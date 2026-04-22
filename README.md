@@ -7,9 +7,6 @@ English | [简体中文](./README.zh-CN.md)
 > Current stable release: **v1.0.0**  
 > Official download: signed and notarized **macOS Apple Silicon DMG** via GitHub Releases
 
-![Codex Pacer screenshot 1](src/assets/readme_pic1.png)
-![Codex Pacer screenshot 2](src/assets/readme_pic2.png)
-
 ## Highlights
 
 - Imports local Codex usage data from `~/.codex` or a custom `CODEX_HOME`

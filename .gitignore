@@ -13,6 +13,30 @@ dist-ssr
 *.local
 var/
 
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local databases and app data
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Signing identities and release credentials
+*.pem
+*.key
+*.p8
+*.p12
+*.cer
+*.crt
+*.csr
+*.der
+*.mobileprovision
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

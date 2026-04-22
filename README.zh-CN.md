@@ -7,9 +7,6 @@
 > 当前稳定版本：**v1.0.0**  
 > 官方下载：通过 GitHub Releases 获取已签名并完成 notarization 的 **macOS Apple Silicon DMG**
 
-![Codex Pacer screenshot 1](src/assets/readme_pic1.png)
-![Codex Pacer screenshot 2](src/assets/readme_pic2.png)
-
 ## 核心能力
 
 - 从 `~/.codex` 或自定义 `CODEX_HOME` 导入本地 Codex 使用数据
