@@ -17,11 +17,21 @@ Notarization environment variables (choose exactly one path):
 Optional environment variables:
   TAURI_TARGET        e.g. aarch64-apple-darwin
   TAURI_BUILD_ARGS    extra Tauri build args appended before the Cargo `--` boundary
+  CARGO_TARGET_DIR    defaults to ~/Library/Caches/CodexPacer/cargo-target
 EOF
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+default_cargo_target_dir() {
+  printf '%s\n' "${HOME}/Library/Caches/CodexPacer/cargo-target"
+}
+
+path_is_cloud_synced() {
+  local path="$1"
+  [[ "${path}" == *"/Mobile Documents/"* || "${path}" == *"/CloudStorage/"* ]]
+}
 
 require_command() {
   local command_name="$1"
@@ -53,11 +63,12 @@ require_clean_worktree() {
 }
 
 latest_recent_match() {
-  local start_epoch="$1"
-  local find_type="$2"
-  local expected_name="$3"
-  local expected_fragment="$4"
-  local expected_suffix="$5"
+  local search_root="$1"
+  local start_epoch="$2"
+  local find_type="$3"
+  local expected_name="$4"
+  local expected_fragment="$5"
+  local expected_suffix="$6"
   local latest_path=""
   local latest_mtime=0
   local candidate
@@ -86,7 +97,7 @@ latest_recent_match() {
       latest_path="${candidate}"
       latest_mtime="${mtime}"
     fi
-  done < <(find "${REPO_ROOT}/src-tauri/target" -type "${find_type}" -print0)
+  done < <(find "${search_root}" -type "${find_type}" -print0)
 
   if [[ -z "${latest_path}" ]]; then
     return 1
@@ -124,7 +135,17 @@ main() {
   cd "${REPO_ROOT}"
   require_clean_worktree
 
-  local package_version tauri_version product_name
+  local build_target_root package_version tauri_version product_name
+  build_target_root="${CARGO_TARGET_DIR:-$(default_cargo_target_dir)}"
+  mkdir -p "${build_target_root}"
+  build_target_root="$(cd "${build_target_root}" && pwd)"
+  if path_is_cloud_synced "${build_target_root}"; then
+    echo "ERROR: CARGO_TARGET_DIR points to a cloud-synced path: ${build_target_root}" >&2
+    echo "Use a local path such as $(default_cargo_target_dir) to avoid FinderInfo metadata breaking macOS code signing." >&2
+    exit 1
+  fi
+  export CARGO_TARGET_DIR="${build_target_root}"
+
   package_version="$(json_value "${REPO_ROOT}/package.json" "data.version")"
   tauri_version="$(json_value "${REPO_ROOT}/src-tauri/tauri.conf.json" "data.version")"
   product_name="$(json_value "${REPO_ROOT}/src-tauri/tauri.conf.json" "data.productName")"
@@ -194,6 +215,7 @@ main() {
   echo "Building Codex Pacer v${version}"
   echo "Signing identity : ${APPLE_SIGNING_IDENTITY}"
   echo "Notarization via : ${notarization_mode}"
+  echo "Cargo target dir : ${build_target_root}"
   if [[ -n "${TAURI_TARGET:-}" ]]; then
   echo "Tauri target     : ${TAURI_TARGET}"
   fi
@@ -228,12 +250,12 @@ main() {
   app_name="${product_name}.app"
   dmg_fragment="_${version}_"
 
-  app_path="$(latest_recent_match "${build_start}" d "${app_name}" "" "")" || {
+  app_path="$(latest_recent_match "${build_target_root}" "${build_start}" d "${app_name}" "" "")" || {
     echo "ERROR: Could not locate the built app bundle for ${app_name}." >&2
     exit 1
   }
 
-  dmg_path="$(latest_recent_match "${build_start}" f "" "${dmg_fragment}" ".dmg")" || {
+  dmg_path="$(latest_recent_match "${build_target_root}" "${build_start}" f "" "${dmg_fragment}" ".dmg")" || {
     echo "ERROR: Could not locate the built DMG for version ${version}." >&2
     exit 1
   }

@@ -10,11 +10,16 @@ Requires:
   - gh authenticated against the target GitHub repository
   - docs/en/release-notes-vVERSION.md
   - a built DMG plus its .sha256 file from build-macos-release.sh
+  - optional CARGO_TARGET_DIR matching the build step when overridden
 EOF
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+default_cargo_target_dir() {
+  printf '%s\n' "${HOME}/Library/Caches/CodexPacer/cargo-target"
+}
 
 require_command() {
   local command_name="$1"
@@ -46,8 +51,9 @@ require_clean_worktree() {
 }
 
 latest_matching_file() {
-  local expected_fragment="$1"
-  local required_suffix="$2"
+  local search_root="$1"
+  local expected_fragment="$2"
+  local required_suffix="$3"
   local latest_path=""
   local latest_mtime=0
   local candidate
@@ -68,7 +74,7 @@ latest_matching_file() {
       latest_path="${candidate}"
       latest_mtime="${mtime}"
     fi
-  done < <(find "${REPO_ROOT}/src-tauri/target" -type f -print0)
+  done < <(find "${search_root}" -type f -print0)
 
   if [[ -z "${latest_path}" ]]; then
     return 1
@@ -112,7 +118,15 @@ main() {
   cd "${REPO_ROOT}"
   require_clean_worktree
 
-  local package_version tauri_version
+  local artifact_root package_version tauri_version
+  artifact_root="${CARGO_TARGET_DIR:-$(default_cargo_target_dir)}"
+  if [[ ! -d "${artifact_root}" ]]; then
+    echo "ERROR: Artifact root does not exist: ${artifact_root}" >&2
+    echo "Run build-macos-release.sh first, or export the same CARGO_TARGET_DIR used during the build." >&2
+    exit 1
+  fi
+  artifact_root="$(cd "${artifact_root}" && pwd)"
+
   package_version="$(json_value "${REPO_ROOT}/package.json" "data.version")"
   tauri_version="$(json_value "${REPO_ROOT}/src-tauri/tauri.conf.json" "data.version")"
 
@@ -164,8 +178,8 @@ main() {
   gh auth status >/dev/null
 
   local dmg_path checksum_path
-  dmg_path="$(latest_matching_file "_${version}_" ".dmg")" || {
-    echo "ERROR: Could not locate a built DMG for version ${version}." >&2
+  dmg_path="$(latest_matching_file "${artifact_root}" "_${version}_" ".dmg")" || {
+    echo "ERROR: Could not locate a built DMG for version ${version} under ${artifact_root}." >&2
     exit 1
   }
 

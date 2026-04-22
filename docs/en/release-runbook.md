@@ -15,6 +15,8 @@ The local release entry points are:
 ./scripts/release/publish-github-release.sh 1.0.0
 ```
 
+The release scripts default `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target` so signed macOS bundles are produced outside cloud-synced folders such as iCloud Drive. This avoids `codesign` failures caused by Finder and file-provider metadata on `.app` bundles.
+
 ## Prerequisites
 
 - macOS on Apple Silicon for the standard public build flow
@@ -28,6 +30,7 @@ The local release entry points are:
 - committed `src-tauri/Cargo.lock` present and up to date for the release commit
 - clean git working tree before starting the build or publish steps
 - release tag `vVERSION` created locally, pointing at `HEAD`, and pushed to `origin` before publishing
+- if you override `CARGO_TARGET_DIR`, use the same value for both build and publish, and keep it on a local non-cloud-synced path
 
 To list available local signing identities:
 
@@ -95,7 +98,9 @@ What the build script does:
 - runs `npm run build`
 - runs `cargo test --manifest-path src-tauri/Cargo.toml --locked`
 - runs `npm run tauri build -- --ci --bundles dmg [--target ...] -- --locked`
-- locates the most recent built `.app` and `.dmg` under `src-tauri/target/**/release/bundle`
+- defaults `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target`
+- rejects cloud-synced target roots that can inject Finder metadata into `.app` bundles
+- locates the most recent built `.app` and `.dmg` under the active Cargo target root
 - verifies the signed app with `codesign`, `spctl`, and `xcrun stapler validate`
 - verifies the signed DMG with `codesign`, `spctl --type open`, and `xcrun stapler validate`
 - writes a sibling checksum file at `<artifact>.dmg.sha256`
@@ -110,8 +115,20 @@ export TAURI_TARGET="aarch64-apple-darwin"
 ```
 
 `TAURI_TARGET` stays on the Tauri CLI side of the command, before the final `--` that introduces Cargo runner args such as `--locked`.
-The script does not assume a single target output path; it searches `src-tauri/target` for the fresh build artifacts after Tauri finishes.
+The script does not assume a single target output path; it searches the active Cargo target root for the fresh build artifacts after Tauri finishes.
 Because the release path uses `npm ci` plus Cargo `--locked`, maintainers should update and commit both `package-lock.json` and `src-tauri/Cargo.lock` before starting the clean release flow rather than letting dependency resolution change during the build.
+
+### Optional Cargo target override
+
+If you need to override the build output location, export `CARGO_TARGET_DIR` before running the release scripts:
+
+```bash
+export CARGO_TARGET_DIR="$HOME/Library/Caches/CodexPacer/custom-target"
+./scripts/release/build-macos-release.sh 1.0.0
+./scripts/release/publish-github-release.sh 1.0.0
+```
+
+Do not point `CARGO_TARGET_DIR` at iCloud Drive, Dropbox, OneDrive, or other cloud/file-provider folders. Signed `.app` bundles created there can pick up `com.apple.FinderInfo` metadata and fail during `codesign`.
 
 ## Create and push the release tag
 
@@ -169,6 +186,7 @@ xcrun stapler validate "/path/to/Codex Pacer.dmg"
 
 - If the build fails before notarization, confirm the Developer ID certificate is installed in the login keychain and that `APPLE_SIGNING_IDENTITY` matches `security find-identity -v -p codesigning`.
 - If notarization fails, confirm only one credential path is exported and that the App Store Connect key file still exists at `APPLE_API_KEY_PATH`.
+- If `codesign` reports `resource fork, Finder information, or similar detritus not allowed`, confirm the build output is not under a cloud-synced path and rerun with the default `CARGO_TARGET_DIR` or another local cache directory.
 - If either release script stops on the clean-tree check, clear or stash local changes and rerun only after `git status --short` is empty.
 - If the build succeeds but the release script cannot find artifacts, clear old outputs and rerun the build so the newest `.app` and `.dmg` are unambiguous.
 - If `gh release create` fails, confirm `gh auth status`, the local `vVERSION` tag, that the tag still matches `HEAD`, that the same tag exists on `origin`, and the presence of the checksum file beside the DMG.
