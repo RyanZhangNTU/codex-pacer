@@ -55,12 +55,14 @@ EOF
 cat > "${STUB_BIN}/spctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "${TEST_SPCTL_LOG:?}"
 exit 0
 EOF
 
 cat > "${STUB_BIN}/xcrun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "${TEST_XCRUN_LOG:?}"
 exit 0
 EOF
 
@@ -137,6 +139,8 @@ chmod +x \
 
 export PATH="${STUB_BIN}:${PATH}"
 export TEST_RELEASE_LOG="${LOG_DIR}/npm.log"
+export TEST_SPCTL_LOG="${LOG_DIR}/spctl.log"
+export TEST_XCRUN_LOG="${LOG_DIR}/xcrun.log"
 export APPLE_SIGNING_IDENTITY="Developer ID Application: Test Maintainer (TEAMID1234)"
 export APPLE_ID="maintainer@example.com"
 export APPLE_PASSWORD="app-specific-password"
@@ -157,6 +161,21 @@ fi
 
 if [[ ! -f "${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.0_aarch64.dmg.sha256" ]]; then
   echo "expected checksum to be written beside the mocked DMG" >&2
+  exit 1
+fi
+
+if ! grep -F -- "notarytool submit ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.0_aarch64.dmg --apple-id maintainer@example.com --password app-specific-password --team-id TEAMID1234 --wait" "${TEST_XCRUN_LOG}" >/dev/null; then
+  echo "expected build script to notarize the built DMG with notarytool" >&2
+  exit 1
+fi
+
+if ! grep -F -- "stapler staple ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.0_aarch64.dmg" "${TEST_XCRUN_LOG}" >/dev/null; then
+  echo "expected build script to staple the built DMG" >&2
+  exit 1
+fi
+
+if ! grep -F -- "--type open --context context:primary-signature ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.0_aarch64.dmg" "${TEST_SPCTL_LOG}" >/dev/null; then
+  echo "expected build script to assess the DMG with the primary-signature context" >&2
   exit 1
 fi
 

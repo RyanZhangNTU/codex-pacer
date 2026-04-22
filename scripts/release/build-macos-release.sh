@@ -198,7 +198,16 @@ main() {
     notarization_mode="App Store Connect API"
   fi
 
-  local -a tauri_build_args cargo_runner_args
+  local -a notarytool_auth_args tauri_build_args cargo_runner_args
+  notarytool_auth_args=()
+  if (( has_apple_id_path == 1 )); then
+    notarytool_auth_args+=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
+  else
+    notarytool_auth_args+=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}")
+    if [[ -n "${APPLE_API_ISSUER:-}" ]]; then
+      notarytool_auth_args+=(--issuer "${APPLE_API_ISSUER}")
+    fi
+  fi
   tauri_build_args=(--ci --bundles app,dmg)
   cargo_runner_args=(--locked)
 
@@ -269,9 +278,15 @@ main() {
   xcrun stapler validate "${app_path}"
 
   echo
+  echo "Notarizing DMG..."
+  xcrun notarytool submit "${dmg_path}" "${notarytool_auth_args[@]}" --wait
+  echo "Stapling DMG..."
+  xcrun stapler staple "${dmg_path}"
+
+  echo
   echo "Verifying signed DMG..."
   codesign --verify --verbose=2 "${dmg_path}"
-  spctl -a -vv --type open "${dmg_path}"
+  spctl -a -vv --type open --context context:primary-signature "${dmg_path}"
   xcrun stapler validate "${dmg_path}"
 
   echo

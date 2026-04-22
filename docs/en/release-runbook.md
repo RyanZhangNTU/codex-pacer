@@ -102,7 +102,9 @@ What the build script does:
 - rejects cloud-synced target roots that can inject Finder metadata into `.app` bundles
 - locates the most recent built `.app` and `.dmg` under the active Cargo target root
 - verifies the signed app with `codesign`, `spctl`, and `xcrun stapler validate`
-- verifies the signed DMG with `codesign`, `spctl --type open`, and `xcrun stapler validate`
+- submits the built DMG to Apple with `xcrun notarytool submit --wait`
+- staples the DMG ticket with `xcrun stapler staple`
+- verifies the signed DMG with `codesign`, `spctl --type open --context context:primary-signature`, and `xcrun stapler validate`
 - writes a sibling checksum file at `<artifact>.dmg.sha256`
 
 ### Optional target override
@@ -178,7 +180,7 @@ Useful spot checks:
 ```bash
 spctl -a -vv --type exec "/Applications/Codex Pacer.app"
 codesign --verify --deep --strict --verbose=2 "/Applications/Codex Pacer.app"
-spctl -a -vv --type open "/path/to/Codex Pacer.dmg"
+spctl -a -vv --type open --context context:primary-signature "/path/to/Codex Pacer.dmg"
 xcrun stapler validate "/path/to/Codex Pacer.dmg"
 ```
 
@@ -186,6 +188,7 @@ xcrun stapler validate "/path/to/Codex Pacer.dmg"
 
 - If the build fails before notarization, confirm the Developer ID certificate is installed in the login keychain and that `APPLE_SIGNING_IDENTITY` matches `security find-identity -v -p codesigning`.
 - If notarization fails, confirm only one credential path is exported and that the App Store Connect key file still exists at `APPLE_API_KEY_PATH`.
+- If the DMG fails Gatekeeper assessment, confirm the script completed the explicit `notarytool submit` and `stapler staple` steps for the DMG itself, not just the app bundle.
 - If `codesign` reports `resource fork, Finder information, or similar detritus not allowed`, confirm the build output is not under a cloud-synced path and rerun with the default `CARGO_TARGET_DIR` or another local cache directory.
 - If either release script stops on the clean-tree check, clear or stash local changes and rerun only after `git status --short` is empty.
 - If the build succeeds but the release script cannot find artifacts, clear old outputs and rerun the build so the newest `.app` and `.dmg` are unambiguous.
