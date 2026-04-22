@@ -97,7 +97,7 @@ What the build script does:
 - runs `npm run lint`
 - runs `npm run build`
 - runs `cargo test --manifest-path src-tauri/Cargo.toml --locked`
-- runs `npm run tauri build -- --ci --bundles dmg [--target ...] -- --locked`
+- runs `npm run tauri build -- --ci --bundles app,dmg [--target ...] -- --locked`
 - defaults `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target`
 - rejects cloud-synced target roots that can inject Finder metadata into `.app` bundles
 - locates the most recent built `.app` and `.dmg` under the active Cargo target root

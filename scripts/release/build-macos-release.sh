@@ -199,7 +199,7 @@ main() {
   fi
 
   local -a tauri_build_args cargo_runner_args
-  tauri_build_args=(--ci --bundles dmg)
+  tauri_build_args=(--ci --bundles app,dmg)
   cargo_runner_args=(--locked)
 
   if [[ -n "${TAURI_TARGET:-}" ]]; then
