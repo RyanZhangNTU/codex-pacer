@@ -16,6 +16,18 @@ fn pricing_seed() -> Vec<PricingCatalogEntry> {
   let updated_at = now_utc_string();
   vec![
     PricingCatalogEntry {
+      model_id: "gpt-5.5".to_string(),
+      display_name: "GPT-5.5".to_string(),
+      input_price_per_million: 5.00,
+      cached_input_price_per_million: 0.50,
+      output_price_per_million: 30.00,
+      effective_model_id: "gpt-5.5".to_string(),
+      is_official: true,
+      note: None,
+      source_url: "https://openai.com/api/pricing/".to_string(),
+      updated_at: updated_at.clone(),
+    },
+    PricingCatalogEntry {
       model_id: "gpt-5.4".to_string(),
       display_name: "GPT-5.4".to_string(),
       input_price_per_million: 2.50,
@@ -231,6 +243,8 @@ pub fn resolve_pricing(
   let normalized = normalize_model_id(model_id);
   let entry = if let Some(entry) = catalog.get(&normalized) {
     entry.clone()
+  } else if normalized.starts_with("gpt-5.5") {
+    catalog.get("gpt-5.5")?.clone()
   } else if normalized.starts_with("gpt-5.4-mini") {
     catalog.get("gpt-5.4-mini")?.clone()
   } else if normalized.starts_with("gpt-5.4-nano") {
@@ -275,6 +289,7 @@ pub fn normalize_model_id(model_id: &str) -> String {
 
 pub fn display_name_for_model(model_id: &str) -> String {
   match normalize_model_id(model_id).as_str() {
+    "gpt-5.5" => "GPT-5.5".to_string(),
     "gpt-5.4" => "GPT-5.4".to_string(),
     "gpt-5.4-mini" => "GPT-5.4 Mini".to_string(),
     "gpt-5.4-nano" => "GPT-5.4 Nano".to_string(),
@@ -293,6 +308,7 @@ pub fn display_name_for_model(model_id: &str) -> String {
 
 pub fn model_color(model_id: &str) -> &'static str {
   match normalize_model_id(model_id).as_str() {
+    "gpt-5.5" => "#d946ef",
     "gpt-5.4" => "#ff6b35",
     "gpt-5.4-mini" => "#ff915c",
     "gpt-5.4-nano" => "#ffb67d",
@@ -308,13 +324,26 @@ pub fn model_color(model_id: &str) -> &'static str {
   }
 }
 
-pub fn is_gpt_54_model(model_id: &str) -> bool {
-  normalize_model_id(model_id).starts_with("gpt-5.4")
+pub fn is_codex_fast_mode_model(model_id: &str) -> bool {
+  let normalized = normalize_model_id(model_id);
+  normalized.starts_with("gpt-5.5") || normalized.starts_with("gpt-5.4")
+}
+
+pub fn fast_mode_multiplier_for_model(model_id: &str) -> f64 {
+  let normalized = normalize_model_id(model_id);
+  if normalized.starts_with("gpt-5.5") {
+    2.5
+  } else if normalized.starts_with("gpt-5.4") {
+    2.0
+  } else {
+    1.0
+  }
 }
 
 pub fn calculate_value_usd(
   usage: &TokenUsage,
   resolved_pricing: Option<&ResolvedPricing>,
+  model_id: &str,
   fast_mode_enabled: bool,
 ) -> f64 {
   let Some(pricing) = resolved_pricing else {
@@ -327,9 +356,10 @@ pub fn calculate_value_usd(
   let mut uncached_input_tokens = (input_tokens - cached_input_tokens).max(0.0);
 
   if fast_mode_enabled {
-    input_tokens *= 2.0;
-    cached_input_tokens *= 2.0;
-    output_tokens *= 2.0;
+    let multiplier = fast_mode_multiplier_for_model(model_id);
+    input_tokens *= multiplier;
+    cached_input_tokens *= multiplier;
+    output_tokens *= multiplier;
     uncached_input_tokens = (input_tokens - cached_input_tokens).max(0.0);
   }
 
@@ -357,7 +387,7 @@ mod tests {
       output_price_per_million: 10.0,
     };
 
-    let value = calculate_value_usd(&usage, Some(&pricing), false);
+    let value = calculate_value_usd(&usage, Some(&pricing), "gpt-5.4", false);
     let expected = (600_000.0 / 1_000_000.0) * 2.0
       + (400_000.0 / 1_000_000.0) * 0.5
       + (100_000.0 / 1_000_000.0) * 10.0;
@@ -380,8 +410,8 @@ mod tests {
       output_price_per_million: 10.0,
     };
 
-    let standard = calculate_value_usd(&usage, Some(&pricing), false);
-    let fast = calculate_value_usd(&usage, Some(&pricing), true);
+    let standard = calculate_value_usd(&usage, Some(&pricing), "gpt-5.4", false);
+    let fast = calculate_value_usd(&usage, Some(&pricing), "gpt-5.4", true);
 
     assert!((fast - standard * 2.0).abs() < 1e-9);
   }
@@ -403,5 +433,49 @@ mod tests {
     assert_eq!(nano.input_price_per_million, 0.20);
     assert!(flagship.input_price_per_million > mini.input_price_per_million);
     assert!(mini.input_price_per_million > nano.input_price_per_million);
+  }
+
+  #[test]
+  fn resolve_pricing_includes_gpt_55() {
+    let entries = pricing_seed();
+    let catalog = entries
+      .into_iter()
+      .map(|entry| (entry.model_id.clone(), entry))
+      .collect::<HashMap<_, _>>();
+
+    let pricing = resolve_pricing(&catalog, "gpt-5.5").expect("gpt-5.5 pricing");
+
+    assert_eq!(pricing.input_price_per_million, 5.00);
+    assert_eq!(pricing.cached_input_price_per_million, 0.50);
+    assert_eq!(pricing.output_price_per_million, 30.00);
+  }
+
+  #[test]
+  fn gpt_55_fast_mode_uses_two_point_five_multiplier() {
+    let usage = TokenUsage {
+      input_tokens: 1_000_000,
+      cached_input_tokens: 250_000,
+      output_tokens: 250_000,
+      reasoning_output_tokens: 0,
+      total_tokens: 1_250_000,
+    };
+    let pricing = ResolvedPricing {
+      input_price_per_million: 5.0,
+      cached_input_price_per_million: 0.5,
+      output_price_per_million: 30.0,
+    };
+
+    let standard = calculate_value_usd(&usage, Some(&pricing), "gpt-5.5", false);
+    let fast = calculate_value_usd(&usage, Some(&pricing), "gpt-5.5", true);
+
+    assert!((fast - standard * 2.5).abs() < 1e-9);
+  }
+
+  #[test]
+  fn gpt_55_models_are_fast_mode_eligible() {
+    assert!(is_codex_fast_mode_model("gpt-5.5"));
+    assert!(is_codex_fast_mode_model("gpt-5.5-2026-04-23"));
+    assert!(is_codex_fast_mode_model("gpt-5.4"));
+    assert!(!is_codex_fast_mode_model("gpt-5.3-codex"));
   }
 }

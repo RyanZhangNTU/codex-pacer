@@ -25,6 +25,6 @@ Official public release asset:
 
 ## Notes
 
-- `v1.0.0` is the current stable release line.
+- `v1.0.0` was the first stable release line. See the latest release notes for the current stable version.
 - Intel macOS, universal builds, Windows, Linux, and auto-update delivery are not currently promised as official release assets.
 - Codex Pacer remains local-first and does not depend on a cloud sync service to work.

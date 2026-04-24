@@ -101,4 +101,4 @@ npm run tauri build
 
 - [Installing on macOS](./installing-on-macos.md)
 - [Packaging and release](./packaging-and-release.md)
-- [Release notes for v1.0.0](./release-notes-v1.0.0.md)
+- [Release notes for v1.0.1](./release-notes-v1.0.1.md)

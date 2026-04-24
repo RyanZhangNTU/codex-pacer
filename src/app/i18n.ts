@@ -422,9 +422,9 @@ const translations: Record<AppLanguage, TranslationSet> = {
           autoScanIntervalMinutes: '自动扫描间隔（分钟）',
           liveQuotaRefreshIntervalSeconds: 'Live quota 刷新间隔（秒）',
           liveQuotaRefreshNote: '独立控制 `5小时 / 7天` live quota 的主动刷新与历史持久化频率。',
-          defaultFastModeForNewGpt54Sessions: '新 gpt-5.4 对话默认按快速模式计费',
+          defaultFastModeForNewGpt54Sessions: '新 gpt-5.4 / gpt-5.5 对话默认按快速模式计费',
           defaultFastModeForNewGpt54SessionsNote:
-            '仅影响新导入、且原始 session 未显式写入 `fast_mode/quick_mode` 的 gpt-5.4 对话；不会改动已有对话。',
+            '仅影响新导入、且原始 session 未显式写入 `fast_mode/quick_mode` 的 gpt-5.4 / gpt-5.5 对话；不会改动已有对话。',
         },
         menuBar: {
           eyebrow: '菜单栏',
@@ -658,9 +658,9 @@ const translations: Record<AppLanguage, TranslationSet> = {
           autoScanIntervalMinutes: 'Auto scan interval (minutes)',
           liveQuotaRefreshIntervalSeconds: 'Live quota refresh interval (seconds)',
           liveQuotaRefreshNote: 'Separately controls active refresh and history persistence for `5h / 7d` live quota snapshots.',
-          defaultFastModeForNewGpt54Sessions: 'Default new gpt-5.4 sessions to fast-mode billing',
+          defaultFastModeForNewGpt54Sessions: 'Default new gpt-5.4 / gpt-5.5 sessions to fast-mode billing',
           defaultFastModeForNewGpt54SessionsNote:
-            'Only affects newly imported gpt-5.4 sessions when the raw session does not explicitly contain `fast_mode/quick_mode`; existing sessions are unchanged.',
+            'Only affects newly imported gpt-5.4 / gpt-5.5 sessions when the raw session does not explicitly contain `fast_mode/quick_mode`; existing sessions are unchanged.',
         },
         menuBar: {
           eyebrow: 'Menu Bar',

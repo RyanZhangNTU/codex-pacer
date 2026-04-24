@@ -29,24 +29,15 @@ The intended public release flow is:
 
 ## Local release preparation
 
-Public release preparation should eventually be driven by the release scripts below:
+Public release preparation is driven by the release scripts below:
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.0.0
+./scripts/release/build-macos-release.sh 1.0.1
+./scripts/release/publish-github-release.sh 1.0.1
 ```
 
-Those scripts are the future entry points for the stable release workflow. If they do not exist yet in your local checkout, treat them as the planned interface rather than a promise that release automation is already complete.
-
-Until those helper scripts land, use the current fallback flow:
-
-```bash
-npm install
-npm run lint
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri build
-```
+Those scripts are the stable local entry points for public release preparation. The build script verifies the version, runs the audit/lint/build/test checks, produces the signed and notarized DMG, and writes a checksum beside the artifact. The publish script then verifies the tag and uploads the DMG plus checksum to GitHub Releases.
 
 ## Recommended validation before publishing
 
@@ -64,16 +55,18 @@ npm run tauri build
 - Add the matching release notes document for the version being published.
 - Verify the download and install flow after publication.
 
+GitHub Releases is more than a file host in the current workflow. It is the public boundary where a reviewed Git tag, human-readable release notes, the signed DMG, and the checksum meet. Users should treat the DMG attached to the tagged release as the official installer, while maintainers use the tag and checksum to make the release reproducible and auditable.
+
 ## What users should be told
 
 For public docs and announcements, use this message consistently:
 
 - official distribution channel: GitHub Releases
 - official release artifact: signed and notarized macOS Apple Silicon DMG
-- current stable line: `v1.0.0`
+- current stable line: `v1.0.1`
 
 ## Related docs
 
 - [Getting started](./getting-started.md)
 - [Installing on macOS](./installing-on-macos.md)
-- [Release notes for v1.0.0](./release-notes-v1.0.0.md)
+- [Release notes for v1.0.1](./release-notes-v1.0.1.md)

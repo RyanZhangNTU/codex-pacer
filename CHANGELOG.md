@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-04-24
+
+### Added
+- official GPT-5.5 API-equivalent pricing for input, cached input, and output token valuation
+- GPT-5.5 Codex fast-mode cost handling with the documented 2.5x multiplier
+- release notes and packaging guidance for the v1.0.1 GitHub Releases workflow
+
+### Changed
+- fast-mode valuation is now model-aware, preserving GPT-5.4's 2x behavior while applying GPT-5.5's 2.5x cost
+- settings copy now describes the default fast-mode behavior for both GPT-5.4 and GPT-5.5 sessions
+- public docs now identify GitHub Releases as the versioned distribution point for signed DMG installers and checksums
+
+### Fixed
+- GPT-5.5 sessions no longer fall through to zero API-equivalent value during import or recalculation
+- token composition cost breakdowns now use the same model-aware fast-mode multiplier as session totals
+
 ## [1.0.0] - 2026-04-16
 
 ### Added

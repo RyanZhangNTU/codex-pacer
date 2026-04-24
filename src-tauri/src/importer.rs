@@ -14,7 +14,7 @@ use crate::database::{
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
-  calculate_value_usd, is_gpt_54_model, load_catalog_map, normalize_model_id, resolve_pricing,
+  calculate_value_usd, is_codex_fast_mode_model, load_catalog_map, normalize_model_id, resolve_pricing,
   seed_pricing_catalog,
 };
 
@@ -224,9 +224,10 @@ pub fn recalculate_session_values(conn: &Connection, session_id: &str) -> rusqli
 
   for item in events {
     let (id, model_id, usage) = item?;
-    let auto_fast = is_gpt_54_model(&model_id) && explicit_fast_mode.unwrap_or(fast_mode_default);
+    let auto_fast = is_codex_fast_mode_model(&model_id) && explicit_fast_mode.unwrap_or(fast_mode_default);
     let effective_fast = override_value.unwrap_or(auto_fast);
-    let value_usd = calculate_value_usd(&usage, resolve_pricing(&catalog, &model_id).as_ref(), effective_fast);
+    let value_usd =
+      calculate_value_usd(&usage, resolve_pricing(&catalog, &model_id).as_ref(), &model_id, effective_fast);
     conn.execute(
       "
       UPDATE usage_events
@@ -650,7 +651,7 @@ fn persist_session(
     .snapshots
     .iter()
     .any(|snapshot| {
-      is_gpt_54_model(&snapshot.model_id)
+      is_codex_fast_mode_model(&snapshot.model_id)
         && parsed.explicit_fast_mode.is_none()
         && sync_settings.default_fast_mode_for_new_gpt54_sessions
     });
@@ -728,10 +729,10 @@ fn persist_session(
     }
 
     let auto_fast =
-      is_gpt_54_model(&snapshot.model_id) && parsed.explicit_fast_mode.unwrap_or(fast_mode_default);
+      is_codex_fast_mode_model(&snapshot.model_id) && parsed.explicit_fast_mode.unwrap_or(fast_mode_default);
     let effective_fast = override_value.unwrap_or(auto_fast);
     let resolved_pricing = resolve_pricing(catalog, &snapshot.model_id);
-    let value_usd = calculate_value_usd(&delta, resolved_pricing.as_ref(), effective_fast);
+    let value_usd = calculate_value_usd(&delta, resolved_pricing.as_ref(), &snapshot.model_id, effective_fast);
 
     tx.execute(
       "
@@ -1158,6 +1159,45 @@ mod tests {
       reasoning_output_tokens: 8,
       total_tokens: 0,
     }));
+  }
+
+  #[test]
+  fn scan_prices_gpt_55_with_codex_fast_mode_multiplier() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "12121212-1212-1212-1212-121212121212";
+    let session_path = sessions_dir.join("gpt55.jsonl");
+    std::fs::write(
+      &session_path,
+      concat!(
+        "{\"timestamp\":\"2026-04-24T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"12121212-1212-1212-1212-121212121212\"}}\n",
+        "{\"timestamp\":\"2026-04-24T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.5\"}}\n",
+        "{\"timestamp\":\"2026-04-24T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":40,\"reasoning_output_tokens\":0,\"total_tokens\":140}},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n"
+      ),
+    )
+    .expect("write gpt-5.5 session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let (value_usd, fast_mode_auto, fast_mode_effective): (f64, i64, i64) = conn
+      .query_row(
+        "SELECT value_usd, fast_mode_auto, fast_mode_effective FROM usage_events WHERE session_id = ?1",
+        params![session_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+      )
+      .expect("query usage");
+
+    let standard = (75.0 / 1_000_000.0) * 5.0
+      + (25.0 / 1_000_000.0) * 0.5
+      + (40.0 / 1_000_000.0) * 30.0;
+    assert!((value_usd - standard * 2.5).abs() < 1e-9);
+    assert_eq!(fast_mode_auto, 1);
+    assert_eq!(fast_mode_effective, 1);
   }
 
   #[test]

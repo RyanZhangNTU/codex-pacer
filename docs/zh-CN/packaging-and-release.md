@@ -29,24 +29,15 @@
 
 ## 本地发布准备
 
-后续的公开发布准备流程应以这两个脚本为入口：
+公开发布准备流程以这些脚本为入口：
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.0.0
+./scripts/release/build-macos-release.sh 1.0.1
+./scripts/release/publish-github-release.sh 1.0.1
 ```
 
-这两个脚本代表未来稳定发布工作流的入口。如果你当前本地仓库里还没有这些脚本，应把它们理解为计划中的接口，而不是已经完成的自动化承诺。
-
-在这些辅助脚本落地之前，请先使用当前可执行的回退流程：
-
-```bash
-npm install
-npm run lint
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri build
-```
+这些脚本是当前稳定公开发布准备的本地入口。构建脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，生成已签名并完成 notarization 的 DMG，并在旁边写入 checksum。发布脚本会继续校验 tag，并把 DMG 与 checksum 上传到 GitHub Releases。
 
 ## 发布前建议验证
 
@@ -64,16 +55,18 @@ npm run tauri build
 - 附上该版本对应的发布说明
 - 发布后再次验证下载与安装流程
 
+在当前工作流里，GitHub Releases 不只是文件托管位置。它是公开发布边界：一个经过确认的 Git tag、面向用户的发布说明、签名 DMG 和 checksum 在这里汇合。用户应把对应 tag release 下的 DMG 视为官方安装包；维护者则通过 tag 和 checksum 保持发布可追溯、可审计。
+
 ## 面向用户应统一传达的内容
 
 面向外部文档和公告时，请保持以下表述一致：
 
 - 官方分发渠道：GitHub Releases
 - 官方发布资产：已签名并完成 notarization 的 macOS Apple Silicon DMG
-- 当前稳定版本线：`v1.0.0`
+- 当前稳定版本线：`v1.0.1`
 
 ## 相关文档
 
 - [快速开始](./getting-started.md)
 - [在 macOS 上安装](./installing-on-macos.md)
-- [v1.0.0 发布说明](./release-notes-v1.0.0.md)
+- [v1.0.1 发布说明](./release-notes-v1.0.1.md)

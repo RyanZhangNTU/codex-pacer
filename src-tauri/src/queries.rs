@@ -18,8 +18,8 @@ use crate::models::{
   TrendPoint,
 };
 use crate::pricing::{
-  calculate_value_usd, display_name_for_model, is_gpt_54_model, load_catalog_map, model_color,
-  normalize_model_id, resolve_pricing,
+  calculate_value_usd, display_name_for_model, fast_mode_multiplier_for_model, is_codex_fast_mode_model,
+  load_catalog_map, model_color, normalize_model_id, resolve_pricing,
 };
 
 #[derive(Debug, Clone)]
@@ -726,9 +726,10 @@ fn build_turns_for_session(
             );
             let model_id = current_model.clone().unwrap_or_else(|| "unknown".to_string());
             let auto_fast =
-              is_gpt_54_model(&model_id) && explicit_fast_mode.unwrap_or(session.fast_mode_default);
+              is_codex_fast_mode_model(&model_id) && explicit_fast_mode.unwrap_or(session.fast_mode_default);
             let effective_fast = fast_mode_override.unwrap_or(auto_fast);
-            let value_usd = calculate_value_usd(&delta, resolve_pricing(catalog, &model_id).as_ref(), effective_fast);
+            let value_usd =
+              calculate_value_usd(&delta, resolve_pricing(catalog, &model_id).as_ref(), &model_id, effective_fast);
             let turn = &mut turns[turn_index];
             turn.model_ids.insert(model_id);
             turn.input_tokens += delta.input_tokens;
@@ -1011,7 +1012,11 @@ fn build_composition_breakdown(
     let Some(pricing) = resolve_pricing(catalog, &event.model_id) else {
       continue;
     };
-    let multiplier = if event.fast_mode_effective { 2.0 } else { 1.0 };
+    let multiplier = if event.fast_mode_effective {
+      fast_mode_multiplier_for_model(&event.model_id)
+    } else {
+      1.0
+    };
     breakdown[0].api_value_usd +=
       ((event.input_tokens - event.cached_input_tokens).max(0) as f64 * multiplier / 1_000_000.0)
         * pricing.input_price_per_million;
