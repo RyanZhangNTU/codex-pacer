@@ -2,9 +2,10 @@
 
 ## Purpose
 
-This runbook is for maintainers producing the public **Codex Pacer** macOS release artifact:
+This runbook is for maintainers producing public **Codex Pacer** release assets:
 
 - signed and notarized Apple Silicon DMG
+- unsigned Windows NSIS setup EXE
 - published through GitHub Releases
 
 The local release entry points are:
@@ -15,7 +16,11 @@ The local release entry points are:
 ./scripts/release/publish-github-release.sh 1.1.1
 ```
 
-The release scripts default `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target` so signed macOS bundles are produced outside cloud-synced folders such as iCloud Drive. This avoids `codesign` failures caused by Finder and file-provider metadata on `.app` bundles.
+```powershell
+.\scripts\release\build-windows-release.ps1 1.1.1
+```
+
+The macOS release scripts default `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target` so signed macOS bundles are produced outside cloud-synced folders such as iCloud Drive. This avoids `codesign` failures caused by Finder and file-provider metadata on `.app` bundles.
 
 ## Prerequisites
 
@@ -31,6 +36,14 @@ The release scripts default `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/c
 - clean git working tree before starting the build or publish steps
 - release tag `vVERSION` created locally, pointing at `HEAD`, and pushed to `origin` before publishing
 - if you override `CARGO_TARGET_DIR`, use the same value for both build and publish, and keep it on a local non-cloud-synced path
+
+For Windows release builds:
+
+- Windows PowerShell or PowerShell on Windows
+- `git`, `node`, `npm`, and `cargo` available on `PATH`
+- Tauri prerequisites for Windows NSIS builds installed
+- clean git working tree unless `-AllowDirty` is explicitly used for a local test build
+- no Windows code signing is configured by default; the setup EXE is unsigned unless a release separately adds signing
 
 To list available local signing identities:
 
@@ -70,7 +83,7 @@ export APPLE_API_KEY_PATH="$HOME/keys/AuthKey_ABC123DEFG.p8"
 
 Pick one notarization path and leave the other unset. The build script rejects ambiguous or incomplete credential sets.
 
-## Standard release flow
+## Standard macOS release flow
 
 1. Confirm the target release notes file exists.
 2. Confirm `package.json` and `src-tauri/tauri.conf.json` both match the release version.
@@ -83,7 +96,7 @@ Pick one notarization path and leave the other unset. The build script rejects a
 9. Publish the GitHub Release with the DMG, checksum, and English release notes.
 10. Run the manual smoke test on the packaged app.
 
-GitHub Releases is the handoff point between maintainer workflow and user installation. The tag records exactly what source was released, the release notes explain the user-facing change, and the attached DMG plus checksum are the canonical install assets for that version.
+GitHub Releases is the handoff point between maintainer workflow and user installation. The tag records exactly what source was released, the release notes explain the user-facing change, and the attached platform installers plus checksums are the canonical install assets for that version.
 
 ## Build the signed and notarized DMG
 
@@ -108,6 +121,37 @@ What the build script does:
 - staples the DMG ticket with `xcrun stapler staple`
 - verifies the signed DMG with `codesign`, `spctl --type open --context context:primary-signature`, and `xcrun stapler validate`
 - writes a sibling checksum file at `<artifact>.dmg.sha256`
+
+## Build the Windows NSIS installer
+
+Run this on Windows:
+
+```powershell
+.\scripts\release\build-windows-release.ps1 1.1.1
+```
+
+What the Windows build script does:
+
+- requires Windows
+- requires a clean git working tree unless `-AllowDirty` is passed
+- runs `npm ci` against the committed `package-lock.json`
+- runs `npm run lint`
+- runs `npm run build`
+- runs `cargo test --manifest-path src-tauri/Cargo.toml --locked`
+- runs `npm run tauri build -- --ci --bundles nsis -- --locked`
+- locates the generated NSIS setup `.exe` under the active Cargo target root
+- writes a sibling checksum file at `<installer>.exe.sha256`
+
+The Windows installer is unsigned unless Windows code signing is separately configured for the release. Do not describe it as signed, notarized, or SmartScreen-trusted by default.
+
+### Optional Windows Cargo target override
+
+If you need to override the Windows build output location, set `CARGO_TARGET_DIR` before running the script:
+
+```powershell
+$env:CARGO_TARGET_DIR = "C:\Users\you\AppData\Local\CodexPacer\cargo-target"
+.\scripts\release\build-windows-release.ps1 1.1.1
+```
 
 ### Optional target override
 
@@ -163,7 +207,9 @@ The publish script uses:
 
 It publishes those assets with `gh release create`.
 
-## Manual smoke test
+For releases that include Windows, also attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release. Note in the release body that the Windows installer is unsigned unless Windows signing was separately configured for that release.
+
+## macOS manual smoke test
 
 Run this before announcing the release publicly:
 
@@ -175,7 +221,9 @@ Run this before announcing the release publicly:
 6. Confirm the window title and menu bar entry use **Codex Pacer** branding.
 7. Run an import from the default `~/.codex` path or a known-good sample environment.
 8. Confirm the overview loads and the first local indexing pass completes.
-9. Confirm the app quits and relaunches cleanly from `Applications`.
+9. Confirm the menu bar popup opens below the macOS menu bar.
+10. Confirm macOS-only Dock settings are present on macOS and are not described as Windows settings.
+11. Confirm the app quits and relaunches cleanly from `Applications`.
 
 Useful spot checks:
 
@@ -184,6 +232,28 @@ spctl -a -vv --type exec "/Applications/Codex Pacer.app"
 codesign --verify --deep --strict --verbose=2 "/Applications/Codex Pacer.app"
 spctl -a -vv --type open --context context:primary-signature "/path/to/Codex Pacer.dmg"
 xcrun stapler validate "/path/to/Codex Pacer.dmg"
+```
+
+## Windows manual smoke test
+
+Run this before announcing Windows availability publicly:
+
+1. Confirm the generated setup `.exe` and sibling `.sha256` file are present.
+2. Verify the checksum with `Get-FileHash`.
+3. Run the setup `.exe` on a Windows test machine.
+4. If SmartScreen warns about an unknown publisher, confirm the warning is expected for an unsigned installer.
+5. Launch **Codex Pacer** from the Start menu.
+6. Confirm the app reads the default `~\.codex` path or a custom `CODEX_HOME`.
+7. Run an import from a known-good local Codex environment.
+8. Confirm the overview loads and the first local indexing pass completes.
+9. Confirm the tray popup opens above a bottom taskbar and grows upward when optional modules are shown.
+10. Refresh live quota data and confirm no black console window appears.
+11. Confirm the app quits and relaunches cleanly.
+
+Useful spot check:
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.1_x64-setup.exe"
 ```
 
 ## Troubleshooting
@@ -195,8 +265,11 @@ xcrun stapler validate "/path/to/Codex Pacer.dmg"
 - If either release script stops on the clean-tree check, clear or stash local changes and rerun only after `git status --short` is empty.
 - If the build succeeds but the release script cannot find artifacts, clear old outputs and rerun the build so the newest `.app` and `.dmg` are unambiguous.
 - If `gh release create` fails, confirm `gh auth status`, the local `vVERSION` tag, that the tag still matches `HEAD`, that the same tag exists on `origin`, and the presence of the checksum file beside the DMG.
+- If the Windows release script cannot find the NSIS installer, confirm the Tauri build completed and inspect `src-tauri\target\release\bundle\nsis` or the configured `CARGO_TARGET_DIR`.
+- If users report a Windows SmartScreen warning, confirm whether the published installer was intentionally unsigned and make the unsigned note visible in the release body.
 
 ## Related docs
 
 - [Packaging and release](./packaging-and-release.md)
 - [Installing on macOS](./installing-on-macos.md)
+- [Installing on Windows](./installing-on-windows.md)

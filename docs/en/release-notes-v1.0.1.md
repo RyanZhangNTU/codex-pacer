@@ -13,18 +13,19 @@ This is a focused maintenance release for users who want API-equivalent value es
 - preserved GPT-5.4 fast-mode valuation at `2x`
 - updated session import, recalculation, turn timelines, and token-composition breakdowns to use the same model-aware fast-mode logic
 - refreshed settings copy for new GPT-5.4 / GPT-5.5 sessions
-- updated packaging docs to explain why GitHub Releases is the canonical distribution point for versioned signed DMG installers
+- updated packaging docs to explain why GitHub Releases is the canonical distribution point for versioned installers
 
 ## Packaging
 
-Official public release asset:
+Packaged asset at this release:
 
 - signed and notarized macOS Apple Silicon DMG via GitHub Releases
 
-GitHub Releases is used as the public release boundary for this project: each release is tied to a Git tag, carries the user-facing release notes, and hosts the signed DMG plus checksum users should install from.
+GitHub Releases is used as the public release boundary for this project: each release is tied to a Git tag, carries the user-facing release notes, and hosts packaged assets plus checksums users should install from.
 
 ## Notes
 
 - `v1.0.1` was the previous stable release line. See the latest release notes for the current stable version.
-- Intel macOS, universal builds, Windows, Linux, and auto-update delivery are not currently promised as official release assets.
+- Intel macOS, universal builds, Linux bundles, Windows code signing, and auto-update delivery are not currently promised as official release assets.
+- Current Windows installer support is documented in the latest installation and release docs.
 - Codex Pacer remains local-first and does not depend on a cloud sync service to work.

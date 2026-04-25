@@ -16,14 +16,15 @@ This release makes Codex Pacer more resilient when Codex app-server is still ini
 
 ## Packaging
 
-Official public release asset:
+Official public release assets:
 
 - signed and notarized macOS Apple Silicon DMG via GitHub Releases
+- unsigned Windows NSIS setup EXE via GitHub Releases
 
-GitHub Releases remains the public release boundary for Codex Pacer: each release is tied to a Git tag, carries the user-facing release notes, and hosts the signed DMG plus checksum users should install from.
+GitHub Releases remains the public release boundary for Codex Pacer: each release is tied to a Git tag, carries the user-facing release notes, and hosts platform installers plus checksums users should install from.
 
 ## Notes
 
 - `v1.1.1` is the current stable release line.
-- Intel macOS, universal builds, Windows, Linux, and auto-update delivery are not currently promised as official release assets.
+- Intel macOS, universal builds, Linux bundles, Windows code signing, and auto-update delivery are not currently promised as official release assets.
 - Codex Pacer remains local-first and does not depend on a cloud sync service to work.

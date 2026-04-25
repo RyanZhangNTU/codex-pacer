@@ -18,14 +18,15 @@
 
 ## 打包形态
 
-当前官方公开发布资产：
+此版本的打包资产：
 
 - 通过 GitHub Releases 分发的、已签名并完成 notarization 的 macOS Apple Silicon DMG
 
-GitHub Releases 仍是 Codex Pacer 的公开发布边界：每个 release 对应一个 Git tag，承载面向用户的发布说明，并托管用户应下载和安装的签名 DMG 及 checksum。
+GitHub Releases 仍是 Codex Pacer 的公开发布边界：每个 release 对应一个 Git tag，承载面向用户的发布说明，并托管用户应下载和安装的打包资产及 checksum。
 
 ## 说明
 
-- `v1.1.0` 是当前稳定发布线。
-- Intel macOS、universal 构建、Windows、Linux，以及自动更新交付目前都不承诺作为官方发布资产。
+- `v1.1.0` 是上一条稳定发布线。当前稳定版本请查看最新发布说明。
+- Intel macOS、universal 构建、Linux 打包产物、Windows code signing，以及自动更新交付目前都不承诺作为官方发布资产。
+- 当前 Windows 安装包支持以最新安装与发布文档为准。
 - Codex Pacer 保持本地优先，不依赖云端同步服务即可运行。

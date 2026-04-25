@@ -1,8 +1,8 @@
 # Installing on macOS
 
-## Official install path
+## macOS install path
 
-The official public installer for **Codex Pacer** is the signed and notarized **Apple Silicon DMG** published through GitHub Releases.
+The macOS public installer for **Codex Pacer** is the signed and notarized **Apple Silicon DMG** published through GitHub Releases.
 
 ## Happy path
 
@@ -44,6 +44,6 @@ On first run:
 
 ## Notes
 
-- The official packaged release currently targets Apple Silicon macOS.
+- The macOS packaged release currently targets Apple Silicon macOS.
 - GitHub Releases is the official distribution channel.
-- Intel, universal, Windows, Linux, and auto-update delivery are not currently promised as public release options.
+- Intel macOS builds, universal macOS builds, Linux bundles, and auto-update delivery are not currently promised as public release options.

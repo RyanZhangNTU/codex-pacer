@@ -1,5 +1,6 @@
+use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -44,19 +45,17 @@ enum AppServerMessage {
   Closed,
 }
 
+struct AppServerCommandSpec {
+  program: OsString,
+  args: Vec<OsString>,
+  hide_window: bool,
+}
+
 pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
   let codex_binary = resolve_codex_binary();
-  let mut child = Command::new("script")
-    .args([
-      "-q",
-      "/dev/null",
-      codex_binary
-        .to_str()
-        .ok_or_else(|| format!("Invalid Codex binary path: {}", codex_binary.display()))?,
-      "app-server",
-      "--listen",
-      "stdio://",
-    ])
+  let command_spec = app_server_command_spec(&codex_binary);
+  let mut command = app_server_command(&command_spec);
+  let mut child = command
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::null())
@@ -220,6 +219,83 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
   response
 }
 
+fn app_server_command(spec: &AppServerCommandSpec) -> Command {
+  let mut command = Command::new(&spec.program);
+  command.args(&spec.args);
+  apply_app_server_window_policy(&mut command, spec);
+  command
+}
+
+#[cfg(windows)]
+fn apply_app_server_window_policy(command: &mut Command, spec: &AppServerCommandSpec) {
+  use std::os::windows::process::CommandExt;
+
+  const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+  if spec.hide_window {
+    command.creation_flags(CREATE_NO_WINDOW);
+  }
+}
+
+#[cfg(not(windows))]
+fn apply_app_server_window_policy(_: &mut Command, spec: &AppServerCommandSpec) {
+  let _ = spec.hide_window;
+}
+
+#[cfg(windows)]
+fn app_server_command_spec(codex_binary: &PathBuf) -> AppServerCommandSpec {
+  if codex_binary
+    .extension()
+    .and_then(OsStr::to_str)
+    .is_some_and(|extension| extension.eq_ignore_ascii_case("ps1"))
+  {
+    let mut args = vec![
+      OsString::from("-NoProfile"),
+      OsString::from("-ExecutionPolicy"),
+      OsString::from("Bypass"),
+      OsString::from("-File"),
+      codex_binary.as_os_str().to_os_string(),
+    ];
+    args.extend(app_server_args());
+
+    return AppServerCommandSpec {
+      program: OsString::from("powershell.exe"),
+      args,
+      hide_window: true,
+    };
+  }
+
+  AppServerCommandSpec {
+    program: codex_binary.as_os_str().to_os_string(),
+    args: app_server_args(),
+    hide_window: true,
+  }
+}
+
+#[cfg(unix)]
+fn app_server_command_spec(codex_binary: &PathBuf) -> AppServerCommandSpec {
+  let mut args = vec![
+    OsString::from("-q"),
+    OsString::from("/dev/null"),
+    codex_binary.as_os_str().to_os_string(),
+  ];
+  args.extend(app_server_args());
+
+  AppServerCommandSpec {
+    program: OsString::from("script"),
+    args,
+    hide_window: false,
+  }
+}
+
+fn app_server_args() -> Vec<OsString> {
+  vec![
+    OsString::from("app-server"),
+    OsString::from("--listen"),
+    OsString::from("stdio://"),
+  ]
+}
+
 fn send_app_server_request(
   child: &mut Child,
   request: Value,
@@ -299,41 +375,83 @@ fn json_error_message(value: &Value) -> String {
 }
 
 fn resolve_codex_binary() -> PathBuf {
-  if let Ok(path) = std::env::var("CODEX_BIN") {
+  let codex_bin = std::env::var_os("CODEX_BIN");
+  let app_data = std::env::var_os("APPDATA");
+  let home_dir = dirs::home_dir();
+
+  resolve_codex_binary_from_env(codex_bin.as_deref(), app_data.as_deref(), home_dir.as_deref(), |path| path.exists())
+}
+
+fn resolve_codex_binary_from_env(
+  codex_bin: Option<&OsStr>,
+  app_data: Option<&OsStr>,
+  home_dir: Option<&Path>,
+  exists: impl Fn(&Path) -> bool,
+) -> PathBuf {
+  if let Some(path) = codex_bin {
     let candidate = PathBuf::from(path);
-    if candidate.exists() {
+    if exists(&candidate) {
       return candidate;
     }
   }
 
-  let candidates = [
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
-    "~/.cargo/bin/codex",
-  ];
-
-  for candidate in candidates {
-    let path = expand_home(candidate);
-    if path.exists() {
-      return path;
+  for candidate in codex_binary_candidates(app_data, home_dir) {
+    if exists(&candidate) {
+      return candidate;
     }
   }
 
-  PathBuf::from("codex")
+  fallback_codex_binary()
 }
 
-fn expand_home(value: &str) -> PathBuf {
-  if value == "~/.cargo/bin/codex" {
-    if let Some(home) = dirs::home_dir() {
-      return home.join(".cargo/bin/codex");
-    }
+#[cfg(windows)]
+fn codex_binary_candidates(app_data: Option<&OsStr>, _home_dir: Option<&Path>) -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+
+  if let Some(app_data) = app_data {
+    let npm_dir = PathBuf::from(app_data).join("npm");
+    candidates.push(npm_dir.join("codex.cmd"));
+    candidates.push(npm_dir.join("codex.ps1"));
+    candidates.push(npm_dir.join("codex.exe"));
   }
-  PathBuf::from(value)
+
+  candidates
+}
+
+#[cfg(not(windows))]
+fn codex_binary_candidates(_app_data: Option<&OsStr>, home_dir: Option<&Path>) -> Vec<PathBuf> {
+  let mut candidates = vec![
+    PathBuf::from("/opt/homebrew/bin/codex"),
+    PathBuf::from("/usr/local/bin/codex"),
+  ];
+
+  if let Some(home_dir) = home_dir {
+    candidates.push(home_dir.join(".cargo/bin/codex"));
+  }
+
+  candidates
+}
+
+#[cfg(windows)]
+fn fallback_codex_binary() -> PathBuf {
+  PathBuf::from("codex.cmd")
+}
+
+#[cfg(not(windows))]
+fn fallback_codex_binary() -> PathBuf {
+  PathBuf::from("codex")
 }
 
 #[cfg(test)]
 mod tests {
   use super::convert_window;
+  use std::ffi::OsString;
+  use std::path::{Path, PathBuf};
+
+  fn existing_paths(paths: &[&str]) -> impl Fn(&Path) -> bool {
+    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    move |candidate| paths.iter().any(|path| path == candidate)
+  }
 
   #[test]
   fn convert_window_calculates_remaining_and_start() {
@@ -348,5 +466,99 @@ mod tests {
     assert_eq!(converted.window_duration_mins, Some(300));
     assert!(converted.resets_at.is_some());
     assert!(converted.window_start.is_some());
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn app_server_command_spec_uses_codex_directly_on_windows() {
+    let spec = super::app_server_command_spec(&PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"));
+
+    assert_eq!(spec.program, OsString::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"));
+    assert!(spec.hide_window);
+    assert_eq!(
+      spec.args,
+      vec![
+        OsString::from("app-server"),
+        OsString::from("--listen"),
+        OsString::from("stdio://"),
+      ]
+    );
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn app_server_command_spec_wraps_windows_ps1_shim_with_powershell() {
+    let spec = super::app_server_command_spec(&PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"));
+
+    assert_eq!(spec.program, OsString::from("powershell.exe"));
+    assert!(spec.hide_window);
+    assert_eq!(
+      spec.args,
+      vec![
+        OsString::from("-NoProfile"),
+        OsString::from("-ExecutionPolicy"),
+        OsString::from("Bypass"),
+        OsString::from("-File"),
+        OsString::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"),
+        OsString::from("app-server"),
+        OsString::from("--listen"),
+        OsString::from("stdio://"),
+      ]
+    );
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn resolve_codex_binary_prefers_windows_cmd_shim_over_ps1() {
+    let resolved = super::resolve_codex_binary_from_env(
+      None,
+      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      None,
+      existing_paths(&[r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"]),
+    );
+
+    assert_eq!(resolved, PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"));
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn resolve_codex_binary_uses_windows_ps1_shim_when_cmd_missing() {
+    let resolved = super::resolve_codex_binary_from_env(
+      None,
+      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      None,
+      existing_paths(&[r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"]),
+    );
+
+    assert_eq!(resolved, PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"));
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn resolve_codex_binary_prefers_existing_codex_bin_override() {
+    let resolved = super::resolve_codex_binary_from_env(
+      Some(OsString::from(r"D:\Tools\codex.exe").as_os_str()),
+      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      None,
+      existing_paths(&[
+        r"D:\Tools\codex.exe",
+        r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd",
+      ]),
+    );
+
+    assert_eq!(resolved, PathBuf::from(r"D:\Tools\codex.exe"));
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn resolve_codex_binary_falls_back_to_windows_cmd_shim_name() {
+    let resolved = super::resolve_codex_binary_from_env(
+      None,
+      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      None,
+      |_| false,
+    );
+
+    assert_eq!(resolved, PathBuf::from("codex.cmd"));
   }
 }

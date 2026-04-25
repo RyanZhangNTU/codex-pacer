@@ -60,6 +60,10 @@ function refreshMinutesToSeconds(minutes: number) {
   return Math.min(60, Math.max(1, minutes)) * 60
 }
 
+function isMacOs() {
+  return typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac')
+}
+
 export function SettingsPanel({
   isOpen,
   language,
@@ -77,6 +81,7 @@ export function SettingsPanel({
   )
   const [saving, setSaving] = useState(false)
   const wasOpenRef = useRef(false)
+  const showDockSettings = isMacOs()
 
   useEffect(() => {
     const justOpened = isOpen && !wasOpenRef.current
@@ -326,20 +331,22 @@ export function SettingsPanel({
               </div>
 
               <div className="settings-grid">
-                <SwitchField
-                  checked={draftSync.hideDockIconWhenMenuBarVisible}
-                  label={t.settings.sections.menuBar.hideDockIcon}
-                  onChange={(checked) =>
-                    setDraftSync((current) =>
-                      current
-                        ? {
-                            ...current,
-                            hideDockIconWhenMenuBarVisible: checked,
-                          }
-                        : current,
-                    )
-                  }
-                />
+                {showDockSettings ? (
+                  <SwitchField
+                    checked={draftSync.hideDockIconWhenMenuBarVisible}
+                    label={t.settings.sections.menuBar.hideDockIcon}
+                    onChange={(checked) =>
+                      setDraftSync((current) =>
+                        current
+                          ? {
+                              ...current,
+                              hideDockIconWhenMenuBarVisible: checked,
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                ) : null}
 
                 <SwitchField
                   checked={draftSync.showMenuBarLogo}

@@ -1,8 +1,8 @@
 # 在 macOS 上安装
 
-## 官方安装路径
+## macOS 安装路径
 
-**Codex Pacer** 的官方公开安装包，是通过 GitHub Releases 发布的、已签名并完成 notarization 的 **Apple Silicon DMG**。
+**Codex Pacer** 的 macOS 公开安装包，是通过 GitHub Releases 发布的、已签名并完成 notarization 的 **Apple Silicon DMG**。
 
 ## 标准安装流程
 
@@ -44,6 +44,6 @@
 
 ## 说明
 
-- 当前官方打包版本面向 Apple Silicon macOS。
+- 当前 macOS 打包版本面向 Apple Silicon macOS。
 - GitHub Releases 是官方分发渠道。
-- Intel、universal、Windows、Linux，以及自动更新交付目前都不承诺作为公开发布选项。
+- Intel macOS 构建、universal macOS 构建、Linux 打包产物，以及自动更新交付目前都不承诺作为公开发布选项。
