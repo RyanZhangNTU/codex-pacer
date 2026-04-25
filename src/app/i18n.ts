@@ -245,7 +245,7 @@ export type TranslationSet = {
 }
 
 export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
-  { code: 'zh-CN', label: '简体中文', nativeLabel: '简体中文' },
+  { code: 'zh-CN', label: 'Chinese', nativeLabel: '简体中文' },
   { code: 'en', label: 'English', nativeLabel: 'English' },
 ]
 
