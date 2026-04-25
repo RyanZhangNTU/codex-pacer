@@ -156,6 +156,7 @@ pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
       auto_scan_interval_minutes INTEGER NOT NULL,
       live_quota_refresh_interval_seconds INTEGER NOT NULL DEFAULT 60,
       default_fast_mode_for_new_gpt54_sessions INTEGER NOT NULL DEFAULT 1,
+      hide_dock_icon_when_menu_bar_visible INTEGER NOT NULL DEFAULT 0,
       show_menu_bar_logo INTEGER NOT NULL DEFAULT 1,
       show_menu_bar_daily_api_value INTEGER NOT NULL DEFAULT 1,
       show_menu_bar_live_quota_percent INTEGER NOT NULL DEFAULT 0,
@@ -337,6 +338,19 @@ fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result<()> {
     )?;
   }
 
+  if !column_names
+    .iter()
+    .any(|name| name == "hide_dock_icon_when_menu_bar_visible")
+  {
+    conn.execute(
+      "
+      ALTER TABLE sync_settings
+      ADD COLUMN hide_dock_icon_when_menu_bar_visible INTEGER NOT NULL DEFAULT 0
+      ",
+      [],
+    )?;
+  }
+
   if !column_names.iter().any(|name| name == "menu_bar_speed_show_emoji") {
     conn.execute(
       "ALTER TABLE sync_settings ADD COLUMN menu_bar_speed_show_emoji INTEGER NOT NULL DEFAULT 1",
@@ -441,6 +455,7 @@ fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {
     INSERT INTO sync_settings (
       singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
       live_quota_refresh_interval_seconds, default_fast_mode_for_new_gpt54_sessions,
+      hide_dock_icon_when_menu_bar_visible,
       show_menu_bar_logo,
       show_menu_bar_daily_api_value,
       show_menu_bar_live_quota_percent, menu_bar_live_quota_metric,
@@ -452,7 +467,7 @@ fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {
       menu_bar_popup_show_reset_timeline, menu_bar_popup_show_actions,
       last_scan_started_at, last_scan_completed_at, updated_at
     )
-    VALUES (1, NULL, 1, 5, 60, 1, 1, 1, 0, 'remaining_percent', 'five_hour', 'day', 1, 85, 115, '🟢', '🔥', '🐢', 1, ?2, 1, 1, NULL, NULL, ?1)
+    VALUES (1, NULL, 1, 5, 60, 1, 0, 1, 1, 0, 'remaining_percent', 'five_hour', 'day', 1, 85, 115, '🟢', '🔥', '🐢', 1, ?2, 1, 1, NULL, NULL, ?1)
     ON CONFLICT(singleton_id) DO NOTHING
     ",
     params![now, default_menu_bar_popup_modules_json()],
@@ -466,6 +481,7 @@ pub fn get_sync_settings(conn: &Connection) -> rusqlite::Result<SyncSettings> {
     "
     SELECT codex_home, auto_scan_enabled, auto_scan_interval_minutes,
            live_quota_refresh_interval_seconds, default_fast_mode_for_new_gpt54_sessions,
+           hide_dock_icon_when_menu_bar_visible,
            show_menu_bar_logo, show_menu_bar_daily_api_value,
            show_menu_bar_live_quota_percent, menu_bar_live_quota_metric,
            menu_bar_live_quota_bucket, menu_bar_bucket,
@@ -486,25 +502,26 @@ pub fn get_sync_settings(conn: &Connection) -> rusqlite::Result<SyncSettings> {
         auto_scan_interval_minutes: row.get(2)?,
         live_quota_refresh_interval_seconds: row.get(3)?,
         default_fast_mode_for_new_gpt54_sessions: i64_to_bool(row.get::<_, i64>(4)?),
-        show_menu_bar_logo: i64_to_bool(row.get::<_, i64>(5)?),
-        show_menu_bar_daily_api_value: i64_to_bool(row.get::<_, i64>(6)?),
-        show_menu_bar_live_quota_percent: i64_to_bool(row.get::<_, i64>(7)?),
-        menu_bar_live_quota_metric: row.get(8)?,
-        menu_bar_live_quota_bucket: row.get(9)?,
-        menu_bar_bucket: row.get(10)?,
-        menu_bar_speed_show_emoji: i64_to_bool(row.get::<_, i64>(11)?),
-        menu_bar_speed_fast_threshold_percent: row.get(12)?,
-        menu_bar_speed_slow_threshold_percent: row.get(13)?,
-        menu_bar_speed_healthy_emoji: row.get(14)?,
-        menu_bar_speed_fast_emoji: row.get(15)?,
-        menu_bar_speed_slow_emoji: row.get(16)?,
-        menu_bar_popup_enabled: i64_to_bool(row.get::<_, i64>(17)?),
-        menu_bar_popup_modules: deserialize_menu_bar_popup_modules(row.get(18)?),
-        menu_bar_popup_show_reset_timeline: i64_to_bool(row.get::<_, i64>(19)?),
-        menu_bar_popup_show_actions: i64_to_bool(row.get::<_, i64>(20)?),
-        last_scan_started_at: row.get(21)?,
-        last_scan_completed_at: row.get(22)?,
-        updated_at: row.get(23)?,
+        hide_dock_icon_when_menu_bar_visible: i64_to_bool(row.get::<_, i64>(5)?),
+        show_menu_bar_logo: i64_to_bool(row.get::<_, i64>(6)?),
+        show_menu_bar_daily_api_value: i64_to_bool(row.get::<_, i64>(7)?),
+        show_menu_bar_live_quota_percent: i64_to_bool(row.get::<_, i64>(8)?),
+        menu_bar_live_quota_metric: row.get(9)?,
+        menu_bar_live_quota_bucket: row.get(10)?,
+        menu_bar_bucket: row.get(11)?,
+        menu_bar_speed_show_emoji: i64_to_bool(row.get::<_, i64>(12)?),
+        menu_bar_speed_fast_threshold_percent: row.get(13)?,
+        menu_bar_speed_slow_threshold_percent: row.get(14)?,
+        menu_bar_speed_healthy_emoji: row.get(15)?,
+        menu_bar_speed_fast_emoji: row.get(16)?,
+        menu_bar_speed_slow_emoji: row.get(17)?,
+        menu_bar_popup_enabled: i64_to_bool(row.get::<_, i64>(18)?),
+        menu_bar_popup_modules: deserialize_menu_bar_popup_modules(row.get(19)?),
+        menu_bar_popup_show_reset_timeline: i64_to_bool(row.get::<_, i64>(20)?),
+        menu_bar_popup_show_actions: i64_to_bool(row.get::<_, i64>(21)?),
+        last_scan_started_at: row.get(22)?,
+        last_scan_completed_at: row.get(23)?,
+        updated_at: row.get(24)?,
       })
     },
   )
@@ -517,6 +534,7 @@ pub fn save_sync_settings(conn: &Connection, settings: &SyncSettings) -> rusqlit
     INSERT INTO sync_settings (
       singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
       live_quota_refresh_interval_seconds, default_fast_mode_for_new_gpt54_sessions,
+      hide_dock_icon_when_menu_bar_visible,
       show_menu_bar_logo,
       show_menu_bar_daily_api_value,
       show_menu_bar_live_quota_percent, menu_bar_live_quota_metric,
@@ -528,13 +546,14 @@ pub fn save_sync_settings(conn: &Connection, settings: &SyncSettings) -> rusqlit
       menu_bar_popup_show_reset_timeline, menu_bar_popup_show_actions,
       last_scan_started_at, last_scan_completed_at, updated_at
     )
-    VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+    VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
     ON CONFLICT(singleton_id) DO UPDATE SET
       codex_home = excluded.codex_home,
       auto_scan_enabled = excluded.auto_scan_enabled,
       auto_scan_interval_minutes = excluded.auto_scan_interval_minutes,
       live_quota_refresh_interval_seconds = excluded.live_quota_refresh_interval_seconds,
       default_fast_mode_for_new_gpt54_sessions = excluded.default_fast_mode_for_new_gpt54_sessions,
+      hide_dock_icon_when_menu_bar_visible = excluded.hide_dock_icon_when_menu_bar_visible,
       show_menu_bar_logo = excluded.show_menu_bar_logo,
       show_menu_bar_daily_api_value = excluded.show_menu_bar_daily_api_value,
       show_menu_bar_live_quota_percent = excluded.show_menu_bar_live_quota_percent,
@@ -561,6 +580,7 @@ pub fn save_sync_settings(conn: &Connection, settings: &SyncSettings) -> rusqlit
       settings.auto_scan_interval_minutes.max(1),
       settings.live_quota_refresh_interval_seconds.clamp(5, 3600),
       bool_to_i64(settings.default_fast_mode_for_new_gpt54_sessions),
+      bool_to_i64(settings.hide_dock_icon_when_menu_bar_visible),
       bool_to_i64(settings.show_menu_bar_logo),
       bool_to_i64(settings.show_menu_bar_daily_api_value),
       bool_to_i64(settings.show_menu_bar_live_quota_percent),
@@ -711,6 +731,7 @@ mod tests {
     );
     assert!(settings.menu_bar_popup_show_reset_timeline);
     assert!(settings.menu_bar_popup_show_actions);
+    assert!(!settings.hide_dock_icon_when_menu_bar_visible);
   }
 
   #[test]
@@ -745,6 +766,26 @@ mod tests {
 
     assert!(!settings.show_menu_bar_daily_api_value);
     assert!(!settings.show_menu_bar_logo);
+    assert!(!settings.hide_dock_icon_when_menu_bar_visible);
+  }
+
+  #[test]
+  fn save_sync_settings_round_trips_dock_visibility_preference() {
+    let conn = Connection::open_in_memory().expect("open in-memory database");
+    init_db(&conn).expect("init database");
+
+    save_sync_settings(
+      &conn,
+      &SyncSettings {
+        hide_dock_icon_when_menu_bar_visible: true,
+        ..SyncSettings::default()
+      },
+    )
+    .expect("save settings");
+
+    let settings = get_sync_settings(&conn).expect("load settings");
+
+    assert!(settings.hide_dock_icon_when_menu_bar_visible);
   }
 
   #[test]

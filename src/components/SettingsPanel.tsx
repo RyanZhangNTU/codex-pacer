@@ -314,6 +314,27 @@ export function SettingsPanel({
 
               <div className="settings-grid">
                 <label className="field">
+                  <span>{t.settings.sections.menuBar.hideDockIcon}</span>
+                  <div className="field-checkbox-row">
+                    <span className="field-note">{t.settings.sections.menuBar.hideDockIconNote}</span>
+                    <input
+                      checked={draftSync.hideDockIconWhenMenuBarVisible}
+                      onChange={(event) =>
+                        setDraftSync((current) =>
+                          current
+                            ? {
+                                ...current,
+                                hideDockIconWhenMenuBarVisible: event.target.checked,
+                              }
+                            : current,
+                        )
+                      }
+                      type="checkbox"
+                    />
+                  </div>
+                </label>
+
+                <label className="field">
                   <span>{t.settings.sections.menuBar.showLogo}</span>
                   <div className="field-checkbox-row">
                     <span className="field-note">{t.settings.sections.menuBar.showLogoNote}</span>

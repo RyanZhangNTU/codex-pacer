@@ -228,7 +228,11 @@ fn getSyncSettings(state: State<'_, AppState>) -> Result<SyncSettings, String> {
 
 #[allow(non_snake_case)]
 #[tauri::command(rename_all = "camelCase")]
-fn updateSyncSettings(state: State<'_, AppState>, payload: SyncSettings) -> Result<SyncSettings, String> {
+fn updateSyncSettings(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  payload: SyncSettings,
+) -> Result<SyncSettings, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let current = get_sync_settings(&conn).map_err(|error| error.to_string())?;
   let updated = SyncSettings {
@@ -237,6 +241,7 @@ fn updateSyncSettings(state: State<'_, AppState>, payload: SyncSettings) -> Resu
     auto_scan_interval_minutes: payload.auto_scan_interval_minutes.max(1),
     live_quota_refresh_interval_seconds: payload.live_quota_refresh_interval_seconds.clamp(5, 3600),
     default_fast_mode_for_new_gpt54_sessions: payload.default_fast_mode_for_new_gpt54_sessions,
+    hide_dock_icon_when_menu_bar_visible: payload.hide_dock_icon_when_menu_bar_visible,
     show_menu_bar_logo: payload.show_menu_bar_logo,
     show_menu_bar_daily_api_value: payload.show_menu_bar_daily_api_value,
     show_menu_bar_live_quota_percent: payload.show_menu_bar_live_quota_percent,
@@ -259,6 +264,7 @@ fn updateSyncSettings(state: State<'_, AppState>, payload: SyncSettings) -> Resu
   };
   let saved = save_sync_settings(&conn, &updated).map_err(|error| error.to_string())?;
   refresh_daily_value_menu_bar(state.inner());
+  apply_dock_icon_visibility(&app, &saved, state.daily_value_tray.is_some());
   Ok(saved)
 }
 
@@ -339,6 +345,26 @@ fn menu_bar_has_visible_content(settings: &SyncSettings) -> bool {
     || settings.show_menu_bar_daily_api_value
     || settings.show_menu_bar_live_quota_percent
 }
+
+fn should_hide_dock_icon(settings: &SyncSettings) -> bool {
+  settings.hide_dock_icon_when_menu_bar_visible && menu_bar_has_visible_content(settings)
+}
+
+#[cfg(target_os = "macos")]
+fn apply_dock_icon_visibility(app: &AppHandle, settings: &SyncSettings, menu_bar_available: bool) {
+  let activation_policy = if menu_bar_available && should_hide_dock_icon(settings) {
+    tauri::ActivationPolicy::Accessory
+  } else {
+    tauri::ActivationPolicy::Regular
+  };
+
+  if let Err(error) = app.set_activation_policy(activation_policy) {
+    log::warn!("Failed to update macOS Dock visibility: {error}");
+  }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_dock_icon_visibility(_: &AppHandle, _: &SyncSettings, _: bool) {}
 
 fn apply_menu_bar_icon(tray: &TrayIcon, show_logo: bool) -> Result<(), String> {
   if show_logo {
@@ -1272,6 +1298,9 @@ pub fn run() {
         live_rate_limits: Arc::new(Mutex::new(None)),
       };
       app.manage(state.clone());
+      if let Ok(settings) = get_sync_settings(&conn) {
+        apply_dock_icon_visibility(&app_handle, &settings, state.daily_value_tray.is_some());
+      }
       if let Err(error) = build_menu_bar_popup_window(&app_handle) {
         log::warn!("Failed to set up menu bar popup window: {error}");
       }
@@ -1446,6 +1475,35 @@ mod tests {
     };
 
     assert!(!menu_bar_has_visible_content(&settings));
+  }
+
+  #[test]
+  fn dock_icon_hides_only_when_enabled_and_menu_bar_has_content() {
+    let enabled_with_menu_bar = SyncSettings {
+      hide_dock_icon_when_menu_bar_visible: true,
+      show_menu_bar_logo: true,
+      show_menu_bar_daily_api_value: false,
+      show_menu_bar_live_quota_percent: false,
+      ..SyncSettings::default()
+    };
+    let enabled_without_menu_bar = SyncSettings {
+      hide_dock_icon_when_menu_bar_visible: true,
+      show_menu_bar_logo: false,
+      show_menu_bar_daily_api_value: false,
+      show_menu_bar_live_quota_percent: false,
+      ..SyncSettings::default()
+    };
+    let disabled_with_menu_bar = SyncSettings {
+      hide_dock_icon_when_menu_bar_visible: false,
+      show_menu_bar_logo: true,
+      show_menu_bar_daily_api_value: false,
+      show_menu_bar_live_quota_percent: false,
+      ..SyncSettings::default()
+    };
+
+    assert!(should_hide_dock_icon(&enabled_with_menu_bar));
+    assert!(!should_hide_dock_icon(&enabled_without_menu_bar));
+    assert!(!should_hide_dock_icon(&disabled_with_menu_bar));
   }
 
   #[test]

@@ -187,6 +187,8 @@ export type TranslationSet = {
         eyebrow: string
         title: string
         description: string
+        hideDockIcon: string
+        hideDockIconNote: string
         showLogo: string
         showLogoNote: string
         showApiValue: string
@@ -430,6 +432,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
           eyebrow: '菜单栏',
           title: '菜单栏显示',
           description: '统一管理菜单栏里的 logo、金额、live quota 指标和指标来源。',
+          hideDockIcon: '菜单栏可见时隐藏程序坞图标',
+          hideDockIconNote: '启用后应用以菜单栏作为入口；若菜单栏项目被隐藏，程序坞图标会保持显示。',
           showLogo: '在 macOS 菜单栏显示 logo',
           showLogoNote: '关闭后仅保留文字内容；若同时关闭所有文字指标，菜单栏项目会隐藏。',
           showApiValue: '在 macOS 菜单栏显示 API 价值',
@@ -666,6 +670,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
           eyebrow: 'Menu Bar',
           title: 'Menu bar display',
           description: 'Manage the logo, amount, live quota metric, and source used in the macOS menu bar.',
+          hideDockIcon: 'Hide Dock icon while menu bar is visible',
+          hideDockIconNote: 'Uses the menu bar item as the app entry point. If the menu bar item is hidden, the Dock icon stays visible.',
           showLogo: 'Show logo in macOS menu bar',
           showLogoNote: 'When disabled, only text stays visible. If every text metric is also off, the tray item is hidden.',
           showApiValue: 'Show API value in macOS menu bar',

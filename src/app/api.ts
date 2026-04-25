@@ -26,6 +26,7 @@ function createMockSyncSettings(): SyncSettings {
     autoScanIntervalMinutes: 5,
     liveQuotaRefreshIntervalSeconds: 60,
     defaultFastModeForNewGpt54Sessions: true,
+    hideDockIconWhenMenuBarVisible: false,
     showMenuBarLogo: true,
     showMenuBarDailyApiValue: true,
     showMenuBarLiveQuotaPercent: false,
