@@ -1,8 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 use chrono::{Local, LocalResult, TimeZone, Timelike};
@@ -39,6 +38,12 @@ struct AppServerRateLimitReadResponse {
   rate_limits: AppServerRateLimitSnapshot,
 }
 
+enum AppServerMessage {
+  Initialized(Result<(), String>),
+  RateLimits(Result<LiveRateLimitSnapshot, String>),
+  Closed,
+}
+
 pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
   let codex_binary = resolve_codex_binary();
   let mut child = Command::new("script")
@@ -58,10 +63,13 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
     .spawn()
     .map_err(|error| format!("Failed to launch codex app-server from {}: {error}", codex_binary.display()))?;
 
-  let stdout = child
-    .stdout
-    .take()
-    .ok_or_else(|| "Failed to capture codex app-server stdout.".to_string())?;
+  let stdout = match child.stdout.take() {
+    Some(stdout) => stdout,
+    None => {
+      stop_app_server(&mut child);
+      return Err("Failed to capture codex app-server stdout.".to_string());
+    }
+  };
   let (sender, receiver) = mpsc::channel();
 
   std::thread::spawn(move || {
@@ -81,13 +89,14 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
 
       if response_id == INIT_REQUEST_ID {
         if let Some(error) = parsed.get("error") {
-          let _ = sender.send(Err(format!(
+          let _ = sender.send(AppServerMessage::Initialized(Err(format!(
             "Codex app-server initialize failed: {}",
             json_error_message(error)
-          )));
+          ))));
           return;
         }
         init_ok = true;
+        let _ = sender.send(AppServerMessage::Initialized(Ok(())));
         continue;
       }
 
@@ -96,88 +105,141 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
       }
 
       if !init_ok {
-        let _ = sender.send(Err(
+        let _ = sender.send(AppServerMessage::RateLimits(Err(
           "Codex app-server returned rate limits before initialization completed.".to_string(),
-        ));
-        return;
-      }
-
-      if let Some(error) = parsed.get("error") {
-        let _ = sender.send(Err(format!(
-          "Codex app-server rate-limit query failed: {}",
-          json_error_message(error)
         )));
         return;
       }
 
+      if let Some(error) = parsed.get("error") {
+        let _ = sender.send(AppServerMessage::RateLimits(Err(format!(
+          "Codex app-server rate-limit query failed: {}",
+          json_error_message(error)
+        ))));
+        return;
+      }
+
       let Some(result) = parsed.get("result") else {
-        let _ = sender.send(Err(
+        let _ = sender.send(AppServerMessage::RateLimits(Err(
           "Codex app-server returned an empty rate-limit response.".to_string(),
-        ));
+        )));
         return;
       };
 
       let response = serde_json::from_value::<AppServerRateLimitReadResponse>(result.clone())
         .map_err(|error| format!("Failed to decode Codex rate-limit response: {error}"));
-      let _ = sender.send(response.map(|value| convert_live_rate_limits(value.rate_limits)));
+      let _ = sender.send(AppServerMessage::RateLimits(
+        response.map(|value| convert_live_rate_limits(value.rate_limits)),
+      ));
       return;
     }
 
-    let _ = sender.send(Err(
-      "Codex app-server closed before returning live rate limits.".to_string(),
-    ));
+    let _ = sender.send(AppServerMessage::Closed);
   });
 
-  {
-    let stdin = child
-      .stdin
-      .as_mut()
-      .ok_or_else(|| "Failed to open codex app-server stdin.".to_string())?;
-    writeln!(
-      stdin,
-      "{}",
-      json!({
-        "id": INIT_REQUEST_ID,
-        "method": "initialize",
-        "params": {
-          "clientInfo": {
-            "name": "codex-counter",
-            "version": env!("CARGO_PKG_VERSION"),
-          },
-          "capabilities": {
-            "experimentalApi": true,
-          }
+  if let Err(error) = send_app_server_request(
+    &mut child,
+    json!({
+      "id": INIT_REQUEST_ID,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "codex-counter",
+          "version": env!("CARGO_PKG_VERSION"),
+        },
+        "capabilities": {
+          "experimentalApi": true,
         }
-      })
-    )
-    .map_err(|error| format!("Failed to initialize codex app-server: {error}"))?;
-    stdin
-      .flush()
-      .map_err(|error| format!("Failed to flush codex app-server init request: {error}"))?;
-    thread::sleep(Duration::from_millis(150));
-    writeln!(
-      stdin,
-      "{}",
-      json!({
-        "id": READ_REQUEST_ID,
-        "method": "account/rateLimits/read",
-        "params": Value::Null,
-      })
-    )
-    .map_err(|error| format!("Failed to request live rate limits: {error}"))?;
-    stdin
-      .flush()
-      .map_err(|error| format!("Failed to flush codex app-server rate-limit request: {error}"))?;
+      }
+    }),
+    "Failed to initialize codex app-server",
+    "Failed to flush codex app-server init request",
+  ) {
+    stop_app_server(&mut child);
+    return Err(error);
   }
 
-  let response = receiver.recv_timeout(APP_SERVER_TIMEOUT).map_err(|_| {
-    let _ = child.kill();
-    "Timed out while querying live rate limits from Codex.".to_string()
-  })?;
+  let init_response = match receiver.recv_timeout(APP_SERVER_TIMEOUT) {
+    Ok(message) => message,
+    Err(_) => {
+      stop_app_server(&mut child);
+      return Err("Timed out while initializing Codex app-server.".to_string());
+    }
+  };
+
+  match init_response {
+    AppServerMessage::Initialized(Ok(())) => {}
+    AppServerMessage::Initialized(Err(error)) => {
+      stop_app_server(&mut child);
+      return Err(error);
+    }
+    AppServerMessage::RateLimits(result) => {
+      stop_app_server(&mut child);
+      return result;
+    }
+    AppServerMessage::Closed => {
+      stop_app_server(&mut child);
+      return Err("Codex app-server closed before initialization completed.".to_string());
+    }
+  }
+
+  if let Err(error) = send_app_server_request(
+    &mut child,
+    json!({
+      "id": READ_REQUEST_ID,
+      "method": "account/rateLimits/read",
+      "params": Value::Null,
+    }),
+    "Failed to request live rate limits after Codex app-server initialization",
+    "Failed to flush codex app-server rate-limit request",
+  ) {
+    stop_app_server(&mut child);
+    return Err(error);
+  }
+
+  let response = loop {
+    let message = match receiver.recv_timeout(APP_SERVER_TIMEOUT) {
+      Ok(message) => message,
+      Err(_) => {
+        stop_app_server(&mut child);
+        return Err("Timed out while querying live rate limits from Codex.".to_string());
+      }
+    };
+
+    match message {
+      AppServerMessage::Initialized(Ok(())) => continue,
+      AppServerMessage::Initialized(Err(error)) => break Err(error),
+      AppServerMessage::RateLimits(result) => break result,
+      AppServerMessage::Closed => break Err(
+        "Codex app-server closed before returning live rate limits.".to_string(),
+      ),
+    }
+  };
+
+  stop_app_server(&mut child);
+  response
+}
+
+fn send_app_server_request(
+  child: &mut Child,
+  request: Value,
+  write_context: &str,
+  flush_context: &str,
+) -> Result<(), String> {
+  let stdin = child
+    .stdin
+    .as_mut()
+    .ok_or_else(|| "Failed to open codex app-server stdin.".to_string())?;
+  writeln!(stdin, "{request}").map_err(|error| format!("{write_context}: {error}"))?;
+  stdin
+    .flush()
+    .map_err(|error| format!("{flush_context}: {error}"))
+}
+
+fn stop_app_server(child: &mut Child) {
   let _ = child.stdin.take();
   let _ = child.kill();
   let _ = child.wait();
-  response
 }
 
 fn convert_live_rate_limits(snapshot: AppServerRateLimitSnapshot) -> LiveRateLimitSnapshot {

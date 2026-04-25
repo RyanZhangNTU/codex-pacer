@@ -33,8 +33,8 @@
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.0
-./scripts/release/publish-github-release.sh 1.1.0
+./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/publish-github-release.sh 1.1.1
 ```
 
 这些脚本是当前稳定公开发布准备的本地入口。构建脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，生成已签名并完成 notarization 的 DMG，并在旁边写入 checksum。发布脚本会继续校验 tag，并把 DMG 与 checksum 上传到 GitHub Releases。
@@ -63,10 +63,10 @@
 
 - 官方分发渠道：GitHub Releases
 - 官方发布资产：已签名并完成 notarization 的 macOS Apple Silicon DMG
-- 当前稳定版本线：`v1.1.0`
+- 当前稳定版本线：`v1.1.1`
 
 ## 相关文档
 
 - [快速开始](./getting-started.md)
 - [在 macOS 上安装](./installing-on-macos.md)
-- [v1.1.0 发布说明](./release-notes-v1.1.0.md)
+- [v1.1.1 发布说明](./release-notes-v1.1.1.md)

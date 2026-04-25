@@ -33,8 +33,8 @@ Public release preparation is driven by the release scripts below:
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.0
-./scripts/release/publish-github-release.sh 1.1.0
+./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/publish-github-release.sh 1.1.1
 ```
 
 Those scripts are the stable local entry points for public release preparation. The build script verifies the version, runs the audit/lint/build/test checks, produces the signed and notarized DMG, and writes a checksum beside the artifact. The publish script then verifies the tag and uploads the DMG plus checksum to GitHub Releases.
@@ -63,10 +63,10 @@ For public docs and announcements, use this message consistently:
 
 - official distribution channel: GitHub Releases
 - official release artifact: signed and notarized macOS Apple Silicon DMG
-- current stable line: `v1.1.0`
+- current stable line: `v1.1.1`
 
 ## Related docs
 
 - [Getting started](./getting-started.md)
 - [Installing on macOS](./installing-on-macos.md)
-- [Release notes for v1.1.0](./release-notes-v1.1.0.md)
+- [Release notes for v1.1.1](./release-notes-v1.1.1.md)

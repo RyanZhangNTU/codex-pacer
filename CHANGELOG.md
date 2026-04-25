@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-04-25
+
+### Changed
+- live quota refresh now waits for the Codex app-server initialization response instead of relying on a fixed delay before requesting rate limits
+- failed live quota refreshes now attempt to refresh Codex history and load the latest session-sourced quota sample before falling back to older persisted or cached data
+
+### Fixed
+- reduced `Broken pipe (os error 32)` failures when Codex app-server exits or closes stdin before a live quota request is ready
+- menu bar popup placement now stays on the display where the menu bar item was clicked when external monitors are attached
+
 ## [1.1.0] - 2026-04-25
 
 ### Added

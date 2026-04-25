@@ -734,13 +734,13 @@ fn get_live_rate_limits_cached(state: &AppState) -> Result<LiveRateLimitSnapshot
 }
 
 fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
-  let mut cache = state
-    .live_rate_limits
-    .lock()
-    .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
   let ttl = live_rate_limit_cache_ttl(state);
 
   if !force_refresh {
+    let cache = state
+      .live_rate_limits
+      .lock()
+      .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
     if let Some(snapshot) = cache.as_ref() {
       if snapshot.fetched_at.elapsed() <= ttl {
         return Ok(snapshot.snapshot.clone());
@@ -748,14 +748,24 @@ fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRat
     }
   }
 
-  let snapshot = query_live_rate_limits()?;
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
-  *cache = Some(CachedRateLimitSnapshot {
-    fetched_at: Instant::now(),
-    snapshot: snapshot.clone(),
-  });
-  Ok(snapshot)
+  match query_live_rate_limits() {
+    Ok(snapshot) => {
+      let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+      insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
+      store_live_rate_limits_cache(state, &snapshot)?;
+      Ok(snapshot)
+    }
+    Err(error) => {
+      log::warn!("Failed to refresh live rate limits from Codex app-server: {error}");
+      if let Some(snapshot) = get_live_rate_limits_history_fallback(state) {
+        if let Err(cache_error) = store_live_rate_limits_cache(state, &snapshot) {
+          log::warn!("Failed to cache fallback live rate limits: {cache_error}");
+        }
+        return Ok(snapshot);
+      }
+      Err(error)
+    }
+  }
 }
 
 #[derive(Clone)]
@@ -770,20 +780,23 @@ struct PersistedRateLimitWindow {
 fn load_latest_persisted_rate_limit_window(
   conn: &rusqlite::Connection,
   bucket: &str,
+  source_kind: Option<&str>,
 ) -> Result<Option<PersistedRateLimitWindow>, String> {
   let mut stmt = conn
     .prepare(
       "
       SELECT sample_timestamp, limit_id, limit_name, plan_type, window_start, resets_at, used_percent, remaining_percent
       FROM rate_limit_samples
-      WHERE bucket = ?1
+      WHERE bucket = ?1 AND (?2 IS NULL OR source_kind = ?2)
       ORDER BY sample_timestamp DESC
       LIMIT 1
       ",
     )
     .map_err(|error| error.to_string())?;
 
-  let mut rows = stmt.query(params![bucket]).map_err(|error| error.to_string())?;
+  let mut rows = stmt
+    .query(params![bucket, source_kind])
+    .map_err(|error| error.to_string())?;
   let Some(row) = rows.next().map_err(|error| error.to_string())? else {
     return Ok(None);
   };
@@ -830,9 +843,24 @@ fn load_latest_persisted_rate_limit_window(
 }
 
 fn load_persisted_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
+  load_persisted_live_rate_limits_for_source(state, None)
+}
+
+fn load_history_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
+  load_persisted_live_rate_limits_for_source(state, Some("session"))
+}
+
+fn load_persisted_live_rate_limits_for_source(
+  state: &AppState,
+  source_kind: Option<&str>,
+) -> Option<LiveRateLimitSnapshot> {
   let conn = open_connection(&state.db_path).ok()?;
-  let primary = load_latest_persisted_rate_limit_window(&conn, "five_hour").ok().flatten();
-  let secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day").ok().flatten();
+  let primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
+    .ok()
+    .flatten();
+  let secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
+    .ok()
+    .flatten();
   if primary.is_none() && secondary.is_none() {
     return None;
   }
@@ -863,12 +891,50 @@ fn load_persisted_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnap
 }
 
 fn get_live_rate_limits_local(state: &AppState) -> Option<LiveRateLimitSnapshot> {
+  get_cached_live_rate_limits(state).or_else(|| load_persisted_live_rate_limits(state))
+}
+
+fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
+  refresh_rate_limit_history_if_idle(state);
+  load_history_live_rate_limits(state)
+    .or_else(|| load_persisted_live_rate_limits(state))
+    .or_else(|| get_cached_live_rate_limits(state))
+}
+
+fn refresh_rate_limit_history_if_idle(state: &AppState) {
+  if state
+    .scan_in_progress
+    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    .is_err()
+  {
+    return;
+  }
+
+  let result = perform_scan(&state.db_path, None);
+  state.scan_in_progress.store(false, Ordering::SeqCst);
+  if let Err(error) = result {
+    log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
+  }
+}
+
+fn get_cached_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
   state
     .live_rate_limits
     .lock()
     .ok()
     .and_then(|cache| cache.as_ref().map(|snapshot| snapshot.snapshot.clone()))
-    .or_else(|| load_persisted_live_rate_limits(state))
+}
+
+fn store_live_rate_limits_cache(state: &AppState, snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
+  let mut cache = state
+    .live_rate_limits
+    .lock()
+    .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
+  *cache = Some(CachedRateLimitSnapshot {
+    fetched_at: Instant::now(),
+    snapshot: snapshot.clone(),
+  });
+  Ok(())
 }
 
 fn best_effort_live_rate_limits(state: &AppState, force_refresh: bool) -> Option<LiveRateLimitSnapshot> {
