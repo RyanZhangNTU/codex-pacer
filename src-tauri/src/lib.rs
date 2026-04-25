@@ -239,7 +239,7 @@ fn updateSyncSettings(
     codex_home: payload.codex_home,
     auto_scan_enabled: payload.auto_scan_enabled,
     auto_scan_interval_minutes: payload.auto_scan_interval_minutes.max(1),
-    live_quota_refresh_interval_seconds: payload.live_quota_refresh_interval_seconds.clamp(5, 3600),
+    live_quota_refresh_interval_seconds: payload.live_quota_refresh_interval_seconds.clamp(60, 3600),
     default_fast_mode_for_new_gpt54_sessions: payload.default_fast_mode_for_new_gpt54_sessions,
     hide_dock_icon_when_menu_bar_visible: payload.hide_dock_icon_when_menu_bar_visible,
     show_menu_bar_logo: payload.show_menu_bar_logo,
@@ -983,8 +983,8 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
   open_connection(&state.db_path)
     .ok()
     .and_then(|conn| get_sync_settings(&conn).ok())
-    .map(|settings| Duration::from_secs(settings.live_quota_refresh_interval_seconds.clamp(5, 3600) as u64))
-    .unwrap_or(Duration::from_secs(60))
+    .map(|settings| Duration::from_secs(settings.live_quota_refresh_interval_seconds.clamp(60, 3600) as u64))
+    .unwrap_or(Duration::from_secs(300))
 }
 
 fn build_menu_bar_popup_window(app: &AppHandle) -> Result<WebviewWindow, String> {

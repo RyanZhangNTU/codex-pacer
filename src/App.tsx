@@ -319,7 +319,7 @@ function App() {
     if (!hasBootstrapped) return
     const refreshMs =
       bucket === 'five_hour' || bucket === 'seven_day'
-        ? (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 60) * 1000
+        ? (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 300) * 1000
         : 60000
     const interval = window.setInterval(() => {
       void loadShell(false)
@@ -341,7 +341,7 @@ function App() {
     refresh()
     const interval = window.setInterval(
       refresh,
-      Math.max(5000, (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 60) * 1000),
+      Math.max(60000, (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 300) * 1000),
     )
     return () => {
       cancelled = true

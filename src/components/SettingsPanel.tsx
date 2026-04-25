@@ -52,6 +52,14 @@ function SwitchField({ label, checked, disabled = false, onChange }: SwitchField
   )
 }
 
+function refreshSecondsToMinutes(seconds: number) {
+  return Math.max(1, Math.round(seconds / 60))
+}
+
+function refreshMinutesToSeconds(minutes: number) {
+  return Math.min(60, Math.max(1, minutes)) * 60
+}
+
 export function SettingsPanel({
   isOpen,
   language,
@@ -274,19 +282,18 @@ export function SettingsPanel({
                 <label className="field">
                   <span>{t.settings.sections.sync.liveQuotaRefreshIntervalSeconds}</span>
                   <input
-                    min={5}
-                    max={3600}
-                    step={5}
+                    min={1}
+                    max={60}
+                    step={1}
                     type="number"
-                    value={draftSync.liveQuotaRefreshIntervalSeconds}
+                    value={refreshSecondsToMinutes(draftSync.liveQuotaRefreshIntervalSeconds)}
                     onChange={(event) =>
                       setDraftSync((current) =>
                         current
                           ? {
                               ...current,
-                              liveQuotaRefreshIntervalSeconds: Math.min(
-                                3600,
-                                Math.max(5, Number(event.target.value || 60)),
+                              liveQuotaRefreshIntervalSeconds: refreshMinutesToSeconds(
+                                Number(event.target.value || 5),
                               ),
                             }
                           : current,

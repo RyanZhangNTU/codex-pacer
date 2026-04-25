@@ -151,11 +151,12 @@ pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
 
     CREATE TABLE IF NOT EXISTS sync_settings (
       singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+      sync_settings_schema_version INTEGER NOT NULL DEFAULT 2,
       codex_home TEXT,
       auto_scan_enabled INTEGER NOT NULL,
       auto_scan_interval_minutes INTEGER NOT NULL,
-      live_quota_refresh_interval_seconds INTEGER NOT NULL DEFAULT 60,
-      default_fast_mode_for_new_gpt54_sessions INTEGER NOT NULL DEFAULT 1,
+      live_quota_refresh_interval_seconds INTEGER NOT NULL DEFAULT 300,
+      default_fast_mode_for_new_gpt54_sessions INTEGER NOT NULL DEFAULT 0,
       hide_dock_icon_when_menu_bar_visible INTEGER NOT NULL DEFAULT 0,
       show_menu_bar_logo INTEGER NOT NULL DEFAULT 1,
       show_menu_bar_daily_api_value INTEGER NOT NULL DEFAULT 1,
@@ -228,6 +229,19 @@ fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result<()> {
   let column_names = stmt
     .query_map([], |row| row.get::<_, String>(1))?
     .collect::<rusqlite::Result<Vec<_>>>()?;
+
+  if !column_names
+    .iter()
+    .any(|name| name == "sync_settings_schema_version")
+  {
+    conn.execute(
+      "
+      ALTER TABLE sync_settings
+      ADD COLUMN sync_settings_schema_version INTEGER NOT NULL DEFAULT 1
+      ",
+      [],
+    )?;
+  }
 
   if !column_names
     .iter()
@@ -319,7 +333,7 @@ fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
       "
       ALTER TABLE sync_settings
-      ADD COLUMN live_quota_refresh_interval_seconds INTEGER NOT NULL DEFAULT 60
+      ADD COLUMN live_quota_refresh_interval_seconds INTEGER NOT NULL DEFAULT 300
       ",
       [],
     )?;
@@ -332,7 +346,7 @@ fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
       "
       ALTER TABLE sync_settings
-      ADD COLUMN default_fast_mode_for_new_gpt54_sessions INTEGER NOT NULL DEFAULT 1
+      ADD COLUMN default_fast_mode_for_new_gpt54_sessions INTEGER NOT NULL DEFAULT 0
       ",
       [],
     )?;
@@ -433,6 +447,43 @@ fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result<()> {
     )?;
   }
 
+  migrate_sync_settings_defaults_to_minutes(conn)?;
+
+  Ok(())
+}
+
+fn migrate_sync_settings_defaults_to_minutes(conn: &Connection) -> rusqlite::Result<()> {
+  let schema_version = conn
+    .query_row(
+      "SELECT sync_settings_schema_version FROM sync_settings WHERE singleton_id = 1",
+      [],
+      |row| row.get::<_, i64>(0),
+    )
+    .optional()?
+    .unwrap_or(2);
+
+  if schema_version >= 2 {
+    return Ok(());
+  }
+
+  conn.execute(
+    "
+    UPDATE sync_settings
+    SET
+      live_quota_refresh_interval_seconds = CASE
+        WHEN live_quota_refresh_interval_seconds = 60 THEN 300
+        ELSE live_quota_refresh_interval_seconds
+      END,
+      default_fast_mode_for_new_gpt54_sessions = CASE
+        WHEN default_fast_mode_for_new_gpt54_sessions = 1 THEN 0
+        ELSE default_fast_mode_for_new_gpt54_sessions
+      END,
+      sync_settings_schema_version = 2
+    WHERE singleton_id = 1
+    ",
+    [],
+  )?;
+
   Ok(())
 }
 
@@ -453,7 +504,8 @@ fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {
   conn.execute(
     "
     INSERT INTO sync_settings (
-      singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
+      singleton_id, sync_settings_schema_version,
+      codex_home, auto_scan_enabled, auto_scan_interval_minutes,
       live_quota_refresh_interval_seconds, default_fast_mode_for_new_gpt54_sessions,
       hide_dock_icon_when_menu_bar_visible,
       show_menu_bar_logo,
@@ -467,7 +519,7 @@ fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {
       menu_bar_popup_show_reset_timeline, menu_bar_popup_show_actions,
       last_scan_started_at, last_scan_completed_at, updated_at
     )
-    VALUES (1, NULL, 1, 5, 60, 1, 0, 1, 1, 0, 'remaining_percent', 'five_hour', 'day', 1, 85, 115, '🟢', '🔥', '🐢', 1, ?2, 1, 1, NULL, NULL, ?1)
+    VALUES (1, 2, NULL, 1, 5, 300, 0, 0, 1, 1, 0, 'remaining_percent', 'five_hour', 'day', 1, 85, 115, '🟢', '🔥', '🐢', 1, ?2, 1, 1, NULL, NULL, ?1)
     ON CONFLICT(singleton_id) DO NOTHING
     ",
     params![now, default_menu_bar_popup_modules_json()],
@@ -578,7 +630,7 @@ pub fn save_sync_settings(conn: &Connection, settings: &SyncSettings) -> rusqlit
       settings.codex_home,
       bool_to_i64(settings.auto_scan_enabled),
       settings.auto_scan_interval_minutes.max(1),
-      settings.live_quota_refresh_interval_seconds.clamp(5, 3600),
+      settings.live_quota_refresh_interval_seconds.clamp(60, 3600),
       bool_to_i64(settings.default_fast_mode_for_new_gpt54_sessions),
       bool_to_i64(settings.hide_dock_icon_when_menu_bar_visible),
       bool_to_i64(settings.show_menu_bar_logo),
@@ -717,7 +769,8 @@ mod tests {
     assert_eq!(settings.menu_bar_live_quota_metric, "remaining_percent");
     assert_eq!(settings.menu_bar_live_quota_bucket, "five_hour");
     assert_eq!(settings.menu_bar_bucket, "day");
-    assert_eq!(settings.live_quota_refresh_interval_seconds, 60);
+    assert_eq!(settings.live_quota_refresh_interval_seconds, 300);
+    assert!(!settings.default_fast_mode_for_new_gpt54_sessions);
     assert!(settings.menu_bar_speed_show_emoji);
     assert_eq!(settings.menu_bar_speed_fast_threshold_percent, 85);
     assert_eq!(settings.menu_bar_speed_slow_threshold_percent, 115);
@@ -786,6 +839,56 @@ mod tests {
     let settings = get_sync_settings(&conn).expect("load settings");
 
     assert!(settings.hide_dock_icon_when_menu_bar_visible);
+  }
+
+  #[test]
+  fn init_db_migrates_old_default_refresh_and_fast_mode_once() {
+    let conn = Connection::open_in_memory().expect("open in-memory database");
+
+    init_db(&conn).expect("init database");
+    conn
+      .execute(
+        "
+        UPDATE sync_settings
+        SET
+          sync_settings_schema_version = 1,
+          live_quota_refresh_interval_seconds = 60,
+          default_fast_mode_for_new_gpt54_sessions = 1
+        WHERE singleton_id = 1
+        ",
+        [],
+      )
+      .expect("seed old defaults");
+
+    init_db(&conn).expect("migrate defaults");
+    let settings = get_sync_settings(&conn).expect("load settings");
+    let schema_version = conn
+      .query_row(
+        "SELECT sync_settings_schema_version FROM sync_settings WHERE singleton_id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+      )
+      .expect("load schema version");
+
+    assert_eq!(settings.live_quota_refresh_interval_seconds, 300);
+    assert!(!settings.default_fast_mode_for_new_gpt54_sessions);
+    assert_eq!(schema_version, 2);
+
+    save_sync_settings(
+      &conn,
+      &SyncSettings {
+        live_quota_refresh_interval_seconds: 600,
+        default_fast_mode_for_new_gpt54_sessions: true,
+        ..SyncSettings::default()
+      },
+    )
+    .expect("save user preferences");
+
+    init_db(&conn).expect("run init again");
+    let settings = get_sync_settings(&conn).expect("reload settings");
+
+    assert_eq!(settings.live_quota_refresh_interval_seconds, 600);
+    assert!(settings.default_fast_mode_for_new_gpt54_sessions);
   }
 
   #[test]

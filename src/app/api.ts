@@ -24,8 +24,8 @@ function createMockSyncSettings(): SyncSettings {
     codexHome: null,
     autoScanEnabled: false,
     autoScanIntervalMinutes: 5,
-    liveQuotaRefreshIntervalSeconds: 60,
-    defaultFastModeForNewGpt54Sessions: true,
+    liveQuotaRefreshIntervalSeconds: 300,
+    defaultFastModeForNewGpt54Sessions: false,
     hideDockIconWhenMenuBarVisible: false,
     showMenuBarLogo: true,
     showMenuBarDailyApiValue: true,
@@ -98,7 +98,7 @@ function createMockMenuBarPopupSnapshot(): MenuBarPopupSnapshot {
   const fetchedAt = nowIso()
   return {
     fetchedAt,
-    refreshIntervalSeconds: 60,
+    refreshIntervalSeconds: 300,
     selectedBucket: 'day',
     quota5h: {
       usedPercent: 58,

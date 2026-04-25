@@ -65,10 +65,10 @@ export function MenuBarPopup() {
   }, [loadSnapshot])
 
   useEffect(() => {
-    const intervalSeconds = snapshot?.refreshIntervalSeconds ?? 60
+    const intervalSeconds = snapshot?.refreshIntervalSeconds ?? 300
     const interval = window.setInterval(() => {
       void loadSnapshot(false)
-    }, Math.max(5000, intervalSeconds * 1000))
+    }, Math.max(60000, intervalSeconds * 1000))
 
     return () => window.clearInterval(interval)
   }, [loadSnapshot, snapshot?.refreshIntervalSeconds])

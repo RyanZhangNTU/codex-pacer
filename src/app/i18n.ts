@@ -422,7 +422,7 @@ const translations: Record<AppLanguage, TranslationSet> = {
           autoScanEnabled: '启用自动扫描',
           autoScanEnabledNote: '关闭后仅保留手动扫描，不再按周期自动刷新数据。',
           autoScanIntervalMinutes: '自动扫描间隔（分钟）',
-          liveQuotaRefreshIntervalSeconds: 'Live quota 刷新间隔（秒）',
+          liveQuotaRefreshIntervalSeconds: 'Live quota 刷新间隔（分钟）',
           liveQuotaRefreshNote: '独立控制 `5小时 / 7天` live quota 的主动刷新与历史持久化频率。',
           defaultFastModeForNewGpt54Sessions: '新 gpt-5.4 / gpt-5.5 对话默认按快速模式计费',
           defaultFastModeForNewGpt54SessionsNote:
@@ -660,7 +660,7 @@ const translations: Record<AppLanguage, TranslationSet> = {
           autoScanEnabled: 'Auto scan enabled',
           autoScanEnabledNote: 'When disabled, only manual scans are kept and periodic refresh stops.',
           autoScanIntervalMinutes: 'Auto scan interval (minutes)',
-          liveQuotaRefreshIntervalSeconds: 'Live quota refresh interval (seconds)',
+          liveQuotaRefreshIntervalSeconds: 'Live quota refresh interval (minutes)',
           liveQuotaRefreshNote: 'Separately controls active refresh and history persistence for `5h / 7d` live quota snapshots.',
           defaultFastModeForNewGpt54Sessions: 'Default new gpt-5.4 / gpt-5.5 sessions to fast-mode billing',
           defaultFastModeForNewGpt54SessionsNote:

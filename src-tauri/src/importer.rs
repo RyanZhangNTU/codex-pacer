@@ -1174,7 +1174,7 @@ mod tests {
       &session_path,
       concat!(
         "{\"timestamp\":\"2026-04-24T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"12121212-1212-1212-1212-121212121212\"}}\n",
-        "{\"timestamp\":\"2026-04-24T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.5\"}}\n",
+        "{\"timestamp\":\"2026-04-24T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.5\",\"fast_mode\":true}}\n",
         "{\"timestamp\":\"2026-04-24T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":40,\"reasoning_output_tokens\":0,\"total_tokens\":140}},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n"
       ),
     )
