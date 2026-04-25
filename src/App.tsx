@@ -432,16 +432,8 @@ function App() {
     activeOverview && isLiveBucket
       ? `${formatCompactDateTime(activeOverview.windowStart, language)} → ${formatCompactDateTime(activeOverview.windowEnd, language)}`
       : null
-  const lastScanLabel = syncSettings?.lastScanCompletedAt
-    ? formatCompactDateTime(syncSettings.lastScanCompletedAt, language)
-    : t.status.waitingForFirstScan
-  const showHeroSummary = view === 'conversations'
-  const heroEyebrow = t.nav.conversations
-  const heroTitle = t.conversationList.title
-  const heroSubtitle = currentBucketLabel
   const anchorInputLabel =
     language === 'zh-CN' ? `${t.buckets[bucket]}统计锚点日期` : `${t.buckets[bucket]} anchor date`
-  const heroStatusLabel = language === 'zh-CN' ? '仪表盘状态' : 'Dashboard status'
 
   return (
     <div className="app-shell">
@@ -495,36 +487,8 @@ function App() {
         </aside>
 
         <main className="main-panel">
-          <section className={`hero-panel hero-panel-filters ${showHeroSummary ? '' : 'hero-panel-filters--controls-only'}`}>
-            {showHeroSummary ? (
-              <div className="hero-toolbar">
-                <div className="hero-copy">
-                  <p className="eyebrow">{heroEyebrow}</p>
-                  <h2>{heroTitle}</h2>
-                  <p className="subtitle">{heroSubtitle}</p>
-                </div>
-                <div className="hero-meta-strip" aria-label={heroStatusLabel}>
-                  <div className="hero-meta-pill">
-                    <span>{t.common.autoScan}</span>
-                    <strong>
-                      {syncSettings?.autoScanEnabled
-                        ? t.common.everyMinutes(syncSettings.autoScanIntervalMinutes)
-                        : t.common.disabled}
-                    </strong>
-                  </div>
-                  <div className="hero-meta-pill">
-                    <span>{t.common.updated}</span>
-                    <strong>{lastScanLabel}</strong>
-                  </div>
-                  <div className="hero-meta-pill">
-                    <span>{isLiveBucket ? t.common.quotaWindow : t.nav.overview}</span>
-                    <strong>{isLiveBucket ? liveWindowRangeLabel ?? currentBucketLabel : currentBucketLabel}</strong>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <div className={`hero-filter-region ${showHeroSummary ? '' : 'hero-filter-region--standalone'}`}>
+          <section className="hero-panel hero-panel-filters hero-panel-filters--controls-only">
+            <div className="hero-filter-region hero-filter-region--standalone">
               <div className="hero-filter-controls">
                 <div className="pill-strip">
                   {BUCKETS.map((option) => (

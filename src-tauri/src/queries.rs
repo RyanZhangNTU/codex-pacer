@@ -118,6 +118,38 @@ pub fn get_overview(
   )
 }
 
+pub fn get_quota_trend(
+  db_path: &Path,
+  bucket: String,
+  live_rate_limits: Option<LiveRateLimitSnapshot>,
+) -> Result<Vec<QuotaTrendPoint>, String> {
+  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  let events = load_events(&conn).map_err(|error| error.to_string())?;
+  let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
+  let resolved_window = resolve_window(
+    &conn,
+    Some(bucket),
+    None,
+    &events,
+    profile.billing_anchor_day,
+    live_rate_limits.as_ref(),
+    None,
+  )?;
+  let window = &resolved_window.window;
+  let filtered_events: Vec<_> = events
+    .iter()
+    .filter(|event| event_in_window(event, window))
+    .cloned()
+    .collect();
+
+  Ok(build_quota_trend(
+    &conn,
+    window,
+    &filtered_events,
+    live_rate_limits.as_ref(),
+  ))
+}
+
 pub fn list_conversations(
   db_path: &Path,
   filters: Option<ConversationFilters>,

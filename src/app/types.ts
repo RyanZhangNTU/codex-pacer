@@ -119,6 +119,7 @@ export interface MenuBarPopupSnapshot {
   selectedBucket: OverviewBucket
   quota5h: MenuBarPopupQuotaSnapshot | null
   quota7d: MenuBarPopupQuotaSnapshot | null
+  quotaTrend7d: QuotaTrendPoint[]
   suggestedSpeed7d: MenuBarPopupSuggestedSpeed | null
   speedFastThresholdPercent: number
   speedSlowThresholdPercent: number

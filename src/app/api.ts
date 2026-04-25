@@ -7,6 +7,7 @@ import type {
   MenuBarPopupSnapshot,
   OverviewBucket,
   OverviewResponse,
+  QuotaTrendPoint,
   SubscriptionProfile,
   SyncSettings,
 } from './types'
@@ -94,8 +95,32 @@ function createMockOverview(bucket: OverviewBucket, anchor?: string | null): Ove
   }
 }
 
+function createMockQuotaTrend7d(windowStart: string, fetchedAt: string): QuotaTrendPoint[] {
+  const startTime = new Date(windowStart).getTime()
+  const fetchedTime = new Date(fetchedAt).getTime()
+  const step = 24 * 60 * 60 * 1000
+  const remaining = [100, 93, 86, 79, 72, 68]
+
+  return remaining.map((remainingPercent, index) => {
+    const timestamp = new Date(Math.min(startTime + index * step, fetchedTime)).toISOString()
+    const usedPercent = 100 - remainingPercent
+
+    return {
+      label: timestamp,
+      timestamp,
+      apiValueUsd: 0,
+      cumulativeApiValueUsd: 0,
+      totalTokens: 0,
+      cumulativeTokens: 0,
+      remainingPercent,
+      usedPercent,
+    }
+  })
+}
+
 function createMockMenuBarPopupSnapshot(): MenuBarPopupSnapshot {
   const fetchedAt = nowIso()
+  const quota7dWindowStart = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
   return {
     fetchedAt,
     refreshIntervalSeconds: 300,
@@ -112,8 +137,9 @@ function createMockMenuBarPopupSnapshot(): MenuBarPopupSnapshot {
       remainingPercent: 68,
       windowDurationMins: 7 * 24 * 60,
       resetsAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString(),
-      windowStart: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      windowStart: quota7dWindowStart,
     },
+    quotaTrend7d: createMockQuotaTrend7d(quota7dWindowStart, fetchedAt),
     suggestedSpeed7d: {
       percent: 82,
       displayValue: '82%',

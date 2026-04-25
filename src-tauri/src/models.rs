@@ -250,6 +250,7 @@ pub struct MenuBarPopupSnapshot {
   pub selected_bucket: String,
   pub quota_5h: Option<MenuBarPopupQuotaSnapshot>,
   pub quota_7d: Option<MenuBarPopupQuotaSnapshot>,
+  pub quota_trend_7d: Vec<QuotaTrendPoint>,
   pub suggested_speed_7d: Option<MenuBarPopupSuggestedSpeed>,
   pub speed_fast_threshold_percent: i64,
   pub speed_slow_threshold_percent: i64,

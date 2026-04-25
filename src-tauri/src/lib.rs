@@ -28,7 +28,7 @@ use models::{
   ScanResult, SubscriptionProfile, SyncSettings,
 };
 use pricing::{load_catalog, seed_pricing_catalog};
-use queries::{get_conversation_detail, get_overview, list_conversations, load_dashboard_data};
+use queries::{get_conversation_detail, get_overview, get_quota_trend, list_conversations, load_dashboard_data};
 use rate_limits::query_live_rate_limits;
 use tauri::{
   Emitter, Manager, PhysicalPosition, Position, Rect, WebviewUrl, WebviewWindow,
@@ -886,6 +886,14 @@ fn build_menu_bar_popup_snapshot(
     None,
   )
   .ok();
+  let quota_trend_7d = if selected_bucket == "seven_day" {
+    overview
+      .as_ref()
+      .map(|value| value.quota_trend.clone())
+      .unwrap_or_default()
+  } else {
+    get_quota_trend(&state.db_path, "seven_day".to_string(), live_rate_limits.clone()).unwrap_or_default()
+  };
 
   Ok(MenuBarPopupSnapshot {
     fetched_at: Local::now().to_rfc3339(),
@@ -897,6 +905,7 @@ fn build_menu_bar_popup_snapshot(
     quota_7d: live_rate_limits
       .as_ref()
       .and_then(|snapshot| snapshot.secondary.as_ref().map(menu_bar_popup_quota_snapshot)),
+    quota_trend_7d,
     suggested_speed_7d: live_rate_limits
       .as_ref()
       .and_then(|snapshot| snapshot.secondary.as_ref())

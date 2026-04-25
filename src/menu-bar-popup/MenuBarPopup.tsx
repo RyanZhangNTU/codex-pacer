@@ -16,8 +16,8 @@ import {
 import type { MenuBarPopupModuleId, MenuBarPopupSnapshot } from '../app/types'
 import { useI18n } from '../app/useI18n'
 import { PopupStatModuleGrid } from '../components/PopupStatModuleGrid'
+import { PopupSevenDayUsageChart } from '../components/PopupSevenDayUsageChart'
 import { QuotaRingCard } from '../components/QuotaRingCard'
-import { VelocityGaugeCard } from '../components/VelocityGaugeCard'
 
 function computeRemainingTimePercent(resetsAt: string | null, windowStart: string | null) {
   if (!resetsAt || !windowStart) return null
@@ -152,13 +152,6 @@ export function MenuBarPopup() {
     }))
   }, [language, snapshot, t])
 
-  const speedTone =
-    snapshot?.suggestedSpeed7d?.status === 'fast'
-      ? 'fast'
-      : snapshot?.suggestedSpeed7d?.status === 'slow'
-        ? 'slow'
-        : 'healthy'
-
   return (
     <div className="menu-popup-shell">
       <div className="menu-popup-panel">
@@ -218,21 +211,13 @@ export function MenuBarPopup() {
               />
             </section>
 
-            {snapshot.suggestedSpeed7d ? (
-              <VelocityGaugeCard
-                title={t.popup.speedTitle}
-                value={snapshot.suggestedSpeed7d.displayValue}
-                emoji={snapshot.suggestedSpeed7d.emoji}
-                statusText={t.popup.speedStatus[snapshot.suggestedSpeed7d.status]}
-                helperText={t.popup.speedHint}
-                percent={snapshot.suggestedSpeed7d.percent}
-                tone={speedTone}
-                thresholds={{
-                  fast: snapshot.speedFastThresholdPercent,
-                  slow: snapshot.speedSlowThresholdPercent,
-                }}
-              />
-            ) : null}
+            <PopupSevenDayUsageChart
+              ariaLabel={t.popup.sevenDayUsageChart}
+              data={snapshot.quotaTrend7d}
+              fetchedAt={snapshot.liveQuotaFetchedAt ?? snapshot.fetchedAt}
+              quota={snapshot.quota7d}
+              speed={snapshot.suggestedSpeed7d}
+            />
 
             {snapshot.showResetTimeline ? (
               <section className="popup-reset-row">

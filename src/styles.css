@@ -948,6 +948,110 @@ select:focus-visible {
   line-height: 1.35;
 }
 
+.popup-seven-day-chart {
+  position: relative;
+  padding: 8px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(118, 197, 255, 0.14), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.popup-seven-day-speed-badge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(7, 13, 24, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px);
+}
+
+.popup-seven-day-speed-badge strong {
+  color: #fff7e8;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.82rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.popup-seven-day-speed-badge--fast {
+  border-color: rgba(255, 179, 107, 0.36);
+}
+
+.popup-seven-day-speed-badge--healthy {
+  border-color: rgba(139, 255, 190, 0.32);
+}
+
+.popup-seven-day-speed-badge--slow {
+  border-color: rgba(118, 197, 255, 0.36);
+}
+
+.popup-seven-day-speed-emoji {
+  font-size: 0.86rem;
+  line-height: 1;
+}
+
+.popup-seven-day-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.popup-seven-day-plot {
+  fill: rgba(4, 9, 18, 0.2);
+}
+
+.popup-seven-day-grid-line {
+  stroke: rgba(255, 255, 255, 0.075);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.popup-seven-day-grid-line--vertical {
+  stroke: rgba(255, 255, 255, 0.052);
+}
+
+.popup-seven-day-reference {
+  stroke: rgba(255, 218, 160, 0.6);
+  stroke-width: 2;
+  stroke-dasharray: 6 7;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.popup-seven-day-area {
+  fill: url(#popupSevenDayUsageFill);
+}
+
+.popup-seven-day-line {
+  fill: none;
+  stroke: #76c5ff;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.popup-seven-day-current-halo {
+  fill: rgba(118, 197, 255, 0.18);
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 1;
+}
+
+.popup-seven-day-current-dot {
+  fill: #fff7e8;
+  stroke: #76c5ff;
+  stroke-width: 2.2;
+}
+
 .popup-reset-row,
 .popup-action-row {
   display: grid;
