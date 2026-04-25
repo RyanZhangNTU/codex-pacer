@@ -4,19 +4,24 @@
 
 **Codex Pacer** 的稳定公开版本通过 **GitHub Releases** 分发。
 
-当前官方打包资产为：
+当前稳定公开打包资产为：
 
 - 已签名并完成 notarization 的 **macOS Apple Silicon DMG**
-- 未签名的 **Windows NSIS setup EXE**
+
+Windows 目前作为测试阶段资产发布：
+
+- 未签名的 **Windows NSIS setup EXE**，用于兼容性测试和早期验证
 
 以下内容**目前不承诺**作为官方发布资产提供：
 
 - Intel macOS 构建
 - universal macOS 构建
 - Linux 打包产物
+- Windows 稳定支持
+- Windows code signing
 - 自动更新交付
 
-所有公开发布文案都应与这个范围保持一致，避免超出当前稳定工作流承诺签名、notarization 或自动更新能力。
+所有公开发布文案都应与这个范围保持一致，避免超出当前稳定工作流承诺 Windows 稳定性、签名、notarization 或自动更新能力。
 
 ## 稳定版发布流程
 
@@ -24,7 +29,7 @@
 
 1. 确认公开品牌文案和文档已经准备完成。
 2. 构建已签名并完成 notarization 的 macOS Apple Silicon DMG。
-3. 构建未签名的 Windows NSIS setup EXE。
+3. 如果该版本包含 Windows 测试阶段资产，构建未签名的 Windows NSIS setup EXE。
 4. 通过 GitHub Releases 发布这些安装资产。
 5. 附上对应版本的发布说明。
 
@@ -42,7 +47,7 @@
 .\scripts\release\build-windows-release.ps1 1.1.1
 ```
 
-这些脚本是当前稳定公开发布准备的本地入口。macOS 构建脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，生成已签名并完成 notarization 的 DMG，并在旁边写入 checksum。Windows 构建脚本在 Windows 上运行，会校验版本，运行 lint、前端构建和 Rust 测试，生成 NSIS setup EXE，并在旁边写入 checksum。Windows 安装包默认未签名，除非单独配置了 Windows code signing。发布脚本会继续校验 tag，并把 macOS DMG 与 checksum 上传到 GitHub Releases；如果该版本包含 Windows 安装包，请同时上传 Windows EXE 与 checksum。
+这些脚本是当前稳定公开发布准备的本地入口。macOS 构建脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，生成已签名并完成 notarization 的 DMG，并在旁边写入 checksum。Windows 构建脚本在 Windows 上运行，会校验版本，运行 lint、前端构建和 Rust 测试，生成 NSIS setup EXE，并在旁边写入 checksum。Windows 安装包默认未签名且仍处于测试阶段，除非单独配置了 Windows code signing 和稳定 Windows 发布策略。发布脚本会继续校验 tag，并把 macOS DMG 与 checksum 上传到 GitHub Releases；如果该版本包含 Windows 安装包，请同时以测试阶段资产上传 Windows EXE 与 checksum。
 
 ## 平台隔离规则
 
@@ -65,14 +70,14 @@ Windows 专属的托盘弹窗定位、隐藏子进程命令行窗口、未签名
 - 确认 macOS menu bar 弹窗仍在 menu bar 下方打开，且 macOS 专属 Dock 设置不会出现在非 macOS
 - 确认生成的 Windows setup EXE 可以在 Windows 上安装
 - 确认 Windows 托盘弹窗在底部任务栏上方向上展开，显示可选模块后仍向上扩展，并且刷新 live quota 时不会弹出命令行窗口
-- 确认 Windows 安装包 checksum，并注明除非另行配置签名，否则该安装包未签名
+- 确认 Windows 安装包 checksum，并注明除非另行配置签名，否则该安装包仍处于测试阶段且未签名
 
 ## 发布建议
 
 - 为稳定版本创建 Git tag
 - 基于该 tag 创建 GitHub Release
 - 上传已签名并完成 notarization 的 Apple Silicon DMG
-- 如果已运行 Windows 发布脚本，上传未签名的 Windows NSIS setup EXE
+- 如果已运行 Windows 发布脚本，以测试阶段资产上传未签名的 Windows NSIS setup EXE
 - 附上该版本对应的发布说明
 - 发布后再次验证下载与安装流程
 
@@ -83,7 +88,8 @@ Windows 专属的托盘弹窗定位、隐藏子进程命令行窗口、未签名
 面向外部文档和公告时，请保持以下表述一致：
 
 - 官方分发渠道：GitHub Releases
-- 官方发布资产：已签名并完成 notarization 的 macOS Apple Silicon DMG；未签名的 Windows NSIS setup EXE
+- 稳定发布资产：已签名并完成 notarization 的 macOS Apple Silicon DMG
+- Windows 测试阶段资产：未签名的 Windows NSIS setup EXE
 - 当前稳定版本线：`v1.1.1`
 
 ## 相关文档

@@ -12,7 +12,7 @@
 
 ## 环境要求
 
-- 官方打包版本面向 Apple Silicon macOS 和 Windows
+- 稳定打包版本面向 Apple Silicon macOS；Windows 安装包目前作为测试阶段资产提供
 - 本地 Codex 数据位于 `~/.codex` 或自定义 `CODEX_HOME`
 
 如果你要从源码开发，还需要：
@@ -26,7 +26,7 @@
 官方公开下载方式均通过 GitHub Releases 提供：
 
 - 已签名并完成 notarization 的 **macOS Apple Silicon DMG**
-- 未签名的 **Windows NSIS setup EXE**
+- 未签名的 **Windows NSIS setup EXE**，作为测试阶段资产
 
 请先阅读：
 

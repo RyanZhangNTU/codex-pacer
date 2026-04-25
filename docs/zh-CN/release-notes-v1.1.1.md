@@ -16,15 +16,20 @@
 
 ## 打包形态
 
-当前官方公开发布资产：
+当前稳定公开发布资产：
 
 - 通过 GitHub Releases 分发的、已签名并完成 notarization 的 macOS Apple Silicon DMG
+
+Windows 在此版本中作为测试阶段资产提供：
+
 - 通过 GitHub Releases 分发的、未签名的 Windows NSIS setup EXE
+
+Windows 安装包用于兼容性测试和早期验证。它目前没有 code signing，不会安装 Codex CLI，并且可能触发 Microsoft SmartScreen 的 unknown publisher 提示。
 
 GitHub Releases 仍是 Codex Pacer 的公开发布边界：每个 release 对应一个 Git tag，承载面向用户的发布说明，并托管用户应下载和安装的平台安装包及 checksum。
 
 ## 说明
 
 - `v1.1.1` 是当前稳定发布线。
-- Intel macOS、universal 构建、Linux 打包产物、Windows code signing，以及自动更新交付目前都不承诺作为官方发布资产。
+- Intel macOS、universal 构建、Linux 打包产物、Windows code signing、Windows 稳定支持，以及自动更新交付目前都不承诺作为官方发布资产。
 - Codex Pacer 保持本地优先，不依赖云端同步服务即可运行。

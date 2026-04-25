@@ -5,7 +5,7 @@
 本文面向维护者，说明如何生成 **Codex Pacer** 的公开发布资产：
 
 - 已签名并完成 notarization 的 Apple Silicon DMG
-- 未签名的 Windows NSIS setup EXE
+- 作为测试阶段资产的未签名 Windows NSIS setup EXE
 - 通过 GitHub Releases 分发
 
 本地发布入口：
@@ -39,7 +39,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 - `git`、`node`、`npm`、`cargo` 位于 `PATH`
 - 已安装 Windows NSIS 构建所需的 Tauri 前置依赖
 - 发布前工作区保持 clean；本地测试构建可显式传入 `-AllowDirty`
-- 默认未配置 Windows code signing；除非某次发布单独配置签名，否则 setup EXE 是未签名的
+- Windows 支持仍处于测试阶段；默认未配置 Windows code signing，除非某次发布单独配置签名，否则 setup EXE 是未签名的
 
 ## macOS 构建
 
@@ -57,7 +57,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 
 脚本会校验版本，运行 `npm ci`、lint、前端构建和 Rust 测试，执行 `npm run tauri build -- --ci --bundles nsis -- --locked`，定位生成的 NSIS setup `.exe`，并写入 `<installer>.exe.sha256`。
 
-不要默认把 Windows installer 描述为已签名、已 notarize 或已被 SmartScreen 信任。只有在某次发布明确配置了 Windows code signing 时，才可以说明签名状态。
+不要默认把 Windows installer 描述为稳定、已签名、已 notarize 或已被 SmartScreen 信任。只有在某次发布明确配置了 Windows code signing 时，才可以说明签名状态。
 
 ## 发布到 GitHub Releases
 
@@ -69,8 +69,8 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 6. 创建并 push `vVERSION` tag。
 7. 发布 GitHub Release。
 8. 上传已签名并完成 notarization 的 macOS DMG 与 checksum。
-9. 如该版本包含 Windows，上传未签名的 Windows NSIS setup EXE 与 checksum。
-10. 在 release body 中说明 Windows installer 默认未签名，用户可能看到 SmartScreen unknown publisher 警告。
+9. 如该版本包含 Windows，上传测试阶段的未签名 Windows NSIS setup EXE 与 checksum。
+10. 在 release body 中说明 Windows installer 仍处于测试阶段且默认未签名，用户可能看到 SmartScreen unknown publisher 警告。
 
 ## macOS 手工验证
 

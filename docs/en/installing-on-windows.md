@@ -1,10 +1,10 @@
 # Installing on Windows
 
-## Windows install path
+## Windows test-stage install path
 
 The Windows public installer for **Codex Pacer** is the NSIS setup `.exe` published through GitHub Releases.
 
-The Windows installer is currently unsigned unless Windows code signing is separately configured for a release. Windows SmartScreen may warn that the publisher is unknown.
+Windows support is currently in a test stage. The Windows installer is unsigned unless Windows code signing is separately configured for a release, and Windows SmartScreen may warn that the publisher is unknown.
 
 ## Standard install flow
 
@@ -27,6 +27,6 @@ On first run:
 ## Notes
 
 - GitHub Releases is the official distribution channel.
-- The Windows setup `.exe` is an NSIS installer.
+- The Windows setup `.exe` is a test-stage NSIS installer.
 - The installer does not install the Codex CLI and does not create Codex usage history.
-- Windows code signing and auto-update delivery are not currently promised.
+- Stable Windows support, Windows code signing, and auto-update delivery are not currently promised.

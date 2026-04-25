@@ -5,7 +5,7 @@
 This runbook is for maintainers producing public **Codex Pacer** release assets:
 
 - signed and notarized Apple Silicon DMG
-- unsigned Windows NSIS setup EXE
+- unsigned Windows NSIS setup EXE as a test-stage asset
 - published through GitHub Releases
 
 The local release entry points are:
@@ -43,7 +43,7 @@ For Windows release builds:
 - `git`, `node`, `npm`, and `cargo` available on `PATH`
 - Tauri prerequisites for Windows NSIS builds installed
 - clean git working tree unless `-AllowDirty` is explicitly used for a local test build
-- no Windows code signing is configured by default; the setup EXE is unsigned unless a release separately adds signing
+- Windows support is test-stage; no Windows code signing is configured by default, so the setup EXE is unsigned unless a release separately adds signing
 
 To list available local signing identities:
 
@@ -142,7 +142,7 @@ What the Windows build script does:
 - locates the generated NSIS setup `.exe` under the active Cargo target root
 - writes a sibling checksum file at `<installer>.exe.sha256`
 
-The Windows installer is unsigned unless Windows code signing is separately configured for the release. Do not describe it as signed, notarized, or SmartScreen-trusted by default.
+The Windows installer is a test-stage asset and is unsigned unless Windows code signing is separately configured for the release. Do not describe it as stable, signed, notarized, or SmartScreen-trusted by default.
 
 ### Optional Windows Cargo target override
 
@@ -207,7 +207,7 @@ The publish script uses:
 
 It publishes those assets with `gh release create`.
 
-For releases that include Windows, also attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release. Note in the release body that the Windows installer is unsigned unless Windows signing was separately configured for that release.
+For releases that include Windows, also attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release. Note in the release body that the Windows installer is test-stage and unsigned unless Windows signing was separately configured for that release.
 
 ## macOS manual smoke test
 

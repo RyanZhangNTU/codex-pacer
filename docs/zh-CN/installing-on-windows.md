@@ -1,10 +1,10 @@
 # 在 Windows 上安装
 
-## Windows 安装路径
+## Windows 测试阶段安装路径
 
 **Codex Pacer** 的 Windows 公开安装包，是通过 GitHub Releases 发布的 NSIS setup `.exe`。
 
-Windows 安装包当前默认未签名，除非某次发布单独配置了 Windows code signing。Windows SmartScreen 可能会提示发布者未知。
+Windows 支持目前仍处于测试阶段。Windows 安装包当前默认未签名，除非某次发布单独配置了 Windows code signing。Windows SmartScreen 可能会提示发布者未知。
 
 ## 标准安装流程
 
@@ -27,6 +27,6 @@ Windows 安装包当前默认未签名，除非某次发布单独配置了 Windo
 ## 说明
 
 - GitHub Releases 是官方分发渠道。
-- Windows setup `.exe` 是 NSIS 安装包。
+- Windows setup `.exe` 是测试阶段的 NSIS 安装包。
 - 安装包不会安装 Codex CLI，也不会创建 Codex 使用历史。
-- Windows code signing 和自动更新交付目前都不承诺。
+- Windows 稳定支持、Windows code signing 和自动更新交付目前都不承诺。

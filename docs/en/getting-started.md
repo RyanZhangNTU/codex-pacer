@@ -12,7 +12,7 @@ It is built to help you answer practical questions such as:
 
 ## Requirements
 
-- macOS on Apple Silicon or Windows for the official packaged apps
+- Apple Silicon macOS for the stable packaged app, or Windows for the test-stage installer
 - Local Codex data under `~/.codex` or a custom `CODEX_HOME`
 
 For development from source, you will also need:
@@ -26,7 +26,7 @@ For development from source, you will also need:
 Official public downloads are published through GitHub Releases:
 
 - signed and notarized **macOS Apple Silicon DMG**
-- unsigned **Windows NSIS setup EXE**
+- unsigned **Windows NSIS setup EXE** as a test-stage asset
 
 Start here:
 
