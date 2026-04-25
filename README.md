@@ -4,7 +4,7 @@ English | [简体中文](./README.zh-CN.md)
 
 **Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
 
-> Current stable release: **v1.0.1**
+> Current stable release: **v1.1.0**
 > Official download: signed and notarized **macOS Apple Silicon DMG** via GitHub Releases
 
 ## Highlights
@@ -35,12 +35,12 @@ Codex Pacer is local-first:
 
 ## Getting started
 
-The documentation set for installation, packaging, and release notes is maintained for the public `v1.0.1` release. Start with:
+The documentation set for installation, packaging, and release notes is maintained for the public `v1.1.0` release. Start with:
 
 - [Getting started](./docs/en/getting-started.md)
 - [Installing on macOS](./docs/en/installing-on-macos.md)
 - [Packaging and release](./docs/en/packaging-and-release.md)
-- [Release notes for v1.0.1](./docs/en/release-notes-v1.0.1.md)
+- [Release notes for v1.1.0](./docs/en/release-notes-v1.1.0.md)
 
 ## Development
 
@@ -75,7 +75,7 @@ npm run tauri build
 
 ## Project status
 
-`v1.0.1` is the current stable release line.
+`v1.1.0` is the current stable release line.
 
 Current release packaging focus:
 

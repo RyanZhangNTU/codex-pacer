@@ -4,7 +4,7 @@
 
 **Codex Pacer** 是一个本地优先的桌面应用，用来把 Codex 使用情况转换成更容易行动的视角：额度节奏、API 等价价值，以及会话级别的使用分析。你可以更快看清自己消耗额度的速度、订阅回报，以及哪些对话或 subagent 正在驱动这些使用量。
 
-> 当前稳定版本：**v1.0.1**
+> 当前稳定版本：**v1.1.0**
 > 官方下载：通过 GitHub Releases 获取已签名并完成 notarization 的 **macOS Apple Silicon DMG**
 
 ## 核心能力
@@ -35,12 +35,12 @@ Codex Pacer 是本地优先的：
 
 ## 开始使用
 
-安装、打包和发布说明已按公开 `v1.0.1` 版本维护。可以从这些文档入口开始：
+安装、打包和发布说明已按公开 `v1.1.0` 版本维护。可以从这些文档入口开始：
 
 - [快速开始](./docs/zh-CN/getting-started.md)
 - [在 macOS 上安装](./docs/zh-CN/installing-on-macos.md)
 - [打包与发布](./docs/zh-CN/packaging-and-release.md)
-- [v1.0.1 发布说明](./docs/zh-CN/release-notes-v1.0.1.md)
+- [v1.1.0 发布说明](./docs/zh-CN/release-notes-v1.1.0.md)
 
 ## 开发
 
@@ -75,7 +75,7 @@ npm run tauri build
 
 ## 项目状态
 
-`v1.0.1` 是当前稳定发布线。
+`v1.1.0` 是当前稳定发布线。
 
 当前发布重点：
 

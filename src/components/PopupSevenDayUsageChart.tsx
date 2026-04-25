@@ -1,4 +1,6 @@
+import { formatUsd } from '../app/format'
 import type { MenuBarPopupQuotaSnapshot, MenuBarPopupSuggestedSpeed, QuotaTrendPoint } from '../app/types'
+import { useI18n } from '../app/useI18n'
 
 interface PopupSevenDayUsageChartProps {
   ariaLabel: string
@@ -26,6 +28,7 @@ const PADDING_BOTTOM = 14
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
 export function PopupSevenDayUsageChart({ ariaLabel, data, fetchedAt, quota, speed }: PopupSevenDayUsageChartProps) {
+  const { language } = useI18n()
   const dataTimes = data
     .map((point) => toTimestamp(point.timestamp))
     .filter((value): value is number => value !== null)
@@ -44,6 +47,7 @@ export function PopupSevenDayUsageChart({ ariaLabel, data, fetchedAt, quota, spe
   const referenceStart = toPlotPoint({ time: windowStart, value: 100 }, windowStart, safeWindowEnd)
   const referenceEnd = toPlotPoint({ time: safeWindowEnd, value: 0 }, windowStart, safeWindowEnd)
   const currentPoint = plotPoints.find((point) => point.time === currentTime) ?? plotPoints[plotPoints.length - 1] ?? null
+  const apiValueUsd = getSevenDayApiValue(data, windowStart, currentTime)
   const dayLines = Array.from({ length: 8 }, (_, index) => {
     const x = PADDING_X + ((CHART_WIDTH - PADDING_X * 2) * index) / 7
     return <line className="popup-seven-day-grid-line popup-seven-day-grid-line--vertical" key={index} x1={x} x2={x} y1={PADDING_TOP} y2={chartBottom()} />
@@ -54,7 +58,7 @@ export function PopupSevenDayUsageChart({ ariaLabel, data, fetchedAt, quota, spe
   })
 
   return (
-    <section aria-label={ariaLabel} className="popup-card popup-seven-day-chart">
+    <section aria-label={ariaLabel} className="popup-seven-day-chart">
       {speed ? (
         <div className={`popup-seven-day-speed-badge popup-seven-day-speed-badge--${speed.status}`}>
           {speed.emoji ? (
@@ -65,6 +69,12 @@ export function PopupSevenDayUsageChart({ ariaLabel, data, fetchedAt, quota, spe
           <strong>{speed.displayValue}</strong>
         </div>
       ) : null}
+      <div className="popup-seven-day-value-badge">
+        <span aria-hidden="true" className="popup-seven-day-badge-emoji">
+          💵
+        </span>
+        <strong>{formatUsd(apiValueUsd, language)}</strong>
+      </div>
       <svg aria-hidden="true" className="popup-seven-day-svg" focusable="false" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}>
         <defs>
           <linearGradient id="popupSevenDayUsageFill" x1="0" x2="0" y1="0" y2="1">
@@ -136,6 +146,20 @@ function buildValuePoints(
   }
 
   return points
+}
+
+function getSevenDayApiValue(data: QuotaTrendPoint[], windowStart: number, currentTime: number) {
+  const values = data
+    .map((point) => ({
+      time: toTimestamp(point.timestamp),
+      value: point.cumulativeApiValueUsd,
+    }))
+    .filter((point): point is { time: number; value: number } => {
+      return point.time !== null && point.time >= windowStart && point.time <= currentTime && Number.isFinite(point.value)
+    })
+    .sort((left, right) => left.time - right.time)
+
+  return values[values.length - 1]?.value ?? 0
 }
 
 function buildSmoothPath(points: PlotPoint[]) {

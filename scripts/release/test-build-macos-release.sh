@@ -106,7 +106,7 @@ if [[ "${1:-}" == "run" && "${2:-}" == "tauri" && "${3:-}" == "build" ]]; then
   dmg_dir="${CARGO_TARGET_DIR}/release/bundle/dmg"
   macos_dir="${CARGO_TARGET_DIR}/release/bundle/macos"
   mkdir -p "${dmg_dir}" "${macos_dir}"
-  touch "${dmg_dir}/Codex Pacer_1.0.1_aarch64.dmg"
+  touch "${dmg_dir}/Codex Pacer_1.1.0_aarch64.dmg"
 
   case "${bundles}" in
     app,dmg|dmg,app)
@@ -147,7 +147,7 @@ export APPLE_PASSWORD="app-specific-password"
 export APPLE_TEAM_ID="TEAMID1234"
 export CARGO_TARGET_DIR="${TEST_ROOT}/target"
 
-"${REPO_ROOT}/scripts/release/build-macos-release.sh" "1.0.1"
+"${REPO_ROOT}/scripts/release/build-macos-release.sh" "1.1.0"
 
 if ! grep -F -- "--bundles app,dmg" "${TEST_RELEASE_LOG}" >/dev/null; then
   echo "expected build script to request both app and dmg bundles" >&2
@@ -159,22 +159,22 @@ if [[ ! -d "${CARGO_TARGET_DIR}/release/bundle/macos/Codex Pacer.app" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.1_aarch64.dmg.sha256" ]]; then
+if [[ ! -f "${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.1.0_aarch64.dmg.sha256" ]]; then
   echo "expected checksum to be written beside the mocked DMG" >&2
   exit 1
 fi
 
-if ! grep -F -- "notarytool submit ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.1_aarch64.dmg --apple-id maintainer@example.com --password app-specific-password --team-id TEAMID1234 --wait" "${TEST_XCRUN_LOG}" >/dev/null; then
+if ! grep -F -- "notarytool submit ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.1.0_aarch64.dmg --apple-id maintainer@example.com --password app-specific-password --team-id TEAMID1234 --wait" "${TEST_XCRUN_LOG}" >/dev/null; then
   echo "expected build script to notarize the built DMG with notarytool" >&2
   exit 1
 fi
 
-if ! grep -F -- "stapler staple ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.1_aarch64.dmg" "${TEST_XCRUN_LOG}" >/dev/null; then
+if ! grep -F -- "stapler staple ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.1.0_aarch64.dmg" "${TEST_XCRUN_LOG}" >/dev/null; then
   echo "expected build script to staple the built DMG" >&2
   exit 1
 fi
 
-if ! grep -F -- "--type open --context context:primary-signature ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.0.1_aarch64.dmg" "${TEST_SPCTL_LOG}" >/dev/null; then
+if ! grep -F -- "--type open --context context:primary-signature ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_1.1.0_aarch64.dmg" "${TEST_SPCTL_LOG}" >/dev/null; then
   echo "expected build script to assess the DMG with the primary-signature context" >&2
   exit 1
 fi

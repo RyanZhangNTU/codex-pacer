@@ -47,6 +47,8 @@ const MENU_BAR_POPUP_OPEN_SETTINGS_EVENT: &str = "codex-counter://open-settings"
 const MENU_BAR_POPUP_REFRESH_EVENT: &str = "codex-counter://menu-bar-popup-refresh";
 const MENU_BAR_POPUP_WIDTH: f64 = 420.0;
 const MENU_BAR_POPUP_HEIGHT: f64 = 620.0;
+const MENU_BAR_POPUP_MIN_HEIGHT: f64 = 260.0;
+const MENU_BAR_POPUP_MAX_HEIGHT: f64 = 620.0;
 const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 #[derive(Clone)]
 struct CachedRateLimitSnapshot {
@@ -124,6 +126,22 @@ fn getMenuBarPopupSnapshot(
   force_refresh: Option<bool>,
 ) -> Result<MenuBarPopupSnapshot, String> {
   build_menu_bar_popup_snapshot(state.inner(), force_refresh.unwrap_or(false))
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn resizeMenuBarPopup(app: AppHandle, height: f64) -> Result<bool, String> {
+  let Some(window) = app.get_webview_window(MENU_BAR_POPUP_WINDOW_LABEL) else {
+    return Ok(false);
+  };
+  let height = height.clamp(MENU_BAR_POPUP_MIN_HEIGHT, MENU_BAR_POPUP_MAX_HEIGHT);
+  window
+    .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+      MENU_BAR_POPUP_WIDTH,
+      height,
+    )))
+    .map_err(|error| error.to_string())?;
+  Ok(true)
 }
 
 #[allow(non_snake_case)]
@@ -1327,6 +1345,7 @@ pub fn run() {
       listConversations,
       getLiveRateLimits,
       getMenuBarPopupSnapshot,
+      resizeMenuBarPopup,
       loadDashboard,
       getConversationDetail,
       handleMenuBarPopupAction,

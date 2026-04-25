@@ -686,7 +686,6 @@ select:focus-visible {
   display: grid;
   gap: 10px;
   width: min(100%, 420px);
-  min-height: calc(100vh - 16px);
   max-height: calc(100vh - 16px);
   overflow: auto;
   padding: 14px;
@@ -750,36 +749,36 @@ select:focus-visible {
 .popup-hero-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
+  padding: 0 2px;
 }
 
 .quota-ring-card {
   display: grid;
-  gap: 6px;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  place-items: center;
 }
 
 .quota-ring-card--warm {
-  background:
-    linear-gradient(180deg, rgba(255, 170, 94, 0.15), rgba(255, 170, 94, 0.04)),
-    rgba(255, 255, 255, 0.03);
+  color: #ffb36b;
 }
 
 .quota-ring-card--cool {
-  background:
-    linear-gradient(180deg, rgba(118, 197, 255, 0.16), rgba(118, 197, 255, 0.04)),
-    rgba(255, 255, 255, 0.03);
+  color: #76c5ff;
 }
 
 .quota-ring-visual {
   position: relative;
-  width: 124px;
-  height: 124px;
+  width: 136px;
+  height: 136px;
   margin: 0 auto;
 }
 
 .quota-ring-svg {
-  width: 124px;
-  height: 124px;
+  width: 136px;
+  height: 136px;
   transform: rotate(-90deg);
 }
 
@@ -800,11 +799,11 @@ select:focus-visible {
 }
 
 .quota-ring-track {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.1);
 }
 
 .quota-ring-track--inner {
-  stroke: rgba(255, 255, 255, 0.12);
+  stroke: rgba(255, 255, 255, 0.14);
 }
 
 .quota-ring-progress--outer {
@@ -832,13 +831,15 @@ select:focus-visible {
 }
 
 .quota-ring-copy strong {
-  font-size: 1.42rem;
+  font-size: 1.5rem;
   font-family: 'Fira Code', monospace;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  color: #fff7e8;
 }
 
 .quota-ring-copy span,
+.quota-ring-label,
 .quota-ring-subtitle,
 .popup-reset-pill span,
 .popup-stat-card span,
@@ -846,12 +847,20 @@ select:focus-visible {
   color: rgba(244, 234, 214, 0.72);
 }
 
+.quota-ring-label {
+  margin: -2px 0 0;
+  color: currentColor;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
 .quota-ring-subtitle {
   margin: 0;
   text-align: center;
-  font-size: 0.8rem;
-  line-height: 1.3;
-  min-height: 2.05em;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  min-height: 1.25em;
 }
 
 .velocity-card {
@@ -950,17 +959,13 @@ select:focus-visible {
 
 .popup-seven-day-chart {
   position: relative;
-  padding: 8px;
-  overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(118, 197, 255, 0.14), rgba(255, 255, 255, 0.035)),
-    rgba(255, 255, 255, 0.03);
+  padding: 2px 0 4px;
+  overflow: visible;
 }
 
-.popup-seven-day-speed-badge {
+.popup-seven-day-speed-badge,
+.popup-seven-day-value-badge {
   position: absolute;
-  top: 18px;
-  right: 18px;
   z-index: 1;
   display: inline-flex;
   align-items: center;
@@ -974,7 +979,20 @@ select:focus-visible {
   backdrop-filter: blur(10px);
 }
 
-.popup-seven-day-speed-badge strong {
+.popup-seven-day-speed-badge {
+  top: 18px;
+  right: 18px;
+}
+
+.popup-seven-day-value-badge {
+  bottom: 18px;
+  left: 18px;
+  background: rgba(68, 38, 9, 0.78);
+  border-color: rgba(255, 179, 107, 0.42);
+}
+
+.popup-seven-day-speed-badge strong,
+.popup-seven-day-value-badge strong {
   color: #fff7e8;
   font-family: 'Fira Code', monospace;
   font-size: 0.82rem;
@@ -994,7 +1012,8 @@ select:focus-visible {
   border-color: rgba(118, 197, 255, 0.36);
 }
 
-.popup-seven-day-speed-emoji {
+.popup-seven-day-speed-emoji,
+.popup-seven-day-badge-emoji {
   font-size: 0.86rem;
   line-height: 1;
 }
@@ -1006,7 +1025,7 @@ select:focus-visible {
 }
 
 .popup-seven-day-plot {
-  fill: rgba(4, 9, 18, 0.2);
+  fill: transparent;
 }
 
 .popup-seven-day-grid-line {

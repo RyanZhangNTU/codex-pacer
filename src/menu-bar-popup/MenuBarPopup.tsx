@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ChartNoAxesCombined, RefreshCw } from 'lucide-react'
 
-import { getMenuBarPopupSnapshot, handleMenuBarPopupAction } from '../app/api'
+import { getMenuBarPopupSnapshot, handleMenuBarPopupAction, resizeMenuBarPopup } from '../app/api'
 import {
   formatCompactDateTime,
   formatDateTime,
@@ -36,6 +36,8 @@ function computeRemainingTimePercent(resetsAt: string | null, windowStart: strin
 
 export function MenuBarPopup() {
   const { language, setLanguage, t } = useI18n()
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const lastMeasuredHeightRef = useRef<number | null>(null)
   const [snapshot, setSnapshot] = useState<MenuBarPopupSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -87,8 +89,33 @@ export function MenuBarPopup() {
   useEffect(() => {
     if (!isTauri()) return
 
+    let resizeFrame = 0
     let refreshDispose: (() => void) | undefined
     let languageDispose: (() => void) | undefined
+    const resizeObserver = new ResizeObserver(() => {
+      schedulePopupResize()
+    })
+
+    function schedulePopupResize() {
+      window.cancelAnimationFrame(resizeFrame)
+      resizeFrame = window.requestAnimationFrame(() => {
+        const panel = panelRef.current
+        if (!panel) return
+
+        const panelHeight = Math.max(panel.scrollHeight, panel.getBoundingClientRect().height)
+        const nextHeight = Math.ceil(panelHeight + 18)
+        if (Math.abs((lastMeasuredHeightRef.current ?? 0) - nextHeight) < 2) return
+
+        lastMeasuredHeightRef.current = nextHeight
+        void resizeMenuBarPopup(nextHeight).catch(() => {})
+      })
+    }
+
+    if (panelRef.current) {
+      resizeObserver.observe(panelRef.current)
+    }
+    window.addEventListener('resize', schedulePopupResize)
+    schedulePopupResize()
 
     void listen('codex-counter://menu-bar-popup-refresh', () => {
       void loadSnapshot(false)
@@ -105,6 +132,9 @@ export function MenuBarPopup() {
     })
 
     return () => {
+      window.cancelAnimationFrame(resizeFrame)
+      window.removeEventListener('resize', schedulePopupResize)
+      resizeObserver.disconnect()
       refreshDispose?.()
       languageDispose?.()
     }
@@ -154,7 +184,7 @@ export function MenuBarPopup() {
 
   return (
     <div className="menu-popup-shell">
-      <div className="menu-popup-panel">
+      <div className="menu-popup-panel" ref={panelRef}>
         <header className="menu-popup-header">
           <span className="brand-badge">{t.appSubtitle}</span>
           <div className="popup-header-actions">

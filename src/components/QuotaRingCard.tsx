@@ -6,8 +6,10 @@ interface QuotaRingCardProps {
   tone: 'warm' | 'cool'
 }
 
-const OUTER_RADIUS = 42
-const INNER_RADIUS = 30
+const RING_VIEWBOX_SIZE = 136
+const RING_CENTER = RING_VIEWBOX_SIZE / 2
+const OUTER_RADIUS = 47
+const INNER_RADIUS = 34
 const OUTER_CIRCUMFERENCE = 2 * Math.PI * OUTER_RADIUS
 const INNER_CIRCUMFERENCE = 2 * Math.PI * INNER_RADIUS
 
@@ -19,24 +21,23 @@ export function QuotaRingCard({ label, percent, timePercent, subtitle, tone }: Q
     clampedTimePercent === null ? INNER_CIRCUMFERENCE : INNER_CIRCUMFERENCE * (1 - clampedTimePercent / 100)
 
   return (
-    <section className={`popup-card quota-ring-card quota-ring-card--${tone}`}>
-      <p className="eyebrow">{label}</p>
+    <section className={`quota-ring-card quota-ring-card--${tone}`}>
       <div className="quota-ring-visual">
-        <svg aria-hidden="true" className="quota-ring-svg" viewBox="0 0 124 124">
-          <circle className="quota-ring-track quota-ring-track--outer" cx="62" cy="62" r={OUTER_RADIUS} />
+        <svg aria-hidden="true" className="quota-ring-svg" viewBox={`0 0 ${RING_VIEWBOX_SIZE} ${RING_VIEWBOX_SIZE}`}>
+          <circle className="quota-ring-track quota-ring-track--outer" cx={RING_CENTER} cy={RING_CENTER} r={OUTER_RADIUS} />
           <circle
             className="quota-ring-progress quota-ring-progress--outer"
-            cx="62"
-            cy="62"
+            cx={RING_CENTER}
+            cy={RING_CENTER}
             r={OUTER_RADIUS}
             strokeDasharray={OUTER_CIRCUMFERENCE}
             strokeDashoffset={outerStrokeOffset}
           />
-          <circle className="quota-ring-track quota-ring-track--inner" cx="62" cy="62" r={INNER_RADIUS} />
+          <circle className="quota-ring-track quota-ring-track--inner" cx={RING_CENTER} cy={RING_CENTER} r={INNER_RADIUS} />
           <circle
             className="quota-ring-progress quota-ring-progress--inner"
-            cx="62"
-            cy="62"
+            cx={RING_CENTER}
+            cy={RING_CENTER}
             r={INNER_RADIUS}
             strokeDasharray={INNER_CIRCUMFERENCE}
             strokeDashoffset={innerStrokeOffset}
@@ -46,6 +47,7 @@ export function QuotaRingCard({ label, percent, timePercent, subtitle, tone }: Q
           <strong>{clampedPercent}%</strong>
         </div>
       </div>
+      <p className="quota-ring-label">{label}</p>
       <p className="quota-ring-subtitle">{subtitle}</p>
     </section>
   )

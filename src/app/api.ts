@@ -248,6 +248,10 @@ export async function getMenuBarPopupSnapshot(forceRefresh = false): Promise<Men
   return invokeOrMock('getMenuBarPopupSnapshot', { forceRefresh }, createMockMenuBarPopupSnapshot)
 }
 
+export async function resizeMenuBarPopup(height: number) {
+  return invokeOrMock('resizeMenuBarPopup', { height }, () => true)
+}
+
 export type MenuBarPopupAction = 'open_dashboard' | 'open_settings' | 'hide' | 'refresh'
 
 export async function handleMenuBarPopupAction(action: MenuBarPopupAction) {
