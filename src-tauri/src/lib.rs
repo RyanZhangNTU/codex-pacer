@@ -31,7 +31,7 @@ use pricing::{load_catalog, seed_pricing_catalog};
 use queries::{get_conversation_detail, get_overview, get_quota_trend, list_conversations, load_dashboard_data};
 use rate_limits::query_live_rate_limits;
 use tauri::{
-  Emitter, Manager, PhysicalPosition, Position, Rect, WebviewUrl, WebviewWindow,
+  Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
   WebviewWindowBuilder,
   menu::{Menu, MenuItem, PredefinedMenuItem},
   tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
@@ -50,6 +50,8 @@ const MENU_BAR_POPUP_HEIGHT: f64 = 620.0;
 const MENU_BAR_POPUP_MIN_HEIGHT: f64 = 260.0;
 const MENU_BAR_POPUP_MAX_HEIGHT: f64 = 620.0;
 const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
+const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
+const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 #[derive(Clone)]
 struct CachedRateLimitSnapshot {
   fetched_at: Instant,
@@ -1074,43 +1076,142 @@ fn position_menu_bar_popup(
   rect: Rect,
   click_position: PhysicalPosition<f64>,
 ) -> Result<(), String> {
-  if let Some(monitor) = window
-    .monitor_from_point(click_position.x, click_position.y)
-    .map_err(|error| error.to_string())?
-  {
-    let scale_factor = monitor.scale_factor();
-    let rect_position = tray_rect_position_to_physical(rect.position, scale_factor);
-    let rect_size = tray_rect_size_to_physical(rect.size, scale_factor);
-    let mut x = rect_position.x + rect_size.width as i32 / 2 - MENU_BAR_POPUP_WIDTH as i32 / 2;
-    let mut y = rect_position.y + rect_size.height as i32 + MENU_BAR_POPUP_OFFSET_Y;
-    let monitor_position = monitor.position();
-    let monitor_size = monitor.size();
-    let max_x = monitor_position.x + monitor_size.width as i32 - MENU_BAR_POPUP_WIDTH as i32;
-    let max_y = monitor_position.y + monitor_size.height as i32 - MENU_BAR_POPUP_HEIGHT as i32;
-    x = x.clamp(monitor_position.x, max_x.max(monitor_position.x));
-    y = y.clamp(monitor_position.y, max_y.max(monitor_position.y));
+  if let Some(monitor) = tray_event_monitor(window, rect, click_position)? {
+    let position = menu_bar_popup_position_for_monitor(
+      rect,
+      click_position,
+      *monitor.position(),
+      *monitor.size(),
+      monitor.scale_factor(),
+    );
     return window
-      .set_position(Position::Physical(PhysicalPosition::new(x, y)))
+      .set_position(Position::Physical(position))
       .map_err(|error| error.to_string());
   }
 
-  let rect_position = tray_rect_position_to_physical(rect.position, 1.0);
-  let rect_size = tray_rect_size_to_physical(rect.size, 1.0);
-  let anchor_x = if rect_size.width > 0 {
-    rect_position.x + rect_size.width as i32 / 2
-  } else {
-    click_position.x.round() as i32
-  };
-  let anchor_y = if rect_size.height > 0 {
-    rect_position.y + rect_size.height as i32
-  } else {
-    click_position.y.round() as i32
-  };
+  let anchor = tray_rect_anchor_physical(rect, click_position, 1.0);
+  let anchor_x = anchor.x.round() as i32;
+  let anchor_y = anchor.y.round() as i32;
   let x = (anchor_x - MENU_BAR_POPUP_WIDTH as i32 / 2).max(0);
   let y = (anchor_y + MENU_BAR_POPUP_OFFSET_Y).max(0);
   window
     .set_position(Position::Physical(PhysicalPosition::new(x, y)))
     .map_err(|error| error.to_string())
+}
+
+fn tray_event_monitor(
+  window: &WebviewWindow,
+  rect: Rect,
+  click_position: PhysicalPosition<f64>,
+) -> Result<Option<Monitor>, String> {
+  let monitors = window.available_monitors().map_err(|error| error.to_string())?;
+  let mut best_match: Option<(Monitor, f64)> = None;
+
+  for monitor in monitors {
+    let scale_factor = normalized_scale_factor(monitor.scale_factor());
+    // macOS tray events report scaled global positions; monitor_from_point expects CoreGraphics coordinates.
+    let lookup_point = tray_event_monitor_lookup_point(rect, click_position, scale_factor);
+    let Some(candidate) = window
+      .monitor_from_point(lookup_point.x, lookup_point.y)
+      .map_err(|error| error.to_string())?
+    else {
+      continue;
+    };
+
+    if !same_monitor(&candidate, &monitor) {
+      continue;
+    }
+
+    let score = tray_monitor_scale_score(rect, scale_factor);
+    let is_better_match = match best_match.as_ref() {
+      Some((_, best_score)) => score < *best_score,
+      None => true,
+    };
+    if is_better_match {
+      best_match = Some((monitor, score));
+    }
+  }
+
+  if let Some((monitor, _)) = best_match {
+    return Ok(Some(monitor));
+  }
+
+  window
+    .monitor_from_point(click_position.x, click_position.y)
+    .map_err(|error| error.to_string())
+}
+
+fn same_monitor(left: &Monitor, right: &Monitor) -> bool {
+  left.position() == right.position()
+    && left.size() == right.size()
+    && (left.scale_factor() - right.scale_factor()).abs() < 0.01
+}
+
+fn normalized_scale_factor(scale_factor: f64) -> f64 {
+  if scale_factor.is_finite() && scale_factor > 0.0 {
+    scale_factor
+  } else {
+    1.0
+  }
+}
+
+fn tray_event_monitor_lookup_point(
+  rect: Rect,
+  click_position: PhysicalPosition<f64>,
+  scale_factor: f64,
+) -> PhysicalPosition<f64> {
+  let anchor = tray_rect_anchor_physical(rect, click_position, scale_factor);
+  PhysicalPosition::new(anchor.x / scale_factor, anchor.y / scale_factor)
+}
+
+fn tray_monitor_scale_score(rect: Rect, scale_factor: f64) -> f64 {
+  let rect_size = tray_rect_size_to_physical(rect.size, scale_factor);
+  if rect_size.height == 0 {
+    return TRAY_ICON_MAX_LOGICAL_HEIGHT;
+  }
+
+  let logical_height = rect_size.height as f64 / scale_factor;
+  if (TRAY_ICON_MIN_LOGICAL_HEIGHT..=TRAY_ICON_MAX_LOGICAL_HEIGHT).contains(&logical_height) {
+    0.0
+  } else if logical_height < TRAY_ICON_MIN_LOGICAL_HEIGHT {
+    TRAY_ICON_MIN_LOGICAL_HEIGHT - logical_height
+  } else {
+    logical_height - TRAY_ICON_MAX_LOGICAL_HEIGHT
+  }
+}
+
+fn menu_bar_popup_position_for_monitor(
+  rect: Rect,
+  click_position: PhysicalPosition<f64>,
+  monitor_position: PhysicalPosition<i32>,
+  monitor_size: PhysicalSize<u32>,
+  scale_factor: f64,
+) -> PhysicalPosition<i32> {
+  let anchor = tray_rect_anchor_physical(rect, click_position, normalized_scale_factor(scale_factor));
+  let mut x = anchor.x.round() as i32 - MENU_BAR_POPUP_WIDTH as i32 / 2;
+  let mut y = anchor.y.round() as i32 + MENU_BAR_POPUP_OFFSET_Y;
+  let max_x = monitor_position.x + monitor_size.width as i32 - MENU_BAR_POPUP_WIDTH as i32;
+  let max_y = monitor_position.y + monitor_size.height as i32 - MENU_BAR_POPUP_HEIGHT as i32;
+  x = x.clamp(monitor_position.x, max_x.max(monitor_position.x));
+  y = y.clamp(monitor_position.y, max_y.max(monitor_position.y));
+  PhysicalPosition::new(x, y)
+}
+
+fn tray_rect_anchor_physical(
+  rect: Rect,
+  click_position: PhysicalPosition<f64>,
+  scale_factor: f64,
+) -> PhysicalPosition<f64> {
+  let rect_position = tray_rect_position_to_physical(rect.position, scale_factor);
+  let rect_size = tray_rect_size_to_physical(rect.size, scale_factor);
+  if rect_size.width > 0 && rect_size.height > 0 {
+    return PhysicalPosition::new(
+      rect_position.x as f64 + rect_size.width as f64 / 2.0,
+      rect_position.y as f64 + rect_size.height as f64,
+    );
+  }
+
+  click_position
 }
 
 fn tray_rect_position_to_physical(position: Position, scale_factor: f64) -> PhysicalPosition<i32> {
@@ -1552,5 +1653,52 @@ mod tests {
     assert_eq!(position, PhysicalPosition::new(1440, 12));
     assert_eq!(size.width, 24);
     assert_eq!(size.height, 24);
+  }
+
+  #[test]
+  fn tray_popup_monitor_lookup_undoes_status_item_scale() {
+    let rect = Rect {
+      position: Position::Physical((4000.0, 10.0).into()),
+      size: tauri::Size::Physical((48u32, 48u32).into()),
+    };
+
+    let lookup_point = tray_event_monitor_lookup_point(rect, PhysicalPosition::new(4024.0, 24.0), 2.0);
+
+    assert_eq!(lookup_point, PhysicalPosition::new(2012.0, 29.0));
+  }
+
+  #[test]
+  fn tray_popup_monitor_scale_score_prefers_menu_bar_sized_rect() {
+    let retina_rect = Rect {
+      position: Position::Physical((4000.0, 10.0).into()),
+      size: tauri::Size::Physical((48u32, 48u32).into()),
+    };
+    let standard_rect = Rect {
+      position: Position::Physical((2000.0, 10.0).into()),
+      size: tauri::Size::Physical((24u32, 24u32).into()),
+    };
+
+    assert_eq!(tray_monitor_scale_score(retina_rect, 2.0), 0.0);
+    assert!(tray_monitor_scale_score(retina_rect, 1.0) > 0.0);
+    assert_eq!(tray_monitor_scale_score(standard_rect, 1.0), 0.0);
+    assert!(tray_monitor_scale_score(standard_rect, 2.0) > 0.0);
+  }
+
+  #[test]
+  fn tray_popup_position_clamps_to_selected_external_monitor() {
+    let rect = Rect {
+      position: Position::Physical((7250.0, 16.0).into()),
+      size: tauri::Size::Physical((48u32, 48u32).into()),
+    };
+    let position = menu_bar_popup_position_for_monitor(
+      rect,
+      PhysicalPosition::new(7274.0, 24.0),
+      PhysicalPosition::new(3840, 0),
+      PhysicalSize::new(3456, 2234),
+      2.0,
+    );
+
+    assert_eq!(position.x, 6876);
+    assert_eq!(position.y, 72);
   }
 }
