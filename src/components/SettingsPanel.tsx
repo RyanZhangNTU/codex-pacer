@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 
 import { formatPercent, formatRemainingDuration } from '../app/format'
 import { SUPPORTED_LANGUAGES, type AppLanguage } from '../app/i18n'
@@ -23,6 +24,32 @@ interface SettingsPanelProps {
     syncSettings: SyncSettings
     subscriptionProfile: SubscriptionProfile
   }) => Promise<void>
+}
+
+interface SwitchFieldProps {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  onChange: (checked: boolean) => void
+}
+
+function SwitchField({ label, checked, disabled = false, onChange }: SwitchFieldProps) {
+  return (
+    <label className={`switch-field${disabled ? ' is-disabled' : ''}`}>
+      <span>{label}</span>
+      <input
+        checked={checked}
+        className="switch-input"
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        role="switch"
+        type="checkbox"
+      />
+      <span className="switch-track" aria-hidden="true">
+        <span />
+      </span>
+    </label>
+  )
 }
 
 export function SettingsPanel({
@@ -165,11 +192,10 @@ export function SettingsPanel({
               <div className="settings-section-head">
                 <p className="eyebrow">{t.settings.sections.language.eyebrow}</p>
                 <h4>{t.settings.sections.language.title}</h4>
-                <p>{t.settings.sections.language.description}</p>
               </div>
 
               <div className="settings-grid">
-                <label className="field field-span-2">
+                <label className="field">
                   <span>{t.settings.sections.language.label}</span>
                   <select
                     value={language}
@@ -181,7 +207,6 @@ export function SettingsPanel({
                       </option>
                     ))}
                   </select>
-                  <span className="field-note">{t.settings.sections.language.note}</span>
                 </label>
               </div>
             </section>
@@ -190,11 +215,10 @@ export function SettingsPanel({
               <div className="settings-section-head">
                 <p className="eyebrow">{t.settings.sections.sync.eyebrow}</p>
                 <h4>{t.settings.sections.sync.title}</h4>
-                <p>{t.settings.sections.sync.description}</p>
               </div>
 
               <div className="settings-grid">
-                <label className="field field-span-2">
+                <label className="field">
                   <span>{t.settings.sections.sync.codexHome}</span>
                   <input
                     value={draftSync.codexHome ?? ''}
@@ -212,26 +236,20 @@ export function SettingsPanel({
                   />
                 </label>
 
-                <label className="field">
-                  <span>{t.settings.sections.sync.autoScanEnabled}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.sync.autoScanEnabledNote}</span>
-                    <input
-                      checked={draftSync.autoScanEnabled}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                autoScanEnabled: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.autoScanEnabled}
+                  label={t.settings.sections.sync.autoScanEnabled}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            autoScanEnabled: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
                 <label className="field">
                   <span>{t.settings.sections.sync.autoScanIntervalMinutes}</span>
@@ -253,7 +271,7 @@ export function SettingsPanel({
                   />
                 </label>
 
-                <label className="field field-span-2">
+                <label className="field">
                   <span>{t.settings.sections.sync.liveQuotaRefreshIntervalSeconds}</span>
                   <input
                     min={5}
@@ -275,33 +293,22 @@ export function SettingsPanel({
                       )
                     }
                   />
-                  <span className="field-note">
-                    {t.settings.sections.sync.liveQuotaRefreshNote}
-                  </span>
                 </label>
 
-                <label className="field field-span-2">
-                  <span>{t.settings.sections.sync.defaultFastModeForNewGpt54Sessions}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">
-                      {t.settings.sections.sync.defaultFastModeForNewGpt54SessionsNote}
-                    </span>
-                    <input
-                      checked={draftSync.defaultFastModeForNewGpt54Sessions}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                defaultFastModeForNewGpt54Sessions: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.defaultFastModeForNewGpt54Sessions}
+                  label={t.settings.sections.sync.defaultFastModeForNewGpt54Sessions}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            defaultFastModeForNewGpt54Sessions: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
               </div>
             </section>
 
@@ -309,95 +316,68 @@ export function SettingsPanel({
               <div className="settings-section-head">
                 <p className="eyebrow">{t.settings.sections.menuBar.eyebrow}</p>
                 <h4>{t.settings.sections.menuBar.title}</h4>
-                <p>{t.settings.sections.menuBar.description}</p>
               </div>
 
               <div className="settings-grid">
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.hideDockIcon}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.menuBar.hideDockIconNote}</span>
-                    <input
-                      checked={draftSync.hideDockIconWhenMenuBarVisible}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                hideDockIconWhenMenuBarVisible: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.hideDockIconWhenMenuBarVisible}
+                  label={t.settings.sections.menuBar.hideDockIcon}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            hideDockIconWhenMenuBarVisible: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.showLogo}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.menuBar.showLogoNote}</span>
-                    <input
-                      checked={draftSync.showMenuBarLogo}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                showMenuBarLogo: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.showMenuBarLogo}
+                  label={t.settings.sections.menuBar.showLogo}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            showMenuBarLogo: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.showApiValue}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.menuBar.showApiValueNote}</span>
-                    <input
-                      checked={draftSync.showMenuBarDailyApiValue}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                showMenuBarDailyApiValue: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.showMenuBarDailyApiValue}
+                  label={t.settings.sections.menuBar.showApiValue}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            showMenuBarDailyApiValue: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.showLiveQuotaMetric}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">
-                      {t.settings.sections.menuBar.showLiveQuotaMetricNote}
-                    </span>
-                    <input
-                      checked={draftSync.showMenuBarLiveQuotaPercent}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                showMenuBarLiveQuotaPercent: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.showMenuBarLiveQuotaPercent}
+                  label={t.settings.sections.menuBar.showLiveQuotaMetric}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            showMenuBarLiveQuotaPercent: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
                 <label className="field">
                   <span>{t.settings.sections.menuBar.range}</span>
@@ -420,7 +400,6 @@ export function SettingsPanel({
                       </option>
                     ))}
                   </select>
-                  <span className="field-note">{t.settings.sections.menuBar.rangeNote}</span>
                 </label>
 
                 <label className="field">
@@ -447,10 +426,9 @@ export function SettingsPanel({
                       </option>
                     ))}
                   </select>
-                  <span className="field-note">{t.settings.sections.menuBar.liveMetricNote}</span>
                 </label>
 
-                <label className="field field-span-2">
+                <label className="field">
                   <span>{t.settings.sections.menuBar.quotaSource}</span>
                   <select
                     disabled={!draftSync.showMenuBarLiveQuotaPercent}
@@ -472,33 +450,26 @@ export function SettingsPanel({
                       </option>
                     ))}
                   </select>
-                  <span className="field-note">{t.settings.sections.menuBar.quotaSourceNote}</span>
                 </label>
 
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.speedShowEmoji}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.menuBar.speedShowEmojiNote}</span>
-                    <input
-                      disabled={
-                        !draftSync.showMenuBarLiveQuotaPercent ||
-                        draftSync.menuBarLiveQuotaMetric !== 'suggested_usage_speed'
-                      }
-                      checked={draftSync.menuBarSpeedShowEmoji}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                menuBarSpeedShowEmoji: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.menuBarSpeedShowEmoji}
+                  disabled={
+                    !draftSync.showMenuBarLiveQuotaPercent ||
+                    draftSync.menuBarLiveQuotaMetric !== 'suggested_usage_speed'
+                  }
+                  label={t.settings.sections.menuBar.speedShowEmoji}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            menuBarSpeedShowEmoji: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
                 <label className="field">
                   <span>{t.settings.sections.menuBar.speedFastThreshold}</span>
@@ -554,7 +525,6 @@ export function SettingsPanel({
                       )
                     }
                   />
-                  <span className="field-note">{t.settings.sections.menuBar.speedThresholdNote}</span>
                 </label>
 
                 <label className="field">
@@ -599,7 +569,7 @@ export function SettingsPanel({
                   />
                 </label>
 
-                <label className="field field-span-2">
+                <label className="field">
                   <span>{t.settings.sections.menuBar.speedSlowEmoji}</span>
                   <input
                     disabled={
@@ -618,54 +588,40 @@ export function SettingsPanel({
                       )
                     }
                   />
-                  <span className="field-note">{t.settings.sections.menuBar.speedEmojiNote}</span>
                 </label>
 
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.popupEnabled}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.menuBar.popupEnabledNote}</span>
-                    <input
-                      checked={draftSync.menuBarPopupEnabled}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                menuBarPopupEnabled: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.menuBarPopupEnabled}
+                  label={t.settings.sections.menuBar.popupEnabled}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            menuBarPopupEnabled: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
-                <label className="field">
-                  <span>{t.settings.sections.menuBar.popupShowResetTimeline}</span>
-                  <div className="field-checkbox-row">
-                    <span className="field-note">{t.settings.sections.menuBar.popupModulesNote}</span>
-                    <input
-                      checked={draftSync.menuBarPopupShowResetTimeline}
-                      onChange={(event) =>
-                        setDraftSync((current) =>
-                          current
-                            ? {
-                                ...current,
-                                menuBarPopupShowResetTimeline: event.target.checked,
-                              }
-                            : current,
-                        )
-                      }
-                      type="checkbox"
-                    />
-                  </div>
-                </label>
+                <SwitchField
+                  checked={draftSync.menuBarPopupShowResetTimeline}
+                  label={t.settings.sections.menuBar.popupShowResetTimeline}
+                  onChange={(checked) =>
+                    setDraftSync((current) =>
+                      current
+                        ? {
+                            ...current,
+                            menuBarPopupShowResetTimeline: checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
 
-                <div className="field field-span-2 popup-module-editor">
+                <div className="field popup-module-editor">
                   <span>{t.settings.sections.menuBar.popupModules}</span>
-                  <span className="field-note">{t.settings.sections.menuBar.popupModulesNote}</span>
                   <div className="popup-module-list">
                     {popupModuleOptions.map((option) => {
                       const enabled = draftSync.menuBarPopupModules.includes(option.value)
@@ -675,27 +631,34 @@ export function SettingsPanel({
                           <label className="popup-module-toggle">
                             <input
                               checked={enabled}
+                              className="switch-input"
                               onChange={(event) => togglePopupModule(option.value, event.target.checked)}
+                              role="switch"
                               type="checkbox"
                             />
+                            <span className="switch-track" aria-hidden="true">
+                              <span />
+                            </span>
                             <span>{option.label}</span>
                           </label>
                           <div className="popup-module-actions">
                             <button
-                              className="ghost-button"
+                              aria-label={t.settings.sections.menuBar.moveUp}
+                              className="ghost-button popup-icon-button"
                               disabled={!enabled || index <= 0}
                               onClick={() => movePopupModule(option.value, -1)}
                               type="button"
                             >
-                              {t.settings.sections.menuBar.moveUp}
+                              <ChevronUp aria-hidden="true" size={15} />
                             </button>
                             <button
-                              className="ghost-button"
+                              aria-label={t.settings.sections.menuBar.moveDown}
+                              className="ghost-button popup-icon-button"
                               disabled={!enabled || index < 0 || index >= draftSync.menuBarPopupModules.length - 1}
                               onClick={() => movePopupModule(option.value, 1)}
                               type="button"
                             >
-                              {t.settings.sections.menuBar.moveDown}
+                              <ChevronDown aria-hidden="true" size={15} />
                             </button>
                           </div>
                         </div>
@@ -710,7 +673,6 @@ export function SettingsPanel({
               <div className="settings-section-head">
                 <p className="eyebrow">{t.settings.sections.subscription.eyebrow}</p>
                 <h4>{t.settings.sections.subscription.title}</h4>
-                <p>{t.settings.sections.subscription.description}</p>
               </div>
 
               <div className="settings-grid">
@@ -734,7 +696,6 @@ export function SettingsPanel({
                 <label className="field">
                   <span>{t.settings.sections.subscription.currency}</span>
                   <input disabled readOnly value={draftSubscription.currency} />
-                  <span className="field-note">{t.settings.sections.subscription.currencyNote}</span>
                 </label>
 
                 <label className="field">
@@ -776,9 +737,6 @@ export function SettingsPanel({
                       )
                     }
                   />
-                  <span className="field-note">
-                    {t.settings.sections.subscription.billingAnchorDayNote}
-                  </span>
                 </label>
               </div>
             </section>
@@ -788,7 +746,6 @@ export function SettingsPanel({
                 <div className="settings-section-head">
                   <p className="eyebrow">{t.settings.sections.liveQuota.eyebrow}</p>
                   <h4>{t.settings.sections.liveQuota.title}</h4>
-                  <p>{t.settings.sections.liveQuota.description}</p>
                 </div>
 
                 <div className="field field-readonly live-quota-field">
