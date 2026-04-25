@@ -12,7 +12,7 @@ It is built to help you answer practical questions such as:
 
 ## Requirements
 
-- macOS on Apple Silicon for the official packaged app
+- macOS on Apple Silicon or Windows for the official packaged apps
 - Local Codex data under `~/.codex` or a custom `CODEX_HOME`
 
 For development from source, you will also need:
@@ -23,11 +23,15 @@ For development from source, you will also need:
 
 ## Install the stable app
 
-The official public download is the signed and notarized **macOS Apple Silicon DMG** from GitHub Releases.
+Official public downloads are published through GitHub Releases:
+
+- signed and notarized **macOS Apple Silicon DMG**
+- unsigned **Windows NSIS setup EXE**
 
 Start here:
 
 - [Installing on macOS](./installing-on-macos.md)
+- [Installing on Windows](./installing-on-windows.md)
 
 ## Clone the repository for local development
 
@@ -53,7 +57,7 @@ Use this for UI work only. Tauri-only features are limited or mocked in browser 
 
 ## First-time setup inside the app
 
-1. Launch **Codex Pacer** from `Applications`.
+1. Launch **Codex Pacer** from `Applications` on macOS or the Start menu on Windows.
 2. Open **Settings**.
 3. Confirm the Codex home path (`~/.codex` by default) or point it to a custom `CODEX_HOME`.
 4. Run the first scan/import.
@@ -100,5 +104,6 @@ npm run tauri build
 ## Next docs
 
 - [Installing on macOS](./installing-on-macos.md)
+- [Installing on Windows](./installing-on-windows.md)
 - [Packaging and release](./packaging-and-release.md)
 - [Release notes for v1.1.1](./release-notes-v1.1.1.md)

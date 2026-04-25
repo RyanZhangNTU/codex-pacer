@@ -12,7 +12,7 @@
 
 ## 环境要求
 
-- 官方打包版本面向 Apple Silicon 的 macOS
+- 官方打包版本面向 Apple Silicon macOS 和 Windows
 - 本地 Codex 数据位于 `~/.codex` 或自定义 `CODEX_HOME`
 
 如果你要从源码开发，还需要：
@@ -23,11 +23,15 @@
 
 ## 安装稳定版应用
 
-官方公开下载方式是通过 GitHub Releases 获取已签名并完成 notarization 的 **macOS Apple Silicon DMG**。
+官方公开下载方式均通过 GitHub Releases 提供：
+
+- 已签名并完成 notarization 的 **macOS Apple Silicon DMG**
+- 未签名的 **Windows NSIS setup EXE**
 
 请先阅读：
 
 - [在 macOS 上安装](./installing-on-macos.md)
+- [在 Windows 上安装](./installing-on-windows.md)
 
 ## 克隆仓库并安装依赖
 
@@ -53,7 +57,7 @@ npm run dev
 
 ## App 内首次设置
 
-1. 从 `Applications` 启动 **Codex Pacer**。
+1. 在 macOS 从 `Applications` 启动 **Codex Pacer**，在 Windows 从 Start menu 启动。
 2. 打开 **Settings**。
 3. 确认 Codex home 路径（默认 `~/.codex`），或改成自定义 `CODEX_HOME`。
 4. 运行首次扫描 / 导入。
@@ -100,5 +104,6 @@ npm run tauri build
 ## 下一步文档
 
 - [在 macOS 上安装](./installing-on-macos.md)
+- [在 Windows 上安装](./installing-on-windows.md)
 - [打包与发布](./packaging-and-release.md)
 - [v1.1.1 发布说明](./release-notes-v1.1.1.md)

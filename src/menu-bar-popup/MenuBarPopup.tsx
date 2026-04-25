@@ -19,6 +19,8 @@ import { PopupStatModuleGrid } from '../components/PopupStatModuleGrid'
 import { PopupSevenDayUsageChart } from '../components/PopupSevenDayUsageChart'
 import { QuotaRingCard } from '../components/QuotaRingCard'
 
+const POPUP_RESIZE_PADDING = 18
+
 function computeRemainingTimePercent(resetsAt: string | null, windowStart: string | null) {
   if (!resetsAt || !windowStart) return null
 
@@ -34,10 +36,16 @@ function computeRemainingTimePercent(resetsAt: string | null, windowStart: strin
   return Math.max(0, Math.min(100, Math.round((remaining / total) * 100)))
 }
 
+function measuredPopupHeight(panel: HTMLElement) {
+  const panelHeight = Math.max(panel.scrollHeight, panel.getBoundingClientRect().height)
+  return Math.ceil(panelHeight + POPUP_RESIZE_PADDING)
+}
+
 export function MenuBarPopup() {
   const { language, setLanguage, t } = useI18n()
   const panelRef = useRef<HTMLDivElement | null>(null)
   const lastMeasuredHeightRef = useRef<number | null>(null)
+  const resizeFrameRef = useRef(0)
   const [snapshot, setSnapshot] = useState<MenuBarPopupSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -75,6 +83,22 @@ export function MenuBarPopup() {
     return () => window.clearInterval(interval)
   }, [loadSnapshot, snapshot?.refreshIntervalSeconds])
 
+  const schedulePopupResize = useCallback(() => {
+    if (!isTauri()) return
+
+    window.cancelAnimationFrame(resizeFrameRef.current)
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      const panel = panelRef.current
+      if (!panel) return
+
+      const nextHeight = measuredPopupHeight(panel)
+      if (Math.abs((lastMeasuredHeightRef.current ?? 0) - nextHeight) < 2) return
+
+      lastMeasuredHeightRef.current = nextHeight
+      void resizeMenuBarPopup(nextHeight).catch(() => {})
+    })
+  }, [])
+
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -89,27 +113,11 @@ export function MenuBarPopup() {
   useEffect(() => {
     if (!isTauri()) return
 
-    let resizeFrame = 0
     let refreshDispose: (() => void) | undefined
     let languageDispose: (() => void) | undefined
     const resizeObserver = new ResizeObserver(() => {
       schedulePopupResize()
     })
-
-    function schedulePopupResize() {
-      window.cancelAnimationFrame(resizeFrame)
-      resizeFrame = window.requestAnimationFrame(() => {
-        const panel = panelRef.current
-        if (!panel) return
-
-        const panelHeight = Math.max(panel.scrollHeight, panel.getBoundingClientRect().height)
-        const nextHeight = Math.ceil(panelHeight + 18)
-        if (Math.abs((lastMeasuredHeightRef.current ?? 0) - nextHeight) < 2) return
-
-        lastMeasuredHeightRef.current = nextHeight
-        void resizeMenuBarPopup(nextHeight).catch(() => {})
-      })
-    }
 
     if (panelRef.current) {
       resizeObserver.observe(panelRef.current)
@@ -132,13 +140,13 @@ export function MenuBarPopup() {
     })
 
     return () => {
-      window.cancelAnimationFrame(resizeFrame)
+      window.cancelAnimationFrame(resizeFrameRef.current)
       window.removeEventListener('resize', schedulePopupResize)
       resizeObserver.disconnect()
       refreshDispose?.()
       languageDispose?.()
     }
-  }, [loadSnapshot, setLanguage])
+  }, [loadSnapshot, schedulePopupResize, setLanguage])
 
   const moduleCards = useMemo(() => {
     if (!snapshot) return []
@@ -182,29 +190,46 @@ export function MenuBarPopup() {
     }))
   }, [language, snapshot, t])
 
+  const visibleModuleSignature = snapshot?.visibleModules.join('|') ?? ''
+  const showPopupActions = snapshot?.showActions ?? true
+
+  useEffect(() => {
+    schedulePopupResize()
+  }, [
+    error,
+    language,
+    loading,
+    schedulePopupResize,
+    snapshot?.showActions,
+    snapshot?.showResetTimeline,
+    visibleModuleSignature,
+  ])
+
   return (
     <div className="menu-popup-shell">
       <div className="menu-popup-panel" ref={panelRef}>
         <header className="menu-popup-header">
           <span className="brand-badge">{t.appSubtitle}</span>
-          <div className="popup-header-actions">
-            <button
-              aria-label={t.popup.actions.openDashboard}
-              className="ghost-button popup-icon-button"
-              onClick={() => void handleMenuBarPopupAction('open_dashboard')}
-              type="button"
-            >
-              <ChartNoAxesCombined size={16} />
-            </button>
-            <button
-              aria-label={t.popup.actions.refresh}
-              className="ghost-button popup-icon-button"
-              onClick={() => void loadSnapshot(true)}
-              type="button"
-            >
-              <RefreshCw className={refreshing ? 'spinning' : ''} size={16} />
-            </button>
-          </div>
+          {showPopupActions ? (
+            <div className="popup-header-actions">
+              <button
+                aria-label={t.popup.actions.openDashboard}
+                className="ghost-button popup-icon-button"
+                onClick={() => void handleMenuBarPopupAction('open_dashboard')}
+                type="button"
+              >
+                <ChartNoAxesCombined size={16} />
+              </button>
+              <button
+                aria-label={t.popup.actions.refresh}
+                className="ghost-button popup-icon-button"
+                onClick={() => void loadSnapshot(true)}
+                type="button"
+              >
+                <RefreshCw className={refreshing ? 'spinning' : ''} size={16} />
+              </button>
+            </div>
+          ) : null}
         </header>
 
         {loading ? (

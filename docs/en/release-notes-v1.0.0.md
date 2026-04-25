@@ -19,12 +19,13 @@ This release establishes the public product line around a local-first desktop ap
 
 ## Packaging
 
-Official public release asset:
+Packaged asset at this release:
 
 - signed and notarized macOS Apple Silicon DMG via GitHub Releases
 
 ## Notes
 
 - `v1.0.0` was the first stable release line. See the latest release notes for the current stable version.
-- Intel macOS, universal builds, Windows, Linux, and auto-update delivery are not currently promised as official release assets.
+- Intel macOS, universal builds, Linux bundles, Windows code signing, and auto-update delivery are not currently promised as official release assets.
+- Current Windows installer support is documented in the latest installation and release docs.
 - Codex Pacer remains local-first and does not depend on a cloud sync service to work.
