@@ -2,6 +2,10 @@
 
 English | [简体中文](./README.zh-CN.md)
 
+<p align="center">
+  <img src="./docs/assets/popup.png" alt="Codex Pacer menu bar popup showing 5-hour and 7-day quota pacing" width="860">
+</p>
+
 **Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
 
 > Current stable release: **v1.1.1**

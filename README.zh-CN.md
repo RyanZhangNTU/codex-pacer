@@ -2,6 +2,10 @@
 
 [English](./README.md) | 简体中文
 
+<p align="center">
+  <img src="./docs/assets/popup.png" alt="Codex Pacer 菜单栏弹窗，展示 5 小时和 7 天额度节奏" width="860">
+</p>
+
 **Codex Pacer** 是一个本地优先的桌面应用，用来把 Codex 使用情况转换成更容易行动的视角：额度节奏、API 等价价值，以及会话级别的使用分析。你可以更快看清自己消耗额度的速度、订阅回报，以及哪些对话或 subagent 正在驱动这些使用量。
 
 > 当前稳定版本：**v1.1.1**
