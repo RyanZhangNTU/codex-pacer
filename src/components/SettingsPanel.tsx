@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 
-import { formatPercent, formatRemainingDuration } from '../app/format'
+import { formatPercent, formatRemainingDuration, formatUsd, todayInputValue } from '../app/format'
 import { SUPPORTED_LANGUAGES, type AppLanguage } from '../app/i18n'
+import { addOneCalendarMonth } from '../app/subscriptionDates'
 import { useI18n } from '../app/useI18n'
 import type {
   LiveRateLimitSnapshot,
   MenuBarPopupModuleId,
   OverviewBucket,
+  SubscriptionBillingMode,
   SubscriptionProfile,
+  SubscriptionRecord,
+  SubscriptionRecordInput,
   SyncSettings,
 } from '../app/types'
 
@@ -18,12 +22,15 @@ interface SettingsPanelProps {
   liveRateLimits: LiveRateLimitSnapshot | null
   syncSettings: SyncSettings | null
   subscriptionProfile: SubscriptionProfile | null
+  subscriptionRecords: SubscriptionRecord[]
   onClose: () => void
   onLanguageChange: (language: AppLanguage) => void
   onSave: (payload: {
     syncSettings: SyncSettings
     subscriptionProfile: SubscriptionProfile
   }) => Promise<void>
+  onSaveSubscriptionRecord: (payload: SubscriptionRecordInput, id?: number | null) => Promise<void>
+  onDeleteSubscriptionRecord: (id: number) => Promise<void>
 }
 
 interface SwitchFieldProps {
@@ -52,6 +59,76 @@ function SwitchField({ label, checked, disabled = false, onChange }: SwitchField
   )
 }
 
+type SubscriptionPlanOption = 'plus' | 'pro_x5' | 'pro_x10'
+
+interface SubscriptionRecordFormState {
+  serviceStart: string
+  serviceEnd: string
+  amountUsd: number
+  billingMode: SubscriptionBillingMode
+  planType: SubscriptionPlanOption
+  accountEmail: string
+}
+
+const SUBSCRIPTION_PLAN_AMOUNTS: Record<SubscriptionPlanOption, number> = {
+  plus: 19.99,
+  pro_x5: 100,
+  pro_x10: 200,
+}
+
+function normalizePlanOption(planType?: string | null): SubscriptionPlanOption {
+  const normalized = planType?.toLowerCase().replace(/[×*]/g, 'x').replace(/[\s-]+/g, '_') ?? ''
+  if (normalized.includes('pro') && normalized.includes('5')) return 'pro_x5'
+  if (normalized.includes('pro')) return 'pro_x10'
+  return 'plus'
+}
+
+function defaultAmountForPlan(planType?: string | null) {
+  return SUBSCRIPTION_PLAN_AMOUNTS[normalizePlanOption(planType)]
+}
+
+function createDefaultRecordForm(profile: SubscriptionProfile | null): SubscriptionRecordFormState {
+  const serviceStart = todayInputValue()
+  const planType = normalizePlanOption(profile?.planType)
+  return {
+    serviceStart,
+    serviceEnd: addOneCalendarMonth(serviceStart),
+    amountUsd:
+      profile?.monthlyPrice && profile.monthlyPrice > 0
+        ? profile.monthlyPrice
+        : defaultAmountForPlan(planType),
+    billingMode: 'monthly_recurring',
+    planType,
+    accountEmail: '',
+  }
+}
+
+function recordToForm(record: SubscriptionRecord): SubscriptionRecordFormState {
+  const planType = normalizePlanOption(record.planType)
+  return {
+    serviceStart: record.serviceStart,
+    serviceEnd: record.serviceEnd,
+    amountUsd: record.amountUsd,
+    billingMode: record.billingMode ?? 'one_time',
+    planType,
+    accountEmail: record.note ?? '',
+  }
+}
+
+function formatPlanLabel(
+  planType: string,
+  labels: {
+    planPlus: string
+    planPro5: string
+    planPro10: string
+  },
+) {
+  const normalized = normalizePlanOption(planType)
+  if (normalized === 'pro_x5') return labels.planPro5
+  if (normalized === 'pro_x10') return labels.planPro10
+  return labels.planPlus
+}
+
 function refreshSecondsToMinutes(seconds: number) {
   return Math.max(1, Math.round(seconds / 60))
 }
@@ -70,16 +147,25 @@ export function SettingsPanel({
   liveRateLimits,
   syncSettings,
   subscriptionProfile,
+  subscriptionRecords,
   onClose,
   onLanguageChange,
   onSave,
+  onSaveSubscriptionRecord,
+  onDeleteSubscriptionRecord,
 }: SettingsPanelProps) {
   const { t } = useI18n()
   const [draftSync, setDraftSync] = useState<SyncSettings | null>(syncSettings)
   const [draftSubscription, setDraftSubscription] = useState<SubscriptionProfile | null>(
     subscriptionProfile,
   )
+  const [recordForm, setRecordForm] = useState<SubscriptionRecordFormState>(() =>
+    createDefaultRecordForm(subscriptionProfile),
+  )
+  const [editingRecordId, setEditingRecordId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+  const [savingRecord, setSavingRecord] = useState(false)
+  const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null)
   const wasOpenRef = useRef(false)
   const showDockSettings = isMacOs()
 
@@ -89,11 +175,19 @@ export function SettingsPanel({
     if (justOpened || (!draftSync && syncSettings) || (!draftSubscription && subscriptionProfile)) {
       setDraftSync(syncSettings)
       setDraftSubscription(subscriptionProfile)
+      setRecordForm(createDefaultRecordForm(subscriptionProfile))
+      setEditingRecordId(null)
       setSaving(false)
+      setSavingRecord(false)
+      setDeletingRecordId(null)
     } else if (!isOpen && wasOpenRef.current) {
       setDraftSync(syncSettings)
       setDraftSubscription(subscriptionProfile)
+      setRecordForm(createDefaultRecordForm(subscriptionProfile))
+      setEditingRecordId(null)
       setSaving(false)
+      setSavingRecord(false)
+      setDeletingRecordId(null)
     }
 
     wasOpenRef.current = isOpen
@@ -134,6 +228,34 @@ export function SettingsPanel({
     { value: 'conversation_count', label: t.popup.modules.conversationCount },
   ]
 
+  const planOptions: Array<{ value: SubscriptionPlanOption; label: string; amountUsd: number }> = [
+    {
+      value: 'plus',
+      label: t.settings.sections.subscription.planPlus,
+      amountUsd: SUBSCRIPTION_PLAN_AMOUNTS.plus,
+    },
+    {
+      value: 'pro_x5',
+      label: t.settings.sections.subscription.planPro5,
+      amountUsd: SUBSCRIPTION_PLAN_AMOUNTS.pro_x5,
+    },
+    {
+      value: 'pro_x10',
+      label: t.settings.sections.subscription.planPro10,
+      amountUsd: SUBSCRIPTION_PLAN_AMOUNTS.pro_x10,
+    },
+  ]
+  const billingModeOptions: Array<{ value: SubscriptionBillingMode; label: string }> = [
+    {
+      value: 'monthly_recurring',
+      label: t.settings.sections.subscription.billingModeMonthlyRecurring,
+    },
+    {
+      value: 'one_time',
+      label: t.settings.sections.subscription.billingModeOneTime,
+    },
+  ]
+
   function togglePopupModule(moduleId: MenuBarPopupModuleId, enabled: boolean) {
     setDraftSync((current) => {
       if (!current) return current
@@ -168,6 +290,71 @@ export function SettingsPanel({
         menuBarPopupModules: nextModules,
       }
     })
+  }
+
+  function resetRecordForm() {
+    setRecordForm(createDefaultRecordForm(draftSubscription))
+    setEditingRecordId(null)
+  }
+
+  function updateRecordForm(patch: Partial<SubscriptionRecordFormState>) {
+    setRecordForm((current) => ({ ...current, ...patch }))
+  }
+
+  function updateRecordPlan(planType: SubscriptionPlanOption) {
+    setRecordForm((current) => ({
+      ...current,
+      planType,
+      amountUsd: SUBSCRIPTION_PLAN_AMOUNTS[planType],
+    }))
+  }
+
+  function updateRecordServiceStart(serviceStart: string) {
+    setRecordForm((current) => ({
+      ...current,
+      serviceStart,
+      serviceEnd:
+        current.serviceEnd <= serviceStart ? addOneCalendarMonth(serviceStart) : current.serviceEnd,
+    }))
+  }
+
+  function editSubscriptionRecord(record: SubscriptionRecord) {
+    setEditingRecordId(record.id)
+    setRecordForm(recordToForm(record))
+  }
+
+  async function saveSubscriptionRecordForm() {
+    setSavingRecord(true)
+    try {
+      const accountEmail = recordForm.accountEmail.trim()
+      await onSaveSubscriptionRecord(
+        {
+          paidAt: recordForm.serviceStart,
+          serviceStart: recordForm.serviceStart,
+          serviceEnd: recordForm.serviceEnd,
+          amountUsd: Number(recordForm.amountUsd || 0),
+          billingMode: recordForm.billingMode,
+          planType: recordForm.planType,
+          note: accountEmail || null,
+        },
+        editingRecordId,
+      )
+      resetRecordForm()
+    } finally {
+      setSavingRecord(false)
+    }
+  }
+
+  async function removeSubscriptionRecord(id: number) {
+    setDeletingRecordId(id)
+    try {
+      await onDeleteSubscriptionRecord(id)
+      if (editingRecordId === id) {
+        resetRecordForm()
+      }
+    } finally {
+      setDeletingRecordId(null)
+    }
   }
 
   async function handleSubmit() {
@@ -738,6 +925,190 @@ export function SettingsPanel({
                     }
                   />
                 </label>
+              </div>
+
+              <div className="subscription-record-list">
+                {subscriptionRecords.length === 0 ? (
+                  <div className="empty-state subscription-empty-state">
+                    {t.settings.sections.subscription.emptyRecords}
+                  </div>
+                ) : (
+                  subscriptionRecords.map((record) => (
+                    <div className="subscription-record-card subscription-record-summary-card" key={record.id}>
+                      <div className="subscription-record-summary-main">
+                        <span className="subscription-record-plan-badge">
+                          {formatPlanLabel(record.planType, t.settings.sections.subscription)}
+                        </span>
+                        <span className="subscription-record-mode-badge">
+                          {record.billingMode === 'monthly_recurring'
+                            ? t.settings.sections.subscription.billingModeMonthlyRecurring
+                            : t.settings.sections.subscription.billingModeOneTime}
+                        </span>
+                        <strong className="subscription-record-amount">
+                          {formatUsd(record.amountUsd, language)}
+                        </strong>
+                        <span className="field-note">
+                          {record.serviceStart} → {record.serviceEnd}
+                        </span>
+                      </div>
+                      <div className="subscription-record-summary-meta">
+                        {record.note ? (
+                          <span>{record.note}</span>
+                        ) : (
+                          <span>{t.settings.sections.subscription.accountEmailPlaceholder}</span>
+                        )}
+                      </div>
+                      <div className="subscription-record-actions">
+                        <button
+                          className="ghost-button"
+                          disabled={savingRecord || deletingRecordId === record.id}
+                          onClick={() => editSubscriptionRecord(record)}
+                          type="button"
+                        >
+                          {t.settings.sections.subscription.editRecord}
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={savingRecord || deletingRecordId === record.id}
+                          onClick={() => removeSubscriptionRecord(record.id)}
+                          type="button"
+                        >
+                          {deletingRecordId === record.id
+                            ? t.actions.saving
+                            : t.settings.sections.subscription.removeRecord}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="subscription-record-editor">
+                <div className="settings-section-head">
+                  <p className="eyebrow">
+                    {editingRecordId
+                      ? t.settings.sections.subscription.editRecordTitle
+                      : t.settings.sections.subscription.addRecordTitle}
+                  </p>
+                  <h4>
+                    {editingRecordId
+                      ? t.settings.sections.subscription.updateRecord
+                      : t.settings.sections.subscription.addRecord}
+                  </h4>
+                </div>
+
+                <div className="subscription-record-grid">
+                  <label className="field">
+                    <span>{t.settings.sections.subscription.planType}</span>
+                    <select
+                      value={recordForm.planType}
+                      onChange={(event) => updateRecordPlan(event.target.value as SubscriptionPlanOption)}
+                    >
+                      {planOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label} · {formatUsd(option.amountUsd, language)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="field field-span-2">
+                    <span>{t.settings.sections.subscription.billingMode}</span>
+                    <div
+                      aria-label={t.settings.sections.subscription.billingMode}
+                      className="segmented-control"
+                      role="radiogroup"
+                    >
+                      {billingModeOptions.map((option) => (
+                        <button
+                          aria-checked={recordForm.billingMode === option.value}
+                          className={`segmented-control-button${
+                            recordForm.billingMode === option.value ? ' is-active' : ''
+                          }`}
+                          key={option.value}
+                          onClick={() => updateRecordForm({ billingMode: option.value })}
+                          role="radio"
+                          type="button"
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <label className="field">
+                    <span>{t.settings.sections.subscription.amountUsd}</span>
+                    <input
+                      min={0.01}
+                      step={0.01}
+                      type="number"
+                      value={recordForm.amountUsd}
+                      onChange={(event) =>
+                        updateRecordForm({ amountUsd: Number(event.target.value || 0) })
+                      }
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>{t.settings.sections.subscription.accountEmail}</span>
+                    <input
+                      placeholder={t.settings.sections.subscription.accountEmailPlaceholder}
+                      type="email"
+                      value={recordForm.accountEmail}
+                      onChange={(event) => updateRecordForm({ accountEmail: event.target.value })}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>{t.settings.sections.subscription.serviceStart}</span>
+                    <input
+                      type="date"
+                      value={recordForm.serviceStart}
+                      onChange={(event) => updateRecordServiceStart(event.target.value)}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>{t.settings.sections.subscription.serviceEnd}</span>
+                    <input
+                      type="date"
+                      value={recordForm.serviceEnd}
+                      onChange={(event) => updateRecordForm({ serviceEnd: event.target.value })}
+                    />
+                  </label>
+
+                  <div className="subscription-record-form-actions">
+                    {editingRecordId ? (
+                      <button
+                        className="ghost-button"
+                        disabled={savingRecord}
+                        onClick={resetRecordForm}
+                        type="button"
+                      >
+                        {t.settings.sections.subscription.cancelEditRecord}
+                      </button>
+                    ) : null}
+                    <button
+                      className="accent-button"
+                      disabled={
+                        savingRecord ||
+                        !Number.isFinite(recordForm.amountUsd) ||
+                        recordForm.amountUsd <= 0 ||
+                        !recordForm.serviceStart ||
+                        !recordForm.serviceEnd ||
+                        recordForm.serviceEnd <= recordForm.serviceStart
+                      }
+                      onClick={saveSubscriptionRecordForm}
+                      type="button"
+                    >
+                      {savingRecord
+                        ? t.actions.saving
+                        : editingRecordId
+                          ? t.settings.sections.subscription.updateRecord
+                          : t.settings.sections.subscription.saveRecord}
+                    </button>
+                  </div>
+                </div>
               </div>
             </section>
 

@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS subscription_profile (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS subscription_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  paid_at TEXT NOT NULL CHECK (paid_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  service_start TEXT NOT NULL CHECK (service_start GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  service_end TEXT NOT NULL CHECK (service_end GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  amount_usd REAL NOT NULL CHECK (amount_usd > 0),
+  billing_mode TEXT NOT NULL DEFAULT 'one_time' CHECK (billing_mode IN ('one_time', 'monthly_recurring')),
+  plan_type TEXT NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (service_end > service_start)
+);
+
 CREATE TABLE IF NOT EXISTS session_overrides (
   session_id TEXT PRIMARY KEY,
   fast_mode_override INTEGER,

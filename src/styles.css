@@ -1879,6 +1879,152 @@ select:focus-visible {
   font-family: 'Fira Code', monospace;
 }
 
+.subscription-record-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line-subtle);
+  background: rgba(7, 13, 24, 0.48);
+}
+
+.subscription-record-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.subscription-record-list {
+  display: grid;
+  gap: 12px;
+}
+
+.subscription-record-summary-card {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.subscription-record-summary-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.subscription-record-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 179, 237, 0.28);
+  background: rgba(38, 94, 145, 0.18);
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.subscription-record-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--text-primary);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.subscription-record-amount {
+  color: var(--text-strong);
+  font-family: 'Fira Code', monospace;
+}
+
+.subscription-record-summary-meta {
+  min-width: 140px;
+  max-width: 260px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.subscription-record-editor {
+  display: grid;
+  gap: 14px;
+  margin-top: 4px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 35%),
+    rgba(7, 13, 24, 0.54);
+}
+
+.subscription-record-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 16px;
+  border: 1px solid var(--line-subtle);
+  background: rgba(4, 9, 16, 0.46);
+}
+
+.segmented-control-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.segmented-control-button:hover {
+  color: var(--text-primary);
+  border-color: rgba(96, 165, 250, 0.22);
+}
+
+.segmented-control-button.is-active {
+  background: rgba(30, 64, 175, 0.28);
+  border-color: rgba(96, 165, 250, 0.34);
+  color: var(--text-strong);
+}
+
+.segmented-control-button:focus-visible {
+  outline: 3px solid rgba(96, 165, 250, 0.32);
+  outline-offset: 2px;
+}
+
+.subscription-record-form-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.subscription-empty-state {
+  padding: 24px 16px;
+}
+
 .modal-actions {
   justify-content: flex-end;
   margin-top: 16px;
@@ -1910,8 +2056,15 @@ select:focus-visible {
   .conversation-layout,
   .share-layout,
   .settings-grid,
+  .subscription-record-grid,
+  .subscription-record-summary-card,
   .detail-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .subscription-record-form-actions,
+  .subscription-record-summary-meta {
+    justify-content: flex-start;
   }
 
   .field-span-2,

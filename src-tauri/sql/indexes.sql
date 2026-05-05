@@ -10,3 +10,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_limit_samples_dedupe
   ON rate_limit_samples(
     bucket, sample_timestamp, source_kind, source_session_id, limit_id, window_start, resets_at
   );
+CREATE INDEX IF NOT EXISTS idx_subscription_records_service
+  ON subscription_records(service_start, service_end);

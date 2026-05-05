@@ -59,6 +59,8 @@ export type TranslationSet = {
     failedToLoad: (bucketLabel: string, error: string) => string
     pricingRefreshed: string
     settingsSaved: string
+    subscriptionRecordSaved: string
+    subscriptionRecordDeleted: string
     waitingLiveQuota: string
   }
   buckets: Record<OverviewBucket, string>
@@ -82,6 +84,8 @@ export type TranslationSet = {
     subscriptionCost: string
     payoffRatio: string
     planPerMonth: (planType: string, price: string) => string
+    subscriptionLedgerNote: (count: number) => string
+    noSubscriptionRecords: string
     monthlyFeeShare: string
   }
   overview: {
@@ -236,6 +240,26 @@ export type TranslationSet = {
         monthlyPrice: string
         billingAnchorDay: string
         billingAnchorDayNote: string
+        planPlus: string
+        planPro5: string
+        planPro10: string
+        billingMode: string
+        billingModeOneTime: string
+        billingModeMonthlyRecurring: string
+        amountUsd: string
+        serviceStart: string
+        serviceEnd: string
+        addRecordTitle: string
+        editRecordTitle: string
+        addRecord: string
+        updateRecord: string
+        saveRecord: string
+        editRecord: string
+        removeRecord: string
+        cancelEditRecord: string
+        emptyRecords: string
+        accountEmail: string
+        accountEmailPlaceholder: string
       }
       liveQuota: {
         eyebrow: string
@@ -298,6 +322,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       failedToLoad: (bucketLabel, error) => `加载${bucketLabel}失败：${error}`,
       pricingRefreshed: '已按 OpenAI 标准短上下文定价刷新目录。',
       settingsSaved: '设置已保存。',
+      subscriptionRecordSaved: '订阅记录已保存。',
+      subscriptionRecordDeleted: '订阅记录已删除。',
       waitingLiveQuota: '等待 live quota',
     },
     buckets: {
@@ -331,7 +357,9 @@ const translations: Record<AppLanguage, TranslationSet> = {
       subscriptionCost: '订阅费',
       payoffRatio: '回本比例',
       planPerMonth: (planType, price) => `${planType} · ${price}/月`,
-      monthlyFeeShare: '占月费比例',
+      subscriptionLedgerNote: (count) => `${count} 条订阅记录`,
+      noSubscriptionRecords: '未添加订阅记录',
+      monthlyFeeShare: '订阅账本占比',
     },
     overview: {
       distribution: '分布',
@@ -485,6 +513,26 @@ const translations: Record<AppLanguage, TranslationSet> = {
           monthlyPrice: '月订阅价格',
           billingAnchorDay: '订阅月起始日',
           billingAnchorDayNote: '订阅月会按这个日期切分。例如设置为 23，则统计范围是每月 23 号到次月 22 号。',
+          planPlus: 'ChatGPT Plus',
+          planPro5: 'ChatGPT Pro 5x',
+          planPro10: 'ChatGPT Pro 10x',
+          billingMode: '计费方式',
+          billingModeOneTime: '单次',
+          billingModeMonthlyRecurring: '每月重复',
+          amountUsd: '金额（USD）',
+          serviceStart: '服务开始',
+          serviceEnd: '服务结束',
+          addRecordTitle: '账本记录',
+          editRecordTitle: '编辑记录',
+          addRecord: '添加订阅记录',
+          updateRecord: '更新订阅记录',
+          saveRecord: '保存记录',
+          editRecord: '编辑',
+          removeRecord: '删除',
+          cancelEditRecord: '取消编辑',
+          emptyRecords: '还没有订阅账本记录。添加记录后，回本会按服务期重叠比例计算。',
+          accountEmail: '账号邮箱/备注',
+          accountEmailPlaceholder: '可选备注或邮箱',
         },
         liveQuota: {
           eyebrow: 'Live Quota',
@@ -540,6 +588,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       failedToLoad: (bucketLabel, error) => `Failed to load ${bucketLabel}: ${error}`,
       pricingRefreshed: 'Pricing catalog refreshed from OpenAI Standard short-context pricing.',
       settingsSaved: 'Settings saved.',
+      subscriptionRecordSaved: 'Subscription record saved.',
+      subscriptionRecordDeleted: 'Subscription record deleted.',
       waitingLiveQuota: 'Waiting for live quota',
     },
     buckets: {
@@ -573,7 +623,9 @@ const translations: Record<AppLanguage, TranslationSet> = {
       subscriptionCost: 'Subscription cost',
       payoffRatio: 'Payoff ratio',
       planPerMonth: (planType, price) => `${planType} · ${price}/mo`,
-      monthlyFeeShare: 'Share of monthly fee',
+      subscriptionLedgerNote: (count) => `${count} subscription records`,
+      noSubscriptionRecords: 'No subscription records',
+      monthlyFeeShare: 'Share of subscription ledger',
     },
     overview: {
       distribution: 'Distribution',
@@ -727,6 +779,26 @@ const translations: Record<AppLanguage, TranslationSet> = {
           monthlyPrice: 'Monthly subscription price',
           billingAnchorDay: 'Subscription month starts on',
           billingAnchorDayNote: 'The billing month is split by this day. For example, `23` means each window runs from the 23rd to the 22nd of the next month.',
+          planPlus: 'ChatGPT Plus',
+          planPro5: 'ChatGPT Pro 5x',
+          planPro10: 'ChatGPT Pro 10x',
+          billingMode: 'Billing mode',
+          billingModeOneTime: 'One-time',
+          billingModeMonthlyRecurring: 'Monthly recurring',
+          amountUsd: 'Amount (USD)',
+          serviceStart: 'Service start',
+          serviceEnd: 'Service end',
+          addRecordTitle: 'Ledger record',
+          editRecordTitle: 'Edit record',
+          addRecord: 'Add subscription record',
+          updateRecord: 'Update subscription record',
+          saveRecord: 'Save record',
+          editRecord: 'Edit',
+          removeRecord: 'Delete',
+          cancelEditRecord: 'Cancel edit',
+          emptyRecords: 'No subscription ledger records yet. Add records to prorate payoff by service period overlap.',
+          accountEmail: 'Account email / note',
+          accountEmailPlaceholder: 'Optional note or email',
         },
         liveQuota: {
           eyebrow: 'Live Quota',

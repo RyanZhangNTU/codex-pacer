@@ -1,5 +1,6 @@
 import type { AppLanguage } from './i18n'
 import { getDateTimeLocale, getNumberLocale, getRelativeTimeLocale } from './i18n'
+import { todayLocalInputValue } from './subscriptionDates'
 
 export function formatUsd(value: number, language: AppLanguage = 'zh-CN') {
   return new Intl.NumberFormat(getNumberLocale(language), {
@@ -92,5 +93,5 @@ export function formatRemainingDuration(endValue: string | null, language: AppLa
 }
 
 export function todayInputValue() {
-  return new Date().toISOString().slice(0, 10)
+  return todayLocalInputValue()
 }

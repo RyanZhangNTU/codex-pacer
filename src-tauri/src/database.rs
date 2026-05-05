@@ -10,7 +10,9 @@ mod sync_settings;
 
 pub use rate_limit_samples::{insert_live_rate_limit_snapshot, replace_session_rate_limit_samples};
 pub use subscriptions::{
-    canonical_subscription_currency, get_subscription_profile, save_subscription_profile,
+    canonical_subscription_currency, create_subscription_record, delete_subscription_record,
+    get_subscription_profile, list_subscription_records, save_subscription_profile,
+    update_subscription_record,
 };
 pub use sync_settings::{
     get_sync_settings, save_sync_settings, set_last_scan_completed, set_last_scan_started,
@@ -42,11 +44,31 @@ pub fn open_connection(db_path: &Path) -> rusqlite::Result<Connection> {
 }
 
 pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
+    let had_subscription_records_table = table_exists(conn, "subscription_records")?;
     conn.execute_batch(include_str!("../sql/schema.sql"))?;
+    subscriptions::ensure_subscription_records_schema(conn)?;
     sync_settings::ensure_sync_settings_schema(conn)?;
     ensure_singletons(conn)?;
+    subscriptions::migrate_subscription_profile_to_subscription_record(
+        conn,
+        had_subscription_records_table,
+    )?;
     conn.execute_batch(include_str!("../sql/indexes.sql"))?;
     Ok(())
+}
+
+fn table_exists(conn: &Connection, table_name: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "
+        SELECT EXISTS(
+          SELECT 1
+          FROM sqlite_master
+          WHERE type = 'table' AND name = ?1
+        )
+        ",
+        params![table_name],
+        |row| row.get::<_, bool>(0),
+    )
 }
 
 fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {

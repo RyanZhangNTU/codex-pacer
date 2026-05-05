@@ -12,6 +12,7 @@ export type OverviewBucket =
 export type ShareMode = 'value' | 'tokens'
 export type ShareDimension = 'model' | 'composition'
 export type AppView = 'overview' | 'conversations'
+export type SubscriptionBillingMode = 'one_time' | 'monthly_recurring'
 export type MenuBarPopupModuleId =
   | 'api_value'
   | 'token_count'
@@ -53,6 +54,29 @@ export interface SubscriptionProfile {
   monthlyPrice: number
   billingAnchorDay: number
   updatedAt: string
+}
+
+export interface SubscriptionRecord {
+  id: number
+  paidAt: string
+  serviceStart: string
+  serviceEnd: string
+  amountUsd: number
+  billingMode: SubscriptionBillingMode
+  planType: string
+  note: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SubscriptionRecordInput {
+  paidAt: string
+  serviceStart: string
+  serviceEnd: string
+  amountUsd: number
+  billingMode: SubscriptionBillingMode
+  planType: string
+  note: string | null
 }
 
 export interface ScanResult {
@@ -191,6 +215,7 @@ export interface DashboardSnapshot {
   conversations: ConversationListItem[]
   syncSettings: SyncSettings
   subscriptionProfile: SubscriptionProfile
+  subscriptionRecords: SubscriptionRecord[]
   liveRateLimits: LiveRateLimitSnapshot | null
 }
 

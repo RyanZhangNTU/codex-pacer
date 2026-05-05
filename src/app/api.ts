@@ -9,8 +9,11 @@ import type {
   OverviewResponse,
   QuotaTrendPoint,
   SubscriptionProfile,
+  SubscriptionRecord,
+  SubscriptionRecordInput,
   SyncSettings,
 } from './types'
+import { todayLocalInputValue } from './subscriptionDates'
 
 function bucketUsesAnchor(bucket: OverviewBucket) {
   return !['five_hour', 'seven_day', 'custom', 'total'].includes(bucket)
@@ -59,6 +62,10 @@ function createMockSubscriptionProfile(): SubscriptionProfile {
   }
 }
 
+function createMockSubscriptionRecords(): SubscriptionRecord[] {
+  return []
+}
+
 function createMockLiveRateLimits(): LiveRateLimitSnapshot {
   return {
     limitId: null,
@@ -71,19 +78,15 @@ function createMockLiveRateLimits(): LiveRateLimitSnapshot {
 }
 
 function localDateStartIso(value: string | null | undefined) {
-  const fallback = todayInputValue()
+  const fallback = todayLocalInputValue()
   return new Date(`${value ?? fallback}T00:00:00`).toISOString()
 }
 
 function localDateExclusiveEndIso(value: string | null | undefined) {
-  const fallback = todayInputValue()
+  const fallback = todayLocalInputValue()
   const date = new Date(`${value ?? fallback}T00:00:00`)
   date.setDate(date.getDate() + 1)
   return date.toISOString()
-}
-
-function todayInputValue() {
-  return new Date().toISOString().slice(0, 10)
 }
 
 function createMockOverview(
@@ -260,6 +263,7 @@ export async function loadDashboard(
       conversations: [] as ConversationListItem[],
       syncSettings: createMockSyncSettings(),
       subscriptionProfile: createMockSubscriptionProfile(),
+      subscriptionRecords: createMockSubscriptionRecords(),
       liveRateLimits: createMockLiveRateLimits(),
     }),
   )
@@ -275,8 +279,9 @@ export async function getLiveRateLimits(): Promise<LiveRateLimitSnapshot> {
 
 export async function getConversationDetail(
   rootSessionId: string,
+  filters?: ConversationFilters | null,
 ): Promise<import('./types').ConversationDetail> {
-  return invokeOrMock('getConversationDetail', { rootSessionId }, () => {
+  return invokeOrMock('getConversationDetail', { rootSessionId, filters: filters ?? null }, () => {
     throw new Error(`Conversation ${rootSessionId} is unavailable in browser preview mode.`)
   })
 }
@@ -312,4 +317,30 @@ export async function updateSubscriptionProfile(payload: SubscriptionProfile) {
     ...payload,
     currency: 'USD',
   }))
+}
+
+export async function listSubscriptionRecords() {
+  return invokeOrMock('listSubscriptionRecords', {}, createMockSubscriptionRecords)
+}
+
+export async function createSubscriptionRecord(payload: SubscriptionRecordInput) {
+  return invokeOrMock('createSubscriptionRecord', { payload }, () => ({
+    id: Date.now(),
+    ...payload,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  }))
+}
+
+export async function updateSubscriptionRecord(id: number, payload: SubscriptionRecordInput) {
+  return invokeOrMock('updateSubscriptionRecord', { id, payload }, () => ({
+    id,
+    ...payload,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  }))
+}
+
+export async function deleteSubscriptionRecord(id: number) {
+  return invokeOrMock('deleteSubscriptionRecord', { id }, () => true)
 }

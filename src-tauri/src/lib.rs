@@ -16,15 +16,17 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use rusqlite::params;
 use database::{
-  canonical_subscription_currency, get_subscription_profile, get_sync_settings, init_db,
-  insert_live_rate_limit_snapshot, open_connection, save_subscription_profile, save_sync_settings,
+  canonical_subscription_currency, create_subscription_record, delete_subscription_record,
+  get_subscription_profile, get_sync_settings, init_db, insert_live_rate_limit_snapshot,
+  list_subscription_records, open_connection, save_subscription_profile, save_sync_settings,
+  update_subscription_record,
 };
 use importer::{perform_scan, recalculate_all_session_values};
 use models::{
   ConversationDetail, ConversationFilters, ConversationListItem, DashboardSnapshot,
   LiveRateLimitSnapshot, MenuBarPopupQuotaSnapshot, MenuBarPopupSnapshot,
   MenuBarPopupSuggestedSpeed, OverviewResponse, PricingCatalogEntry, RateLimitWindowSnapshot,
-  ScanResult, SubscriptionProfile, SyncSettings,
+  ScanResult, SubscriptionProfile, SubscriptionRecord, SubscriptionRecordInput, SyncSettings,
 };
 use pricing::{load_catalog, refresh_pricing_catalog_from_openai, seed_pricing_catalog};
 use queries::{get_conversation_detail, get_overview, get_quota_trend, list_conversations, load_dashboard_data};
@@ -204,6 +206,7 @@ async fn loadDashboard(
       conversations: snapshot.conversations,
       sync_settings,
       subscription_profile: snapshot.subscription_profile,
+      subscription_records: snapshot.subscription_records,
       live_rate_limits,
     })
   })
@@ -216,8 +219,14 @@ async fn loadDashboard(
 fn getConversationDetail(
   state: State<'_, AppState>,
   root_session_id: String,
+  filters: Option<ConversationFilters>,
 ) -> Result<ConversationDetail, String> {
-  get_conversation_detail(&state.db_path, &root_session_id)
+  let live_rate_limits = maybe_live_rate_limits_for_bucket(
+    state.inner(),
+    filters.as_ref().and_then(|value| value.bucket.as_deref()),
+    filters.as_ref().and_then(|value| value.live_window_offset),
+  )?;
+  get_conversation_detail(&state.db_path, &root_session_id, filters, live_rate_limits)
 }
 
 #[allow(non_snake_case)]
@@ -324,6 +333,41 @@ fn updateSubscriptionProfile(
     updated_at: payload.updated_at,
   };
   save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())
+}
+
+#[allow(non_snake_case)]
+#[tauri::command]
+fn listSubscriptionRecords(state: State<'_, AppState>) -> Result<Vec<SubscriptionRecord>, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  list_subscription_records(&conn).map_err(|error| error.to_string())
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn createSubscriptionRecord(
+  state: State<'_, AppState>,
+  payload: SubscriptionRecordInput,
+) -> Result<SubscriptionRecord, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  create_subscription_record(&conn, &payload)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn updateSubscriptionRecord(
+  state: State<'_, AppState>,
+  id: i64,
+  payload: SubscriptionRecordInput,
+) -> Result<SubscriptionRecord, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  update_subscription_record(&conn, id, &payload)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn deleteSubscriptionRecord(state: State<'_, AppState>, id: i64) -> Result<bool, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  delete_subscription_record(&conn, id)
 }
 
 fn run_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
@@ -1669,6 +1713,10 @@ pub fn run() {
       updateSyncSettings,
       getSubscriptionProfile,
       updateSubscriptionProfile,
+      listSubscriptionRecords,
+      createSubscriptionRecord,
+      updateSubscriptionRecord,
+      deleteSubscriptionRecord,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

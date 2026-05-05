@@ -13,12 +13,16 @@ import {
 } from 'lucide-react'
 
 import {
+  createSubscriptionRecord,
+  deleteSubscriptionRecord,
   getScanInProgress,
   getConversationDetail,
   getLiveRateLimits,
+  listSubscriptionRecords,
   loadDashboard,
   refreshPricing,
   scanCodexUsage,
+  updateSubscriptionRecord,
   updateSubscriptionProfile,
   updateSyncSettings,
 } from './app/api'
@@ -38,6 +42,7 @@ import type {
   AppView,
   CompositionShare,
   ConversationDetail,
+  ConversationFilters,
   ConversationListItem,
   ConversationSessionSummary,
   ConversationTurnPoint,
@@ -49,6 +54,8 @@ import type {
   ShareMode,
   ShareSlice,
   SubscriptionProfile,
+  SubscriptionRecord,
+  SubscriptionRecordInput,
   SyncSettings,
 } from './app/types'
 import { ModelShareChart } from './components/ModelShareChart'
@@ -89,6 +96,7 @@ function App() {
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [syncSettings, setSyncSettings] = useState<SyncSettings | null>(null)
   const [subscriptionProfile, setSubscriptionProfile] = useState<SubscriptionProfile | null>(null)
+  const [subscriptionRecords, setSubscriptionRecords] = useState<SubscriptionRecord[]>([])
   const [liveRateLimits, setLiveRateLimits] = useState<LiveRateLimitSnapshot | null>(null)
   const [loadedQueryKey, setLoadedQueryKey] = useState<string | null>(null)
   const [dashboardRevision, setDashboardRevision] = useState(0)
@@ -170,9 +178,14 @@ function App() {
       startTransition(() => {
         const nextDetailCache = new Map<string, ConversationDetail>()
         for (const conversation of snapshot.conversations) {
-          const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
+          const cachedDetail = detailCacheRef.current.get(
+            buildDetailCacheKey(conversation.rootSessionId, lastRequestedQueryKeyRef.current),
+          )
           if (cachedDetail && cachedDetail.updatedAt === conversation.updatedAt) {
-            nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+            nextDetailCache.set(
+              buildDetailCacheKey(conversation.rootSessionId, lastRequestedQueryKeyRef.current),
+              cachedDetail,
+            )
           }
         }
 
@@ -180,6 +193,7 @@ function App() {
         setConversations(snapshot.conversations)
         setSyncSettings(snapshot.syncSettings)
         setSubscriptionProfile(snapshot.subscriptionProfile)
+        setSubscriptionRecords(snapshot.subscriptionRecords)
         setLiveRateLimits(snapshot.liveRateLimits)
         detailCacheRef.current = nextDetailCache
         setDashboardRevision((current) => current + 1)
@@ -268,37 +282,49 @@ function App() {
     void emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_LANGUAGE_EVENT, { language }).catch(() => {})
   }, [language])
 
-  const loadDetail = useCallback(async (rootSessionId: string | null) => {
-    const requestId = latestDetailRequestIdRef.current + 1
-    latestDetailRequestIdRef.current = requestId
-    if (!rootSessionId) {
+  const loadDetail = useCallback(
+    async (rootSessionId: string | null) => {
+      const requestId = latestDetailRequestIdRef.current + 1
+      latestDetailRequestIdRef.current = requestId
+      if (!rootSessionId) {
+        setDetail(null)
+        return
+      }
+
+      const filters = buildConversationFilters(
+        bucket,
+        anchor,
+        customStart,
+        customEnd,
+        deferredSearch || null,
+        liveWindowOffset,
+      )
+      const cacheKey = buildDetailCacheKey(rootSessionId, currentQueryKey)
+      const cachedDetail = detailCacheRef.current.get(cacheKey)
+      if (cachedDetail) {
+        setDetail(cachedDetail)
+        return
+      }
+
       setDetail(null)
-      return
-    }
-
-    const cachedDetail = detailCacheRef.current.get(rootSessionId)
-    if (cachedDetail) {
-      setDetail(cachedDetail)
-      return
-    }
-
-    setDetail(null)
-    try {
-      const nextDetail = await getConversationDetail(rootSessionId)
-      if (requestId !== latestDetailRequestIdRef.current) {
-        return
+      try {
+        const nextDetail = await getConversationDetail(rootSessionId, filters)
+        if (requestId !== latestDetailRequestIdRef.current) {
+          return
+        }
+        detailCacheRef.current.set(cacheKey, nextDetail)
+        startTransition(() => {
+          setDetail(nextDetail)
+        })
+      } catch (error) {
+        if (requestId !== latestDetailRequestIdRef.current) {
+          return
+        }
+        setStatusMessage(String(error))
       }
-      detailCacheRef.current.set(rootSessionId, nextDetail)
-      startTransition(() => {
-        setDetail(nextDetail)
-      })
-    } catch (error) {
-      if (requestId !== latestDetailRequestIdRef.current) {
-        return
-      }
-      setStatusMessage(String(error))
-    }
-  }, [])
+    },
+    [anchor, bucket, currentQueryKey, customEnd, customStart, deferredSearch, liveWindowOffset],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -394,6 +420,32 @@ function App() {
       await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
     }
     setStatusMessage(t.status.settingsSaved)
+  }
+
+  async function handleSaveSubscriptionRecord(payload: SubscriptionRecordInput, id?: number | null) {
+    if (id) {
+      await updateSubscriptionRecord(id, payload)
+    } else {
+      await createSubscriptionRecord(payload)
+    }
+    const nextRecords = await listSubscriptionRecords()
+    setSubscriptionRecords(nextRecords)
+    await loadShell(false)
+    if (isTauri()) {
+      await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
+    }
+    setStatusMessage(t.status.subscriptionRecordSaved)
+  }
+
+  async function handleDeleteSubscriptionRecord(id: number) {
+    await deleteSubscriptionRecord(id)
+    const nextRecords = await listSubscriptionRecords()
+    setSubscriptionRecords(nextRecords)
+    await loadShell(false)
+    if (isTauri()) {
+      await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
+    }
+    setStatusMessage(t.status.subscriptionRecordDeleted)
   }
 
   const snapshotIsCurrent = loadedQueryKey === currentQueryKey
@@ -670,12 +722,9 @@ function App() {
                       tone="secondary"
                       value={formatUsd(activeOverview?.stats.subscriptionCostUsd ?? 0, language)}
                       note={
-                        subscriptionProfile
-                          ? t.metrics.planPerMonth(
-                              subscriptionProfile.planType,
-                              formatUsd(subscriptionProfile.monthlyPrice, language),
-                            )
-                          : undefined
+                        subscriptionRecords.length > 0
+                          ? t.metrics.subscriptionLedgerNote(subscriptionRecords.length)
+                          : t.metrics.noSubscriptionRecords
                       }
                     />
                     <MetricCard
@@ -900,9 +949,12 @@ function App() {
         language={language}
         liveRateLimits={liveRateLimits}
         onClose={() => setSettingsOpen(false)}
+        onDeleteSubscriptionRecord={handleDeleteSubscriptionRecord}
         onLanguageChange={setLanguage}
         onSave={handleSaveSettings}
+        onSaveSubscriptionRecord={handleSaveSubscriptionRecord}
         subscriptionProfile={subscriptionProfile}
+        subscriptionRecords={subscriptionRecords}
         syncSettings={syncSettings}
       />
     </div>
@@ -962,6 +1014,24 @@ function bucketUsesAnchor(bucket: OverviewBucket) {
   return !['five_hour', 'seven_day', 'custom', 'total'].includes(bucket)
 }
 
+function buildConversationFilters(
+  bucket: OverviewBucket,
+  anchor: string,
+  customStart: string,
+  customEnd: string,
+  search: string | null,
+  liveWindowOffset: number,
+): ConversationFilters {
+  return {
+    bucket,
+    anchor: bucketUsesAnchor(bucket) ? anchor : null,
+    customStart: bucket === 'custom' ? customStart : null,
+    customEnd: bucket === 'custom' ? customEnd : null,
+    search,
+    liveWindowOffset: bucket === 'five_hour' || bucket === 'seven_day' ? liveWindowOffset : 0,
+  }
+}
+
 function buildQueryKey(
   bucket: OverviewBucket,
   anchor: string | null,
@@ -971,6 +1041,10 @@ function buildQueryKey(
   liveWindowOffset: number,
 ) {
   return [bucket, anchor ?? '', customStart ?? '', customEnd ?? '', search ?? '', String(liveWindowOffset)].join('::')
+}
+
+function buildDetailCacheKey(rootSessionId: string, queryKey: string | null) {
+  return `${queryKey ?? 'unloaded'}::${rootSessionId}`
 }
 
 function formatCustomRangeLabel(windowStart: string | null, windowEnd: string | null, language: 'zh-CN' | 'en') {
