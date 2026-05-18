@@ -110,6 +110,7 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
 
   let mut topology_dirty = false;
   let mut new_root_session_ids = Vec::new();
+  let mut skipped_token_repair_file = false;
   if !changed_files.is_empty() {
     let titles = load_session_index(&codex_home);
     let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
@@ -124,6 +125,9 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
             session_file.path.display(),
             error
           );
+          if needs_token_usage_repair {
+            skipped_token_repair_file = true;
+          }
           continue;
         }
       };
@@ -165,7 +169,7 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
     .map_err(|error| error.to_string())? as usize;
 
   let completed_at = now_utc_string();
-  if needs_token_usage_repair {
+  if needs_token_usage_repair && !skipped_token_repair_file {
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
@@ -1821,6 +1825,79 @@ mod tests {
       .optional()
       .expect("query data repair marker");
     assert!(repair_completed.is_some());
+  }
+
+  #[test]
+  fn scan_defers_token_repair_marker_when_any_session_file_is_skipped() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "36363636-3636-3636-3636-363636363636";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-05-18T14:42:17Z", 800, 100, 100, 1000),
+        ("2026-05-18T14:42:28Z", 880, 110, 110, 1100),
+        ("2026-05-18T14:42:39Z", 840, 105, 105, 1050),
+        ("2026-05-18T14:42:50Z", 960, 120, 120, 1200),
+      ],
+    );
+    std::fs::write(sessions_dir.join("unparseable.jsonl"), "not json\n").expect("write bad session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open db");
+    init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES (?1, ?1, NULL, NULL, 'active', ?2, 'active', NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?3, ?3)
+        ",
+        params![session_id, session_path.to_string_lossy().to_string(), now_utc_string()],
+      )
+      .expect("insert existing session");
+    for (input_tokens, cached_input_tokens, output_tokens, total_tokens) in [
+      (800, 100, 100, 1000),
+      (80, 10, 10, 100),
+      (840, 105, 105, 1050),
+      (120, 15, 15, 150),
+    ] {
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+            reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-05-18T14:42:50Z', 'gpt-5.4', ?2, ?3, ?4, 0, ?5, 0.0, 0, 0)
+          ",
+          params![session_id, input_tokens, cached_input_tokens, output_tokens, total_tokens],
+        )
+        .expect("insert stale usage event");
+    }
+    drop(conn);
+
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id), (960, 120, 120, 1200, 3));
+    let repair_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = ?1",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query data repair marker");
+    assert!(repair_completed.is_none());
   }
 
   #[test]
