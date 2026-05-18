@@ -138,10 +138,6 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
           continue;
         }
       };
-      if file_needs_token_repair {
-        clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
-          .map_err(|error| error.to_string())?;
-      }
       imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
       match classify_topology_maintenance(
@@ -159,6 +155,10 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
       }
 
       persist_session(&mut conn, session_file, &parsed, &catalog).map_err(|error| error.to_string())?;
+      if file_needs_token_repair {
+        clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
+          .map_err(|error| error.to_string())?;
+      }
       changed_sessions += 1;
     }
   }
@@ -1992,6 +1992,77 @@ mod tests {
 
     let result = perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("rescan");
     assert_eq!(result.updated_sessions, 0);
+  }
+
+  #[test]
+  fn scan_keeps_pending_token_repair_file_when_persistence_fails() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "37373737-3737-3737-3737-373737373737";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-05-18T14:42:17Z", 800, 100, 100, 1000)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open db");
+    init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repairs (repair_key, completed_at)
+        VALUES (?1, ?2)
+        ",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY, now_utc_string()],
+      )
+      .expect("insert repair marker");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+        VALUES (?1, ?2, 'previous parse error', ?3)
+        ",
+        params![
+          TOKEN_USAGE_MONOTONIC_REPAIR_KEY,
+          session_path.to_string_lossy().to_string(),
+          now_utc_string(),
+        ],
+      )
+      .expect("insert pending file");
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_usage_event_insert
+        BEFORE INSERT ON usage_events
+        BEGIN
+          SELECT RAISE(ABORT, 'forced usage insert failure');
+        END;
+        ",
+      )
+      .expect("create failing trigger");
+    drop(conn);
+
+    let error = perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect_err("scan should fail while persisting pending repair file");
+    assert!(error.contains("forced usage insert failure"));
+
+    let conn = open_connection(&db_path).expect("open db");
+    let pending_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1 AND source_path = ?2",
+        params![
+          TOKEN_USAGE_MONOTONIC_REPAIR_KEY,
+          session_path.to_string_lossy().to_string(),
+        ],
+        |row| row.get(0),
+      )
+      .expect("query pending file count");
+    assert_eq!(pending_count, 1);
   }
 
   #[test]
