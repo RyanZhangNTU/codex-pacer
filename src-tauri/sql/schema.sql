@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS import_state (
   last_imported_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS data_repairs (
+  repair_key TEXT PRIMARY KEY,
+  completed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS rate_limit_samples (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_kind TEXT NOT NULL,
