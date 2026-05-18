@@ -80,19 +80,23 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
 
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
-  let needs_token_usage_repair =
+  let needs_token_usage_repair_sweep =
     data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let pending_token_repair_paths =
+    load_pending_data_repair_paths(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
 
   let mut changed_sessions = 0usize;
   let mut imported_session_ids = HashSet::new();
 
   let mut changed_files = Vec::new();
   for session_file in &session_files {
-    if needs_rate_limit_backfill || needs_token_usage_repair {
+    let source_path = session_file.path.to_string_lossy().to_string();
+    if needs_rate_limit_backfill || needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path)
+    {
       changed_files.push(session_file);
       continue;
     }
-    if let Some(state) = import_state.get(&session_file.path.to_string_lossy().to_string()) {
+    if let Some(state) = import_state.get(&source_path) {
       let session_id_mismatch = import_state_session_id_mismatch(state, session_file);
       if state.file_size == session_file.file_size
         && state.file_mtime_ms == session_file.file_mtime_ms
@@ -110,13 +114,15 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
 
   let mut topology_dirty = false;
   let mut new_root_session_ids = Vec::new();
-  let mut skipped_token_repair_file = false;
   if !changed_files.is_empty() {
     let titles = load_session_index(&codex_home);
     let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
     let existing_relations = load_existing_session_relations(&conn).map_err(|error| error.to_string())?;
 
     for session_file in changed_files {
+      let source_path = session_file.path.to_string_lossy().to_string();
+      let file_needs_token_repair =
+        needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path);
       let parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
         Err(error) => {
@@ -125,12 +131,17 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
             session_file.path.display(),
             error
           );
-          if needs_token_usage_repair {
-            skipped_token_repair_file = true;
+          if file_needs_token_repair {
+            mark_data_repair_file_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path, &error)
+              .map_err(|error| error.to_string())?;
           }
           continue;
         }
       };
+      if file_needs_token_repair {
+        clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
+          .map_err(|error| error.to_string())?;
+      }
       imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
       match classify_topology_maintenance(
@@ -169,7 +180,7 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
     .map_err(|error| error.to_string())? as usize;
 
   let completed_at = now_utc_string();
-  if needs_token_usage_repair && !skipped_token_repair_file {
+  if needs_token_usage_repair_sweep {
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
@@ -941,6 +952,53 @@ fn mark_data_repair_complete(conn: &Connection, repair_key: &str, completed_at: 
     ON CONFLICT(repair_key) DO UPDATE SET completed_at = excluded.completed_at
     ",
     params![repair_key, completed_at],
+  )?;
+  Ok(())
+}
+
+fn load_pending_data_repair_paths(conn: &Connection, repair_key: &str) -> rusqlite::Result<HashSet<String>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT source_path
+    FROM data_repair_pending_files
+    WHERE repair_key = ?1
+    ",
+  )?;
+  let rows = stmt.query_map(params![repair_key], |row| row.get::<_, String>(0))?;
+
+  let mut paths = HashSet::new();
+  for row in rows {
+    paths.insert(row?);
+  }
+  Ok(paths)
+}
+
+fn mark_data_repair_file_pending(
+  conn: &Connection,
+  repair_key: &str,
+  source_path: &str,
+  last_error: &str,
+) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+    VALUES (?1, ?2, ?3, ?4)
+    ON CONFLICT(repair_key, source_path) DO UPDATE SET
+      last_error = excluded.last_error,
+      updated_at = excluded.updated_at
+    ",
+    params![repair_key, source_path, last_error, now_utc_string()],
+  )?;
+  Ok(())
+}
+
+fn clear_pending_data_repair_file(conn: &Connection, repair_key: &str, source_path: &str) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    DELETE FROM data_repair_pending_files
+    WHERE repair_key = ?1 AND source_path = ?2
+    ",
+    params![repair_key, source_path],
   )?;
   Ok(())
 }
@@ -1828,7 +1886,7 @@ mod tests {
   }
 
   #[test]
-  fn scan_defers_token_repair_marker_when_any_session_file_is_skipped() {
+  fn scan_tracks_skipped_token_repair_files_without_reimporting_everything() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
@@ -1851,6 +1909,18 @@ mod tests {
     let db_path = directory.path().join("usage.sqlite");
     let conn = open_connection(&db_path).expect("open db");
     init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp, limit_id, limit_name,
+          plan_type, window_start, resets_at, used_percent, remaining_percent, created_at
+        )
+        VALUES ('session', 'seed', 'five_hour', ?1, '', '', '', ?1, ?1, 0, 100, ?1)
+        ",
+        params![now_utc_string()],
+      )
+      .expect("insert rate limit backfill sentinel");
     conn
       .execute(
         "
@@ -1897,7 +1967,31 @@ mod tests {
       )
       .optional()
       .expect("query data repair marker");
-    assert!(repair_completed.is_none());
+    assert!(repair_completed.is_some());
+    let pending_path: Option<String> = conn
+      .query_row(
+        "SELECT source_path FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query pending repair file");
+    assert_eq!(
+      pending_path.as_deref(),
+      Some(sessions_dir.join("unparseable.jsonl").to_string_lossy().as_ref())
+    );
+    let session_rate_sample_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM rate_limit_samples WHERE source_kind = 'session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("query session rate sample count");
+    assert!(session_rate_sample_count > 0);
+    drop(conn);
+
+    let result = perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("rescan");
+    assert_eq!(result.updated_sessions, 0);
   }
 
   #[test]
