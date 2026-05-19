@@ -22,6 +22,13 @@ use crate::pricing::{
   resolve_pricing,
 };
 
+const SQL_SESSIONS: &str = include_str!("../sql/queries/sessions.sql");
+const SQL_SESSIONS_FOR_ROOT: &str = include_str!("../sql/queries/sessions_for_root.sql");
+const SQL_USAGE_EVENTS: &str = include_str!("../sql/queries/usage_events.sql");
+const SQL_USAGE_EVENTS_FOR_ROOT: &str = include_str!("../sql/queries/usage_events_for_root.sql");
+const SQL_RATE_LIMIT_WINDOWS: &str = include_str!("../sql/queries/rate_limit_windows.sql");
+const SQL_QUOTA_SAMPLES: &str = include_str!("../sql/queries/quota_samples.sql");
+
 #[derive(Debug, Clone)]
 struct SessionRow {
   session_id: String,
@@ -737,6 +744,9 @@ fn build_turns_for_session(
             }
 
             let delta = if let Some(previous) = previous_usage.as_ref() {
+              if usage.total_tokens <= previous.total_tokens {
+                continue;
+              }
               diff_usage(previous, &usage)
             } else {
               usage.clone()
@@ -984,22 +994,21 @@ fn compact_text_preview(value: &str) -> Option<String> {
 }
 
 fn diff_usage(previous: &TokenUsage, current: &TokenUsage) -> TokenUsage {
-  if current.input_tokens < previous.input_tokens
-    || current.cached_input_tokens < previous.cached_input_tokens
-    || current.output_tokens < previous.output_tokens
-    || current.reasoning_output_tokens < previous.reasoning_output_tokens
-    || current.total_tokens < previous.total_tokens
-  {
-    return current.clone();
+  if current.total_tokens <= previous.total_tokens {
+    return TokenUsage::default();
   }
 
   TokenUsage {
-    input_tokens: current.input_tokens - previous.input_tokens,
-    cached_input_tokens: current.cached_input_tokens - previous.cached_input_tokens,
-    output_tokens: current.output_tokens - previous.output_tokens,
-    reasoning_output_tokens: current.reasoning_output_tokens - previous.reasoning_output_tokens,
+    input_tokens: non_negative_delta(current.input_tokens, previous.input_tokens),
+    cached_input_tokens: non_negative_delta(current.cached_input_tokens, previous.cached_input_tokens),
+    output_tokens: non_negative_delta(current.output_tokens, previous.output_tokens),
+    reasoning_output_tokens: non_negative_delta(current.reasoning_output_tokens, previous.reasoning_output_tokens),
     total_tokens: current.total_tokens - previous.total_tokens,
   }
+}
+
+fn non_negative_delta(current: i64, previous: i64) -> i64 {
+  current.saturating_sub(previous).max(0)
 }
 
 fn is_zero_delta(delta: &TokenUsage) -> bool {
@@ -1059,13 +1068,7 @@ fn build_composition_breakdown(
 }
 
 fn load_sessions(conn: &Connection) -> rusqlite::Result<HashMap<String, SessionRow>> {
-  let mut stmt = conn.prepare(
-    "
-    SELECT session_id, root_session_id, parent_session_id, title, source_state, source_path,
-           started_at, updated_at, agent_nickname, agent_role
-    FROM sessions
-    ",
-  )?;
+  let mut stmt = conn.prepare(SQL_SESSIONS)?;
   let rows = stmt.query_map([], |row| {
     Ok(SessionRow {
       session_id: row.get(0)?,
@@ -1093,14 +1096,7 @@ fn load_sessions_for_root_session(
   conn: &Connection,
   root_session_id: &str,
 ) -> rusqlite::Result<HashMap<String, SessionRow>> {
-  let mut stmt = conn.prepare(
-    "
-    SELECT session_id, root_session_id, parent_session_id, title, source_state, source_path,
-           started_at, updated_at, agent_nickname, agent_role
-    FROM sessions
-    WHERE root_session_id = ?1
-    ",
-  )?;
+  let mut stmt = conn.prepare(SQL_SESSIONS_FOR_ROOT)?;
   let rows = stmt.query_map([root_session_id], |row| {
     Ok(SessionRow {
       session_id: row.get(0)?,
@@ -1125,15 +1121,7 @@ fn load_sessions_for_root_session(
 }
 
 fn load_events(conn: &Connection) -> rusqlite::Result<Vec<EventRow>> {
-  let mut stmt = conn.prepare(
-    "
-    SELECT session_id, timestamp, model_id, input_tokens, cached_input_tokens,
-           output_tokens, reasoning_output_tokens, total_tokens, value_usd,
-           fast_mode_auto, fast_mode_effective
-    FROM usage_events
-    ORDER BY timestamp ASC, id ASC
-    ",
-  )?;
+  let mut stmt = conn.prepare(SQL_USAGE_EVENTS)?;
   let rows = stmt.query_map([], |row| {
     Ok(EventRow {
       session_id: row.get(0)?,
@@ -1154,19 +1142,7 @@ fn load_events(conn: &Connection) -> rusqlite::Result<Vec<EventRow>> {
 }
 
 fn load_events_for_root_session(conn: &Connection, root_session_id: &str) -> rusqlite::Result<Vec<EventRow>> {
-  let mut stmt = conn.prepare(
-    "
-    SELECT usage_events.session_id, usage_events.timestamp, usage_events.model_id,
-           usage_events.input_tokens, usage_events.cached_input_tokens,
-           usage_events.output_tokens, usage_events.reasoning_output_tokens,
-           usage_events.total_tokens, usage_events.value_usd,
-           usage_events.fast_mode_auto, usage_events.fast_mode_effective
-    FROM usage_events
-    INNER JOIN sessions ON sessions.session_id = usage_events.session_id
-    WHERE sessions.root_session_id = ?1
-    ORDER BY usage_events.timestamp ASC, usage_events.id ASC
-    ",
-  )?;
+  let mut stmt = conn.prepare(SQL_USAGE_EVENTS_FOR_ROOT)?;
   let rows = stmt.query_map([root_session_id], |row| {
     Ok(EventRow {
       session_id: row.get(0)?,
@@ -1340,15 +1316,7 @@ fn load_live_rate_limit_windows(
   bucket: &str,
   current_window: Option<RateLimitWindowSummary>,
 ) -> rusqlite::Result<Vec<RateLimitWindowSummary>> {
-  let mut stmt = conn.prepare(
-    "
-    SELECT window_start, resets_at
-    FROM rate_limit_samples
-    WHERE bucket = ?1
-    GROUP BY window_start, resets_at
-    ORDER BY window_start DESC, resets_at DESC
-    ",
-  )?;
+  let mut stmt = conn.prepare(SQL_RATE_LIMIT_WINDOWS)?;
   let rows = stmt.query_map(rusqlite::params![bucket], |row| {
     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
   })?;
@@ -1620,14 +1588,7 @@ fn live_sample(live_rate_limits: &LiveRateLimitSnapshot, bucket: &str) -> Option
 }
 
 fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
-  let mut stmt = match conn.prepare(
-    "
-    SELECT sample_timestamp, used_percent, window_start, resets_at
-    FROM rate_limit_samples
-    WHERE bucket = ?1
-    ORDER BY sample_timestamp ASC
-    ",
-  ) {
+  let mut stmt = match conn.prepare(SQL_QUOTA_SAMPLES) {
     Ok(stmt) => stmt,
     Err(_) => return Vec::new(),
   };
@@ -1921,6 +1882,51 @@ mod tests {
     assert_eq!(turns[0].cached_input_tokens, 40);
     assert_eq!(turns[0].output_tokens, 50);
     assert_eq!(turns[0].status, "completed");
+  }
+
+  #[test]
+  fn ignores_non_monotonic_token_snapshots_in_turn_totals() {
+    let directory = tempdir().expect("tempdir");
+    let path = directory.path().join("session.jsonl");
+    std::fs::write(
+      &path,
+      concat!(
+        "{\"timestamp\":\"2026-05-18T14:42:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-rollback\"}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"investigate tokens\"}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:02Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:17Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":800,\"cached_input_tokens\":100,\"output_tokens\":100,\"reasoning_output_tokens\":0,\"total_tokens\":1000}}}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:28Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":880,\"cached_input_tokens\":110,\"output_tokens\":110,\"reasoning_output_tokens\":0,\"total_tokens\":1100}}}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:39Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":840,\"cached_input_tokens\":105,\"output_tokens\":105,\"reasoning_output_tokens\":0,\"total_tokens\":1050}}}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:50Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":960,\"cached_input_tokens\":120,\"output_tokens\":120,\"reasoning_output_tokens\":0,\"total_tokens\":1200}}}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:55Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"done\",\"phase\":\"final_answer\"}}\n",
+        "{\"timestamp\":\"2026-05-18T14:42:56Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-rollback\"}}\n"
+      ),
+    )
+    .expect("write sample");
+
+    let turns = build_turns_for_session(
+      &SessionRow {
+        session_id: "session-rollback".to_string(),
+        root_session_id: "session-rollback".to_string(),
+        parent_session_id: None,
+        title: String::new(),
+        source_state: "active".to_string(),
+        source_path: Some(path.to_string_lossy().to_string()),
+        started_at: None,
+        updated_at: None,
+        agent_nickname: None,
+        agent_role: None,
+      },
+      &HashMap::new(),
+    )
+    .expect("build turns");
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].turn_id, "turn-rollback");
+    assert_eq!(turns[0].input_tokens, 960);
+    assert_eq!(turns[0].cached_input_tokens, 120);
+    assert_eq!(turns[0].output_tokens, 120);
+    assert_eq!(turns[0].total_tokens, 1200);
   }
 
   #[test]
