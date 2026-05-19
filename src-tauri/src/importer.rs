@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use chrono::{Local, LocalResult, TimeZone, Timelike};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use walkdir::WalkDir;
 
@@ -61,6 +61,8 @@ enum SessionParseError {
   Fatal(String),
 }
 
+const TOKEN_USAGE_MONOTONIC_REPAIR_KEY: &str = "token_usage_monotonic_v2";
+
 pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Result<ScanResult, String> {
   let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
@@ -78,17 +80,23 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
 
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
+  let needs_token_usage_repair_sweep =
+    data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let pending_token_repair_paths =
+    load_pending_data_repair_paths(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
 
   let mut changed_sessions = 0usize;
   let mut imported_session_ids = HashSet::new();
 
   let mut changed_files = Vec::new();
   for session_file in &session_files {
-    if needs_rate_limit_backfill {
+    let source_path = session_file.path.to_string_lossy().to_string();
+    if needs_rate_limit_backfill || needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path)
+    {
       changed_files.push(session_file);
       continue;
     }
-    if let Some(state) = import_state.get(&session_file.path.to_string_lossy().to_string()) {
+    if let Some(state) = import_state.get(&source_path) {
       let session_id_mismatch = import_state_session_id_mismatch(state, session_file);
       if state.file_size == session_file.file_size
         && state.file_mtime_ms == session_file.file_mtime_ms
@@ -112,6 +120,9 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
     let existing_relations = load_existing_session_relations(&conn).map_err(|error| error.to_string())?;
 
     for session_file in changed_files {
+      let source_path = session_file.path.to_string_lossy().to_string();
+      let file_needs_token_repair =
+        needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path);
       let parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
         Err(error) => {
@@ -120,6 +131,10 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
             session_file.path.display(),
             error
           );
+          if file_needs_token_repair {
+            mark_data_repair_file_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path, &error)
+              .map_err(|error| error.to_string())?;
+          }
           continue;
         }
       };
@@ -140,6 +155,10 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
       }
 
       persist_session(&mut conn, session_file, &parsed, &catalog).map_err(|error| error.to_string())?;
+      if file_needs_token_repair {
+        clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
+          .map_err(|error| error.to_string())?;
+      }
       changed_sessions += 1;
     }
   }
@@ -161,6 +180,10 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
     .map_err(|error| error.to_string())? as usize;
 
   let completed_at = now_utc_string();
+  if needs_token_usage_repair_sweep {
+    mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
+      .map_err(|error| error.to_string())?;
+  }
   set_last_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
 
   Ok(ScanResult {
@@ -693,6 +716,9 @@ fn persist_session(
     }
 
     let delta = if let Some(previous) = previous_usage.as_ref() {
+      if snapshot.usage.total_tokens <= previous.total_tokens {
+        continue;
+      }
       diff_usage(previous, &snapshot.usage)
     } else {
       snapshot.usage.clone()
@@ -767,22 +793,21 @@ fn persist_session(
 }
 
 fn diff_usage(previous: &TokenUsage, current: &TokenUsage) -> TokenUsage {
-  if current.input_tokens < previous.input_tokens
-    || current.cached_input_tokens < previous.cached_input_tokens
-    || current.output_tokens < previous.output_tokens
-    || current.reasoning_output_tokens < previous.reasoning_output_tokens
-    || current.total_tokens < previous.total_tokens
-  {
-    return current.clone();
+  if current.total_tokens <= previous.total_tokens {
+    return TokenUsage::default();
   }
 
   TokenUsage {
-    input_tokens: current.input_tokens - previous.input_tokens,
-    cached_input_tokens: current.cached_input_tokens - previous.cached_input_tokens,
-    output_tokens: current.output_tokens - previous.output_tokens,
-    reasoning_output_tokens: current.reasoning_output_tokens - previous.reasoning_output_tokens,
+    input_tokens: non_negative_delta(current.input_tokens, previous.input_tokens),
+    cached_input_tokens: non_negative_delta(current.cached_input_tokens, previous.cached_input_tokens),
+    output_tokens: non_negative_delta(current.output_tokens, previous.output_tokens),
+    reasoning_output_tokens: non_negative_delta(current.reasoning_output_tokens, previous.reasoning_output_tokens),
     total_tokens: current.total_tokens - previous.total_tokens,
   }
+}
+
+fn non_negative_delta(current: i64, previous: i64) -> i64 {
+  current.saturating_sub(previous).max(0)
 }
 
 fn is_zero_delta(delta: &TokenUsage) -> bool {
@@ -906,6 +931,76 @@ fn needs_rate_limit_sample_backfill(conn: &Connection) -> rusqlite::Result<bool>
     |row| row.get::<_, i64>(0),
   )?;
   Ok(count == 0)
+}
+
+fn data_repair_is_pending(conn: &Connection, repair_key: &str) -> rusqlite::Result<bool> {
+  let completed = conn
+    .query_row(
+      "SELECT 1 FROM data_repairs WHERE repair_key = ?1",
+      params![repair_key],
+      |row| row.get::<_, i64>(0),
+    )
+    .optional()?;
+  Ok(completed.is_none())
+}
+
+fn mark_data_repair_complete(conn: &Connection, repair_key: &str, completed_at: &str) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    INSERT INTO data_repairs (repair_key, completed_at)
+    VALUES (?1, ?2)
+    ON CONFLICT(repair_key) DO UPDATE SET completed_at = excluded.completed_at
+    ",
+    params![repair_key, completed_at],
+  )?;
+  Ok(())
+}
+
+fn load_pending_data_repair_paths(conn: &Connection, repair_key: &str) -> rusqlite::Result<HashSet<String>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT source_path
+    FROM data_repair_pending_files
+    WHERE repair_key = ?1
+    ",
+  )?;
+  let rows = stmt.query_map(params![repair_key], |row| row.get::<_, String>(0))?;
+
+  let mut paths = HashSet::new();
+  for row in rows {
+    paths.insert(row?);
+  }
+  Ok(paths)
+}
+
+fn mark_data_repair_file_pending(
+  conn: &Connection,
+  repair_key: &str,
+  source_path: &str,
+  last_error: &str,
+) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+    VALUES (?1, ?2, ?3, ?4)
+    ON CONFLICT(repair_key, source_path) DO UPDATE SET
+      last_error = excluded.last_error,
+      updated_at = excluded.updated_at
+    ",
+    params![repair_key, source_path, last_error, now_utc_string()],
+  )?;
+  Ok(())
+}
+
+fn clear_pending_data_repair_file(conn: &Connection, repair_key: &str, source_path: &str) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    DELETE FROM data_repair_pending_files
+    WHERE repair_key = ?1 AND source_path = ?2
+    ",
+    params![repair_key, source_path],
+  )?;
+  Ok(())
 }
 
 fn load_existing_session_relations(conn: &Connection) -> rusqlite::Result<HashMap<String, ExistingSessionRelation>> {
@@ -1091,7 +1186,7 @@ mod tests {
   use tempfile::tempdir;
 
   #[test]
-  fn diff_usage_handles_resets_and_growth() {
+  fn diff_usage_handles_growth_and_component_rollbacks() {
     let previous = TokenUsage {
       input_tokens: 10,
       cached_input_tokens: 2,
@@ -1113,15 +1208,39 @@ mod tests {
     assert_eq!(delta.reasoning_output_tokens, 1);
     assert_eq!(delta.total_tokens, 12);
 
-    let reset = TokenUsage {
-      input_tokens: 4,
-      cached_input_tokens: 1,
-      output_tokens: 2,
-      reasoning_output_tokens: 0,
-      total_tokens: 6,
+    let component_rollback = TokenUsage {
+      input_tokens: 28,
+      cached_input_tokens: 3,
+      output_tokens: 12,
+      reasoning_output_tokens: 1,
+      total_tokens: 40,
     };
-    let delta = diff_usage(&current, &reset);
-    assert_eq!(delta, reset);
+    let delta = diff_usage(&current, &component_rollback);
+    assert_eq!(delta.input_tokens, 10);
+    assert_eq!(delta.cached_input_tokens, 0);
+    assert_eq!(delta.output_tokens, 5);
+    assert_eq!(delta.reasoning_output_tokens, 0);
+    assert_eq!(delta.total_tokens, 15);
+  }
+
+  #[test]
+  fn diff_usage_ignores_non_monotonic_replayed_totals() {
+    let previous = TokenUsage {
+      input_tokens: 18,
+      cached_input_tokens: 5,
+      output_tokens: 7,
+      reasoning_output_tokens: 2,
+      total_tokens: 25,
+    };
+    let replayed = TokenUsage {
+      input_tokens: 17,
+      cached_input_tokens: 4,
+      output_tokens: 6,
+      reasoning_output_tokens: 1,
+      total_tokens: 24,
+    };
+    let delta = diff_usage(&previous, &replayed);
+    assert!(is_zero_delta(&delta));
   }
 
   #[test]
@@ -1640,6 +1759,310 @@ mod tests {
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(session_usage_totals(&conn, session_id), (180, 40, 45, 225, 2));
     assert_eq!(session_source_state(&conn, session_id), Some("active".to_string()));
+  }
+
+  #[test]
+  fn non_monotonic_token_snapshots_do_not_rebill_replayed_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "34343434-3434-3434-3434-343434343434";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-05-18T14:42:17Z", 800, 100, 100, 1000),
+        ("2026-05-18T14:42:28Z", 880, 110, 110, 1100),
+        ("2026-05-18T14:42:39Z", 840, 105, 105, 1050),
+        ("2026-05-18T14:42:50Z", 960, 120, 120, 1200),
+      ],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id), (960, 120, 120, 1200, 3));
+  }
+
+  #[test]
+  fn scan_repairs_existing_overcounted_usage_when_source_metadata_is_unchanged() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "35353535-3535-3535-3535-353535353535";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-05-18T14:42:17Z", 800, 100, 100, 1000),
+        ("2026-05-18T14:42:28Z", 880, 110, 110, 1100),
+        ("2026-05-18T14:42:39Z", 840, 105, 105, 1050),
+        ("2026-05-18T14:42:50Z", 960, 120, 120, 1200),
+      ],
+    );
+    let metadata = std::fs::metadata(&session_path).expect("metadata");
+    let file_size = metadata.len() as i64;
+    let file_mtime_ms = metadata
+      .modified()
+      .ok()
+      .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+      .map(|duration| duration.as_millis() as i64)
+      .unwrap_or_default();
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open db");
+    init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES (?1, ?1, NULL, NULL, 'active', ?2, 'active', NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?3, ?3)
+        ",
+        params![session_id, session_path.to_string_lossy().to_string(), now_utc_string()],
+      )
+      .expect("insert existing session");
+    conn
+      .execute(
+        "
+        INSERT INTO import_state (source_path, session_id, source_bucket, file_size, file_mtime_ms, last_imported_at)
+        VALUES (?1, ?2, 'active', ?3, ?4, ?5)
+        ",
+        params![
+          session_path.to_string_lossy().to_string(),
+          session_id,
+          file_size,
+          file_mtime_ms,
+          now_utc_string(),
+        ],
+      )
+      .expect("insert matching import state");
+    for (input_tokens, cached_input_tokens, output_tokens, total_tokens) in [
+      (800, 100, 100, 1000),
+      (80, 10, 10, 100),
+      (840, 105, 105, 1050),
+      (120, 15, 15, 150),
+    ] {
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+            reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-05-18T14:42:50Z', 'gpt-5.4', ?2, ?3, ?4, 0, ?5, 0.0, 0, 0)
+          ",
+          params![session_id, input_tokens, cached_input_tokens, output_tokens, total_tokens],
+        )
+        .expect("insert stale usage event");
+    }
+    assert_eq!(session_usage_totals(&conn, session_id), (1840, 230, 230, 2300, 4));
+    drop(conn);
+
+    let result = perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id), (960, 120, 120, 1200, 3));
+    let repair_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = ?1",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query data repair marker");
+    assert!(repair_completed.is_some());
+  }
+
+  #[test]
+  fn scan_tracks_skipped_token_repair_files_without_reimporting_everything() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "36363636-3636-3636-3636-363636363636";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-05-18T14:42:17Z", 800, 100, 100, 1000),
+        ("2026-05-18T14:42:28Z", 880, 110, 110, 1100),
+        ("2026-05-18T14:42:39Z", 840, 105, 105, 1050),
+        ("2026-05-18T14:42:50Z", 960, 120, 120, 1200),
+      ],
+    );
+    std::fs::write(sessions_dir.join("unparseable.jsonl"), "not json\n").expect("write bad session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open db");
+    init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp, limit_id, limit_name,
+          plan_type, window_start, resets_at, used_percent, remaining_percent, created_at
+        )
+        VALUES ('session', 'seed', 'five_hour', ?1, '', '', '', ?1, ?1, 0, 100, ?1)
+        ",
+        params![now_utc_string()],
+      )
+      .expect("insert rate limit backfill sentinel");
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES (?1, ?1, NULL, NULL, 'active', ?2, 'active', NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?3, ?3)
+        ",
+        params![session_id, session_path.to_string_lossy().to_string(), now_utc_string()],
+      )
+      .expect("insert existing session");
+    for (input_tokens, cached_input_tokens, output_tokens, total_tokens) in [
+      (800, 100, 100, 1000),
+      (80, 10, 10, 100),
+      (840, 105, 105, 1050),
+      (120, 15, 15, 150),
+    ] {
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+            reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-05-18T14:42:50Z', 'gpt-5.4', ?2, ?3, ?4, 0, ?5, 0.0, 0, 0)
+          ",
+          params![session_id, input_tokens, cached_input_tokens, output_tokens, total_tokens],
+        )
+        .expect("insert stale usage event");
+    }
+    drop(conn);
+
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id), (960, 120, 120, 1200, 3));
+    let repair_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = ?1",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query data repair marker");
+    assert!(repair_completed.is_some());
+    let pending_path: Option<String> = conn
+      .query_row(
+        "SELECT source_path FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query pending repair file");
+    assert_eq!(
+      pending_path.as_deref(),
+      Some(sessions_dir.join("unparseable.jsonl").to_string_lossy().as_ref())
+    );
+    let session_rate_sample_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM rate_limit_samples WHERE source_kind = 'session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("query session rate sample count");
+    assert!(session_rate_sample_count > 0);
+    drop(conn);
+
+    let result = perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("rescan");
+    assert_eq!(result.updated_sessions, 0);
+  }
+
+  #[test]
+  fn scan_keeps_pending_token_repair_file_when_persistence_fails() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "37373737-3737-3737-3737-373737373737";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-05-18T14:42:17Z", 800, 100, 100, 1000)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open db");
+    init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repairs (repair_key, completed_at)
+        VALUES (?1, ?2)
+        ",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY, now_utc_string()],
+      )
+      .expect("insert repair marker");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+        VALUES (?1, ?2, 'previous parse error', ?3)
+        ",
+        params![
+          TOKEN_USAGE_MONOTONIC_REPAIR_KEY,
+          session_path.to_string_lossy().to_string(),
+          now_utc_string(),
+        ],
+      )
+      .expect("insert pending file");
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_usage_event_insert
+        BEFORE INSERT ON usage_events
+        BEGIN
+          SELECT RAISE(ABORT, 'forced usage insert failure');
+        END;
+        ",
+      )
+      .expect("create failing trigger");
+    drop(conn);
+
+    let error = perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect_err("scan should fail while persisting pending repair file");
+    assert!(error.contains("forced usage insert failure"));
+
+    let conn = open_connection(&db_path).expect("open db");
+    let pending_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1 AND source_path = ?2",
+        params![
+          TOKEN_USAGE_MONOTONIC_REPAIR_KEY,
+          session_path.to_string_lossy().to_string(),
+        ],
+        |row| row.get(0),
+      )
+      .expect("query pending file count");
+    assert_eq!(pending_count, 1);
   }
 
   #[test]
