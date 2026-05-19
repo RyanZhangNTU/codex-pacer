@@ -55,7 +55,7 @@ Use the exact certificate name for `APPLE_SIGNING_IDENTITY`.
 
 ## Required environment variables
 
-The build script expects a local signing identity plus exactly one notarization credential path.
+The build script expects a local signing identity. Notarization credentials are optional; when they are not provided, the macOS build is signed-only.
 
 ### Signing
 
@@ -65,7 +65,7 @@ export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 
 `APPLE_SIGNING_IDENTITY` is the official Tauri-supported way to point a local macOS build at a keychain-installed certificate.
 
-### Notarization with Apple ID
+### Optional notarization with Apple ID
 
 ```bash
 export APPLE_ID="maintainer@example.com"
@@ -73,7 +73,7 @@ export APPLE_PASSWORD="app-specific-password"
 export APPLE_TEAM_ID="TEAMID1234"
 ```
 
-### Notarization with App Store Connect API
+### Optional notarization with App Store Connect API
 
 ```bash
 export APPLE_API_ISSUER="00000000-0000-0000-0000-000000000000"
@@ -81,14 +81,14 @@ export APPLE_API_KEY="ABC123DEFG"
 export APPLE_API_KEY_PATH="$HOME/keys/AuthKey_ABC123DEFG.p8"
 ```
 
-Pick one notarization path and leave the other unset. The build script rejects ambiguous or incomplete credential sets.
+Pick at most one notarization path and leave the other unset. The build script rejects ambiguous credential sets. If no notarization credential path is set, it skips notarytool, stapling, and Gatekeeper/stapler validation while still verifying the app and DMG signatures.
 
 ## Standard macOS release flow
 
 1. Confirm the target release notes file exists.
 2. Confirm `package.json` and `src-tauri/tauri.conf.json` both match the release version.
 3. Confirm `git status --short` is empty before starting release actions.
-4. Export `APPLE_SIGNING_IDENTITY` and one notarization credential set.
+4. Export `APPLE_SIGNING_IDENTITY`; optionally export one notarization credential set.
 5. Run the build script.
 6. Review the generated DMG and checksum.
 7. Create and push the Git tag.
@@ -116,10 +116,12 @@ What the build script does:
 - defaults `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target`
 - rejects cloud-synced target roots that can inject Finder metadata into `.app` bundles
 - locates the most recent built `.app` and `.dmg` under the active Cargo target root
-- verifies the signed app with `codesign`, `spctl`, and `xcrun stapler validate`
-- submits the built DMG to Apple with `xcrun notarytool submit --wait`
-- staples the DMG ticket with `xcrun stapler staple`
-- verifies the signed DMG with `codesign`, `spctl --type open --context context:primary-signature`, and `xcrun stapler validate`
+- verifies the signed app with `codesign`
+- when notarization credentials are configured, verifies the app with `spctl` and `xcrun stapler validate`
+- when notarization credentials are configured, submits the built DMG to Apple with `xcrun notarytool submit --wait`
+- when notarization credentials are configured, staples the DMG ticket with `xcrun stapler staple`
+- verifies the signed DMG with `codesign` and `hdiutil verify`
+- when notarization credentials are configured, verifies the DMG with `spctl --type open --context context:primary-signature` and `xcrun stapler validate`
 - writes a sibling checksum file at `<artifact>.dmg.sha256`
 
 ## Build the Windows NSIS installer

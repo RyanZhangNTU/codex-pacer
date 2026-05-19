@@ -31,7 +31,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 - `package.json` 与 `src-tauri/tauri.conf.json` 版本一致
 - 发布前工作区保持 clean
 
-构建前需要设置 `APPLE_SIGNING_IDENTITY`，并在 Apple ID notarization 或 App Store Connect API notarization 两条路径中选择一条。不要同时设置两组 notarization 凭据。
+构建前必须设置 `APPLE_SIGNING_IDENTITY`。notarization 凭据是可选项；如果不设置 Apple ID notarization 或 App Store Connect API notarization 凭据，macOS 构建会走 signed-only 路径。不要同时设置两组 notarization 凭据。
 
 ## Windows 发布要求
 
@@ -47,7 +47,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 ./scripts/release/build-macos-release.sh 1.1.2
 ```
 
-脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，构建 app/dmg，执行 codesign、notarization 与 stapling，并写入 `<artifact>.dmg.sha256`。
+脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，构建 app/dmg，执行 codesign，并写入 `<artifact>.dmg.sha256`。如果配置了 notarization 凭据，脚本还会执行 notarytool、stapling、Gatekeeper 与 stapler 校验；如果未配置，则跳过这些 notarization 专属步骤。
 
 ## Windows 构建
 

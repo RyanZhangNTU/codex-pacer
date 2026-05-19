@@ -9,7 +9,7 @@ Usage: ./scripts/release/build-macos-release.sh VERSION
 Required environment variables:
   APPLE_SIGNING_IDENTITY
 
-Notarization environment variables (choose exactly one path):
+Notarization environment variables (optional; choose at most one path):
   APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID
   or
   APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH
@@ -129,6 +129,7 @@ main() {
   require_command codesign
   require_command spctl
   require_command xcrun
+  require_command hdiutil
   require_command shasum
   require_command git
 
@@ -181,8 +182,8 @@ main() {
     has_api_path=1
   fi
 
-  if (( has_apple_id_path + has_api_path != 1 )); then
-    echo "ERROR: Provide exactly one notarization credential path." >&2
+  if (( has_apple_id_path + has_api_path > 1 )); then
+    echo "ERROR: Provide at most one notarization credential path." >&2
     echo "  Apple ID: APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID" >&2
     echo "  API key : APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH" >&2
     exit 1
@@ -193,16 +194,21 @@ main() {
     exit 1
   fi
 
-  local notarization_mode="Apple ID"
-  if (( has_api_path == 1 )); then
+  local notarization_mode="not configured; signed-only DMG"
+  local should_notarize=0
+  if (( has_apple_id_path == 1 )); then
+    notarization_mode="Apple ID"
+    should_notarize=1
+  elif (( has_api_path == 1 )); then
     notarization_mode="App Store Connect API"
+    should_notarize=1
   fi
 
   local -a notarytool_auth_args tauri_build_args cargo_runner_args
   notarytool_auth_args=()
   if (( has_apple_id_path == 1 )); then
     notarytool_auth_args+=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
-  else
+  elif (( has_api_path == 1 )); then
     notarytool_auth_args+=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}")
     if [[ -n "${APPLE_API_ISSUER:-}" ]]; then
       notarytool_auth_args+=(--issuer "${APPLE_API_ISSUER}")
@@ -274,20 +280,34 @@ main() {
   echo
   echo "Verifying signed app..."
   codesign --verify --deep --strict --verbose=2 "${app_path}"
-  spctl -a -vv --type exec "${app_path}"
-  xcrun stapler validate "${app_path}"
+  if (( should_notarize == 1 )); then
+    spctl -a -vv --type exec "${app_path}"
+    xcrun stapler validate "${app_path}"
+  else
+    echo "Skipping Gatekeeper and stapler app checks because notarization credentials were not provided."
+  fi
 
-  echo
-  echo "Notarizing DMG..."
-  xcrun notarytool submit "${dmg_path}" "${notarytool_auth_args[@]}" --wait
-  echo "Stapling DMG..."
-  xcrun stapler staple "${dmg_path}"
+  if (( should_notarize == 1 )); then
+    echo
+    echo "Notarizing DMG..."
+    xcrun notarytool submit "${dmg_path}" "${notarytool_auth_args[@]}" --wait
+    echo "Stapling DMG..."
+    xcrun stapler staple "${dmg_path}"
+  else
+    echo
+    echo "Skipping DMG notarization; build is signed-only."
+  fi
 
   echo
   echo "Verifying signed DMG..."
   codesign --verify --verbose=2 "${dmg_path}"
-  spctl -a -vv --type open --context context:primary-signature "${dmg_path}"
-  xcrun stapler validate "${dmg_path}"
+  hdiutil verify "${dmg_path}"
+  if (( should_notarize == 1 )); then
+    spctl -a -vv --type open --context context:primary-signature "${dmg_path}"
+    xcrun stapler validate "${dmg_path}"
+  else
+    echo "Skipping Gatekeeper and stapler DMG checks because notarization credentials were not provided."
+  fi
 
   echo
   echo "Writing DMG checksum..."
