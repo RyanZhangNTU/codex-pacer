@@ -219,4 +219,29 @@ if ! grep -F -- "verify ${CARGO_TARGET_DIR}/release/bundle/dmg/Codex Pacer_${REL
   exit 1
 fi
 
+: > "${TEST_RELEASE_LOG}"
+export APPLE_ID="maintainer@example.com"
+export APPLE_PASSWORD="app-specific-password"
+unset APPLE_TEAM_ID
+
+set +e
+partial_output="$("${REPO_ROOT}/scripts/release/build-macos-release.sh" "${RELEASE_VERSION}" 2>&1)"
+partial_status=$?
+set -e
+
+if [[ "${partial_status}" -eq 0 ]]; then
+  echo "expected incomplete notarization credentials to fail" >&2
+  exit 1
+fi
+
+if [[ "${partial_output}" != *"Incomplete Apple ID notarization credentials"* ]]; then
+  echo "expected incomplete Apple ID credential failure to be explicit" >&2
+  exit 1
+fi
+
+if [[ -s "${TEST_RELEASE_LOG}" ]]; then
+  echo "expected incomplete notarization credentials to stop before npm commands run" >&2
+  exit 1
+fi
+
 echo "build-macos-release regression test passed"

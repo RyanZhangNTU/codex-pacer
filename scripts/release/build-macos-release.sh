@@ -173,6 +173,28 @@ main() {
 
   local has_apple_id_path=0
   local has_api_path=0
+  local apple_id_field_count=0
+  local api_field_count=0
+
+  [[ -n "${APPLE_ID:-}" ]] && (( apple_id_field_count += 1 ))
+  [[ -n "${APPLE_PASSWORD:-}" ]] && (( apple_id_field_count += 1 ))
+  [[ -n "${APPLE_TEAM_ID:-}" ]] && (( apple_id_field_count += 1 ))
+
+  [[ -n "${APPLE_API_ISSUER:-}" ]] && (( api_field_count += 1 ))
+  [[ -n "${APPLE_API_KEY:-}" ]] && (( api_field_count += 1 ))
+  [[ -n "${APPLE_API_KEY_PATH:-}" ]] && (( api_field_count += 1 ))
+
+  if (( apple_id_field_count > 0 && apple_id_field_count < 3 )); then
+    echo "ERROR: Incomplete Apple ID notarization credentials." >&2
+    echo "  Provide APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or unset all three for a signed-only build." >&2
+    exit 1
+  fi
+
+  if (( api_field_count > 0 && api_field_count < 3 )); then
+    echo "ERROR: Incomplete App Store Connect API notarization credentials." >&2
+    echo "  Provide APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH, or unset all three for a signed-only build." >&2
+    exit 1
+  fi
 
   if [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
     has_apple_id_path=1
