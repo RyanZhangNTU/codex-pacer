@@ -6,13 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [1.1.2] - 2026-05-19
 
+### Added
+- custom dashboard date range selection for inspecting a specific local usage period
+- Windows compatibility groundwork, release scripts, and source-validation documentation; Windows installer publishing remains paused for this release
+- updated README popup screenshot for the current public UI
+
 ### Changed
+- API-equivalent pricing now uses refreshed Standard short-context pricing and deterministic pricing row selection
 - database query access now uses versioned SQL query files and smaller persistence modules for cleaner release maintenance
 - public release documentation now points to the macOS DMG-only GitHub Release flow while Windows installer publishing remains paused
 
 ### Fixed
 - token usage imports now treat cumulative snapshots as monotonic high-water marks so Codex state resets, replayed files, or process restarts do not rebill already-counted tokens
 - existing overcounted token usage rows are repaired once on the next scan, with failed source files tracked for targeted retry instead of forcing full repeated reimports
+- dashboard distribution controls now align with button semantics and wrap more predictably
 
 ## [1.1.1] - 2026-04-25
 

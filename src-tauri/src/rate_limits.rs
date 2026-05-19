@@ -471,9 +471,9 @@ mod tests {
   #[test]
   #[cfg(windows)]
   fn app_server_command_spec_uses_codex_directly_on_windows() {
-    let spec = super::app_server_command_spec(&PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"));
+    let spec = super::app_server_command_spec(&PathBuf::from(r"C:\Users\CodexUser\AppData\Roaming\npm\codex.cmd"));
 
-    assert_eq!(spec.program, OsString::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"));
+    assert_eq!(spec.program, OsString::from(r"C:\Users\CodexUser\AppData\Roaming\npm\codex.cmd"));
     assert!(spec.hide_window);
     assert_eq!(
       spec.args,
@@ -488,7 +488,7 @@ mod tests {
   #[test]
   #[cfg(windows)]
   fn app_server_command_spec_wraps_windows_ps1_shim_with_powershell() {
-    let spec = super::app_server_command_spec(&PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"));
+    let spec = super::app_server_command_spec(&PathBuf::from(r"C:\Users\CodexUser\AppData\Roaming\npm\codex.ps1"));
 
     assert_eq!(spec.program, OsString::from("powershell.exe"));
     assert!(spec.hide_window);
@@ -499,7 +499,7 @@ mod tests {
         OsString::from("-ExecutionPolicy"),
         OsString::from("Bypass"),
         OsString::from("-File"),
-        OsString::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"),
+        OsString::from(r"C:\Users\CodexUser\AppData\Roaming\npm\codex.ps1"),
         OsString::from("app-server"),
         OsString::from("--listen"),
         OsString::from("stdio://"),
@@ -512,12 +512,12 @@ mod tests {
   fn resolve_codex_binary_prefers_windows_cmd_shim_over_ps1() {
     let resolved = super::resolve_codex_binary_from_env(
       None,
-      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      Some(OsString::from(r"C:\Users\CodexUser\AppData\Roaming").as_os_str()),
       None,
-      existing_paths(&[r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"]),
+      existing_paths(&[r"C:\Users\CodexUser\AppData\Roaming\npm\codex.cmd"]),
     );
 
-    assert_eq!(resolved, PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd"));
+    assert_eq!(resolved, PathBuf::from(r"C:\Users\CodexUser\AppData\Roaming\npm\codex.cmd"));
   }
 
   #[test]
@@ -525,12 +525,12 @@ mod tests {
   fn resolve_codex_binary_uses_windows_ps1_shim_when_cmd_missing() {
     let resolved = super::resolve_codex_binary_from_env(
       None,
-      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      Some(OsString::from(r"C:\Users\CodexUser\AppData\Roaming").as_os_str()),
       None,
-      existing_paths(&[r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"]),
+      existing_paths(&[r"C:\Users\CodexUser\AppData\Roaming\npm\codex.ps1"]),
     );
 
-    assert_eq!(resolved, PathBuf::from(r"C:\Users\Ryan\AppData\Roaming\npm\codex.ps1"));
+    assert_eq!(resolved, PathBuf::from(r"C:\Users\CodexUser\AppData\Roaming\npm\codex.ps1"));
   }
 
   #[test]
@@ -538,11 +538,11 @@ mod tests {
   fn resolve_codex_binary_prefers_existing_codex_bin_override() {
     let resolved = super::resolve_codex_binary_from_env(
       Some(OsString::from(r"D:\Tools\codex.exe").as_os_str()),
-      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      Some(OsString::from(r"C:\Users\CodexUser\AppData\Roaming").as_os_str()),
       None,
       existing_paths(&[
         r"D:\Tools\codex.exe",
-        r"C:\Users\Ryan\AppData\Roaming\npm\codex.cmd",
+        r"C:\Users\CodexUser\AppData\Roaming\npm\codex.cmd",
       ]),
     );
 
@@ -554,7 +554,7 @@ mod tests {
   fn resolve_codex_binary_falls_back_to_windows_cmd_shim_name() {
     let resolved = super::resolve_codex_binary_from_env(
       None,
-      Some(OsString::from(r"C:\Users\Ryan\AppData\Roaming").as_os_str()),
+      Some(OsString::from(r"C:\Users\CodexUser\AppData\Roaming").as_os_str()),
       None,
       |_| false,
     );
