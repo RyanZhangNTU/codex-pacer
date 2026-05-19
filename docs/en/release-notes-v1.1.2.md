@@ -4,7 +4,7 @@
 
 `v1.1.2` fixes token overcounting after Codex state resets, replayed session files, or process restarts.
 
-This release also includes the database query refactor now promoted from `develop` to `main`, keeping the same local-first storage model while making the release line easier to maintain.
+Compared with `v1.1.1`, this release also includes the database query refactor, refreshed pricing data, custom dashboard range controls, and Windows compatibility groundwork now promoted to `main`.
 
 ## Highlights
 
@@ -14,6 +14,10 @@ This release also includes the database query refactor now promoted from `develo
 - existing overcounted token usage rows are repaired once during the next scan
 - source files that cannot be repaired are tracked for targeted retry instead of repeatedly forcing every session to reimport
 - database query SQL is split into versioned files, with smaller persistence modules for sync settings, subscription data, and rate-limit samples
+- custom dashboard date range selection makes it easier to inspect a specific local usage period
+- API-equivalent pricing uses refreshed Standard short-context pricing with deterministic pricing row selection
+- dashboard distribution controls have clearer button behavior and wrapping
+- Windows compatibility scripts and docs are present for source validation, while installer publishing remains paused for this release
 
 ## Packaging
 
