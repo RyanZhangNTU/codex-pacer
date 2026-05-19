@@ -4,20 +4,20 @@
 
 This runbook is for maintainers producing public **Codex Pacer** release assets:
 
-- signed and notarized Apple Silicon DMG
-- unsigned Windows NSIS setup EXE as a test-stage asset
+- signed Apple Silicon DMG
+- Windows compatibility checks, with Windows installer publishing paused for `v1.1.2`
 - published through GitHub Releases
 
 The local release entry points are:
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.1
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 The macOS release scripts default `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target` so signed macOS bundles are produced outside cloud-synced folders such as iCloud Drive. This avoids `codesign` failures caused by Finder and file-provider metadata on `.app` bundles.
@@ -55,7 +55,7 @@ Use the exact certificate name for `APPLE_SIGNING_IDENTITY`.
 
 ## Required environment variables
 
-The build script expects a local signing identity plus exactly one notarization credential path.
+The build script expects a local signing identity. Notarization credentials are optional; when they are not provided, the macOS build is signed-only.
 
 ### Signing
 
@@ -65,7 +65,7 @@ export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 
 `APPLE_SIGNING_IDENTITY` is the official Tauri-supported way to point a local macOS build at a keychain-installed certificate.
 
-### Notarization with Apple ID
+### Optional notarization with Apple ID
 
 ```bash
 export APPLE_ID="maintainer@example.com"
@@ -73,7 +73,7 @@ export APPLE_PASSWORD="app-specific-password"
 export APPLE_TEAM_ID="TEAMID1234"
 ```
 
-### Notarization with App Store Connect API
+### Optional notarization with App Store Connect API
 
 ```bash
 export APPLE_API_ISSUER="00000000-0000-0000-0000-000000000000"
@@ -81,14 +81,14 @@ export APPLE_API_KEY="ABC123DEFG"
 export APPLE_API_KEY_PATH="$HOME/keys/AuthKey_ABC123DEFG.p8"
 ```
 
-Pick one notarization path and leave the other unset. The build script rejects ambiguous or incomplete credential sets.
+Pick at most one notarization path and leave the other unset. The build script rejects ambiguous credential sets. If no notarization credential path is set, it skips notarytool, stapling, and Gatekeeper/stapler validation while still verifying the app and DMG signatures.
 
 ## Standard macOS release flow
 
 1. Confirm the target release notes file exists.
 2. Confirm `package.json` and `src-tauri/tauri.conf.json` both match the release version.
 3. Confirm `git status --short` is empty before starting release actions.
-4. Export `APPLE_SIGNING_IDENTITY` and one notarization credential set.
+4. Export `APPLE_SIGNING_IDENTITY`; optionally export one notarization credential set.
 5. Run the build script.
 6. Review the generated DMG and checksum.
 7. Create and push the Git tag.
@@ -98,10 +98,10 @@ Pick one notarization path and leave the other unset. The build script rejects a
 
 GitHub Releases is the handoff point between maintainer workflow and user installation. The tag records exactly what source was released, the release notes explain the user-facing change, and the attached platform installers plus checksums are the canonical install assets for that version.
 
-## Build the signed and notarized DMG
+## Build the signed DMG
 
 ```bash
-./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
 ```
 
 What the build script does:
@@ -116,10 +116,12 @@ What the build script does:
 - defaults `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target`
 - rejects cloud-synced target roots that can inject Finder metadata into `.app` bundles
 - locates the most recent built `.app` and `.dmg` under the active Cargo target root
-- verifies the signed app with `codesign`, `spctl`, and `xcrun stapler validate`
-- submits the built DMG to Apple with `xcrun notarytool submit --wait`
-- staples the DMG ticket with `xcrun stapler staple`
-- verifies the signed DMG with `codesign`, `spctl --type open --context context:primary-signature`, and `xcrun stapler validate`
+- verifies the signed app with `codesign`
+- when notarization credentials are configured, verifies the app with `spctl` and `xcrun stapler validate`
+- when notarization credentials are configured, submits the built DMG to Apple with `xcrun notarytool submit --wait`
+- when notarization credentials are configured, staples the DMG ticket with `xcrun stapler staple`
+- verifies the signed DMG with `codesign` and `hdiutil verify`
+- when notarization credentials are configured, verifies the DMG with `spctl --type open --context context:primary-signature` and `xcrun stapler validate`
 - writes a sibling checksum file at `<artifact>.dmg.sha256`
 
 ## Build the Windows NSIS installer
@@ -127,7 +129,7 @@ What the build script does:
 Run this on Windows:
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 What the Windows build script does:
@@ -150,7 +152,7 @@ If you need to override the Windows build output location, set `CARGO_TARGET_DIR
 
 ```powershell
 $env:CARGO_TARGET_DIR = "C:\Users\you\AppData\Local\CodexPacer\cargo-target"
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 ### Optional target override
@@ -159,7 +161,7 @@ If you need to pass a specific Tauri target triple, set `TAURI_TARGET` before ru
 
 ```bash
 export TAURI_TARGET="aarch64-apple-darwin"
-./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
 ```
 
 `TAURI_TARGET` stays on the Tauri CLI side of the command, before the final `--` that introduces Cargo runner args such as `--locked`.
@@ -172,8 +174,8 @@ If you need to override the build output location, export `CARGO_TARGET_DIR` bef
 
 ```bash
 export CARGO_TARGET_DIR="$HOME/Library/Caches/CodexPacer/custom-target"
-./scripts/release/build-macos-release.sh 1.1.1
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 Do not point `CARGO_TARGET_DIR` at iCloud Drive, Dropbox, OneDrive, or other cloud/file-provider folders. Signed `.app` bundles created there can pick up `com.apple.FinderInfo` metadata and fail during `codesign`.
@@ -182,8 +184,8 @@ Do not point `CARGO_TARGET_DIR` at iCloud Drive, Dropbox, OneDrive, or other clo
 
 ```bash
 git status --short
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.1.2
+git push origin v1.1.2
 ```
 
 The publish script expects:
@@ -196,18 +198,18 @@ The publish script expects:
 ## Publish the GitHub Release
 
 ```bash
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 The publish script uses:
 
-- the built DMG for `v1.1.1`
+- the built DMG for `v1.1.2`
 - the sibling `.sha256` checksum file
-- `docs/en/release-notes-v1.1.1.md`
+- `docs/en/release-notes-v1.1.2.md`
 
 It publishes those assets with `gh release create`.
 
-For releases that include Windows, also attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release. Note in the release body that the Windows installer is test-stage and unsigned unless Windows signing was separately configured for that release.
+For `v1.1.2`, do not attach Windows installer assets. For later releases that explicitly include Windows, attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release and note in the release body that the Windows installer is test-stage and unsigned unless Windows signing was separately configured for that release.
 
 ## macOS manual smoke test
 
@@ -253,7 +255,7 @@ Run this before announcing Windows availability publicly:
 Useful spot check:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.1_x64-setup.exe"
+Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.2_x64-setup.exe"
 ```
 
 ## Troubleshooting

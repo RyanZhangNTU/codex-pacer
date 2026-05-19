@@ -30,6 +30,6 @@ GitHub Releases 仍是 Codex Pacer 的公开发布边界：每个 release 对应
 
 ## 说明
 
-- `v1.1.1` 是当前稳定发布线。
+- `v1.1.1` 是上一条稳定发布线。请查看最新发布说明了解当前稳定版本。
 - Intel macOS、universal 构建、Linux 打包产物、Windows code signing、Windows 稳定支持，以及自动更新交付目前都不承诺作为官方发布资产。
 - Codex Pacer 保持本地优先，不依赖云端同步服务即可运行。

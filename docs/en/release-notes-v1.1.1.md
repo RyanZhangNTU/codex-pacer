@@ -30,6 +30,6 @@ GitHub Releases remains the public release boundary for Codex Pacer: each releas
 
 ## Notes
 
-- `v1.1.1` is the current stable release line.
+- `v1.1.1` was the previous stable release line. See the latest release notes for the current stable version.
 - Intel macOS, universal builds, Linux bundles, Windows code signing, stable Windows support, and auto-update delivery are not currently promised as official release assets.
 - Codex Pacer remains local-first and does not depend on a cloud sync service to work.

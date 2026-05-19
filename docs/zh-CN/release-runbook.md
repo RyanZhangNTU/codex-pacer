@@ -4,22 +4,22 @@
 
 本文面向维护者，说明如何生成 **Codex Pacer** 的公开发布资产：
 
-- 已签名并完成 notarization 的 Apple Silicon DMG
-- 作为测试阶段资产的未签名 Windows NSIS setup EXE
+- 已签名的 Apple Silicon DMG
+- Windows 兼容性检查，且 `v1.1.2` 暂缓发布 Windows 安装包
 - 通过 GitHub Releases 分发
 
 本地发布入口：
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
 ```
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
-macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.1` 上传 DMG 与 checksum。包含 Windows 的 release 还需要把 Windows setup EXE 与对应 checksum 附加到同一个 GitHub Release。
+macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.2` 上传 DMG 与 checksum。`v1.1.2` 不附加 Windows setup EXE；后续明确包含 Windows 的 release 再把 Windows setup EXE 与对应 checksum 附加到同一个 GitHub Release。
 
 ## macOS 发布要求
 
@@ -31,7 +31,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 - `package.json` 与 `src-tauri/tauri.conf.json` 版本一致
 - 发布前工作区保持 clean
 
-构建前需要设置 `APPLE_SIGNING_IDENTITY`，并在 Apple ID notarization 或 App Store Connect API notarization 两条路径中选择一条。不要同时设置两组 notarization 凭据。
+构建前必须设置 `APPLE_SIGNING_IDENTITY`。notarization 凭据是可选项；如果不设置 Apple ID notarization 或 App Store Connect API notarization 凭据，macOS 构建会走 signed-only 路径。不要同时设置两组 notarization 凭据。
 
 ## Windows 发布要求
 
@@ -44,15 +44,15 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 ## macOS 构建
 
 ```bash
-./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
 ```
 
-脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，构建 app/dmg，执行 codesign、notarization 与 stapling，并写入 `<artifact>.dmg.sha256`。
+脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，构建 app/dmg，执行 codesign，并写入 `<artifact>.dmg.sha256`。如果配置了 notarization 凭据，脚本还会执行 notarytool、stapling、Gatekeeper 与 stapler 校验；如果未配置，则跳过这些 notarization 专属步骤。
 
 ## Windows 构建
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 脚本会校验版本，运行 `npm ci`、lint、前端构建和 Rust 测试，执行 `npm run tauri build -- --ci --bundles nsis -- --locked`，定位生成的 NSIS setup `.exe`，并写入 `<installer>.exe.sha256`。
@@ -68,7 +68,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 5. 如该版本包含 Windows，构建 Windows setup EXE 与 checksum。
 6. 创建并 push `vVERSION` tag。
 7. 发布 GitHub Release。
-8. 上传已签名并完成 notarization 的 macOS DMG 与 checksum。
+8. 上传已签名的 macOS DMG 与 checksum。
 9. 如该版本包含 Windows，上传测试阶段的未签名 Windows NSIS setup EXE 与 checksum。
 10. 在 release body 中说明 Windows installer 仍处于测试阶段且默认未签名，用户可能看到 SmartScreen unknown publisher 警告。
 
@@ -98,7 +98,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 10. 刷新 live quota 数据，确认不会弹出黑色命令行窗口。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.1_x64-setup.exe"
+Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.2_x64-setup.exe"
 ```
 
 ## 相关文档

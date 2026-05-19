@@ -8,8 +8,8 @@ English | [简体中文](./README.zh-CN.md)
 
 **Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
 
-> Current stable release: **v1.1.1**
-> Official downloads: signed and notarized **macOS Apple Silicon DMG** and unsigned **Windows NSIS setup EXE** via GitHub Releases
+> Current stable release: **v1.1.2**
+> Official download: signed **macOS Apple Silicon DMG** via GitHub Releases. Windows installer publishing is paused for this release.
 
 ## Highlights
 
@@ -39,13 +39,13 @@ Codex Pacer is local-first:
 
 ## Getting started
 
-The documentation set for installation, packaging, and release notes is maintained for the public `v1.1.1` release. Start with:
+The documentation set for installation, packaging, and release notes is maintained for the public `v1.1.2` release. Start with:
 
 - [Getting started](./docs/en/getting-started.md)
 - [Installing on macOS](./docs/en/installing-on-macos.md)
 - [Installing on Windows](./docs/en/installing-on-windows.md)
 - [Packaging and release](./docs/en/packaging-and-release.md)
-- [Release notes for v1.1.1](./docs/en/release-notes-v1.1.1.md)
+- [Release notes for v1.1.2](./docs/en/release-notes-v1.1.2.md)
 
 ## Development
 
@@ -80,12 +80,12 @@ npm run tauri build
 
 ## Project status
 
-`v1.1.1` is the current stable release line.
+`v1.1.2` is the current stable release line.
 
 Current release packaging focus:
 
-- officially released: signed and notarized macOS Apple Silicon DMG
-- officially released: unsigned Windows NSIS setup EXE
+- officially released: signed macOS Apple Silicon DMG
+- paused for this release: Windows NSIS setup EXE
 - source build support: additional Tauri-compatible desktop environments
 
 ## Open source
