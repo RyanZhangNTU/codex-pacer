@@ -4,20 +4,20 @@
 
 This runbook is for maintainers producing public **Codex Pacer** release assets:
 
-- signed and notarized Apple Silicon DMG
-- unsigned Windows NSIS setup EXE as a test-stage asset
+- signed Apple Silicon DMG
+- Windows compatibility checks, with Windows installer publishing paused for `v1.1.2`
 - published through GitHub Releases
 
 The local release entry points are:
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.1
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 The macOS release scripts default `CARGO_TARGET_DIR` to `~/Library/Caches/CodexPacer/cargo-target` so signed macOS bundles are produced outside cloud-synced folders such as iCloud Drive. This avoids `codesign` failures caused by Finder and file-provider metadata on `.app` bundles.
@@ -98,10 +98,10 @@ Pick one notarization path and leave the other unset. The build script rejects a
 
 GitHub Releases is the handoff point between maintainer workflow and user installation. The tag records exactly what source was released, the release notes explain the user-facing change, and the attached platform installers plus checksums are the canonical install assets for that version.
 
-## Build the signed and notarized DMG
+## Build the signed DMG
 
 ```bash
-./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
 ```
 
 What the build script does:
@@ -127,7 +127,7 @@ What the build script does:
 Run this on Windows:
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 What the Windows build script does:
@@ -150,7 +150,7 @@ If you need to override the Windows build output location, set `CARGO_TARGET_DIR
 
 ```powershell
 $env:CARGO_TARGET_DIR = "C:\Users\you\AppData\Local\CodexPacer\cargo-target"
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
 ### Optional target override
@@ -159,7 +159,7 @@ If you need to pass a specific Tauri target triple, set `TAURI_TARGET` before ru
 
 ```bash
 export TAURI_TARGET="aarch64-apple-darwin"
-./scripts/release/build-macos-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
 ```
 
 `TAURI_TARGET` stays on the Tauri CLI side of the command, before the final `--` that introduces Cargo runner args such as `--locked`.
@@ -172,8 +172,8 @@ If you need to override the build output location, export `CARGO_TARGET_DIR` bef
 
 ```bash
 export CARGO_TARGET_DIR="$HOME/Library/Caches/CodexPacer/custom-target"
-./scripts/release/build-macos-release.sh 1.1.1
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 Do not point `CARGO_TARGET_DIR` at iCloud Drive, Dropbox, OneDrive, or other cloud/file-provider folders. Signed `.app` bundles created there can pick up `com.apple.FinderInfo` metadata and fail during `codesign`.
@@ -182,8 +182,8 @@ Do not point `CARGO_TARGET_DIR` at iCloud Drive, Dropbox, OneDrive, or other clo
 
 ```bash
 git status --short
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.1.2
+git push origin v1.1.2
 ```
 
 The publish script expects:
@@ -196,18 +196,18 @@ The publish script expects:
 ## Publish the GitHub Release
 
 ```bash
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 The publish script uses:
 
-- the built DMG for `v1.1.1`
+- the built DMG for `v1.1.2`
 - the sibling `.sha256` checksum file
-- `docs/en/release-notes-v1.1.1.md`
+- `docs/en/release-notes-v1.1.2.md`
 
 It publishes those assets with `gh release create`.
 
-For releases that include Windows, also attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release. Note in the release body that the Windows installer is test-stage and unsigned unless Windows signing was separately configured for that release.
+For `v1.1.2`, do not attach Windows installer assets. For later releases that explicitly include Windows, attach the generated NSIS setup `.exe` and its `.sha256` checksum to the same GitHub Release and note in the release body that the Windows installer is test-stage and unsigned unless Windows signing was separately configured for that release.
 
 ## macOS manual smoke test
 
@@ -253,7 +253,7 @@ Run this before announcing Windows availability publicly:
 Useful spot check:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.1_x64-setup.exe"
+Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.2_x64-setup.exe"
 ```
 
 ## Troubleshooting

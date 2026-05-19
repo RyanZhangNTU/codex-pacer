@@ -6,11 +6,11 @@
 
 当前稳定公开打包资产为：
 
-- 已签名并完成 notarization 的 **macOS Apple Silicon DMG**
+- 已签名的 **macOS Apple Silicon DMG**
 
-Windows 目前作为测试阶段资产发布：
+`v1.1.2` 暂缓发布 Windows 安装包。Windows 兼容性仍处于测试阶段，后续发布 Windows 安装包前应先在源码或 Windows 构建机上验证：
 
-- 未签名的 **Windows NSIS setup EXE**，用于兼容性测试和早期验证
+- 未签名的 **Windows NSIS setup EXE**，仅用于本地兼容性测试和早期验证
 
 以下内容**目前不承诺**作为官方发布资产提供：
 
@@ -28,8 +28,8 @@ Windows 目前作为测试阶段资产发布：
 当前面向公开发布的目标流程是：
 
 1. 确认公开品牌文案和文档已经准备完成。
-2. 构建已签名并完成 notarization 的 macOS Apple Silicon DMG。
-3. 如果该版本包含 Windows 测试阶段资产，构建未签名的 Windows NSIS setup EXE。
+2. 构建已签名的 macOS Apple Silicon DMG。
+3. 如果包含 Windows 相关改动，单独执行 Windows 兼容性检查；`v1.1.2` 不发布 Windows 安装包。
 4. 通过 GitHub Releases 发布这些安装资产。
 5. 附上对应版本的发布说明。
 
@@ -39,15 +39,15 @@ Windows 目前作为测试阶段资产发布：
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.1
-./scripts/release/publish-github-release.sh 1.1.1
+./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/publish-github-release.sh 1.1.2
 ```
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.1
+.\scripts\release\build-windows-release.ps1 1.1.2
 ```
 
-这些脚本是当前稳定公开发布准备的本地入口。macOS 构建脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，生成已签名并完成 notarization 的 DMG，并在旁边写入 checksum。Windows 构建脚本在 Windows 上运行，会校验版本，运行 lint、前端构建和 Rust 测试，生成 NSIS setup EXE，并在旁边写入 checksum。Windows 安装包默认未签名且仍处于测试阶段，除非单独配置了 Windows code signing 和稳定 Windows 发布策略。发布脚本会继续校验 tag，并把 macOS DMG 与 checksum 上传到 GitHub Releases；如果该版本包含 Windows 安装包，请同时以测试阶段资产上传 Windows EXE 与 checksum。
+这些脚本是当前稳定公开发布准备的本地入口。macOS 构建脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，生成已签名的 DMG，并在旁边写入 checksum。Windows 构建脚本在 Windows 上运行，会校验版本，运行 lint、前端构建和 Rust 测试，生成 NSIS setup EXE，并在旁边写入 checksum，供本地兼容性验证使用。Windows 安装包默认未签名且仍处于测试阶段，除非单独配置了 Windows code signing 和稳定 Windows 发布策略。发布脚本会继续校验 tag，并把 macOS DMG 与 checksum 上传到 GitHub Releases；`v1.1.2` 不上传 Windows EXE 资产。
 
 ## 平台隔离规则
 
@@ -68,16 +68,16 @@ Windows 专属的托盘弹窗定位、隐藏子进程命令行窗口、未签名
 - 确认生成的 DMG 能在 Apple Silicon macOS 上正常打开
 - 确认已签名的应用可以从 `Applications` 正常启动
 - 确认 macOS menu bar 弹窗仍在 menu bar 下方打开，且 macOS 专属 Dock 设置不会出现在非 macOS
-- 确认生成的 Windows setup EXE 可以在 Windows 上安装
-- 确认 Windows 托盘弹窗在底部任务栏上方向上展开，显示可选模块后仍向上扩展，并且刷新 live quota 时不会弹出命令行窗口
-- 确认 Windows 安装包 checksum，并注明除非另行配置签名，否则该安装包仍处于测试阶段且未签名
+- 如果执行本地 Windows 验证，确认生成的 Windows setup EXE 可以在 Windows 上安装
+- 如果执行本地 Windows 验证，确认 Windows 托盘弹窗在底部任务栏上方向上展开，显示可选模块后仍向上扩展，并且刷新 live quota 时不会弹出命令行窗口
+- 如果执行本地 Windows 验证，确认 Windows 安装包 checksum，并注明除非另行配置签名，否则该安装包仍处于测试阶段且未签名
 
 ## 发布建议
 
 - 为稳定版本创建 Git tag
 - 基于该 tag 创建 GitHub Release
-- 上传已签名并完成 notarization 的 Apple Silicon DMG
-- 如果已运行 Windows 发布脚本，以测试阶段资产上传未签名的 Windows NSIS setup EXE
+- 上传已签名的 Apple Silicon DMG
+- `v1.1.2` 不上传 Windows NSIS setup EXE
 - 附上该版本对应的发布说明
 - 发布后再次验证下载与安装流程
 
@@ -88,9 +88,9 @@ Windows 专属的托盘弹窗定位、隐藏子进程命令行窗口、未签名
 面向外部文档和公告时，请保持以下表述一致：
 
 - 官方分发渠道：GitHub Releases
-- 稳定发布资产：已签名并完成 notarization 的 macOS Apple Silicon DMG
-- Windows 测试阶段资产：未签名的 Windows NSIS setup EXE
-- 当前稳定版本线：`v1.1.1`
+- 稳定发布资产：已签名的 macOS Apple Silicon DMG
+- Windows 安装包：`v1.1.2` 暂缓发布
+- 当前稳定版本线：`v1.1.2`
 
 ## 相关文档
 
@@ -98,4 +98,4 @@ Windows 专属的托盘弹窗定位、隐藏子进程命令行窗口、未签名
 - [在 macOS 上安装](./installing-on-macos.md)
 - [在 Windows 上安装](./installing-on-windows.md)
 - [发布 Runbook](./release-runbook.md)
-- [v1.1.1 发布说明](./release-notes-v1.1.1.md)
+- [v1.1.2 发布说明](./release-notes-v1.1.2.md)

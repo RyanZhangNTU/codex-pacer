@@ -2,7 +2,7 @@
 
 ## macOS install path
 
-The macOS public installer for **Codex Pacer** is the signed and notarized **Apple Silicon DMG** published through GitHub Releases.
+The macOS public installer for **Codex Pacer** is the signed **Apple Silicon DMG** published through GitHub Releases.
 
 ## Happy path
 

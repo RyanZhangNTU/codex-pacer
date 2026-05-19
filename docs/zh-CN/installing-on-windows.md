@@ -1,22 +1,22 @@
 # 在 Windows 上安装
 
-## Windows 测试阶段安装路径
+## Windows 测试阶段状态
 
-**Codex Pacer** 的 Windows 公开安装包，是通过 GitHub Releases 发布的 NSIS setup `.exe`。
+`v1.1.2` 暂缓发布 Windows 安装包。当前稳定版 GitHub Release 不附加 Windows setup `.exe`。
 
-Windows 支持目前仍处于测试阶段。Windows 安装包当前默认未签名，除非某次发布单独配置了 Windows code signing。Windows SmartScreen 可能会提示发布者未知。
+Windows 支持目前仍处于测试阶段。后续某个版本如果包含 Windows 安装包，除非该版本单独配置了 Windows code signing，否则安装包默认未签名，Windows SmartScreen 可能会提示发布者未知。
 
-## 标准安装流程
+## 源码验证流程
 
-1. 打开 `codex-pacer` 的最新 GitHub Releases 页面。
-2. 下载最新的 Windows NSIS setup `.exe`。
-3. 运行下载得到的 setup 文件。
-4. 如果 SmartScreen 提示发布者未知，请先确认文件来自项目 GitHub Release，再继续安装。
-5. 安装后从 Start menu 启动 **Codex Pacer**。
+1. 从 GitHub 仓库检出对应 release tag。
+2. 安装 Windows Tauri 前置依赖。
+3. 运行 `npm ci`。
+4. 运行 `npm run lint`、`npm run build` 和 `cargo test --manifest-path src-tauri/Cargo.toml --locked`。
+5. 仅用于本地安装包验证时，在 Windows 上运行 `.\scripts\release\build-windows-release.ps1 1.1.2`。
 
 ## 安装后
 
-首次运行建议完成这些步骤：
+测试本地 Windows 构建时，首次运行建议完成这些步骤：
 
 1. 确认 Codex home 路径（Windows 默认 `~\.codex`），或选择自定义 `CODEX_HOME`。
 2. 确认该路径下已经有本地 Codex CLI 会话与 rate-limit 数据。
@@ -27,6 +27,7 @@ Windows 支持目前仍处于测试阶段。Windows 安装包当前默认未签�
 ## 说明
 
 - GitHub Releases 是官方分发渠道。
-- Windows setup `.exe` 是测试阶段的 NSIS 安装包。
-- 安装包不会安装 Codex CLI，也不会创建 Codex 使用历史。
+- `v1.1.2` 只发布 macOS Apple Silicon DMG 资产。
+- 任何本地构建的 Windows setup `.exe` 仍是测试阶段的 NSIS 安装包。
+- Windows 安装包不会安装 Codex CLI，也不会创建 Codex 使用历史。
 - Windows 稳定支持、Windows code signing 和自动更新交付目前都不承诺。

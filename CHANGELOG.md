@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-05-19
+
+### Changed
+- database query access now uses versioned SQL query files and smaller persistence modules for cleaner release maintenance
+- public release documentation now points to the macOS DMG-only GitHub Release flow while Windows installer publishing remains paused
+
+### Fixed
+- token usage imports now treat cumulative snapshots as monotonic high-water marks so Codex state resets, replayed files, or process restarts do not rebill already-counted tokens
+- existing overcounted token usage rows are repaired once on the next scan, with failed source files tracked for targeted retry instead of forcing full repeated reimports
+
 ## [1.1.1] - 2026-04-25
 
 ### Changed

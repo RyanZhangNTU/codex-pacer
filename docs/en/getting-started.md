@@ -25,7 +25,7 @@ For development from source, you will also need:
 
 Official public downloads are published through GitHub Releases:
 
-- signed and notarized **macOS Apple Silicon DMG**
+- signed **macOS Apple Silicon DMG**
 - unsigned **Windows NSIS setup EXE** as a test-stage asset
 
 Start here:
@@ -106,4 +106,4 @@ npm run tauri build
 - [Installing on macOS](./installing-on-macos.md)
 - [Installing on Windows](./installing-on-windows.md)
 - [Packaging and release](./packaging-and-release.md)
-- [Release notes for v1.1.1](./release-notes-v1.1.1.md)
+- [Release notes for v1.1.2](./release-notes-v1.1.2.md)
