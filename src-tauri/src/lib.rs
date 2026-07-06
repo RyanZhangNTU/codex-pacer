@@ -161,7 +161,7 @@ fn getMenuBarPopupSnapshot(
   state: State<'_, AppState>,
   force_refresh: Option<bool>,
 ) -> Result<MenuBarPopupSnapshot, String> {
-  build_menu_bar_popup_snapshot(state.inner(), force_refresh.unwrap_or(false))
+  build_due_menu_bar_popup_snapshot(state.inner(), force_refresh.unwrap_or(false), Utc::now())
 }
 
 #[allow(non_snake_case)]
@@ -264,7 +264,7 @@ fn handleMenuBarPopupAction(
       Ok(true)
     }
     "refresh" => {
-      let _ = build_menu_bar_popup_snapshot(state.inner(), true)?;
+      let _ = build_due_menu_bar_popup_snapshot(state.inner(), true, Utc::now())?;
       refresh_daily_value_menu_bar(state.inner());
       Ok(true)
     }
@@ -1125,6 +1125,17 @@ fn build_menu_bar_popup_snapshot(
   })
 }
 
+fn build_due_menu_bar_popup_snapshot(
+  state: &AppState,
+  force_refresh: bool,
+  now: chrono::DateTime<chrono::Utc>,
+) -> Result<MenuBarPopupSnapshot, String> {
+  if let Err(error) = run_due_background_refresh(state.clone(), now) {
+    log::warn!("Failed to run due background refresh before menu bar snapshot: {error}");
+  }
+  build_menu_bar_popup_snapshot(state, force_refresh)
+}
+
 fn menu_bar_popup_quota_snapshot(window: &RateLimitWindowSnapshot) -> MenuBarPopupQuotaSnapshot {
   MenuBarPopupQuotaSnapshot {
     used_percent: window.used_percent,
@@ -1973,6 +1984,79 @@ mod tests {
         utc_time("2026-03-28T00:00:00Z")
       ),
       BackgroundRefreshDecision::Full
+    );
+  }
+
+  #[test]
+  fn menu_bar_popup_snapshot_runs_due_background_refresh() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home
+      .join("sessions")
+      .join(Local::now().format("%Y").to_string())
+      .join(Local::now().format("%m").to_string())
+      .join(Local::now().format("%d").to_string());
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_id = "abcdefab-1234-5678-90ab-abcdefabcdef";
+    std::fs::write(
+      sessions_dir.join("new.jsonl"),
+      format!(
+        concat!(
+          "{{\"timestamp\":\"2026-03-27T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{}\"}}}}\n",
+          "{{\"timestamp\":\"2026-03-27T00:00:00Z\",\"type\":\"turn_context\",\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n",
+          "{{\"timestamp\":\"2026-03-27T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{{",
+          "\"type\":\"token_count\",",
+          "\"info\":{{\"total_token_usage\":{{",
+          "\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":25,",
+          "\"reasoning_output_tokens\":0,\"total_tokens\":125",
+          "}}}},",
+          "\"rate_limits\":{{\"plan_type\":\"pro\"}}",
+          "}}}}\n"
+        ),
+        session_id
+      ),
+    )
+    .expect("write session");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = SyncSettings {
+      codex_home: Some(codex_home.to_string_lossy().to_string()),
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 1,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..get_sync_settings(&conn).expect("load settings")
+    };
+    save_sync_settings(&conn, &settings).expect("save settings");
+    database::set_last_full_scan_completed(&conn, "2026-03-27T00:00:30Z").expect("set full scan");
+    drop(conn);
+    let state = AppState {
+      db_path: db_path.clone(),
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = build_due_menu_bar_popup_snapshot(
+      &state,
+      false,
+      utc_time("2026-03-27T00:01:00Z"),
+    )
+    .expect("load snapshot");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let event_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM usage_events WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get(0),
+      )
+      .expect("count events");
+    assert_eq!(event_count, 1);
+    assert_ne!(
+      snapshot.last_scan_completed_at.as_deref(),
+      Some("2026-03-27T00:00:00Z")
     );
   }
 
