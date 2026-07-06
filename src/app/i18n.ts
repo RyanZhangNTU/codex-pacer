@@ -184,8 +184,6 @@ export type TranslationSet = {
         autoScanEnabled: string
         autoScanEnabledNote: string
         autoScanIntervalMinutes: string
-        liveQuotaRefreshIntervalSeconds: string
-        liveQuotaRefreshNote: string
       }
       menuBar: {
         eyebrow: string
@@ -427,14 +425,12 @@ const translations: Record<AppLanguage, TranslationSet> = {
         sync: {
           eyebrow: '同步',
           title: '扫描与数据源',
-          description: '控制 Codex 数据目录、自动扫描频率，以及 live quota 的刷新周期。',
+          description: '控制 Codex 数据目录，以及所有后台自动刷新的统一频率。',
           codexHome: 'Codex home',
           codexHomePlaceholder: '默认使用 CODEX_HOME 或 ~/.codex',
           autoScanEnabled: '启用自动扫描',
           autoScanEnabledNote: '关闭后仅保留手动扫描，不再按周期自动刷新数据。',
-          autoScanIntervalMinutes: '自动扫描间隔（分钟）',
-          liveQuotaRefreshIntervalSeconds: 'Live quota 刷新间隔（分钟）',
-          liveQuotaRefreshNote: '独立控制 `5小时 / 7天` live quota 的主动刷新与历史持久化频率。',
+          autoScanIntervalMinutes: '后台自动刷新间隔（分钟）',
         },
         menuBar: {
           eyebrow: '托盘',
@@ -669,14 +665,12 @@ const translations: Record<AppLanguage, TranslationSet> = {
         sync: {
           eyebrow: 'Sync',
           title: 'Scan and data sources',
-          description: 'Control the Codex data directory, automatic scan cadence, and live quota refresh interval.',
+          description: 'Control the Codex data directory and the unified cadence for all background refreshes.',
           codexHome: 'Codex home',
           codexHomePlaceholder: 'Defaults to CODEX_HOME or ~/.codex',
           autoScanEnabled: 'Auto scan enabled',
           autoScanEnabledNote: 'When disabled, only manual scans are kept and periodic refresh stops.',
-          autoScanIntervalMinutes: 'Auto scan interval (minutes)',
-          liveQuotaRefreshIntervalSeconds: 'Live quota refresh interval (minutes)',
-          liveQuotaRefreshNote: 'Separately controls active refresh and history persistence for `5h / 7d` live quota snapshots.',
+          autoScanIntervalMinutes: 'Background refresh interval (minutes)',
         },
         menuBar: {
           eyebrow: 'Tray',

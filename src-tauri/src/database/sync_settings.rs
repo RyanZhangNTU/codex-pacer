@@ -284,6 +284,16 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
     )?;
     }
 
+    if !column_names
+        .iter()
+        .any(|name| name == "last_full_scan_completed_at")
+    {
+        conn.execute(
+      "ALTER TABLE sync_settings ADD COLUMN last_full_scan_completed_at TEXT",
+      [],
+    )?;
+    }
+
     migrate_sync_settings_defaults_to_minutes(conn)?;
 
     Ok(())
@@ -341,14 +351,15 @@ pub fn get_sync_settings(conn: &Connection) -> rusqlite::Result<SyncSettings> {
            last_scan_started_at, last_scan_completed_at, updated_at
     FROM sync_settings
     WHERE singleton_id = 1
-    ",
+        ",
         [],
         |row| {
+            let auto_scan_interval_minutes = row.get::<_, i64>(2)?.max(1);
             Ok(SyncSettings {
                 codex_home: row.get(0)?,
                 auto_scan_enabled: i64_to_bool(row.get::<_, i64>(1)?),
-                auto_scan_interval_minutes: row.get(2)?,
-                live_quota_refresh_interval_seconds: row.get(3)?,
+                auto_scan_interval_minutes,
+                live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(auto_scan_interval_minutes),
                 hide_dock_icon_when_menu_bar_visible: i64_to_bool(row.get::<_, i64>(4)?),
                 show_menu_bar_logo: i64_to_bool(row.get::<_, i64>(5)?),
                 show_menu_bar_daily_api_value: i64_to_bool(row.get::<_, i64>(6)?),
@@ -379,6 +390,7 @@ pub fn save_sync_settings(
     settings: &SyncSettings,
 ) -> rusqlite::Result<SyncSettings> {
     let updated_at = now_utc_string();
+    let auto_scan_interval_minutes = settings.auto_scan_interval_minutes.max(1);
     conn.execute(
     "
     INSERT INTO sync_settings (
@@ -426,8 +438,8 @@ pub fn save_sync_settings(
     params![
       settings.codex_home,
       bool_to_i64(settings.auto_scan_enabled),
-      settings.auto_scan_interval_minutes.max(1),
-      settings.live_quota_refresh_interval_seconds.clamp(60, 3600),
+      auto_scan_interval_minutes,
+      unified_refresh_interval_seconds(auto_scan_interval_minutes),
       bool_to_i64(settings.hide_dock_icon_when_menu_bar_visible),
       bool_to_i64(settings.show_menu_bar_logo),
       bool_to_i64(settings.show_menu_bar_daily_api_value),
@@ -453,6 +465,10 @@ pub fn save_sync_settings(
     get_sync_settings(conn)
 }
 
+fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
+    auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
+}
+
 pub fn set_last_scan_started(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
     conn.execute(
         "
@@ -470,6 +486,30 @@ pub fn set_last_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::
         "
     UPDATE sync_settings
     SET last_scan_completed_at = ?1, updated_at = ?1
+    WHERE singleton_id = 1
+    ",
+        params![timestamp],
+    )?;
+    Ok(())
+}
+
+pub fn get_last_full_scan_completed(conn: &Connection) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "
+    SELECT last_full_scan_completed_at
+    FROM sync_settings
+    WHERE singleton_id = 1
+    ",
+        [],
+        |row| row.get(0),
+    )
+}
+
+pub fn set_last_full_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "
+    UPDATE sync_settings
+    SET last_full_scan_completed_at = ?1, updated_at = ?1
     WHERE singleton_id = 1
     ",
         params![timestamp],

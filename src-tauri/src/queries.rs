@@ -162,6 +162,36 @@ pub fn get_quota_trend(
   ))
 }
 
+pub fn get_window_api_value(
+  db_path: &Path,
+  bucket: String,
+  anchor: Option<String>,
+  custom_start: Option<String>,
+  custom_end: Option<String>,
+  live_rate_limits: Option<LiveRateLimitSnapshot>,
+  live_window_offset: Option<i64>,
+) -> Result<f64, String> {
+  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  if bucket == "total" {
+    return sum_all_api_value(&conn).map_err(|error| error.to_string());
+  }
+
+  let events = load_events(&conn).map_err(|error| error.to_string())?;
+  let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
+  let resolved_window = resolve_window(
+    &conn,
+    Some(bucket),
+    anchor,
+    custom_start,
+    custom_end,
+    &events,
+    profile.billing_anchor_day,
+    live_rate_limits.as_ref(),
+    live_window_offset,
+  )?;
+  Ok(sum_window_api_value(&events, &resolved_window.window))
+}
+
 pub fn list_conversations(
   db_path: &Path,
   filters: Option<ConversationFilters>,
@@ -1160,6 +1190,20 @@ fn load_events_for_root_session(conn: &Connection, root_session_id: &str) -> rus
   })?;
 
   rows.collect()
+}
+
+fn sum_all_api_value(conn: &Connection) -> rusqlite::Result<f64> {
+  conn.query_row("SELECT COALESCE(SUM(value_usd), 0.0) FROM usage_events", [], |row| {
+    row.get(0)
+  })
+}
+
+fn sum_window_api_value(events: &[EventRow], window: &Window) -> f64 {
+  events
+    .iter()
+    .filter(|event| event_in_window(event, window))
+    .map(|event| event.value_usd)
+    .sum()
 }
 
 fn resolve_window(
@@ -2266,6 +2310,59 @@ mod tests {
     assert_eq!(window.window.anchor, "2026-03-26");
     assert_eq!(window.window.start.to_rfc3339(), "2026-03-26T11:27:00+08:00");
     assert_eq!(window.window.end.to_rfc3339(), "2026-03-26T16:27:00+08:00");
+  }
+
+  #[test]
+  fn menu_bar_api_value_uses_selected_live_window() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES
+          ('inside', '2026-03-26T04:30:00Z', 'gpt-5.4', 0, 0, 0, 0, 0, 2.50, 0, 0),
+          ('inside-offset', '2026-03-26T11:45:00+08:00', 'gpt-5.4', 0, 0, 0, 0, 0, 1.25, 0, 0),
+          ('outside', '2026-03-26T09:30:00Z', 'gpt-5.4', 0, 0, 0, 0, 0, 7.25, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage events");
+    let live_rate_limits = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: Some(crate::models::RateLimitWindowSnapshot {
+        used_percent: 8,
+        remaining_percent: 92,
+        window_duration_mins: Some(300),
+        resets_at: Some("2026-03-26T16:27:36+08:00".to_string()),
+        window_start: Some("2026-03-26T11:27:36+08:00".to_string()),
+      }),
+      secondary: None,
+      fetched_at: "2026-03-26T14:33:00+08:00".to_string(),
+    };
+    insert_live_rate_limit_snapshot(&conn, &live_rate_limits).expect("insert live rate limit snapshot");
+    drop(conn);
+
+    let api_value = get_window_api_value(
+      &db_path,
+      "five_hour".to_string(),
+      None,
+      None,
+      None,
+      Some(live_rate_limits),
+      None,
+    )
+    .expect("load menu bar api value");
+
+    assert_eq!(api_value, 3.75);
   }
 
   #[test]

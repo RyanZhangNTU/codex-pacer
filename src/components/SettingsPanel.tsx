@@ -52,14 +52,6 @@ function SwitchField({ label, checked, disabled = false, onChange }: SwitchField
   )
 }
 
-function refreshSecondsToMinutes(seconds: number) {
-  return Math.max(1, Math.round(seconds / 60))
-}
-
-function refreshMinutesToSeconds(minutes: number) {
-  return Math.min(60, Math.max(1, minutes)) * 60
-}
-
 function isMacOs() {
   return typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac')
 }
@@ -272,37 +264,16 @@ export function SettingsPanel({
                     type="number"
                     value={draftSync.autoScanIntervalMinutes}
                     onChange={(event) =>
-                      setDraftSync((current) =>
-                        current
+                      setDraftSync((current) => {
+                        const intervalMinutes = Math.max(1, Number(event.target.value || 5))
+                        return current
                           ? {
                               ...current,
-                              autoScanIntervalMinutes: Math.max(1, Number(event.target.value || 5)),
+                              autoScanIntervalMinutes: intervalMinutes,
+                              liveQuotaRefreshIntervalSeconds: intervalMinutes * 60,
                             }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-
-                <label className="field">
-                  <span>{t.settings.sections.sync.liveQuotaRefreshIntervalSeconds}</span>
-                  <input
-                    min={1}
-                    max={60}
-                    step={1}
-                    type="number"
-                    value={refreshSecondsToMinutes(draftSync.liveQuotaRefreshIntervalSeconds)}
-                    onChange={(event) =>
-                      setDraftSync((current) =>
-                        current
-                          ? {
-                              ...current,
-                              liveQuotaRefreshIntervalSeconds: refreshMinutesToSeconds(
-                                Number(event.target.value || 5),
-                              ),
-                            }
-                          : current,
-                      )
+                          : current
+                      })
                     }
                   />
                 </label>

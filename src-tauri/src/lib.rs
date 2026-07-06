@@ -6,20 +6,20 @@ mod queries;
 mod rate_limits;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
   atomic::{AtomicBool, Ordering},
   Arc, Mutex,
 };
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Duration as ChronoDuration, Local};
+use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use rusqlite::params;
 use database::{
-  canonical_subscription_currency, get_subscription_profile, get_sync_settings, init_db,
+  canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
   insert_live_rate_limit_snapshot, open_connection, save_subscription_profile, save_sync_settings,
 };
-use importer::{perform_scan, recalculate_all_session_values};
+use importer::{perform_incremental_scan, perform_scan, recalculate_all_session_values};
 use models::{
   ConversationDetail, ConversationFilters, ConversationListItem, DashboardSnapshot,
   LiveRateLimitSnapshot, MenuBarPopupQuotaSnapshot, MenuBarPopupSnapshot,
@@ -27,7 +27,9 @@ use models::{
   ScanResult, SubscriptionProfile, SyncSettings,
 };
 use pricing::{load_catalog, refresh_pricing_catalog_from_openai, seed_pricing_catalog};
-use queries::{get_conversation_detail, get_overview, get_quota_trend, list_conversations, load_dashboard_data};
+use queries::{
+  get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
+};
 use rate_limits::query_live_rate_limits;
 use tauri::{
   Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
@@ -51,6 +53,7 @@ const MENU_BAR_POPUP_MAX_HEIGHT: f64 = 760.0;
 const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
+const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 #[derive(Clone)]
 struct CachedRateLimitSnapshot {
   fetched_at: Instant,
@@ -270,11 +273,12 @@ fn updateSyncSettings(
 ) -> Result<SyncSettings, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let current = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+  let auto_scan_interval_minutes = payload.auto_scan_interval_minutes.max(1);
   let updated = SyncSettings {
     codex_home: payload.codex_home,
     auto_scan_enabled: payload.auto_scan_enabled,
-    auto_scan_interval_minutes: payload.auto_scan_interval_minutes.max(1),
-    live_quota_refresh_interval_seconds: payload.live_quota_refresh_interval_seconds.clamp(60, 3600),
+    auto_scan_interval_minutes,
+    live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(auto_scan_interval_minutes),
     hide_dock_icon_when_menu_bar_visible: payload.hide_dock_icon_when_menu_bar_visible,
     show_menu_bar_logo: payload.show_menu_bar_logo,
     show_menu_bar_daily_api_value: payload.show_menu_bar_daily_api_value,
@@ -339,6 +343,64 @@ fn run_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanR
   state.scan_in_progress.store(false, Ordering::SeqCst);
   refresh_daily_value_menu_bar(&state);
   result
+}
+
+fn run_incremental_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
+  if state
+    .scan_in_progress
+    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    .is_err()
+  {
+    return Err("A scan is already running.".to_string());
+  }
+
+  let result = perform_incremental_scan(&state.db_path, codex_home);
+  state.scan_in_progress.store(false, Ordering::SeqCst);
+  refresh_daily_value_menu_bar(&state);
+  result
+}
+
+fn prepare_app_database(db_path: &Path) -> Result<(), String> {
+  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  init_db(&conn).map_err(|error| error.to_string())?;
+  let pricing_signature_before = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
+  seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
+  let pricing_signature_after = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
+  if pricing_signature_before != pricing_signature_after {
+    recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
+  }
+  Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+struct PricingValueSignatureEntry {
+  model_id: String,
+  input_price_per_million: f64,
+  cached_input_price_per_million: f64,
+  output_price_per_million: f64,
+  effective_model_id: String,
+}
+
+fn load_pricing_value_signature(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<PricingValueSignatureEntry>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT model_id, input_price_per_million, cached_input_price_per_million,
+           output_price_per_million, effective_model_id
+    FROM pricing_catalog
+    ORDER BY model_id
+    ",
+  )?;
+  let rows = stmt.query_map([], |row| {
+    Ok(PricingValueSignatureEntry {
+      model_id: row.get(0)?,
+      input_price_per_million: row.get(1)?,
+      cached_input_price_per_million: row.get(2)?,
+      output_price_per_million: row.get(3)?,
+      effective_model_id: row.get(4)?,
+    })
+  })?;
+
+  rows.collect()
 }
 
 fn refresh_daily_value_menu_bar(state: &AppState) {
@@ -429,16 +491,16 @@ fn current_menu_bar_title_parts(
     None
   };
   let api_value_title = if settings.show_menu_bar_daily_api_value {
-    let overview = get_overview(
+    let api_value_usd = get_window_api_value(
       &state.db_path,
-      Some(bucket.clone()),
+      bucket.clone(),
       if bucket_uses_anchor(&bucket) { Some(anchor) } else { None },
       None,
       None,
       live_rate_limits.clone(),
       None,
     )?;
-    Some(format!("${:.1}", overview.stats.api_value_usd))
+    Some(format!("${:.1}", api_value_usd))
   } else {
     None
   };
@@ -926,7 +988,7 @@ fn refresh_rate_limit_history_if_idle(state: &AppState) {
     return;
   }
 
-  let result = perform_scan(&state.db_path, None);
+  let result = perform_incremental_scan(&state.db_path, None);
   state.scan_in_progress.store(false, Ordering::SeqCst);
   if let Err(error) = result {
     log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
@@ -1001,7 +1063,7 @@ fn build_menu_bar_popup_snapshot(
 
   Ok(MenuBarPopupSnapshot {
     fetched_at: Local::now().to_rfc3339(),
-    refresh_interval_seconds: settings.live_quota_refresh_interval_seconds,
+    refresh_interval_seconds: unified_refresh_interval_seconds(settings.auto_scan_interval_minutes),
     selected_bucket,
     quota_5h: live_rate_limits
       .as_ref()
@@ -1096,8 +1158,14 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
   open_connection(&state.db_path)
     .ok()
     .and_then(|conn| get_sync_settings(&conn).ok())
-    .map(|settings| Duration::from_secs(settings.live_quota_refresh_interval_seconds.clamp(60, 3600) as u64))
+    .map(|settings| {
+      Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64)
+    })
     .unwrap_or(Duration::from_secs(300))
+}
+
+fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
+  auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
 }
 
 fn build_menu_bar_popup_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -1516,50 +1584,77 @@ fn show_main_window(app: &AppHandle) {
 
 fn spawn_initial_scan(state: AppState) {
   tauri::async_runtime::spawn(async move {
-    let _ = run_scan_if_idle(state, None);
+    let _ = run_incremental_scan_if_idle(state, None);
   });
 }
 
 fn spawn_scheduler(state: AppState) {
   tauri::async_runtime::spawn(async move {
     loop {
-      tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-      if state.scan_in_progress.load(Ordering::SeqCst) {
-        continue;
-      }
-
       let Ok(conn) = open_connection(&state.db_path) else {
+        tokio::time::sleep(Duration::from_secs(60)).await;
         continue;
       };
       let Ok(settings) = get_sync_settings(&conn) else {
+        tokio::time::sleep(Duration::from_secs(60)).await;
         continue;
       };
-      if menu_bar_has_visible_content(&settings) {
-        refresh_daily_value_menu_bar(&state);
-      }
-      if !settings.auto_scan_enabled {
+      let now = Utc::now();
+      let delay = scheduler_delay_until_next_refresh(&settings, now);
+      if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
         continue;
       }
+      let should_run_full = get_last_full_scan_completed(&conn)
+        .map(|last_completed_at| full_maintenance_due(last_completed_at.as_deref(), now))
+        .unwrap_or(true);
+      drop(conn);
 
-      let should_scan = match settings.last_scan_completed_at.as_deref() {
-        Some(last_completed_at) => {
-          chrono::DateTime::parse_from_rfc3339(last_completed_at)
-            .ok()
-            .map(|last| {
-              let elapsed = chrono::Utc::now().signed_duration_since(last.with_timezone(&chrono::Utc));
-              elapsed.num_minutes() >= settings.auto_scan_interval_minutes.max(1)
-            })
-            .unwrap_or(true)
-        }
-        None => true,
-      };
-
-      if should_scan {
+      if state.scan_in_progress.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_secs(
+          unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
+        ))
+        .await;
+      } else if should_run_full {
         let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
+      } else {
+        let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
       }
     }
   });
+}
+
+fn scheduler_delay_until_next_refresh(settings: &SyncSettings, now: chrono::DateTime<chrono::Utc>) -> Duration {
+  let interval_seconds = unified_refresh_interval_seconds(settings.auto_scan_interval_minutes);
+  if !settings.auto_scan_enabled {
+    return Duration::from_secs(interval_seconds as u64);
+  }
+
+  let Some(last_completed_at) = settings.last_scan_completed_at.as_deref() else {
+    return Duration::ZERO;
+  };
+  let Some(last_completed_at) = chrono::DateTime::parse_from_rfc3339(last_completed_at).ok() else {
+    return Duration::ZERO;
+  };
+  let elapsed_seconds = now
+    .signed_duration_since(last_completed_at.with_timezone(&chrono::Utc))
+    .num_seconds()
+    .max(0);
+  let remaining_seconds = interval_seconds.saturating_sub(elapsed_seconds);
+  Duration::from_secs(remaining_seconds as u64)
+}
+
+fn full_maintenance_due(last_completed_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> bool {
+  let Some(last_completed_at) = last_completed_at else {
+    return true;
+  };
+  let Some(last_completed_at) = chrono::DateTime::parse_from_rfc3339(last_completed_at).ok() else {
+    return true;
+  };
+  now
+    .signed_duration_since(last_completed_at.with_timezone(&chrono::Utc))
+    .num_seconds()
+    >= FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1620,10 +1715,8 @@ pub fn run() {
         .map_err(|error| format!("Failed to create app data dir {}: {error}", app_data_dir.display()))?;
       let db_path = app_data_dir.join("codex-counter.sqlite");
 
+      prepare_app_database(&db_path)?;
       let conn = open_connection(&db_path).map_err(|error| error.to_string())?;
-      init_db(&conn).map_err(|error| error.to_string())?;
-      seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
-      recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
 
       let app_handle = app.app_handle();
       let daily_value_tray = match build_daily_value_menu_bar(&app_handle, &db_path) {
@@ -1677,6 +1770,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tempfile::tempdir;
 
   fn speed_test_settings() -> SyncSettings {
     SyncSettings {
@@ -1695,6 +1789,211 @@ mod tests {
     DateTime::parse_from_rfc3339(value)
       .expect("parse test timestamp")
       .with_timezone(&Local)
+  }
+
+  fn utc_time(value: &str) -> chrono::DateTime<chrono::Utc> {
+    DateTime::parse_from_rfc3339(value)
+      .expect("parse test timestamp")
+      .with_timezone(&chrono::Utc)
+  }
+
+  #[test]
+  fn scheduler_uses_auto_scan_interval_when_disabled() {
+    let settings = SyncSettings {
+      auto_scan_enabled: false,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: None,
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:00:00Z")),
+      Duration::from_secs(420)
+    );
+  }
+
+  #[test]
+  fn scheduler_runs_immediately_without_previous_scan() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: None,
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:00:00Z")),
+      Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn scheduler_waits_remaining_auto_scan_interval() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:03:00Z")),
+      Duration::from_secs(240)
+    );
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:07:00Z")),
+      Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn scheduler_honors_auto_scan_intervals_above_one_hour() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 180,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T01:00:00Z")),
+      Duration::from_secs(7200)
+    );
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T03:00:00Z")),
+      Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn full_maintenance_is_due_without_previous_full_scan() {
+    assert!(full_maintenance_due(None, utc_time("2026-03-27T00:00:00Z")));
+  }
+
+  #[test]
+  fn full_maintenance_waits_until_daily_interval() {
+    assert!(!full_maintenance_due(
+      Some("2026-03-27T00:00:00Z"),
+      utc_time("2026-03-27T23:59:59Z")
+    ));
+    assert!(full_maintenance_due(
+      Some("2026-03-27T00:00:00Z"),
+      utc_time("2026-03-28T00:00:00Z")
+    ));
+  }
+
+  #[test]
+  fn startup_database_prepare_does_not_recalculate_usage_values() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('startup-session', 'startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('startup-session', '2026-03-26T04:30:00Z', 'gpt-5.4',
+          100, 0, 10, 0, 110, 123.45, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 123.45);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_usage_values_when_seed_pricing_changes() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET input_price_per_million = 1.00
+        WHERE model_id = 'gpt-5.4'
+        ",
+        [],
+      )
+      .expect("seed stale pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('startup-session', 'startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('startup-session', '2026-03-26T04:30:00Z', 'gpt-5.4',
+          1000000, 0, 0, 0, 1000000, 123.45, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 2.50);
   }
 
   #[test]
