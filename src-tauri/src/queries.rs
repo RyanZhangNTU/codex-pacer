@@ -5,7 +5,7 @@ use std::path::Path;
 
 use chrono::{
   DateTime, Datelike, Days, Local, LocalResult, Months, NaiveDate, NaiveDateTime, TimeZone,
-  SecondsFormat, Timelike,
+  Timelike,
 };
 use rusqlite::Connection;
 use serde_json::Value;
@@ -176,6 +176,7 @@ pub fn get_window_api_value(
     return sum_all_api_value(&conn).map_err(|error| error.to_string());
   }
 
+  let events = load_events(&conn).map_err(|error| error.to_string())?;
   let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
   let resolved_window = resolve_window(
     &conn,
@@ -183,12 +184,12 @@ pub fn get_window_api_value(
     anchor,
     custom_start,
     custom_end,
-    &[],
+    &events,
     profile.billing_anchor_day,
     live_rate_limits.as_ref(),
     live_window_offset,
   )?;
-  sum_window_api_value(&conn, &resolved_window.window).map_err(|error| error.to_string())
+  Ok(sum_window_api_value(&events, &resolved_window.window))
 }
 
 pub fn list_conversations(
@@ -1197,22 +1198,12 @@ fn sum_all_api_value(conn: &Connection) -> rusqlite::Result<f64> {
   })
 }
 
-fn sum_window_api_value(conn: &Connection, window: &Window) -> rusqlite::Result<f64> {
-  conn.query_row(
-    "
-    SELECT COALESCE(SUM(value_usd), 0.0)
-    FROM usage_events
-    WHERE timestamp >= ?1 AND timestamp < ?2
-    ",
-    rusqlite::params![utc_timestamp_key(window.start), utc_timestamp_key(window.end)],
-    |row| row.get(0),
-  )
-}
-
-fn utc_timestamp_key(timestamp: DateTime<Local>) -> String {
-  timestamp
-    .with_timezone(&chrono::Utc)
-    .to_rfc3339_opts(SecondsFormat::Millis, true)
+fn sum_window_api_value(events: &[EventRow], window: &Window) -> f64 {
+  events
+    .iter()
+    .filter(|event| event_in_window(event, window))
+    .map(|event| event.value_usd)
+    .sum()
 }
 
 fn resolve_window(
@@ -2337,6 +2328,7 @@ mod tests {
         )
         VALUES
           ('inside', '2026-03-26T04:30:00Z', 'gpt-5.4', 0, 0, 0, 0, 0, 2.50, 0, 0),
+          ('inside-offset', '2026-03-26T11:45:00+08:00', 'gpt-5.4', 0, 0, 0, 0, 0, 1.25, 0, 0),
           ('outside', '2026-03-26T09:30:00Z', 'gpt-5.4', 0, 0, 0, 0, 0, 7.25, 0, 0)
         ",
         [],
@@ -2370,7 +2362,7 @@ mod tests {
     )
     .expect("load menu bar api value");
 
-    assert_eq!(api_value, 2.50);
+    assert_eq!(api_value, 3.75);
   }
 
   #[test]

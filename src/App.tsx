@@ -308,7 +308,7 @@ function App() {
     let cancelled = false
 
     const bootstrap = async () => {
-      await loadShellRef.current(true)
+      await loadShellRef.current(false)
       if (!cancelled) {
         setHasBootstrapped(true)
       }
