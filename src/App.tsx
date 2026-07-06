@@ -17,6 +17,7 @@ import {
   getConversationDetail,
   getLiveRateLimits,
   loadDashboard,
+  refreshBackgroundData,
   refreshPricing,
   scanCodexUsage,
   updateSubscriptionProfile,
@@ -334,15 +335,17 @@ function App() {
   }, [dashboardRevision, loadDetail, loadedQueryKey, selectedRootSessionId])
 
   useEffect(() => {
-    if (!hasBootstrapped) return
+    if (!hasBootstrapped || !syncSettings?.autoScanEnabled) return
     const interval = window.setInterval(() => {
-      void loadShell(false)
+      void refreshBackgroundData()
+        .catch(() => null)
+        .then(() => loadShell(false))
     }, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
     return () => window.clearInterval(interval)
-  }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanIntervalMinutes])
+  }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes])
 
   useEffect(() => {
-    if (!settingsOpen) return
+    if (!settingsOpen || !syncSettings?.autoScanEnabled) return
     let cancelled = false
     const refresh = () =>
       void getLiveRateLimits()
@@ -358,7 +361,7 @@ function App() {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [settingsOpen, syncSettings?.autoScanIntervalMinutes])
+  }, [settingsOpen, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes])
 
   async function handleRescan() {
     await loadShell(true)

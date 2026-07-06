@@ -54,6 +54,15 @@ const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackgroundRefreshDecision {
+  Disabled(Duration),
+  Wait(Duration),
+  Incremental,
+  Full,
+}
+
 #[derive(Clone)]
 struct CachedRateLimitSnapshot {
   fetched_at: Instant,
@@ -85,6 +94,12 @@ fn scanCodexUsage(state: State<'_, AppState>, codex_home: Option<String>) -> Res
 #[tauri::command]
 fn getScanInProgress(state: State<'_, AppState>) -> bool {
   state.inner().scan_in_progress.load(Ordering::SeqCst)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command]
+fn refreshBackgroundData(state: State<'_, AppState>) -> Result<Option<ScanResult>, String> {
+  run_due_background_refresh(state.inner().clone(), Utc::now())
 }
 
 #[allow(non_snake_case)]
@@ -358,6 +373,23 @@ fn run_incremental_scan_if_idle(state: AppState, codex_home: Option<String>) -> 
   state.scan_in_progress.store(false, Ordering::SeqCst);
   refresh_daily_value_menu_bar(&state);
   result
+}
+
+fn run_due_background_refresh(
+  state: AppState,
+  now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<ScanResult>, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+  let last_full_scan_completed = get_last_full_scan_completed(&conn).map_err(|error| error.to_string())?;
+  let decision = background_refresh_decision(&settings, last_full_scan_completed.as_deref(), now);
+  drop(conn);
+
+  match decision {
+    BackgroundRefreshDecision::Full => run_scan_if_idle(state, settings.codex_home).map(Some),
+    BackgroundRefreshDecision::Incremental => run_incremental_scan_if_idle(state, settings.codex_home).map(Some),
+    BackgroundRefreshDecision::Disabled(_) | BackgroundRefreshDecision::Wait(_) => Ok(None),
+  }
 }
 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
@@ -1600,28 +1632,53 @@ fn spawn_scheduler(state: AppState) {
         continue;
       };
       let now = Utc::now();
-      let delay = scheduler_delay_until_next_refresh(&settings, now);
-      if !delay.is_zero() {
-        tokio::time::sleep(delay).await;
-        continue;
-      }
-      let should_run_full = get_last_full_scan_completed(&conn)
-        .map(|last_completed_at| full_maintenance_due(last_completed_at.as_deref(), now))
-        .unwrap_or(true);
+      let last_full_scan_completed = get_last_full_scan_completed(&conn).unwrap_or(None);
+      let decision = background_refresh_decision(&settings, last_full_scan_completed.as_deref(), now);
       drop(conn);
 
-      if state.scan_in_progress.load(Ordering::SeqCst) {
-        tokio::time::sleep(Duration::from_secs(
-          unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
-        ))
-        .await;
-      } else if should_run_full {
-        let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
-      } else {
-        let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
+      match decision {
+        BackgroundRefreshDecision::Disabled(delay) | BackgroundRefreshDecision::Wait(delay) => {
+          tokio::time::sleep(delay).await;
+        }
+        BackgroundRefreshDecision::Full | BackgroundRefreshDecision::Incremental
+          if state.scan_in_progress.load(Ordering::SeqCst) =>
+        {
+          tokio::time::sleep(Duration::from_secs(
+            unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
+          ))
+          .await;
+        }
+        BackgroundRefreshDecision::Full => {
+          let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
+        }
+        BackgroundRefreshDecision::Incremental => {
+          let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
+        }
       }
     }
   });
+}
+
+fn background_refresh_decision(
+  settings: &SyncSettings,
+  last_full_scan_completed_at: Option<&str>,
+  now: chrono::DateTime<chrono::Utc>,
+) -> BackgroundRefreshDecision {
+  let interval = Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64);
+  if !settings.auto_scan_enabled {
+    return BackgroundRefreshDecision::Disabled(interval);
+  }
+
+  let delay = scheduler_delay_until_next_refresh(settings, now);
+  if !delay.is_zero() {
+    return BackgroundRefreshDecision::Wait(delay);
+  }
+
+  if full_maintenance_due(last_full_scan_completed_at, now) {
+    BackgroundRefreshDecision::Full
+  } else {
+    BackgroundRefreshDecision::Incremental
+  }
 }
 
 fn scheduler_delay_until_next_refresh(settings: &SyncSettings, now: chrono::DateTime<chrono::Utc>) -> Duration {
@@ -1749,6 +1806,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       scanCodexUsage,
       getScanInProgress,
+      refreshBackgroundData,
       refreshPricing,
       getOverview,
       listConversations,
@@ -1862,6 +1920,59 @@ mod tests {
     assert_eq!(
       scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T03:00:00Z")),
       Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn background_refresh_decision_skips_when_auto_scan_is_disabled() {
+    let settings = SyncSettings {
+      auto_scan_enabled: false,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: None,
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      background_refresh_decision(&settings, None, utc_time("2026-03-27T00:00:00Z")),
+      BackgroundRefreshDecision::Disabled(Duration::from_secs(420))
+    );
+  }
+
+  #[test]
+  fn background_refresh_decision_runs_incremental_when_interval_is_due() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 5,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      background_refresh_decision(
+        &settings,
+        Some("2026-03-27T00:00:00Z"),
+        utc_time("2026-03-27T00:05:00Z")
+      ),
+      BackgroundRefreshDecision::Incremental
+    );
+  }
+
+  #[test]
+  fn background_refresh_decision_runs_full_when_daily_maintenance_is_due() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 5,
+      last_scan_completed_at: Some("2026-03-27T23:55:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      background_refresh_decision(
+        &settings,
+        Some("2026-03-27T00:00:00Z"),
+        utc_time("2026-03-28T00:00:00Z")
+      ),
+      BackgroundRefreshDecision::Full
     );
   }
 
