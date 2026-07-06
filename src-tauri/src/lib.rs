@@ -1032,7 +1032,7 @@ fn get_live_rate_limits_with_fallback(
     }
   }
 
-  match query_live_rate_limits() {
+  match query_live_rate_limits(live_rate_limit_query_timeout_for_interval(ttl)) {
     Ok(snapshot) => {
       let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
       insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
@@ -1384,6 +1384,12 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
       Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64)
     })
     .unwrap_or(Duration::from_secs(300))
+}
+
+fn live_rate_limit_query_timeout_for_interval(interval: Duration) -> Duration {
+  interval
+    .checked_sub(Duration::from_secs(5))
+    .unwrap_or_else(|| Duration::from_secs(1))
 }
 
 fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
@@ -2120,6 +2126,18 @@ mod tests {
       Duration::from_secs(SCHEDULER_MAX_SLEEP_SECONDS)
     );
     assert_eq!(scheduler_sleep_duration(Duration::from_secs(2)), Duration::from_secs(2));
+  }
+
+  #[test]
+  fn live_rate_limit_query_timeout_finishes_before_next_refresh() {
+    assert_eq!(
+      live_rate_limit_query_timeout_for_interval(Duration::from_secs(60)),
+      Duration::from_secs(55)
+    );
+    assert_eq!(
+      live_rate_limit_query_timeout_for_interval(Duration::from_secs(180)),
+      Duration::from_secs(175)
+    );
   }
 
   #[test]
