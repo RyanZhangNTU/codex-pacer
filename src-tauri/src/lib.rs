@@ -1193,8 +1193,8 @@ fn get_live_rate_limits_local(state: &AppState) -> Option<LiveRateLimitSnapshot>
 }
 
 fn get_live_rate_limits_stored_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  load_history_live_rate_limits(state)
-    .or_else(|| load_persisted_live_rate_limits(state))
+  load_persisted_live_rate_limits(state)
+    .or_else(|| load_history_live_rate_limits(state))
     .or_else(|| get_cached_live_rate_limits(state))
 }
 
@@ -2526,6 +2526,69 @@ mod tests {
 
     assert_eq!(api_value_title, None);
     assert_eq!(live_metric_title.as_deref(), Some("88%"));
+  }
+
+  #[test]
+  fn background_live_rate_limit_fallback_prefers_newest_persisted_sample() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-1",
+      &[crate::models::RateLimitSampleRecord {
+        source_kind: "session".to_string(),
+        source_session_id: Some("session-1".to_string()),
+        bucket: "five_hour".to_string(),
+        sample_timestamp: "2026-03-27T00:00:00+08:00".to_string(),
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        window_start: "2026-03-27T00:00:00+08:00".to_string(),
+        resets_at: "2026-03-27T05:00:00+08:00".to_string(),
+        used_percent: 80,
+        remaining_percent: 20,
+      }],
+    )
+    .expect("insert session sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 12,
+          remaining_percent: 88,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-03-27T05:05:00+08:00".to_string()),
+          window_start: Some("2026-03-27T00:05:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:05:00+08:00".to_string(),
+      },
+    )
+    .expect("insert live sample");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = get_live_rate_limits_stored_fallback(&state).expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-03-27T00:05:00+08:00");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(88)
+    );
   }
 
   #[test]
