@@ -6,7 +6,7 @@ mod queries;
 mod rate_limits;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
   atomic::{AtomicBool, Ordering},
   Arc, Mutex,
@@ -27,7 +27,9 @@ use models::{
   ScanResult, SubscriptionProfile, SyncSettings,
 };
 use pricing::{load_catalog, refresh_pricing_catalog_from_openai, seed_pricing_catalog};
-use queries::{get_conversation_detail, get_overview, get_quota_trend, list_conversations, load_dashboard_data};
+use queries::{
+  get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
+};
 use rate_limits::query_live_rate_limits;
 use tauri::{
   Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
@@ -341,6 +343,13 @@ fn run_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanR
   result
 }
 
+fn prepare_app_database(db_path: &Path) -> Result<(), String> {
+  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  init_db(&conn).map_err(|error| error.to_string())?;
+  seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
+  Ok(())
+}
+
 fn refresh_daily_value_menu_bar(state: &AppState) {
   if let Err(error) = update_daily_value_menu_bar(state) {
     log::warn!("Failed to update menu bar display: {error}");
@@ -429,16 +438,16 @@ fn current_menu_bar_title_parts(
     None
   };
   let api_value_title = if settings.show_menu_bar_daily_api_value {
-    let overview = get_overview(
+    let api_value_usd = get_window_api_value(
       &state.db_path,
-      Some(bucket.clone()),
+      bucket.clone(),
       if bucket_uses_anchor(&bucket) { Some(anchor) } else { None },
       None,
       None,
       live_rate_limits.clone(),
       None,
     )?;
-    Some(format!("${:.1}", overview.stats.api_value_usd))
+    Some(format!("${:.1}", api_value_usd))
   } else {
     None
   };
@@ -1620,10 +1629,8 @@ pub fn run() {
         .map_err(|error| format!("Failed to create app data dir {}: {error}", app_data_dir.display()))?;
       let db_path = app_data_dir.join("codex-counter.sqlite");
 
+      prepare_app_database(&db_path)?;
       let conn = open_connection(&db_path).map_err(|error| error.to_string())?;
-      init_db(&conn).map_err(|error| error.to_string())?;
-      seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
-      recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
 
       let app_handle = app.app_handle();
       let daily_value_tray = match build_daily_value_menu_bar(&app_handle, &db_path) {
@@ -1677,6 +1684,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tempfile::tempdir;
 
   fn speed_test_settings() -> SyncSettings {
     SyncSettings {
@@ -1695,6 +1703,58 @@ mod tests {
     DateTime::parse_from_rfc3339(value)
       .expect("parse test timestamp")
       .with_timezone(&Local)
+  }
+
+  #[test]
+  fn startup_database_prepare_does_not_recalculate_usage_values() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('startup-session', 'startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('startup-session', '2026-03-26T04:30:00Z', 'gpt-5.4',
+          100, 0, 10, 0, 110, 123.45, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 123.45);
   }
 
   #[test]
