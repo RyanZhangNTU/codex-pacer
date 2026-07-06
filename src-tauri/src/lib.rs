@@ -363,8 +363,44 @@ fn run_incremental_scan_if_idle(state: AppState, codex_home: Option<String>) -> 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
+  let pricing_signature_before = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
   seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
+  let pricing_signature_after = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
+  if pricing_signature_before != pricing_signature_after {
+    recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
+  }
   Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+struct PricingValueSignatureEntry {
+  model_id: String,
+  input_price_per_million: f64,
+  cached_input_price_per_million: f64,
+  output_price_per_million: f64,
+  effective_model_id: String,
+}
+
+fn load_pricing_value_signature(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<PricingValueSignatureEntry>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT model_id, input_price_per_million, cached_input_price_per_million,
+           output_price_per_million, effective_model_id
+    FROM pricing_catalog
+    ORDER BY model_id
+    ",
+  )?;
+  let rows = stmt.query_map([], |row| {
+    Ok(PricingValueSignatureEntry {
+      model_id: row.get(0)?,
+      input_price_per_million: row.get(1)?,
+      cached_input_price_per_million: row.get(2)?,
+      output_price_per_million: row.get(3)?,
+      effective_model_id: row.get(4)?,
+    })
+  })?;
+
+  rows.collect()
 }
 
 fn refresh_daily_value_menu_bar(state: &AppState) {
@@ -1877,6 +1913,68 @@ mod tests {
       .expect("load usage value");
 
     assert_eq!(value_usd, 123.45);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_usage_values_when_seed_pricing_changes() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET input_price_per_million = 1.00
+        WHERE model_id = 'gpt-5.4'
+        ",
+        [],
+      )
+      .expect("seed stale pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('startup-session', 'startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('startup-session', '2026-03-26T04:30:00Z', 'gpt-5.4',
+          1000000, 0, 0, 0, 1000000, 123.45, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 2.50);
   }
 
   #[test]
