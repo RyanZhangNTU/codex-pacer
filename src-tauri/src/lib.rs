@@ -13,10 +13,10 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Duration as ChronoDuration, Local};
+use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use rusqlite::params;
 use database::{
-  canonical_subscription_currency, get_subscription_profile, get_sync_settings, init_db,
+  canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
   insert_live_rate_limit_snapshot, open_connection, save_subscription_profile, save_sync_settings,
 };
 use importer::{perform_incremental_scan, perform_scan, recalculate_all_session_values};
@@ -53,6 +53,7 @@ const MENU_BAR_POPUP_MAX_HEIGHT: f64 = 760.0;
 const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
+const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 #[derive(Clone)]
 struct CachedRateLimitSnapshot {
   fetched_at: Instant,
@@ -1562,17 +1563,24 @@ fn spawn_scheduler(state: AppState) {
         tokio::time::sleep(Duration::from_secs(60)).await;
         continue;
       };
-      let delay = scheduler_delay_until_next_refresh(&settings, chrono::Utc::now());
+      let now = Utc::now();
+      let delay = scheduler_delay_until_next_refresh(&settings, now);
       if !delay.is_zero() {
         tokio::time::sleep(delay).await;
         continue;
       }
+      let should_run_full = get_last_full_scan_completed(&conn)
+        .map(|last_completed_at| full_maintenance_due(last_completed_at.as_deref(), now))
+        .unwrap_or(true);
+      drop(conn);
 
       if state.scan_in_progress.load(Ordering::SeqCst) {
         tokio::time::sleep(Duration::from_secs(
           unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
         ))
         .await;
+      } else if should_run_full {
+        let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
       } else {
         let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
       }
@@ -1598,6 +1606,19 @@ fn scheduler_delay_until_next_refresh(settings: &SyncSettings, now: chrono::Date
     .max(0);
   let remaining_seconds = interval_seconds.saturating_sub(elapsed_seconds);
   Duration::from_secs(remaining_seconds as u64)
+}
+
+fn full_maintenance_due(last_completed_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> bool {
+  let Some(last_completed_at) = last_completed_at else {
+    return true;
+  };
+  let Some(last_completed_at) = chrono::DateTime::parse_from_rfc3339(last_completed_at).ok() else {
+    return true;
+  };
+  now
+    .signed_duration_since(last_completed_at.with_timezone(&chrono::Utc))
+    .num_seconds()
+    >= FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1787,6 +1808,23 @@ mod tests {
       scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:07:00Z")),
       Duration::ZERO
     );
+  }
+
+  #[test]
+  fn full_maintenance_is_due_without_previous_full_scan() {
+    assert!(full_maintenance_due(None, utc_time("2026-03-27T00:00:00Z")));
+  }
+
+  #[test]
+  fn full_maintenance_waits_until_daily_interval() {
+    assert!(!full_maintenance_due(
+      Some("2026-03-27T00:00:00Z"),
+      utc_time("2026-03-27T23:59:59Z")
+    ));
+    assert!(full_maintenance_due(
+      Some("2026-03-27T00:00:00Z"),
+      utc_time("2026-03-28T00:00:00Z")
+    ));
   }
 
   #[test]

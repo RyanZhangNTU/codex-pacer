@@ -13,7 +13,8 @@ pub use subscriptions::{
     canonical_subscription_currency, get_subscription_profile, save_subscription_profile,
 };
 pub use sync_settings::{
-    get_sync_settings, save_sync_settings, set_last_scan_completed, set_last_scan_started,
+    get_last_full_scan_completed, get_sync_settings, save_sync_settings,
+    set_last_full_scan_completed, set_last_scan_completed, set_last_scan_started,
 };
 
 pub fn now_utc_string() -> String {
@@ -79,9 +80,9 @@ fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {
       menu_bar_speed_fast_emoji, menu_bar_speed_slow_emoji,
       menu_bar_popup_enabled, menu_bar_popup_modules,
       menu_bar_popup_show_reset_timeline, menu_bar_popup_show_actions,
-      last_scan_started_at, last_scan_completed_at, updated_at
+      last_scan_started_at, last_scan_completed_at, last_full_scan_completed_at, updated_at
     )
-    VALUES (1, 2, NULL, 1, 5, 300, 0, 0, 1, 1, 0, 'remaining_percent', 'five_hour', 'day', 1, 85, 115, '🟢', '🔥', '🐢', 1, ?2, 1, 1, NULL, NULL, ?1)
+    VALUES (1, 2, NULL, 1, 5, 300, 0, 0, 1, 1, 0, 'remaining_percent', 'five_hour', 'day', 1, 85, 115, '🟢', '🔥', '🐢', 1, ?2, 1, 1, NULL, NULL, NULL, ?1)
     ON CONFLICT(singleton_id) DO NOTHING
     ",
         params![now, sync_settings::default_menu_bar_popup_modules_json()],
@@ -143,7 +144,23 @@ mod tests {
         );
         assert!(settings.menu_bar_popup_show_reset_timeline);
         assert!(settings.menu_bar_popup_show_actions);
+        assert!(get_last_full_scan_completed(&conn).expect("load last full scan").is_none());
         assert!(!settings.hide_dock_icon_when_menu_bar_visible);
+    }
+
+    #[test]
+    fn sync_settings_tracks_last_full_scan_completion() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        assert!(get_last_full_scan_completed(&conn).expect("load initial value").is_none());
+
+        set_last_full_scan_completed(&conn, "2026-03-27T00:00:00Z").expect("set full scan timestamp");
+
+        assert_eq!(
+            get_last_full_scan_completed(&conn).expect("load saved value"),
+            Some("2026-03-27T00:00:00Z".to_string())
+        );
     }
 
     #[test]

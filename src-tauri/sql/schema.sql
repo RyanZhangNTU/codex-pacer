@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS sync_settings (
   menu_bar_popup_show_actions INTEGER NOT NULL DEFAULT 1,
   last_scan_started_at TEXT,
   last_scan_completed_at TEXT,
+  last_full_scan_completed_at TEXT,
   updated_at TEXT NOT NULL
 );
 

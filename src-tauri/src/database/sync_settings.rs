@@ -284,6 +284,16 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
     )?;
     }
 
+    if !column_names
+        .iter()
+        .any(|name| name == "last_full_scan_completed_at")
+    {
+        conn.execute(
+      "ALTER TABLE sync_settings ADD COLUMN last_full_scan_completed_at TEXT",
+      [],
+    )?;
+    }
+
     migrate_sync_settings_defaults_to_minutes(conn)?;
 
     Ok(())
@@ -476,6 +486,30 @@ pub fn set_last_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::
         "
     UPDATE sync_settings
     SET last_scan_completed_at = ?1, updated_at = ?1
+    WHERE singleton_id = 1
+    ",
+        params![timestamp],
+    )?;
+    Ok(())
+}
+
+pub fn get_last_full_scan_completed(conn: &Connection) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "
+    SELECT last_full_scan_completed_at
+    FROM sync_settings
+    WHERE singleton_id = 1
+    ",
+        [],
+        |row| row.get(0),
+    )
+}
+
+pub fn set_last_full_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "
+    UPDATE sync_settings
+    SET last_full_scan_completed_at = ?1, updated_at = ?1
     WHERE singleton_id = 1
     ",
         params![timestamp],

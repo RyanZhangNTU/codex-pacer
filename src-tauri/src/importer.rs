@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::database::{
   bool_to_i64, get_sync_settings, init_db, now_utc_string, open_connection,
-  replace_session_rate_limit_samples, set_last_scan_completed, set_last_scan_started,
+  replace_session_rate_limit_samples, set_last_full_scan_completed, set_last_scan_completed, set_last_scan_started,
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
@@ -63,7 +63,6 @@ enum SessionParseError {
 
 const TOKEN_USAGE_MONOTONIC_REPAIR_KEY: &str = "token_usage_monotonic_v2";
 const RATE_LIMIT_SAMPLE_BACKFILL_KEY: &str = "rate_limit_sample_backfill_v1";
-const INCREMENTAL_DISCOVERY_DAYS: i64 = 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScanScope {
@@ -110,7 +109,7 @@ fn perform_scan_with_scope(
 
   let session_files = match effective_scope {
     ScanScope::Full => collect_session_files(&codex_home),
-    ScanScope::Incremental => collect_incremental_session_files(&codex_home, &import_state, &pending_token_repair_paths),
+    ScanScope::Incremental => collect_active_session_files(&codex_home),
   };
   let present_paths: HashSet<String> = session_files
     .iter()
@@ -198,6 +197,8 @@ fn perform_scan_with_scope(
   if effective_scope == ScanScope::Full {
     mark_missing_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
     prune_import_state(&conn, &present_paths).map_err(|error| error.to_string())?;
+  } else {
+    mark_missing_active_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
   }
   if topology_dirty {
     recompute_conversation_links(&conn).map_err(|error| error.to_string())?;
@@ -221,6 +222,9 @@ fn perform_scan_with_scope(
   if needs_token_usage_repair_sweep {
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
+  }
+  if effective_scope == ScanScope::Full {
+    set_last_full_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
   }
   set_last_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
 
@@ -395,84 +399,20 @@ fn collect_session_files(codex_home: &Path) -> Vec<SessionFile> {
   files
 }
 
-fn collect_incremental_session_files(
-  codex_home: &Path,
-  import_state: &HashMap<String, ImportState>,
-  pending_token_repair_paths: &HashSet<String>,
-) -> Vec<SessionFile> {
-  let mut files = Vec::new();
-  let mut seen_paths = HashSet::new();
-
-  for state in import_state.values() {
-    let is_pending_repair = pending_token_repair_paths.contains(&state.source_path);
-    if state.source_bucket != "active" && !is_pending_repair {
-      continue;
-    }
-
-    let path = PathBuf::from(&state.source_path);
-    if !seen_paths.insert(path.clone()) {
-      continue;
-    }
-    if let Some(session_file) = session_file_from_path(path, &state.source_bucket) {
-      files.push(session_file);
-    }
-  }
-
-  for source_path in pending_token_repair_paths {
-    let path = PathBuf::from(source_path);
-    if !seen_paths.insert(path.clone()) {
-      continue;
-    }
-    let bucket = infer_source_bucket(codex_home, &path);
-    if let Some(session_file) = session_file_from_path(path, bucket) {
-      files.push(session_file);
-    }
-  }
-
-  for session_file in collect_recent_active_session_files(codex_home) {
-    if seen_paths.insert(session_file.path.clone()) {
-      files.push(session_file);
-    }
-  }
-
-  files.sort_by(|left, right| left.path.cmp(&right.path));
-  files
-}
-
-fn collect_recent_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
+fn collect_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
   let sessions_root = codex_home.join("sessions");
   if !sessions_root.exists() {
     return Vec::new();
   }
 
-  let today = Local::now().date_naive();
   let mut files = Vec::new();
-  for days_ago in 0..=INCREMENTAL_DISCOVERY_DAYS {
-    let day = today - chrono::Duration::days(days_ago);
-    let day_dir = sessions_root
-      .join(day.format("%Y").to_string())
-      .join(day.format("%m").to_string())
-      .join(day.format("%d").to_string());
-    if !day_dir.exists() {
-      continue;
-    }
-
-    for entry in WalkDir::new(day_dir).into_iter().filter_map(Result::ok) {
-      if let Some(session_file) = session_file_from_path(entry.path().to_path_buf(), "active") {
-        files.push(session_file);
-      }
+  for entry in WalkDir::new(sessions_root).into_iter().filter_map(Result::ok) {
+    if let Some(session_file) = session_file_from_path(entry.path().to_path_buf(), "active") {
+      files.push(session_file);
     }
   }
-
+  files.sort_by(|left, right| left.path.cmp(&right.path));
   files
-}
-
-fn infer_source_bucket(codex_home: &Path, path: &Path) -> &'static str {
-  if path.starts_with(codex_home.join("archived_sessions")) {
-    "archived"
-  } else {
-    "active"
-  }
 }
 
 fn session_file_from_path(path: PathBuf, bucket: &str) -> Option<SessionFile> {
@@ -1022,7 +962,7 @@ fn normalize_local_timestamp(timestamp: chrono::DateTime<Local>) -> chrono::Date
 fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, ImportState>> {
   let mut stmt = conn.prepare(
     "
-    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms
+    SELECT source_path, session_id, file_size, file_mtime_ms
     FROM import_state
     ",
   )?;
@@ -1031,9 +971,8 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
     Ok(ImportState {
       source_path: row.get(0)?,
       session_id: row.get(1)?,
-      source_bucket: row.get(2)?,
-      file_size: row.get(3)?,
-      file_mtime_ms: row.get(4)?,
+      file_size: row.get(2)?,
+      file_mtime_ms: row.get(3)?,
     })
   })?;
 
@@ -1177,6 +1116,37 @@ fn mark_missing_sources(conn: &Connection, present_paths: &HashSet<String>) -> r
   Ok(())
 }
 
+fn mark_missing_active_sources(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT session_id, source_path
+    FROM sessions
+    WHERE source_state = 'active' AND source_bucket = 'active' AND source_path IS NOT NULL
+    ",
+  )?;
+  let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+
+  for row in rows {
+    let (session_id, source_path) = row?;
+    if !present_paths.contains(&source_path) && !Path::new(&source_path).exists() {
+      let now = now_utc_string();
+      conn.execute(
+        "
+        UPDATE sessions
+        SET source_state = 'missing', imported_at = ?1
+        WHERE session_id = ?2
+        ",
+        params![now, session_id],
+      )?;
+      conn.execute(
+        "DELETE FROM import_state WHERE source_path = ?1",
+        params![source_path],
+      )?;
+    }
+  }
+  Ok(())
+}
+
 fn prune_import_state(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
   let mut stmt = conn.prepare("SELECT source_path FROM import_state")?;
   let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
@@ -1290,7 +1260,6 @@ fn read_percent(value: &Value, key: &str) -> Option<i64> {
 struct ImportState {
   source_path: String,
   session_id: Option<String>,
-  source_bucket: String,
   file_size: i64,
   file_mtime_ms: i64,
 }
@@ -1894,6 +1863,69 @@ mod tests {
     assert_eq!(result.updated_sessions, 1);
     assert_eq!(session_usage_totals(&conn, existing_session_id), (100, 20, 25, 125, 1));
     assert_eq!(session_usage_totals(&conn, new_session_id), (180, 40, 45, 225, 1));
+  }
+
+  #[test]
+  fn incremental_scan_discovers_new_old_dated_active_session() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let existing_session_id = "10101010-2020-3030-4040-505050505050";
+    write_session_file(
+      &sessions_dir.join("existing.jsonl"),
+      existing_session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+
+    let old_dir = sessions_dir.join("2025").join("11").join("05");
+    std::fs::create_dir_all(&old_dir).expect("old sessions dir");
+    let new_session_id = "60606060-7070-8080-9090-a0a0a0a0a0a0";
+    write_session_file(
+      &old_dir.join("old-new.jsonl"),
+      new_session_id,
+      &[("2026-03-24T00:10:01Z", 180, 40, 45, 225)],
+    );
+
+    let result =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, existing_session_id), (100, 20, 25, 125, 1));
+    assert_eq!(session_usage_totals(&conn, new_session_id), (180, 40, 45, 225, 1));
+  }
+
+  #[test]
+  fn incremental_scan_marks_missing_active_source() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "b0b0b0b0-c0c0-d0d0-e0e0-f0f0f0f0f0f0";
+    let session_path = sessions_dir.join("sample.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+    std::fs::remove_file(&session_path).expect("remove active session");
+
+    let result =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 0);
+    assert_eq!(session_usage_totals(&conn, session_id), (100, 20, 25, 125, 1));
+    assert_eq!(session_source_state(&conn, session_id), Some("missing".to_string()));
   }
 
   #[test]
