@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{Local, LocalResult, TimeZone, Timelike};
 use serde::Deserialize;
@@ -11,7 +11,6 @@ use serde_json::{json, Value};
 
 use crate::models::{LiveRateLimitSnapshot, RateLimitWindowSnapshot};
 
-const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(5);
 const INIT_REQUEST_ID: &str = "codex-counter.init";
 const READ_REQUEST_ID: &str = "codex-counter.rate-limits";
 
@@ -51,7 +50,8 @@ struct AppServerCommandSpec {
   hide_window: bool,
 }
 
-pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
+pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
+  let started_at = Instant::now();
   let codex_binary = resolve_codex_binary();
   let command_spec = app_server_command_spec(&codex_binary);
   let mut command = app_server_command(&command_spec);
@@ -158,7 +158,14 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
     return Err(error);
   }
 
-  let init_response = match receiver.recv_timeout(APP_SERVER_TIMEOUT) {
+  let init_timeout = match remaining_app_server_timeout(started_at, timeout) {
+    Some(timeout) => timeout,
+    None => {
+      stop_app_server(&mut child);
+      return Err("Timed out while initializing Codex app-server.".to_string());
+    }
+  };
+  let init_response = match receiver.recv_timeout(init_timeout) {
     Ok(message) => message,
     Err(_) => {
       stop_app_server(&mut child);
@@ -197,7 +204,14 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
   }
 
   let response = loop {
-    let message = match receiver.recv_timeout(APP_SERVER_TIMEOUT) {
+    let timeout = match remaining_app_server_timeout(started_at, timeout) {
+      Some(timeout) => timeout,
+      None => {
+        stop_app_server(&mut child);
+        return Err("Timed out while querying live rate limits from Codex.".to_string());
+      }
+    };
+    let message = match receiver.recv_timeout(timeout) {
       Ok(message) => message,
       Err(_) => {
         stop_app_server(&mut child);
@@ -217,6 +231,11 @@ pub fn query_live_rate_limits() -> Result<LiveRateLimitSnapshot, String> {
 
   stop_app_server(&mut child);
   response
+}
+
+fn remaining_app_server_timeout(started_at: Instant, timeout: Duration) -> Option<Duration> {
+  let remaining = timeout.checked_sub(started_at.elapsed())?;
+  (remaining > Duration::ZERO).then_some(remaining)
 }
 
 fn app_server_command(spec: &AppServerCommandSpec) -> Command {

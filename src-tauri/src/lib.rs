@@ -14,6 +14,13 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
+#[cfg(target_os = "macos")]
+use objc2::{
+  rc::Retained,
+  runtime::{NSObjectProtocol, ProtocolObject},
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 use rusqlite::params;
 use database::{
   canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
@@ -54,6 +61,17 @@ const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
+const SCHEDULER_MAX_SLEEP_SECONDS: u64 = 5;
+const FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS: u64 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackgroundRefreshDecision {
+  Disabled(Duration),
+  Wait(Duration),
+  Incremental,
+  Full,
+}
+
 #[derive(Clone)]
 struct CachedRateLimitSnapshot {
   fetched_at: Instant,
@@ -68,11 +86,69 @@ struct MenuBarPopupAnchor {
 
 #[derive(Clone)]
 struct AppState {
+  app_handle: Option<AppHandle>,
   db_path: PathBuf,
   scan_in_progress: Arc<AtomicBool>,
+  live_refresh_in_progress: Arc<AtomicBool>,
+  menu_bar_refresh_in_progress: Arc<AtomicBool>,
   daily_value_tray: Option<TrayIcon>,
   live_rate_limits: Arc<Mutex<Option<CachedRateLimitSnapshot>>>,
   menu_bar_popup_anchor: Arc<Mutex<Option<MenuBarPopupAnchor>>>,
+}
+
+struct AtomicFlagGuard {
+  flag: Arc<AtomicBool>,
+}
+
+impl Drop for AtomicFlagGuard {
+  fn drop(&mut self) {
+    self.flag.store(false, Ordering::SeqCst);
+  }
+}
+
+fn try_acquire_flag(flag: &Arc<AtomicBool>, busy_message: &str) -> Result<AtomicFlagGuard, String> {
+  if flag
+    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    .is_err()
+  {
+    return Err(busy_message.to_string());
+  }
+
+  Ok(AtomicFlagGuard {
+    flag: Arc::clone(flag),
+  })
+}
+
+#[cfg(target_os = "macos")]
+struct SchedulerActivity {
+  activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for SchedulerActivity {
+  fn drop(&mut self) {
+    unsafe {
+      NSProcessInfo::processInfo().endActivity(&self.activity);
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn begin_scheduler_activity() -> Option<SchedulerActivity> {
+  let reason = NSString::from_str("Codex Pacer background refresh");
+  let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+    NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+    &reason,
+  );
+  Some(SchedulerActivity { activity })
+}
+
+#[cfg(not(target_os = "macos"))]
+struct SchedulerActivity;
+
+#[cfg(not(target_os = "macos"))]
+fn begin_scheduler_activity() -> Option<SchedulerActivity> {
+  None
 }
 
 #[allow(non_snake_case)]
@@ -85,6 +161,12 @@ fn scanCodexUsage(state: State<'_, AppState>, codex_home: Option<String>) -> Res
 #[tauri::command]
 fn getScanInProgress(state: State<'_, AppState>) -> bool {
   state.inner().scan_in_progress.load(Ordering::SeqCst)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command]
+fn refreshBackgroundData(state: State<'_, AppState>) -> Result<Option<ScanResult>, String> {
+  run_due_background_refresh(state.inner().clone(), Utc::now())
 }
 
 #[allow(non_snake_case)]
@@ -146,7 +228,7 @@ fn getMenuBarPopupSnapshot(
   state: State<'_, AppState>,
   force_refresh: Option<bool>,
 ) -> Result<MenuBarPopupSnapshot, String> {
-  build_menu_bar_popup_snapshot(state.inner(), force_refresh.unwrap_or(false))
+  build_due_menu_bar_popup_snapshot(state.inner(), force_refresh.unwrap_or(false), Utc::now())
 }
 
 #[allow(non_snake_case)]
@@ -249,7 +331,7 @@ fn handleMenuBarPopupAction(
       Ok(true)
     }
     "refresh" => {
-      let _ = build_menu_bar_popup_snapshot(state.inner(), true)?;
+      let _ = build_due_menu_bar_popup_snapshot(state.inner(), true, Utc::now())?;
       refresh_daily_value_menu_bar(state.inner());
       Ok(true)
     }
@@ -331,33 +413,72 @@ fn updateSubscriptionProfile(
 }
 
 fn run_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
-  if state
-    .scan_in_progress
-    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-    .is_err()
-  {
-    return Err("A scan is already running.".to_string());
-  }
+  run_scan_if_idle_with_live_refresh(state, codex_home, true, perform_scan)
+}
 
-  let result = perform_scan(&state.db_path, codex_home);
-  state.scan_in_progress.store(false, Ordering::SeqCst);
-  refresh_daily_value_menu_bar(&state);
+fn run_background_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
+  run_scan_if_idle_with_live_refresh(state, codex_home, false, perform_scan)
+}
+
+fn run_background_incremental_scan_if_idle(
+  state: AppState,
+  codex_home: Option<String>,
+) -> Result<ScanResult, String> {
+  run_scan_if_idle_with_live_refresh(state, codex_home, false, perform_incremental_scan)
+}
+
+fn run_scan_if_idle_with_live_refresh<F>(
+  state: AppState,
+  codex_home: Option<String>,
+  allow_menu_bar_live_refresh: bool,
+  scan: F,
+) -> Result<ScanResult, String>
+where
+  F: FnOnce(&Path, Option<String>) -> Result<ScanResult, String>,
+{
+  let guard = try_acquire_flag(&state.scan_in_progress, "A scan is already running.")?;
+
+  let result = scan(&state.db_path, codex_home);
+  drop(guard);
+  refresh_daily_value_menu_bar_with_live_refresh(&state, allow_menu_bar_live_refresh);
   result
 }
 
-fn run_incremental_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
-  if state
-    .scan_in_progress
-    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-    .is_err()
-  {
-    return Err("A scan is already running.".to_string());
-  }
+fn run_due_background_refresh(
+  state: AppState,
+  now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<ScanResult>, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+  let last_full_scan_completed = get_last_full_scan_completed(&conn).map_err(|error| error.to_string())?;
+  let decision = background_refresh_decision(&settings, last_full_scan_completed.as_deref(), now);
+  drop(conn);
 
-  let result = perform_incremental_scan(&state.db_path, codex_home);
-  state.scan_in_progress.store(false, Ordering::SeqCst);
-  refresh_daily_value_menu_bar(&state);
-  result
+  match decision {
+    BackgroundRefreshDecision::Full => {
+      let result = if state.scan_in_progress.load(Ordering::SeqCst) {
+        Ok(None)
+      } else {
+        run_background_scan_if_idle(state.clone(), settings.codex_home.clone()).map(Some)
+      };
+      if background_live_rate_limits_enabled(&settings) {
+        spawn_live_rate_limits_refresh_if_idle(state, true);
+      }
+      result
+    }
+    BackgroundRefreshDecision::Incremental => {
+      let result = if state.scan_in_progress.load(Ordering::SeqCst) {
+        Ok(None)
+      } else {
+        run_background_incremental_scan_if_idle(state.clone(), settings.codex_home.clone()).map(Some)
+      };
+      if background_live_rate_limits_enabled(&settings) {
+        spawn_live_rate_limits_refresh_if_idle(state, true);
+      }
+      result
+    }
+    BackgroundRefreshDecision::Disabled(_) | BackgroundRefreshDecision::Wait(_) => Ok(None),
+  }
 }
 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
@@ -404,12 +525,40 @@ fn load_pricing_value_signature(conn: &rusqlite::Connection) -> rusqlite::Result
 }
 
 fn refresh_daily_value_menu_bar(state: &AppState) {
-  if let Err(error) = update_daily_value_menu_bar(state) {
-    log::warn!("Failed to update menu bar display: {error}");
+  refresh_daily_value_menu_bar_with_live_refresh(state, true);
+}
+
+fn refresh_daily_value_menu_bar_with_live_refresh(state: &AppState, allow_live_refresh: bool) {
+  let Some(app_handle) = state.app_handle.as_ref().cloned() else {
+    if let Err(error) = update_daily_value_menu_bar(state, allow_live_refresh) {
+      log::warn!("Failed to update menu bar display: {error}");
+    }
+    return;
+  };
+
+  let Ok(guard) = try_acquire_flag(
+    &state.menu_bar_refresh_in_progress,
+    "A menu bar refresh is already running.",
+  ) else {
+    return;
+  };
+  let state = state.clone();
+  if let Err(error) = app_handle.run_on_main_thread(move || {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      update_daily_value_menu_bar(&state, allow_live_refresh)
+    }));
+    drop(guard);
+    match result {
+      Ok(Ok(())) => {}
+      Ok(Err(error)) => log::warn!("Failed to update menu bar display: {error}"),
+      Err(_) => log::warn!("Menu bar display update panicked."),
+    }
+  }) {
+    log::warn!("Failed to schedule menu bar display update: {error}");
   }
 }
 
-fn update_daily_value_menu_bar(state: &AppState) -> Result<(), String> {
+fn update_daily_value_menu_bar(state: &AppState, allow_live_refresh: bool) -> Result<(), String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
   let Some(tray) = state.daily_value_tray.as_ref() else {
@@ -422,7 +571,8 @@ fn update_daily_value_menu_bar(state: &AppState) -> Result<(), String> {
   }
 
   apply_menu_bar_icon(tray, settings.show_menu_bar_logo)?;
-  let (api_value_title, live_metric_title) = current_menu_bar_title_parts(state, &settings)?;
+  let (api_value_title, live_metric_title) =
+    current_menu_bar_title_parts_with_live_refresh(state, &settings, allow_live_refresh)?;
   match menu_bar_title(api_value_title.as_deref(), live_metric_title.as_deref()) {
     Some(title) => tray.set_title(Some(&title)).map_err(|error| error.to_string())?,
     None => tray
@@ -430,7 +580,12 @@ fn update_daily_value_menu_bar(state: &AppState) -> Result<(), String> {
       .map_err(|error| error.to_string())?,
   }
   tray
-    .set_tooltip(Some(menu_bar_tooltip(&settings, api_value_title.as_deref(), state)?))
+    .set_tooltip(Some(menu_bar_tooltip_with_live_refresh(
+      &settings,
+      api_value_title.as_deref(),
+      state,
+      allow_live_refresh,
+    )?))
     .map_err(|error| error.to_string())?;
   tray.set_visible(true).map_err(|error| error.to_string())?;
   Ok(())
@@ -440,6 +595,13 @@ fn menu_bar_has_visible_content(settings: &SyncSettings) -> bool {
   settings.show_menu_bar_logo
     || settings.show_menu_bar_daily_api_value
     || settings.show_menu_bar_live_quota_percent
+}
+
+fn background_live_rate_limits_enabled(settings: &SyncSettings) -> bool {
+  let menu_bar_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  settings.show_menu_bar_live_quota_percent
+    || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&menu_bar_bucket))
+    || settings.menu_bar_popup_enabled
 }
 
 fn should_hide_dock_icon(settings: &SyncSettings) -> bool {
@@ -477,16 +639,17 @@ fn apply_menu_bar_icon(tray: &TrayIcon, show_logo: bool) -> Result<(), String> {
   Ok(())
 }
 
-fn current_menu_bar_title_parts(
+fn current_menu_bar_title_parts_with_live_refresh(
   state: &AppState,
   settings: &SyncSettings,
+  allow_live_refresh: bool,
 ) -> Result<(Option<String>, Option<String>), String> {
   let bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
   let anchor = Local::now().format("%Y-%m-%d").to_string();
   let live_rate_limits = if settings.show_menu_bar_live_quota_percent
     || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&bucket))
   {
-    maybe_live_rate_limits_for_bucket(state, Some(&bucket), None)?
+    maybe_live_rate_limits_for_bucket_with_live_refresh(state, Some(&bucket), None, allow_live_refresh)?
   } else {
     None
   };
@@ -512,6 +675,7 @@ fn current_menu_bar_title_parts(
       &settings.menu_bar_live_quota_metric,
       live_rate_limits,
       Local::now(),
+      allow_live_refresh,
     )?
   } else {
     None
@@ -586,10 +750,11 @@ fn normalize_menu_bar_popup_modules(modules: &[String]) -> Vec<String> {
   normalized
 }
 
-fn menu_bar_tooltip(
+fn menu_bar_tooltip_with_live_refresh(
   settings: &SyncSettings,
   api_value_title: Option<&str>,
   state: &AppState,
+  allow_live_refresh: bool,
 ) -> Result<String, String> {
   let bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
   let mut fragments = Vec::new();
@@ -597,15 +762,21 @@ fn menu_bar_tooltip(
     fragments.push(format!("{}累计 API 价值：{title}", menu_bar_bucket_label(&bucket)));
   }
   if settings.show_menu_bar_live_quota_percent {
-    let snapshot = get_live_rate_limits_cached(state)?;
-    if let Some(fragment) = menu_bar_live_quota_tooltip(
-      &snapshot,
-      settings,
-      &settings.menu_bar_live_quota_bucket,
-      &settings.menu_bar_live_quota_metric,
-      Local::now(),
-    ) {
-      fragments.push(fragment);
+    let snapshot = if allow_live_refresh {
+      Some(get_live_rate_limits_cached(state)?)
+    } else {
+      get_live_rate_limits_local(state)
+    };
+    if let Some(snapshot) = snapshot {
+      if let Some(fragment) = menu_bar_live_quota_tooltip(
+        &snapshot,
+        settings,
+        &settings.menu_bar_live_quota_bucket,
+        &settings.menu_bar_live_quota_metric,
+        Local::now(),
+      ) {
+        fragments.push(fragment);
+      }
     }
   }
   if fragments.is_empty() {
@@ -643,10 +814,17 @@ fn menu_bar_live_quota_snapshot(
   metric: &str,
   existing_snapshot: Option<LiveRateLimitSnapshot>,
   now: DateTime<Local>,
+  allow_live_refresh: bool,
 ) -> Result<Option<String>, String> {
   let snapshot = match existing_snapshot {
     Some(snapshot) => snapshot,
-    None => get_live_rate_limits_cached(state)?,
+    None if allow_live_refresh => get_live_rate_limits_cached(state)?,
+    None => {
+      let Some(snapshot) = get_live_rate_limits_local(state) else {
+        return Ok(None);
+      };
+      snapshot
+    }
   };
   Ok(menu_bar_live_quota_title(&snapshot, settings, bucket, metric, now))
 }
@@ -795,6 +973,15 @@ fn maybe_live_rate_limits_for_bucket(
   bucket: Option<&str>,
   live_window_offset: Option<i64>,
 ) -> Result<Option<LiveRateLimitSnapshot>, String> {
+  maybe_live_rate_limits_for_bucket_with_live_refresh(state, bucket, live_window_offset, true)
+}
+
+fn maybe_live_rate_limits_for_bucket_with_live_refresh(
+  state: &AppState,
+  bucket: Option<&str>,
+  live_window_offset: Option<i64>,
+  allow_live_refresh: bool,
+) -> Result<Option<LiveRateLimitSnapshot>, String> {
   let Some(bucket) = bucket else {
     return Ok(None);
   };
@@ -804,7 +991,11 @@ fn maybe_live_rate_limits_for_bucket(
   if live_window_offset.unwrap_or(0) > 0 {
     return Ok(None);
   }
-  Ok(Some(get_live_rate_limits_cached(state)?))
+  if allow_live_refresh {
+    Ok(Some(get_live_rate_limits_cached(state)?))
+  } else {
+    Ok(get_live_rate_limits_local(state))
+  }
 }
 
 fn get_live_rate_limits_cached(state: &AppState) -> Result<LiveRateLimitSnapshot, String> {
@@ -812,6 +1003,30 @@ fn get_live_rate_limits_cached(state: &AppState) -> Result<LiveRateLimitSnapshot
 }
 
 fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
+  get_live_rate_limits_with_fallback(
+    state,
+    force_refresh,
+    true,
+    live_rate_limit_foreground_query_timeout(),
+  )
+}
+
+fn get_live_rate_limits_background(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
+  let ttl = live_rate_limit_cache_ttl(state);
+  get_live_rate_limits_with_fallback(
+    state,
+    force_refresh,
+    false,
+    live_rate_limit_background_query_timeout_for_interval(ttl),
+  )
+}
+
+fn get_live_rate_limits_with_fallback(
+  state: &AppState,
+  force_refresh: bool,
+  refresh_history_on_failure: bool,
+  query_timeout: Duration,
+) -> Result<LiveRateLimitSnapshot, String> {
   let ttl = live_rate_limit_cache_ttl(state);
 
   if !force_refresh {
@@ -826,7 +1041,7 @@ fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRat
     }
   }
 
-  match query_live_rate_limits() {
+  match query_live_rate_limits(query_timeout) {
     Ok(snapshot) => {
       let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
       insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
@@ -835,7 +1050,12 @@ fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRat
     }
     Err(error) => {
       log::warn!("Failed to refresh live rate limits from Codex app-server: {error}");
-      if let Some(snapshot) = get_live_rate_limits_history_fallback(state) {
+      let fallback = if refresh_history_on_failure {
+        get_live_rate_limits_history_fallback(state)
+      } else {
+        get_live_rate_limits_stored_fallback(state)
+      };
+      if let Some(snapshot) = fallback {
         if let Err(cache_error) = store_live_rate_limits_cache(state, &snapshot) {
           log::warn!("Failed to cache fallback live rate limits: {cache_error}");
         }
@@ -972,24 +1192,24 @@ fn get_live_rate_limits_local(state: &AppState) -> Option<LiveRateLimitSnapshot>
   get_cached_live_rate_limits(state).or_else(|| load_persisted_live_rate_limits(state))
 }
 
-fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  refresh_rate_limit_history_if_idle(state);
-  load_history_live_rate_limits(state)
-    .or_else(|| load_persisted_live_rate_limits(state))
+fn get_live_rate_limits_stored_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
+  load_persisted_live_rate_limits(state)
+    .or_else(|| load_history_live_rate_limits(state))
     .or_else(|| get_cached_live_rate_limits(state))
 }
 
+fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
+  refresh_rate_limit_history_if_idle(state);
+  get_live_rate_limits_stored_fallback(state)
+}
+
 fn refresh_rate_limit_history_if_idle(state: &AppState) {
-  if state
-    .scan_in_progress
-    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-    .is_err()
-  {
+  let Ok(guard) = try_acquire_flag(&state.scan_in_progress, "A scan is already running.") else {
     return;
-  }
+  };
 
   let result = perform_incremental_scan(&state.db_path, None);
-  state.scan_in_progress.store(false, Ordering::SeqCst);
+  drop(guard);
   if let Err(error) = result {
     log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
   }
@@ -1093,6 +1313,17 @@ fn build_menu_bar_popup_snapshot(
   })
 }
 
+fn build_due_menu_bar_popup_snapshot(
+  state: &AppState,
+  force_refresh: bool,
+  now: chrono::DateTime<chrono::Utc>,
+) -> Result<MenuBarPopupSnapshot, String> {
+  if let Err(error) = run_due_background_refresh(state.clone(), now) {
+    log::warn!("Failed to run due background refresh before menu bar snapshot: {error}");
+  }
+  build_menu_bar_popup_snapshot(state, force_refresh)
+}
+
 fn menu_bar_popup_quota_snapshot(window: &RateLimitWindowSnapshot) -> MenuBarPopupQuotaSnapshot {
   MenuBarPopupQuotaSnapshot {
     used_percent: window.used_percent,
@@ -1162,6 +1393,16 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
       Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64)
     })
     .unwrap_or(Duration::from_secs(300))
+}
+
+fn live_rate_limit_foreground_query_timeout() -> Duration {
+  Duration::from_secs(FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS)
+}
+
+fn live_rate_limit_background_query_timeout_for_interval(interval: Duration) -> Duration {
+  interval
+    .checked_sub(Duration::from_secs(FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS))
+    .unwrap_or_else(|| Duration::from_secs(1))
 }
 
 fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
@@ -1583,45 +1824,114 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn spawn_initial_scan(state: AppState) {
-  tauri::async_runtime::spawn(async move {
-    let _ = run_incremental_scan_if_idle(state, None);
-  });
+  std::thread::Builder::new()
+    .name("codex-pacer-initial-scan".to_string())
+    .spawn(move || {
+      let _ = run_background_incremental_scan_if_idle(state, None);
+    })
+    .expect("failed to spawn initial scan thread");
+}
+
+fn spawn_live_rate_limits_refresh_if_idle(state: AppState, force_refresh: bool) {
+  let Ok(guard) = try_acquire_flag(&state.live_refresh_in_progress, "A live quota refresh is already running.") else {
+    return;
+  };
+
+  if let Err(error) = std::thread::Builder::new()
+    .name("codex-pacer-live-quota-refresh".to_string())
+    .spawn(move || {
+      let result = get_live_rate_limits_background(&state, force_refresh);
+      drop(guard);
+      if let Err(error) = result {
+        log::warn!("Failed to refresh live quota in background: {error}");
+      }
+      refresh_daily_value_menu_bar_with_live_refresh(&state, false);
+    })
+  {
+    log::warn!("Failed to spawn live quota refresh thread: {error}");
+  }
 }
 
 fn spawn_scheduler(state: AppState) {
-  tauri::async_runtime::spawn(async move {
-    loop {
-      let Ok(conn) = open_connection(&state.db_path) else {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        continue;
-      };
-      let Ok(settings) = get_sync_settings(&conn) else {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        continue;
-      };
-      let now = Utc::now();
-      let delay = scheduler_delay_until_next_refresh(&settings, now);
-      if !delay.is_zero() {
-        tokio::time::sleep(delay).await;
-        continue;
+  std::thread::Builder::new()
+    .name("codex-pacer-scheduler".to_string())
+    .spawn(move || {
+      let _scheduler_activity = begin_scheduler_activity();
+      loop {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_scheduler_tick(&state)));
+        let delay = match result {
+          Ok(delay) => delay,
+          Err(_) => {
+            log::warn!("Background scheduler tick panicked; continuing on the next interval.");
+            Duration::from_secs(60)
+          }
+        };
+        std::thread::sleep(scheduler_sleep_duration(delay));
       }
-      let should_run_full = get_last_full_scan_completed(&conn)
-        .map(|last_completed_at| full_maintenance_due(last_completed_at.as_deref(), now))
-        .unwrap_or(true);
-      drop(conn);
+    })
+    .expect("failed to spawn background scheduler thread");
+}
 
-      if state.scan_in_progress.load(Ordering::SeqCst) {
-        tokio::time::sleep(Duration::from_secs(
-          unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
-        ))
-        .await;
-      } else if should_run_full {
-        let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
-      } else {
-        let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
+fn scheduler_sleep_duration(delay: Duration) -> Duration {
+  let max_sleep = Duration::from_secs(SCHEDULER_MAX_SLEEP_SECONDS);
+  if delay > max_sleep { max_sleep } else { delay }
+}
+
+fn run_scheduler_tick(state: &AppState) -> Duration {
+  let Ok(conn) = open_connection(&state.db_path) else {
+    return Duration::from_secs(60);
+  };
+  let Ok(settings) = get_sync_settings(&conn) else {
+    return Duration::from_secs(60);
+  };
+  let now = Utc::now();
+  let last_full_scan_completed = get_last_full_scan_completed(&conn).unwrap_or(None);
+  let decision = background_refresh_decision(&settings, last_full_scan_completed.as_deref(), now);
+  drop(conn);
+
+  match decision {
+    BackgroundRefreshDecision::Disabled(delay) | BackgroundRefreshDecision::Wait(delay) => delay,
+    BackgroundRefreshDecision::Full | BackgroundRefreshDecision::Incremental => {
+      if !state.scan_in_progress.load(Ordering::SeqCst) {
+        let result = match decision {
+          BackgroundRefreshDecision::Full => run_background_scan_if_idle(state.clone(), settings.codex_home.clone()),
+          BackgroundRefreshDecision::Incremental => {
+            run_background_incremental_scan_if_idle(state.clone(), settings.codex_home.clone())
+          }
+          BackgroundRefreshDecision::Disabled(_) | BackgroundRefreshDecision::Wait(_) => unreachable!(),
+        };
+        if let Err(error) = result {
+          log::warn!("Failed to run background Codex scan: {error}");
+        }
       }
+      if background_live_rate_limits_enabled(&settings) {
+        spawn_live_rate_limits_refresh_if_idle(state.clone(), true);
+      }
+      Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64)
     }
-  });
+  }
+}
+
+fn background_refresh_decision(
+  settings: &SyncSettings,
+  last_full_scan_completed_at: Option<&str>,
+  now: chrono::DateTime<chrono::Utc>,
+) -> BackgroundRefreshDecision {
+  let interval = Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64);
+  if !settings.auto_scan_enabled {
+    return BackgroundRefreshDecision::Disabled(interval);
+  }
+
+  let delay = scheduler_delay_until_next_refresh(settings, now);
+  if !delay.is_zero() {
+    return BackgroundRefreshDecision::Wait(delay);
+  }
+
+  if full_maintenance_due(last_full_scan_completed_at, now) {
+    BackgroundRefreshDecision::Full
+  } else {
+    BackgroundRefreshDecision::Incremental
+  }
 }
 
 fn scheduler_delay_until_next_refresh(settings: &SyncSettings, now: chrono::DateTime<chrono::Utc>) -> Duration {
@@ -1727,20 +2037,29 @@ pub fn run() {
         }
       };
       let state = AppState {
+        app_handle: Some(app_handle.clone()),
         db_path,
         scan_in_progress: Arc::new(AtomicBool::new(false)),
+        live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+        menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         daily_value_tray,
         live_rate_limits: Arc::new(Mutex::new(None)),
         menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
       };
       app.manage(state.clone());
-      if let Ok(settings) = get_sync_settings(&conn) {
+      let should_refresh_live_on_startup = if let Ok(settings) = get_sync_settings(&conn) {
         apply_dock_icon_visibility(&app_handle, &settings, state.daily_value_tray.is_some());
-      }
+        background_live_rate_limits_enabled(&settings)
+      } else {
+        false
+      };
       if let Err(error) = build_menu_bar_popup_window(&app_handle) {
         log::warn!("Failed to set up menu bar popup window: {error}");
       }
-      refresh_daily_value_menu_bar(&state);
+      refresh_daily_value_menu_bar_with_live_refresh(&state, false);
+      if should_refresh_live_on_startup {
+        spawn_live_rate_limits_refresh_if_idle(state.clone(), true);
+      }
       spawn_initial_scan(state.clone());
       spawn_scheduler(state);
 
@@ -1749,6 +2068,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       scanCodexUsage,
       getScanInProgress,
+      refreshBackgroundData,
       refreshPricing,
       getOverview,
       listConversations,
@@ -1813,6 +2133,37 @@ mod tests {
   }
 
   #[test]
+  fn scheduler_caps_actual_sleep_duration() {
+    assert_eq!(
+      scheduler_sleep_duration(Duration::from_secs(60)),
+      Duration::from_secs(SCHEDULER_MAX_SLEEP_SECONDS)
+    );
+    assert_eq!(scheduler_sleep_duration(Duration::from_secs(2)), Duration::from_secs(2));
+  }
+
+  #[test]
+  fn live_rate_limit_query_timeout_finishes_before_next_refresh() {
+    assert_eq!(
+      live_rate_limit_background_query_timeout_for_interval(Duration::from_secs(60)),
+      Duration::from_secs(55)
+    );
+    assert_eq!(
+      live_rate_limit_background_query_timeout_for_interval(Duration::from_secs(180)),
+      Duration::from_secs(175)
+    );
+  }
+
+  #[test]
+  fn live_rate_limit_foreground_query_timeout_stays_short() {
+    assert_eq!(live_rate_limit_foreground_query_timeout(), Duration::from_secs(5));
+  }
+
+  #[test]
+  fn default_menu_bar_popup_requires_background_live_rate_limits() {
+    assert!(background_live_rate_limits_enabled(&SyncSettings::default()));
+  }
+
+  #[test]
   fn scheduler_runs_immediately_without_previous_scan() {
     let settings = SyncSettings {
       auto_scan_enabled: true,
@@ -1862,6 +2213,135 @@ mod tests {
     assert_eq!(
       scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T03:00:00Z")),
       Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn background_refresh_decision_skips_when_auto_scan_is_disabled() {
+    let settings = SyncSettings {
+      auto_scan_enabled: false,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: None,
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      background_refresh_decision(&settings, None, utc_time("2026-03-27T00:00:00Z")),
+      BackgroundRefreshDecision::Disabled(Duration::from_secs(420))
+    );
+  }
+
+  #[test]
+  fn background_refresh_decision_runs_incremental_when_interval_is_due() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 5,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      background_refresh_decision(
+        &settings,
+        Some("2026-03-27T00:00:00Z"),
+        utc_time("2026-03-27T00:05:00Z")
+      ),
+      BackgroundRefreshDecision::Incremental
+    );
+  }
+
+  #[test]
+  fn background_refresh_decision_runs_full_when_daily_maintenance_is_due() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 5,
+      last_scan_completed_at: Some("2026-03-27T23:55:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      background_refresh_decision(
+        &settings,
+        Some("2026-03-27T00:00:00Z"),
+        utc_time("2026-03-28T00:00:00Z")
+      ),
+      BackgroundRefreshDecision::Full
+    );
+  }
+
+  #[test]
+  fn menu_bar_popup_snapshot_runs_due_background_refresh() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home
+      .join("sessions")
+      .join(Local::now().format("%Y").to_string())
+      .join(Local::now().format("%m").to_string())
+      .join(Local::now().format("%d").to_string());
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_id = "abcdefab-1234-5678-90ab-abcdefabcdef";
+    std::fs::write(
+      sessions_dir.join("new.jsonl"),
+      format!(
+        concat!(
+          "{{\"timestamp\":\"2026-03-27T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{}\"}}}}\n",
+          "{{\"timestamp\":\"2026-03-27T00:00:00Z\",\"type\":\"turn_context\",\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n",
+          "{{\"timestamp\":\"2026-03-27T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{{",
+          "\"type\":\"token_count\",",
+          "\"info\":{{\"total_token_usage\":{{",
+          "\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":25,",
+          "\"reasoning_output_tokens\":0,\"total_tokens\":125",
+          "}}}},",
+          "\"rate_limits\":{{\"plan_type\":\"pro\"}}",
+          "}}}}\n"
+        ),
+        session_id
+      ),
+    )
+    .expect("write session");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = SyncSettings {
+      codex_home: Some(codex_home.to_string_lossy().to_string()),
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 1,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..get_sync_settings(&conn).expect("load settings")
+    };
+    save_sync_settings(&conn, &settings).expect("save settings");
+    database::set_last_full_scan_completed(&conn, "2026-03-27T00:00:30Z").expect("set full scan");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path: db_path.clone(),
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = build_due_menu_bar_popup_snapshot(
+      &state,
+      false,
+      utc_time("2026-03-27T00:01:00Z"),
+    )
+    .expect("load snapshot");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let event_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM usage_events WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get(0),
+      )
+      .expect("count events");
+    assert_eq!(event_count, 1);
+    assert_ne!(
+      snapshot.last_scan_completed_at.as_deref(),
+      Some("2026-03-27T00:00:00Z")
     );
   }
 
@@ -1994,6 +2474,121 @@ mod tests {
       .expect("load usage value");
 
     assert_eq!(value_usd, 2.50);
+  }
+
+  #[test]
+  fn menu_bar_title_parts_can_use_local_live_rate_limits_without_refresh() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = SyncSettings {
+      show_menu_bar_daily_api_value: false,
+      show_menu_bar_live_quota_percent: true,
+      menu_bar_live_quota_metric: "remaining_percent".to_string(),
+      menu_bar_live_quota_bucket: "five_hour".to_string(),
+      ..get_sync_settings(&conn).expect("load settings")
+    };
+    save_sync_settings(&conn, &settings).expect("save settings");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 12,
+          remaining_percent: 88,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-03-27T05:00:00+08:00".to_string()),
+          window_start: Some("2026-03-27T00:00:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+      },
+    )
+    .expect("insert live limits");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let (api_value_title, live_metric_title) =
+      current_menu_bar_title_parts_with_live_refresh(&state, &settings, false)
+        .expect("build title");
+
+    assert_eq!(api_value_title, None);
+    assert_eq!(live_metric_title.as_deref(), Some("88%"));
+  }
+
+  #[test]
+  fn background_live_rate_limit_fallback_prefers_newest_persisted_sample() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-1",
+      &[crate::models::RateLimitSampleRecord {
+        source_kind: "session".to_string(),
+        source_session_id: Some("session-1".to_string()),
+        bucket: "five_hour".to_string(),
+        sample_timestamp: "2026-03-27T00:00:00+08:00".to_string(),
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        window_start: "2026-03-27T00:00:00+08:00".to_string(),
+        resets_at: "2026-03-27T05:00:00+08:00".to_string(),
+        used_percent: 80,
+        remaining_percent: 20,
+      }],
+    )
+    .expect("insert session sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 12,
+          remaining_percent: 88,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-03-27T05:05:00+08:00".to_string()),
+          window_start: Some("2026-03-27T00:05:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:05:00+08:00".to_string(),
+      },
+    )
+    .expect("insert live sample");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = get_live_rate_limits_stored_fallback(&state).expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-03-27T00:05:00+08:00");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(88)
+    );
   }
 
   #[test]
