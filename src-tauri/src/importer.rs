@@ -62,8 +62,28 @@ enum SessionParseError {
 }
 
 const TOKEN_USAGE_MONOTONIC_REPAIR_KEY: &str = "token_usage_monotonic_v2";
+const RATE_LIMIT_SAMPLE_BACKFILL_KEY: &str = "rate_limit_sample_backfill_v1";
+const INCREMENTAL_DISCOVERY_DAYS: i64 = 14;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScanScope {
+  Full,
+  Incremental,
+}
 
 pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Result<ScanResult, String> {
+  perform_scan_with_scope(db_path, codex_home_override, ScanScope::Full)
+}
+
+pub fn perform_incremental_scan(db_path: &Path, codex_home_override: Option<String>) -> Result<ScanResult, String> {
+  perform_scan_with_scope(db_path, codex_home_override, ScanScope::Incremental)
+}
+
+fn perform_scan_with_scope(
+  db_path: &Path,
+  codex_home_override: Option<String>,
+  requested_scope: ScanScope,
+) -> Result<ScanResult, String> {
   let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
   seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
@@ -72,18 +92,30 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
   let scan_started_at = now_utc_string();
   set_last_scan_started(&conn, &scan_started_at).map_err(|error| error.to_string())?;
 
-  let session_files = collect_session_files(&codex_home);
-  let present_paths: HashSet<String> = session_files
-    .iter()
-    .map(|item| item.path.to_string_lossy().to_string())
-    .collect();
-
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
   let needs_token_usage_repair_sweep =
     data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
   let pending_token_repair_paths =
     load_pending_data_repair_paths(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let effective_scope = if requested_scope == ScanScope::Full
+    || import_state.is_empty()
+    || needs_rate_limit_backfill
+    || needs_token_usage_repair_sweep
+  {
+    ScanScope::Full
+  } else {
+    ScanScope::Incremental
+  };
+
+  let session_files = match effective_scope {
+    ScanScope::Full => collect_session_files(&codex_home),
+    ScanScope::Incremental => collect_incremental_session_files(&codex_home, &import_state, &pending_token_repair_paths),
+  };
+  let present_paths: HashSet<String> = session_files
+    .iter()
+    .map(|item| item.path.to_string_lossy().to_string())
+    .collect();
 
   let mut changed_sessions = 0usize;
   let mut imported_session_ids = HashSet::new();
@@ -163,8 +195,10 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
     }
   }
 
-  mark_missing_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
-  prune_import_state(&conn, &present_paths).map_err(|error| error.to_string())?;
+  if effective_scope == ScanScope::Full {
+    mark_missing_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
+    prune_import_state(&conn, &present_paths).map_err(|error| error.to_string())?;
+  }
   if topology_dirty {
     recompute_conversation_links(&conn).map_err(|error| error.to_string())?;
   } else if !new_root_session_ids.is_empty() {
@@ -180,6 +214,10 @@ pub fn perform_scan(db_path: &Path, codex_home_override: Option<String>) -> Resu
     .map_err(|error| error.to_string())? as usize;
 
   let completed_at = now_utc_string();
+  if needs_rate_limit_backfill {
+    mark_data_repair_complete(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &completed_at)
+      .map_err(|error| error.to_string())?;
+  }
   if needs_token_usage_repair_sweep {
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
@@ -348,33 +386,119 @@ fn collect_session_files(codex_home: &Path) -> Vec<SessionFile> {
       continue;
     }
     for entry in WalkDir::new(base).into_iter().filter_map(Result::ok) {
-      if !entry.file_type().is_file() {
-        continue;
+      if let Some(session_file) = session_file_from_path(entry.path().to_path_buf(), bucket) {
+        files.push(session_file);
       }
-      if entry.path().extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-        continue;
-      }
-      let Ok(metadata) = entry.metadata() else {
-        continue;
-      };
-      let file_size = metadata.len() as i64;
-      let file_mtime_ms = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default();
-
-      files.push(SessionFile {
-        path: entry.path().to_path_buf(),
-        bucket: bucket.to_string(),
-        file_size,
-        file_mtime_ms,
-      });
     }
   }
   files.sort_by(|left, right| left.path.cmp(&right.path));
   files
+}
+
+fn collect_incremental_session_files(
+  codex_home: &Path,
+  import_state: &HashMap<String, ImportState>,
+  pending_token_repair_paths: &HashSet<String>,
+) -> Vec<SessionFile> {
+  let mut files = Vec::new();
+  let mut seen_paths = HashSet::new();
+
+  for state in import_state.values() {
+    let is_pending_repair = pending_token_repair_paths.contains(&state.source_path);
+    if state.source_bucket != "active" && !is_pending_repair {
+      continue;
+    }
+
+    let path = PathBuf::from(&state.source_path);
+    if !seen_paths.insert(path.clone()) {
+      continue;
+    }
+    if let Some(session_file) = session_file_from_path(path, &state.source_bucket) {
+      files.push(session_file);
+    }
+  }
+
+  for source_path in pending_token_repair_paths {
+    let path = PathBuf::from(source_path);
+    if !seen_paths.insert(path.clone()) {
+      continue;
+    }
+    let bucket = infer_source_bucket(codex_home, &path);
+    if let Some(session_file) = session_file_from_path(path, bucket) {
+      files.push(session_file);
+    }
+  }
+
+  for session_file in collect_recent_active_session_files(codex_home) {
+    if seen_paths.insert(session_file.path.clone()) {
+      files.push(session_file);
+    }
+  }
+
+  files.sort_by(|left, right| left.path.cmp(&right.path));
+  files
+}
+
+fn collect_recent_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
+  let sessions_root = codex_home.join("sessions");
+  if !sessions_root.exists() {
+    return Vec::new();
+  }
+
+  let today = Local::now().date_naive();
+  let mut files = Vec::new();
+  for days_ago in 0..=INCREMENTAL_DISCOVERY_DAYS {
+    let day = today - chrono::Duration::days(days_ago);
+    let day_dir = sessions_root
+      .join(day.format("%Y").to_string())
+      .join(day.format("%m").to_string())
+      .join(day.format("%d").to_string());
+    if !day_dir.exists() {
+      continue;
+    }
+
+    for entry in WalkDir::new(day_dir).into_iter().filter_map(Result::ok) {
+      if let Some(session_file) = session_file_from_path(entry.path().to_path_buf(), "active") {
+        files.push(session_file);
+      }
+    }
+  }
+
+  files
+}
+
+fn infer_source_bucket(codex_home: &Path, path: &Path) -> &'static str {
+  if path.starts_with(codex_home.join("archived_sessions")) {
+    "archived"
+  } else {
+    "active"
+  }
+}
+
+fn session_file_from_path(path: PathBuf, bucket: &str) -> Option<SessionFile> {
+  if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+    return None;
+  }
+
+  let metadata = std::fs::metadata(&path).ok()?;
+  if !metadata.is_file() {
+    return None;
+  }
+
+  let file_size = metadata.len() as i64;
+  let file_mtime_ms = metadata
+    .modified()
+    .ok()
+    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|duration| duration.as_millis() as i64)
+    .unwrap_or_default();
+
+  Some(SessionFile {
+    path,
+    bucket: bucket.to_string(),
+    file_size,
+    file_mtime_ms,
+  })
 }
 
 fn parse_session_file(
@@ -898,7 +1022,7 @@ fn normalize_local_timestamp(timestamp: chrono::DateTime<Local>) -> chrono::Date
 fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, ImportState>> {
   let mut stmt = conn.prepare(
     "
-    SELECT source_path, session_id, file_size, file_mtime_ms
+    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms
     FROM import_state
     ",
   )?;
@@ -907,8 +1031,9 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
     Ok(ImportState {
       source_path: row.get(0)?,
       session_id: row.get(1)?,
-      file_size: row.get(2)?,
-      file_mtime_ms: row.get(3)?,
+      source_bucket: row.get(2)?,
+      file_size: row.get(3)?,
+      file_mtime_ms: row.get(4)?,
     })
   })?;
 
@@ -921,16 +1046,7 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
 }
 
 fn needs_rate_limit_sample_backfill(conn: &Connection) -> rusqlite::Result<bool> {
-  let count = conn.query_row(
-    "
-    SELECT COUNT(*)
-    FROM rate_limit_samples
-    WHERE source_kind = 'session'
-    ",
-    [],
-    |row| row.get::<_, i64>(0),
-  )?;
-  Ok(count == 0)
+  data_repair_is_pending(conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY)
 }
 
 fn data_repair_is_pending(conn: &Connection, repair_key: &str) -> rusqlite::Result<bool> {
@@ -1174,6 +1290,7 @@ fn read_percent(value: &Value, key: &str) -> Option<i64> {
 struct ImportState {
   source_path: String,
   session_id: Option<String>,
+  source_bucket: String,
   file_size: i64,
   file_mtime_ms: i64,
 }
@@ -1695,6 +1812,131 @@ mod tests {
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(session_usage_totals(&conn, session_id), (100, 20, 25, 125, 1));
     assert_eq!(session_source_state(&conn, session_id), Some("archived".to_string()));
+  }
+
+  #[test]
+  fn incremental_scan_skips_archived_session_changes() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    let archived_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_dir).expect("archived dir");
+
+    let active_session_id = "12121212-3434-5656-7878-909090909090";
+    let archived_session_id = "abababab-cdcd-efef-1212-343434343434";
+    write_session_file(
+      &sessions_dir.join("active.jsonl"),
+      active_session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let archived_path = archived_dir.join("archived.jsonl");
+    write_session_file(
+      &archived_path,
+      archived_session_id,
+      &[("2026-03-24T00:00:01Z", 150, 30, 40, 190)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+    write_session_file(
+      &archived_path,
+      archived_session_id,
+      &[
+        ("2026-03-24T00:00:01Z", 150, 30, 40, 190),
+        ("2026-03-24T00:10:01Z", 300, 60, 80, 380),
+      ],
+    );
+
+    let result =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 0);
+    assert_eq!(session_usage_totals(&conn, active_session_id), (100, 20, 25, 125, 1));
+    assert_eq!(session_usage_totals(&conn, archived_session_id), (150, 30, 40, 190, 1));
+  }
+
+  #[test]
+  fn incremental_scan_discovers_new_recent_active_session() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let existing_session_id = "99999999-8888-7777-6666-555555555555";
+    write_session_file(
+      &sessions_dir.join("existing.jsonl"),
+      existing_session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+
+    let today = Local::now();
+    let recent_dir = sessions_dir
+      .join(today.format("%Y").to_string())
+      .join(today.format("%m").to_string())
+      .join(today.format("%d").to_string());
+    std::fs::create_dir_all(&recent_dir).expect("recent sessions dir");
+    let new_session_id = "44444444-3333-2222-1111-000000000000";
+    write_session_file(
+      &recent_dir.join("new.jsonl"),
+      new_session_id,
+      &[("2026-03-24T00:10:01Z", 180, 40, 45, 225)],
+    );
+
+    let result =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, existing_session_id), (100, 20, 25, 125, 1));
+    assert_eq!(session_usage_totals(&conn, new_session_id), (180, 40, 45, 225, 1));
+  }
+
+  #[test]
+  fn incremental_scan_retries_pending_repair_path_without_import_state() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let existing_session_id = "77777777-8888-9999-aaaa-bbbbbbbbbbbb";
+    write_session_file(
+      &sessions_dir.join("existing.jsonl"),
+      existing_session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let pending_path = sessions_dir.join("unparseable.jsonl");
+    std::fs::write(&pending_path, "not json\n").expect("write bad session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+
+    let recovered_session_id = "88888888-9999-aaaa-bbbb-cccccccccccc";
+    write_session_file(
+      &pending_path,
+      recovered_session_id,
+      &[("2026-03-24T00:10:01Z", 180, 40, 45, 225)],
+    );
+
+    let result =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, existing_session_id), (100, 20, 25, 125, 1));
+    assert_eq!(session_usage_totals(&conn, recovered_session_id), (180, 40, 45, 225, 1));
+    let pending_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![TOKEN_USAGE_MONOTONIC_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("query pending repairs");
+    assert_eq!(pending_count, 0);
   }
 
   #[test]

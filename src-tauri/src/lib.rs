@@ -19,7 +19,7 @@ use database::{
   canonical_subscription_currency, get_subscription_profile, get_sync_settings, init_db,
   insert_live_rate_limit_snapshot, open_connection, save_subscription_profile, save_sync_settings,
 };
-use importer::{perform_scan, recalculate_all_session_values};
+use importer::{perform_incremental_scan, perform_scan, recalculate_all_session_values};
 use models::{
   ConversationDetail, ConversationFilters, ConversationListItem, DashboardSnapshot,
   LiveRateLimitSnapshot, MenuBarPopupQuotaSnapshot, MenuBarPopupSnapshot,
@@ -338,6 +338,21 @@ fn run_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanR
   }
 
   let result = perform_scan(&state.db_path, codex_home);
+  state.scan_in_progress.store(false, Ordering::SeqCst);
+  refresh_daily_value_menu_bar(&state);
+  result
+}
+
+fn run_incremental_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
+  if state
+    .scan_in_progress
+    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    .is_err()
+  {
+    return Err("A scan is already running.".to_string());
+  }
+
+  let result = perform_incremental_scan(&state.db_path, codex_home);
   state.scan_in_progress.store(false, Ordering::SeqCst);
   refresh_daily_value_menu_bar(&state);
   result
@@ -935,7 +950,7 @@ fn refresh_rate_limit_history_if_idle(state: &AppState) {
     return;
   }
 
-  let result = perform_scan(&state.db_path, None);
+  let result = perform_incremental_scan(&state.db_path, None);
   state.scan_in_progress.store(false, Ordering::SeqCst);
   if let Err(error) = result {
     log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
@@ -1525,7 +1540,7 @@ fn show_main_window(app: &AppHandle) {
 
 fn spawn_initial_scan(state: AppState) {
   tauri::async_runtime::spawn(async move {
-    let _ = run_scan_if_idle(state, None);
+    let _ = run_incremental_scan_if_idle(state, None);
   });
 }
 
@@ -1565,7 +1580,7 @@ fn spawn_scheduler(state: AppState) {
       };
 
       if should_scan {
-        let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
+        let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
       }
     }
   });
