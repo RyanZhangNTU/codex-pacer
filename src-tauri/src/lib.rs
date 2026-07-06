@@ -62,6 +62,7 @@ const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 const SCHEDULER_MAX_SLEEP_SECONDS: u64 = 5;
+const FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS: u64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackgroundRefreshDecision {
@@ -600,11 +601,7 @@ fn background_live_rate_limits_enabled(settings: &SyncSettings) -> bool {
   let menu_bar_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
   settings.show_menu_bar_live_quota_percent
     || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&menu_bar_bucket))
-    || (settings.menu_bar_popup_enabled
-      && settings
-        .menu_bar_popup_modules
-        .iter()
-        .any(|module| module == "live_quota_freshness"))
+    || settings.menu_bar_popup_enabled
 }
 
 fn should_hide_dock_icon(settings: &SyncSettings) -> bool {
@@ -1006,17 +1003,29 @@ fn get_live_rate_limits_cached(state: &AppState) -> Result<LiveRateLimitSnapshot
 }
 
 fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
-  get_live_rate_limits_with_fallback(state, force_refresh, true)
+  get_live_rate_limits_with_fallback(
+    state,
+    force_refresh,
+    true,
+    live_rate_limit_foreground_query_timeout(),
+  )
 }
 
 fn get_live_rate_limits_background(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
-  get_live_rate_limits_with_fallback(state, force_refresh, false)
+  let ttl = live_rate_limit_cache_ttl(state);
+  get_live_rate_limits_with_fallback(
+    state,
+    force_refresh,
+    false,
+    live_rate_limit_background_query_timeout_for_interval(ttl),
+  )
 }
 
 fn get_live_rate_limits_with_fallback(
   state: &AppState,
   force_refresh: bool,
   refresh_history_on_failure: bool,
+  query_timeout: Duration,
 ) -> Result<LiveRateLimitSnapshot, String> {
   let ttl = live_rate_limit_cache_ttl(state);
 
@@ -1032,7 +1041,7 @@ fn get_live_rate_limits_with_fallback(
     }
   }
 
-  match query_live_rate_limits(live_rate_limit_query_timeout_for_interval(ttl)) {
+  match query_live_rate_limits(query_timeout) {
     Ok(snapshot) => {
       let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
       insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
@@ -1386,9 +1395,13 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
     .unwrap_or(Duration::from_secs(300))
 }
 
-fn live_rate_limit_query_timeout_for_interval(interval: Duration) -> Duration {
+fn live_rate_limit_foreground_query_timeout() -> Duration {
+  Duration::from_secs(FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS)
+}
+
+fn live_rate_limit_background_query_timeout_for_interval(interval: Duration) -> Duration {
   interval
-    .checked_sub(Duration::from_secs(5))
+    .checked_sub(Duration::from_secs(FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS))
     .unwrap_or_else(|| Duration::from_secs(1))
 }
 
@@ -2131,13 +2144,23 @@ mod tests {
   #[test]
   fn live_rate_limit_query_timeout_finishes_before_next_refresh() {
     assert_eq!(
-      live_rate_limit_query_timeout_for_interval(Duration::from_secs(60)),
+      live_rate_limit_background_query_timeout_for_interval(Duration::from_secs(60)),
       Duration::from_secs(55)
     );
     assert_eq!(
-      live_rate_limit_query_timeout_for_interval(Duration::from_secs(180)),
+      live_rate_limit_background_query_timeout_for_interval(Duration::from_secs(180)),
       Duration::from_secs(175)
     );
+  }
+
+  #[test]
+  fn live_rate_limit_foreground_query_timeout_stays_short() {
+    assert_eq!(live_rate_limit_foreground_query_timeout(), Duration::from_secs(5));
+  }
+
+  #[test]
+  fn default_menu_bar_popup_requires_background_live_rate_limits() {
+    assert!(background_live_rate_limits_enabled(&SyncSettings::default()));
   }
 
   #[test]
