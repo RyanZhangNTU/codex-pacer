@@ -241,7 +241,8 @@ mod tests {
         save_sync_settings(
             &conn,
             &SyncSettings {
-                live_quota_refresh_interval_seconds: 600,
+                auto_scan_interval_minutes: 10,
+                live_quota_refresh_interval_seconds: 60,
                 ..SyncSettings::default()
             },
         )
@@ -250,6 +251,7 @@ mod tests {
         init_db(&conn).expect("run init again");
         let settings = get_sync_settings(&conn).expect("reload settings");
 
+        assert_eq!(settings.auto_scan_interval_minutes, 10);
         assert_eq!(settings.live_quota_refresh_interval_seconds, 600);
     }
 

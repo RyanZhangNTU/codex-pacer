@@ -73,6 +73,10 @@ const BUCKETS: OverviewBucket[] = [
   'total',
 ]
 
+function unifiedRefreshIntervalMs(autoScanIntervalMinutes: number | null | undefined) {
+  return Math.max(60000, (autoScanIntervalMinutes ?? 5) * 60 * 1000)
+}
+
 function App() {
   const { language, setLanguage, t } = useI18n()
   const [view, setView] = useState<AppView>('overview')
@@ -330,15 +334,11 @@ function App() {
 
   useEffect(() => {
     if (!hasBootstrapped) return
-    const refreshMs =
-      bucket === 'five_hour' || bucket === 'seven_day'
-        ? (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 300) * 1000
-        : 60000
     const interval = window.setInterval(() => {
       void loadShell(false)
-    }, Math.max(5000, refreshMs))
+    }, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
     return () => window.clearInterval(interval)
-  }, [bucket, hasBootstrapped, loadShell, syncSettings?.liveQuotaRefreshIntervalSeconds])
+  }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanIntervalMinutes])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -352,15 +352,12 @@ function App() {
         })
         .catch(() => {})
     refresh()
-    const interval = window.setInterval(
-      refresh,
-      Math.max(60000, (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 300) * 1000),
-    )
+    const interval = window.setInterval(refresh, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
     return () => {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [settingsOpen, syncSettings?.liveQuotaRefreshIntervalSeconds])
+  }, [settingsOpen, syncSettings?.autoScanIntervalMinutes])
 
   async function handleRescan() {
     await loadShell(true)

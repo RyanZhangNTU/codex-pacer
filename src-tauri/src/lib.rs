@@ -272,11 +272,12 @@ fn updateSyncSettings(
 ) -> Result<SyncSettings, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let current = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+  let auto_scan_interval_minutes = payload.auto_scan_interval_minutes.max(1);
   let updated = SyncSettings {
     codex_home: payload.codex_home,
     auto_scan_enabled: payload.auto_scan_enabled,
-    auto_scan_interval_minutes: payload.auto_scan_interval_minutes.max(1),
-    live_quota_refresh_interval_seconds: payload.live_quota_refresh_interval_seconds.clamp(60, 3600),
+    auto_scan_interval_minutes,
+    live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(auto_scan_interval_minutes),
     hide_dock_icon_when_menu_bar_visible: payload.hide_dock_icon_when_menu_bar_visible,
     show_menu_bar_logo: payload.show_menu_bar_logo,
     show_menu_bar_daily_api_value: payload.show_menu_bar_daily_api_value,
@@ -1025,7 +1026,7 @@ fn build_menu_bar_popup_snapshot(
 
   Ok(MenuBarPopupSnapshot {
     fetched_at: Local::now().to_rfc3339(),
-    refresh_interval_seconds: settings.live_quota_refresh_interval_seconds,
+    refresh_interval_seconds: unified_refresh_interval_seconds(settings.auto_scan_interval_minutes),
     selected_bucket,
     quota_5h: live_rate_limits
       .as_ref()
@@ -1120,8 +1121,14 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
   open_connection(&state.db_path)
     .ok()
     .and_then(|conn| get_sync_settings(&conn).ok())
-    .map(|settings| Duration::from_secs(settings.live_quota_refresh_interval_seconds.clamp(60, 3600) as u64))
+    .map(|settings| {
+      Duration::from_secs(unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64)
+    })
     .unwrap_or(Duration::from_secs(300))
+}
+
+fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
+  auto_scan_interval_minutes.max(1).saturating_mul(60).clamp(60, 3600)
 }
 
 fn build_menu_bar_popup_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -1547,43 +1554,50 @@ fn spawn_initial_scan(state: AppState) {
 fn spawn_scheduler(state: AppState) {
   tauri::async_runtime::spawn(async move {
     loop {
-      tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-      if state.scan_in_progress.load(Ordering::SeqCst) {
-        continue;
-      }
-
       let Ok(conn) = open_connection(&state.db_path) else {
+        tokio::time::sleep(Duration::from_secs(60)).await;
         continue;
       };
       let Ok(settings) = get_sync_settings(&conn) else {
+        tokio::time::sleep(Duration::from_secs(60)).await;
         continue;
       };
-      if menu_bar_has_visible_content(&settings) {
-        refresh_daily_value_menu_bar(&state);
-      }
-      if !settings.auto_scan_enabled {
+      let delay = scheduler_delay_until_next_refresh(&settings, chrono::Utc::now());
+      if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
         continue;
       }
 
-      let should_scan = match settings.last_scan_completed_at.as_deref() {
-        Some(last_completed_at) => {
-          chrono::DateTime::parse_from_rfc3339(last_completed_at)
-            .ok()
-            .map(|last| {
-              let elapsed = chrono::Utc::now().signed_duration_since(last.with_timezone(&chrono::Utc));
-              elapsed.num_minutes() >= settings.auto_scan_interval_minutes.max(1)
-            })
-            .unwrap_or(true)
-        }
-        None => true,
-      };
-
-      if should_scan {
+      if state.scan_in_progress.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_secs(
+          unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
+        ))
+        .await;
+      } else {
         let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
       }
     }
   });
+}
+
+fn scheduler_delay_until_next_refresh(settings: &SyncSettings, now: chrono::DateTime<chrono::Utc>) -> Duration {
+  let interval_seconds = unified_refresh_interval_seconds(settings.auto_scan_interval_minutes);
+  if !settings.auto_scan_enabled {
+    return Duration::from_secs(interval_seconds as u64);
+  }
+
+  let Some(last_completed_at) = settings.last_scan_completed_at.as_deref() else {
+    return Duration::ZERO;
+  };
+  let Some(last_completed_at) = chrono::DateTime::parse_from_rfc3339(last_completed_at).ok() else {
+    return Duration::ZERO;
+  };
+  let elapsed_seconds = now
+    .signed_duration_since(last_completed_at.with_timezone(&chrono::Utc))
+    .num_seconds()
+    .max(0);
+  let remaining_seconds = interval_seconds.saturating_sub(elapsed_seconds);
+  Duration::from_secs(remaining_seconds as u64)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1718,6 +1732,61 @@ mod tests {
     DateTime::parse_from_rfc3339(value)
       .expect("parse test timestamp")
       .with_timezone(&Local)
+  }
+
+  fn utc_time(value: &str) -> chrono::DateTime<chrono::Utc> {
+    DateTime::parse_from_rfc3339(value)
+      .expect("parse test timestamp")
+      .with_timezone(&chrono::Utc)
+  }
+
+  #[test]
+  fn scheduler_uses_auto_scan_interval_when_disabled() {
+    let settings = SyncSettings {
+      auto_scan_enabled: false,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: None,
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:00:00Z")),
+      Duration::from_secs(420)
+    );
+  }
+
+  #[test]
+  fn scheduler_runs_immediately_without_previous_scan() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: None,
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:00:00Z")),
+      Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn scheduler_waits_remaining_auto_scan_interval() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 7,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:03:00Z")),
+      Duration::from_secs(240)
+    );
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:07:00Z")),
+      Duration::ZERO
+    );
   }
 
   #[test]
