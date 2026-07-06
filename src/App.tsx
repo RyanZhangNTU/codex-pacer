@@ -109,9 +109,9 @@ function App() {
   const latestDetailRequestIdRef = useRef(0)
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
 
-  const waitForScanToSettle = useCallback(async () => {
+  const waitForScanToSettle = useCallback(async (timeoutMs = 15000) => {
     const startedAt = Date.now()
-    while (Date.now() - startedAt < 15000) {
+    while (Date.now() - startedAt < timeoutMs) {
       if (!(await getScanInProgress())) {
         return
       }
@@ -308,6 +308,7 @@ function App() {
     let cancelled = false
 
     const bootstrap = async () => {
+      await waitForScanToSettle(60000)
       await loadShellRef.current(false)
       if (!cancelled) {
         setHasBootstrapped(true)
@@ -319,7 +320,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [waitForScanToSettle])
 
   useEffect(() => {
     if (!hasBootstrapped) return
