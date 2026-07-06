@@ -217,6 +217,26 @@ mod tests {
     }
 
     #[test]
+    fn save_sync_settings_honors_long_background_refresh_intervals() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        save_sync_settings(
+            &conn,
+            &SyncSettings {
+                auto_scan_interval_minutes: 180,
+                ..SyncSettings::default()
+            },
+        )
+        .expect("save settings");
+
+        let settings = get_sync_settings(&conn).expect("load settings");
+
+        assert_eq!(settings.auto_scan_interval_minutes, 180);
+        assert_eq!(settings.live_quota_refresh_interval_seconds, 10800);
+    }
+
+    #[test]
     fn init_db_migrates_old_default_refresh_and_disables_legacy_fast_mode_once() {
         let conn = Connection::open_in_memory().expect("open in-memory database");
 

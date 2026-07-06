@@ -466,7 +466,7 @@ pub fn save_sync_settings(
 }
 
 fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
-    auto_scan_interval_minutes.max(1).saturating_mul(60).clamp(60, 3600)
+    auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
 }
 
 pub fn set_last_scan_started(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {

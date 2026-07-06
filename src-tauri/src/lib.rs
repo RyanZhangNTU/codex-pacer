@@ -1165,7 +1165,7 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
 }
 
 fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
-  auto_scan_interval_minutes.max(1).saturating_mul(60).clamp(60, 3600)
+  auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
 }
 
 fn build_menu_bar_popup_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -1842,6 +1842,25 @@ mod tests {
     );
     assert_eq!(
       scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T00:07:00Z")),
+      Duration::ZERO
+    );
+  }
+
+  #[test]
+  fn scheduler_honors_auto_scan_intervals_above_one_hour() {
+    let settings = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 180,
+      last_scan_completed_at: Some("2026-03-27T00:00:00Z".to_string()),
+      ..SyncSettings::default()
+    };
+
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T01:00:00Z")),
+      Duration::from_secs(7200)
+    );
+    assert_eq!(
+      scheduler_delay_until_next_refresh(&settings, utc_time("2026-03-27T03:00:00Z")),
       Duration::ZERO
     );
   }
