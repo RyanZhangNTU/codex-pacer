@@ -1626,20 +1626,24 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn spawn_initial_scan(state: AppState) {
-  tauri::async_runtime::spawn(async move {
-    let _ = run_incremental_scan_if_idle(state, None);
-  });
+  std::thread::Builder::new()
+    .name("codex-pacer-initial-scan".to_string())
+    .spawn(move || {
+      let _ = run_incremental_scan_if_idle(state, None);
+    })
+    .expect("failed to spawn initial scan thread");
 }
 
 fn spawn_scheduler(state: AppState) {
-  tauri::async_runtime::spawn(async move {
-    loop {
+  std::thread::Builder::new()
+    .name("codex-pacer-scheduler".to_string())
+    .spawn(move || loop {
       let Ok(conn) = open_connection(&state.db_path) else {
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        std::thread::sleep(Duration::from_secs(60));
         continue;
       };
       let Ok(settings) = get_sync_settings(&conn) else {
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        std::thread::sleep(Duration::from_secs(60));
         continue;
       };
       let now = Utc::now();
@@ -1649,15 +1653,14 @@ fn spawn_scheduler(state: AppState) {
 
       match decision {
         BackgroundRefreshDecision::Disabled(delay) | BackgroundRefreshDecision::Wait(delay) => {
-          tokio::time::sleep(delay).await;
+          std::thread::sleep(delay);
         }
         BackgroundRefreshDecision::Full | BackgroundRefreshDecision::Incremental
           if state.scan_in_progress.load(Ordering::SeqCst) =>
         {
-          tokio::time::sleep(Duration::from_secs(
+          std::thread::sleep(Duration::from_secs(
             unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
-          ))
-          .await;
+          ));
         }
         BackgroundRefreshDecision::Full => {
           let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
@@ -1666,8 +1669,8 @@ fn spawn_scheduler(state: AppState) {
           let _ = run_incremental_scan_if_idle(state.clone(), settings.codex_home.clone());
         }
       }
-    }
-  });
+    })
+    .expect("failed to spawn background scheduler thread");
 }
 
 fn background_refresh_decision(
