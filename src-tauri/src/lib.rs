@@ -2477,6 +2477,69 @@ mod tests {
   }
 
   #[test]
+  fn startup_database_prepare_recalculates_new_gpt_56_values() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET output_price_per_million = 6.25,
+            is_official = 1
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+      )
+      .expect("seed malformed GPT-5.6 Sol pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('gpt-56-startup-session', 'gpt-56-startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('gpt-56-startup-session', '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+          0, 0, 1000000, 0, 1000000, 0.0, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'gpt-56-startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 30.0);
+  }
+
+  #[test]
   fn menu_bar_title_parts_can_use_local_live_rate_limits_without_refresh() {
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");

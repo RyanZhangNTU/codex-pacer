@@ -1380,6 +1380,60 @@ mod tests {
   }
 
   #[test]
+  fn scan_prices_gpt_56_sol_at_standard_api_equivalent_value() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "56565656-5656-5656-5656-565656565656";
+    let session_path = sessions_dir.join("gpt56-sol.jsonl");
+    std::fs::write(
+      &session_path,
+      concat!(
+        "{\"timestamp\":\"2026-07-09T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"56565656-5656-5656-5656-565656565656\"}}\n",
+        "{\"timestamp\":\"2026-07-09T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.6-sol\"}}\n",
+        "{\"timestamp\":\"2026-07-09T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":40,\"reasoning_output_tokens\":0,\"total_tokens\":140}},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n"
+      ),
+    )
+    .expect("write GPT-5.6 Sol session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let (input_tokens, cached_input_tokens, output_tokens, total_tokens, value_usd):
+      (i64, i64, i64, i64, f64) = conn
+      .query_row(
+        "
+        SELECT input_tokens, cached_input_tokens, output_tokens, total_tokens, value_usd
+        FROM usage_events
+        WHERE session_id = ?1
+        ",
+        params![session_id],
+        |row| {
+          Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+          ))
+        },
+      )
+      .expect("query usage");
+
+    assert_eq!(input_tokens, 100);
+    assert_eq!(cached_input_tokens, 25);
+    assert_eq!(output_tokens, 40);
+    assert_eq!(total_tokens, 140);
+    let standard = (75.0 / 1_000_000.0) * 5.0
+      + (25.0 / 1_000_000.0) * 0.5
+      + (40.0 / 1_000_000.0) * 30.0;
+    assert!((value_usd - standard).abs() < 1e-9);
+  }
+
+  #[test]
   fn import_state_mismatch_reimports_even_when_file_metadata_is_unchanged() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
