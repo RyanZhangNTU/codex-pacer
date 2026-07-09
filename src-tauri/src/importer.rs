@@ -104,11 +104,19 @@ fn perform_scan_with_scope(
     &codex_home,
     home_dir.as_deref(),
   );
+  let resolved_codex_home = codex_home.to_string_lossy().to_string();
   let scan_started_at = now_utc_string();
-  if track_scan_freshness {
-    set_last_scan_started_for_source(&conn, &scan_started_at, scan_source_selector.as_deref())
-      .map_err(|error| error.to_string())?;
-  }
+  let scan_freshness_start = if track_scan_freshness {
+    set_last_scan_started_for_source(
+      &conn,
+      &scan_started_at,
+      scan_source_selector.as_deref(),
+      &resolved_codex_home,
+    )
+    .map_err(|error| error.to_string())?
+  } else {
+    Default::default()
+  };
 
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
@@ -116,15 +124,13 @@ fn perform_scan_with_scope(
     data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
   let pending_token_repair_paths =
     load_pending_data_repair_paths(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
-  let effective_scope = if requested_scope == ScanScope::Full
-    || import_state.is_empty()
-    || needs_rate_limit_backfill
-    || needs_token_usage_repair_sweep
-  {
-    ScanScope::Full
-  } else {
-    ScanScope::Incremental
-  };
+  let effective_scope = effective_scan_scope(
+    requested_scope,
+    import_state.is_empty(),
+    needs_rate_limit_backfill,
+    needs_token_usage_repair_sweep,
+    scan_freshness_start.full_scan_required,
+  );
 
   let (session_files, active_paths_kept_for_archive_retry) = match effective_scope {
     ScanScope::Full => (collect_session_files(&codex_home), HashSet::new()),
@@ -253,11 +259,12 @@ fn perform_scan_with_scope(
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
-  if track_scan_freshness {
+  if scan_freshness_start.recorded {
     set_scan_completed_for_source(
       &conn,
       &completed_at,
       scan_source_selector.as_deref(),
+      &resolved_codex_home,
       effective_scope == ScanScope::Full,
     )
     .map_err(|error| error.to_string())?;
@@ -271,6 +278,25 @@ fn perform_scan_with_scope(
     missing_sessions,
     last_completed_at: completed_at,
   })
+}
+
+fn effective_scan_scope(
+  requested_scope: ScanScope,
+  import_state_is_empty: bool,
+  needs_rate_limit_backfill: bool,
+  needs_token_usage_repair_sweep: bool,
+  resolved_source_requires_full_scan: bool,
+) -> ScanScope {
+  if requested_scope == ScanScope::Full
+    || import_state_is_empty
+    || needs_rate_limit_backfill
+    || needs_token_usage_repair_sweep
+    || resolved_source_requires_full_scan
+  {
+    ScanScope::Full
+  } else {
+    ScanScope::Incremental
+  }
 }
 
 fn import_state_session_id_mismatch(state: &ImportState, session_file: &SessionFile) -> bool {
@@ -1419,7 +1445,33 @@ mod tests {
   use super::*;
   use crate::database::{init_db, now_utc_string, open_connection, save_sync_settings};
   use rusqlite::OptionalExtension;
+  use std::ffi::OsString;
+  use std::sync::Mutex;
   use tempfile::tempdir;
+
+  static CODEX_HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+  struct CodexHomeEnvGuard {
+    previous: Option<OsString>,
+  }
+
+  impl CodexHomeEnvGuard {
+    fn set(path: &Path) -> Self {
+      let previous = std::env::var_os("CODEX_HOME");
+      std::env::set_var("CODEX_HOME", path);
+      Self { previous }
+    }
+  }
+
+  impl Drop for CodexHomeEnvGuard {
+    fn drop(&mut self) {
+      if let Some(previous) = self.previous.take() {
+        std::env::set_var("CODEX_HOME", previous);
+      } else {
+        std::env::remove_var("CODEX_HOME");
+      }
+    }
+  }
 
   #[test]
   fn diff_usage_handles_growth_and_component_rollbacks() {
@@ -2899,6 +2951,65 @@ mod tests {
     assert_eq!(started, None);
     assert_eq!(completed, None);
     assert_eq!(full_completed, None);
+  }
+
+  #[test]
+  fn changed_resolved_default_source_forces_full_scan() {
+    assert_eq!(
+      effective_scan_scope(ScanScope::Incremental, false, false, false, true),
+      ScanScope::Full
+    );
+  }
+
+  #[test]
+  fn incremental_scan_finds_untracked_archives_after_default_source_moves() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let first_codex_home = directory.path().join("codex-home-a");
+    let second_codex_home = directory.path().join("codex-home-b");
+    let first_sessions = first_codex_home.join("sessions");
+    let second_archives = second_codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&first_sessions).expect("first sessions");
+    std::fs::create_dir_all(&second_archives).expect("second archives");
+
+    let first_session_id = "18181818-1818-1818-1818-181818181818";
+    write_session_file(
+      &first_sessions.join("first.jsonl"),
+      first_session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let second_session_id = "28282828-2828-2828-2828-282828282828";
+    write_session_file(
+      &second_archives.join("second.jsonl"),
+      second_session_id,
+      &[("2026-07-10T01:00:00Z", 200, 40, 20, 220)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&first_codex_home);
+    perform_scan(&db_path, None).expect("scan first default source");
+
+    std::env::set_var("CODEX_HOME", &second_codex_home);
+    let result = perform_incremental_scan(&db_path, None).expect("scan moved default source");
+
+    let conn = open_connection(&db_path).expect("open database");
+    let (selector, resolved_source): (Option<String>, Option<String>) = conn
+      .query_row(
+        "
+        SELECT codex_home, last_scan_codex_home
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load scan source identity");
+
+    assert_eq!(selector, None);
+    assert_eq!(resolved_source.as_deref(), Some(second_codex_home.to_string_lossy().as_ref()));
+    assert_eq!(result.scanned_files, 1);
+    assert_eq!(session_usage_totals(&conn, second_session_id).3, 220);
+    assert_eq!(session_usage_totals(&conn, first_session_id).3, 110);
   }
 
   #[test]

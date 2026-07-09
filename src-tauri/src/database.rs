@@ -151,6 +151,61 @@ mod tests {
     }
 
     #[test]
+    fn init_db_adds_resolved_scan_source_to_existing_sync_settings() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+
+        conn.execute_batch(
+            "
+        CREATE TABLE sync_settings (
+          singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+          codex_home TEXT,
+          auto_scan_enabled INTEGER NOT NULL,
+          auto_scan_interval_minutes INTEGER NOT NULL,
+          last_scan_started_at TEXT,
+          last_scan_completed_at TEXT,
+          updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO sync_settings (
+          singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
+          last_scan_started_at, last_scan_completed_at, updated_at
+        )
+        VALUES (
+          1, NULL, 1, 5,
+          '2026-07-09T23:00:00Z', '2026-07-09T23:01:00Z',
+          '2026-07-10T00:00:00Z'
+        );
+        ",
+        )
+        .expect("seed legacy schema");
+
+        init_db(&conn).expect("migrate schema");
+
+        let (resolved_source, started, completed, full_completed): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "
+                SELECT last_scan_codex_home, last_scan_started_at,
+                       last_scan_completed_at, last_full_scan_completed_at
+                FROM sync_settings
+                WHERE singleton_id = 1
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("load resolved scan source");
+
+        assert_eq!(resolved_source, None);
+        assert_eq!(started, None);
+        assert_eq!(completed, None);
+        assert_eq!(full_completed, None);
+    }
+
+    #[test]
     fn sync_settings_tracks_last_full_scan_completion() {
         let conn = Connection::open_in_memory().expect("open in-memory database");
         init_db(&conn).expect("init database");
@@ -163,6 +218,104 @@ mod tests {
             get_last_full_scan_completed(&conn).expect("load saved value"),
             Some("2026-03-27T00:00:00Z".to_string())
         );
+    }
+
+    #[test]
+    fn scan_freshness_tracks_resolved_source_when_default_selector_moves() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        let first = set_last_scan_started_for_source(
+            &conn,
+            "2026-07-10T00:00:00Z",
+            None,
+            "/tmp/codex-home-a",
+        )
+        .expect("start first scan");
+        assert!(first.recorded);
+        assert!(first.source_changed);
+
+        assert!(set_scan_completed_for_source(
+            &conn,
+            "2026-07-10T00:01:00Z",
+            None,
+            "/tmp/codex-home-a",
+            true,
+        )
+        .expect("complete first scan"));
+
+        let second = set_last_scan_started_for_source(
+            &conn,
+            "2026-07-10T01:00:00Z",
+            None,
+            "/tmp/codex-home-b",
+        )
+        .expect("start second scan");
+        assert!(second.recorded);
+        assert!(second.source_changed);
+        assert!(second.full_scan_required);
+
+        let (resolved_source, started, completed, full_completed): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "
+                SELECT last_scan_codex_home, last_scan_started_at,
+                       last_scan_completed_at, last_full_scan_completed_at
+                FROM sync_settings
+                WHERE singleton_id = 1
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("load moved scan source");
+
+        assert_eq!(resolved_source.as_deref(), Some("/tmp/codex-home-b"));
+        assert_eq!(started.as_deref(), Some("2026-07-10T01:00:00Z"));
+        assert_eq!(completed, None);
+        assert_eq!(full_completed, None);
+
+        let retry = set_last_scan_started_for_source(
+            &conn,
+            "2026-07-10T01:00:30Z",
+            None,
+            "/tmp/codex-home-b",
+        )
+        .expect("retry second scan");
+        assert!(retry.recorded);
+        assert!(!retry.source_changed);
+        assert!(retry.full_scan_required);
+
+        assert!(!set_scan_completed_for_source(
+            &conn,
+            "2026-07-10T01:01:00Z",
+            None,
+            "/tmp/codex-home-a",
+            true,
+        )
+        .expect("reject completion from first source"));
+        assert!(set_scan_completed_for_source(
+            &conn,
+            "2026-07-10T01:02:00Z",
+            None,
+            "/tmp/codex-home-b",
+            true,
+        )
+        .expect("complete second scan"));
+
+        let next = set_last_scan_started_for_source(
+            &conn,
+            "2026-07-10T02:00:00Z",
+            None,
+            "/tmp/codex-home-b",
+        )
+        .expect("start next incremental scan");
+        assert!(next.recorded);
+        assert!(!next.source_changed);
+        assert!(!next.full_scan_required);
     }
 
     #[test]

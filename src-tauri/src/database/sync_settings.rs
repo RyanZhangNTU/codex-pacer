@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::models::SyncSettings;
 
@@ -294,6 +294,25 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
     )?;
     }
 
+    if !column_names.iter().any(|name| name == "last_scan_codex_home") {
+        let transaction = conn.unchecked_transaction()?;
+        transaction.execute(
+            "ALTER TABLE sync_settings ADD COLUMN last_scan_codex_home TEXT",
+            [],
+        )?;
+        transaction.execute(
+            "
+            UPDATE sync_settings
+            SET last_scan_started_at = NULL,
+                last_scan_completed_at = NULL,
+                last_full_scan_completed_at = NULL
+            WHERE singleton_id = 1
+            ",
+            [],
+        )?;
+        transaction.commit()?;
+    }
+
     migrate_sync_settings_defaults_to_minutes(conn)?;
 
     Ok(())
@@ -494,7 +513,8 @@ fn clear_scan_timestamps(conn: &Connection) -> rusqlite::Result<()> {
     UPDATE sync_settings
     SET last_scan_started_at = NULL,
         last_scan_completed_at = NULL,
-        last_full_scan_completed_at = NULL
+        last_full_scan_completed_at = NULL,
+        last_scan_codex_home = NULL
     WHERE singleton_id = 1
     ",
         [],
@@ -502,54 +522,109 @@ fn clear_scan_timestamps(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
-    auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanFreshnessStart {
+    pub recorded: bool,
+    pub source_changed: bool,
+    pub full_scan_required: bool,
 }
 
 pub fn set_last_scan_started_for_source(
     conn: &Connection,
     timestamp: &str,
     codex_home_selector: Option<&str>,
-) -> rusqlite::Result<bool> {
-    let updated = conn.execute(
+    resolved_codex_home: &str,
+) -> rusqlite::Result<ScanFreshnessStart> {
+    let transaction =
+        Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let previous_freshness = transaction
+        .query_row(
+            "
+            SELECT last_scan_codex_home, last_full_scan_completed_at
+            FROM sync_settings
+            WHERE singleton_id = 1
+              AND (
+                (codex_home IS NULL AND ?1 IS NULL)
+                OR codex_home = ?1
+              )
+            ",
+            params![codex_home_selector],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?;
+    let Some((previous_source, last_full_scan_completed_at)) = previous_freshness else {
+        transaction.commit()?;
+        return Ok(ScanFreshnessStart::default());
+    };
+    let source_changed = previous_source.as_deref() != Some(resolved_codex_home);
+    let full_scan_required = source_changed || last_full_scan_completed_at.is_none();
+
+    let updated = transaction.execute(
         "
-    UPDATE sync_settings
-    SET last_scan_started_at = ?1, updated_at = ?1
-    WHERE singleton_id = 1
-      AND (
-        (codex_home IS NULL AND ?2 IS NULL)
-        OR codex_home = ?2
-      )
-    ",
-        params![timestamp, codex_home_selector],
+        UPDATE sync_settings
+        SET last_scan_started_at = ?1,
+            last_scan_completed_at = CASE
+              WHEN last_scan_codex_home = ?3 THEN last_scan_completed_at
+              ELSE NULL
+            END,
+            last_full_scan_completed_at = CASE
+              WHEN last_scan_codex_home = ?3 THEN last_full_scan_completed_at
+              ELSE NULL
+            END,
+            last_scan_codex_home = ?3,
+            updated_at = ?1
+        WHERE singleton_id = 1
+          AND (
+            (codex_home IS NULL AND ?2 IS NULL)
+            OR codex_home = ?2
+          )
+        ",
+        params![timestamp, codex_home_selector, resolved_codex_home],
     )?;
-    Ok(updated == 1)
+    transaction.commit()?;
+
+    Ok(ScanFreshnessStart {
+        recorded: updated == 1,
+        source_changed: updated == 1 && source_changed,
+        full_scan_required: updated == 1 && full_scan_required,
+    })
 }
 
 pub fn set_scan_completed_for_source(
     conn: &Connection,
     timestamp: &str,
     codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
     full_scan: bool,
 ) -> rusqlite::Result<bool> {
     let updated = conn.execute(
         "
-    UPDATE sync_settings
-    SET last_scan_completed_at = ?1,
-        last_full_scan_completed_at = CASE
-          WHEN ?3 != 0 THEN ?1
-          ELSE last_full_scan_completed_at
-        END,
-        updated_at = ?1
-    WHERE singleton_id = 1
-      AND (
-        (codex_home IS NULL AND ?2 IS NULL)
-        OR codex_home = ?2
-      )
-    ",
-        params![timestamp, codex_home_selector, bool_to_i64(full_scan)],
+        UPDATE sync_settings
+        SET last_scan_completed_at = ?1,
+            last_full_scan_completed_at = CASE
+              WHEN ?4 != 0 THEN ?1
+              ELSE last_full_scan_completed_at
+            END,
+            updated_at = ?1
+        WHERE singleton_id = 1
+          AND (
+            (codex_home IS NULL AND ?2 IS NULL)
+            OR codex_home = ?2
+          )
+          AND last_scan_codex_home = ?3
+        ",
+        params![
+            timestamp,
+            codex_home_selector,
+            resolved_codex_home,
+            bool_to_i64(full_scan)
+        ],
     )?;
     Ok(updated == 1)
+}
+
+fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
+    auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
 }
 
 pub fn get_last_full_scan_completed(conn: &Connection) -> rusqlite::Result<Option<String>> {
