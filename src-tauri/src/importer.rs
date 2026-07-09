@@ -472,6 +472,21 @@ fn collect_incremental_session_files(
   let mut active_paths_kept_for_archive_retry = HashSet::new();
 
   for state in import_state.values() {
+    if state.source_bucket == "archived" {
+      let Some(session_file) = session_file_from_path(
+        PathBuf::from(&state.source_path),
+        "archived",
+      ) else {
+        continue;
+      };
+      if state.file_size == session_file.file_size && state.file_mtime_ms == session_file.file_mtime_ms {
+        continue;
+      }
+      if collected_paths.insert(session_file.path.to_string_lossy().to_string()) {
+        files.push(session_file);
+      }
+      continue;
+    }
     if state.source_bucket != "active" || collected_paths.contains(&state.source_path) {
       continue;
     }
@@ -1936,7 +1951,7 @@ mod tests {
   }
 
   #[test]
-  fn incremental_scan_skips_archived_session_changes() {
+  fn incremental_scan_does_not_walk_archived_directory_for_untracked_files() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
@@ -1951,15 +1966,9 @@ mod tests {
       active_session_id,
       &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
     );
-    let archived_path = archived_dir.join("archived.jsonl");
-    write_session_file(
-      &archived_path,
-      archived_session_id,
-      &[("2026-03-24T00:00:01Z", 150, 30, 40, 190)],
-    );
-
     let db_path = directory.path().join("usage.sqlite");
     perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+    let archived_path = archived_dir.join("archived.jsonl");
     write_session_file(
       &archived_path,
       archived_session_id,
@@ -1975,7 +1984,7 @@ mod tests {
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(result.updated_sessions, 0);
     assert_eq!(session_usage_totals(&conn, active_session_id), (100, 20, 25, 125, 1));
-    assert_eq!(session_usage_totals(&conn, archived_session_id), (150, 30, 40, 190, 1));
+    assert_eq!(session_usage_totals(&conn, archived_session_id), (0, 0, 0, 0, 0));
   }
 
   #[test]
@@ -2743,6 +2752,78 @@ mod tests {
 
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(session_usage_totals(&conn, session_id).3, 200);
+    assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
+  }
+
+  #[test]
+  fn incremental_scan_reimports_archived_file_after_incomplete_tail_is_finished() {
+    use std::io::Write;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    let archived = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    std::fs::create_dir_all(&archived).expect("archive");
+    let session_id = "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0";
+    let active_path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let archived_path = archived.join(active_path.file_name().expect("filename"));
+    write_session_file(&active_path, session_id, &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)]);
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&active_path)
+      .expect("open active session");
+    file
+      .write_all(
+        concat!(
+          "{\"timestamp\":\"2026-07-10T00:01:00Z\",\"type\":\"event_msg\",\"payload\":{",
+          "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{",
+          "\"input_tokens\":180,\"cached_input_tokens\":40,\"output_tokens\":20,"
+        )
+        .as_bytes(),
+      )
+      .expect("write incomplete tail");
+    drop(file);
+    std::fs::rename(&active_path, &archived_path).expect("archive session");
+
+    let first_result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("import complete prefix from archive");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(first_result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id), (100, 20, 10, 110, 1));
+    let archived_state: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM import_state WHERE source_path = ?1 AND source_bucket = 'archived'",
+        params![archived_path.to_string_lossy().to_string()],
+        |row| row.get(0),
+      )
+      .expect("query archived state");
+    assert_eq!(archived_state, 1);
+    drop(conn);
+
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&archived_path)
+      .expect("open archived session");
+    file
+      .write_all(
+        concat!(
+          "\"reasoning_output_tokens\":0,\"total_tokens\":200}}",
+          ",\"rate_limits\":{\"plan_type\":\"pro\"}}}\n"
+        )
+        .as_bytes(),
+      )
+      .expect("finish archived tail");
+    drop(file);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("reimport finished archive");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id), (180, 40, 20, 200, 2));
     assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
   }
 
