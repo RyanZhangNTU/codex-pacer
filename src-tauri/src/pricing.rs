@@ -48,14 +48,7 @@ fn pricing_seed() -> Vec<PricingCatalogEntry> {
             source_url: OPENAI_API_PRICING_URL.to_string(),
             updated_at: updated_at.clone(),
         },
-        fallback_entry(
-            "gpt-5.6-sol",
-            "GPT-5.6 Sol",
-            5.00,
-            0.50,
-            30.00,
-            &updated_at,
-        ),
+        fallback_entry("gpt-5.6-sol", "GPT-5.6 Sol", 5.00, 0.50, 30.00, &updated_at),
         fallback_entry(
             "gpt-5.6-terra",
             "GPT-5.6 Terra",
@@ -196,33 +189,28 @@ fn official_entry(row: OfficialPricingRow, updated_at: &str) -> PricingCatalogEn
 
 pub fn seed_pricing_catalog(conn: &Connection) -> rusqlite::Result<Vec<PricingCatalogEntry>> {
     let entries = pricing_seed();
-    repair_misparsed_gpt_56_output_prices(conn, &entries)?;
+    repair_misparsed_gpt_56_output_prices(conn)?;
     upsert_pricing_entries(conn, &entries, PricingUpsertMode::PreserveOfficial)?;
     load_catalog(conn)
 }
 
-fn repair_misparsed_gpt_56_output_prices(
-    conn: &Connection,
-    entries: &[PricingCatalogEntry],
-) -> rusqlite::Result<()> {
-    for entry in entries {
-        if !matches!(
-            entry.model_id.as_str(),
-            "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-        ) {
-            continue;
-        }
+fn repair_misparsed_gpt_56_output_prices(conn: &Connection) -> rusqlite::Result<()> {
+    for (model_id, input, cached_input, bad_output) in [
+        ("gpt-5.6-sol", 5.0, 0.5, 6.25),
+        ("gpt-5.6-terra", 2.5, 0.25, 3.125),
+        ("gpt-5.6-luna", 1.0, 0.1, 1.25),
+    ] {
         conn.execute(
             "
             UPDATE pricing_catalog
-            SET output_price_per_million = ?2
+            SET is_official = 0
             WHERE model_id = ?1
               AND is_official = 1
-              AND ABS(
-                output_price_per_million - input_price_per_million * 1.25
-              ) <= 1e-9
+              AND ABS(input_price_per_million - ?2) <= 1e-9
+              AND ABS(cached_input_price_per_million - ?3) <= 1e-9
+              AND ABS(output_price_per_million - ?4) <= 1e-9
             ",
-            params![entry.model_id, entry.output_price_per_million],
+            params![model_id, input, cached_input, bad_output],
         )?;
     }
 
@@ -576,7 +564,9 @@ pub fn resolve_pricing(
     model_id: &str,
 ) -> Option<ResolvedPricing> {
     let normalized = normalize_model_id(model_id);
-    let entry = if let Some(entry) = catalog.get(&normalized) {
+    let entry = if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6") {
+        catalog.get("gpt-5.6-sol")?.clone()
+    } else if let Some(entry) = catalog.get(&normalized) {
         entry.clone()
     } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-sol") {
         catalog.get("gpt-5.6-sol")?.clone()
@@ -820,6 +810,7 @@ mod tests {
 
         for (model, input, cached, output) in [
             ("gpt-5.6", 5.0, 0.5, 30.0),
+            ("gpt-5.6-2026-07-09", 5.0, 0.5, 30.0),
             ("gpt-5.6-sol", 5.0, 0.5, 30.0),
             ("gpt-5.6-sol-2026-07-09", 5.0, 0.5, 30.0),
             ("gpt-5.6-terra", 2.5, 0.25, 15.0),
@@ -850,6 +841,29 @@ mod tests {
     }
 
     #[test]
+    fn resolve_pricing_routes_gpt_56_aliases_to_current_sol_row() {
+        let mut catalog = pricing_seed()
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let alias = catalog.get_mut("gpt-5.6").expect("GPT-5.6 alias");
+        alias.input_price_per_million = 4.0;
+        alias.cached_input_price_per_million = 0.4;
+        alias.output_price_per_million = 24.0;
+        let sol = catalog.get_mut("gpt-5.6-sol").expect("GPT-5.6 Sol");
+        sol.input_price_per_million = 7.0;
+        sol.cached_input_price_per_million = 0.7;
+        sol.output_price_per_million = 42.0;
+
+        for model_id in ["gpt-5.6", "gpt-5.6-2026-07-09"] {
+            let pricing = resolve_pricing(&catalog, model_id).expect(model_id);
+            assert_eq!(pricing.input_price_per_million, 7.0);
+            assert_eq!(pricing.cached_input_price_per_million, 0.7);
+            assert_eq!(pricing.output_price_per_million, 42.0);
+        }
+    }
+
+    #[test]
     fn resolve_pricing_does_not_guess_unknown_gpt_56_ids() {
         let catalog = pricing_seed()
             .into_iter()
@@ -860,7 +874,9 @@ mod tests {
             "gpt-5.6-solaris",
             "gpt-5.6-neptune",
             "gpt-5.60",
-            "gpt-5.6-2026-07-09",
+            "gpt-5.6-2026-02-30",
+            "gpt-5.6-2026-7-09",
+            "gpt-5.6-2026-07-09-preview",
             "gpt-5.6-sol-2026-02-30",
             "gpt-5.6-sol-2026-7-09",
             "gpt-5.6-sol-2026-07-09-preview",
@@ -914,37 +930,98 @@ mod tests {
             .map(|entry| (entry.model_id.clone(), entry))
             .collect::<HashMap<_, _>>();
 
-        for (model_id, display_name, output, provenance, source_url) in [
-            (
-                "gpt-5.6-sol",
-                "Official Sol",
-                30.0,
-                "official-sol",
-                "https://example.com/sol",
-            ),
-            (
-                "gpt-5.6-terra",
-                "Official Terra",
-                15.0,
-                "official-terra",
-                "https://example.com/terra",
-            ),
-            (
-                "gpt-5.6-luna",
-                "Official Luna",
-                6.0,
-                "official-luna",
-                "https://example.com/luna",
-            ),
+        for (model_id, display_name, output, provenance) in [
+            ("gpt-5.6-sol", "GPT-5.6 Sol", 30.0, "official-sol"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra", 15.0, "official-terra"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna", 6.0, "official-luna"),
         ] {
             let entry = &catalog[model_id];
             assert_eq!(entry.output_price_per_million, output);
             assert_eq!(entry.display_name, display_name);
-            assert!(entry.is_official);
-            assert_eq!(entry.note.as_deref(), Some(provenance));
-            assert_eq!(entry.source_url, source_url);
-            assert_eq!(entry.updated_at, provenance);
+            assert!(!entry.is_official);
+            assert_eq!(entry.note.as_deref(), Some(FALLBACK_PRICING_NOTE));
+            assert_eq!(entry.source_url, OPENAI_API_PRICING_URL);
+            assert_ne!(entry.updated_at, provenance);
         }
+    }
+
+    #[test]
+    fn seed_preserves_future_official_gpt_56_price_at_one_point_two_five_ratio() {
+        let conn = Connection::open_in_memory().expect("open database");
+        crate::database::init_db(&conn).expect("init database");
+        conn.execute(
+            "
+            INSERT INTO pricing_catalog (
+                model_id, display_name, input_price_per_million, cached_input_price_per_million,
+                output_price_per_million, effective_model_id, is_official, note, source_url, updated_at
+            )
+            VALUES ('gpt-5.6-sol', 'Future Official Sol', 8.0, 0.8, 10.0,
+                    'gpt-5.6-sol', 1, 'future-official', 'https://example.com/future',
+                    'future-official-sol')
+            ",
+            [],
+        )
+        .expect("insert future official Sol pricing");
+
+        let catalog = seed_pricing_catalog(&conn)
+            .expect("seed pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let sol = &catalog["gpt-5.6-sol"];
+
+        assert_eq!(sol.input_price_per_million, 8.0);
+        assert_eq!(sol.cached_input_price_per_million, 0.8);
+        assert_eq!(sol.output_price_per_million, 10.0);
+        assert_eq!(sol.display_name, "Future Official Sol");
+        assert!(sol.is_official);
+        assert_eq!(sol.note.as_deref(), Some("future-official"));
+        assert_eq!(sol.source_url, "https://example.com/future");
+        assert_eq!(sol.updated_at, "future-official-sol");
+    }
+
+    #[test]
+    fn official_refresh_restores_repaired_gpt_56_provenance() {
+        let conn = Connection::open_in_memory().expect("open database");
+        crate::database::init_db(&conn).expect("init database");
+        conn.execute(
+            "
+            INSERT INTO pricing_catalog (
+                model_id, display_name, input_price_per_million, cached_input_price_per_million,
+                output_price_per_million, effective_model_id, is_official, note, source_url, updated_at
+            )
+            VALUES ('gpt-5.6-sol', 'Old Official Sol', 5.0, 0.5, 6.25,
+                    'gpt-5.6-sol', 1, 'old-official', 'https://example.com/old', 'old-official')
+            ",
+            [],
+        )
+        .expect("insert malformed official Sol pricing");
+
+        let repaired = seed_pricing_catalog(&conn).expect("repair malformed pricing");
+        assert!(repaired
+            .iter()
+            .find(|entry| entry.model_id == "gpt-5.6-sol")
+            .is_some_and(|entry| !entry.is_official));
+
+        let official_entries =
+            parse_official_pricing_catalog(&complete_standard_fixture_with_gpt56_rows())
+                .expect("parse official pricing");
+        upsert_pricing_entries(&conn, &official_entries, PricingUpsertMode::Overwrite)
+            .expect("write refreshed official pricing");
+        let catalog = seed_pricing_catalog(&conn)
+            .expect("seed refreshed pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let sol = &catalog["gpt-5.6-sol"];
+
+        assert!(sol.is_official);
+        assert_eq!(sol.output_price_per_million, 30.0);
+        assert_eq!(sol.source_url, OPENAI_API_PRICING_URL);
+        assert_eq!(
+            sol.note.as_deref(),
+            Some("OpenAI API Standard short-context pricing.")
+        );
     }
 
     #[test]
