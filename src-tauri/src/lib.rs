@@ -33,7 +33,10 @@ use models::{
   MenuBarPopupSuggestedSpeed, OverviewResponse, PricingCatalogEntry, RateLimitWindowSnapshot,
   ScanResult, SubscriptionProfile, SyncSettings,
 };
-use pricing::{load_catalog, refresh_pricing_catalog_from_openai, seed_pricing_catalog};
+use pricing::{
+  apply_pricing_catalog_refresh, fetch_official_pricing_catalog, load_catalog,
+  seed_pricing_catalog, OPENAI_API_PRICING_URL,
+};
 use queries::{
   get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
 };
@@ -63,6 +66,7 @@ const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 const SCHEDULER_MAX_SLEEP_SECONDS: u64 = 5;
 const FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS: u64 = 5;
+const PRICING_VALUE_RESOLUTION_REPAIR_KEY: &str = "pricing_value_resolution_v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackgroundRefreshDecision {
@@ -172,11 +176,34 @@ fn refreshBackgroundData(state: State<'_, AppState>) -> Result<Option<ScanResult
 #[allow(non_snake_case)]
 #[tauri::command]
 fn refreshPricing(state: State<'_, AppState>) -> Result<Vec<PricingCatalogEntry>, String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  refresh_pricing_catalog_from_openai(&conn)?;
-  recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
-  let catalog = load_catalog(&conn).map_err(|error| error.to_string())?;
+  let official_entries = match fetch_official_pricing_catalog() {
+    Ok(entries) => Some(entries),
+    Err(error) => {
+      log::warn!(
+        "Failed to refresh OpenAI API pricing from {OPENAI_API_PRICING_URL}: {error}; using bundled fallback pricing."
+      );
+      None
+    }
+  };
+  let mut conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  let catalog = refresh_pricing_catalog_atomically(&mut conn, official_entries.as_deref())?;
   refresh_daily_value_menu_bar(state.inner());
+  Ok(catalog)
+}
+
+fn refresh_pricing_catalog_atomically(
+  conn: &mut rusqlite::Connection,
+  official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  let transaction = conn
+    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    .map_err(|error| error.to_string())?;
+  apply_pricing_catalog_refresh(&transaction, official_entries)?;
+  recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
+  mark_pricing_value_resolution_repair_complete(&transaction)
+    .map_err(|error| error.to_string())?;
+  let catalog = load_catalog(&transaction).map_err(|error| error.to_string())?;
+  transaction.commit().map_err(|error| error.to_string())?;
   Ok(catalog)
 }
 
@@ -494,15 +521,40 @@ fn prepare_app_database(db_path: &Path) -> Result<(), String> {
   let transaction = conn
     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
     .map_err(|error| error.to_string())?;
+  let resolver_repair_pending =
+    pricing_value_resolution_repair_pending(&transaction).map_err(|error| error.to_string())?;
   let pricing_signature_before =
     load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
   seed_pricing_catalog(&transaction).map_err(|error| error.to_string())?;
   let pricing_signature_after =
     load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
-  if pricing_signature_before != pricing_signature_after {
+  if resolver_repair_pending || pricing_signature_before != pricing_signature_after {
     recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
+    mark_pricing_value_resolution_repair_complete(&transaction)
+      .map_err(|error| error.to_string())?;
   }
   transaction.commit().map_err(|error| error.to_string())?;
+  Ok(())
+}
+
+fn pricing_value_resolution_repair_pending(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
+  let completed: i64 = conn.query_row(
+    "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+    params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+    |row| row.get(0),
+  )?;
+  Ok(completed == 0)
+}
+
+fn mark_pricing_value_resolution_repair_complete(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    INSERT INTO data_repairs (repair_key, completed_at)
+    VALUES (?1, ?2)
+    ON CONFLICT(repair_key) DO UPDATE SET completed_at = excluded.completed_at
+    ",
+    params![PRICING_VALUE_RESOLUTION_REPAIR_KEY, database::now_utc_string()],
+  )?;
   Ok(())
 }
 
@@ -2450,6 +2502,7 @@ mod tests {
     let conn = open_connection(&db_path).expect("open database");
     init_db(&conn).expect("init db");
     seed_pricing_catalog(&conn).expect("seed pricing");
+    mark_pricing_value_resolution_repair_complete(&conn).expect("mark resolver repair complete");
     let created_at = database::now_utc_string();
     conn
       .execute(
@@ -2493,6 +2546,77 @@ mod tests {
       .expect("load usage value");
 
     assert_eq!(value_usd, 123.45);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_gpt_56_aliases_when_resolver_repair_is_pending() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    let created_at = database::now_utc_string();
+    for (session_id, model_id, stale_value) in [
+      ("gpt-56-alias-exact", "gpt-5.6", 6.25),
+      ("gpt-56-alias-dated", "gpt-5.6-2026-07-09", 0.0),
+    ] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, ?2, 0, ?3, ?3)
+          ",
+          params![session_id, model_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', ?2,
+            0, 0, 1000000, 0, 1000000, ?3, 0, 0)
+          ",
+          params![session_id, model_id, stale_value],
+        )
+        .expect("insert usage event");
+    }
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let values = conn
+      .prepare("SELECT session_id, value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare usage values")
+      .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+      .expect("query usage values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect usage values");
+    let repair_completed: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("load repair marker");
+
+    assert_eq!(
+      values,
+      vec![
+        ("gpt-56-alias-dated".to_string(), 30.0),
+        ("gpt-56-alias-exact".to_string(), 30.0),
+      ]
+    );
+    assert_eq!(repair_completed, 1);
   }
 
   #[test]
@@ -2714,6 +2838,7 @@ mod tests {
       failed_values,
       vec![("recalc-a".to_string(), 11.0), ("recalc-b".to_string(), 22.0)]
     );
+    assert!(pricing_value_resolution_repair_pending(&conn).expect("load rolled back repair marker"));
 
     conn
       .execute_batch("DROP TRIGGER fail_second_session_recalculation;")
@@ -2740,6 +2865,117 @@ mod tests {
 
     assert_eq!(repaired_output, 30.0);
     assert_eq!(repaired_values, vec![30.0, 30.0]);
+    assert!(!pricing_value_resolution_repair_pending(&conn).expect("load completed repair marker"));
+  }
+
+  #[test]
+  fn pricing_refresh_rolls_back_catalog_values_and_marker_before_retry() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let mut conn = open_connection(&db_path).expect("open database");
+    let created_at = database::now_utc_string();
+    for (session_id, sentinel_value) in [("refresh-a", 11.0), ("refresh-b", 22.0)] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?2, ?2)
+          ",
+          params![session_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+            0, 0, 1000000, 0, 1000000, ?2, 0, 0)
+          ",
+          params![session_id, sentinel_value],
+        )
+        .expect("insert usage event");
+    }
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+      )
+      .expect("clear repair marker");
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_second_refresh_recalculation
+        BEFORE UPDATE OF value_usd ON usage_events
+        WHEN OLD.session_id = 'refresh-b'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected refresh failure');
+        END;
+        ",
+      )
+      .expect("create failure trigger");
+    let mut official_sol = load_catalog(&conn)
+      .expect("load catalog")
+      .into_iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load GPT-5.6 Sol");
+    official_sol.output_price_per_million = 42.0;
+    official_sol.is_official = true;
+    official_sol.note = Some("atomic refresh test".to_string());
+    official_sol.updated_at = "atomic-refresh-test".to_string();
+    let official_entries = vec![official_sol];
+
+    let error = refresh_pricing_catalog_atomically(&mut conn, Some(&official_entries))
+      .expect_err("refresh should fail");
+    assert!(error.contains("injected refresh failure"));
+
+    let failed_output: f64 = conn
+      .query_row(
+        "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load rolled back pricing");
+    let failed_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare failed values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query failed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect failed values");
+    assert_eq!(failed_output, 30.0);
+    assert_eq!(failed_values, vec![11.0, 22.0]);
+    assert!(pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
+
+    conn
+      .execute_batch("DROP TRIGGER fail_second_refresh_recalculation;")
+      .expect("drop failure trigger");
+    let catalog = refresh_pricing_catalog_atomically(&mut conn, Some(&official_entries))
+      .expect("retry refresh");
+    let refreshed_sol = catalog
+      .iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load refreshed GPT-5.6 Sol");
+    let refreshed_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare refreshed values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query refreshed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect refreshed values");
+
+    assert_eq!(refreshed_sol.output_price_per_million, 42.0);
+    assert_eq!(refreshed_values, vec![42.0, 42.0]);
+    assert!(!pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
   }
 
   #[test]

@@ -217,25 +217,20 @@ fn repair_misparsed_gpt_56_output_prices(conn: &Connection) -> rusqlite::Result<
     Ok(())
 }
 
-pub fn refresh_pricing_catalog_from_openai(
+pub fn apply_pricing_catalog_refresh(
     conn: &Connection,
-) -> Result<Vec<PricingCatalogEntry>, String> {
-    match fetch_official_pricing_catalog() {
-        Ok(entries) => {
-            upsert_pricing_entries(conn, &entries, PricingUpsertMode::Overwrite)
-                .map_err(|error| error.to_string())?;
-            seed_pricing_catalog(conn).map_err(|error| error.to_string())
-        }
-        Err(error) => {
-            log::warn!(
-                "Failed to refresh OpenAI API pricing from {OPENAI_API_PRICING_URL}: {error}; using bundled fallback pricing."
-            );
-            seed_pricing_catalog(conn).map_err(|error| error.to_string())
-        }
+    official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<(), String> {
+    if let Some(entries) = official_entries {
+        upsert_pricing_entries(conn, entries, PricingUpsertMode::Overwrite)
+            .map_err(|error| error.to_string())?;
     }
+
+    seed_pricing_catalog(conn).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
-fn fetch_official_pricing_catalog() -> Result<Vec<PricingCatalogEntry>, String> {
+pub fn fetch_official_pricing_catalog() -> Result<Vec<PricingCatalogEntry>, String> {
     let response = ureq::get(OPENAI_API_PRICING_URL)
         .timeout(Duration::from_secs(20))
         .call()
