@@ -54,7 +54,7 @@ Codex Pacer 是本地优先的：
 
 环境要求：
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - 当前平台所需的 Tauri 构建依赖
 - `~/.codex` 或自定义 `CODEX_HOME` 中的本地 Codex 数据

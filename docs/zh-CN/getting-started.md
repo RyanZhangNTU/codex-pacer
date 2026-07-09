@@ -17,7 +17,7 @@
 
 如果你要从源码开发，还需要：
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - 当前平台所需的 Tauri 构建依赖
 

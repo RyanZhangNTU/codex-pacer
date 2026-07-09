@@ -24,11 +24,13 @@ import {
   updateSyncSettings,
 } from './app/api'
 import {
+  loadConversationDetailForGeneration,
   refreshDashboardAfterBackgroundScan,
   runScanWithOverlapRetry,
   shouldKeepConversationDetail,
   waitForScanToSettleUntilCancelled,
 } from './app/dataFreshness'
+import { saveSettingsWithCodexHomeRollback } from './app/settingsSave'
 import {
   formatCompactDateTime,
   formatDateTime,
@@ -191,12 +193,16 @@ function App() {
           }
         }
 
+        latestDetailRequestIdRef.current += 1
         setOverview(snapshot.overview)
         setConversations(snapshot.conversations)
         setSyncSettings(snapshot.syncSettings)
         setSubscriptionProfile(snapshot.subscriptionProfile)
         setLiveRateLimits(snapshot.liveRateLimits)
         detailCacheRef.current = nextDetailCache
+        setDetail((current) =>
+          current && nextDetailCache.get(current.rootSessionId) === current ? current : null,
+        )
         setDashboardRevision((current) => current + 1)
         setLiveWindowOffset(snapshot.overview.liveWindowOffset)
         setLoadedQueryKey(
@@ -299,8 +305,12 @@ function App() {
 
     setDetail(null)
     try {
-      const nextDetail = await getConversationDetail(rootSessionId)
-      if (requestId !== latestDetailRequestIdRef.current) {
+      const nextDetail = await loadConversationDetailForGeneration(
+        () => getConversationDetail(rootSessionId),
+        requestId,
+        () => latestDetailRequestIdRef.current,
+      )
+      if (!nextDetail) {
         return
       }
       detailCacheRef.current.set(rootSessionId, nextDetail)
@@ -409,16 +419,31 @@ function App() {
     syncSettings: SyncSettings
     subscriptionProfile: SubscriptionProfile
   }) {
-    const previousCodexHome = syncSettingsRef.current?.codexHome ?? null
-    const [nextSyncSettings, nextSubscriptionProfile] = await Promise.all([
-      updateSyncSettings(payload.syncSettings),
-      updateSubscriptionProfile(payload.subscriptionProfile),
-    ])
-    const codexHomeChanged = previousCodexHome !== nextSyncSettings.codexHome
-    syncSettingsRef.current = nextSyncSettings
-    setSyncSettings(nextSyncSettings)
-    setSubscriptionProfile(nextSubscriptionProfile)
-    await loadShell(codexHomeChanged)
+    const previousSyncSettings = syncSettingsRef.current
+    const previousSubscriptionProfile = subscriptionProfile
+    if (!previousSyncSettings || !previousSubscriptionProfile) {
+      throw new Error(t.status.settingsStillLoading)
+    }
+
+    const saved = await saveSettingsWithCodexHomeRollback({
+      previousSyncSettings,
+      nextSyncSettings: payload.syncSettings,
+      previousSubscriptionProfile,
+      nextSubscriptionProfile: payload.subscriptionProfile,
+      updateSyncSettings,
+      updateSubscriptionProfile,
+      scanCodexHome: (codexHome) =>
+        runScanWithOverlapRetry(
+          () => scanCodexUsage(codexHome),
+          (error) => String(error).includes('already running'),
+          waitForScanToSettle,
+          () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
+        ),
+    })
+    syncSettingsRef.current = saved.syncSettings
+    setSyncSettings(saved.syncSettings)
+    setSubscriptionProfile(saved.subscriptionProfile)
+    await loadShell(false)
     if (isTauri()) {
       await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
     }

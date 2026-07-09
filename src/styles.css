@@ -1887,6 +1887,16 @@ select:focus-visible {
   flex: none;
 }
 
+.settings-save-error {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-radius: 14px;
+  background: rgba(127, 29, 29, 0.18);
+  color: #fecaca;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1240px) {
   .app-frame {
     grid-template-columns: 1fr;

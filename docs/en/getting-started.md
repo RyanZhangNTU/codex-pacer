@@ -17,7 +17,7 @@ It is built to help you answer practical questions such as:
 
 For development from source, you will also need:
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - Tauri build prerequisites for your platform
 

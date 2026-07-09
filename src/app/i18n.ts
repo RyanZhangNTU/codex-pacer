@@ -59,6 +59,8 @@ export type TranslationSet = {
     failedToLoad: (bucketLabel: string, error: string) => string
     pricingRefreshed: string
     settingsSaved: string
+    settingsSaveFailed: (error: string) => string
+    settingsStillLoading: string
     waitingLiveQuota: string
   }
   buckets: Record<OverviewBucket, string>
@@ -296,6 +298,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       failedToLoad: (bucketLabel, error) => `加载${bucketLabel}失败：${error}`,
       pricingRefreshed: '已按 OpenAI 标准短上下文定价刷新目录。',
       settingsSaved: '设置已保存。',
+      settingsSaveFailed: (error) => `设置未保存：${error}`,
+      settingsStillLoading: '设置仍在加载，请稍后重试。',
       waitingLiveQuota: '等待 live quota',
     },
     buckets: {
@@ -536,6 +540,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       failedToLoad: (bucketLabel, error) => `Failed to load ${bucketLabel}: ${error}`,
       pricingRefreshed: 'Pricing catalog refreshed from OpenAI Standard short-context pricing.',
       settingsSaved: 'Settings saved.',
+      settingsSaveFailed: (error) => `Settings were not saved: ${error}`,
+      settingsStillLoading: 'Settings are still loading. Try again in a moment.',
       waitingLiveQuota: 'Waiting for live quota',
     },
     buckets: {

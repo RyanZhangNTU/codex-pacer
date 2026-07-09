@@ -54,7 +54,7 @@ On macOS, Codex Pacer can use the Codex CLI bundled with the ChatGPT desktop app
 
 Requirements:
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - Tauri build prerequisites for your platform
 - Local Codex data under `~/.codex` or a custom `CODEX_HOME`
