@@ -93,6 +93,7 @@ struct AppState {
   app_handle: Option<AppHandle>,
   db_path: PathBuf,
   scan_in_progress: Arc<AtomicBool>,
+  usage_mutation_lock: Arc<Mutex<()>>,
   live_refresh_in_progress: Arc<AtomicBool>,
   menu_bar_refresh_in_progress: Arc<AtomicBool>,
   daily_value_tray: Option<TrayIcon>,
@@ -121,6 +122,13 @@ fn try_acquire_flag(flag: &Arc<AtomicBool>, busy_message: &str) -> Result<Atomic
   Ok(AtomicFlagGuard {
     flag: Arc::clone(flag),
   })
+}
+
+fn lock_usage_mutations(state: &AppState) -> std::sync::MutexGuard<'_, ()> {
+  state
+    .usage_mutation_lock
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(target_os = "macos")]
@@ -185,10 +193,18 @@ fn refreshPricing(state: State<'_, AppState>) -> Result<Vec<PricingCatalogEntry>
       None
     }
   };
-  let mut conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  let catalog = refresh_pricing_catalog_atomically(&mut conn, official_entries.as_deref())?;
+  let catalog = refresh_pricing_catalog_for_state(state.inner(), official_entries.as_deref())?;
   refresh_daily_value_menu_bar(state.inner());
   Ok(catalog)
+}
+
+fn refresh_pricing_catalog_for_state(
+  state: &AppState,
+  official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  let _mutation_guard = lock_usage_mutations(state);
+  let mut conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  refresh_pricing_catalog_atomically(&mut conn, official_entries)
 }
 
 fn refresh_pricing_catalog_atomically(
@@ -471,8 +487,10 @@ where
   F: FnOnce(&Path, Option<String>) -> Result<ScanResult, String>,
 {
   let guard = try_acquire_flag(&state.scan_in_progress, "A scan is already running.")?;
+  let mutation_guard = lock_usage_mutations(&state);
 
   let result = scan(&state.db_path, codex_home);
+  drop(mutation_guard);
   drop(guard);
   refresh_daily_value_menu_bar_with_live_refresh(&state, allow_menu_bar_live_refresh);
   result
@@ -2118,6 +2136,7 @@ pub fn run() {
         app_handle: Some(app_handle.clone()),
         db_path,
         scan_in_progress: Arc::new(AtomicBool::new(false)),
+        usage_mutation_lock: Arc::new(Mutex::new(())),
         live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         daily_value_tray,
@@ -2449,6 +2468,7 @@ mod tests {
       app_handle: None,
       db_path: db_path.clone(),
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -2979,6 +2999,119 @@ mod tests {
   }
 
   #[test]
+  fn pricing_refresh_waits_for_active_scan_before_recalculating() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('refresh-race', 'refresh-race', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('refresh-race', '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+          0, 0, 1000000, 0, 1000000, 30.0, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    let mut official_sol = load_catalog(&conn)
+      .expect("load catalog")
+      .into_iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load GPT-5.6 Sol");
+    official_sol.output_price_per_million = 42.0;
+    official_sol.is_official = true;
+    official_sol.note = Some("serialized refresh test".to_string());
+    official_sol.updated_at = "serialized-refresh-test".to_string();
+    drop(conn);
+
+    let state = AppState {
+      app_handle: None,
+      db_path: db_path.clone(),
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+    let (scan_loaded_sender, scan_loaded_receiver) = std::sync::mpsc::channel();
+    let (release_scan_sender, release_scan_receiver) = std::sync::mpsc::channel();
+    let scan_state = state.clone();
+    let scan_thread = std::thread::spawn(move || {
+      run_scan_if_idle_with_live_refresh(scan_state, None, false, |db_path, _| {
+        let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+        let stale_output_price: f64 = conn
+          .query_row(
+            "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| row.get(0),
+          )
+          .map_err(|error| error.to_string())?;
+        scan_loaded_sender.send(()).map_err(|error| error.to_string())?;
+        release_scan_receiver.recv().map_err(|error| error.to_string())?;
+        conn
+          .execute(
+            "UPDATE usage_events SET value_usd = ?1 WHERE session_id = 'refresh-race'",
+            params![stale_output_price],
+          )
+          .map_err(|error| error.to_string())?;
+        Ok(ScanResult {
+          codex_home: "test".to_string(),
+          scanned_files: 1,
+          imported_sessions: 1,
+          updated_sessions: 1,
+          missing_sessions: 0,
+          last_completed_at: database::now_utc_string(),
+        })
+      })
+    });
+    scan_loaded_receiver.recv().expect("scan loaded stale pricing");
+    let release_thread = std::thread::spawn(move || {
+      std::thread::sleep(Duration::from_millis(100));
+      release_scan_sender.send(()).expect("release scan");
+    });
+
+    refresh_pricing_catalog_for_state(&state, Some(&[official_sol]))
+      .expect("refresh pricing after scan");
+    release_thread.join().expect("join release thread");
+    scan_thread
+      .join()
+      .expect("join scan thread")
+      .expect("complete scan");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'refresh-race'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load final value");
+    assert_eq!(value_usd, 42.0);
+  }
+
+  #[test]
   fn menu_bar_title_parts_can_use_local_live_rate_limits_without_refresh() {
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");
@@ -3015,6 +3148,7 @@ mod tests {
       app_handle: None,
       db_path,
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -3077,6 +3211,7 @@ mod tests {
       app_handle: None,
       db_path,
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -3140,6 +3275,7 @@ mod tests {
       app_handle: None,
       db_path,
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -3209,6 +3345,7 @@ mod tests {
       app_handle: None,
       db_path,
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
