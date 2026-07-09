@@ -595,14 +595,17 @@ pub fn set_scan_completed_for_source(
     timestamp: &str,
     codex_home_selector: Option<&str>,
     resolved_codex_home: &str,
-    full_scan: bool,
+    full_scan_completed: bool,
+    full_scan_incomplete: bool,
 ) -> rusqlite::Result<bool> {
+    debug_assert!(!(full_scan_completed && full_scan_incomplete));
     let updated = conn.execute(
         "
         UPDATE sync_settings
         SET last_scan_completed_at = ?1,
             last_full_scan_completed_at = CASE
               WHEN ?4 != 0 THEN ?1
+              WHEN ?5 != 0 THEN NULL
               ELSE last_full_scan_completed_at
             END,
             updated_at = ?1
@@ -617,7 +620,8 @@ pub fn set_scan_completed_for_source(
             timestamp,
             codex_home_selector,
             resolved_codex_home,
-            bool_to_i64(full_scan)
+            bool_to_i64(full_scan_completed),
+            bool_to_i64(full_scan_incomplete)
         ],
     )?;
     Ok(updated == 1)

@@ -241,6 +241,7 @@ mod tests {
             None,
             "/tmp/codex-home-a",
             true,
+            false,
         )
         .expect("complete first scan"));
 
@@ -295,6 +296,7 @@ mod tests {
             None,
             "/tmp/codex-home-a",
             true,
+            false,
         )
         .expect("reject completion from first source"));
         assert!(set_scan_completed_for_source(
@@ -303,6 +305,7 @@ mod tests {
             None,
             "/tmp/codex-home-b",
             true,
+            false,
         )
         .expect("complete second scan"));
 

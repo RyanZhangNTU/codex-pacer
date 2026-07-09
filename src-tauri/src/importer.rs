@@ -120,6 +120,8 @@ fn perform_scan_with_scope(
 
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
+  let pending_rate_limit_repair_paths =
+    load_pending_data_repair_paths(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY).map_err(|error| error.to_string())?;
   let needs_token_usage_repair_sweep =
     data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
   let pending_token_repair_paths =
@@ -148,7 +150,10 @@ fn perform_scan_with_scope(
   let mut changed_files = Vec::new();
   for session_file in &session_files {
     let source_path = session_file.path.to_string_lossy().to_string();
-    if needs_rate_limit_backfill || needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path)
+    if needs_rate_limit_backfill
+      || pending_rate_limit_repair_paths.contains(&source_path)
+      || needs_token_usage_repair_sweep
+      || pending_token_repair_paths.contains(&source_path)
     {
       changed_files.push(session_file);
       continue;
@@ -184,6 +189,8 @@ fn perform_scan_with_scope(
 
     for session_file in changed_files {
       let source_path = session_file.path.to_string_lossy().to_string();
+      let file_needs_rate_limit_repair =
+        needs_rate_limit_backfill || pending_rate_limit_repair_paths.contains(&source_path);
       let file_needs_token_repair =
         needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path);
       let parsed = match parse_session_file(session_file, &titles) {
@@ -197,6 +204,10 @@ fn perform_scan_with_scope(
           );
           if file_needs_token_repair {
             mark_data_repair_file_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path, &error)
+              .map_err(|error| error.to_string())?;
+          }
+          if file_needs_rate_limit_repair {
+            mark_data_repair_file_pending(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &source_path, &error)
               .map_err(|error| error.to_string())?;
           }
           continue;
@@ -219,6 +230,10 @@ fn perform_scan_with_scope(
       }
 
       persist_session(&mut conn, session_file, &parsed, &catalog).map_err(|error| error.to_string())?;
+      if file_needs_rate_limit_repair {
+        clear_pending_data_repair_file(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &source_path)
+          .map_err(|error| error.to_string())?;
+      }
       if file_needs_token_repair {
         clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
           .map_err(|error| error.to_string())?;
@@ -232,8 +247,21 @@ fn perform_scan_with_scope(
   }
 
   if effective_scope == ScanScope::Full {
-    mark_missing_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
-    prune_import_state(&conn, &present_paths).map_err(|error| error.to_string())?;
+    // A full scan that is required for freshness is authoritative even on retry:
+    // paths outside the resolved source must not remain active just because they still exist.
+    let reconcile_existing_absent_sources = scan_freshness_start.full_scan_required;
+    mark_missing_sources(
+      &conn,
+      &present_paths,
+      reconcile_existing_absent_sources,
+    )
+    .map_err(|error| error.to_string())?;
+    prune_import_state(
+      &conn,
+      &present_paths,
+      reconcile_existing_absent_sources,
+    )
+    .map_err(|error| error.to_string())?;
   } else {
     mark_missing_active_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
   }
@@ -268,6 +296,7 @@ fn perform_scan_with_scope(
       scan_source_selector.as_deref(),
       &resolved_codex_home,
       effective_scope == ScanScope::Full && !skipped_session_files,
+      effective_scope == ScanScope::Full && skipped_session_files,
     )
     .map_err(|error| error.to_string())?;
   }
@@ -1273,13 +1302,19 @@ fn conversation_links_need_repair(conn: &Connection) -> rusqlite::Result<bool> {
   )
 }
 
-fn mark_missing_sources(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
+fn mark_missing_sources(
+  conn: &Connection,
+  present_paths: &HashSet<String>,
+  reconcile_existing_absent_sources: bool,
+) -> rusqlite::Result<()> {
   let mut stmt = conn.prepare("SELECT session_id, source_path FROM sessions WHERE source_path IS NOT NULL")?;
   let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
 
   for row in rows {
     let (session_id, source_path) = row?;
-    if !present_paths.contains(&source_path) && !Path::new(&source_path).exists() {
+    if !present_paths.contains(&source_path)
+      && (reconcile_existing_absent_sources || !Path::new(&source_path).exists())
+    {
       conn.execute(
         "
         UPDATE sessions
@@ -1324,12 +1359,18 @@ fn mark_missing_active_sources(conn: &Connection, present_paths: &HashSet<String
   Ok(())
 }
 
-fn prune_import_state(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
+fn prune_import_state(
+  conn: &Connection,
+  present_paths: &HashSet<String>,
+  reconcile_existing_absent_sources: bool,
+) -> rusqlite::Result<()> {
   let mut stmt = conn.prepare("SELECT source_path FROM import_state")?;
   let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
   for row in rows {
     let source_path = row?;
-    if !present_paths.contains(&source_path) && !Path::new(&source_path).exists() {
+    if !present_paths.contains(&source_path)
+      && (reconcile_existing_absent_sources || !Path::new(&source_path).exists())
+    {
       conn.execute(
         "DELETE FROM import_state WHERE source_path = ?1",
         params![source_path],
@@ -2966,7 +3007,7 @@ mod tests {
   }
 
   #[test]
-  fn incremental_scan_finds_untracked_archives_after_default_source_moves() {
+  fn moved_default_source_reconciles_sessions_from_the_previous_existing_home() {
     let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
     let directory = tempdir().expect("tempdir");
     let first_codex_home = directory.path().join("codex-home-a");
@@ -3014,6 +3055,152 @@ mod tests {
     assert_eq!(result.scanned_files, 1);
     assert_eq!(session_usage_totals(&conn, second_session_id).3, 220);
     assert_eq!(session_usage_totals(&conn, first_session_id).3, 110);
+    assert_eq!(session_source_state(&conn, first_session_id), Some("missing".to_string()));
+    assert_eq!(import_state_session_id(&conn, &first_sessions.join("first.jsonl")), None);
+    assert!(first_sessions.join("first.jsonl").is_file());
+  }
+
+  #[test]
+  fn full_scan_retry_reconciles_previous_source_after_the_first_attempt_fails() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let first_codex_home = directory.path().join("codex-home-a");
+    let second_codex_home = directory.path().join("codex-home-b");
+    let first_sessions = first_codex_home.join("sessions");
+    let second_sessions = second_codex_home.join("sessions");
+    std::fs::create_dir_all(&first_sessions).expect("first sessions");
+    std::fs::create_dir_all(&second_sessions).expect("second sessions");
+
+    let first_session_id = "19191919-1919-1919-1919-191919191919";
+    let first_session_path = first_sessions.join("first.jsonl");
+    write_session_file(
+      &first_session_path,
+      first_session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let second_session_id = "29292929-2929-2929-2929-292929292929";
+    write_session_file(
+      &second_sessions.join("second.jsonl"),
+      second_session_id,
+      &[("2026-07-10T01:00:00Z", 200, 40, 20, 220)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&first_codex_home);
+    perform_scan(&db_path, None).expect("scan first default source");
+
+    let conn = open_connection(&db_path).expect("open database");
+    conn
+      .execute_batch(&format!(
+        "
+        CREATE TRIGGER fail_previous_source_reconciliation
+        BEFORE UPDATE OF source_state ON sessions
+        WHEN OLD.session_id = '{first_session_id}'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced source reconciliation failure');
+        END;
+        "
+      ))
+      .expect("create reconciliation trigger");
+    drop(conn);
+
+    std::env::set_var("CODEX_HOME", &second_codex_home);
+    let error = perform_incremental_scan(&db_path, None).expect_err("first moved-source scan should fail");
+    assert!(error.contains("forced source reconciliation failure"));
+
+    let conn = open_connection(&db_path).expect("reopen failed database");
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full freshness"), None);
+    conn
+      .execute_batch("DROP TRIGGER fail_previous_source_reconciliation;")
+      .expect("drop reconciliation trigger");
+    drop(conn);
+
+    let retry = perform_incremental_scan(&db_path, None).expect("retry moved default source");
+
+    let conn = open_connection(&db_path).expect("open retried database");
+    assert_eq!(retry.scanned_files, 1);
+    assert_eq!(session_usage_totals(&conn, second_session_id).3, 220);
+    assert_eq!(session_source_state(&conn, first_session_id), Some("missing".to_string()));
+    assert_eq!(import_state_session_id(&conn, &first_session_path), None);
+    assert!(first_session_path.is_file());
+  }
+
+  #[test]
+  fn partial_full_scan_invalidates_freshness_and_tracks_skipped_rate_limit_backfill() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let archived_sessions = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&archived_sessions).expect("archived sessions");
+
+    let session_id = "39393939-3939-3939-3939-393939393939";
+    let session_path = archived_sessions.join("archive.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&codex_home);
+    perform_scan(&db_path, None).expect("initial full scan");
+
+    let conn = open_connection(&db_path).expect("open initial database");
+    assert!(get_last_full_scan_completed(&conn).expect("load initial freshness").is_some());
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+      )
+      .expect("make rate-limit backfill pending");
+    drop(conn);
+
+    std::fs::write(&session_path, [0xff, 0xfe, 0xfd]).expect("corrupt archived session");
+    perform_scan(&db_path, None).expect("partial full scan");
+
+    let conn = open_connection(&db_path).expect("open partial database");
+    let (completed, full_completed): (Option<String>, Option<String>) = conn
+      .query_row(
+        "SELECT last_scan_completed_at, last_full_scan_completed_at FROM sync_settings WHERE singleton_id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load partial scan freshness");
+    assert!(completed.is_some());
+    assert_eq!(full_completed, None);
+    let pending_rate_limit_path: Option<String> = conn
+      .query_row(
+        "SELECT source_path FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("load pending rate-limit repair");
+    assert_eq!(pending_rate_limit_path.as_deref(), Some(session_path.to_string_lossy().as_ref()));
+    drop(conn);
+
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 200, 40, 20, 220),
+      ],
+    );
+    let retry = perform_incremental_scan(&db_path, None).expect("retry repaired archive");
+
+    let conn = open_connection(&db_path).expect("open repaired database");
+    assert_eq!(retry.scanned_files, 1);
+    assert_eq!(session_usage_totals(&conn, session_id).3, 220);
+    assert!(get_last_full_scan_completed(&conn).expect("load repaired freshness").is_some());
+    let pending_rate_limit_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending rate-limit repairs");
+    assert_eq!(pending_rate_limit_count, 0);
   }
 
   #[test]
