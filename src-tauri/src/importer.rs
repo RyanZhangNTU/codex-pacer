@@ -87,7 +87,7 @@ fn perform_scan_with_scope(
   init_db(&conn).map_err(|error| error.to_string())?;
   seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
 
-  let codex_home = resolve_codex_home(&conn, codex_home_override)?;
+  let codex_home = validate_codex_home(resolve_codex_home(&conn, codex_home_override)?, dirs::home_dir().as_deref())?;
   let scan_started_at = now_utc_string();
   set_last_scan_started(&conn, &scan_started_at).map_err(|error| error.to_string())?;
 
@@ -107,14 +107,15 @@ fn perform_scan_with_scope(
     ScanScope::Incremental
   };
 
-  let session_files = match effective_scope {
-    ScanScope::Full => collect_session_files(&codex_home),
-    ScanScope::Incremental => collect_active_session_files(&codex_home),
+  let (session_files, active_paths_kept_for_archive_retry) = match effective_scope {
+    ScanScope::Full => (collect_session_files(&codex_home), HashSet::new()),
+    ScanScope::Incremental => collect_incremental_session_files(&codex_home, &import_state),
   };
-  let present_paths: HashSet<String> = session_files
+  let mut present_paths: HashSet<String> = session_files
     .iter()
     .map(|item| item.path.to_string_lossy().to_string())
     .collect();
+  present_paths.extend(active_paths_kept_for_archive_retry);
 
   let mut changed_sessions = 0usize;
   let mut imported_session_ids = HashSet::new();
@@ -143,10 +144,15 @@ fn perform_scan_with_scope(
     changed_files.push(session_file);
   }
 
+  let titles = if effective_scope == ScanScope::Full || !changed_files.is_empty() {
+    load_session_index(&codex_home)
+  } else {
+    HashMap::new()
+  };
+
   let mut topology_dirty = false;
   let mut new_root_session_ids = Vec::new();
   if !changed_files.is_empty() {
-    let titles = load_session_index(&codex_home);
     let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
     let existing_relations = load_existing_session_relations(&conn).map_err(|error| error.to_string())?;
 
@@ -195,12 +201,17 @@ fn perform_scan_with_scope(
   }
 
   if effective_scope == ScanScope::Full {
+    refresh_session_titles(&conn, &titles).map_err(|error| error.to_string())?;
+  }
+
+  if effective_scope == ScanScope::Full {
     mark_missing_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
     prune_import_state(&conn, &present_paths).map_err(|error| error.to_string())?;
   } else {
     mark_missing_active_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
   }
-  if topology_dirty {
+  let topology_needs_repair = conversation_links_need_repair(&conn).map_err(|error| error.to_string())?;
+  if topology_dirty || topology_needs_repair {
     recompute_conversation_links(&conn).map_err(|error| error.to_string())?;
   } else if !new_root_session_ids.is_empty() {
     upsert_root_conversation_links(&conn, &new_root_session_ids).map_err(|error| error.to_string())?;
@@ -354,6 +365,30 @@ fn resolve_codex_home(conn: &Connection, override_value: Option<String>) -> Resu
   Ok(home_dir.join(".codex"))
 }
 
+fn validate_codex_home(path: PathBuf, home_dir: Option<&Path>) -> Result<PathBuf, String> {
+  let expanded = expand_home_prefix(path, home_dir)?;
+  if !expanded.is_dir() {
+    return Err(format!(
+      "Codex home is not an existing directory: {}",
+      expanded.display()
+    ));
+  }
+  Ok(expanded)
+}
+
+fn expand_home_prefix(path: PathBuf, home_dir: Option<&Path>) -> Result<PathBuf, String> {
+  let Ok(suffix) = path.strip_prefix(Path::new("~")) else {
+    return Ok(path);
+  };
+  let Some(home_dir) = home_dir else {
+    return Err(format!(
+      "Unable to resolve home directory for Codex home path: {}",
+      path.display()
+    ));
+  };
+  Ok(home_dir.join(suffix))
+}
+
 fn load_session_index(codex_home: &Path) -> HashMap<String, String> {
   let mut titles = HashMap::new();
   let path = codex_home.join("session_index.jsonl");
@@ -380,6 +415,16 @@ fn load_session_index(codex_home: &Path) -> HashMap<String, String> {
   }
 
   titles
+}
+
+fn refresh_session_titles(conn: &Connection, titles: &HashMap<String, String>) -> rusqlite::Result<()> {
+  for (session_id, title) in titles {
+    conn.execute(
+      "UPDATE sessions SET title = ?1 WHERE session_id = ?2",
+      params![title, session_id],
+    )?;
+  }
+  Ok(())
 }
 
 fn collect_session_files(codex_home: &Path) -> Vec<SessionFile> {
@@ -413,6 +458,38 @@ fn collect_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
   }
   files.sort_by(|left, right| left.path.cmp(&right.path));
   files
+}
+
+fn collect_incremental_session_files(
+  codex_home: &Path,
+  import_state: &HashMap<String, ImportState>,
+) -> (Vec<SessionFile>, HashSet<String>) {
+  let mut files = collect_active_session_files(codex_home);
+  let mut collected_paths = files
+    .iter()
+    .map(|session_file| session_file.path.to_string_lossy().to_string())
+    .collect::<HashSet<_>>();
+  let mut active_paths_kept_for_archive_retry = HashSet::new();
+
+  for state in import_state.values() {
+    if state.source_bucket != "active" || collected_paths.contains(&state.source_path) {
+      continue;
+    }
+    let Some(filename) = Path::new(&state.source_path).file_name() else {
+      continue;
+    };
+    let archived_path = codex_home.join("archived_sessions").join(filename);
+    let Some(session_file) = session_file_from_path(archived_path, "archived") else {
+      continue;
+    };
+    active_paths_kept_for_archive_retry.insert(state.source_path.clone());
+    if collected_paths.insert(session_file.path.to_string_lossy().to_string()) {
+      files.push(session_file);
+    }
+  }
+
+  files.sort_by(|left, right| left.path.cmp(&right.path));
+  (files, active_paths_kept_for_archive_retry)
 }
 
 fn session_file_from_path(path: PathBuf, bucket: &str) -> Option<SessionFile> {
@@ -473,7 +550,10 @@ fn parse_session_file_once(
   let mut first_session_meta: Option<SessionMetaCandidate> = None;
   let mut matching_session_meta: Option<SessionMetaCandidate> = None;
 
-  for line in BufReader::new(file).lines().map_while(Result::ok) {
+  for line_result in BufReader::new(file).lines() {
+    let line = line_result.map_err(|error| {
+      SessionParseError::Fatal(format!("Failed to read {}: {error}", session_file.path.display()))
+    })?;
     if line.contains("\"fast_mode\":true") || line.contains("\"quick_mode\":true") {
       explicit_fast_mode = Some(true);
     }
@@ -962,7 +1042,7 @@ fn normalize_local_timestamp(timestamp: chrono::DateTime<Local>) -> chrono::Date
 fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, ImportState>> {
   let mut stmt = conn.prepare(
     "
-    SELECT source_path, session_id, file_size, file_mtime_ms
+    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms
     FROM import_state
     ",
   )?;
@@ -971,8 +1051,9 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
     Ok(ImportState {
       source_path: row.get(0)?,
       session_id: row.get(1)?,
-      file_size: row.get(2)?,
-      file_mtime_ms: row.get(3)?,
+      source_bucket: row.get(2)?,
+      file_size: row.get(3)?,
+      file_mtime_ms: row.get(4)?,
     })
   })?;
 
@@ -1094,6 +1175,22 @@ fn upsert_root_conversation_links(conn: &Connection, session_ids: &[String]) -> 
   }
 
   Ok(())
+}
+
+fn conversation_links_need_repair(conn: &Connection) -> rusqlite::Result<bool> {
+  conn.query_row(
+    "
+    SELECT EXISTS (
+      SELECT 1
+      FROM sessions AS session
+      LEFT JOIN conversation_links AS link ON link.session_id = session.session_id
+      WHERE link.session_id IS NULL
+         OR link.parent_session_id IS NOT session.parent_session_id
+    )
+    ",
+    [],
+    |row| Ok(row.get::<_, i64>(0)? != 0),
+  )
 }
 
 fn mark_missing_sources(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
@@ -1260,6 +1357,7 @@ fn read_percent(value: &Value, key: &str) -> Option<i64> {
 struct ImportState {
   source_path: String,
   session_id: Option<String>,
+  source_bucket: String,
   file_size: i64,
   file_mtime_ms: i64,
 }
@@ -2576,6 +2674,277 @@ mod tests {
     assert_eq!(
       import_state_session_id(&conn, &child_path),
       Some(child_session_id.to_string())
+    );
+  }
+
+  #[test]
+  fn invalid_custom_home_does_not_advance_completed_scan_time() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let missing = directory.path().join("missing-codex-home");
+
+    let error = perform_scan(&db_path, Some(missing.to_string_lossy().to_string()))
+      .expect_err("missing home must fail");
+    assert!(error.contains("existing directory"));
+
+    let conn = open_connection(&db_path).expect("open db");
+    let completed: Option<String> = conn
+      .query_row(
+        "SELECT last_scan_completed_at FROM sync_settings WHERE singleton_id = 1",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load completion");
+    assert!(completed.is_none());
+  }
+
+  #[test]
+  fn custom_home_path_expands_supported_tilde_forms() {
+    let directory = tempdir().expect("tempdir");
+    let nested = directory.path().join("codex-home");
+    std::fs::create_dir_all(&nested).expect("codex home");
+
+    assert_eq!(
+      validate_codex_home(PathBuf::from("~"), Some(directory.path())).expect("bare tilde"),
+      directory.path()
+    );
+    assert_eq!(
+      validate_codex_home(PathBuf::from("~/codex-home"), Some(directory.path())).expect("tilde prefix"),
+      nested
+    );
+  }
+
+  #[test]
+  fn incremental_scan_imports_final_snapshot_after_active_file_is_archived() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    let archived = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    std::fs::create_dir_all(&archived).expect("archive");
+    let session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    let active_path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let archived_path = archived.join(active_path.file_name().expect("filename"));
+    write_session_file(&active_path, session_id, &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)]);
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+
+    write_session_file(
+      &active_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 180, 40, 20, 200),
+      ],
+    );
+    std::fs::rename(&active_path, &archived_path).expect("archive session");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id).3, 200);
+    assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
+  }
+
+  #[test]
+  fn incremental_scan_retries_moved_archive_after_read_error() {
+    use std::io::Write;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    let archived = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    std::fs::create_dir_all(&archived).expect("archive");
+    let session_id = "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1";
+    let active_path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let archived_path = archived.join(active_path.file_name().expect("filename"));
+    write_session_file(&active_path, session_id, &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)]);
+    write_session_file(
+      &sessions.join("other.jsonl"),
+      "a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2",
+      &[("2026-07-10T00:00:00Z", 50, 10, 5, 55)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+
+    let mut file = File::create(&active_path).expect("session file");
+    writeln!(
+      file,
+      "{{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}"
+    )
+    .expect("meta");
+    file.write_all(&[0xff, b'\n']).expect("invalid utf8");
+    drop(file);
+    std::fs::rename(&active_path, &archived_path).expect("archive session");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("scan skips unreadable archive");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let retained_state: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM import_state WHERE source_path = ?1",
+        params![active_path.to_string_lossy().to_string()],
+        |row| row.get(0),
+      )
+      .expect("retained active state");
+    assert_eq!(retained_state, 1);
+    drop(conn);
+
+    write_session_file(
+      &archived_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 180, 40, 20, 200),
+      ],
+    );
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry moved archive");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id).3, 200);
+    assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
+  }
+
+  #[test]
+  fn full_scan_refreshes_title_when_only_session_index_changes() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let session_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    write_session_file(
+      &sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl")),
+      session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let index_path = codex_home.join("session_index.jsonl");
+    std::fs::write(&index_path, format!("{{\"id\":\"{session_id}\",\"thread_name\":\"A\"}}\n"))
+      .expect("title A");
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    std::fs::write(&index_path, format!("{{\"id\":\"{session_id}\",\"thread_name\":\"B\"}}\n"))
+      .expect("title B");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("second scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let title: String = conn
+      .query_row(
+        "SELECT title FROM sessions WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get(0),
+      )
+      .expect("title");
+    assert_eq!(title, "B");
+  }
+
+  #[test]
+  fn invalid_utf8_does_not_commit_partial_session_or_import_state() {
+    use std::io::Write;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let session_id = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let mut file = File::create(&path).expect("session file");
+    writeln!(
+      file,
+      "{{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}"
+    )
+    .expect("meta");
+    file.write_all(&[0xff, b'\n']).expect("invalid utf8");
+    writeln!(
+      file,
+      "{{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{{\"model\":\"gpt-5.6-sol\"}}}}"
+    )
+    .expect("tail");
+    drop(file);
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan skips bad file");
+    let conn = open_connection(&db_path).expect("open db");
+    let sessions_count: i64 = conn
+      .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+      .expect("sessions");
+    let states_count: i64 = conn
+      .query_row("SELECT COUNT(*) FROM import_state", [], |row| row.get(0))
+      .expect("states");
+    assert_eq!((sessions_count, states_count), (0, 0));
+  }
+
+  #[test]
+  fn incremental_scan_repairs_missing_conversation_link_without_source_change() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let parent = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    let child = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    write_session_file_with_parent(
+      &sessions.join(format!("rollout-2026-07-10T00-00-00-{parent}.jsonl")),
+      parent,
+      None,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    write_session_file_with_parent(
+      &sessions.join(format!("rollout-2026-07-10T00-01-00-{child}.jsonl")),
+      child,
+      Some(parent),
+      &[("2026-07-10T00:01:00Z", 50, 10, 5, 55)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute("DELETE FROM conversation_links WHERE session_id = ?1", params![child])
+      .expect("remove link");
+    drop(conn);
+
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("repair scan");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(conversation_link(&conn, child).expect("child link").0, parent);
+  }
+
+  #[test]
+  fn incremental_scan_repairs_conversation_link_parent_mismatch_without_source_change() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let parent = "f1f1f1f1-f1f1-f1f1-f1f1-f1f1f1f1f1f1";
+    let child = "f2f2f2f2-f2f2-f2f2-f2f2-f2f2f2f2f2f2";
+    write_session_file(
+      &sessions.join(format!("rollout-2026-07-10T00-00-00-{parent}.jsonl")),
+      parent,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    write_session_file_with_parent(
+      &sessions.join(format!("rollout-2026-07-10T00-01-00-{child}.jsonl")),
+      child,
+      Some(parent),
+      &[("2026-07-10T00:01:00Z", 50, 10, 5, 55)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute(
+        "UPDATE conversation_links SET parent_session_id = NULL WHERE session_id = ?1",
+        params![child],
+      )
+      .expect("corrupt direct parent");
+    drop(conn);
+
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("repair scan");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(
+      conversation_link(&conn, child).expect("child link").1.as_deref(),
+      Some(parent)
     );
   }
 
