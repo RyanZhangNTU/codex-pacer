@@ -177,6 +177,7 @@ fn perform_scan_with_scope(
 
   let mut topology_dirty = false;
   let mut new_root_session_ids = Vec::new();
+  let mut skipped_session_files = false;
   if !changed_files.is_empty() {
     let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
     let existing_relations = load_existing_session_relations(&conn).map_err(|error| error.to_string())?;
@@ -188,6 +189,7 @@ fn perform_scan_with_scope(
       let parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
         Err(error) => {
+          skipped_session_files = true;
           log::warn!(
             "Skipping unreadable session file {}: {}",
             session_file.path.display(),
@@ -265,7 +267,7 @@ fn perform_scan_with_scope(
       &completed_at,
       scan_source_selector.as_deref(),
       &resolved_codex_home,
-      effective_scope == ScanScope::Full,
+      effective_scope == ScanScope::Full && !skipped_session_files,
     )
     .map_err(|error| error.to_string())?;
   }
@@ -1443,7 +1445,9 @@ struct ImportState {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::database::{init_db, now_utc_string, open_connection, save_sync_settings};
+  use crate::database::{
+    get_last_full_scan_completed, init_db, now_utc_string, open_connection, save_sync_settings,
+  };
   use rusqlite::OptionalExtension;
   use std::ffi::OsString;
   use std::sync::Mutex;
@@ -3010,6 +3014,57 @@ mod tests {
     assert_eq!(result.scanned_files, 1);
     assert_eq!(session_usage_totals(&conn, second_session_id).3, 220);
     assert_eq!(session_usage_totals(&conn, first_session_id).3, 110);
+  }
+
+  #[test]
+  fn skipped_archive_keeps_moved_default_source_due_for_full_retry() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let first_codex_home = directory.path().join("codex-home-a");
+    let second_codex_home = directory.path().join("codex-home-b");
+    let first_sessions = first_codex_home.join("sessions");
+    let second_sessions = second_codex_home.join("sessions");
+    let second_archives = second_codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&first_sessions).expect("first sessions");
+    std::fs::create_dir_all(&second_sessions).expect("second sessions");
+    std::fs::create_dir_all(&second_archives).expect("second archives");
+
+    write_session_file(
+      &first_sessions.join("first.jsonl"),
+      "38383838-3838-3838-3838-383838383838",
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    write_session_file(
+      &second_sessions.join("tracked.jsonl"),
+      "48484848-4848-4848-4848-484848484848",
+      &[("2026-07-10T01:00:00Z", 150, 30, 15, 165)],
+    );
+    let repaired_session_id = "58585858-5858-5858-5858-585858585858";
+    let repaired_archive = second_archives.join("repaired.jsonl");
+    std::fs::write(&repaired_archive, [0xff, 0xfe, 0xfd]).expect("write unreadable archive");
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&first_codex_home);
+    perform_scan(&db_path, None).expect("scan first default source");
+
+    std::env::set_var("CODEX_HOME", &second_codex_home);
+    let partial = perform_incremental_scan(&db_path, None).expect("scan moved source with skipped archive");
+    assert_eq!(partial.scanned_files, 2);
+
+    let conn = open_connection(&db_path).expect("open partial database");
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full freshness"), None);
+    drop(conn);
+
+    write_session_file(
+      &repaired_archive,
+      repaired_session_id,
+      &[("2026-07-10T01:30:00Z", 200, 40, 20, 220)],
+    );
+    let retry = perform_incremental_scan(&db_path, None).expect("retry repaired archive");
+
+    let conn = open_connection(&db_path).expect("open repaired database");
+    assert_eq!(retry.scanned_files, 2);
+    assert_eq!(session_usage_totals(&conn, repaired_session_id).3, 220);
   }
 
   #[test]
