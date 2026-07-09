@@ -16,6 +16,7 @@ English | [简体中文](./README.zh-CN.md)
 - Imports local Codex usage data from `~/.codex` or a custom `CODEX_HOME`
 - Builds a local SQLite index for fast analysis and drill-down views
 - Estimates API-equivalent value and subscription payoff from token usage
+- Recognizes GPT-5.6 Sol, Terra, and Luna with bundled Standard API pricing
 - Tracks rolling quota windows, including `5-hour` and `7-day` pacing when available
 - Breaks usage down by conversation, root session, subagent, model, and token composition
 - Provides a macOS menu bar experience for quick quota checks
@@ -47,6 +48,8 @@ The documentation set for installation, packaging, and release notes is maintain
 - [Packaging and release](./docs/en/packaging-and-release.md)
 - [Release notes for v1.1.2](./docs/en/release-notes-v1.1.2.md)
 
+On macOS, Codex Pacer can use the Codex CLI bundled with the ChatGPT desktop app for live quota reads. It discovers `/Applications/ChatGPT.app/Contents/Resources/codex` automatically. A standalone Codex CLI and the `CODEX_BIN` override remain supported.
+
 ## Development
 
 Requirements:
@@ -74,7 +77,7 @@ Production build:
 ```bash
 npm install
 npm run build
-cargo test
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run tauri build
 ```
 
