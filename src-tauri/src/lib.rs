@@ -1086,7 +1086,7 @@ fn load_latest_persisted_rate_limit_window(
       SELECT sample_timestamp, limit_id, limit_name, plan_type, window_start, resets_at, used_percent, remaining_percent
       FROM rate_limit_samples
       WHERE bucket = ?1 AND (?2 IS NULL OR source_kind = ?2)
-      ORDER BY sample_timestamp DESC
+      ORDER BY julianday(sample_timestamp) DESC, id DESC
       LIMIT 1
       ",
     )
@@ -1153,21 +1153,34 @@ fn load_persisted_live_rate_limits_for_source(
   source_kind: Option<&str>,
 ) -> Option<LiveRateLimitSnapshot> {
   let conn = open_connection(&state.db_path).ok()?;
-  let primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
+  let mut primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
     .ok()
     .flatten();
-  let secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
+  let mut secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
     .ok()
     .flatten();
-  if primary.is_none() && secondary.is_none() {
-    return None;
+  let primary_instant = primary
+    .as_ref()
+    .and_then(|window| DateTime::parse_from_rfc3339(&window.fetched_at).ok());
+  let secondary_instant = secondary
+    .as_ref()
+    .and_then(|window| DateTime::parse_from_rfc3339(&window.fetched_at).ok());
+  let newest_instant = [primary_instant.as_ref(), secondary_instant.as_ref()]
+    .into_iter()
+    .flatten()
+    .max()?;
+
+  if primary_instant.as_ref() != Some(newest_instant) {
+    primary = None;
+  }
+  if secondary_instant.as_ref() != Some(newest_instant) {
+    secondary = None;
   }
 
   let fetched_at = primary
     .as_ref()
     .map(|window| window.fetched_at.clone())
-    .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))
-    .unwrap_or_else(|| Local::now().to_rfc3339());
+    .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))?;
 
   Some(LiveRateLimitSnapshot {
     limit_id: primary
@@ -2652,6 +2665,139 @@ mod tests {
       snapshot.primary.as_ref().map(|window| window.remaining_percent),
       Some(88)
     );
+  }
+
+  #[test]
+  fn persisted_live_rate_limits_order_mixed_rfc3339_offsets_by_instant() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 10,
+          remaining_percent: 90,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T14:00:00+08:00".to_string()),
+          window_start: Some("2026-07-10T09:00:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T09:00:00+08:00".to_string(),
+      },
+    )
+    .expect("insert earlier offset sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 20,
+          remaining_percent: 80,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T07:00:00Z".to_string()),
+          window_start: Some("2026-07-10T02:00:00Z".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T02:00:00Z".to_string(),
+      },
+    )
+    .expect("insert later UTC sample");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = load_persisted_live_rate_limits(&state).expect("load persisted sample");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-10T02:00:00Z");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(80)
+    );
+  }
+
+  #[test]
+  fn persisted_live_rate_limits_do_not_combine_windows_from_different_samples() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 30,
+          remaining_percent: 70,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T06:00:00Z".to_string()),
+          window_start: Some("2026-07-10T01:00:00Z".to_string()),
+        }),
+        secondary: Some(RateLimitWindowSnapshot {
+          used_percent: 40,
+          remaining_percent: 60,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-07-17T01:00:00Z".to_string()),
+          window_start: Some("2026-07-10T01:00:00Z".to_string()),
+        }),
+        fetched_at: "2026-07-10T01:00:00Z".to_string(),
+      },
+    )
+    .expect("insert older complete sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 25,
+          remaining_percent: 75,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T07:00:00Z".to_string()),
+          window_start: Some("2026-07-10T02:00:00Z".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T02:00:00Z".to_string(),
+      },
+    )
+    .expect("insert newer primary-only sample");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = load_persisted_live_rate_limits(&state).expect("load persisted sample");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-10T02:00:00Z");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(75)
+    );
+    assert!(snapshot.secondary.is_none());
   }
 
   #[test]
