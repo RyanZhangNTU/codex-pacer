@@ -14,8 +14,10 @@ pub use subscriptions::{
 };
 pub use sync_settings::{
     get_last_full_scan_completed, get_sync_settings, save_sync_settings,
-    set_last_full_scan_completed, set_last_scan_completed, set_last_scan_started,
+    set_last_scan_started_for_source, set_scan_completed_for_source,
 };
+#[cfg(test)]
+pub use sync_settings::set_last_full_scan_completed;
 
 pub fn now_utc_string() -> String {
     Utc::now().to_rfc3339()

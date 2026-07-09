@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::database::{
   bool_to_i64, get_sync_settings, init_db, now_utc_string, open_connection,
-  replace_session_rate_limit_samples, set_last_full_scan_completed, set_last_scan_completed, set_last_scan_started,
+  replace_session_rate_limit_samples, set_last_scan_started_for_source, set_scan_completed_for_source,
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
@@ -85,11 +85,30 @@ fn perform_scan_with_scope(
 ) -> Result<ScanResult, String> {
   let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
+  let scan_source_selector = get_sync_settings(&conn)
+    .map_err(|error| error.to_string())?
+    .codex_home;
   seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
 
-  let codex_home = validate_codex_home(resolve_codex_home(&conn, codex_home_override)?, dirs::home_dir().as_deref())?;
+  let home_dir = dirs::home_dir();
+  let codex_home = validate_codex_home(
+    resolve_codex_home(
+      scan_source_selector.as_deref(),
+      codex_home_override,
+      home_dir.as_deref(),
+    )?,
+    home_dir.as_deref(),
+  )?;
+  let track_scan_freshness = freshness_source_matches(
+    scan_source_selector.as_deref(),
+    &codex_home,
+    home_dir.as_deref(),
+  );
   let scan_started_at = now_utc_string();
-  set_last_scan_started(&conn, &scan_started_at).map_err(|error| error.to_string())?;
+  if track_scan_freshness {
+    set_last_scan_started_for_source(&conn, &scan_started_at, scan_source_selector.as_deref())
+      .map_err(|error| error.to_string())?;
+  }
 
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
@@ -234,10 +253,15 @@ fn perform_scan_with_scope(
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
-  if effective_scope == ScanScope::Full {
-    set_last_full_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
+  if track_scan_freshness {
+    set_scan_completed_for_source(
+      &conn,
+      &completed_at,
+      scan_source_selector.as_deref(),
+      effective_scope == ScanScope::Full,
+    )
+    .map_err(|error| error.to_string())?;
   }
-  set_last_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
 
   Ok(ScanResult {
     codex_home: codex_home.to_string_lossy().to_string(),
@@ -339,16 +363,18 @@ pub fn recalculate_all_session_values(conn: &Connection) -> rusqlite::Result<()>
   Ok(())
 }
 
-fn resolve_codex_home(conn: &Connection, override_value: Option<String>) -> Result<PathBuf, String> {
+fn resolve_codex_home(
+  persisted_codex_home: Option<&str>,
+  override_value: Option<String>,
+  home_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
   if let Some(path) = override_value {
     return Ok(PathBuf::from(path));
   }
 
-  if let Ok(settings) = get_sync_settings(conn) {
-    if let Some(path) = settings.codex_home {
-      if !path.trim().is_empty() {
-        return Ok(PathBuf::from(path));
-      }
+  if let Some(path) = persisted_codex_home {
+    if !path.trim().is_empty() {
+      return Ok(PathBuf::from(path));
     }
   }
 
@@ -358,11 +384,22 @@ fn resolve_codex_home(conn: &Connection, override_value: Option<String>) -> Resu
     }
   }
 
-  let Some(home_dir) = dirs::home_dir() else {
+  let Some(home_dir) = home_dir else {
     return Err("Unable to resolve home directory for CODEX_HOME fallback.".to_string());
   };
 
   Ok(home_dir.join(".codex"))
+}
+
+fn freshness_source_matches(
+  persisted_codex_home: Option<&str>,
+  scanned_codex_home: &Path,
+  home_dir: Option<&Path>,
+) -> bool {
+  resolve_codex_home(persisted_codex_home, None, home_dir)
+    .and_then(|path| expand_home_prefix(path, home_dir))
+    .map(|path| path == scanned_codex_home)
+    .unwrap_or(false)
 }
 
 fn validate_codex_home(path: PathBuf, home_dir: Option<&Path>) -> Result<PathBuf, String> {
@@ -1380,7 +1417,7 @@ struct ImportState {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::database::{init_db, now_utc_string, open_connection};
+  use crate::database::{init_db, now_utc_string, open_connection, save_sync_settings};
   use rusqlite::OptionalExtension;
   use tempfile::tempdir;
 
@@ -2705,6 +2742,163 @@ mod tests {
       )
       .expect("load completion");
     assert!(completed.is_none());
+  }
+
+  #[test]
+  fn scan_does_not_restore_freshness_after_source_changes_mid_import() {
+    let directory = tempdir().expect("tempdir");
+    let old_codex_home = directory.path().join("old-codex-home");
+    let new_codex_home = directory.path().join("new-codex-home");
+    let sessions_dir = old_codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("old sessions dir");
+    std::fs::create_dir_all(&new_codex_home).expect("new Codex home");
+
+    let session_path = sessions_dir.join("source-race.jsonl");
+    std::fs::write(
+      &session_path,
+      concat!(
+        "{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"abababab-abab-abab-abab-abababababab\"}}\n",
+        "{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.6-sol\"}}\n",
+        "{\"timestamp\":\"2026-07-10T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":10,\"reasoning_output_tokens\":0,\"total_tokens\":110}}}}\n"
+      ),
+    )
+    .expect("write session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.codex_home = Some(old_codex_home.to_string_lossy().to_string());
+    save_sync_settings(&conn, &settings).expect("save old source");
+
+    let new_home_sql = new_codex_home.to_string_lossy().replace('\'', "''");
+    conn
+      .execute_batch(&format!(
+        "
+        CREATE TRIGGER switch_codex_home_during_import
+        AFTER INSERT ON usage_events
+        BEGIN
+          UPDATE sync_settings
+          SET codex_home = '{new_home_sql}',
+              last_scan_started_at = NULL,
+              last_scan_completed_at = NULL,
+              last_full_scan_completed_at = NULL
+          WHERE singleton_id = 1;
+        END;
+        "
+      ))
+      .expect("create source switch trigger");
+    drop(conn);
+
+    perform_scan(
+      &db_path,
+      Some(old_codex_home.to_string_lossy().to_string()),
+    )
+    .expect("scan old source");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (codex_home, started, completed, full_completed): (
+      Option<String>,
+      Option<String>,
+      Option<String>,
+      Option<String>,
+    ) = conn
+      .query_row(
+        "
+        SELECT codex_home, last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+      )
+      .expect("load scan freshness");
+
+    assert_eq!(
+      codex_home.as_deref(),
+      Some(new_codex_home.to_string_lossy().as_ref())
+    );
+    assert_eq!(started, None);
+    assert_eq!(completed, None);
+    assert_eq!(full_completed, None);
+  }
+
+  #[test]
+  fn scan_writes_freshness_when_source_selector_is_unchanged() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("Codex home");
+    let db_path = directory.path().join("usage.sqlite");
+
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.codex_home = Some(codex_home.to_string_lossy().to_string());
+    save_sync_settings(&conn, &settings).expect("save source");
+    drop(conn);
+
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("scan matching source");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (started, completed, full_completed): (Option<String>, Option<String>, Option<String>) = conn
+      .query_row(
+        "
+        SELECT last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+      )
+      .expect("load scan freshness");
+
+    assert!(started.is_some());
+    assert!(completed.is_some());
+    assert!(full_completed.is_some());
+  }
+
+  #[test]
+  fn scan_does_not_write_freshness_for_an_override_from_the_previous_source() {
+    let directory = tempdir().expect("tempdir");
+    let old_codex_home = directory.path().join("old-codex-home");
+    let new_codex_home = directory.path().join("new-codex-home");
+    std::fs::create_dir_all(&old_codex_home).expect("old Codex home");
+    std::fs::create_dir_all(&new_codex_home).expect("new Codex home");
+    let db_path = directory.path().join("usage.sqlite");
+
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.codex_home = Some(new_codex_home.to_string_lossy().to_string());
+    save_sync_settings(&conn, &settings).expect("save new source");
+    drop(conn);
+
+    perform_scan(
+      &db_path,
+      Some(old_codex_home.to_string_lossy().to_string()),
+    )
+    .expect("scan previous source");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (started, completed, full_completed): (Option<String>, Option<String>, Option<String>) = conn
+      .query_row(
+        "
+        SELECT last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+      )
+      .expect("load scan freshness");
+
+    assert_eq!(started, None);
+    assert_eq!(completed, None);
+    assert_eq!(full_completed, None);
   }
 
   #[test]

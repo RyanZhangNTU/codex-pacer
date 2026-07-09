@@ -506,28 +506,50 @@ fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
     auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
 }
 
-pub fn set_last_scan_started(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
-    conn.execute(
+pub fn set_last_scan_started_for_source(
+    conn: &Connection,
+    timestamp: &str,
+    codex_home_selector: Option<&str>,
+) -> rusqlite::Result<bool> {
+    let updated = conn.execute(
         "
     UPDATE sync_settings
     SET last_scan_started_at = ?1, updated_at = ?1
     WHERE singleton_id = 1
+      AND (
+        (codex_home IS NULL AND ?2 IS NULL)
+        OR codex_home = ?2
+      )
     ",
-        params![timestamp],
+        params![timestamp, codex_home_selector],
     )?;
-    Ok(())
+    Ok(updated == 1)
 }
 
-pub fn set_last_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
-    conn.execute(
+pub fn set_scan_completed_for_source(
+    conn: &Connection,
+    timestamp: &str,
+    codex_home_selector: Option<&str>,
+    full_scan: bool,
+) -> rusqlite::Result<bool> {
+    let updated = conn.execute(
         "
     UPDATE sync_settings
-    SET last_scan_completed_at = ?1, updated_at = ?1
+    SET last_scan_completed_at = ?1,
+        last_full_scan_completed_at = CASE
+          WHEN ?3 != 0 THEN ?1
+          ELSE last_full_scan_completed_at
+        END,
+        updated_at = ?1
     WHERE singleton_id = 1
+      AND (
+        (codex_home IS NULL AND ?2 IS NULL)
+        OR codex_home = ?2
+      )
     ",
-        params![timestamp],
+        params![timestamp, codex_home_selector, bool_to_i64(full_scan)],
     )?;
-    Ok(())
+    Ok(updated == 1)
 }
 
 pub fn get_last_full_scan_completed(conn: &Connection) -> rusqlite::Result<Option<String>> {
@@ -542,6 +564,7 @@ pub fn get_last_full_scan_completed(conn: &Connection) -> rusqlite::Result<Optio
     )
 }
 
+#[cfg(test)]
 pub fn set_last_full_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
     conn.execute(
         "
