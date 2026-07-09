@@ -578,14 +578,12 @@ pub fn resolve_pricing(
     let normalized = normalize_model_id(model_id);
     let entry = if let Some(entry) = catalog.get(&normalized) {
         entry.clone()
-    } else if normalized.starts_with("gpt-5.6-sol") {
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-sol") {
         catalog.get("gpt-5.6-sol")?.clone()
-    } else if normalized.starts_with("gpt-5.6-terra") {
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-terra") {
         catalog.get("gpt-5.6-terra")?.clone()
-    } else if normalized.starts_with("gpt-5.6-luna") {
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-luna") {
         catalog.get("gpt-5.6-luna")?.clone()
-    } else if normalized.starts_with("gpt-5.6") {
-        catalog.get("gpt-5.6")?.clone()
     } else if normalized.starts_with("gpt-5.5-pro") {
         catalog.get("gpt-5.5-pro")?.clone()
     } else if normalized.starts_with("gpt-5.5") {
@@ -623,6 +621,28 @@ pub fn resolve_pricing(
         cached_input_price_per_million: entry.cached_input_price_per_million,
         output_price_per_million: entry.output_price_per_million,
     })
+}
+
+fn matches_canonical_or_dated_model_id(model_id: &str, canonical_model_id: &str) -> bool {
+    if model_id == canonical_model_id {
+        return true;
+    }
+
+    let Some(date_suffix) = model_id
+        .strip_prefix(canonical_model_id)
+        .and_then(|suffix| suffix.strip_prefix('-'))
+    else {
+        return false;
+    };
+    let bytes = date_suffix.as_bytes();
+    let has_iso_date_shape = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..].iter().all(u8::is_ascii_digit);
+
+    has_iso_date_shape && chrono::NaiveDate::parse_from_str(date_suffix, "%Y-%m-%d").is_ok()
 }
 
 pub fn normalize_model_id(model_id: &str) -> String {
@@ -800,8 +820,11 @@ mod tests {
 
         for (model, input, cached, output) in [
             ("gpt-5.6", 5.0, 0.5, 30.0),
+            ("gpt-5.6-sol", 5.0, 0.5, 30.0),
             ("gpt-5.6-sol-2026-07-09", 5.0, 0.5, 30.0),
+            ("gpt-5.6-terra", 2.5, 0.25, 15.0),
             ("gpt-5.6-terra-2026-07-09", 2.5, 0.25, 15.0),
+            ("gpt-5.6-luna", 1.0, 0.1, 6.0),
             ("gpt-5.6-luna-2026-07-09", 1.0, 0.1, 6.0),
         ] {
             let pricing = resolve_pricing(&catalog, model).expect(model);
@@ -823,6 +846,29 @@ mod tests {
         ] {
             assert_eq!(display_name_for_model(model_id), display_name);
             assert_eq!(model_color(model_id), color);
+        }
+    }
+
+    #[test]
+    fn resolve_pricing_does_not_guess_unknown_gpt_56_ids() {
+        let catalog = pricing_seed()
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+
+        for model_id in [
+            "gpt-5.6-solaris",
+            "gpt-5.6-neptune",
+            "gpt-5.60",
+            "gpt-5.6-2026-07-09",
+            "gpt-5.6-sol-2026-02-30",
+            "gpt-5.6-sol-2026-7-09",
+            "gpt-5.6-sol-2026-07-09-preview",
+        ] {
+            assert!(
+                resolve_pricing(&catalog, model_id).is_none(),
+                "unexpected guessed pricing for {model_id}"
+            );
         }
     }
 
