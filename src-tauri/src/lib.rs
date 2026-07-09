@@ -346,15 +346,11 @@ fn getSyncSettings(state: State<'_, AppState>) -> Result<SyncSettings, String> {
   get_sync_settings(&conn).map_err(|error| error.to_string())
 }
 
-#[allow(non_snake_case)]
-#[tauri::command(rename_all = "camelCase")]
-fn updateSyncSettings(
-  app: AppHandle,
-  state: State<'_, AppState>,
+fn save_normalized_sync_settings(
+  conn: &rusqlite::Connection,
   payload: SyncSettings,
-) -> Result<SyncSettings, String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  let current = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+) -> rusqlite::Result<SyncSettings> {
+  let current = get_sync_settings(conn)?;
   let auto_scan_interval_minutes = payload.auto_scan_interval_minutes.max(1);
   let updated = SyncSettings {
     codex_home: payload.codex_home,
@@ -382,7 +378,18 @@ fn updateSyncSettings(
     last_scan_completed_at: current.last_scan_completed_at,
     updated_at: current.updated_at,
   };
-  let saved = save_sync_settings(&conn, &updated).map_err(|error| error.to_string())?;
+  save_sync_settings(conn, &updated)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn updateSyncSettings(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  payload: SyncSettings,
+) -> Result<SyncSettings, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  let saved = save_normalized_sync_settings(&conn, payload).map_err(|error| error.to_string())?;
   refresh_daily_value_menu_bar(state.inner());
   apply_dock_icon_visibility(&app, &saved, state.daily_value_tray.is_some());
   Ok(saved)
@@ -2128,6 +2135,61 @@ mod tests {
     DateTime::parse_from_rfc3339(value)
       .expect("parse test timestamp")
       .with_timezone(&chrono::Utc)
+  }
+
+  fn seed_scan_freshness(conn: &rusqlite::Connection, codex_home: &str) -> SyncSettings {
+    let initial = SyncSettings {
+      codex_home: Some(codex_home.to_string()),
+      ..get_sync_settings(conn).expect("load settings")
+    };
+    save_sync_settings(conn, &initial).expect("save initial source");
+
+    let settings = SyncSettings {
+      last_scan_started_at: Some("2026-07-10T08:00:00Z".to_string()),
+      last_scan_completed_at: Some("2026-07-10T08:01:00Z".to_string()),
+      ..get_sync_settings(conn).expect("reload initial source")
+    };
+    let saved = save_sync_settings(conn, &settings).expect("save scan freshness");
+    database::set_last_full_scan_completed(conn, "2026-07-10T08:01:00Z")
+      .expect("set full scan");
+    saved
+  }
+
+  #[test]
+  fn changing_codex_home_clears_scan_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = seed_scan_freshness(&conn, "/tmp/codex-home-before");
+
+    let changed = SyncSettings {
+      codex_home: Some("/tmp/codex-home-after".to_string()),
+      ..settings
+    };
+    let saved = save_normalized_sync_settings(&conn, changed).expect("save changed settings");
+
+    assert_eq!(saved.last_scan_started_at, None);
+    assert_eq!(saved.last_scan_completed_at, None);
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full scan"), None);
+  }
+
+  #[test]
+  fn unchanged_codex_home_preserves_scan_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = seed_scan_freshness(&conn, "/tmp/codex-home");
+
+    let saved = save_normalized_sync_settings(&conn, settings).expect("save unchanged source");
+
+    assert_eq!(saved.last_scan_started_at.as_deref(), Some("2026-07-10T08:00:00Z"));
+    assert_eq!(saved.last_scan_completed_at.as_deref(), Some("2026-07-10T08:01:00Z"));
+    assert_eq!(
+      get_last_full_scan_completed(&conn).expect("load full scan").as_deref(),
+      Some("2026-07-10T08:01:00Z")
+    );
   }
 
   #[test]

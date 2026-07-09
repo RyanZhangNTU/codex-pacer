@@ -389,9 +389,27 @@ pub fn save_sync_settings(
     conn: &Connection,
     settings: &SyncSettings,
 ) -> rusqlite::Result<SyncSettings> {
+    let transaction = conn.unchecked_transaction()?;
+    let current_codex_home = transaction
+        .query_row(
+            "SELECT codex_home FROM sync_settings WHERE singleton_id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    let codex_home_changed = current_codex_home.as_deref() != settings.codex_home.as_deref();
     let updated_at = now_utc_string();
     let auto_scan_interval_minutes = settings.auto_scan_interval_minutes.max(1);
-    conn.execute(
+    let (last_scan_started_at, last_scan_completed_at) = if codex_home_changed {
+        (None, None)
+    } else {
+        (
+            settings.last_scan_started_at.as_deref(),
+            settings.last_scan_completed_at.as_deref(),
+        )
+    };
+    transaction.execute(
     "
     INSERT INTO sync_settings (
       singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
@@ -457,12 +475,31 @@ pub fn save_sync_settings(
       serialize_menu_bar_popup_modules(&settings.menu_bar_popup_modules),
       bool_to_i64(settings.menu_bar_popup_show_reset_timeline),
       bool_to_i64(settings.menu_bar_popup_show_actions),
-      settings.last_scan_started_at,
-      settings.last_scan_completed_at,
+      last_scan_started_at,
+      last_scan_completed_at,
       updated_at,
     ],
     )?;
-    get_sync_settings(conn)
+    if codex_home_changed {
+        clear_scan_timestamps(&transaction)?;
+    }
+    let saved = get_sync_settings(&transaction)?;
+    transaction.commit()?;
+    Ok(saved)
+}
+
+fn clear_scan_timestamps(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "
+    UPDATE sync_settings
+    SET last_scan_started_at = NULL,
+        last_scan_completed_at = NULL,
+        last_full_scan_completed_at = NULL
+    WHERE singleton_id = 1
+    ",
+        [],
+    )?;
+    Ok(())
 }
 
 fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {

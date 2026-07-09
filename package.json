@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "npm run test:issue-1 && npm run test:issue-3",
+    "test": "npm run test:issue-1 && npm run test:issue-3 && npm run test:data-freshness",
     "test:issue-1": "node scripts/test-issue-1-view-controls.mjs",
     "test:issue-3": "node scripts/test-issue-3-custom-range.mjs",
+    "test:data-freshness": "node scripts/test-data-freshness.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

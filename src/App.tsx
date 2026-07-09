@@ -23,6 +23,7 @@ import {
   updateSubscriptionProfile,
   updateSyncSettings,
 } from './app/api'
+import { shouldKeepConversationDetail, waitForOverlappingScan } from './app/dataFreshness'
 import {
   formatCompactDateTime,
   formatDateTime,
@@ -176,7 +177,14 @@ function App() {
         const nextDetailCache = new Map<string, ConversationDetail>()
         for (const conversation of snapshot.conversations) {
           const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
-          if (cachedDetail && cachedDetail.updatedAt === conversation.updatedAt) {
+          if (
+            cachedDetail &&
+            shouldKeepConversationDetail(
+              cachedDetail,
+              conversation,
+              snapshot.subscriptionProfile.monthlyPrice,
+            )
+          ) {
             nextDetailCache.set(conversation.rootSessionId, cachedDetail)
           }
         }
@@ -339,10 +347,11 @@ function App() {
     const interval = window.setInterval(() => {
       void refreshBackgroundData()
         .catch(() => null)
+        .then(() => waitForOverlappingScan(getScanInProgress, waitForScanToSettle))
         .then(() => loadShell(false))
     }, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
     return () => window.clearInterval(interval)
-  }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes])
+  }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes, waitForScanToSettle])
 
   useEffect(() => {
     if (!settingsOpen || !syncSettings?.autoScanEnabled) return
@@ -384,13 +393,16 @@ function App() {
     syncSettings: SyncSettings
     subscriptionProfile: SubscriptionProfile
   }) {
+    const previousCodexHome = syncSettingsRef.current?.codexHome ?? null
     const [nextSyncSettings, nextSubscriptionProfile] = await Promise.all([
       updateSyncSettings(payload.syncSettings),
       updateSubscriptionProfile(payload.subscriptionProfile),
     ])
+    const codexHomeChanged = previousCodexHome !== nextSyncSettings.codexHome
+    syncSettingsRef.current = nextSyncSettings
     setSyncSettings(nextSyncSettings)
     setSubscriptionProfile(nextSubscriptionProfile)
-    await loadShell(false)
+    await loadShell(codexHomeChanged)
     if (isTauri()) {
       await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
     }
