@@ -189,18 +189,16 @@ pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot
     }
   }
 
-  if let Err(error) = send_app_server_request(
-    &mut child,
-    json!({
-      "id": READ_REQUEST_ID,
-      "method": "account/rateLimits/read",
-      "params": Value::Null,
-    }),
-    "Failed to request live rate limits after Codex app-server initialization",
-    "Failed to flush codex app-server rate-limit request",
-  ) {
-    stop_app_server(&mut child);
-    return Err(error);
+  for (message, write_context, flush_context) in post_initialize_messages() {
+    if let Err(error) = send_app_server_request(
+      &mut child,
+      message,
+      write_context,
+      flush_context,
+    ) {
+      stop_app_server(&mut child);
+      return Err(error);
+    }
   }
 
   let response = loop {
@@ -312,6 +310,27 @@ fn app_server_args() -> Vec<OsString> {
     OsString::from("app-server"),
     OsString::from("--listen"),
     OsString::from("stdio://"),
+  ]
+}
+
+fn post_initialize_messages() -> Vec<(Value, &'static str, &'static str)> {
+  vec![
+    (
+      json!({
+        "method": "initialized",
+        "params": {},
+      }),
+      "Failed to notify Codex app-server that initialization completed",
+      "Failed to flush Codex app-server initialized notification",
+    ),
+    (
+      json!({
+        "id": READ_REQUEST_ID,
+        "method": "account/rateLimits/read",
+      }),
+      "Failed to request live rate limits after Codex app-server initialization",
+      "Failed to flush Codex app-server rate-limit request",
+    ),
   ]
 }
 
@@ -500,6 +519,25 @@ mod tests {
     assert_eq!(converted.window_duration_mins, Some(300));
     assert!(converted.resets_at.is_some());
     assert!(converted.window_start.is_some());
+  }
+
+  #[test]
+  fn app_server_post_initialize_messages_follow_protocol_order() {
+    let messages = super::post_initialize_messages()
+      .into_iter()
+      .map(|(message, _, _)| message)
+      .collect::<Vec<_>>();
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].get("method").and_then(serde_json::Value::as_str), Some("initialized"));
+    assert!(messages[0].get("id").is_none());
+    assert_eq!(messages[0].get("params"), Some(&serde_json::json!({})));
+    assert_eq!(
+      messages[1].get("method").and_then(serde_json::Value::as_str),
+      Some("account/rateLimits/read")
+    );
+    assert_eq!(messages[1].get("id").and_then(serde_json::Value::as_str), Some(super::READ_REQUEST_ID));
+    assert!(messages[1].get("params").is_none());
   }
 
   #[test]
