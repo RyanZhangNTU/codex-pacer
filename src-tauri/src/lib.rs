@@ -489,14 +489,20 @@ fn run_due_background_refresh(
 }
 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
-  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
-  let pricing_signature_before = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
-  seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
-  let pricing_signature_after = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
+  let transaction = conn
+    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    .map_err(|error| error.to_string())?;
+  let pricing_signature_before =
+    load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
+  seed_pricing_catalog(&transaction).map_err(|error| error.to_string())?;
+  let pricing_signature_after =
+    load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
   if pricing_signature_before != pricing_signature_after {
-    recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
+    recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
   }
+  transaction.commit().map_err(|error| error.to_string())?;
   Ok(())
 }
 
@@ -2612,6 +2618,128 @@ mod tests {
       .expect("load usage value");
 
     assert_eq!(value_usd, 30.0);
+  }
+
+  #[test]
+  fn startup_database_prepare_rolls_back_pricing_when_recalculation_fails() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET output_price_per_million = 6.25,
+            is_official = 1,
+            note = 'malformed-official',
+            updated_at = 'malformed-official'
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+      )
+      .expect("seed malformed GPT-5.6 Sol pricing");
+    let created_at = database::now_utc_string();
+    for (session_id, sentinel_value) in [("recalc-a", 11.0), ("recalc-b", 22.0)] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?2, ?2)
+          ",
+          params![session_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+            0, 0, 1000000, 0, 1000000, ?2, 0, 0)
+          ",
+          params![session_id, sentinel_value],
+        )
+        .expect("insert usage event");
+    }
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_second_session_recalculation
+        BEFORE UPDATE OF value_usd ON usage_events
+        WHEN OLD.session_id = 'recalc-b'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected recalculation failure');
+        END;
+        ",
+      )
+      .expect("create failure trigger");
+    drop(conn);
+
+    let error = prepare_app_database(&db_path).expect_err("recalculation should fail");
+    assert!(error.contains("injected recalculation failure"));
+
+    let conn = open_connection(&db_path).expect("reopen failed database");
+    let (output_price, is_official): (f64, i64) = conn
+      .query_row(
+        "
+        SELECT output_price_per_million, is_official
+        FROM pricing_catalog
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load rolled back pricing");
+    let failed_values = conn
+      .prepare("SELECT session_id, value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare failed values")
+      .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+      .expect("query failed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect failed values");
+
+    assert_eq!(output_price, 6.25);
+    assert_eq!(is_official, 1);
+    assert_eq!(
+      failed_values,
+      vec![("recalc-a".to_string(), 11.0), ("recalc-b".to_string(), 22.0)]
+    );
+
+    conn
+      .execute_batch("DROP TRIGGER fail_second_session_recalculation;")
+      .expect("drop failure trigger");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("retry prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen repaired database");
+    let repaired_output: f64 = conn
+      .query_row(
+        "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load repaired pricing");
+    let repaired_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare repaired values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query repaired values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect repaired values");
+
+    assert_eq!(repaired_output, 30.0);
+    assert_eq!(repaired_values, vec![30.0, 30.0]);
   }
 
   #[test]
