@@ -4,9 +4,9 @@
 
 **Goal:** Keep Codex Pacer accurate with the GPT-5.6 model family and the merged ChatGPT desktop app, while repairing confirmed stale and partial data-update paths.
 
-**Architecture:** Preserve the current JSONL-to-SQLite pipeline. Extend the executable resolver and pricing catalog at their existing boundaries, then make importer, persisted quota, and frontend cache updates fail safely. Startup pricing-signature comparison remains the migration trigger for historical value recalculation.
+**Architecture:** Preserve the current JSONL-to-SQLite pipeline. Extend the executable resolver and pricing catalog at their existing boundaries, then make importer, persisted quota, and frontend cache updates fail safely. Historical value recalculation is triggered by either a changed price-bearing catalog signature or a pending durable pricing-resolution repair.
 
-**Tech stack:** Rust 2021, rusqlite, serde_json, Tauri 2, React 19, TypeScript 5.9, Node 22, Vite 8.
+**Tech stack:** Rust 2021, rusqlite, serde_json, Tauri 2, React 19, TypeScript 5.9, Node 22.18 or newer, Vite 8.
 
 ## Global constraints
 
@@ -30,7 +30,7 @@
 
 **Interfaces:**
 
-- Consumes: `pricing_seed()`, `parse_official_pricing_catalog()`, `resolve_pricing()`, and the existing startup pricing-signature check.
+- Consumes: `pricing_seed()`, `parse_official_pricing_catalog()`, `resolve_pricing()`, the startup pricing-signature check, and the durable pricing-resolution repair marker.
 - Produces: catalog entries for `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; row parsing that uses the last price as output; automatic repair and recalculation of stored values.
 
 - [ ] **Step 1: Add failing pricing tests**
@@ -131,7 +131,7 @@ Expected: the malformed official row remains `6.25`, and the event remains zero.
 
 - [ ] **Step 6: Repair only the known malformed pattern**
 
-Allow `PreserveOfficial` seeding to replace a GPT-5.6 row only when its current output equals `input * 1.25`, within floating-point tolerance. Correct official rows remain untouched. The existing before-and-after pricing signature then triggers `recalculate_all_session_values`.
+Allow `PreserveOfficial` seeding to replace a GPT-5.6 row only when its current output equals `input * 1.25`, within floating-point tolerance. Correct official rows remain untouched. A changed before-and-after pricing signature triggers `recalculate_all_session_values`; the durable repair marker also guarantees a one-time recalculation for resolver-only changes.
 
 - [ ] **Step 7: Add and pass a GPT-5.6 importer fixture**
 

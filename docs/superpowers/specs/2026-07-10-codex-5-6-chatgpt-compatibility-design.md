@@ -31,7 +31,7 @@ On macOS, automatic discovery uses this order:
 5. Homebrew, `/usr/local/bin`, and `~/.cargo/bin` locations.
 6. The command name `codex`, which lets the operating system search `PATH`.
 
-Windows behavior stays unchanged. Linux keeps its existing standalone CLI lookup. The app-server transport and JSON-RPC methods also stay unchanged because the current bundled executable passed a real initialize and live quota read.
+Windows behavior stays unchanged. Linux keeps its existing standalone CLI lookup. The app-server transport and quota method stay the same. After `initialize` succeeds, Pacer now sends the standard `initialized` notification before reading live quota data.
 
 ## Pricing and data repair
 
@@ -43,7 +43,7 @@ The bundled Standard prices per million tokens are:
 | GPT-5.6 Terra | $2.50 | $0.25 | $15.00 |
 | GPT-5.6 Luna | $1.00 | $0.10 | $6.00 |
 
-The seed catalog adds these rows at startup. The existing pricing-signature check then detects the new rows and recalculates stored usage values, including GPT-5.6 events that were previously worth zero.
+The seed catalog adds these rows at startup. Historical values are recalculated when price-bearing catalog fields change or when the durable `pricing_value_resolution_v2` repair has not completed. The catalog update, recalculation, and repair marker share one transaction, so a failed upgrade can be retried without leaving mixed values behind.
 
 There is one repair case for users who clicked "Refresh pricing" after OpenAI added the new cache-write column but before this fix. Those databases can contain official GPT-5.6 rows whose output price is 1.25 times the input price: 6.25 for Sol, 3.125 for Terra, or 1.25 for Luna. Seeding may replace only that known malformed pattern. Correct official rows remain untouched. A later successful online refresh marks the corrected rows official again.
 
@@ -55,15 +55,19 @@ The audit found several update paths where valid local data can remain stale or 
 
 - A custom Codex home expands a leading `~` and must exist as a directory before a scan starts. An invalid path returns an error and does not advance the completed-scan timestamp.
 - Changing the Codex home clears the old freshness timestamps and triggers a full scan after settings are saved. Existing history stays in Pacer, while the new source becomes the active refresh target.
+- The resolved Codex home is stored with scan freshness. A default source change from A to B is detected even when the saved selector remains empty, and an incomplete first scan stays due for a full retry.
+- An authoritative source scan marks sessions from the previous home missing and removes their import state even when the old files still exist elsewhere on disk.
 - Incremental scans check whether a previously active file moved to the flat `archived_sessions` directory. This imports the final token snapshot immediately instead of waiting for daily maintenance.
 - A full scan refreshes titles from `session_index.jsonl` even when the session JSONL files did not change.
 - A UTF-8 read failure aborts that file before its metadata is committed. Ordinary incomplete JSON at the end of a file remains retryable on the next size or mtime change.
 - A missing or inconsistent conversation link triggers topology repair even when the source file itself did not change.
 - Persisted quota rows are ordered by their parsed RFC3339 instant, not by text. Primary and secondary windows are combined only when they came from the same sample time.
-- Conversation-detail cache entries are retained only while their source time, API-equivalent value, and subscription share still match the refreshed dashboard.
+- Conversation-detail cache entries are retained only while the refreshed title, timestamps, model set, token totals, session composition, API-equivalent value, and source states still match.
 - If a periodic refresh finds another scan in progress, the frontend waits for that scan to settle before loading the dashboard.
+- Pricing refreshes and scans share one mutation lock, so a scan cannot write values from an older catalog after a refresh commits.
+- A failed Codex-home change restores the previous settings and subscription profile, then rescans the restored source before reporting the error.
 
-These fixes keep the existing database schema. They use current metadata and comparisons, so users do not need to delete or rebuild their Pacer database.
+The database migration adds one nullable internal field, `last_scan_codex_home`, to bind freshness to the resolved source. Existing databases are upgraded automatically; users do not need to delete or rebuild them.
 
 ## User-visible behavior
 
