@@ -23,7 +23,12 @@ import {
   updateSubscriptionProfile,
   updateSyncSettings,
 } from './app/api'
-import { shouldKeepConversationDetail, waitForOverlappingScan } from './app/dataFreshness'
+import {
+  refreshDashboardAfterBackgroundScan,
+  runScanWithOverlapRetry,
+  shouldKeepConversationDetail,
+  waitForScanToSettleUntilCancelled,
+} from './app/dataFreshness'
 import {
   formatCompactDateTime,
   formatDateTime,
@@ -115,10 +120,11 @@ function App() {
     const startedAt = Date.now()
     while (Date.now() - startedAt < timeoutMs) {
       if (!(await getScanInProgress())) {
-        return
+        return true
       }
       await new Promise((resolve) => window.setTimeout(resolve, 250))
     }
+    return false
   }, [])
 
   useEffect(() => {
@@ -148,17 +154,13 @@ function App() {
     }
     try {
       if (requestScan) {
-        try {
-          const scan = await scanCodexUsage(syncSettingsRef.current?.codexHome ?? null)
-          setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
-        } catch (error) {
-          const message = String(error)
-          if (!message.includes('already running')) {
-            throw error
-          }
-          setStatusMessage(t.status.backgroundScanAlreadyRunning)
-          await waitForScanToSettle()
-        }
+        const scan = await runScanWithOverlapRetry(
+          () => scanCodexUsage(syncSettingsRef.current?.codexHome ?? null),
+          (error) => String(error).includes('already running'),
+          waitForScanToSettle,
+          () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
+        )
+        setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
       }
 
       const snapshot = await loadDashboard(
@@ -317,7 +319,13 @@ function App() {
     let cancelled = false
 
     const bootstrap = async () => {
-      await waitForScanToSettle(60000)
+      const settled = await waitForScanToSettleUntilCancelled(
+        () => waitForScanToSettle(60000),
+        () => cancelled,
+      )
+      if (!settled || cancelled) {
+        return
+      }
       await loadShellRef.current(false)
       if (!cancelled) {
         setHasBootstrapped(true)
@@ -344,13 +352,21 @@ function App() {
 
   useEffect(() => {
     if (!hasBootstrapped || !syncSettings?.autoScanEnabled) return
-    const interval = window.setInterval(() => {
-      void refreshBackgroundData()
-        .catch(() => null)
-        .then(() => waitForOverlappingScan(getScanInProgress, waitForScanToSettle))
-        .then(() => loadShell(false))
-    }, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
-    return () => window.clearInterval(interval)
+    let cancelled = false
+    const refresh = () => {
+      void refreshDashboardAfterBackgroundScan(
+        refreshBackgroundData,
+        getScanInProgress,
+        waitForScanToSettle,
+        () => loadShell(false),
+        () => cancelled,
+      )
+    }
+    const interval = window.setInterval(refresh, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
   }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes, waitForScanToSettle])
 
   useEffect(() => {
