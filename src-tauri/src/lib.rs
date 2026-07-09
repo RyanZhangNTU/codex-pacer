@@ -1300,13 +1300,10 @@ fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLim
 }
 
 fn refresh_rate_limit_history_if_idle(state: &AppState) {
-  let Ok(guard) = try_acquire_flag(&state.scan_in_progress, "A scan is already running.") else {
-    return;
-  };
-
-  let result = perform_incremental_scan(&state.db_path, None);
-  drop(guard);
-  if let Err(error) = result {
+  if let Err(error) = run_background_incremental_scan_if_idle(state.clone(), None) {
+    if error == "A scan is already running." {
+      return;
+    }
     log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
   }
 }
@@ -3109,6 +3106,54 @@ mod tests {
       )
       .expect("load final value");
     assert_eq!(value_usd, 42.0);
+  }
+
+  #[test]
+  fn history_fallback_scan_waits_for_usage_mutation_lock() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let codex_home = directory.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("create Codex home");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = SyncSettings {
+      codex_home: Some(codex_home.to_string_lossy().to_string()),
+      ..get_sync_settings(&conn).expect("load settings")
+    };
+    save_sync_settings(&conn, &settings).expect("save settings");
+    drop(conn);
+
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+    let mutation_guard = lock_usage_mutations(&state);
+    let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
+    let scan_state = state.clone();
+    let scan_thread = std::thread::spawn(move || {
+      refresh_rate_limit_history_if_idle(&scan_state);
+      completed_sender.send(()).expect("report completion");
+    });
+
+    let completed_while_locked = completed_receiver
+      .recv_timeout(Duration::from_millis(100))
+      .is_ok();
+    drop(mutation_guard);
+    if !completed_while_locked {
+      completed_receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("history scan should complete after unlock");
+    }
+    scan_thread.join().expect("join history scan");
+
+    assert!(!completed_while_locked, "history scan bypassed the shared usage mutation lock");
   }
 
   #[test]
