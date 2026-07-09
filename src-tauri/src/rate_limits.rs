@@ -439,10 +439,24 @@ fn codex_binary_candidates(app_data: Option<&OsStr>, _home_dir: Option<&Path>) -
 
 #[cfg(not(windows))]
 fn codex_binary_candidates(_app_data: Option<&OsStr>, home_dir: Option<&Path>) -> Vec<PathBuf> {
-  let mut candidates = vec![
+  let mut candidates = Vec::new();
+
+  #[cfg(target_os = "macos")]
+  {
+    candidates.push(PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"));
+    if let Some(home_dir) = home_dir {
+      candidates.push(home_dir.join("Applications/ChatGPT.app/Contents/Resources/codex"));
+    }
+    candidates.push(PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"));
+    if let Some(home_dir) = home_dir {
+      candidates.push(home_dir.join("Applications/Codex.app/Contents/Resources/codex"));
+    }
+  }
+
+  candidates.extend([
     PathBuf::from("/opt/homebrew/bin/codex"),
     PathBuf::from("/usr/local/bin/codex"),
-  ];
+  ]);
 
   if let Some(home_dir) = home_dir {
     candidates.push(home_dir.join(".cargo/bin/codex"));
@@ -464,6 +478,7 @@ fn fallback_codex_binary() -> PathBuf {
 #[cfg(test)]
 mod tests {
   use super::convert_window;
+  #[cfg(windows)]
   use std::ffi::OsString;
   use std::path::{Path, PathBuf};
 
@@ -485,6 +500,33 @@ mod tests {
     assert_eq!(converted.window_duration_mins, Some(300));
     assert!(converted.resets_at.is_some());
     assert!(converted.window_start.is_some());
+  }
+
+  #[test]
+  #[cfg(target_os = "macos")]
+  fn resolve_codex_binary_prefers_chatgpt_app_bundle() {
+    let resolved = super::resolve_codex_binary_from_env(
+      None,
+      None,
+      Some(Path::new("/Users/CodexUser")),
+      existing_paths(&[
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/opt/homebrew/bin/codex",
+      ]),
+    );
+    assert_eq!(resolved, PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"));
+  }
+
+  #[test]
+  #[cfg(target_os = "macos")]
+  fn resolve_codex_binary_uses_legacy_app_when_chatgpt_is_missing() {
+    let resolved = super::resolve_codex_binary_from_env(
+      None,
+      None,
+      Some(Path::new("/Users/CodexUser")),
+      existing_paths(&["/Applications/Codex.app/Contents/Resources/codex"]),
+    );
+    assert_eq!(resolved, PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"));
   }
 
   #[test]
