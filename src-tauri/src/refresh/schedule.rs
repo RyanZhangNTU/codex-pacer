@@ -24,6 +24,7 @@ struct LaneState {
   next_deadline: Instant,
   running: bool,
   startup_due: bool,
+  immediate_due: bool,
 }
 
 impl LaneState {
@@ -32,6 +33,7 @@ impl LaneState {
       next_deadline,
       running: false,
       startup_due: next_deadline <= monotonic_now,
+      immediate_due: false,
     }
   }
 
@@ -45,7 +47,23 @@ impl LaneState {
     } else {
       old_interval.saturating_add(now.duration_since(self.next_deadline))
     };
-    self.next_deadline = now + new_interval.saturating_sub(elapsed);
+    let remaining = if self.next_deadline.checked_sub(old_interval).is_some() {
+      let phase = duration_remainder(elapsed, new_interval);
+      if phase.is_zero() {
+        new_interval
+      } else {
+        new_interval - phase
+      }
+    } else {
+      let remaining = new_interval.saturating_sub(elapsed);
+      if remaining.is_zero() {
+        new_interval
+      } else {
+        remaining
+      }
+    };
+    self.next_deadline = now + remaining;
+    self.immediate_due |= elapsed >= new_interval;
   }
 
   fn take_due(
@@ -54,12 +72,15 @@ impl LaneState {
     interval: Duration,
     trigger_reason: RefreshReason,
   ) -> Option<RefreshReason> {
-    if self.next_deadline > now {
+    if !self.immediate_due && self.next_deadline > now {
       return None;
     }
 
-    let (next_deadline, _) = advance_fixed_deadline(self.next_deadline, interval, now);
-    self.next_deadline = next_deadline;
+    self.immediate_due = false;
+    if self.next_deadline <= now {
+      let (next_deadline, _) = advance_fixed_deadline(self.next_deadline, interval, now);
+      self.next_deadline = next_deadline;
+    }
     let reason = if self.startup_due {
       RefreshReason::Startup
     } else {
@@ -176,6 +197,14 @@ fn advance_fixed_deadline(
     elapsed_intervals += 1;
   }
   (deadline, elapsed_intervals.saturating_sub(1))
+}
+
+fn duration_remainder(value: Duration, modulus: Duration) -> Duration {
+  let remainder_nanos = value.as_nanos() % modulus.as_nanos();
+  Duration::new(
+    (remainder_nanos / 1_000_000_000) as u64,
+    (remainder_nanos % 1_000_000_000) as u32,
+  )
 }
 
 fn initial_deadline(
@@ -424,6 +453,33 @@ mod tests {
     ));
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(90));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(90));
+  }
+
+  #[test]
+  fn shorter_interval_preserves_unaligned_fixed_deadline() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut state = CoordinatorState::new(
+      test_config(Duration::from_secs(300), Some(wall)),
+      base,
+      wall,
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(45),
+      CoordinatorEvent::SettingsChanged(test_config(Duration::from_secs(30), Some(wall))),
+    );
+
+    assert_eq!(token_starts(&actions), 1);
+    assert_eq!(live_starts(&actions), 1);
+    assert_eq!(
+      state.token_next_deadline().duration_since(base),
+      Duration::from_secs(60)
+    );
+    assert_eq!(
+      state.live_next_deadline().duration_since(base),
+      Duration::from_secs(60)
+    );
   }
 
   #[test]
