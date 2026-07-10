@@ -3722,7 +3722,7 @@ mod tests {
     perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
       .expect("full parent scan");
 
-    let conn = open_connection(&db_path).expect("open db to corrupt parent source path");
+    let conn = open_connection(&db_path).expect("open db to corrupt parent source paths");
     assert_eq!(
       conn
         .execute(
@@ -3732,7 +3732,17 @@ mod tests {
         .expect("corrupt parent source path"),
       1
     );
+    assert_eq!(
+      conn
+        .execute(
+          "UPDATE import_state SET source_path = ?1 WHERE session_id = ?2",
+          params![child_path.to_string_lossy().to_string(), parent_session_id],
+        )
+        .expect("corrupt parent import state path"),
+      1
+    );
     drop(conn);
+    std::fs::remove_file(&parent_path).expect("remove original parent source");
 
     let child_created_at = "2026-03-24T01:00:00Z";
     let mut child_body = format!(
