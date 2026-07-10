@@ -139,9 +139,11 @@ pub(crate) struct CoordinatorState {
   token: LaneState,
   live: LaneState,
   token_running: Option<TokenExecutionRequest>,
+  token_running_source_refresh: bool,
   token_pending: Option<TokenRequest>,
   token_source_refresh_pending: Option<TokenRequest>,
   token_retry_request: Option<TokenRequest>,
+  token_retry_source_refresh: bool,
   live_running: Option<LiveExecutionRequest>,
   live_pending: ReasonSet,
   live_retry_reasons: ReasonSet,
@@ -181,9 +183,11 @@ impl CoordinatorState {
       token: LaneState::new(token_next_deadline, monotonic_now),
       live: LaneState::new(live_next_deadline, monotonic_now),
       token_running: None,
+      token_running_source_refresh: false,
       token_pending: None,
       token_source_refresh_pending: None,
       token_retry_request: None,
+      token_retry_source_refresh: false,
       live_running: None,
       live_pending: ReasonSet::default(),
       live_retry_reasons: ReasonSet::default(),
@@ -235,8 +239,12 @@ impl CoordinatorState {
     let mut live_reasons = self.take_due_live_reasons(now, trigger_reason);
     let mut actions = Vec::with_capacity(2);
 
-    if let Some(request) = token_request.take() {
-      self.submit_token_request(request, &mut actions);
+    if let Some((request, source_refresh)) = token_request.take() {
+      if source_refresh {
+        self.submit_source_refresh_request(request, &mut actions);
+      } else {
+        self.submit_token_request(request, &mut actions);
+      }
     }
     if !live_reasons.is_empty() {
       self.submit_live_request(
@@ -284,6 +292,7 @@ impl CoordinatorState {
     }
 
     let mut token_request = None;
+    let mut token_request_is_source_refresh = false;
     let mut live_reasons = ReasonSet::default();
     if source_changed {
       self.source_generation = self
@@ -293,6 +302,7 @@ impl CoordinatorState {
       self.token.failure_streak = 0;
       self.token.retry_at = None;
       self.token_retry_request = None;
+      self.token_retry_source_refresh = false;
       self.live.failure_streak = 0;
       self.live.retry_at = None;
       self.live_retry_reasons = ReasonSet::default();
@@ -319,19 +329,23 @@ impl CoordinatorState {
         }
       }
       token_request = Some(request);
+      token_request_is_source_refresh = true;
       if self.config.auto_scan_enabled {
         live_reasons.insert(RefreshReason::SettingsChanged);
       }
     }
 
-    if let Some(due) = self.take_due_token_request(now, RefreshReason::SettingsChanged) {
+    if let Some((due, due_is_source_refresh)) =
+      self.take_due_token_request(now, RefreshReason::SettingsChanged)
+    {
       merge_token_request(&mut token_request, due);
+      token_request_is_source_refresh |= due_is_source_refresh;
     }
     live_reasons.merge(self.take_due_live_reasons(now, RefreshReason::SettingsChanged));
 
     let mut actions = Vec::with_capacity(2);
     if let Some(request) = token_request {
-      if source_changed {
+      if token_request_is_source_refresh {
         self.submit_source_refresh_request(request, &mut actions);
       } else {
         self.submit_token_request(request, &mut actions);
@@ -353,10 +367,12 @@ impl CoordinatorState {
     &mut self,
     now: Instant,
     trigger_reason: RefreshReason,
-  ) -> Option<TokenRequest> {
+  ) -> Option<(TokenRequest, bool)> {
     let mut request = None;
+    let mut source_refresh = false;
     if self.token.retry_at.is_some_and(|retry_at| retry_at <= now) {
       let retry_allowed = self.config.auto_scan_enabled
+        || self.token_retry_source_refresh
         || self
           .token_retry_request
           .as_ref()
@@ -365,6 +381,8 @@ impl CoordinatorState {
         self.token.retry_at = None;
         if let Some(retry) = self.token_retry_request.take() {
           merge_token_request(&mut request, retry);
+          source_refresh = self.token_retry_source_refresh;
+          self.token_retry_source_refresh = false;
         }
       }
     }
@@ -385,7 +403,7 @@ impl CoordinatorState {
         );
       }
     }
-    request
+    request.map(|request| (request, source_refresh))
   }
 
   fn take_due_live_reasons(
@@ -428,6 +446,15 @@ impl CoordinatorState {
     }
 
     if self.token.running_generation.is_some() {
+      let matches_running_source_refresh = self.token_running_source_refresh
+        && self
+          .token_running
+          .as_ref()
+          .is_some_and(|running| running.request.codex_home == request.codex_home);
+      if matches_running_source_refresh {
+        merge_token_request(&mut self.token_source_refresh_pending, request);
+        return;
+      }
       if let Some(source_refresh) = self.token_source_refresh_pending.as_mut() {
         if source_refresh.codex_home == request.codex_home {
           source_refresh.merge(request);
@@ -438,11 +465,32 @@ impl CoordinatorState {
       return;
     }
 
+    if self.token_retry_source_refresh {
+      if let Some(source_retry) = self.token_retry_request.as_mut() {
+        if source_retry.codex_home == request.codex_home {
+          source_retry.merge(request);
+        } else {
+          merge_token_request(&mut self.token_pending, request);
+        }
+        return;
+      }
+      self.token_retry_source_refresh = false;
+    }
+
     if let Some(mut retry) = self.token_retry_request.take() {
       retry.merge(request);
       request = retry;
     }
     self.token.retry_at = None;
+    self.start_token_request(request, false, actions);
+  }
+
+  fn start_token_request(
+    &mut self,
+    request: TokenRequest,
+    source_refresh: bool,
+    actions: &mut Vec<CoordinatorAction>,
+  ) {
     let generation = self.token.start_generation();
     let execution = TokenExecutionRequest {
       generation,
@@ -450,6 +498,7 @@ impl CoordinatorState {
       request,
     };
     self.token_running = Some(execution.clone());
+    self.token_running_source_refresh = source_refresh;
     actions.push(CoordinatorAction::StartToken(execution));
   }
 
@@ -459,13 +508,25 @@ impl CoordinatorState {
     actions: &mut Vec<CoordinatorAction>,
   ) {
     if self.token.running_generation.is_some() {
+      let matches_running_source_refresh = self.token_running_source_refresh
+        && self
+          .token_running
+          .as_ref()
+          .is_some_and(|running| running.request.codex_home == request.codex_home);
+      if matches_running_source_refresh {
+        merge_token_request(&mut self.token_source_refresh_pending, request);
+        return;
+      }
       if let Some(previous) = self.token_source_refresh_pending.take() {
         request.reasons.merge(previous.reasons);
       }
       self.token_source_refresh_pending = Some(request);
       return;
     }
-    self.submit_token_request(request, actions);
+    self.token.retry_at = None;
+    self.token_retry_request = None;
+    self.token_retry_source_refresh = false;
+    self.start_token_request(request, true, actions);
   }
 
   fn submit_live_request(
@@ -538,6 +599,7 @@ impl CoordinatorState {
       .take()
       .expect("matching token generation remains present");
     self.token.clear_running();
+    self.token_running_source_refresh = false;
     actions.push(CoordinatorAction::DiscardToken {
       generation,
       source_generation,
@@ -569,7 +631,9 @@ impl CoordinatorState {
       .token_running
       .take()
       .expect("matching token generation remains present");
+    let running_source_refresh = self.token_running_source_refresh;
     self.token.clear_running();
+    self.token_running_source_refresh = false;
     if running.source_generation != completion.source_generation
       || completion.source_generation != self.source_generation
     {
@@ -584,6 +648,7 @@ impl CoordinatorState {
       self.token.failure_streak = 0;
       self.token.retry_at = None;
       self.token_retry_request = None;
+      self.token_retry_source_refresh = false;
       self.usage_revision = self.usage_revision.saturating_add(1);
       actions.push(CoordinatorAction::PublishInvalidation(
         self.invalidation(completion.commit.expect("normalized success has commit marker")),
@@ -593,7 +658,14 @@ impl CoordinatorState {
       let jitter = completion.retry_jitter.min(Duration::from_secs(1));
       let delay = retry_delay(self.token.failure_streak, self.config.interval, jitter);
       self.token.retry_at = Some(now.checked_add(delay).unwrap_or(now));
-      self.token_retry_request = Some(running.request);
+      let mut retry_request = running.request;
+      if running_source_refresh {
+        if let Some(pending) = self.token_source_refresh_pending.take() {
+          retry_request.merge(pending);
+        }
+      }
+      self.token_retry_request = Some(retry_request);
+      self.token_retry_source_refresh = running_source_refresh;
     }
     actions.push(CoordinatorAction::PublishCompletion(
       self.completed_event(RefreshLane::Token, &completion),
@@ -669,8 +741,11 @@ impl CoordinatorState {
   }
 
   fn start_pending_token(&mut self, actions: &mut Vec<CoordinatorAction>) {
+    if self.token_retry_source_refresh {
+      return;
+    }
     if let Some(request) = self.token_source_refresh_pending.take() {
-      self.submit_token_request(request, actions);
+      self.submit_source_refresh_request(request, actions);
       return;
     }
     if let Some(request) = self.token_pending.take() {
@@ -719,7 +794,9 @@ impl CoordinatorState {
     lane: RefreshLane,
     completion: &ExecutionCompletion,
   ) -> RefreshCompletedEvent {
-    self.refresh_revision = self.refresh_revision.saturating_add(1);
+    if completion.succeeded {
+      self.refresh_revision = self.refresh_revision.saturating_add(1);
+    }
     RefreshCompletedEvent {
       refresh_revision: self.refresh_revision,
       lane,
@@ -1574,7 +1651,7 @@ mod tests {
   }
 
   #[test]
-  fn success_without_commit_marker_is_rejected() {
+  fn success_without_commit_marker_does_not_advance_refresh_revision() {
     let base = Instant::now();
     let wall = utc("2026-07-10T10:00:00Z");
     let mut state = CoordinatorState::new(
@@ -1600,12 +1677,45 @@ mod tests {
     assert!(actions
       .iter()
       .all(|action| !matches!(action, CoordinatorAction::PublishInvalidation(_))));
-    assert!(actions.iter().any(|action| matches!(
+    let published = actions
+      .iter()
+      .find_map(|action| match action {
+        CoordinatorAction::PublishCompletion(event) => Some(event),
+        _ => None,
+      })
+      .expect("invalid success publishes a failed attempt");
+    assert!(!published.succeeded);
+    assert_eq!(
+      published.failure.as_deref(),
+      Some("successful refresh completion missing commit marker")
+    );
+    assert_eq!(published.refresh_revision, 0);
+    assert_eq!(published.usage_revision, 0);
+    assert_eq!(published.quota_revision, 0);
+    assert_eq!(published.generation, first.generation);
+
+    let mut failure_state = CoordinatorState::new(
+      test_config(Duration::from_secs(300), Some(wall)),
+      base,
+      wall,
+    );
+    let failed = start_token_generation(&mut failure_state, base);
+    let failed_actions = failure_state.handle(
+      base,
+      CoordinatorEvent::TokenFinished(execution_failure(
+        failed.generation,
+        failed.source_generation,
+        Duration::ZERO,
+      )),
+    );
+    assert!(failed_actions.iter().any(|action| matches!(
       action,
       CoordinatorAction::PublishCompletion(event)
-        if !event.succeeded
-          && event.failure.as_deref()
-            == Some("successful refresh completion missing commit marker")
+        if event.refresh_revision == 0
+          && event.usage_revision == 0
+          && event.quota_revision == 0
+          && event.generation == failed.generation
+          && !event.succeeded
     )));
   }
 
@@ -1804,5 +1914,147 @@ mod tests {
       starts[0].request.codex_home.as_deref(),
       Some("/normalized/new-home")
     );
+  }
+
+  #[test]
+  fn protected_source_refresh_failure_retries_while_auto_scan_disabled() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let old_source = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.auto_scan_enabled = false;
+    changed.codex_home = Some("/normalized/configured-home".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    let replacement_actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenFinished(execution_success(
+        old_source.generation,
+        old_source.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+    let protected = replacement_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("new source Full refresh starts");
+    assert_eq!(protected.request.kind, TokenScanKind::Full);
+    assert_eq!(
+      protected.request.codex_home.as_deref(),
+      Some("/normalized/configured-home")
+    );
+
+    let failure_actions = state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::TokenFinished(execution_failure(
+        protected.generation,
+        protected.source_generation,
+        Duration::ZERO,
+      )),
+    );
+    assert!(failure_actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartToken(_))));
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(8)));
+
+    let early = state.handle(base + Duration::from_secs(7), CoordinatorEvent::Timer);
+    let retry_actions = state.handle(base + Duration::from_secs(8), CoordinatorEvent::Timer);
+    assert_eq!(token_starts(&early), 0);
+    assert!(matches!(
+      retry_actions.as_slice(),
+      [CoordinatorAction::StartToken(request)]
+        if request.request.kind == TokenScanKind::Full
+          && request.request.codex_home.as_deref()
+            == Some("/normalized/configured-home")
+    ));
+  }
+
+  #[test]
+  fn protected_source_retry_is_not_retargeted_by_different_home_manual_request() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let old_source = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.auto_scan_enabled = false;
+    changed.codex_home = Some("/normalized/configured-home".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    let replacement_actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenFinished(execution_success(
+        old_source.generation,
+        old_source.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+    let protected = replacement_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("new source Full refresh starts");
+    state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::TokenFinished(execution_failure(
+        protected.generation,
+        protected.source_generation,
+        Duration::ZERO,
+      )),
+    );
+
+    let manual_actions = state.handle(
+      base + Duration::from_secs(4),
+      CoordinatorEvent::RequestToken(TokenRequest::manual_full(Some(
+        "/normalized/manual-home".to_string(),
+      ))),
+    );
+    assert!(manual_actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartToken(_))));
+
+    let retry_actions = state.handle(base + Duration::from_secs(8), CoordinatorEvent::Timer);
+    let retry = retry_actions
+      .iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("protected retry starts first");
+    assert_eq!(retry.request.kind, TokenScanKind::Full);
+    assert_eq!(
+      retry.request.codex_home.as_deref(),
+      Some("/normalized/configured-home")
+    );
+
+    let success_actions = state.handle(
+      base + Duration::from_secs(9),
+      CoordinatorEvent::TokenFinished(execution_success(
+        retry.generation,
+        retry.source_generation,
+        2,
+        base + Duration::from_secs(9),
+      )),
+    );
+    assert!(matches!(
+      success_actions.last(),
+      Some(CoordinatorAction::StartToken(request))
+        if request.request.kind == TokenScanKind::Full
+          && request.request.reasons.contains(RefreshReason::Manual)
+          && request.request.codex_home.as_deref() == Some("/normalized/manual-home")
+    ));
   }
 }
