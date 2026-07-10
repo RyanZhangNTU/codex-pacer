@@ -3463,6 +3463,320 @@ mod tests {
   }
 
   #[test]
+  fn incremental_fork_scan_loads_unchanged_archived_parent() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    let archived_sessions_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_sessions_dir).expect("archived sessions dir");
+
+    let parent_session_id = "11111111-1111-4111-8111-111111111111";
+    let child_session_id = "22222222-2222-4222-8222-222222222222";
+    let parent_path = archived_sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let parent_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    for fixture in parent_fixtures.iter().copied() {
+      parent_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&parent_path, parent_body).expect("write archived parent session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("full parent scan");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for (index, fixture) in parent_fixtures.iter().copied().enumerate() {
+      let timestamp = match index {
+        0 => "2026-03-24T00:30:01Z",
+        1 => "2026-03-24T00:30:02Z",
+        _ => "2026-03-24T00:30:03Z",
+      };
+      child_body.push_str(&token_count_line(TokenFixture {
+        timestamp,
+        ..fixture
+      }));
+    }
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (310, 0, 0, 310),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write active fork child");
+
+    let incremental =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+        .expect("incremental child scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let parent_total = session_usage_totals(&conn, parent_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    assert_eq!(incremental.updated_sessions, 1);
+    assert_eq!(parent_total, 260);
+    assert_eq!(child_total, 50);
+    assert_eq!(parent_total + child_total, 310);
+  }
+
+  #[test]
+  fn nested_fork_replay_uses_direct_parent() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let root_session_id = "33333333-3333-4333-8333-333333333333";
+    let child_session_id = "44444444-4444-4444-8444-444444444444";
+    let grandchild_session_id = "55555555-5555-4555-8555-555555555555";
+    let root_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{root_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let grandchild_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T01-00-00-{grandchild_session_id}.jsonl"
+    ));
+    let root_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+    let child_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:30:01Z",
+        ..root_fixtures[0]
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:30:02Z",
+        ..root_fixtures[1]
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:30:03Z",
+        ..root_fixtures[2]
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:31:00Z",
+        total: (310, 0, 0, 310),
+        last: (50, 0, 0, 50),
+      },
+    ];
+
+    let mut root_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      root_session_id,
+    );
+    for fixture in root_fixtures.iter().copied() {
+      root_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&root_path, root_body).expect("write root session");
+
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_session_id,
+      root_session_id,
+    );
+    for fixture in child_fixtures.iter().copied() {
+      child_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&child_path, child_body).expect("write child session");
+
+    let mut grandchild_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      grandchild_session_id,
+      child_session_id,
+    );
+    for (index, fixture) in child_fixtures.iter().copied().enumerate() {
+      let timestamp = match index {
+        0 => "2026-03-24T01:00:01Z",
+        1 => "2026-03-24T01:00:02Z",
+        2 => "2026-03-24T01:00:03Z",
+        _ => "2026-03-24T01:00:04Z",
+      };
+      grandchild_body.push_str(&token_count_line(TokenFixture {
+        timestamp,
+        ..fixture
+      }));
+    }
+    grandchild_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T01:01:00Z",
+      total: (330, 0, 0, 330),
+      last: (20, 0, 0, 20),
+    }));
+    std::fs::write(&grandchild_path, grandchild_body).expect("write grandchild session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full family scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let root_total = session_usage_totals(&conn, root_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    let grandchild_total = session_usage_totals(&conn, grandchild_session_id).3;
+    assert_eq!(root_total, 260);
+    assert_eq!(child_total, 50);
+    assert_eq!(grandchild_total, 20);
+    assert_eq!(root_total + child_total + grandchild_total, 330);
+  }
+
+  #[test]
+  fn parent_path_validation_rejects_child_file_with_replayed_parent_meta() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "66666666-6666-4666-8666-666666666666";
+    let child_session_id = "77777777-7777-4777-8777-777777777777";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T01-00-00-{child_session_id}.jsonl"
+    ));
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    parent_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (25, 0, 0, 25),
+      last: (25, 0, 0, 25),
+    }));
+    std::fs::write(&parent_path, parent_body).expect("write parent session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("full parent scan");
+
+    let conn = open_connection(&db_path).expect("open db to corrupt parent source path");
+    assert_eq!(
+      conn
+        .execute(
+          "UPDATE sessions SET source_path = ?1 WHERE session_id = ?2",
+          params![child_path.to_string_lossy().to_string(), parent_session_id],
+        )
+        .expect("corrupt parent source path"),
+      1
+    );
+    drop(conn);
+
+    let child_created_at = "2026-03-24T01:00:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for fixture in [
+      TokenFixture {
+        timestamp: child_created_at,
+        total: (100, 0, 0, 100),
+        last: (40, 0, 0, 40),
+      },
+      TokenFixture {
+        timestamp: child_created_at,
+        total: (150, 0, 0, 150),
+        last: (50, 0, 0, 50),
+      },
+    ] {
+      child_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&child_path, child_body).expect("write child with replayed parent meta");
+
+    let incremental =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+        .expect("incremental child scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(incremental.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 25);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 90);
+  }
+
+  #[test]
   fn fork_first_snapshot_uses_last_usage_as_baseline() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
