@@ -258,7 +258,7 @@ fn perform_scan_with_scope(
           continue;
         }
       };
-      assign_inherited_token_snapshot_cutoff(
+      let replay_parent_unavailable = assign_inherited_token_snapshot_cutoff(
         &mut parsed,
         &session_source_paths,
         &mut parent_snapshot_cache,
@@ -274,7 +274,8 @@ fn perform_scan_with_scope(
         &parsed.raw_session.session_id,
       );
       file_needs_token_v2_repair |= !related_pending_token_v2_paths.is_empty();
-      file_needs_fork_replay_v3_repair |= !related_pending_fork_replay_v3_paths.is_empty();
+      file_needs_fork_replay_v3_repair |=
+        replay_parent_unavailable || !related_pending_fork_replay_v3_paths.is_empty();
       imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
       match classify_topology_maintenance(
@@ -305,11 +306,21 @@ fn perform_scan_with_scope(
         }
       }
       if file_needs_fork_replay_v3_repair {
-        clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path)
-          .map_err(|error| error.to_string())?;
-        for related_source_path in related_pending_fork_replay_v3_paths {
-          clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &related_source_path)
+        if replay_parent_unavailable {
+          mark_data_repair_file_pending(
+            &conn,
+            TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
+            &source_path,
+            "fork replay parent unavailable",
+          )
             .map_err(|error| error.to_string())?;
+        } else {
+          clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path)
+            .map_err(|error| error.to_string())?;
+          for related_source_path in related_pending_fork_replay_v3_paths {
+            clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &related_source_path)
+              .map_err(|error| error.to_string())?;
+          }
         }
       }
       changed_sessions += 1;
@@ -1050,16 +1061,16 @@ fn assign_inherited_token_snapshot_cutoff(
   parsed: &mut ParsedSession,
   session_source_paths: &HashMap<String, PathBuf>,
   parent_snapshot_cache: &mut HashMap<String, Option<Vec<UsageSnapshot>>>,
-) {
+) -> bool {
   let Some(parent_session_id) = parsed
     .explicit_forked_from_id
     .as_deref()
     .filter(|session_id| !session_id.trim().is_empty())
   else {
-    return;
+    return false;
   };
   let Some(fork_timestamp) = parsed.explicit_fork_timestamp else {
-    return;
+    return false;
   };
 
   if !parent_snapshot_cache.contains_key(parent_session_id) {
@@ -1092,7 +1103,7 @@ fn assign_inherited_token_snapshot_cutoff(
     .get(parent_session_id)
     .and_then(Option::as_deref)
   else {
-    return;
+    return true;
   };
 
   parsed.inherited_token_snapshot_cutoff = replayed_child_snapshot_cutoff(
@@ -1100,6 +1111,7 @@ fn assign_inherited_token_snapshot_cutoff(
     &parsed.snapshots,
     Some(fork_timestamp),
   );
+  false
 }
 
 fn read_parent_replay_snapshots(
@@ -3682,6 +3694,98 @@ mod tests {
         |row| row.get(0),
       )
       .expect("count pending v3 repair files");
+    assert_eq!(pending_v3_count, 0);
+  }
+
+  #[test]
+  fn fork_repair_retries_child_after_parent_source_recovers() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "63636363-6363-4363-8363-636363636363";
+    let child_session_id = "64646464-6464-4464-8464-646464646464";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    std::fs::write(&parent_path, "not json\n").expect("write unavailable parent");
+    let inherited = TokenFixture {
+      timestamp: "2026-03-24T00:30:00Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    };
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_session_id,
+      parent_session_id,
+    );
+    child_body.push_str(&token_count_line(inherited));
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (150, 0, 0, 150),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork child");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let conn = open_connection(&db_path).expect("open initial db");
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 150);
+    let pending_child_count: i64 = conn
+      .query_row(
+        "
+        SELECT COUNT(*)
+        FROM data_repair_pending_files
+        WHERE repair_key = ?1 AND source_path = ?2
+        ",
+        params![
+          TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
+          child_path.to_string_lossy().to_string()
+        ],
+        |row| row.get(0),
+      )
+      .expect("count pending child repair");
+    assert_eq!(pending_child_count, 1);
+    drop(conn);
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    parent_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:00Z",
+      ..inherited
+    }));
+    std::fs::write(&parent_path, parent_body).expect("restore parent source");
+    let retry = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry recovered parent and child");
+
+    let conn = open_connection(&db_path).expect("open repaired db");
+    assert_eq!(retry.updated_sessions, 2);
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 100);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 50);
+    let pending_v3_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending v3 repairs");
     assert_eq!(pending_v3_count, 0);
   }
 
