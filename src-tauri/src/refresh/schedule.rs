@@ -140,7 +140,8 @@ pub(crate) struct CoordinatorState {
   live: LaneState,
   token_running: Option<TokenExecutionRequest>,
   token_running_source_refresh: bool,
-  token_pending: Option<TokenRequest>,
+  token_pending_manual: Option<TokenRequest>,
+  token_pending_automatic: Option<TokenRequest>,
   token_source_refresh_pending: Option<TokenRequest>,
   token_retry_request: Option<TokenRequest>,
   token_retry_source_refresh: bool,
@@ -184,7 +185,8 @@ impl CoordinatorState {
       live: LaneState::new(live_next_deadline, monotonic_now),
       token_running: None,
       token_running_source_refresh: false,
-      token_pending: None,
+      token_pending_manual: None,
+      token_pending_automatic: None,
       token_source_refresh_pending: None,
       token_retry_request: None,
       token_retry_source_refresh: false,
@@ -315,7 +317,10 @@ impl CoordinatorState {
       if let Some(previous_source_refresh) = self.token_source_refresh_pending.take() {
         request.reasons.merge(previous_source_refresh.reasons);
       }
-      if let Some(mut pending) = self.token_pending.take() {
+      if let Some(pending) = self.token_pending_automatic.take() {
+        request.reasons.merge(pending.reasons);
+      }
+      if let Some(mut pending) = self.token_pending_manual.take() {
         let manual_for_another_home = pending.reasons.contains(RefreshReason::Manual)
           && pending.codex_home != self.config.codex_home;
         if manual_for_another_home {
@@ -323,7 +328,7 @@ impl CoordinatorState {
           automatic_reasons.remove(RefreshReason::Manual);
           request.reasons.merge(automatic_reasons);
           pending.reasons = RefreshReason::Manual.into();
-          self.token_pending = Some(pending);
+          self.token_pending_manual = Some(pending);
         } else {
           request.reasons.merge(pending.reasons);
         }
@@ -454,7 +459,7 @@ impl CoordinatorState {
           }
         }
       }
-      merge_token_request(&mut self.token_pending, request);
+      self.queue_token_pending_request(request);
       return;
     }
 
@@ -463,7 +468,7 @@ impl CoordinatorState {
         if source_retry.codex_home == request.codex_home {
           source_retry.merge(request);
         } else {
-          merge_token_request(&mut self.token_pending, request);
+          self.queue_token_pending_request(request);
         }
         return;
       }
@@ -471,11 +476,53 @@ impl CoordinatorState {
     }
 
     if let Some(mut retry) = self.token_retry_request.take() {
-      retry.merge(request);
-      request = retry;
+      if retry.codex_home == request.codex_home {
+        retry.merge(request);
+        request = retry;
+      }
     }
     self.token.retry_at = None;
     self.start_token_request(request, false, actions);
+  }
+
+  fn queue_token_pending_request(&mut self, mut request: TokenRequest) {
+    if request.reasons.contains(RefreshReason::Manual) {
+      let automatic_matches = self
+        .token_pending_automatic
+        .as_ref()
+        .is_some_and(|pending| pending.codex_home == request.codex_home);
+      if automatic_matches {
+        if let Some(automatic) = self.token_pending_automatic.take() {
+          request.merge(automatic);
+        }
+      }
+      if let Some(manual) = self.token_pending_manual.as_mut() {
+        if manual.codex_home == request.codex_home {
+          manual.merge(request);
+        } else {
+          *manual = request;
+        }
+      } else {
+        self.token_pending_manual = Some(request);
+      }
+      return;
+    }
+
+    if let Some(manual) = self.token_pending_manual.as_mut() {
+      if manual.codex_home == request.codex_home {
+        manual.merge(request);
+        return;
+      }
+    }
+    if let Some(automatic) = self.token_pending_automatic.as_mut() {
+      if automatic.codex_home == request.codex_home {
+        automatic.merge(request);
+      } else {
+        *automatic = request;
+      }
+    } else {
+      self.token_pending_automatic = Some(request);
+    }
   }
 
   fn start_token_request(
@@ -741,21 +788,22 @@ impl CoordinatorState {
       self.submit_source_refresh_request(request, actions);
       return;
     }
-    if let Some(request) = self.token_pending.take() {
-      if !self.config.auto_scan_enabled && !request.reasons.contains(RefreshReason::Manual) {
-        return;
-      }
+    if let Some(request) = self.token_pending_manual.take() {
       self.submit_token_request(request, actions);
+      return;
+    }
+    if let Some(request) = self.token_pending_automatic.take() {
+      if self.config.auto_scan_enabled {
+        self.submit_token_request(request, actions);
+      }
     }
   }
 
   fn prune_automatic_pending_work(&mut self) {
-    if let Some(mut pending) = self.token_pending.take() {
-      if pending.reasons.contains(RefreshReason::Manual) {
-        pending.reasons = RefreshReason::Manual.into();
-        self.token_pending = Some(pending);
-      }
+    if let Some(pending) = self.token_pending_manual.as_mut() {
+      pending.reasons = RefreshReason::Manual.into();
     }
+    self.token_pending_automatic = None;
     self.live_pending = ReasonSet::default();
   }
 
@@ -2108,5 +2156,88 @@ mod tests {
     assert!(completion_actions
       .iter()
       .all(|action| !matches!(action, CoordinatorAction::StartToken(_))));
+  }
+
+  #[test]
+  fn later_automatic_trigger_does_not_retarget_pending_manual_home() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let old_source = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/configured-home-b".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    let replacement_actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenFinished(execution_success(
+        old_source.generation,
+        old_source.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+    let protected = replacement_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("configured-source Full refresh starts");
+
+    state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::RequestToken(TokenRequest::manual_full(Some(
+        "/normalized/manual-home-c".to_string(),
+      ))),
+    );
+    state.handle(
+      base + Duration::from_secs(4),
+      CoordinatorEvent::RequestToken(TokenRequest::scheduled()),
+    );
+
+    let protected_success = state.handle(
+      base + Duration::from_secs(5),
+      CoordinatorEvent::TokenFinished(execution_success(
+        protected.generation,
+        protected.source_generation,
+        2,
+        base + Duration::from_secs(5),
+      )),
+    );
+    let manual = protected_success
+      .iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("manual follow-up starts first");
+    assert_eq!(manual.request.kind, TokenScanKind::Full);
+    assert!(manual.request.reasons.contains(RefreshReason::Manual));
+    assert_eq!(
+      manual.request.codex_home.as_deref(),
+      Some("/normalized/manual-home-c")
+    );
+
+    let manual_success = state.handle(
+      base + Duration::from_secs(6),
+      CoordinatorEvent::TokenFinished(execution_success(
+        manual.generation,
+        manual.source_generation,
+        3,
+        base + Duration::from_secs(6),
+      )),
+    );
+    assert!(matches!(
+      manual_success.last(),
+      Some(CoordinatorAction::StartToken(request))
+        if request.request.reasons.contains(RefreshReason::Scheduled)
+          && !request.request.reasons.contains(RefreshReason::Manual)
+          && request.request.codex_home.as_deref()
+            == Some("/normalized/configured-home-b")
+    ));
   }
 }
