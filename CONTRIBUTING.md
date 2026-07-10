@@ -39,9 +39,10 @@ Keep contributions:
 Recommended verification before opening a pull request:
 
 ```bash
+npm test
 npm run lint
 npm run build
-cargo test
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
 If your change affects documentation or user-facing behavior, update the relevant docs in the same pull request when they are in scope. If you touch shared copy, keep English and Chinese surfaces aligned.
@@ -51,6 +52,7 @@ If your change affects documentation or user-facing behavior, update the relevan
 - Frontend: React + TypeScript + Vite
 - Desktop shell: Tauri 2
 - Backend and data layer: Rust + SQLite
+- On macOS, live quota testing can use the Codex CLI bundled with `ChatGPT.app`; a standalone CLI and `CODEX_BIN` remain supported
 
 ## Pull request checklist
 
@@ -58,9 +60,10 @@ If your change affects documentation or user-facing behavior, update the relevan
 - [ ] My pull request targets `develop` unless it is release-only work
 - [ ] If `develop` does not exist yet in a newly initialized public repository, I coordinated with the maintainer before opening the first pull request
 - [ ] The change is scoped and explained clearly
+- [ ] I ran `npm test`
 - [ ] I ran `npm run lint`
 - [ ] I ran `npm run build`
-- [ ] I ran `cargo test`
+- [ ] I ran `cargo test --manifest-path src-tauri/Cargo.toml --locked`
 - [ ] I updated in-scope docs if behavior or setup changed
 - [ ] I avoided unrelated changes
 

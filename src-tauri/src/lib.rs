@@ -33,7 +33,10 @@ use models::{
   MenuBarPopupSuggestedSpeed, OverviewResponse, PricingCatalogEntry, RateLimitWindowSnapshot,
   ScanResult, SubscriptionProfile, SyncSettings,
 };
-use pricing::{load_catalog, refresh_pricing_catalog_from_openai, seed_pricing_catalog};
+use pricing::{
+  apply_pricing_catalog_refresh, fetch_official_pricing_catalog, load_catalog,
+  seed_pricing_catalog, OPENAI_API_PRICING_URL,
+};
 use queries::{
   get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
 };
@@ -63,6 +66,7 @@ const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 const SCHEDULER_MAX_SLEEP_SECONDS: u64 = 5;
 const FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS: u64 = 5;
+const PRICING_VALUE_RESOLUTION_REPAIR_KEY: &str = "pricing_value_resolution_v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackgroundRefreshDecision {
@@ -89,6 +93,7 @@ struct AppState {
   app_handle: Option<AppHandle>,
   db_path: PathBuf,
   scan_in_progress: Arc<AtomicBool>,
+  usage_mutation_lock: Arc<Mutex<()>>,
   live_refresh_in_progress: Arc<AtomicBool>,
   menu_bar_refresh_in_progress: Arc<AtomicBool>,
   daily_value_tray: Option<TrayIcon>,
@@ -117,6 +122,13 @@ fn try_acquire_flag(flag: &Arc<AtomicBool>, busy_message: &str) -> Result<Atomic
   Ok(AtomicFlagGuard {
     flag: Arc::clone(flag),
   })
+}
+
+fn lock_usage_mutations(state: &AppState) -> std::sync::MutexGuard<'_, ()> {
+  state
+    .usage_mutation_lock
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(target_os = "macos")]
@@ -172,11 +184,42 @@ fn refreshBackgroundData(state: State<'_, AppState>) -> Result<Option<ScanResult
 #[allow(non_snake_case)]
 #[tauri::command]
 fn refreshPricing(state: State<'_, AppState>) -> Result<Vec<PricingCatalogEntry>, String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  refresh_pricing_catalog_from_openai(&conn)?;
-  recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
-  let catalog = load_catalog(&conn).map_err(|error| error.to_string())?;
+  let official_entries = match fetch_official_pricing_catalog() {
+    Ok(entries) => Some(entries),
+    Err(error) => {
+      log::warn!(
+        "Failed to refresh OpenAI API pricing from {OPENAI_API_PRICING_URL}: {error}; using bundled fallback pricing."
+      );
+      None
+    }
+  };
+  let catalog = refresh_pricing_catalog_for_state(state.inner(), official_entries.as_deref())?;
   refresh_daily_value_menu_bar(state.inner());
+  Ok(catalog)
+}
+
+fn refresh_pricing_catalog_for_state(
+  state: &AppState,
+  official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  let _mutation_guard = lock_usage_mutations(state);
+  let mut conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  refresh_pricing_catalog_atomically(&mut conn, official_entries)
+}
+
+fn refresh_pricing_catalog_atomically(
+  conn: &mut rusqlite::Connection,
+  official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  let transaction = conn
+    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    .map_err(|error| error.to_string())?;
+  apply_pricing_catalog_refresh(&transaction, official_entries)?;
+  recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
+  mark_pricing_value_resolution_repair_complete(&transaction)
+    .map_err(|error| error.to_string())?;
+  let catalog = load_catalog(&transaction).map_err(|error| error.to_string())?;
+  transaction.commit().map_err(|error| error.to_string())?;
   Ok(catalog)
 }
 
@@ -346,15 +389,11 @@ fn getSyncSettings(state: State<'_, AppState>) -> Result<SyncSettings, String> {
   get_sync_settings(&conn).map_err(|error| error.to_string())
 }
 
-#[allow(non_snake_case)]
-#[tauri::command(rename_all = "camelCase")]
-fn updateSyncSettings(
-  app: AppHandle,
-  state: State<'_, AppState>,
+fn save_normalized_sync_settings(
+  conn: &rusqlite::Connection,
   payload: SyncSettings,
-) -> Result<SyncSettings, String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  let current = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+) -> rusqlite::Result<SyncSettings> {
+  let current = get_sync_settings(conn)?;
   let auto_scan_interval_minutes = payload.auto_scan_interval_minutes.max(1);
   let updated = SyncSettings {
     codex_home: payload.codex_home,
@@ -382,7 +421,18 @@ fn updateSyncSettings(
     last_scan_completed_at: current.last_scan_completed_at,
     updated_at: current.updated_at,
   };
-  let saved = save_sync_settings(&conn, &updated).map_err(|error| error.to_string())?;
+  save_sync_settings(conn, &updated)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn updateSyncSettings(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  payload: SyncSettings,
+) -> Result<SyncSettings, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  let saved = save_normalized_sync_settings(&conn, payload).map_err(|error| error.to_string())?;
   refresh_daily_value_menu_bar(state.inner());
   apply_dock_icon_visibility(&app, &saved, state.daily_value_tray.is_some());
   Ok(saved)
@@ -437,8 +487,10 @@ where
   F: FnOnce(&Path, Option<String>) -> Result<ScanResult, String>,
 {
   let guard = try_acquire_flag(&state.scan_in_progress, "A scan is already running.")?;
+  let mutation_guard = lock_usage_mutations(&state);
 
   let result = scan(&state.db_path, codex_home);
+  drop(mutation_guard);
   drop(guard);
   refresh_daily_value_menu_bar_with_live_refresh(&state, allow_menu_bar_live_refresh);
   result
@@ -482,14 +534,45 @@ fn run_due_background_refresh(
 }
 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
-  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
-  let pricing_signature_before = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
-  seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
-  let pricing_signature_after = load_pricing_value_signature(&conn).map_err(|error| error.to_string())?;
-  if pricing_signature_before != pricing_signature_after {
-    recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
+  let transaction = conn
+    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    .map_err(|error| error.to_string())?;
+  let resolver_repair_pending =
+    pricing_value_resolution_repair_pending(&transaction).map_err(|error| error.to_string())?;
+  let pricing_signature_before =
+    load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
+  seed_pricing_catalog(&transaction).map_err(|error| error.to_string())?;
+  let pricing_signature_after =
+    load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
+  if resolver_repair_pending || pricing_signature_before != pricing_signature_after {
+    recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
+    mark_pricing_value_resolution_repair_complete(&transaction)
+      .map_err(|error| error.to_string())?;
   }
+  transaction.commit().map_err(|error| error.to_string())?;
+  Ok(())
+}
+
+fn pricing_value_resolution_repair_pending(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
+  let completed: i64 = conn.query_row(
+    "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+    params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+    |row| row.get(0),
+  )?;
+  Ok(completed == 0)
+}
+
+fn mark_pricing_value_resolution_repair_complete(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    INSERT INTO data_repairs (repair_key, completed_at)
+    VALUES (?1, ?2)
+    ON CONFLICT(repair_key) DO UPDATE SET completed_at = excluded.completed_at
+    ",
+    params![PRICING_VALUE_RESOLUTION_REPAIR_KEY, database::now_utc_string()],
+  )?;
   Ok(())
 }
 
@@ -1086,7 +1169,7 @@ fn load_latest_persisted_rate_limit_window(
       SELECT sample_timestamp, limit_id, limit_name, plan_type, window_start, resets_at, used_percent, remaining_percent
       FROM rate_limit_samples
       WHERE bucket = ?1 AND (?2 IS NULL OR source_kind = ?2)
-      ORDER BY sample_timestamp DESC
+      ORDER BY julianday(sample_timestamp) DESC, id DESC
       LIMIT 1
       ",
     )
@@ -1153,21 +1236,34 @@ fn load_persisted_live_rate_limits_for_source(
   source_kind: Option<&str>,
 ) -> Option<LiveRateLimitSnapshot> {
   let conn = open_connection(&state.db_path).ok()?;
-  let primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
+  let mut primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
     .ok()
     .flatten();
-  let secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
+  let mut secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
     .ok()
     .flatten();
-  if primary.is_none() && secondary.is_none() {
-    return None;
+  let primary_instant = primary
+    .as_ref()
+    .and_then(|window| DateTime::parse_from_rfc3339(&window.fetched_at).ok());
+  let secondary_instant = secondary
+    .as_ref()
+    .and_then(|window| DateTime::parse_from_rfc3339(&window.fetched_at).ok());
+  let newest_instant = [primary_instant.as_ref(), secondary_instant.as_ref()]
+    .into_iter()
+    .flatten()
+    .max()?;
+
+  if primary_instant.as_ref() != Some(newest_instant) {
+    primary = None;
+  }
+  if secondary_instant.as_ref() != Some(newest_instant) {
+    secondary = None;
   }
 
   let fetched_at = primary
     .as_ref()
     .map(|window| window.fetched_at.clone())
-    .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))
-    .unwrap_or_else(|| Local::now().to_rfc3339());
+    .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))?;
 
   Some(LiveRateLimitSnapshot {
     limit_id: primary
@@ -1204,13 +1300,10 @@ fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLim
 }
 
 fn refresh_rate_limit_history_if_idle(state: &AppState) {
-  let Ok(guard) = try_acquire_flag(&state.scan_in_progress, "A scan is already running.") else {
-    return;
-  };
-
-  let result = perform_incremental_scan(&state.db_path, None);
-  drop(guard);
-  if let Err(error) = result {
+  if let Err(error) = run_background_incremental_scan_if_idle(state.clone(), None) {
+    if error == "A scan is already running." {
+      return;
+    }
     log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
   }
 }
@@ -2040,6 +2133,7 @@ pub fn run() {
         app_handle: Some(app_handle.clone()),
         db_path,
         scan_in_progress: Arc::new(AtomicBool::new(false)),
+        usage_mutation_lock: Arc::new(Mutex::new(())),
         live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         daily_value_tray,
@@ -2115,6 +2209,61 @@ mod tests {
     DateTime::parse_from_rfc3339(value)
       .expect("parse test timestamp")
       .with_timezone(&chrono::Utc)
+  }
+
+  fn seed_scan_freshness(conn: &rusqlite::Connection, codex_home: &str) -> SyncSettings {
+    let initial = SyncSettings {
+      codex_home: Some(codex_home.to_string()),
+      ..get_sync_settings(conn).expect("load settings")
+    };
+    save_sync_settings(conn, &initial).expect("save initial source");
+
+    let settings = SyncSettings {
+      last_scan_started_at: Some("2026-07-10T08:00:00Z".to_string()),
+      last_scan_completed_at: Some("2026-07-10T08:01:00Z".to_string()),
+      ..get_sync_settings(conn).expect("reload initial source")
+    };
+    let saved = save_sync_settings(conn, &settings).expect("save scan freshness");
+    database::set_last_full_scan_completed(conn, "2026-07-10T08:01:00Z")
+      .expect("set full scan");
+    saved
+  }
+
+  #[test]
+  fn changing_codex_home_clears_scan_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = seed_scan_freshness(&conn, "/tmp/codex-home-before");
+
+    let changed = SyncSettings {
+      codex_home: Some("/tmp/codex-home-after".to_string()),
+      ..settings
+    };
+    let saved = save_normalized_sync_settings(&conn, changed).expect("save changed settings");
+
+    assert_eq!(saved.last_scan_started_at, None);
+    assert_eq!(saved.last_scan_completed_at, None);
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full scan"), None);
+  }
+
+  #[test]
+  fn unchanged_codex_home_preserves_scan_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = seed_scan_freshness(&conn, "/tmp/codex-home");
+
+    let saved = save_normalized_sync_settings(&conn, settings).expect("save unchanged source");
+
+    assert_eq!(saved.last_scan_started_at.as_deref(), Some("2026-07-10T08:00:00Z"));
+    assert_eq!(saved.last_scan_completed_at.as_deref(), Some("2026-07-10T08:01:00Z"));
+    assert_eq!(
+      get_last_full_scan_completed(&conn).expect("load full scan").as_deref(),
+      Some("2026-07-10T08:01:00Z")
+    );
   }
 
   #[test]
@@ -2316,6 +2465,7 @@ mod tests {
       app_handle: None,
       db_path: db_path.clone(),
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -2369,6 +2519,7 @@ mod tests {
     let conn = open_connection(&db_path).expect("open database");
     init_db(&conn).expect("init db");
     seed_pricing_catalog(&conn).expect("seed pricing");
+    mark_pricing_value_resolution_repair_complete(&conn).expect("mark resolver repair complete");
     let created_at = database::now_utc_string();
     conn
       .execute(
@@ -2412,6 +2563,77 @@ mod tests {
       .expect("load usage value");
 
     assert_eq!(value_usd, 123.45);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_gpt_56_aliases_when_resolver_repair_is_pending() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    let created_at = database::now_utc_string();
+    for (session_id, model_id, stale_value) in [
+      ("gpt-56-alias-exact", "gpt-5.6", 6.25),
+      ("gpt-56-alias-dated", "gpt-5.6-2026-07-09", 0.0),
+    ] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, ?2, 0, ?3, ?3)
+          ",
+          params![session_id, model_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', ?2,
+            0, 0, 1000000, 0, 1000000, ?3, 0, 0)
+          ",
+          params![session_id, model_id, stale_value],
+        )
+        .expect("insert usage event");
+    }
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let values = conn
+      .prepare("SELECT session_id, value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare usage values")
+      .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+      .expect("query usage values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect usage values");
+    let repair_completed: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("load repair marker");
+
+    assert_eq!(
+      values,
+      vec![
+        ("gpt-56-alias-dated".to_string(), 30.0),
+        ("gpt-56-alias-exact".to_string(), 30.0),
+      ]
+    );
+    assert_eq!(repair_completed, 1);
   }
 
   #[test]
@@ -2477,6 +2699,464 @@ mod tests {
   }
 
   #[test]
+  fn startup_database_prepare_recalculates_new_gpt_56_values() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET output_price_per_million = 6.25,
+            is_official = 1
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+      )
+      .expect("seed malformed GPT-5.6 Sol pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('gpt-56-startup-session', 'gpt-56-startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('gpt-56-startup-session', '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+          0, 0, 1000000, 0, 1000000, 0.0, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'gpt-56-startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 30.0);
+  }
+
+  #[test]
+  fn startup_database_prepare_rolls_back_pricing_when_recalculation_fails() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET output_price_per_million = 6.25,
+            is_official = 1,
+            note = 'malformed-official',
+            updated_at = 'malformed-official'
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+      )
+      .expect("seed malformed GPT-5.6 Sol pricing");
+    let created_at = database::now_utc_string();
+    for (session_id, sentinel_value) in [("recalc-a", 11.0), ("recalc-b", 22.0)] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?2, ?2)
+          ",
+          params![session_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+            0, 0, 1000000, 0, 1000000, ?2, 0, 0)
+          ",
+          params![session_id, sentinel_value],
+        )
+        .expect("insert usage event");
+    }
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_second_session_recalculation
+        BEFORE UPDATE OF value_usd ON usage_events
+        WHEN OLD.session_id = 'recalc-b'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected recalculation failure');
+        END;
+        ",
+      )
+      .expect("create failure trigger");
+    drop(conn);
+
+    let error = prepare_app_database(&db_path).expect_err("recalculation should fail");
+    assert!(error.contains("injected recalculation failure"));
+
+    let conn = open_connection(&db_path).expect("reopen failed database");
+    let (output_price, is_official): (f64, i64) = conn
+      .query_row(
+        "
+        SELECT output_price_per_million, is_official
+        FROM pricing_catalog
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load rolled back pricing");
+    let failed_values = conn
+      .prepare("SELECT session_id, value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare failed values")
+      .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+      .expect("query failed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect failed values");
+
+    assert_eq!(output_price, 6.25);
+    assert_eq!(is_official, 1);
+    assert_eq!(
+      failed_values,
+      vec![("recalc-a".to_string(), 11.0), ("recalc-b".to_string(), 22.0)]
+    );
+    assert!(pricing_value_resolution_repair_pending(&conn).expect("load rolled back repair marker"));
+
+    conn
+      .execute_batch("DROP TRIGGER fail_second_session_recalculation;")
+      .expect("drop failure trigger");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("retry prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen repaired database");
+    let repaired_output: f64 = conn
+      .query_row(
+        "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load repaired pricing");
+    let repaired_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare repaired values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query repaired values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect repaired values");
+
+    assert_eq!(repaired_output, 30.0);
+    assert_eq!(repaired_values, vec![30.0, 30.0]);
+    assert!(!pricing_value_resolution_repair_pending(&conn).expect("load completed repair marker"));
+  }
+
+  #[test]
+  fn pricing_refresh_rolls_back_catalog_values_and_marker_before_retry() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let mut conn = open_connection(&db_path).expect("open database");
+    let created_at = database::now_utc_string();
+    for (session_id, sentinel_value) in [("refresh-a", 11.0), ("refresh-b", 22.0)] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?2, ?2)
+          ",
+          params![session_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+            0, 0, 1000000, 0, 1000000, ?2, 0, 0)
+          ",
+          params![session_id, sentinel_value],
+        )
+        .expect("insert usage event");
+    }
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+      )
+      .expect("clear repair marker");
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_second_refresh_recalculation
+        BEFORE UPDATE OF value_usd ON usage_events
+        WHEN OLD.session_id = 'refresh-b'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected refresh failure');
+        END;
+        ",
+      )
+      .expect("create failure trigger");
+    let mut official_sol = load_catalog(&conn)
+      .expect("load catalog")
+      .into_iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load GPT-5.6 Sol");
+    official_sol.output_price_per_million = 42.0;
+    official_sol.is_official = true;
+    official_sol.note = Some("atomic refresh test".to_string());
+    official_sol.updated_at = "atomic-refresh-test".to_string();
+    let official_entries = vec![official_sol];
+
+    let error = refresh_pricing_catalog_atomically(&mut conn, Some(&official_entries))
+      .expect_err("refresh should fail");
+    assert!(error.contains("injected refresh failure"));
+
+    let failed_output: f64 = conn
+      .query_row(
+        "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load rolled back pricing");
+    let failed_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare failed values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query failed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect failed values");
+    assert_eq!(failed_output, 30.0);
+    assert_eq!(failed_values, vec![11.0, 22.0]);
+    assert!(pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
+
+    conn
+      .execute_batch("DROP TRIGGER fail_second_refresh_recalculation;")
+      .expect("drop failure trigger");
+    let catalog = refresh_pricing_catalog_atomically(&mut conn, Some(&official_entries))
+      .expect("retry refresh");
+    let refreshed_sol = catalog
+      .iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load refreshed GPT-5.6 Sol");
+    let refreshed_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare refreshed values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query refreshed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect refreshed values");
+
+    assert_eq!(refreshed_sol.output_price_per_million, 42.0);
+    assert_eq!(refreshed_values, vec![42.0, 42.0]);
+    assert!(!pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
+  }
+
+  #[test]
+  fn pricing_refresh_waits_for_active_scan_before_recalculating() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('refresh-race', 'refresh-race', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('refresh-race', '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+          0, 0, 1000000, 0, 1000000, 30.0, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    let mut official_sol = load_catalog(&conn)
+      .expect("load catalog")
+      .into_iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load GPT-5.6 Sol");
+    official_sol.output_price_per_million = 42.0;
+    official_sol.is_official = true;
+    official_sol.note = Some("serialized refresh test".to_string());
+    official_sol.updated_at = "serialized-refresh-test".to_string();
+    drop(conn);
+
+    let state = AppState {
+      app_handle: None,
+      db_path: db_path.clone(),
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+    let (scan_loaded_sender, scan_loaded_receiver) = std::sync::mpsc::channel();
+    let (release_scan_sender, release_scan_receiver) = std::sync::mpsc::channel();
+    let scan_state = state.clone();
+    let scan_thread = std::thread::spawn(move || {
+      run_scan_if_idle_with_live_refresh(scan_state, None, false, |db_path, _| {
+        let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+        let stale_output_price: f64 = conn
+          .query_row(
+            "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| row.get(0),
+          )
+          .map_err(|error| error.to_string())?;
+        scan_loaded_sender.send(()).map_err(|error| error.to_string())?;
+        release_scan_receiver.recv().map_err(|error| error.to_string())?;
+        conn
+          .execute(
+            "UPDATE usage_events SET value_usd = ?1 WHERE session_id = 'refresh-race'",
+            params![stale_output_price],
+          )
+          .map_err(|error| error.to_string())?;
+        Ok(ScanResult {
+          codex_home: "test".to_string(),
+          scanned_files: 1,
+          imported_sessions: 1,
+          updated_sessions: 1,
+          missing_sessions: 0,
+          last_completed_at: database::now_utc_string(),
+        })
+      })
+    });
+    scan_loaded_receiver.recv().expect("scan loaded stale pricing");
+    let release_thread = std::thread::spawn(move || {
+      std::thread::sleep(Duration::from_millis(100));
+      release_scan_sender.send(()).expect("release scan");
+    });
+
+    refresh_pricing_catalog_for_state(&state, Some(&[official_sol]))
+      .expect("refresh pricing after scan");
+    release_thread.join().expect("join release thread");
+    scan_thread
+      .join()
+      .expect("join scan thread")
+      .expect("complete scan");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'refresh-race'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load final value");
+    assert_eq!(value_usd, 42.0);
+  }
+
+  #[test]
+  fn history_fallback_scan_waits_for_usage_mutation_lock() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let codex_home = directory.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("create Codex home");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = SyncSettings {
+      codex_home: Some(codex_home.to_string_lossy().to_string()),
+      ..get_sync_settings(&conn).expect("load settings")
+    };
+    save_sync_settings(&conn, &settings).expect("save settings");
+    drop(conn);
+
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+    let mutation_guard = lock_usage_mutations(&state);
+    let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
+    let scan_state = state.clone();
+    let scan_thread = std::thread::spawn(move || {
+      refresh_rate_limit_history_if_idle(&scan_state);
+      completed_sender.send(()).expect("report completion");
+    });
+
+    let completed_while_locked = completed_receiver
+      .recv_timeout(Duration::from_millis(100))
+      .is_ok();
+    drop(mutation_guard);
+    if !completed_while_locked {
+      completed_receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("history scan should complete after unlock");
+    }
+    scan_thread.join().expect("join history scan");
+
+    assert!(!completed_while_locked, "history scan bypassed the shared usage mutation lock");
+  }
+
+  #[test]
   fn menu_bar_title_parts_can_use_local_live_rate_limits_without_refresh() {
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");
@@ -2513,6 +3193,7 @@ mod tests {
       app_handle: None,
       db_path,
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -2575,6 +3256,7 @@ mod tests {
       app_handle: None,
       db_path,
       scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
@@ -2589,6 +3271,141 @@ mod tests {
       snapshot.primary.as_ref().map(|window| window.remaining_percent),
       Some(88)
     );
+  }
+
+  #[test]
+  fn persisted_live_rate_limits_order_mixed_rfc3339_offsets_by_instant() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 10,
+          remaining_percent: 90,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T14:00:00+08:00".to_string()),
+          window_start: Some("2026-07-10T09:00:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T09:00:00+08:00".to_string(),
+      },
+    )
+    .expect("insert earlier offset sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 20,
+          remaining_percent: 80,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T07:00:00Z".to_string()),
+          window_start: Some("2026-07-10T02:00:00Z".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T02:00:00Z".to_string(),
+      },
+    )
+    .expect("insert later UTC sample");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = load_persisted_live_rate_limits(&state).expect("load persisted sample");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-10T02:00:00Z");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(80)
+    );
+  }
+
+  #[test]
+  fn persisted_live_rate_limits_do_not_combine_windows_from_different_samples() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 30,
+          remaining_percent: 70,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T06:00:00Z".to_string()),
+          window_start: Some("2026-07-10T01:00:00Z".to_string()),
+        }),
+        secondary: Some(RateLimitWindowSnapshot {
+          used_percent: 40,
+          remaining_percent: 60,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-07-17T01:00:00Z".to_string()),
+          window_start: Some("2026-07-10T01:00:00Z".to_string()),
+        }),
+        fetched_at: "2026-07-10T01:00:00Z".to_string(),
+      },
+    )
+    .expect("insert older complete sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 25,
+          remaining_percent: 75,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T07:00:00Z".to_string()),
+          window_start: Some("2026-07-10T02:00:00Z".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T02:00:00Z".to_string(),
+      },
+    )
+    .expect("insert newer primary-only sample");
+    drop(conn);
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: Arc::new(Mutex::new(None)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+
+    let snapshot = load_persisted_live_rate_limits(&state).expect("load persisted sample");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-10T02:00:00Z");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(75)
+    );
+    assert!(snapshot.secondary.is_none());
   }
 
   #[test]

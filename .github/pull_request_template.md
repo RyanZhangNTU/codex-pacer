@@ -11,9 +11,10 @@ If this public repository has just been initialized and `develop` is not availab
 
 ## Verification
 
+- [ ] `npm test`
 - [ ] `npm run lint`
 - [ ] `npm run build`
-- [ ] `cargo test`
+- [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked`
 
 ## Checklist
 

@@ -3,14 +3,15 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use chrono::{Local, LocalResult, TimeZone, Timelike};
+use chrono::{DateTime, FixedOffset, Local, LocalResult, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Deserialize;
 use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::database::{
   bool_to_i64, get_sync_settings, init_db, now_utc_string, open_connection,
-  replace_session_rate_limit_samples, set_last_full_scan_completed, set_last_scan_completed, set_last_scan_started,
+  replace_session_rate_limit_samples, set_last_scan_started_for_source, set_scan_completed_for_source,
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
@@ -30,6 +31,9 @@ struct ParsedSession {
   raw_session: RawSession,
   snapshots: Vec<UsageSnapshot>,
   rate_limit_samples: Vec<RateLimitSampleRecord>,
+  explicit_forked_from_id: Option<String>,
+  explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
+  inherited_token_snapshot_cutoff: usize,
   explicit_fast_mode: Option<bool>,
   latest_plan_type: Option<String>,
   last_model_id: Option<String>,
@@ -39,6 +43,8 @@ struct ParsedSession {
 struct SessionMetaCandidate {
   session_id: String,
   parent_session_id: Option<String>,
+  explicit_forked_from_id: Option<String>,
+  explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
   agent_nickname: Option<String>,
   agent_role: Option<String>,
 }
@@ -62,6 +68,7 @@ enum SessionParseError {
 }
 
 const TOKEN_USAGE_MONOTONIC_REPAIR_KEY: &str = "token_usage_monotonic_v2";
+const TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY: &str = "token_usage_fork_replay_v3";
 const RATE_LIMIT_SAMPLE_BACKFILL_KEY: &str = "rate_limit_sample_backfill_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,36 +92,82 @@ fn perform_scan_with_scope(
 ) -> Result<ScanResult, String> {
   let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
   init_db(&conn).map_err(|error| error.to_string())?;
+  let scan_source_selector = get_sync_settings(&conn)
+    .map_err(|error| error.to_string())?
+    .codex_home;
   seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
 
-  let codex_home = resolve_codex_home(&conn, codex_home_override)?;
+  let home_dir = dirs::home_dir();
+  let codex_home = validate_codex_home(
+    resolve_codex_home(
+      scan_source_selector.as_deref(),
+      codex_home_override,
+      home_dir.as_deref(),
+    )?,
+    home_dir.as_deref(),
+  )?;
+  let track_scan_freshness = freshness_source_matches(
+    scan_source_selector.as_deref(),
+    &codex_home,
+    home_dir.as_deref(),
+  );
+  let resolved_codex_home = codex_home.to_string_lossy().to_string();
   let scan_started_at = now_utc_string();
-  set_last_scan_started(&conn, &scan_started_at).map_err(|error| error.to_string())?;
+  let scan_freshness_start = if track_scan_freshness {
+    set_last_scan_started_for_source(
+      &conn,
+      &scan_started_at,
+      scan_source_selector.as_deref(),
+      &resolved_codex_home,
+    )
+    .map_err(|error| error.to_string())?
+  } else {
+    Default::default()
+  };
 
   let import_state = load_import_state(&conn).map_err(|error| error.to_string())?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
-  let needs_token_usage_repair_sweep =
+  let pending_rate_limit_repair_paths =
+    load_pending_data_repair_paths(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY).map_err(|error| error.to_string())?;
+  let needs_token_usage_v2_repair_sweep =
     data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
-  let pending_token_repair_paths =
+  let pending_token_v2_repair_paths =
     load_pending_data_repair_paths(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
-  let effective_scope = if requested_scope == ScanScope::Full
-    || import_state.is_empty()
-    || needs_rate_limit_backfill
-    || needs_token_usage_repair_sweep
-  {
-    ScanScope::Full
-  } else {
-    ScanScope::Incremental
-  };
+  let needs_fork_replay_v3_repair_sweep =
+    data_repair_is_pending(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let pending_fork_replay_v3_repair_paths =
+    load_pending_data_repair_paths(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let pending_token_v2_repair_session_ids =
+    pending_repair_session_ids(&import_state, &pending_token_v2_repair_paths);
+  let pending_fork_replay_v3_repair_session_ids =
+    pending_repair_session_ids(&import_state, &pending_fork_replay_v3_repair_paths);
+  let mut pending_repair_session_ids =
+    pending_repair_session_ids(&import_state, &pending_rate_limit_repair_paths);
+  pending_repair_session_ids.extend(pending_token_v2_repair_session_ids.iter().cloned());
+  pending_repair_session_ids.extend(pending_fork_replay_v3_repair_session_ids.iter().cloned());
+  let needs_token_usage_repair_sweep =
+    needs_token_usage_v2_repair_sweep || needs_fork_replay_v3_repair_sweep;
+  let effective_scope = effective_scan_scope(
+    requested_scope,
+    import_state.is_empty(),
+    needs_rate_limit_backfill,
+    needs_token_usage_repair_sweep,
+    scan_freshness_start.full_scan_required,
+  );
 
-  let session_files = match effective_scope {
-    ScanScope::Full => collect_session_files(&codex_home),
-    ScanScope::Incremental => collect_active_session_files(&codex_home),
+  let (session_files, active_paths_kept_for_archive_retry) = match effective_scope {
+    ScanScope::Full => (collect_session_files(&codex_home), HashSet::new()),
+    ScanScope::Incremental => {
+      collect_incremental_session_files(&codex_home, &import_state, &pending_repair_session_ids)
+    }
   };
-  let present_paths: HashSet<String> = session_files
+  let session_source_paths =
+    load_session_source_paths(&conn, &import_state, &session_files).map_err(|error| error.to_string())?;
+  let mut present_paths: HashSet<String> = session_files
     .iter()
     .map(|item| item.path.to_string_lossy().to_string())
     .collect();
+  present_paths.extend(active_paths_kept_for_archive_retry);
 
   let mut changed_sessions = 0usize;
   let mut imported_session_ids = HashSet::new();
@@ -122,7 +175,23 @@ fn perform_scan_with_scope(
   let mut changed_files = Vec::new();
   for session_file in &session_files {
     let source_path = session_file.path.to_string_lossy().to_string();
-    if needs_rate_limit_backfill || needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path)
+    let session_id = import_state
+      .get(&source_path)
+      .and_then(|state| state.session_id.clone())
+      .or_else(|| fallback_session_id_from_filename(&session_file.path));
+    let session_has_pending_token_v2_repair = session_id
+      .as_ref()
+      .is_some_and(|session_id| pending_token_v2_repair_session_ids.contains(session_id));
+    let session_has_pending_fork_replay_v3_repair = session_id
+      .as_ref()
+      .is_some_and(|session_id| pending_fork_replay_v3_repair_session_ids.contains(session_id));
+    if needs_rate_limit_backfill
+      || pending_rate_limit_repair_paths.contains(&source_path)
+      || needs_token_usage_repair_sweep
+      || pending_token_v2_repair_paths.contains(&source_path)
+      || pending_fork_replay_v3_repair_paths.contains(&source_path)
+      || session_has_pending_token_v2_repair
+      || session_has_pending_fork_replay_v3_repair
     {
       changed_files.push(session_file);
       continue;
@@ -143,32 +212,70 @@ fn perform_scan_with_scope(
     changed_files.push(session_file);
   }
 
+  let titles = if effective_scope == ScanScope::Full || !changed_files.is_empty() {
+    load_session_index(&codex_home)
+  } else {
+    HashMap::new()
+  };
+
   let mut topology_dirty = false;
   let mut new_root_session_ids = Vec::new();
+  let mut skipped_session_files = false;
+  let mut parent_snapshot_cache: HashMap<String, Option<Vec<UsageSnapshot>>> = HashMap::new();
   if !changed_files.is_empty() {
-    let titles = load_session_index(&codex_home);
     let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
     let existing_relations = load_existing_session_relations(&conn).map_err(|error| error.to_string())?;
 
     for session_file in changed_files {
       let source_path = session_file.path.to_string_lossy().to_string();
-      let file_needs_token_repair =
-        needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path);
-      let parsed = match parse_session_file(session_file, &titles) {
+      let file_needs_rate_limit_repair =
+        needs_rate_limit_backfill || pending_rate_limit_repair_paths.contains(&source_path);
+      let mut file_needs_token_v2_repair =
+        needs_token_usage_v2_repair_sweep || pending_token_v2_repair_paths.contains(&source_path);
+      let mut file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
+        || pending_fork_replay_v3_repair_paths.contains(&source_path);
+      let mut parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
         Err(error) => {
+          skipped_session_files = true;
           log::warn!(
             "Skipping unreadable session file {}: {}",
             session_file.path.display(),
             error
           );
-          if file_needs_token_repair {
+          if file_needs_token_v2_repair {
             mark_data_repair_file_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path, &error)
+              .map_err(|error| error.to_string())?;
+          }
+          if file_needs_fork_replay_v3_repair {
+            mark_data_repair_file_pending(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path, &error)
+              .map_err(|error| error.to_string())?;
+          }
+          if file_needs_rate_limit_repair {
+            mark_data_repair_file_pending(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &source_path, &error)
               .map_err(|error| error.to_string())?;
           }
           continue;
         }
       };
+      let replay_parent_unavailable = assign_inherited_token_snapshot_cutoff(
+        &mut parsed,
+        &session_source_paths,
+        &mut parent_snapshot_cache,
+      );
+      let related_pending_token_v2_paths = pending_repair_paths_for_session(
+        &import_state,
+        &pending_token_v2_repair_paths,
+        &parsed.raw_session.session_id,
+      );
+      let related_pending_fork_replay_v3_paths = pending_repair_paths_for_session(
+        &import_state,
+        &pending_fork_replay_v3_repair_paths,
+        &parsed.raw_session.session_id,
+      );
+      file_needs_token_v2_repair |= !related_pending_token_v2_paths.is_empty();
+      file_needs_fork_replay_v3_repair |=
+        replay_parent_unavailable || !related_pending_fork_replay_v3_paths.is_empty();
       imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
       match classify_topology_maintenance(
@@ -186,21 +293,65 @@ fn perform_scan_with_scope(
       }
 
       persist_session(&mut conn, session_file, &parsed, &catalog).map_err(|error| error.to_string())?;
-      if file_needs_token_repair {
+      if file_needs_rate_limit_repair {
+        clear_pending_data_repair_file(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &source_path)
+          .map_err(|error| error.to_string())?;
+      }
+      if file_needs_token_v2_repair {
         clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
           .map_err(|error| error.to_string())?;
+        for related_source_path in related_pending_token_v2_paths {
+          clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &related_source_path)
+            .map_err(|error| error.to_string())?;
+        }
+      }
+      if file_needs_fork_replay_v3_repair {
+        if replay_parent_unavailable {
+          mark_data_repair_file_pending(
+            &conn,
+            TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
+            &source_path,
+            "fork replay parent unavailable",
+          )
+            .map_err(|error| error.to_string())?;
+        } else {
+          clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path)
+            .map_err(|error| error.to_string())?;
+          for related_source_path in related_pending_fork_replay_v3_paths {
+            clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &related_source_path)
+              .map_err(|error| error.to_string())?;
+          }
+        }
       }
       changed_sessions += 1;
     }
   }
 
   if effective_scope == ScanScope::Full {
-    mark_missing_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
-    prune_import_state(&conn, &present_paths).map_err(|error| error.to_string())?;
+    refresh_session_titles(&conn, &titles).map_err(|error| error.to_string())?;
+  }
+
+  if effective_scope == ScanScope::Full {
+    // A full scan that is required for freshness is authoritative even on retry:
+    // paths outside the resolved source must not remain active just because they still exist.
+    let reconcile_existing_absent_sources = scan_freshness_start.full_scan_required;
+    mark_missing_sources(
+      &conn,
+      &present_paths,
+      reconcile_existing_absent_sources,
+    )
+    .map_err(|error| error.to_string())?;
+    prune_import_state(
+      &conn,
+      &present_paths,
+      reconcile_existing_absent_sources,
+    )
+    .map_err(|error| error.to_string())?;
   } else {
     mark_missing_active_sources(&conn, &present_paths).map_err(|error| error.to_string())?;
   }
-  if topology_dirty {
+  let topology_needs_repair = conversation_links_need_repair(&conn).map_err(|error| error.to_string())?;
+  if topology_dirty || topology_needs_repair {
     recompute_conversation_links(&conn).map_err(|error| error.to_string())?;
   } else if !new_root_session_ids.is_empty() {
     upsert_root_conversation_links(&conn, &new_root_session_ids).map_err(|error| error.to_string())?;
@@ -219,14 +370,25 @@ fn perform_scan_with_scope(
     mark_data_repair_complete(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
-  if needs_token_usage_repair_sweep {
+  if needs_token_usage_v2_repair_sweep {
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
-  if effective_scope == ScanScope::Full {
-    set_last_full_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
+  if needs_fork_replay_v3_repair_sweep {
+    mark_data_repair_complete(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &completed_at)
+      .map_err(|error| error.to_string())?;
   }
-  set_last_scan_completed(&conn, &completed_at).map_err(|error| error.to_string())?;
+  if scan_freshness_start.recorded {
+    set_scan_completed_for_source(
+      &conn,
+      &completed_at,
+      scan_source_selector.as_deref(),
+      &resolved_codex_home,
+      effective_scope == ScanScope::Full && !skipped_session_files,
+      effective_scope == ScanScope::Full && skipped_session_files,
+    )
+    .map_err(|error| error.to_string())?;
+  }
 
   Ok(ScanResult {
     codex_home: codex_home.to_string_lossy().to_string(),
@@ -236,6 +398,25 @@ fn perform_scan_with_scope(
     missing_sessions,
     last_completed_at: completed_at,
   })
+}
+
+fn effective_scan_scope(
+  requested_scope: ScanScope,
+  import_state_is_empty: bool,
+  needs_rate_limit_backfill: bool,
+  needs_token_usage_repair_sweep: bool,
+  resolved_source_requires_full_scan: bool,
+) -> ScanScope {
+  if requested_scope == ScanScope::Full
+    || import_state_is_empty
+    || needs_rate_limit_backfill
+    || needs_token_usage_repair_sweep
+    || resolved_source_requires_full_scan
+  {
+    ScanScope::Full
+  } else {
+    ScanScope::Incremental
+  }
 }
 
 fn import_state_session_id_mismatch(state: &ImportState, session_file: &SessionFile) -> bool {
@@ -328,16 +509,18 @@ pub fn recalculate_all_session_values(conn: &Connection) -> rusqlite::Result<()>
   Ok(())
 }
 
-fn resolve_codex_home(conn: &Connection, override_value: Option<String>) -> Result<PathBuf, String> {
+fn resolve_codex_home(
+  persisted_codex_home: Option<&str>,
+  override_value: Option<String>,
+  home_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
   if let Some(path) = override_value {
     return Ok(PathBuf::from(path));
   }
 
-  if let Ok(settings) = get_sync_settings(conn) {
-    if let Some(path) = settings.codex_home {
-      if !path.trim().is_empty() {
-        return Ok(PathBuf::from(path));
-      }
+  if let Some(path) = persisted_codex_home {
+    if !path.trim().is_empty() {
+      return Ok(PathBuf::from(path));
     }
   }
 
@@ -347,11 +530,46 @@ fn resolve_codex_home(conn: &Connection, override_value: Option<String>) -> Resu
     }
   }
 
-  let Some(home_dir) = dirs::home_dir() else {
+  let Some(home_dir) = home_dir else {
     return Err("Unable to resolve home directory for CODEX_HOME fallback.".to_string());
   };
 
   Ok(home_dir.join(".codex"))
+}
+
+fn freshness_source_matches(
+  persisted_codex_home: Option<&str>,
+  scanned_codex_home: &Path,
+  home_dir: Option<&Path>,
+) -> bool {
+  resolve_codex_home(persisted_codex_home, None, home_dir)
+    .and_then(|path| expand_home_prefix(path, home_dir))
+    .map(|path| path == scanned_codex_home)
+    .unwrap_or(false)
+}
+
+fn validate_codex_home(path: PathBuf, home_dir: Option<&Path>) -> Result<PathBuf, String> {
+  let expanded = expand_home_prefix(path, home_dir)?;
+  if !expanded.is_dir() {
+    return Err(format!(
+      "Codex home is not an existing directory: {}",
+      expanded.display()
+    ));
+  }
+  Ok(expanded)
+}
+
+fn expand_home_prefix(path: PathBuf, home_dir: Option<&Path>) -> Result<PathBuf, String> {
+  let Ok(suffix) = path.strip_prefix(Path::new("~")) else {
+    return Ok(path);
+  };
+  let Some(home_dir) = home_dir else {
+    return Err(format!(
+      "Unable to resolve home directory for Codex home path: {}",
+      path.display()
+    ));
+  };
+  Ok(home_dir.join(suffix))
 }
 
 fn load_session_index(codex_home: &Path) -> HashMap<String, String> {
@@ -380,6 +598,16 @@ fn load_session_index(codex_home: &Path) -> HashMap<String, String> {
   }
 
   titles
+}
+
+fn refresh_session_titles(conn: &Connection, titles: &HashMap<String, String>) -> rusqlite::Result<()> {
+  for (session_id, title) in titles {
+    conn.execute(
+      "UPDATE sessions SET title = ?1 WHERE session_id = ?2",
+      params![title, session_id],
+    )?;
+  }
+  Ok(())
 }
 
 fn collect_session_files(codex_home: &Path) -> Vec<SessionFile> {
@@ -413,6 +641,61 @@ fn collect_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
   }
   files.sort_by(|left, right| left.path.cmp(&right.path));
   files
+}
+
+fn collect_incremental_session_files(
+  codex_home: &Path,
+  import_state: &HashMap<String, ImportState>,
+  pending_repair_session_ids: &HashSet<String>,
+) -> (Vec<SessionFile>, HashSet<String>) {
+  let mut files = collect_active_session_files(codex_home);
+  let mut collected_paths = files
+    .iter()
+    .map(|session_file| session_file.path.to_string_lossy().to_string())
+    .collect::<HashSet<_>>();
+  let mut active_paths_kept_for_archive_retry = HashSet::new();
+
+  for state in import_state.values() {
+    if state.source_bucket == "archived" {
+      let Some(session_file) = session_file_from_path(
+        PathBuf::from(&state.source_path),
+        "archived",
+      ) else {
+        continue;
+      };
+      let session_has_pending_repair = state
+        .session_id
+        .as_ref()
+        .is_some_and(|session_id| pending_repair_session_ids.contains(session_id));
+      if state.file_size == session_file.file_size
+        && state.file_mtime_ms == session_file.file_mtime_ms
+        && !session_has_pending_repair
+      {
+        continue;
+      }
+      if collected_paths.insert(session_file.path.to_string_lossy().to_string()) {
+        files.push(session_file);
+      }
+      continue;
+    }
+    if state.source_bucket != "active" || collected_paths.contains(&state.source_path) {
+      continue;
+    }
+    let Some(filename) = Path::new(&state.source_path).file_name() else {
+      continue;
+    };
+    let archived_path = codex_home.join("archived_sessions").join(filename);
+    let Some(session_file) = session_file_from_path(archived_path, "archived") else {
+      continue;
+    };
+    active_paths_kept_for_archive_retry.insert(state.source_path.clone());
+    if collected_paths.insert(session_file.path.to_string_lossy().to_string()) {
+      files.push(session_file);
+    }
+  }
+
+  files.sort_by(|left, right| left.path.cmp(&right.path));
+  (files, active_paths_kept_for_archive_retry)
 }
 
 fn session_file_from_path(path: PathBuf, bucket: &str) -> Option<SessionFile> {
@@ -465,6 +748,8 @@ fn parse_session_file_once(
   let mut current_model: Option<String> = None;
   let mut agent_nickname: Option<String> = None;
   let mut agent_role: Option<String> = None;
+  let mut explicit_forked_from_id: Option<String> = None;
+  let mut explicit_fork_timestamp: Option<DateTime<FixedOffset>> = None;
   let mut explicit_fast_mode: Option<bool> = None;
   let mut latest_plan_type: Option<String> = None;
   let mut snapshots = Vec::new();
@@ -473,7 +758,10 @@ fn parse_session_file_once(
   let mut first_session_meta: Option<SessionMetaCandidate> = None;
   let mut matching_session_meta: Option<SessionMetaCandidate> = None;
 
-  for line in BufReader::new(file).lines().map_while(Result::ok) {
+  for line_result in BufReader::new(file).lines() {
+    let line = line_result.map_err(|error| {
+      SessionParseError::Fatal(format!("Failed to read {}: {error}", session_file.path.display()))
+    })?;
     if line.contains("\"fast_mode\":true") || line.contains("\"quick_mode\":true") {
       explicit_fast_mode = Some(true);
     }
@@ -506,10 +794,12 @@ fn parse_session_file_once(
     match value.get("type").and_then(Value::as_str).unwrap_or_default() {
       "session_meta" => {
         let payload = value.get("payload").unwrap_or(&Value::Null);
-        let parent = payload
+        let candidate_explicit_forked_from_id = payload
           .get("forked_from_id")
           .and_then(Value::as_str)
-          .map(ToString::to_string)
+          .map(ToString::to_string);
+        let parent = candidate_explicit_forked_from_id
+          .clone()
           .or_else(|| {
             payload
               .get("source")
@@ -519,6 +809,10 @@ fn parse_session_file_once(
               .and_then(Value::as_str)
               .map(ToString::to_string)
           });
+        let candidate_explicit_fork_timestamp = candidate_explicit_forked_from_id
+          .as_ref()
+          .and_then(|_| timestamp.as_deref())
+          .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok());
 
         let nickname = payload
           .get("agent_nickname")
@@ -552,6 +846,8 @@ fn parse_session_file_once(
           let candidate = SessionMetaCandidate {
             session_id: id.to_string(),
             parent_session_id: parent,
+            explicit_forked_from_id: candidate_explicit_forked_from_id,
+            explicit_fork_timestamp: candidate_explicit_fork_timestamp,
             agent_nickname: nickname,
             agent_role: role,
           };
@@ -595,6 +891,16 @@ fn parse_session_file_once(
           reasoning_output_tokens: read_i64(total_usage, "reasoning_output_tokens"),
           total_tokens: read_total_tokens(total_usage),
         };
+        let last_token_usage = info
+          .get("last_token_usage")
+          .filter(|last_usage| !last_usage.is_null())
+          .map(|last_usage| TokenUsage {
+            input_tokens: read_i64(last_usage, "input_tokens"),
+            cached_input_tokens: read_i64(last_usage, "cached_input_tokens"),
+            output_tokens: read_i64(last_usage, "output_tokens"),
+            reasoning_output_tokens: read_i64(last_usage, "reasoning_output_tokens"),
+            total_tokens: read_total_tokens(last_usage),
+          });
 
         let plan_type = payload
           .get("rate_limits")
@@ -619,6 +925,7 @@ fn parse_session_file_once(
           timestamp: sample_timestamp,
           model_id,
           usage,
+          last_token_usage,
           plan_type,
           limit_id,
           limit_name,
@@ -632,6 +939,8 @@ fn parse_session_file_once(
   if let Some(candidate) = matching_session_meta.or(first_session_meta) {
     session_id = candidate.session_id;
     parent_session_id = candidate.parent_session_id.or(parent_session_id);
+    explicit_forked_from_id = candidate.explicit_forked_from_id;
+    explicit_fork_timestamp = candidate.explicit_fork_timestamp;
     agent_nickname = candidate.agent_nickname.or(agent_nickname);
     agent_role = candidate.agent_role.or(agent_role);
   }
@@ -673,6 +982,9 @@ fn parse_session_file_once(
     },
     snapshots,
     rate_limit_samples,
+    explicit_forked_from_id,
+    explicit_fork_timestamp,
+    inherited_token_snapshot_cutoff: 0,
     explicit_fast_mode,
     latest_plan_type,
     last_model_id: last_model_id.or_else(|| Some("unknown".to_string())),
@@ -707,6 +1019,354 @@ fn looks_like_session_id(value: &str) -> bool {
     .all(|(segment, expected_len)| {
       segment.len() == *expected_len && segment.chars().all(|character| character.is_ascii_hexdigit())
     })
+}
+
+fn load_session_source_paths(
+  conn: &Connection,
+  import_state: &HashMap<String, ImportState>,
+  session_files: &[SessionFile],
+) -> rusqlite::Result<HashMap<String, PathBuf>> {
+  let mut source_paths = HashMap::new();
+  let mut stmt = conn.prepare(
+    "SELECT session_id, source_path FROM sessions WHERE source_path IS NOT NULL",
+  )?;
+  let rows = stmt.query_map([], |row| {
+    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+  })?;
+
+  for row in rows {
+    let (session_id, source_path) = row?;
+    source_paths.insert(session_id, PathBuf::from(source_path));
+  }
+  drop(stmt);
+
+  for state in import_state.values() {
+    let Some(session_id) = state.session_id.as_ref() else {
+      continue;
+    };
+    source_paths.insert(session_id.clone(), PathBuf::from(&state.source_path));
+  }
+
+  for session_file in session_files {
+    let Some(session_id) = fallback_session_id_from_filename(&session_file.path) else {
+      continue;
+    };
+    source_paths.insert(session_id, session_file.path.clone());
+  }
+
+  Ok(source_paths)
+}
+
+fn assign_inherited_token_snapshot_cutoff(
+  parsed: &mut ParsedSession,
+  session_source_paths: &HashMap<String, PathBuf>,
+  parent_snapshot_cache: &mut HashMap<String, Option<Vec<UsageSnapshot>>>,
+) -> bool {
+  let Some(parent_session_id) = parsed
+    .explicit_forked_from_id
+    .as_deref()
+    .filter(|session_id| !session_id.trim().is_empty())
+  else {
+    return false;
+  };
+  let Some(fork_timestamp) = parsed.explicit_fork_timestamp else {
+    return false;
+  };
+
+  if !parent_snapshot_cache.contains_key(parent_session_id) {
+    let parent_snapshots = match session_source_paths.get(parent_session_id) {
+      Some(source_path) => match read_parent_replay_snapshots(source_path, parent_session_id) {
+        Ok(snapshots) => Some(snapshots),
+        Err(()) => {
+          log::warn!(
+            "Replay parent unavailable: child_id={}, parent_id={}, source_path={}",
+            parsed.raw_session.session_id,
+            parent_session_id,
+            source_path.display()
+          );
+          None
+        }
+      },
+      None => {
+        log::warn!(
+          "Replay parent unavailable: child_id={}, parent_id={}",
+          parsed.raw_session.session_id,
+          parent_session_id
+        );
+        None
+      }
+    };
+    parent_snapshot_cache.insert(parent_session_id.to_string(), parent_snapshots);
+  }
+
+  let Some(parent_snapshots) = parent_snapshot_cache
+    .get(parent_session_id)
+    .and_then(Option::as_deref)
+  else {
+    return true;
+  };
+
+  parsed.inherited_token_snapshot_cutoff = replayed_child_snapshot_cutoff(
+    parent_snapshots,
+    &parsed.snapshots,
+    Some(fork_timestamp),
+  );
+  false
+}
+
+fn read_parent_replay_snapshots(
+  source_path: &Path,
+  requested_parent_id: &str,
+) -> Result<Vec<UsageSnapshot>, ()> {
+  let filename_session_id = fallback_session_id_from_filename(source_path);
+  if filename_session_id
+    .as_deref()
+    .is_some_and(|session_id| session_id != requested_parent_id)
+  {
+    return Err(());
+  }
+
+  let file = File::open(source_path).map_err(|_| ())?;
+  let mut first_session_meta_id: Option<String> = None;
+  let mut snapshots = Vec::new();
+
+  for line_result in BufReader::new(file).lines() {
+    let line = line_result.map_err(|_| ())?;
+    if !line.contains("\"session_meta\"") && !line.contains("\"token_count\"") {
+      continue;
+    }
+
+    let envelope = serde_json::from_str::<ReplayParentLineEnvelope<'_>>(&line).map_err(|_| ())?;
+    match envelope.record_type {
+      Some("session_meta") if first_session_meta_id.is_none() => {
+        let Some(session_id) = envelope.payload.as_ref().and_then(|payload| payload.id) else {
+          continue;
+        };
+        if filename_session_id.is_none() && session_id != requested_parent_id {
+          return Err(());
+        }
+        first_session_meta_id = Some(session_id.to_string());
+      }
+      Some("event_msg")
+        if envelope
+          .payload
+          .as_ref()
+          .and_then(|payload| payload.record_type)
+          == Some("token_count") =>
+      {
+        let timestamp = envelope.timestamp.ok_or(())?;
+        let details = serde_json::from_str::<ReplayParentTokenDetails>(&line).map_err(|_| ())?;
+
+        snapshots.push(UsageSnapshot {
+          timestamp: timestamp.to_string(),
+          model_id: String::new(),
+          usage: details.payload.info.total_token_usage.into_token_usage(),
+          last_token_usage: details
+            .payload
+            .info
+            .last_token_usage
+            .map(ReplayParentTokenUsage::into_token_usage),
+          plan_type: None,
+          limit_id: None,
+          limit_name: None,
+          explicit_fast_mode: None,
+        });
+      }
+      _ => {}
+    }
+  }
+
+  if filename_session_id.is_none() && first_session_meta_id.is_none() {
+    return Err(());
+  }
+  if snapshots.is_empty() {
+    return Err(());
+  }
+
+  Ok(snapshots)
+}
+
+#[derive(Deserialize)]
+struct ReplayParentLineEnvelope<'a> {
+  #[serde(default)]
+  timestamp: Option<&'a str>,
+  #[serde(rename = "type", default)]
+  record_type: Option<&'a str>,
+  #[serde(default, borrow)]
+  payload: Option<ReplayParentPayloadEnvelope<'a>>,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentPayloadEnvelope<'a> {
+  #[serde(default)]
+  id: Option<&'a str>,
+  #[serde(rename = "type", default)]
+  record_type: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenDetails {
+  payload: ReplayParentTokenPayload,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenPayload {
+  info: ReplayParentTokenInfo,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenInfo {
+  total_token_usage: ReplayParentTokenUsage,
+  #[serde(default)]
+  last_token_usage: Option<ReplayParentTokenUsage>,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenUsage {
+  #[serde(default)]
+  input_tokens: i64,
+  #[serde(default)]
+  cached_input_tokens: i64,
+  #[serde(default)]
+  output_tokens: i64,
+  #[serde(default)]
+  reasoning_output_tokens: i64,
+  #[serde(default)]
+  total_tokens: Option<i64>,
+}
+
+impl ReplayParentTokenUsage {
+  fn into_token_usage(self) -> TokenUsage {
+    TokenUsage {
+      input_tokens: self.input_tokens,
+      cached_input_tokens: self.cached_input_tokens,
+      output_tokens: self.output_tokens,
+      reasoning_output_tokens: self.reasoning_output_tokens,
+      total_tokens: self
+        .total_tokens
+        .unwrap_or_else(|| self.input_tokens + self.output_tokens),
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplayKey {
+  total_token_usage: TokenUsage,
+  last_token_usage: TokenUsage,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CanonicalReplaySnapshot<'a> {
+  raw_index: usize,
+  snapshot: &'a UsageSnapshot,
+}
+
+impl CanonicalReplaySnapshot<'_> {
+  fn replay_key(&self) -> Option<ReplayKey> {
+    Some(ReplayKey {
+      total_token_usage: self.snapshot.usage.clone(),
+      last_token_usage: self.snapshot.last_token_usage.clone()?,
+    })
+  }
+}
+
+fn canonical_replay_snapshots(snapshots: &[UsageSnapshot]) -> Vec<CanonicalReplaySnapshot<'_>> {
+  let mut high_water: Option<i64> = None;
+  let mut canonical = Vec::new();
+
+  for (raw_index, snapshot) in snapshots.iter().enumerate() {
+    if high_water.is_some_and(|total| snapshot.usage.total_tokens <= total) {
+      continue;
+    }
+
+    high_water = Some(snapshot.usage.total_tokens);
+    canonical.push(CanonicalReplaySnapshot { raw_index, snapshot });
+  }
+
+  canonical
+}
+
+fn kmp_prefix_table(pattern: &[ReplayKey]) -> Vec<usize> {
+  let mut table = vec![0; pattern.len()];
+
+  for index in 1..pattern.len() {
+    let mut prefix_len = table[index - 1];
+    while prefix_len > 0 && pattern[index] != pattern[prefix_len] {
+      prefix_len = table[prefix_len - 1];
+    }
+    if pattern[index] == pattern[prefix_len] {
+      prefix_len += 1;
+    }
+    table[index] = prefix_len;
+  }
+
+  table
+}
+
+fn replayed_child_snapshot_cutoff(
+  parent_snapshots: &[UsageSnapshot],
+  child_snapshots: &[UsageSnapshot],
+  explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
+) -> usize {
+  let Some(explicit_fork_timestamp) = explicit_fork_timestamp else {
+    return 0;
+  };
+
+  let child_canonical = canonical_replay_snapshots(child_snapshots);
+  let mut child_pattern = Vec::new();
+  for snapshot in &child_canonical {
+    let Some(key) = snapshot.replay_key() else {
+      break;
+    };
+    child_pattern.push(key);
+  }
+  let parent_canonical = canonical_replay_snapshots(parent_snapshots);
+  let eligible_parent_snapshot_count = parent_canonical
+    .iter()
+    .filter(|parent| {
+      DateTime::parse_from_rfc3339(&parent.snapshot.timestamp)
+        .is_ok_and(|timestamp| timestamp <= explicit_fork_timestamp)
+    })
+    .count();
+  let minimum_match_length = if eligible_parent_snapshot_count == 1 { 1 } else { 2 };
+  if child_pattern.len() < minimum_match_length {
+    return 0;
+  }
+
+  let prefix_table = kmp_prefix_table(&child_pattern);
+  let mut matched = 0;
+  let mut longest_match = 0;
+
+  for parent in parent_canonical {
+    let Ok(parent_timestamp) = DateTime::parse_from_rfc3339(&parent.snapshot.timestamp) else {
+      continue;
+    };
+    if parent_timestamp > explicit_fork_timestamp {
+      continue;
+    }
+
+    let Some(parent_key) = parent.replay_key() else {
+      matched = 0;
+      continue;
+    };
+
+    while matched > 0 && child_pattern[matched] != parent_key {
+      matched = prefix_table[matched - 1];
+    }
+    if child_pattern[matched] == parent_key {
+      matched += 1;
+      longest_match = longest_match.max(matched);
+      if matched == child_pattern.len() {
+        break;
+      }
+    }
+  }
+
+  if longest_match < minimum_match_length {
+    0
+  } else {
+    child_canonical[longest_match - 1].raw_index + 1
+  }
 }
 
 fn persist_session(
@@ -772,9 +1432,13 @@ fn persist_session(
   )?;
   replace_session_rate_limit_samples(&tx, &parsed.raw_session.session_id, &parsed.rate_limit_samples)?;
 
-  let mut previous_usage: Option<TokenUsage> = None;
+  let snapshot_cutoff = parsed.inherited_token_snapshot_cutoff;
+  let mut previous_usage = snapshot_cutoff
+    .checked_sub(1)
+    .and_then(|index| parsed.snapshots.get(index))
+    .map(|snapshot| snapshot.usage.clone());
 
-  for snapshot in &parsed.snapshots {
+  for snapshot in parsed.snapshots.iter().skip(snapshot_cutoff) {
     if previous_usage.as_ref() == Some(&snapshot.usage) {
       continue;
     }
@@ -784,6 +1448,11 @@ fn persist_session(
         continue;
       }
       diff_usage(previous, &snapshot.usage)
+    } else if parsed.explicit_forked_from_id.is_some() {
+      snapshot
+        .last_token_usage
+        .clone()
+        .unwrap_or_else(|| snapshot.usage.clone())
     } else {
       snapshot.usage.clone()
     };
@@ -962,7 +1631,7 @@ fn normalize_local_timestamp(timestamp: chrono::DateTime<Local>) -> chrono::Date
 fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, ImportState>> {
   let mut stmt = conn.prepare(
     "
-    SELECT source_path, session_id, file_size, file_mtime_ms
+    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms
     FROM import_state
     ",
   )?;
@@ -971,8 +1640,9 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
     Ok(ImportState {
       source_path: row.get(0)?,
       session_id: row.get(1)?,
-      file_size: row.get(2)?,
-      file_mtime_ms: row.get(3)?,
+      source_bucket: row.get(2)?,
+      file_size: row.get(3)?,
+      file_mtime_ms: row.get(4)?,
     })
   })?;
 
@@ -1026,6 +1696,40 @@ fn load_pending_data_repair_paths(conn: &Connection, repair_key: &str) -> rusqli
     paths.insert(row?);
   }
   Ok(paths)
+}
+
+fn pending_repair_paths_for_session(
+  import_state: &HashMap<String, ImportState>,
+  pending_paths: &HashSet<String>,
+  session_id: &str,
+) -> Vec<String> {
+  pending_paths
+    .iter()
+    .filter(|source_path| {
+      let import_state_session_id = import_state
+        .get(*source_path)
+        .and_then(|state| state.session_id.as_deref());
+      import_state_session_id == Some(session_id)
+        || (import_state_session_id.is_none()
+          && fallback_session_id_from_filename(Path::new(source_path)).as_deref() == Some(session_id))
+    })
+    .cloned()
+    .collect()
+}
+
+fn pending_repair_session_ids(
+  import_state: &HashMap<String, ImportState>,
+  pending_paths: &HashSet<String>,
+) -> HashSet<String> {
+  pending_paths
+    .iter()
+    .filter_map(|source_path| {
+      import_state
+        .get(source_path)
+        .and_then(|state| state.session_id.clone())
+        .or_else(|| fallback_session_id_from_filename(Path::new(source_path)))
+    })
+    .collect()
 }
 
 fn mark_data_repair_file_pending(
@@ -1096,13 +1800,35 @@ fn upsert_root_conversation_links(conn: &Connection, session_ids: &[String]) -> 
   Ok(())
 }
 
-fn mark_missing_sources(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
+fn conversation_links_need_repair(conn: &Connection) -> rusqlite::Result<bool> {
+  conn.query_row(
+    "
+    SELECT EXISTS (
+      SELECT 1
+      FROM sessions AS session
+      LEFT JOIN conversation_links AS link ON link.session_id = session.session_id
+      WHERE link.session_id IS NULL
+         OR link.parent_session_id IS NOT session.parent_session_id
+    )
+    ",
+    [],
+    |row| Ok(row.get::<_, i64>(0)? != 0),
+  )
+}
+
+fn mark_missing_sources(
+  conn: &Connection,
+  present_paths: &HashSet<String>,
+  reconcile_existing_absent_sources: bool,
+) -> rusqlite::Result<()> {
   let mut stmt = conn.prepare("SELECT session_id, source_path FROM sessions WHERE source_path IS NOT NULL")?;
   let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
 
   for row in rows {
     let (session_id, source_path) = row?;
-    if !present_paths.contains(&source_path) && !Path::new(&source_path).exists() {
+    if !present_paths.contains(&source_path)
+      && (reconcile_existing_absent_sources || !Path::new(&source_path).exists())
+    {
       conn.execute(
         "
         UPDATE sessions
@@ -1147,12 +1873,18 @@ fn mark_missing_active_sources(conn: &Connection, present_paths: &HashSet<String
   Ok(())
 }
 
-fn prune_import_state(conn: &Connection, present_paths: &HashSet<String>) -> rusqlite::Result<()> {
+fn prune_import_state(
+  conn: &Connection,
+  present_paths: &HashSet<String>,
+  reconcile_existing_absent_sources: bool,
+) -> rusqlite::Result<()> {
   let mut stmt = conn.prepare("SELECT source_path FROM import_state")?;
   let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
   for row in rows {
     let source_path = row?;
-    if !present_paths.contains(&source_path) && !Path::new(&source_path).exists() {
+    if !present_paths.contains(&source_path)
+      && (reconcile_existing_absent_sources || !Path::new(&source_path).exists())
+    {
       conn.execute(
         "DELETE FROM import_state WHERE source_path = ?1",
         params![source_path],
@@ -1260,6 +1992,7 @@ fn read_percent(value: &Value, key: &str) -> Option<i64> {
 struct ImportState {
   source_path: String,
   session_id: Option<String>,
+  source_bucket: String,
   file_size: i64,
   file_mtime_ms: i64,
 }
@@ -1267,9 +2000,584 @@ struct ImportState {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::database::{init_db, now_utc_string, open_connection};
+  use crate::database::{
+    get_last_full_scan_completed, init_db, now_utc_string, open_connection, save_sync_settings,
+  };
   use rusqlite::OptionalExtension;
+  use std::ffi::OsString;
+  use std::sync::Mutex;
   use tempfile::tempdir;
+
+  static CODEX_HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+  struct CodexHomeEnvGuard {
+    previous: Option<OsString>,
+  }
+
+  impl CodexHomeEnvGuard {
+    fn set(path: &Path) -> Self {
+      let previous = std::env::var_os("CODEX_HOME");
+      std::env::set_var("CODEX_HOME", path);
+      Self { previous }
+    }
+  }
+
+  impl Drop for CodexHomeEnvGuard {
+    fn drop(&mut self) {
+      if let Some(previous) = self.previous.take() {
+        std::env::set_var("CODEX_HOME", previous);
+      } else {
+        std::env::remove_var("CODEX_HOME");
+      }
+    }
+  }
+
+  fn replay_usage(values: (i64, i64, i64, i64, i64)) -> TokenUsage {
+    TokenUsage {
+      input_tokens: values.0,
+      cached_input_tokens: values.1,
+      output_tokens: values.2,
+      reasoning_output_tokens: values.3,
+      total_tokens: values.4,
+    }
+  }
+
+  fn replay_snapshot(
+    timestamp: &str,
+    model_id: &str,
+    total: (i64, i64, i64, i64, i64),
+    last: Option<(i64, i64, i64, i64, i64)>,
+  ) -> UsageSnapshot {
+    UsageSnapshot {
+      timestamp: timestamp.to_string(),
+      model_id: model_id.to_string(),
+      usage: replay_usage(total),
+      last_token_usage: last.map(replay_usage),
+      plan_type: None,
+      limit_id: None,
+      limit_name: None,
+      explicit_fast_mode: None,
+    }
+  }
+
+  fn fork_instant(timestamp: &str) -> chrono::DateTime<chrono::FixedOffset> {
+    chrono::DateTime::parse_from_rfc3339(timestamp).expect("valid fork instant")
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_malformed_token_candidate_between_snapshots() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "10101010-1010-4010-8010-101010101010";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = format!(
+      "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{parent_session_id}\"}}}}\n"
+    );
+    body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    }));
+    body.push_str(
+      "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":\n",
+    );
+    body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:03Z",
+      total: (180, 0, 0, 180),
+      last: (80, 0, 0, 80),
+    }));
+    std::fs::write(&parent_path, body).expect("write malformed replay parent");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_token_count_without_timestamp() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "20202020-2020-4020-8020-202020202020";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(
+      concat!(
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{",
+        "\"total_token_usage\":{\"input_tokens\":180,\"cached_input_tokens\":0,",
+        "\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":180}}}}\n"
+      ),
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent without timestamp");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_token_count_without_total_usage() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "30303030-3030-4030-8030-303030303030";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(
+      concat!(
+        "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"event_msg\",",
+        "\"payload\":{\"type\":\"token_count\",\"info\":{",
+        "\"last_token_usage\":{\"input_tokens\":80,\"cached_input_tokens\":0,",
+        "\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":80}}}}\n"
+      ),
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent without total usage");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_non_numeric_token_usage() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "40404040-4040-4040-8040-404040404040";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let body = concat!(
+      "{\"timestamp\":\"2026-03-24T00:00:01Z\",\"type\":\"event_msg\",",
+      "\"payload\":{\"type\":\"token_count\",\"info\":{",
+      "\"total_token_usage\":{\"input_tokens\":\"not-a-number\",\"cached_input_tokens\":0,",
+      "\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":100}}}}\n"
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent with invalid usage");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_ignores_nested_token_types_in_unrelated_root_record() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "50505050-5050-4050-8050-505050505050";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(
+      concat!(
+        "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"response_item\",",
+        "\"payload\":{\"message\":{\"type\":\"event_msg\",\"payload\":{",
+        "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{",
+        "\"input_tokens\":900,\"cached_input_tokens\":0,\"output_tokens\":0,",
+        "\"reasoning_output_tokens\":0,\"total_tokens\":900}}}}}}\n"
+      ),
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent with nested token types");
+
+    let snapshots = read_parent_replay_snapshots(&parent_path, parent_session_id)
+      .expect("ignore unrelated nested token fields");
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].usage.total_tokens, 100);
+  }
+
+  #[test]
+  fn replay_matching_accepts_a_complete_three_record_match() {
+    let parent = vec![
+      replay_snapshot(
+        "2026-03-24T00:00:01Z",
+        "parent-a",
+        (100, 10, 20, 1, 121),
+        Some((100, 10, 20, 1, 121)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:01:01Z",
+        "parent-b",
+        (180, 20, 35, 2, 217),
+        Some((80, 10, 15, 1, 96)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:02:01Z",
+        "parent-c",
+        (260, 30, 50, 3, 313),
+        Some((80, 10, 15, 1, 96)),
+      ),
+    ];
+    let child = vec![
+      replay_snapshot(
+        "2026-03-24T00:10:00Z",
+        "child-x",
+        (100, 10, 20, 1, 121),
+        Some((100, 10, 20, 1, 121)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:10:00Z",
+        "child-y",
+        (180, 20, 35, 2, 217),
+        Some((80, 10, 15, 1, 96)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:10:00Z",
+        "child-z",
+        (260, 30, 50, 3, 313),
+        Some((80, 10, 15, 1, 96)),
+      ),
+    ];
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &parent,
+        &child,
+        Some(fork_instant("2026-03-24T00:05:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_finds_a_child_prefix_in_the_middle_of_the_parent() {
+    let unrelated = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "parent",
+      (20, 0, 5, 0, 25),
+      Some((20, 0, 5, 0, 25)),
+    );
+    let first = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "parent",
+      (100, 10, 20, 1, 121),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:02:00Z",
+      "parent",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let third = replay_snapshot(
+      "2026-03-24T00:03:00Z",
+      "parent",
+      (260, 30, 50, 3, 313),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let parent = vec![unrelated, first.clone(), second.clone(), third.clone()];
+    let child = vec![first, second, third];
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &parent,
+        &child,
+        Some(fork_instant("2026-03-24T00:04:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_rejects_one_exact_record_from_longer_parent() {
+    let record = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let parent_second = replay_snapshot(
+      "2026-03-24T00:00:30Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[record.clone(), parent_second],
+        std::slice::from_ref(&record),
+        Some(fork_instant("2026-03-24T00:01:00Z")),
+      ),
+      0
+    );
+  }
+
+  #[test]
+  fn replay_matching_missing_last_usage_breaks_the_match() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let parent_second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let child_second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      None,
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), parent_second],
+        &[first, child_second],
+        Some(fork_instant("2026-03-24T00:02:00Z")),
+      ),
+      0
+    );
+  }
+
+  #[test]
+  fn replay_matching_omits_same_total_changed_last_from_the_canonical_sequence() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let changed_last = replay_snapshot(
+      "2026-03-24T00:00:30Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((1, 2, 3, 4, 10)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), second.clone()],
+        &[first, changed_last, second],
+        Some(fork_instant("2026-03-24T00:02:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_uses_cumulative_high_water_after_a_rollback() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let rollback = replay_snapshot(
+      "2026-03-24T00:00:30Z",
+      "model",
+      (70, 5, 10, 0, 80),
+      Some((5, 0, 2, 0, 7)),
+    );
+    let recovery = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (140, 15, 30, 2, 172),
+      Some((40, 5, 10, 1, 51)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), recovery.clone()],
+        &[first, rollback, recovery],
+        Some(fork_instant("2026-03-24T00:02:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_excludes_parent_records_after_the_fork_instant() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let post_fork = replay_snapshot(
+      "2026-03-24T00:06:00Z",
+      "model",
+      (260, 30, 50, 3, 313),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), second.clone(), post_fork.clone()],
+        &[first, second, post_fork],
+        Some(fork_instant("2026-03-24T00:05:00Z")),
+      ),
+      2
+    );
+  }
+
+  #[test]
+  fn replay_matching_without_a_valid_fork_instant_returns_zero() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), second.clone()],
+        &[first, second],
+        None,
+      ),
+      0
+    );
+  }
+
+  #[test]
+  fn parser_retains_last_usage_and_matching_explicit_fork_metadata() {
+    let directory = tempdir().expect("tempdir");
+    let child_id = "55555555-5555-5555-5555-555555555555";
+    let parent_id = "44444444-4444-4444-4444-444444444444";
+    let session_path = directory
+      .path()
+      .join(format!("rollout-2026-03-24T00-30-00-{child_id}.jsonl"));
+    std::fs::write(
+      &session_path,
+      format!(
+        concat!(
+          "{{\"timestamp\":\"2026-03-24T08:30:00+08:00\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+          "{{\"timestamp\":\"2026-03-24T00:30:01Z\",\"type\":\"event_msg\",",
+          "\"payload\":{{\"type\":\"token_count\",\"info\":{{",
+          "\"total_token_usage\":{{\"input_tokens\":180,\"cached_input_tokens\":20,",
+          "\"output_tokens\":35,\"reasoning_output_tokens\":2,\"total_tokens\":217}},",
+          "\"last_token_usage\":{{\"input_tokens\":80,\"cached_input_tokens\":10,",
+          "\"output_tokens\":15,\"reasoning_output_tokens\":1,\"total_tokens\":96}}",
+          "}}}}}}\n",
+          "{{\"timestamp\":\"2026-03-24T00:30:02Z\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\"}}}}\n"
+        ),
+        child_id, parent_id, parent_id,
+      ),
+    )
+    .expect("write fork session");
+
+    let parsed = parse_session_file(
+      &SessionFile {
+        path: session_path,
+        bucket: "active".to_string(),
+        file_size: 0,
+        file_mtime_ms: 0,
+      },
+      &HashMap::new(),
+    )
+    .expect("parse fork session");
+
+    assert_eq!(
+      parsed.snapshots[0].last_token_usage,
+      Some(replay_usage((80, 10, 15, 1, 96)))
+    );
+    assert_eq!(parsed.explicit_forked_from_id.as_deref(), Some(parent_id));
+    assert_eq!(
+      parsed.explicit_fork_timestamp,
+      Some(fork_instant("2026-03-24T08:30:00+08:00"))
+    );
+    let serialized = serde_json::to_value(&parsed.snapshots[0]).expect("serialize snapshot");
+    assert!(!serialized.as_object().expect("snapshot object").contains_key("lastTokenUsage"));
+  }
+
+  #[test]
+  fn parser_leaves_explicit_fork_fields_empty_for_thread_spawn_only_metadata() {
+    let directory = tempdir().expect("tempdir");
+    let child_id = "77777777-7777-7777-7777-777777777777";
+    let parent_id = "66666666-6666-6666-6666-666666666666";
+    let session_path = directory
+      .path()
+      .join(format!("rollout-2026-03-24T01-00-00-{child_id}.jsonl"));
+    std::fs::write(
+      &session_path,
+      format!(
+        concat!(
+          "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\",\"source\":{{\"subagent\":{{\"thread_spawn\":{{",
+          "\"parent_thread_id\":\"{}\"}}}}}}}}}}\n"
+        ),
+        child_id, parent_id,
+      ),
+    )
+    .expect("write thread-spawn session");
+
+    let parsed = parse_session_file(
+      &SessionFile {
+        path: session_path,
+        bucket: "active".to_string(),
+        file_size: 0,
+        file_mtime_ms: 0,
+      },
+      &HashMap::new(),
+    )
+    .expect("parse thread-spawn session");
+
+    assert_eq!(parsed.raw_session.parent_session_id.as_deref(), Some(parent_id));
+    assert!(parsed.explicit_forked_from_id.is_none());
+    assert!(parsed.explicit_fork_timestamp.is_none());
+  }
+
+  #[test]
+  fn parser_invalid_explicit_fork_timestamp_disables_replay_metadata() {
+    let directory = tempdir().expect("tempdir");
+    let child_id = "99999999-9999-9999-9999-999999999999";
+    let parent_id = "88888888-8888-8888-8888-888888888888";
+    let session_path = directory
+      .path()
+      .join(format!("rollout-2026-03-24T01-30-00-{child_id}.jsonl"));
+    std::fs::write(
+      &session_path,
+      format!(
+        concat!(
+          "{{\"timestamp\":\"not-an-instant\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n"
+        ),
+        child_id, parent_id,
+      ),
+    )
+    .expect("write invalid fork session");
+
+    let parsed = parse_session_file(
+      &SessionFile {
+        path: session_path,
+        bucket: "active".to_string(),
+        file_size: 0,
+        file_mtime_ms: 0,
+      },
+      &HashMap::new(),
+    )
+    .expect("parse invalid fork session");
+
+    assert_eq!(parsed.explicit_forked_from_id.as_deref(), Some(parent_id));
+    assert!(parsed.explicit_fork_timestamp.is_none());
+  }
 
   #[test]
   fn diff_usage_handles_growth_and_component_rollbacks() {
@@ -1377,6 +2685,60 @@ mod tests {
     assert!((value_usd - standard).abs() < 1e-9);
     assert_eq!(fast_mode_auto, 0);
     assert_eq!(fast_mode_effective, 0);
+  }
+
+  #[test]
+  fn scan_prices_gpt_56_sol_at_standard_api_equivalent_value() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "56565656-5656-5656-5656-565656565656";
+    let session_path = sessions_dir.join("gpt56-sol.jsonl");
+    std::fs::write(
+      &session_path,
+      concat!(
+        "{\"timestamp\":\"2026-07-09T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"56565656-5656-5656-5656-565656565656\"}}\n",
+        "{\"timestamp\":\"2026-07-09T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.6-sol\"}}\n",
+        "{\"timestamp\":\"2026-07-09T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":40,\"reasoning_output_tokens\":0,\"total_tokens\":140}},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n"
+      ),
+    )
+    .expect("write GPT-5.6 Sol session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let (input_tokens, cached_input_tokens, output_tokens, total_tokens, value_usd):
+      (i64, i64, i64, i64, f64) = conn
+      .query_row(
+        "
+        SELECT input_tokens, cached_input_tokens, output_tokens, total_tokens, value_usd
+        FROM usage_events
+        WHERE session_id = ?1
+        ",
+        params![session_id],
+        |row| {
+          Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+          ))
+        },
+      )
+      .expect("query usage");
+
+    assert_eq!(input_tokens, 100);
+    assert_eq!(cached_input_tokens, 25);
+    assert_eq!(output_tokens, 40);
+    assert_eq!(total_tokens, 140);
+    let standard = (75.0 / 1_000_000.0) * 5.0
+      + (25.0 / 1_000_000.0) * 0.5
+      + (40.0 / 1_000_000.0) * 30.0;
+    assert!((value_usd - standard).abs() < 1e-9);
   }
 
   #[test]
@@ -1784,7 +3146,7 @@ mod tests {
   }
 
   #[test]
-  fn incremental_scan_skips_archived_session_changes() {
+  fn incremental_scan_does_not_walk_archived_directory_for_untracked_files() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
@@ -1799,15 +3161,9 @@ mod tests {
       active_session_id,
       &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
     );
-    let archived_path = archived_dir.join("archived.jsonl");
-    write_session_file(
-      &archived_path,
-      archived_session_id,
-      &[("2026-03-24T00:00:01Z", 150, 30, 40, 190)],
-    );
-
     let db_path = directory.path().join("usage.sqlite");
     perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full scan");
+    let archived_path = archived_dir.join("archived.jsonl");
     write_session_file(
       &archived_path,
       archived_session_id,
@@ -1823,7 +3179,7 @@ mod tests {
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(result.updated_sessions, 0);
     assert_eq!(session_usage_totals(&conn, active_session_id), (100, 20, 25, 125, 1));
-    assert_eq!(session_usage_totals(&conn, archived_session_id), (150, 30, 40, 190, 1));
+    assert_eq!(session_usage_totals(&conn, archived_session_id), (0, 0, 0, 0, 0));
   }
 
   #[test]
@@ -2157,6 +3513,359 @@ mod tests {
       .optional()
       .expect("query data repair marker");
     assert!(repair_completed.is_some());
+  }
+
+  #[test]
+  fn v3_repair_rebuilds_unchanged_fork_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "56565656-5656-4656-8656-565656565656";
+    let child_session_id = "57575757-5757-4757-8757-575757575757";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let repaired_session_id = "58585858-5858-4858-8858-585858585858";
+    let repaired_path = sessions_dir.join("unparseable-v3.jsonl");
+    let parent_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    for fixture in parent_fixtures.iter().copied() {
+      parent_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&parent_path, parent_body).expect("write parent session");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for (index, fixture) in parent_fixtures.iter().copied().enumerate() {
+      let timestamp = match index {
+        0 => "2026-03-24T00:30:01Z",
+        1 => "2026-03-24T00:30:02Z",
+        _ => "2026-03-24T00:30:03Z",
+      };
+      child_body.push_str(&token_count_line(TokenFixture {
+        timestamp,
+        ..fixture
+      }));
+    }
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (310, 0, 0, 310),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork session");
+    std::fs::write(&repaired_path, "not json\n").expect("write unreadable repair fixture");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 260);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 50);
+    conn
+      .execute(
+        "DELETE FROM usage_events WHERE session_id = ?1",
+        params![child_session_id],
+      )
+      .expect("delete corrected child usage");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+          reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+        )
+        VALUES (?1, '2026-03-24T00:31:00Z', 'gpt-5.4', 310, 0, 0, 0, 310, 0.0, 0, 0)
+        ",
+        params![child_session_id],
+      )
+      .expect("insert legacy overcounted child usage");
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = 'token_usage_fork_replay_v3'",
+        [],
+      )
+      .expect("simulate database upgraded from v2");
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 310);
+    drop(conn);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("v3 repair scan");
+
+    let conn = open_connection(&db_path).expect("open repaired db");
+    assert_eq!(result.updated_sessions, 2);
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 260);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 50);
+    let v2_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = 'token_usage_monotonic_v2'",
+        [],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query v2 repair marker");
+    let v3_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = 'token_usage_fork_replay_v3'",
+        [],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query v3 repair marker");
+    let pending_v3_path: Option<String> = conn
+      .query_row(
+        "
+        SELECT source_path
+        FROM data_repair_pending_files
+        WHERE repair_key = 'token_usage_fork_replay_v3'
+        ",
+        [],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query pending v3 repair file");
+    assert!(v2_completed.is_some());
+    assert!(v3_completed.is_some());
+    assert_eq!(
+      pending_v3_path.as_deref(),
+      Some(repaired_path.to_string_lossy().as_ref())
+    );
+    drop(conn);
+
+    write_session_file(
+      &repaired_path,
+      repaired_session_id,
+      &[("2026-03-24T01:00:01Z", 40, 0, 10, 50)],
+    );
+    let retry = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry v3 repair file");
+
+    let conn = open_connection(&db_path).expect("open retried db");
+    assert_eq!(retry.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, repaired_session_id).3, 50);
+    let pending_v3_count: i64 = conn
+      .query_row(
+        "
+        SELECT COUNT(*)
+        FROM data_repair_pending_files
+        WHERE repair_key = 'token_usage_fork_replay_v3'
+        ",
+        [],
+        |row| row.get(0),
+      )
+      .expect("count pending v3 repair files");
+    assert_eq!(pending_v3_count, 0);
+  }
+
+  #[test]
+  fn fork_repair_retries_child_after_parent_source_recovers() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "63636363-6363-4363-8363-636363636363";
+    let child_session_id = "64646464-6464-4464-8464-646464646464";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    std::fs::write(&parent_path, "not json\n").expect("write unavailable parent");
+    let inherited = TokenFixture {
+      timestamp: "2026-03-24T00:30:00Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    };
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_session_id,
+      parent_session_id,
+    );
+    child_body.push_str(&token_count_line(inherited));
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (150, 0, 0, 150),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork child");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let conn = open_connection(&db_path).expect("open initial db");
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 150);
+    let pending_child_count: i64 = conn
+      .query_row(
+        "
+        SELECT COUNT(*)
+        FROM data_repair_pending_files
+        WHERE repair_key = ?1 AND source_path = ?2
+        ",
+        params![
+          TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
+          child_path.to_string_lossy().to_string()
+        ],
+        |row| row.get(0),
+      )
+      .expect("count pending child repair");
+    assert_eq!(pending_child_count, 1);
+    drop(conn);
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    parent_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:00Z",
+      ..inherited
+    }));
+    std::fs::write(&parent_path, parent_body).expect("restore parent source");
+    let retry = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry recovered parent and child");
+
+    let conn = open_connection(&db_path).expect("open repaired db");
+    assert_eq!(retry.updated_sessions, 2);
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 100);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 50);
+    let pending_v3_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending v3 repairs");
+    assert_eq!(pending_v3_count, 0);
+  }
+
+  #[test]
+  fn moved_archive_clears_v3_pending_active_source() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions/2026/07/10");
+    let archived_sessions_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_sessions_dir).expect("archived sessions dir");
+
+    let session_id = "59595959-5959-4959-8959-595959595959";
+    let filename = format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl");
+    let active_path = sessions_dir.join(&filename);
+    let archived_path = archived_sessions_dir.join(&filename);
+    write_session_file(
+      &active_path,
+      session_id,
+      &[("2026-07-10T00:00:01Z", 80, 0, 20, 100)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+    std::fs::rename(&active_path, &archived_path).expect("archive session during repair");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("record archived source before stale pending retry");
+
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute(
+        "DELETE FROM usage_events WHERE session_id = ?1",
+        params![session_id],
+      )
+      .expect("delete corrected usage");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+          reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+        )
+        VALUES (?1, '2026-07-10T00:00:01Z', 'gpt-5.4', 160, 0, 40, 0, 200, 0.0, 0, 0)
+        ",
+        params![session_id],
+      )
+      .expect("insert stale usage");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+        VALUES (?1, ?2, 'source moved during repair', ?3)
+        ",
+        params![
+          TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
+          active_path.to_string_lossy().to_string(),
+          now_utc_string(),
+        ],
+      )
+      .expect("insert pending active source");
+    drop(conn);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("repair moved archive");
+
+    let conn = open_connection(&db_path).expect("open repaired db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id).3, 100);
+    let pending_v3_count: i64 = conn
+      .query_row(
+        "
+        SELECT COUNT(*)
+        FROM data_repair_pending_files
+        WHERE repair_key = ?1
+        ",
+        params![TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending v3 repair files");
+    assert_eq!(pending_v3_count, 0);
   }
 
   #[test]
@@ -2523,6 +4232,1390 @@ mod tests {
       import_state_session_id(&conn, &child_path),
       Some(child_session_id.to_string())
     );
+  }
+
+  #[test]
+  fn fork_replay_counts_only_child_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "99999999-9999-9999-9999-999999999999";
+    let child_session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    let parent_path =
+      sessions_dir.join(format!("rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"));
+    let child_path =
+      sessions_dir.join(format!("rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"));
+    let parent_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    for fixture in parent_fixtures.iter().copied() {
+      parent_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&parent_path, parent_body).expect("write parent session");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for fixture in parent_fixtures.iter().copied() {
+      child_body.push_str(&token_count_line(TokenFixture {
+        timestamp: child_created_at,
+        ..fixture
+      }));
+    }
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (310, 0, 0, 310),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let parent_total = session_usage_totals(&conn, parent_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    assert_eq!(parent_total, 260);
+    assert_eq!(child_total, 50);
+    assert_eq!(parent_total + child_total, 310);
+  }
+
+  #[test]
+  fn single_snapshot_parent_replay_counts_only_child_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "61616161-6161-4161-8161-616161616161";
+    let child_session_id = "62626262-6262-4262-8262-626262626262";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let inherited = TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    };
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    parent_body.push_str(&token_count_line(inherited));
+    std::fs::write(&parent_path, parent_body).expect("write single-snapshot parent");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:30:01Z",
+      ..inherited
+    }));
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (150, 0, 0, 150),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork child");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let parent_total = session_usage_totals(&conn, parent_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    assert_eq!(parent_total, 100);
+    assert_eq!(child_total, 50);
+    assert_eq!(parent_total + child_total, 150);
+  }
+
+  #[test]
+  fn incremental_fork_scan_loads_unchanged_archived_parent() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    let archived_sessions_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_sessions_dir).expect("archived sessions dir");
+
+    let parent_session_id = "11111111-1111-4111-8111-111111111111";
+    let child_session_id = "22222222-2222-4222-8222-222222222222";
+    let parent_path = archived_sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let parent_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    for fixture in parent_fixtures.iter().copied() {
+      parent_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&parent_path, parent_body).expect("write archived parent session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("full parent scan");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for (index, fixture) in parent_fixtures.iter().copied().enumerate() {
+      let timestamp = match index {
+        0 => "2026-03-24T00:30:01Z",
+        1 => "2026-03-24T00:30:02Z",
+        _ => "2026-03-24T00:30:03Z",
+      };
+      child_body.push_str(&token_count_line(TokenFixture {
+        timestamp,
+        ..fixture
+      }));
+    }
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (310, 0, 0, 310),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write active fork child");
+
+    let incremental =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+        .expect("incremental child scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let parent_total = session_usage_totals(&conn, parent_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    assert_eq!(incremental.updated_sessions, 1);
+    assert_eq!(parent_total, 260);
+    assert_eq!(child_total, 50);
+    assert_eq!(parent_total + child_total, 310);
+  }
+
+  #[test]
+  fn nested_fork_replay_uses_direct_parent() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let root_session_id = "33333333-3333-4333-8333-333333333333";
+    let child_session_id = "44444444-4444-4444-8444-444444444444";
+    let grandchild_session_id = "55555555-5555-4555-8555-555555555555";
+    let root_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{root_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let grandchild_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T01-00-00-{grandchild_session_id}.jsonl"
+    ));
+    let root_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+    let child_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:30:01Z",
+        ..root_fixtures[0]
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:30:02Z",
+        ..root_fixtures[1]
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:30:03Z",
+        ..root_fixtures[2]
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:31:00Z",
+        total: (310, 0, 0, 310),
+        last: (50, 0, 0, 50),
+      },
+    ];
+
+    let mut root_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      root_session_id,
+    );
+    for fixture in root_fixtures.iter().copied() {
+      root_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&root_path, root_body).expect("write root session");
+
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:30:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_session_id,
+      root_session_id,
+    );
+    for fixture in child_fixtures.iter().copied() {
+      child_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&child_path, child_body).expect("write child session");
+
+    let mut grandchild_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      grandchild_session_id,
+      child_session_id,
+    );
+    for (index, fixture) in child_fixtures.iter().copied().enumerate() {
+      let timestamp = match index {
+        0 => "2026-03-24T01:00:01Z",
+        1 => "2026-03-24T01:00:02Z",
+        2 => "2026-03-24T01:00:03Z",
+        _ => "2026-03-24T01:00:04Z",
+      };
+      grandchild_body.push_str(&token_count_line(TokenFixture {
+        timestamp,
+        ..fixture
+      }));
+    }
+    grandchild_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T01:01:00Z",
+      total: (330, 0, 0, 330),
+      last: (20, 0, 0, 20),
+    }));
+    std::fs::write(&grandchild_path, grandchild_body).expect("write grandchild session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("full family scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let root_total = session_usage_totals(&conn, root_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    let grandchild_total = session_usage_totals(&conn, grandchild_session_id).3;
+    assert_eq!(root_total, 260);
+    assert_eq!(child_total, 50);
+    assert_eq!(grandchild_total, 20);
+    assert_eq!(root_total + child_total + grandchild_total, 330);
+  }
+
+  #[test]
+  fn parent_path_validation_rejects_child_file_with_replayed_parent_meta() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "66666666-6666-4666-8666-666666666666";
+    let child_session_id = "77777777-7777-4777-8777-777777777777";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T01-00-00-{child_session_id}.jsonl"
+    ));
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    parent_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (25, 0, 0, 25),
+      last: (25, 0, 0, 25),
+    }));
+    std::fs::write(&parent_path, parent_body).expect("write parent session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("full parent scan");
+
+    let conn = open_connection(&db_path).expect("open db to corrupt parent source paths");
+    assert_eq!(
+      conn
+        .execute(
+          "UPDATE sessions SET source_path = ?1 WHERE session_id = ?2",
+          params![child_path.to_string_lossy().to_string(), parent_session_id],
+        )
+        .expect("corrupt parent source path"),
+      1
+    );
+    assert_eq!(
+      conn
+        .execute(
+          "UPDATE import_state SET source_path = ?1 WHERE session_id = ?2",
+          params![child_path.to_string_lossy().to_string(), parent_session_id],
+        )
+        .expect("corrupt parent import state path"),
+      1
+    );
+    drop(conn);
+    std::fs::remove_file(&parent_path).expect("remove original parent source");
+
+    let child_created_at = "2026-03-24T01:00:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for fixture in [
+      TokenFixture {
+        timestamp: child_created_at,
+        total: (100, 0, 0, 100),
+        last: (40, 0, 0, 40),
+      },
+      TokenFixture {
+        timestamp: child_created_at,
+        total: (150, 0, 0, 150),
+        last: (50, 0, 0, 50),
+      },
+    ] {
+      child_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&child_path, child_body).expect("write child with replayed parent meta");
+
+    let incremental =
+      perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+        .expect("incremental child scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(incremental.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 25);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 90);
+  }
+
+  #[test]
+  fn fork_first_snapshot_uses_last_usage_as_baseline() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    let child_session_id = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let child_path =
+      sessions_dir.join(format!("rollout-2026-03-24T01-00-00-{child_session_id}.jsonl"));
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_session_id,
+      parent_session_id,
+    );
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T01:00:00Z",
+      total: (1000, 0, 0, 1000),
+      last: (40, 0, 0, 40),
+    }));
+    std::fs::write(child_path, child_body).expect("write fork session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 40);
+  }
+
+  #[test]
+  fn thread_spawn_without_fork_keeps_full_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    let child_session_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    let child_path =
+      sessions_dir.join(format!("rollout-2026-03-24T02-00-00-{child_session_id}.jsonl"));
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T02:00:00Z\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"source\":{{\"subagent\":{{\"thread_spawn\":{{",
+        "\"parent_thread_id\":\"{}\"}}}}}}}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T02:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_session_id,
+      parent_session_id,
+    );
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T02:00:00Z",
+      total: (1000, 0, 0, 1000),
+      last: (40, 0, 0, 40),
+    }));
+    std::fs::write(child_path, child_body).expect("write thread-spawn session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 1000);
+  }
+
+  #[test]
+  fn invalid_custom_home_does_not_advance_completed_scan_time() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let missing = directory.path().join("missing-codex-home");
+
+    let error = perform_scan(&db_path, Some(missing.to_string_lossy().to_string()))
+      .expect_err("missing home must fail");
+    assert!(error.contains("existing directory"));
+
+    let conn = open_connection(&db_path).expect("open db");
+    let completed: Option<String> = conn
+      .query_row(
+        "SELECT last_scan_completed_at FROM sync_settings WHERE singleton_id = 1",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load completion");
+    assert!(completed.is_none());
+  }
+
+  #[test]
+  fn scan_does_not_restore_freshness_after_source_changes_mid_import() {
+    let directory = tempdir().expect("tempdir");
+    let old_codex_home = directory.path().join("old-codex-home");
+    let new_codex_home = directory.path().join("new-codex-home");
+    let sessions_dir = old_codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("old sessions dir");
+    std::fs::create_dir_all(&new_codex_home).expect("new Codex home");
+
+    let session_path = sessions_dir.join("source-race.jsonl");
+    std::fs::write(
+      &session_path,
+      concat!(
+        "{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"abababab-abab-abab-abab-abababababab\"}}\n",
+        "{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.6-sol\"}}\n",
+        "{\"timestamp\":\"2026-07-10T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":10,\"reasoning_output_tokens\":0,\"total_tokens\":110}}}}\n"
+      ),
+    )
+    .expect("write session");
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.codex_home = Some(old_codex_home.to_string_lossy().to_string());
+    save_sync_settings(&conn, &settings).expect("save old source");
+
+    let new_home_sql = new_codex_home.to_string_lossy().replace('\'', "''");
+    conn
+      .execute_batch(&format!(
+        "
+        CREATE TRIGGER switch_codex_home_during_import
+        AFTER INSERT ON usage_events
+        BEGIN
+          UPDATE sync_settings
+          SET codex_home = '{new_home_sql}',
+              last_scan_started_at = NULL,
+              last_scan_completed_at = NULL,
+              last_full_scan_completed_at = NULL
+          WHERE singleton_id = 1;
+        END;
+        "
+      ))
+      .expect("create source switch trigger");
+    drop(conn);
+
+    perform_scan(
+      &db_path,
+      Some(old_codex_home.to_string_lossy().to_string()),
+    )
+    .expect("scan old source");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (codex_home, started, completed, full_completed): (
+      Option<String>,
+      Option<String>,
+      Option<String>,
+      Option<String>,
+    ) = conn
+      .query_row(
+        "
+        SELECT codex_home, last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+      )
+      .expect("load scan freshness");
+
+    assert_eq!(
+      codex_home.as_deref(),
+      Some(new_codex_home.to_string_lossy().as_ref())
+    );
+    assert_eq!(started, None);
+    assert_eq!(completed, None);
+    assert_eq!(full_completed, None);
+  }
+
+  #[test]
+  fn scan_writes_freshness_when_source_selector_is_unchanged() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("Codex home");
+    let db_path = directory.path().join("usage.sqlite");
+
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.codex_home = Some(codex_home.to_string_lossy().to_string());
+    save_sync_settings(&conn, &settings).expect("save source");
+    drop(conn);
+
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("scan matching source");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (started, completed, full_completed): (Option<String>, Option<String>, Option<String>) = conn
+      .query_row(
+        "
+        SELECT last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+      )
+      .expect("load scan freshness");
+
+    assert!(started.is_some());
+    assert!(completed.is_some());
+    assert!(full_completed.is_some());
+  }
+
+  #[test]
+  fn scan_does_not_write_freshness_for_an_override_from_the_previous_source() {
+    let directory = tempdir().expect("tempdir");
+    let old_codex_home = directory.path().join("old-codex-home");
+    let new_codex_home = directory.path().join("new-codex-home");
+    std::fs::create_dir_all(&old_codex_home).expect("old Codex home");
+    std::fs::create_dir_all(&new_codex_home).expect("new Codex home");
+    let db_path = directory.path().join("usage.sqlite");
+
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.codex_home = Some(new_codex_home.to_string_lossy().to_string());
+    save_sync_settings(&conn, &settings).expect("save new source");
+    drop(conn);
+
+    perform_scan(
+      &db_path,
+      Some(old_codex_home.to_string_lossy().to_string()),
+    )
+    .expect("scan previous source");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (started, completed, full_completed): (Option<String>, Option<String>, Option<String>) = conn
+      .query_row(
+        "
+        SELECT last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+      )
+      .expect("load scan freshness");
+
+    assert_eq!(started, None);
+    assert_eq!(completed, None);
+    assert_eq!(full_completed, None);
+  }
+
+  #[test]
+  fn changed_resolved_default_source_forces_full_scan() {
+    assert_eq!(
+      effective_scan_scope(ScanScope::Incremental, false, false, false, true),
+      ScanScope::Full
+    );
+  }
+
+  #[test]
+  fn moved_default_source_reconciles_sessions_from_the_previous_existing_home() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let first_codex_home = directory.path().join("codex-home-a");
+    let second_codex_home = directory.path().join("codex-home-b");
+    let first_sessions = first_codex_home.join("sessions");
+    let second_archives = second_codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&first_sessions).expect("first sessions");
+    std::fs::create_dir_all(&second_archives).expect("second archives");
+
+    let first_session_id = "18181818-1818-1818-1818-181818181818";
+    write_session_file(
+      &first_sessions.join("first.jsonl"),
+      first_session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let second_session_id = "28282828-2828-2828-2828-282828282828";
+    write_session_file(
+      &second_archives.join("second.jsonl"),
+      second_session_id,
+      &[("2026-07-10T01:00:00Z", 200, 40, 20, 220)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&first_codex_home);
+    perform_scan(&db_path, None).expect("scan first default source");
+
+    std::env::set_var("CODEX_HOME", &second_codex_home);
+    let result = perform_incremental_scan(&db_path, None).expect("scan moved default source");
+
+    let conn = open_connection(&db_path).expect("open database");
+    let (selector, resolved_source): (Option<String>, Option<String>) = conn
+      .query_row(
+        "
+        SELECT codex_home, last_scan_codex_home
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load scan source identity");
+
+    assert_eq!(selector, None);
+    assert_eq!(resolved_source.as_deref(), Some(second_codex_home.to_string_lossy().as_ref()));
+    assert_eq!(result.scanned_files, 1);
+    assert_eq!(session_usage_totals(&conn, second_session_id).3, 220);
+    assert_eq!(session_usage_totals(&conn, first_session_id).3, 110);
+    assert_eq!(session_source_state(&conn, first_session_id), Some("missing".to_string()));
+    assert_eq!(import_state_session_id(&conn, &first_sessions.join("first.jsonl")), None);
+    assert!(first_sessions.join("first.jsonl").is_file());
+  }
+
+  #[test]
+  fn full_scan_retry_reconciles_previous_source_after_the_first_attempt_fails() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let first_codex_home = directory.path().join("codex-home-a");
+    let second_codex_home = directory.path().join("codex-home-b");
+    let first_sessions = first_codex_home.join("sessions");
+    let second_sessions = second_codex_home.join("sessions");
+    std::fs::create_dir_all(&first_sessions).expect("first sessions");
+    std::fs::create_dir_all(&second_sessions).expect("second sessions");
+
+    let first_session_id = "19191919-1919-1919-1919-191919191919";
+    let first_session_path = first_sessions.join("first.jsonl");
+    write_session_file(
+      &first_session_path,
+      first_session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let second_session_id = "29292929-2929-2929-2929-292929292929";
+    write_session_file(
+      &second_sessions.join("second.jsonl"),
+      second_session_id,
+      &[("2026-07-10T01:00:00Z", 200, 40, 20, 220)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&first_codex_home);
+    perform_scan(&db_path, None).expect("scan first default source");
+
+    let conn = open_connection(&db_path).expect("open database");
+    conn
+      .execute_batch(&format!(
+        "
+        CREATE TRIGGER fail_previous_source_reconciliation
+        BEFORE UPDATE OF source_state ON sessions
+        WHEN OLD.session_id = '{first_session_id}'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced source reconciliation failure');
+        END;
+        "
+      ))
+      .expect("create reconciliation trigger");
+    drop(conn);
+
+    std::env::set_var("CODEX_HOME", &second_codex_home);
+    let error = perform_incremental_scan(&db_path, None).expect_err("first moved-source scan should fail");
+    assert!(error.contains("forced source reconciliation failure"));
+
+    let conn = open_connection(&db_path).expect("reopen failed database");
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full freshness"), None);
+    conn
+      .execute_batch("DROP TRIGGER fail_previous_source_reconciliation;")
+      .expect("drop reconciliation trigger");
+    drop(conn);
+
+    let retry = perform_incremental_scan(&db_path, None).expect("retry moved default source");
+
+    let conn = open_connection(&db_path).expect("open retried database");
+    assert_eq!(retry.scanned_files, 1);
+    assert_eq!(session_usage_totals(&conn, second_session_id).3, 220);
+    assert_eq!(session_source_state(&conn, first_session_id), Some("missing".to_string()));
+    assert_eq!(import_state_session_id(&conn, &first_session_path), None);
+    assert!(first_session_path.is_file());
+  }
+
+  #[test]
+  fn partial_full_scan_invalidates_freshness_and_tracks_skipped_rate_limit_backfill() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let archived_sessions = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&archived_sessions).expect("archived sessions");
+
+    let session_id = "39393939-3939-3939-3939-393939393939";
+    let session_path = archived_sessions.join("archive.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&codex_home);
+    perform_scan(&db_path, None).expect("initial full scan");
+
+    let conn = open_connection(&db_path).expect("open initial database");
+    assert!(get_last_full_scan_completed(&conn).expect("load initial freshness").is_some());
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+      )
+      .expect("make rate-limit backfill pending");
+    drop(conn);
+
+    std::fs::write(&session_path, [0xff, 0xfe, 0xfd]).expect("corrupt archived session");
+    perform_scan(&db_path, None).expect("partial full scan");
+
+    let conn = open_connection(&db_path).expect("open partial database");
+    let (completed, full_completed): (Option<String>, Option<String>) = conn
+      .query_row(
+        "SELECT last_scan_completed_at, last_full_scan_completed_at FROM sync_settings WHERE singleton_id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load partial scan freshness");
+    assert!(completed.is_some());
+    assert_eq!(full_completed, None);
+    let pending_rate_limit_path: Option<String> = conn
+      .query_row(
+        "SELECT source_path FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("load pending rate-limit repair");
+    assert_eq!(pending_rate_limit_path.as_deref(), Some(session_path.to_string_lossy().as_ref()));
+    drop(conn);
+
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 200, 40, 20, 220),
+      ],
+    );
+    let retry = perform_incremental_scan(&db_path, None).expect("retry repaired archive");
+
+    let conn = open_connection(&db_path).expect("open repaired database");
+    assert_eq!(retry.scanned_files, 1);
+    assert_eq!(session_usage_totals(&conn, session_id).3, 220);
+    assert!(get_last_full_scan_completed(&conn).expect("load repaired freshness").is_some());
+    let pending_rate_limit_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending rate-limit repairs");
+    assert_eq!(pending_rate_limit_count, 0);
+  }
+
+  #[test]
+  fn incremental_scan_retries_unchanged_pending_rate_limit_archive() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let archived_sessions = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&archived_sessions).expect("archived sessions");
+
+    let session_id = "69696969-6969-4969-8969-696969696969";
+    let session_path = archived_sessions.join(format!(
+      "rollout-2026-07-10T00-00-00-{session_id}.jsonl"
+    ));
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-07-10T00:00:01Z", 80, 0, 20, 100)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+        VALUES (?1, ?2, 'temporary read failure', ?3)
+        ",
+        params![
+          RATE_LIMIT_SAMPLE_BACKFILL_KEY,
+          session_path.to_string_lossy().to_string(),
+          now_utc_string(),
+        ],
+      )
+      .expect("insert pending rate-limit archive");
+    drop(conn);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry unchanged rate-limit archive");
+
+    let conn = open_connection(&db_path).expect("open retried db");
+    assert_eq!(result.updated_sessions, 1);
+    let pending_rate_limit_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending rate-limit repairs");
+    assert_eq!(pending_rate_limit_count, 0);
+  }
+
+  #[test]
+  fn skipped_archive_keeps_moved_default_source_due_for_full_retry() {
+    let _environment_lock = CODEX_HOME_ENV_LOCK.lock().expect("lock CODEX_HOME");
+    let directory = tempdir().expect("tempdir");
+    let first_codex_home = directory.path().join("codex-home-a");
+    let second_codex_home = directory.path().join("codex-home-b");
+    let first_sessions = first_codex_home.join("sessions");
+    let second_sessions = second_codex_home.join("sessions");
+    let second_archives = second_codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&first_sessions).expect("first sessions");
+    std::fs::create_dir_all(&second_sessions).expect("second sessions");
+    std::fs::create_dir_all(&second_archives).expect("second archives");
+
+    write_session_file(
+      &first_sessions.join("first.jsonl"),
+      "38383838-3838-3838-3838-383838383838",
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    write_session_file(
+      &second_sessions.join("tracked.jsonl"),
+      "48484848-4848-4848-4848-484848484848",
+      &[("2026-07-10T01:00:00Z", 150, 30, 15, 165)],
+    );
+    let repaired_session_id = "58585858-5858-5858-5858-585858585858";
+    let repaired_archive = second_archives.join("repaired.jsonl");
+    std::fs::write(&repaired_archive, [0xff, 0xfe, 0xfd]).expect("write unreadable archive");
+
+    let db_path = directory.path().join("usage.sqlite");
+    let _environment = CodexHomeEnvGuard::set(&first_codex_home);
+    perform_scan(&db_path, None).expect("scan first default source");
+
+    std::env::set_var("CODEX_HOME", &second_codex_home);
+    let partial = perform_incremental_scan(&db_path, None).expect("scan moved source with skipped archive");
+    assert_eq!(partial.scanned_files, 2);
+
+    let conn = open_connection(&db_path).expect("open partial database");
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full freshness"), None);
+    drop(conn);
+
+    write_session_file(
+      &repaired_archive,
+      repaired_session_id,
+      &[("2026-07-10T01:30:00Z", 200, 40, 20, 220)],
+    );
+    let retry = perform_incremental_scan(&db_path, None).expect("retry repaired archive");
+
+    let conn = open_connection(&db_path).expect("open repaired database");
+    assert_eq!(retry.scanned_files, 2);
+    assert_eq!(session_usage_totals(&conn, repaired_session_id).3, 220);
+  }
+
+  #[test]
+  fn custom_home_path_expands_supported_tilde_forms() {
+    let directory = tempdir().expect("tempdir");
+    let nested = directory.path().join("codex-home");
+    std::fs::create_dir_all(&nested).expect("codex home");
+
+    assert_eq!(
+      validate_codex_home(PathBuf::from("~"), Some(directory.path())).expect("bare tilde"),
+      directory.path()
+    );
+    assert_eq!(
+      validate_codex_home(PathBuf::from("~/codex-home"), Some(directory.path())).expect("tilde prefix"),
+      nested
+    );
+  }
+
+  #[test]
+  fn incremental_scan_imports_final_snapshot_after_active_file_is_archived() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    let archived = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    std::fs::create_dir_all(&archived).expect("archive");
+    let session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    let active_path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let archived_path = archived.join(active_path.file_name().expect("filename"));
+    write_session_file(&active_path, session_id, &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)]);
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+
+    write_session_file(
+      &active_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 180, 40, 20, 200),
+      ],
+    );
+    std::fs::rename(&active_path, &archived_path).expect("archive session");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("incremental scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id).3, 200);
+    assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
+  }
+
+  #[test]
+  fn incremental_scan_reimports_archived_file_after_incomplete_tail_is_finished() {
+    use std::io::Write;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    let archived = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    std::fs::create_dir_all(&archived).expect("archive");
+    let session_id = "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0";
+    let active_path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let archived_path = archived.join(active_path.file_name().expect("filename"));
+    write_session_file(&active_path, session_id, &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)]);
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&active_path)
+      .expect("open active session");
+    file
+      .write_all(
+        concat!(
+          "{\"timestamp\":\"2026-07-10T00:01:00Z\",\"type\":\"event_msg\",\"payload\":{",
+          "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{",
+          "\"input_tokens\":180,\"cached_input_tokens\":40,\"output_tokens\":20,"
+        )
+        .as_bytes(),
+      )
+      .expect("write incomplete tail");
+    drop(file);
+    std::fs::rename(&active_path, &archived_path).expect("archive session");
+
+    let first_result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("import complete prefix from archive");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(first_result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id), (100, 20, 10, 110, 1));
+    let archived_state: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM import_state WHERE source_path = ?1 AND source_bucket = 'archived'",
+        params![archived_path.to_string_lossy().to_string()],
+        |row| row.get(0),
+      )
+      .expect("query archived state");
+    assert_eq!(archived_state, 1);
+    drop(conn);
+
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&archived_path)
+      .expect("open archived session");
+    file
+      .write_all(
+        concat!(
+          "\"reasoning_output_tokens\":0,\"total_tokens\":200}}",
+          ",\"rate_limits\":{\"plan_type\":\"pro\"}}}\n"
+        )
+        .as_bytes(),
+      )
+      .expect("finish archived tail");
+    drop(file);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("reimport finished archive");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id), (180, 40, 20, 200, 2));
+    assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
+  }
+
+  #[test]
+  fn incremental_scan_retries_moved_archive_after_read_error() {
+    use std::io::Write;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    let archived = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    std::fs::create_dir_all(&archived).expect("archive");
+    let session_id = "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1";
+    let active_path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let archived_path = archived.join(active_path.file_name().expect("filename"));
+    write_session_file(&active_path, session_id, &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)]);
+    write_session_file(
+      &sessions.join("other.jsonl"),
+      "a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2",
+      &[("2026-07-10T00:00:00Z", 50, 10, 5, 55)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+
+    let mut file = File::create(&active_path).expect("session file");
+    writeln!(
+      file,
+      "{{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}"
+    )
+    .expect("meta");
+    file.write_all(&[0xff, b'\n']).expect("invalid utf8");
+    drop(file);
+    std::fs::rename(&active_path, &archived_path).expect("archive session");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("scan skips unreadable archive");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let retained_state: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM import_state WHERE source_path = ?1",
+        params![active_path.to_string_lossy().to_string()],
+        |row| row.get(0),
+      )
+      .expect("retained active state");
+    assert_eq!(retained_state, 1);
+    drop(conn);
+
+    write_session_file(
+      &archived_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 180, 40, 20, 200),
+      ],
+    );
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry moved archive");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, session_id).3, 200);
+    assert_eq!(session_source_state(&conn, session_id).as_deref(), Some("archived"));
+  }
+
+  #[test]
+  fn full_scan_refreshes_title_when_only_session_index_changes() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let session_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    write_session_file(
+      &sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl")),
+      session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let index_path = codex_home.join("session_index.jsonl");
+    std::fs::write(&index_path, format!("{{\"id\":\"{session_id}\",\"thread_name\":\"A\"}}\n"))
+      .expect("title A");
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    std::fs::write(&index_path, format!("{{\"id\":\"{session_id}\",\"thread_name\":\"B\"}}\n"))
+      .expect("title B");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("second scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let title: String = conn
+      .query_row(
+        "SELECT title FROM sessions WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get(0),
+      )
+      .expect("title");
+    assert_eq!(title, "B");
+  }
+
+  #[test]
+  fn invalid_utf8_does_not_commit_partial_session_or_import_state() {
+    use std::io::Write;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let session_id = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let path = sessions.join(format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl"));
+    let mut file = File::create(&path).expect("session file");
+    writeln!(
+      file,
+      "{{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}"
+    )
+    .expect("meta");
+    file.write_all(&[0xff, b'\n']).expect("invalid utf8");
+    writeln!(
+      file,
+      "{{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{{\"model\":\"gpt-5.6-sol\"}}}}"
+    )
+    .expect("tail");
+    drop(file);
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan skips bad file");
+    let conn = open_connection(&db_path).expect("open db");
+    let sessions_count: i64 = conn
+      .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+      .expect("sessions");
+    let states_count: i64 = conn
+      .query_row("SELECT COUNT(*) FROM import_state", [], |row| row.get(0))
+      .expect("states");
+    assert_eq!((sessions_count, states_count), (0, 0));
+  }
+
+  #[test]
+  fn incremental_scan_repairs_missing_conversation_link_without_source_change() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let parent = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    let child = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    write_session_file_with_parent(
+      &sessions.join(format!("rollout-2026-07-10T00-00-00-{parent}.jsonl")),
+      parent,
+      None,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    write_session_file_with_parent(
+      &sessions.join(format!("rollout-2026-07-10T00-01-00-{child}.jsonl")),
+      child,
+      Some(parent),
+      &[("2026-07-10T00:01:00Z", 50, 10, 5, 55)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute("DELETE FROM conversation_links WHERE session_id = ?1", params![child])
+      .expect("remove link");
+    drop(conn);
+
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("repair scan");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(conversation_link(&conn, child).expect("child link").0, parent);
+  }
+
+  #[test]
+  fn incremental_scan_repairs_conversation_link_parent_mismatch_without_source_change() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let parent = "f1f1f1f1-f1f1-f1f1-f1f1-f1f1f1f1f1f1";
+    let child = "f2f2f2f2-f2f2-f2f2-f2f2-f2f2f2f2f2f2";
+    write_session_file(
+      &sessions.join(format!("rollout-2026-07-10T00-00-00-{parent}.jsonl")),
+      parent,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    write_session_file_with_parent(
+      &sessions.join(format!("rollout-2026-07-10T00-01-00-{child}.jsonl")),
+      child,
+      Some(parent),
+      &[("2026-07-10T00:01:00Z", 50, 10, 5, 55)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute(
+        "UPDATE conversation_links SET parent_session_id = NULL WHERE session_id = ?1",
+        params![child],
+      )
+      .expect("corrupt direct parent");
+    drop(conn);
+
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("repair scan");
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(
+      conversation_link(&conn, child).expect("child link").1.as_deref(),
+      Some(parent)
+    );
+  }
+
+  #[derive(Clone, Copy)]
+  struct TokenFixture {
+    timestamp: &'static str,
+    total: (i64, i64, i64, i64),
+    last: (i64, i64, i64, i64),
+  }
+
+  fn token_count_line(fixture: TokenFixture) -> String {
+    let (input, cached, output, total) = fixture.total;
+    let (last_input, last_cached, last_output, last_total) = fixture.last;
+    format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"event_msg\",\"payload\":{{",
+        "\"type\":\"token_count\",\"info\":{{",
+        "\"total_token_usage\":{{\"input_tokens\":{},\"cached_input_tokens\":{},",
+        "\"output_tokens\":{},\"reasoning_output_tokens\":0,\"total_tokens\":{}}},",
+        "\"last_token_usage\":{{\"input_tokens\":{},\"cached_input_tokens\":{},",
+        "\"output_tokens\":{},\"reasoning_output_tokens\":0,\"total_tokens\":{}}}",
+        "}}}}}}\n"
+      ),
+      fixture.timestamp,
+      input,
+      cached,
+      output,
+      total,
+      last_input,
+      last_cached,
+      last_output,
+      last_total,
+    )
   }
 
   fn write_session_file(path: &Path, session_id: &str, snapshots: &[(&str, i64, i64, i64, i64)]) {

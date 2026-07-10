@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS sync_settings (
   last_scan_started_at TEXT,
   last_scan_completed_at TEXT,
   last_full_scan_completed_at TEXT,
+  last_scan_codex_home TEXT,
   updated_at TEXT NOT NULL
 );
 

@@ -33,6 +33,8 @@ pub struct UsageSnapshot {
   pub timestamp: String,
   pub model_id: String,
   pub usage: TokenUsage,
+  #[serde(skip)]
+  pub last_token_usage: Option<TokenUsage>,
   pub plan_type: Option<String>,
   pub limit_id: Option<String>,
   pub limit_name: Option<String>,

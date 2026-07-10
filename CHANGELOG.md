@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- GPT-5.6 Sol, Terra, and Luna model recognition with bundled Standard API pricing; the `gpt-5.6` alias uses Sol pricing
+- automatic discovery of the Codex CLI bundled with the ChatGPT desktop app on macOS, while retaining standalone CLI and `CODEX_BIN` support
+
+### Changed
+- changing a custom Codex home now starts a full refresh without reusing scan times from the previous directory
+- dashboard refreshes now wait for an active scan to finish and reload conversation details when their source values have changed
+
+### Fixed
+- GPT-5.6 API-equivalent values now recalculate at startup, including rows that were zero or used a cache-write price as the output price
+- incremental imports now capture final snapshots moved into `archived_sessions`, refresh titles from `session_index.jsonl`, avoid saving partial results from unreadable files, and repair missing conversation links
+- persisted quota fallback now chooses the latest timestamp by its actual instant and never combines windows from different samples
+
 ## [1.1.2] - 2026-05-19
 
 ### Added
