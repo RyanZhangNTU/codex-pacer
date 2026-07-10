@@ -446,19 +446,12 @@ impl CoordinatorState {
     }
 
     if self.token.running_generation.is_some() {
-      let matches_running_source_refresh = self.token_running_source_refresh
-        && self
-          .token_running
-          .as_ref()
-          .is_some_and(|running| running.request.codex_home == request.codex_home);
-      if matches_running_source_refresh {
-        merge_token_request(&mut self.token_source_refresh_pending, request);
-        return;
-      }
-      if let Some(source_refresh) = self.token_source_refresh_pending.as_mut() {
-        if source_refresh.codex_home == request.codex_home {
-          source_refresh.merge(request);
-          return;
+      if !self.token_running_source_refresh {
+        if let Some(source_refresh) = self.token_source_refresh_pending.as_mut() {
+          if source_refresh.codex_home == request.codex_home {
+            source_refresh.merge(request);
+            return;
+          }
         }
       }
       merge_token_request(&mut self.token_pending, request);
@@ -2056,5 +2049,64 @@ mod tests {
           && request.request.reasons.contains(RefreshReason::Manual)
           && request.request.codex_home.as_deref() == Some("/normalized/manual-home")
     ));
+  }
+
+  #[test]
+  fn automatic_follow_up_during_protected_run_is_pruned_when_disabled() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let old_source = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/configured-home".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed.clone()),
+    );
+    let replacement_actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenFinished(execution_success(
+        old_source.generation,
+        old_source.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+    let protected = replacement_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("configured-source Full refresh starts");
+    assert_eq!(protected.request.kind, TokenScanKind::Full);
+    assert_eq!(
+      protected.request.codex_home.as_deref(),
+      Some("/normalized/configured-home")
+    );
+
+    state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::RequestToken(TokenRequest::scheduled()),
+    );
+    changed.auto_scan_enabled = false;
+    state.handle(
+      base + Duration::from_secs(4),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    let completion_actions = state.handle(
+      base + Duration::from_secs(5),
+      CoordinatorEvent::TokenFinished(execution_success(
+        protected.generation,
+        protected.source_generation,
+        2,
+        base + Duration::from_secs(5),
+      )),
+    );
+
+    assert!(completion_actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartToken(_))));
   }
 }
