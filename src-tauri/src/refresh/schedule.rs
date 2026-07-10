@@ -35,18 +35,17 @@ impl LaneState {
     }
   }
 
-  fn recalculate_interval(&mut self, old_interval: Duration, new_interval: Duration) {
+  fn recalculate_interval(&mut self, now: Instant, old_interval: Duration, new_interval: Duration) {
     if self.startup_due || old_interval == new_interval {
       return;
     }
 
-    let Some(previous_planned_deadline) = self.next_deadline.checked_sub(old_interval) else {
-      return;
+    let elapsed = if self.next_deadline > now {
+      old_interval.saturating_sub(self.next_deadline.duration_since(now))
+    } else {
+      old_interval.saturating_add(now.duration_since(self.next_deadline))
     };
-    let Some(next_deadline) = previous_planned_deadline.checked_add(new_interval) else {
-      return;
-    };
-    self.next_deadline = next_deadline;
+    self.next_deadline = now + new_interval.saturating_sub(elapsed);
   }
 
   fn take_due(
@@ -125,10 +124,10 @@ impl CoordinatorState {
         let old_interval = self.config.interval;
         self
           .token
-          .recalculate_interval(old_interval, config.interval);
+          .recalculate_interval(now, old_interval, config.interval);
         self
           .live
-          .recalculate_interval(old_interval, config.interval);
+          .recalculate_interval(now, old_interval, config.interval);
         self.config = config;
         RefreshReason::SettingsChanged
       }
@@ -425,6 +424,41 @@ mod tests {
     ));
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(90));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(90));
+  }
+
+  #[test]
+  fn shorter_interval_recalculates_when_prior_anchor_predates_monotonic_epoch() {
+    let base = Instant::now();
+    let old_interval = Duration::MAX;
+    let old_next_deadline = base + Duration::from_secs(60);
+    assert!(old_next_deadline.checked_sub(old_interval).is_none());
+    let mut state = CoordinatorState {
+      config: test_config(old_interval, None),
+      token: LaneState::new(old_next_deadline, base),
+      live: LaneState::new(old_next_deadline, base),
+    };
+
+    let actions = state.handle(
+      base + Duration::from_secs(30),
+      CoordinatorEvent::SettingsChanged(test_config(Duration::from_secs(10), None)),
+    );
+
+    assert_eq!(token_starts(&actions), 1);
+    assert_eq!(live_starts(&actions), 1);
+    assert!(matches!(
+      actions.as_slice(),
+      [
+        CoordinatorAction::StartToken {
+          reason: RefreshReason::SettingsChanged,
+          ..
+        },
+        CoordinatorAction::StartLive {
+          reason: RefreshReason::SettingsChanged,
+        },
+      ]
+    ));
+    assert_eq!(state.token_next_deadline(), base + Duration::from_secs(40));
+    assert_eq!(state.live_next_deadline(), base + Duration::from_secs(40));
   }
 
   #[test]
