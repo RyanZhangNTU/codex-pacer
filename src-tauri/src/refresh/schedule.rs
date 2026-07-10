@@ -398,14 +398,19 @@ impl CoordinatorState {
           .token
           .take_normal_due(now, self.config.interval, trigger_reason)
       {
-        merge_token_request(
-          &mut request,
-          TokenRequest {
-            reasons: reason.into(),
-            kind: TokenScanKind::Incremental,
-            codex_home: self.config.codex_home.clone(),
-          },
-        );
+        let automatic = TokenRequest {
+          reasons: reason.into(),
+          kind: TokenScanKind::Incremental,
+          codex_home: self.config.codex_home.clone(),
+        };
+        let retry_has_different_home = request
+          .as_ref()
+          .is_some_and(|retry| retry.codex_home != automatic.codex_home);
+        if retry_has_different_home {
+          self.queue_token_pending_request(automatic);
+        } else {
+          merge_token_request(&mut request, automatic);
+        }
       }
     }
     request.map(|request| (request, source_refresh))
@@ -473,6 +478,16 @@ impl CoordinatorState {
         return;
       }
       self.token_retry_source_refresh = false;
+    }
+
+    let preserves_manual_retry = self.token_retry_request.as_ref().is_some_and(|retry| {
+      retry.reasons.contains(RefreshReason::Manual)
+        && !request.reasons.contains(RefreshReason::Manual)
+        && retry.codex_home != request.codex_home
+    });
+    if preserves_manual_retry {
+      self.queue_token_pending_request(request);
+      return;
     }
 
     if let Some(mut retry) = self.token_retry_request.take() {
@@ -2229,6 +2244,179 @@ mod tests {
         manual.source_generation,
         3,
         base + Duration::from_secs(6),
+      )),
+    );
+    assert!(matches!(
+      manual_success.last(),
+      Some(CoordinatorAction::StartToken(request))
+        if request.request.reasons.contains(RefreshReason::Scheduled)
+          && !request.request.reasons.contains(RefreshReason::Manual)
+          && request.request.codex_home.as_deref()
+            == Some("/normalized/configured-home-b")
+    ));
+  }
+
+  #[test]
+  fn failed_manual_retry_survives_different_home_automatic_pending() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let old_source = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/configured-home-b".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    let replacement_actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenFinished(execution_success(
+        old_source.generation,
+        old_source.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+    let protected = replacement_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("configured-source Full refresh starts");
+
+    state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::RequestToken(TokenRequest::manual_full(Some(
+        "/normalized/manual-home-c".to_string(),
+      ))),
+    );
+    state.handle(
+      base + Duration::from_secs(4),
+      CoordinatorEvent::RequestToken(TokenRequest::scheduled()),
+    );
+    let protected_success = state.handle(
+      base + Duration::from_secs(5),
+      CoordinatorEvent::TokenFinished(execution_success(
+        protected.generation,
+        protected.source_generation,
+        2,
+        base + Duration::from_secs(5),
+      )),
+    );
+    let manual = protected_success
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("manual follow-up starts first");
+
+    let manual_failure = state.handle(
+      base + Duration::from_secs(6),
+      CoordinatorEvent::TokenFinished(execution_failure(
+        manual.generation,
+        manual.source_generation,
+        Duration::ZERO,
+      )),
+    );
+    assert_eq!(token_starts(&manual_failure), 0);
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(11)));
+
+    let early = state.handle(base + Duration::from_secs(10), CoordinatorEvent::Timer);
+    assert_eq!(token_starts(&early), 0);
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(11)));
+
+    let retry_actions = state.handle(base + Duration::from_secs(11), CoordinatorEvent::Timer);
+    let manual_retry = retry_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("manual Full retry starts at its deadline");
+    assert_eq!(manual_retry.request.kind, TokenScanKind::Full);
+    assert!(manual_retry.request.reasons.contains(RefreshReason::Manual));
+    assert_eq!(
+      manual_retry.request.codex_home.as_deref(),
+      Some("/normalized/manual-home-c")
+    );
+
+    let manual_success = state.handle(
+      base + Duration::from_secs(12),
+      CoordinatorEvent::TokenFinished(execution_success(
+        manual_retry.generation,
+        manual_retry.source_generation,
+        3,
+        base + Duration::from_secs(12),
+      )),
+    );
+    assert!(matches!(
+      manual_success.last(),
+      Some(CoordinatorAction::StartToken(request))
+        if request.request.reasons.contains(RefreshReason::Scheduled)
+          && !request.request.reasons.contains(RefreshReason::Manual)
+          && request.request.codex_home.as_deref()
+            == Some("/normalized/configured-home-b")
+    ));
+  }
+
+  #[test]
+  fn due_automatic_trigger_does_not_retarget_manual_retry() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(5);
+    let mut config = test_config(interval, Some(wall));
+    config.codex_home = Some("/normalized/configured-home-b".to_string());
+    let mut state = CoordinatorState::new(config, base, wall);
+    let manual = state
+      .handle(
+        base,
+        CoordinatorEvent::RequestToken(TokenRequest::manual_full(Some(
+          "/normalized/manual-home-c".to_string(),
+        ))),
+      )
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("manual Full refresh starts");
+
+    let failure_actions = state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::TokenFinished(execution_failure(
+        manual.generation,
+        manual.source_generation,
+        Duration::ZERO,
+      )),
+    );
+    assert_eq!(token_starts(&failure_actions), 0);
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(6)));
+
+    let retry_actions = state.handle(base + Duration::from_secs(6), CoordinatorEvent::Timer);
+    let manual_retry = retry_actions
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("manual Full retry starts at its deadline");
+    assert_eq!(manual_retry.request.kind, TokenScanKind::Full);
+    assert!(manual_retry.request.reasons.contains(RefreshReason::Manual));
+    assert_eq!(
+      manual_retry.request.codex_home.as_deref(),
+      Some("/normalized/manual-home-c")
+    );
+
+    let manual_success = state.handle(
+      base + Duration::from_secs(7),
+      CoordinatorEvent::TokenFinished(execution_success(
+        manual_retry.generation,
+        manual_retry.source_generation,
+        1,
+        base + Duration::from_secs(7),
       )),
     );
     assert!(matches!(
