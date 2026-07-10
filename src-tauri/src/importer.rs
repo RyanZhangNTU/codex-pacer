@@ -30,10 +30,9 @@ struct ParsedSession {
   raw_session: RawSession,
   snapshots: Vec<UsageSnapshot>,
   rate_limit_samples: Vec<RateLimitSampleRecord>,
-  #[allow(dead_code)]
   explicit_forked_from_id: Option<String>,
-  #[allow(dead_code)]
   explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
+  inherited_token_snapshot_cutoff: usize,
   explicit_fast_mode: Option<bool>,
   latest_plan_type: Option<String>,
   last_model_id: Option<String>,
@@ -144,6 +143,8 @@ fn perform_scan_with_scope(
     ScanScope::Full => (collect_session_files(&codex_home), HashSet::new()),
     ScanScope::Incremental => collect_incremental_session_files(&codex_home, &import_state),
   };
+  let session_source_paths =
+    load_session_source_paths(&conn, &import_state, &session_files).map_err(|error| error.to_string())?;
   let mut present_paths: HashSet<String> = session_files
     .iter()
     .map(|item| item.path.to_string_lossy().to_string())
@@ -189,6 +190,7 @@ fn perform_scan_with_scope(
   let mut topology_dirty = false;
   let mut new_root_session_ids = Vec::new();
   let mut skipped_session_files = false;
+  let mut parent_snapshot_cache: HashMap<String, Option<Vec<UsageSnapshot>>> = HashMap::new();
   if !changed_files.is_empty() {
     let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
     let existing_relations = load_existing_session_relations(&conn).map_err(|error| error.to_string())?;
@@ -199,7 +201,7 @@ fn perform_scan_with_scope(
         needs_rate_limit_backfill || pending_rate_limit_repair_paths.contains(&source_path);
       let file_needs_token_repair =
         needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path);
-      let parsed = match parse_session_file(session_file, &titles) {
+      let mut parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
         Err(error) => {
           skipped_session_files = true;
@@ -219,6 +221,11 @@ fn perform_scan_with_scope(
           continue;
         }
       };
+      assign_inherited_token_snapshot_cutoff(
+        &mut parsed,
+        &session_source_paths,
+        &mut parent_snapshot_cache,
+      );
       imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
       match classify_topology_maintenance(
@@ -893,6 +900,7 @@ fn parse_session_file_once(
     rate_limit_samples,
     explicit_forked_from_id,
     explicit_fork_timestamp,
+    inherited_token_snapshot_cutoff: 0,
     explicit_fast_mode,
     latest_plan_type,
     last_model_id: last_model_id.or_else(|| Some("unknown".to_string())),
@@ -927,6 +935,204 @@ fn looks_like_session_id(value: &str) -> bool {
     .all(|(segment, expected_len)| {
       segment.len() == *expected_len && segment.chars().all(|character| character.is_ascii_hexdigit())
     })
+}
+
+fn load_session_source_paths(
+  conn: &Connection,
+  import_state: &HashMap<String, ImportState>,
+  session_files: &[SessionFile],
+) -> rusqlite::Result<HashMap<String, PathBuf>> {
+  let mut source_paths = HashMap::new();
+  let mut stmt = conn.prepare(
+    "SELECT session_id, source_path FROM sessions WHERE source_path IS NOT NULL",
+  )?;
+  let rows = stmt.query_map([], |row| {
+    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+  })?;
+
+  for row in rows {
+    let (session_id, source_path) = row?;
+    source_paths.insert(session_id, PathBuf::from(source_path));
+  }
+  drop(stmt);
+
+  for state in import_state.values() {
+    let Some(session_id) = state.session_id.as_ref() else {
+      continue;
+    };
+    source_paths.insert(session_id.clone(), PathBuf::from(&state.source_path));
+  }
+
+  for session_file in session_files {
+    let Some(session_id) = fallback_session_id_from_filename(&session_file.path) else {
+      continue;
+    };
+    source_paths.insert(session_id, session_file.path.clone());
+  }
+
+  Ok(source_paths)
+}
+
+fn assign_inherited_token_snapshot_cutoff(
+  parsed: &mut ParsedSession,
+  session_source_paths: &HashMap<String, PathBuf>,
+  parent_snapshot_cache: &mut HashMap<String, Option<Vec<UsageSnapshot>>>,
+) {
+  let Some(parent_session_id) = parsed
+    .explicit_forked_from_id
+    .as_deref()
+    .filter(|session_id| !session_id.trim().is_empty())
+  else {
+    return;
+  };
+  let Some(fork_timestamp) = parsed.explicit_fork_timestamp else {
+    return;
+  };
+
+  if !parent_snapshot_cache.contains_key(parent_session_id) {
+    let parent_snapshots = match session_source_paths.get(parent_session_id) {
+      Some(source_path) => match read_parent_replay_snapshots(source_path, parent_session_id) {
+        Ok(snapshots) => Some(snapshots),
+        Err(()) => {
+          log::warn!(
+            "Replay parent unavailable: child_id={}, parent_id={}, source_path={}",
+            parsed.raw_session.session_id,
+            parent_session_id,
+            source_path.display()
+          );
+          None
+        }
+      },
+      None => {
+        log::warn!(
+          "Replay parent unavailable: child_id={}, parent_id={}",
+          parsed.raw_session.session_id,
+          parent_session_id
+        );
+        None
+      }
+    };
+    parent_snapshot_cache.insert(parent_session_id.to_string(), parent_snapshots);
+  }
+
+  let Some(parent_snapshots) = parent_snapshot_cache
+    .get(parent_session_id)
+    .and_then(Option::as_deref)
+  else {
+    return;
+  };
+
+  parsed.inherited_token_snapshot_cutoff = replayed_child_snapshot_cutoff(
+    parent_snapshots,
+    &parsed.snapshots,
+    Some(fork_timestamp),
+  );
+}
+
+fn read_parent_replay_snapshots(
+  source_path: &Path,
+  requested_parent_id: &str,
+) -> Result<Vec<UsageSnapshot>, ()> {
+  let filename_session_id = fallback_session_id_from_filename(source_path);
+  if filename_session_id
+    .as_deref()
+    .is_some_and(|session_id| session_id != requested_parent_id)
+  {
+    return Err(());
+  }
+
+  let file = File::open(source_path).map_err(|_| ())?;
+  let mut first_session_meta_id: Option<String> = None;
+  let mut snapshots = Vec::new();
+
+  for line_result in BufReader::new(file).lines() {
+    let line = line_result.map_err(|_| ())?;
+    let may_be_session_meta = json_line_has_string_field(&line, "type", "session_meta");
+    let may_be_token_count = json_line_has_string_field(&line, "type", "event_msg")
+      && json_line_has_string_field(&line, "type", "token_count");
+    if !may_be_session_meta && !may_be_token_count {
+      continue;
+    }
+
+    let Ok(value) = serde_json::from_str::<Value>(&line) else {
+      continue;
+    };
+    match value.get("type").and_then(Value::as_str) {
+      Some("session_meta") if first_session_meta_id.is_none() => {
+        let Some(session_id) = value
+          .get("payload")
+          .and_then(|payload| payload.get("id"))
+          .and_then(Value::as_str)
+        else {
+          continue;
+        };
+        if filename_session_id.is_none() && session_id != requested_parent_id {
+          return Err(());
+        }
+        first_session_meta_id = Some(session_id.to_string());
+      }
+      Some("event_msg") => {
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+          continue;
+        }
+        let info = payload.get("info").unwrap_or(&Value::Null);
+        let total_usage = info.get("total_token_usage").unwrap_or(&Value::Null);
+        let Some(timestamp) = value.get("timestamp").and_then(Value::as_str) else {
+          continue;
+        };
+        if total_usage.is_null() {
+          continue;
+        }
+
+        snapshots.push(UsageSnapshot {
+          timestamp: timestamp.to_string(),
+          model_id: String::new(),
+          usage: token_usage_from_json(total_usage),
+          last_token_usage: info
+            .get("last_token_usage")
+            .filter(|last_usage| !last_usage.is_null())
+            .map(token_usage_from_json),
+          plan_type: None,
+          limit_id: None,
+          limit_name: None,
+          explicit_fast_mode: None,
+        });
+      }
+      _ => {}
+    }
+  }
+
+  if filename_session_id.is_none() && first_session_meta_id.is_none() {
+    return Err(());
+  }
+  if snapshots.is_empty() {
+    return Err(());
+  }
+
+  Ok(snapshots)
+}
+
+fn json_line_has_string_field(line: &str, field: &str, expected_value: &str) -> bool {
+  let field = format!("\"{field}\"");
+  let expected_value = format!("\"{expected_value}\"");
+
+  line.match_indices(&field).any(|(index, _)| {
+    line[index + field.len()..]
+      .trim_start()
+      .strip_prefix(':')
+      .is_some_and(|rest| rest.trim_start().starts_with(&expected_value))
+  })
+}
+
+fn token_usage_from_json(value: &Value) -> TokenUsage {
+  TokenUsage {
+    input_tokens: read_i64(value, "input_tokens"),
+    cached_input_tokens: read_i64(value, "cached_input_tokens"),
+    output_tokens: read_i64(value, "output_tokens"),
+    reasoning_output_tokens: read_i64(value, "reasoning_output_tokens"),
+    total_tokens: read_total_tokens(value),
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -983,7 +1189,6 @@ fn kmp_prefix_table(pattern: &[ReplayKey]) -> Vec<usize> {
   table
 }
 
-#[allow(dead_code)]
 fn replayed_child_snapshot_cutoff(
   parent_snapshots: &[UsageSnapshot],
   child_snapshots: &[UsageSnapshot],
@@ -1104,9 +1309,13 @@ fn persist_session(
   )?;
   replace_session_rate_limit_samples(&tx, &parsed.raw_session.session_id, &parsed.rate_limit_samples)?;
 
-  let mut previous_usage: Option<TokenUsage> = None;
+  let snapshot_cutoff = parsed.inherited_token_snapshot_cutoff;
+  let mut previous_usage = snapshot_cutoff
+    .checked_sub(1)
+    .and_then(|index| parsed.snapshots.get(index))
+    .map(|snapshot| snapshot.usage.clone());
 
-  for snapshot in &parsed.snapshots {
+  for snapshot in parsed.snapshots.iter().skip(snapshot_cutoff) {
     if previous_usage.as_ref() == Some(&snapshot.usage) {
       continue;
     }
@@ -1116,6 +1325,11 @@ fn persist_session(
         continue;
       }
       diff_usage(previous, &snapshot.usage)
+    } else if parsed.explicit_forked_from_id.is_some() {
+      snapshot
+        .last_token_usage
+        .clone()
+        .unwrap_or_else(|| snapshot.usage.clone())
     } else {
       snapshot.usage.clone()
     };
