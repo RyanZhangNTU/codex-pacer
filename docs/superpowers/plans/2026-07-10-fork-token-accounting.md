@@ -12,7 +12,7 @@
 
 - Apply cross-session replay removal only to `session_meta.payload.forked_from_id`.
 - Require at least two consecutive exact `(total_token_usage, last_token_usage)` pairs.
-- Keep timestamps and model labels out of replay matching.
+- Do not compare child and parent timestamps; exclude parent records created after the explicit fork timestamp.
 - Keep the `usage_events` schema and public response types unchanged.
 - Preserve cumulative high-water handling for repeated and non-monotonic totals.
 - Fall back to legacy cumulative accounting when `last_token_usage` is absent.
@@ -116,7 +116,7 @@ Add `forked_from_session_id: Option<String>` to `SessionMetaCandidate` and `Pars
 
 - [ ] **Step 2: Add unit tests for replay matching**
 
-Test a complete match, a match starting inside the parent sequence, a one-record match that returns zero, and a sequence interrupted by a missing last-usage value.
+Test a complete match, a match starting inside the parent sequence, a one-record match that returns zero, and a sequence interrupted by a missing last-usage value. Add a same-total record whose last usage changes and assert that cumulative canonicalization removes it. Add a parent record after the fork whose numbers equal the child's first new usage and assert that the match stops before it.
 
 ```rust
 assert_eq!(longest_inherited_prefix(&child, &parent), 3);
@@ -153,11 +153,11 @@ fn usage_replay_key(snapshot: &UsageSnapshot) -> Option<UsageReplayKey> {
 }
 ```
 
-Build the child pattern only through its first missing key. Scan parent segments with a KMP prefix table. Return zero for matches shorter than two records.
+Reduce parent and child snapshots to strictly increasing cumulative high-water records. Keep each canonical child's original snapshot index so the matched prefix can map back to the raw sequence. Build the child pattern only through its first missing key. Exclude parent records later than the explicit fork timestamp, scan the remaining parent segments with a KMP prefix table, and return zero for matches shorter than two records.
 
 - [ ] **Step 5: Resolve and cache direct-parent sequences**
 
-Build a session source-path map from current scan files and `sessions.source_path`. For each changed explicit fork, read only `turn_context` and `event_msg/token_count` metadata from the direct parent. Cache `Vec<Option<UsageReplayKey>>` by parent session ID for the rest of the scan.
+Build a session source-path map from current scan files and `sessions.source_path`. For each changed explicit fork, read only timestamps and `event_msg/token_count` metadata from the direct parent. Cache the raw replay records by parent session ID for the rest of the scan, then apply each child's fork-time cutoff before canonicalization and matching.
 
 - [ ] **Step 6: Apply the corrected baseline in persistence**
 
@@ -212,9 +212,9 @@ cargo test --manifest-path src-tauri/Cargo.toml importer::tests::v3_repair_rebui
 
 Expected: no file is reimported because the installed v2 marker is already complete.
 
-- [ ] **Step 3: Replace the repair key and keep pending-file behavior**
+- [ ] **Step 3: Add the repair key and keep pending-file behavior**
 
-Set the active token repair key to `token_usage_fork_replay_v3`. Do not delete the v2 marker. Reuse the existing full-scan promotion, per-file pending records, and completion marker.
+Add `token_usage_fork_replay_v3` without deleting the v2 constant or marker. Promote an incremental request to a full scan when either repair is pending, merge both sets of pending paths into the changed-file set, and keep retrying v2 pending files. Record completion for each sweep independently. Reuse the existing per-file pending records and completion helpers.
 
 - [ ] **Step 4: Verify repair retry tests**
 

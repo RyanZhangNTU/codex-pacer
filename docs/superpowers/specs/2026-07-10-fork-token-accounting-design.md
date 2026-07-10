@@ -12,7 +12,9 @@ A second case occurs when the first child snapshot already contains an inherited
 
 The importer will keep the cumulative counter as its monotonic high-water mark. It will also parse `last_token_usage` for replay identification and first-snapshot recovery.
 
-For a session with an explicit `forked_from_id`, the importer will load the direct parent's numeric token sequence. It will compare each child snapshot by the exact pair `(total_token_usage, last_token_usage)`. A copied prefix is removed only when at least two consecutive child pairs match one contiguous slice of the direct parent's sequence. Timestamps and model labels do not participate because Codex can rewrite them during a fork.
+For a session with an explicit `forked_from_id`, the importer will load the direct parent's numeric token sequence. Parent and child sequences are first reduced to the same cumulative high-water records used for billing. This removes repeated snapshots, including records where total usage is unchanged but last usage differs. The importer then compares each child record by the exact pair `(total_token_usage, last_token_usage)`. A copied prefix is removed only when at least two consecutive child pairs match one contiguous slice of the direct parent's sequence.
+
+Child and parent timestamps do not need to be equal because Codex rewrites copied timestamps. The explicit fork timestamp still supplies a causal boundary: parent records created after the fork cannot have been inherited and are excluded before matching. Model labels do not participate in matching.
 
 The matching algorithm finds the longest child prefix contained in the parent sequence in linear time. Missing `last_token_usage` breaks a candidate match. This keeps older JSONL formats on the existing cumulative-counter path.
 
@@ -24,13 +26,13 @@ Sessions linked only through `source.subagent.thread_spawn.parent_thread_id` do 
 
 `UsageSnapshot` will retain both cumulative and last-turn token usage. `ParsedSession` will separately retain the explicit fork parent ID so the importer can distinguish a true fork from a normal spawned subagent.
 
-At scan time, the importer builds a session-to-source-path map from the files in the current scan and existing session records. When a changed explicit fork is parsed, the importer reads the direct parent's numeric token records on demand and caches the result for sibling forks. It does not load message text into memory.
+At scan time, the importer builds a session-to-source-path map from the files in the current scan and existing session records. When a changed explicit fork is parsed, the importer reads the direct parent's token numbers and timestamps on demand, drops records later than the fork, and caches the result for sibling forks. It does not load message text into memory.
 
 The persisted `usage_events` table remains unchanged. It continues to store deltas, not source cumulative counters. API-equivalent value is calculated from the corrected deltas in the same transaction that replaces the session's usage rows.
 
 ## Historical repair
 
-The existing `token_usage_monotonic_v2` repair marker has already completed on installed databases. The new algorithm therefore uses `token_usage_fork_replay_v3`. Its absence forces a full scan and rebuilds unchanged usage files under the selected Codex home.
+The existing `token_usage_monotonic_v2` repair marker has already completed on installed databases. The new algorithm therefore adds `token_usage_fork_replay_v3`. Its absence forces a full scan and rebuilds unchanged usage files under the selected Codex home. The importer continues to load and retry any older v2 pending files instead of abandoning them when v3 is introduced.
 
 If a source file is unreadable, the existing pending-file mechanism records it and retries it on a later scan. A direct parent that is no longer available cannot support exact prefix matching. In that case the child still receives the first-snapshot baseline correction, and the importer logs that full replay matching was unavailable.
 
@@ -38,13 +40,16 @@ Historical sessions from a different Codex home can only be rebuilt while their 
 
 ## Performance
 
-Normal root sessions do no extra file work. An explicit fork loads only its direct parent's numeric token records. Multiple children of one parent share the cached sequence for the duration of the scan. Prefix matching uses a KMP-style prefix table, so its cost is proportional to the parent and child sequence lengths.
+Normal root sessions do no extra file work. An explicit fork loads only its direct parent's numeric token records. Multiple children of one parent share the raw sequence for the duration of the scan, then apply their own fork-time cutoff. Prefix matching uses a KMP-style prefix table, so its cost is proportional to the parent and child sequence lengths.
 
 ## Verification
 
 Automated tests cover:
 
 - a child that copies three parent snapshots and then adds new usage;
+- a copied sequence that starts in the middle of the parent history;
+- unchanged cumulative totals with different last-usage values producing no extra match or charge;
+- parent usage after the fork being ineligible for replay matching;
 - a fork whose first snapshot contains a large inherited baseline;
 - a normal spawned subagent that must not use fork replay removal;
 - a nested fork that compares against its direct parent;
