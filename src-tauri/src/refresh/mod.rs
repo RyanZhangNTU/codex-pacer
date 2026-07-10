@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
+mod mutation;
 mod schedule;
+
+#[allow(unused_imports)]
+pub(crate) use mutation::{MutationOutcome, MutationPriority, UsageMutationCoordinator};
 
 use chrono::{DateTime, Utc};
 use std::time::{Duration, Instant};
