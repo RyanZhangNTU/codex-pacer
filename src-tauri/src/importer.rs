@@ -141,10 +141,10 @@ fn perform_scan_with_scope(
     pending_repair_session_ids(&import_state, &pending_token_v2_repair_paths);
   let pending_fork_replay_v3_repair_session_ids =
     pending_repair_session_ids(&import_state, &pending_fork_replay_v3_repair_paths);
-  let pending_token_repair_session_ids = pending_token_v2_repair_session_ids
-    .union(&pending_fork_replay_v3_repair_session_ids)
-    .cloned()
-    .collect::<HashSet<_>>();
+  let mut pending_repair_session_ids =
+    pending_repair_session_ids(&import_state, &pending_rate_limit_repair_paths);
+  pending_repair_session_ids.extend(pending_token_v2_repair_session_ids.iter().cloned());
+  pending_repair_session_ids.extend(pending_fork_replay_v3_repair_session_ids.iter().cloned());
   let needs_token_usage_repair_sweep =
     needs_token_usage_v2_repair_sweep || needs_fork_replay_v3_repair_sweep;
   let effective_scope = effective_scan_scope(
@@ -158,7 +158,7 @@ fn perform_scan_with_scope(
   let (session_files, active_paths_kept_for_archive_retry) = match effective_scope {
     ScanScope::Full => (collect_session_files(&codex_home), HashSet::new()),
     ScanScope::Incremental => {
-      collect_incremental_session_files(&codex_home, &import_state, &pending_token_repair_session_ids)
+      collect_incremental_session_files(&codex_home, &import_state, &pending_repair_session_ids)
     }
   };
   let session_source_paths =
@@ -4965,6 +4965,57 @@ mod tests {
     assert_eq!(retry.scanned_files, 1);
     assert_eq!(session_usage_totals(&conn, session_id).3, 220);
     assert!(get_last_full_scan_completed(&conn).expect("load repaired freshness").is_some());
+    let pending_rate_limit_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
+        params![RATE_LIMIT_SAMPLE_BACKFILL_KEY],
+        |row| row.get(0),
+      )
+      .expect("count pending rate-limit repairs");
+    assert_eq!(pending_rate_limit_count, 0);
+  }
+
+  #[test]
+  fn incremental_scan_retries_unchanged_pending_rate_limit_archive() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let archived_sessions = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&archived_sessions).expect("archived sessions");
+
+    let session_id = "69696969-6969-4969-8969-696969696969";
+    let session_path = archived_sessions.join(format!(
+      "rollout-2026-07-10T00-00-00-{session_id}.jsonl"
+    ));
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-07-10T00:00:01Z", 80, 0, 20, 100)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+        VALUES (?1, ?2, 'temporary read failure', ?3)
+        ",
+        params![
+          RATE_LIMIT_SAMPLE_BACKFILL_KEY,
+          session_path.to_string_lossy().to_string(),
+          now_utc_string(),
+        ],
+      )
+      .expect("insert pending rate-limit archive");
+    drop(conn);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry unchanged rate-limit archive");
+
+    let conn = open_connection(&db_path).expect("open retried db");
+    assert_eq!(result.updated_sessions, 1);
     let pending_rate_limit_count: i64 = conn
       .query_row(
         "SELECT COUNT(*) FROM data_repair_pending_files WHERE repair_key = ?1",
