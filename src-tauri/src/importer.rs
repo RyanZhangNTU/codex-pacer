@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use chrono::{Local, LocalResult, TimeZone, Timelike};
+use chrono::{DateTime, FixedOffset, Local, LocalResult, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -30,6 +30,10 @@ struct ParsedSession {
   raw_session: RawSession,
   snapshots: Vec<UsageSnapshot>,
   rate_limit_samples: Vec<RateLimitSampleRecord>,
+  #[allow(dead_code)]
+  explicit_forked_from_id: Option<String>,
+  #[allow(dead_code)]
+  explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
   explicit_fast_mode: Option<bool>,
   latest_plan_type: Option<String>,
   last_model_id: Option<String>,
@@ -39,6 +43,8 @@ struct ParsedSession {
 struct SessionMetaCandidate {
   session_id: String,
   parent_session_id: Option<String>,
+  explicit_forked_from_id: Option<String>,
+  explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
   agent_nickname: Option<String>,
   agent_role: Option<String>,
 }
@@ -651,6 +657,8 @@ fn parse_session_file_once(
   let mut current_model: Option<String> = None;
   let mut agent_nickname: Option<String> = None;
   let mut agent_role: Option<String> = None;
+  let mut explicit_forked_from_id: Option<String> = None;
+  let mut explicit_fork_timestamp: Option<DateTime<FixedOffset>> = None;
   let mut explicit_fast_mode: Option<bool> = None;
   let mut latest_plan_type: Option<String> = None;
   let mut snapshots = Vec::new();
@@ -695,10 +703,12 @@ fn parse_session_file_once(
     match value.get("type").and_then(Value::as_str).unwrap_or_default() {
       "session_meta" => {
         let payload = value.get("payload").unwrap_or(&Value::Null);
-        let parent = payload
+        let candidate_explicit_forked_from_id = payload
           .get("forked_from_id")
           .and_then(Value::as_str)
-          .map(ToString::to_string)
+          .map(ToString::to_string);
+        let parent = candidate_explicit_forked_from_id
+          .clone()
           .or_else(|| {
             payload
               .get("source")
@@ -708,6 +718,10 @@ fn parse_session_file_once(
               .and_then(Value::as_str)
               .map(ToString::to_string)
           });
+        let candidate_explicit_fork_timestamp = candidate_explicit_forked_from_id
+          .as_ref()
+          .and_then(|_| timestamp.as_deref())
+          .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok());
 
         let nickname = payload
           .get("agent_nickname")
@@ -741,6 +755,8 @@ fn parse_session_file_once(
           let candidate = SessionMetaCandidate {
             session_id: id.to_string(),
             parent_session_id: parent,
+            explicit_forked_from_id: candidate_explicit_forked_from_id,
+            explicit_fork_timestamp: candidate_explicit_fork_timestamp,
             agent_nickname: nickname,
             agent_role: role,
           };
@@ -784,6 +800,16 @@ fn parse_session_file_once(
           reasoning_output_tokens: read_i64(total_usage, "reasoning_output_tokens"),
           total_tokens: read_total_tokens(total_usage),
         };
+        let last_token_usage = info
+          .get("last_token_usage")
+          .filter(|last_usage| !last_usage.is_null())
+          .map(|last_usage| TokenUsage {
+            input_tokens: read_i64(last_usage, "input_tokens"),
+            cached_input_tokens: read_i64(last_usage, "cached_input_tokens"),
+            output_tokens: read_i64(last_usage, "output_tokens"),
+            reasoning_output_tokens: read_i64(last_usage, "reasoning_output_tokens"),
+            total_tokens: read_total_tokens(last_usage),
+          });
 
         let plan_type = payload
           .get("rate_limits")
@@ -808,6 +834,7 @@ fn parse_session_file_once(
           timestamp: sample_timestamp,
           model_id,
           usage,
+          last_token_usage,
           plan_type,
           limit_id,
           limit_name,
@@ -821,6 +848,8 @@ fn parse_session_file_once(
   if let Some(candidate) = matching_session_meta.or(first_session_meta) {
     session_id = candidate.session_id;
     parent_session_id = candidate.parent_session_id.or(parent_session_id);
+    explicit_forked_from_id = candidate.explicit_forked_from_id;
+    explicit_fork_timestamp = candidate.explicit_fork_timestamp;
     agent_nickname = candidate.agent_nickname.or(agent_nickname);
     agent_role = candidate.agent_role.or(agent_role);
   }
@@ -862,6 +891,8 @@ fn parse_session_file_once(
     },
     snapshots,
     rate_limit_samples,
+    explicit_forked_from_id,
+    explicit_fork_timestamp,
     explicit_fast_mode,
     latest_plan_type,
     last_model_id: last_model_id.or_else(|| Some("unknown".to_string())),
@@ -896,6 +927,118 @@ fn looks_like_session_id(value: &str) -> bool {
     .all(|(segment, expected_len)| {
       segment.len() == *expected_len && segment.chars().all(|character| character.is_ascii_hexdigit())
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplayKey {
+  total_token_usage: TokenUsage,
+  last_token_usage: TokenUsage,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CanonicalReplaySnapshot<'a> {
+  raw_index: usize,
+  snapshot: &'a UsageSnapshot,
+}
+
+impl CanonicalReplaySnapshot<'_> {
+  fn replay_key(&self) -> Option<ReplayKey> {
+    Some(ReplayKey {
+      total_token_usage: self.snapshot.usage.clone(),
+      last_token_usage: self.snapshot.last_token_usage.clone()?,
+    })
+  }
+}
+
+fn canonical_replay_snapshots(snapshots: &[UsageSnapshot]) -> Vec<CanonicalReplaySnapshot<'_>> {
+  let mut high_water: Option<i64> = None;
+  let mut canonical = Vec::new();
+
+  for (raw_index, snapshot) in snapshots.iter().enumerate() {
+    if high_water.is_some_and(|total| snapshot.usage.total_tokens <= total) {
+      continue;
+    }
+
+    high_water = Some(snapshot.usage.total_tokens);
+    canonical.push(CanonicalReplaySnapshot { raw_index, snapshot });
+  }
+
+  canonical
+}
+
+fn kmp_prefix_table(pattern: &[ReplayKey]) -> Vec<usize> {
+  let mut table = vec![0; pattern.len()];
+
+  for index in 1..pattern.len() {
+    let mut prefix_len = table[index - 1];
+    while prefix_len > 0 && pattern[index] != pattern[prefix_len] {
+      prefix_len = table[prefix_len - 1];
+    }
+    if pattern[index] == pattern[prefix_len] {
+      prefix_len += 1;
+    }
+    table[index] = prefix_len;
+  }
+
+  table
+}
+
+#[allow(dead_code)]
+fn replayed_child_snapshot_cutoff(
+  parent_snapshots: &[UsageSnapshot],
+  child_snapshots: &[UsageSnapshot],
+  explicit_fork_timestamp: Option<DateTime<FixedOffset>>,
+) -> usize {
+  let Some(explicit_fork_timestamp) = explicit_fork_timestamp else {
+    return 0;
+  };
+
+  let child_canonical = canonical_replay_snapshots(child_snapshots);
+  let mut child_pattern = Vec::new();
+  for snapshot in &child_canonical {
+    let Some(key) = snapshot.replay_key() else {
+      break;
+    };
+    child_pattern.push(key);
+  }
+  if child_pattern.len() < 2 {
+    return 0;
+  }
+
+  let prefix_table = kmp_prefix_table(&child_pattern);
+  let mut matched = 0;
+  let mut longest_match = 0;
+
+  for parent in canonical_replay_snapshots(parent_snapshots) {
+    let Ok(parent_timestamp) = DateTime::parse_from_rfc3339(&parent.snapshot.timestamp) else {
+      continue;
+    };
+    if parent_timestamp > explicit_fork_timestamp {
+      continue;
+    }
+
+    let Some(parent_key) = parent.replay_key() else {
+      matched = 0;
+      continue;
+    };
+
+    while matched > 0 && child_pattern[matched] != parent_key {
+      matched = prefix_table[matched - 1];
+    }
+    if child_pattern[matched] == parent_key {
+      matched += 1;
+      longest_match = longest_match.max(matched);
+      if matched == child_pattern.len() {
+        break;
+      }
+    }
+  }
+
+  if longest_match < 2 {
+    0
+  } else {
+    child_canonical[longest_match - 1].raw_index + 1
+  }
 }
 
 fn persist_session(
@@ -1516,6 +1659,423 @@ mod tests {
         std::env::remove_var("CODEX_HOME");
       }
     }
+  }
+
+  fn replay_usage(values: (i64, i64, i64, i64, i64)) -> TokenUsage {
+    TokenUsage {
+      input_tokens: values.0,
+      cached_input_tokens: values.1,
+      output_tokens: values.2,
+      reasoning_output_tokens: values.3,
+      total_tokens: values.4,
+    }
+  }
+
+  fn replay_snapshot(
+    timestamp: &str,
+    model_id: &str,
+    total: (i64, i64, i64, i64, i64),
+    last: Option<(i64, i64, i64, i64, i64)>,
+  ) -> UsageSnapshot {
+    UsageSnapshot {
+      timestamp: timestamp.to_string(),
+      model_id: model_id.to_string(),
+      usage: replay_usage(total),
+      last_token_usage: last.map(replay_usage),
+      plan_type: None,
+      limit_id: None,
+      limit_name: None,
+      explicit_fast_mode: None,
+    }
+  }
+
+  fn fork_instant(timestamp: &str) -> chrono::DateTime<chrono::FixedOffset> {
+    chrono::DateTime::parse_from_rfc3339(timestamp).expect("valid fork instant")
+  }
+
+  #[test]
+  fn replay_matching_accepts_a_complete_three_record_match() {
+    let parent = vec![
+      replay_snapshot(
+        "2026-03-24T00:00:01Z",
+        "parent-a",
+        (100, 10, 20, 1, 121),
+        Some((100, 10, 20, 1, 121)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:01:01Z",
+        "parent-b",
+        (180, 20, 35, 2, 217),
+        Some((80, 10, 15, 1, 96)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:02:01Z",
+        "parent-c",
+        (260, 30, 50, 3, 313),
+        Some((80, 10, 15, 1, 96)),
+      ),
+    ];
+    let child = vec![
+      replay_snapshot(
+        "2026-03-24T00:10:00Z",
+        "child-x",
+        (100, 10, 20, 1, 121),
+        Some((100, 10, 20, 1, 121)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:10:00Z",
+        "child-y",
+        (180, 20, 35, 2, 217),
+        Some((80, 10, 15, 1, 96)),
+      ),
+      replay_snapshot(
+        "2026-03-24T00:10:00Z",
+        "child-z",
+        (260, 30, 50, 3, 313),
+        Some((80, 10, 15, 1, 96)),
+      ),
+    ];
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &parent,
+        &child,
+        Some(fork_instant("2026-03-24T00:05:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_finds_a_child_prefix_in_the_middle_of_the_parent() {
+    let unrelated = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "parent",
+      (20, 0, 5, 0, 25),
+      Some((20, 0, 5, 0, 25)),
+    );
+    let first = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "parent",
+      (100, 10, 20, 1, 121),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:02:00Z",
+      "parent",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let third = replay_snapshot(
+      "2026-03-24T00:03:00Z",
+      "parent",
+      (260, 30, 50, 3, 313),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let parent = vec![unrelated, first.clone(), second.clone(), third.clone()];
+    let child = vec![first, second, third];
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &parent,
+        &child,
+        Some(fork_instant("2026-03-24T00:04:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_rejects_one_exact_record() {
+    let record = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        std::slice::from_ref(&record),
+        std::slice::from_ref(&record),
+        Some(fork_instant("2026-03-24T00:01:00Z")),
+      ),
+      0
+    );
+  }
+
+  #[test]
+  fn replay_matching_missing_last_usage_breaks_the_match() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let parent_second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let child_second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      None,
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), parent_second],
+        &[first, child_second],
+        Some(fork_instant("2026-03-24T00:02:00Z")),
+      ),
+      0
+    );
+  }
+
+  #[test]
+  fn replay_matching_omits_same_total_changed_last_from_the_canonical_sequence() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let changed_last = replay_snapshot(
+      "2026-03-24T00:00:30Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((1, 2, 3, 4, 10)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), second.clone()],
+        &[first, changed_last, second],
+        Some(fork_instant("2026-03-24T00:02:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_uses_cumulative_high_water_after_a_rollback() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let rollback = replay_snapshot(
+      "2026-03-24T00:00:30Z",
+      "model",
+      (70, 5, 10, 0, 80),
+      Some((5, 0, 2, 0, 7)),
+    );
+    let recovery = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (140, 15, 30, 2, 172),
+      Some((40, 5, 10, 1, 51)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), recovery.clone()],
+        &[first, rollback, recovery],
+        Some(fork_instant("2026-03-24T00:02:00Z")),
+      ),
+      3
+    );
+  }
+
+  #[test]
+  fn replay_matching_excludes_parent_records_after_the_fork_instant() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+    let post_fork = replay_snapshot(
+      "2026-03-24T00:06:00Z",
+      "model",
+      (260, 30, 50, 3, 313),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), second.clone(), post_fork.clone()],
+        &[first, second, post_fork],
+        Some(fork_instant("2026-03-24T00:05:00Z")),
+      ),
+      2
+    );
+  }
+
+  #[test]
+  fn replay_matching_without_a_valid_fork_instant_returns_zero() {
+    let first = replay_snapshot(
+      "2026-03-24T00:00:00Z",
+      "model",
+      (100, 10, 20, 1, 121),
+      Some((100, 10, 20, 1, 121)),
+    );
+    let second = replay_snapshot(
+      "2026-03-24T00:01:00Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
+
+    assert_eq!(
+      replayed_child_snapshot_cutoff(
+        &[first.clone(), second.clone()],
+        &[first, second],
+        None,
+      ),
+      0
+    );
+  }
+
+  #[test]
+  fn parser_retains_last_usage_and_matching_explicit_fork_metadata() {
+    let directory = tempdir().expect("tempdir");
+    let child_id = "55555555-5555-5555-5555-555555555555";
+    let parent_id = "44444444-4444-4444-4444-444444444444";
+    let session_path = directory
+      .path()
+      .join(format!("rollout-2026-03-24T00-30-00-{child_id}.jsonl"));
+    std::fs::write(
+      &session_path,
+      format!(
+        concat!(
+          "{{\"timestamp\":\"2026-03-24T08:30:00+08:00\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+          "{{\"timestamp\":\"2026-03-24T00:30:01Z\",\"type\":\"event_msg\",",
+          "\"payload\":{{\"type\":\"token_count\",\"info\":{{",
+          "\"total_token_usage\":{{\"input_tokens\":180,\"cached_input_tokens\":20,",
+          "\"output_tokens\":35,\"reasoning_output_tokens\":2,\"total_tokens\":217}},",
+          "\"last_token_usage\":{{\"input_tokens\":80,\"cached_input_tokens\":10,",
+          "\"output_tokens\":15,\"reasoning_output_tokens\":1,\"total_tokens\":96}}",
+          "}}}}}}\n",
+          "{{\"timestamp\":\"2026-03-24T00:30:02Z\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\"}}}}\n"
+        ),
+        child_id, parent_id, parent_id,
+      ),
+    )
+    .expect("write fork session");
+
+    let parsed = parse_session_file(
+      &SessionFile {
+        path: session_path,
+        bucket: "active".to_string(),
+        file_size: 0,
+        file_mtime_ms: 0,
+      },
+      &HashMap::new(),
+    )
+    .expect("parse fork session");
+
+    assert_eq!(
+      parsed.snapshots[0].last_token_usage,
+      Some(replay_usage((80, 10, 15, 1, 96)))
+    );
+    assert_eq!(parsed.explicit_forked_from_id.as_deref(), Some(parent_id));
+    assert_eq!(
+      parsed.explicit_fork_timestamp,
+      Some(fork_instant("2026-03-24T08:30:00+08:00"))
+    );
+    let serialized = serde_json::to_value(&parsed.snapshots[0]).expect("serialize snapshot");
+    assert!(!serialized.as_object().expect("snapshot object").contains_key("lastTokenUsage"));
+  }
+
+  #[test]
+  fn parser_leaves_explicit_fork_fields_empty_for_thread_spawn_only_metadata() {
+    let directory = tempdir().expect("tempdir");
+    let child_id = "77777777-7777-7777-7777-777777777777";
+    let parent_id = "66666666-6666-6666-6666-666666666666";
+    let session_path = directory
+      .path()
+      .join(format!("rollout-2026-03-24T01-00-00-{child_id}.jsonl"));
+    std::fs::write(
+      &session_path,
+      format!(
+        concat!(
+          "{{\"timestamp\":\"2026-03-24T01:00:00Z\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\",\"source\":{{\"subagent\":{{\"thread_spawn\":{{",
+          "\"parent_thread_id\":\"{}\"}}}}}}}}}}\n"
+        ),
+        child_id, parent_id,
+      ),
+    )
+    .expect("write thread-spawn session");
+
+    let parsed = parse_session_file(
+      &SessionFile {
+        path: session_path,
+        bucket: "active".to_string(),
+        file_size: 0,
+        file_mtime_ms: 0,
+      },
+      &HashMap::new(),
+    )
+    .expect("parse thread-spawn session");
+
+    assert_eq!(parsed.raw_session.parent_session_id.as_deref(), Some(parent_id));
+    assert!(parsed.explicit_forked_from_id.is_none());
+    assert!(parsed.explicit_fork_timestamp.is_none());
+  }
+
+  #[test]
+  fn parser_invalid_explicit_fork_timestamp_disables_replay_metadata() {
+    let directory = tempdir().expect("tempdir");
+    let child_id = "99999999-9999-9999-9999-999999999999";
+    let parent_id = "88888888-8888-8888-8888-888888888888";
+    let session_path = directory
+      .path()
+      .join(format!("rollout-2026-03-24T01-30-00-{child_id}.jsonl"));
+    std::fs::write(
+      &session_path,
+      format!(
+        concat!(
+          "{{\"timestamp\":\"not-an-instant\",\"type\":\"session_meta\",",
+          "\"payload\":{{\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n"
+        ),
+        child_id, parent_id,
+      ),
+    )
+    .expect("write invalid fork session");
+
+    let parsed = parse_session_file(
+      &SessionFile {
+        path: session_path,
+        bucket: "active".to_string(),
+        file_size: 0,
+        file_mtime_ms: 0,
+      },
+      &HashMap::new(),
+    )
+    .expect("parse invalid fork session");
+
+    assert_eq!(parsed.explicit_forked_from_id.as_deref(), Some(parent_id));
+    assert!(parsed.explicit_fork_timestamp.is_none());
   }
 
   #[test]
