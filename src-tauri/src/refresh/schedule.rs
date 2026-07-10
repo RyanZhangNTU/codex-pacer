@@ -63,7 +63,7 @@ impl LaneState {
       }
     };
     self.next_deadline = now + remaining;
-    self.immediate_due |= elapsed >= new_interval;
+    self.immediate_due = elapsed >= new_interval;
   }
 
   fn take_due(
@@ -515,6 +515,77 @@ mod tests {
     ));
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(40));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(40));
+  }
+
+  #[test]
+  fn shorten_then_lengthen_while_disabled_does_not_refresh_on_reenable() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut initial = test_config(Duration::from_secs(300), Some(wall));
+    initial.auto_scan_enabled = false;
+    let mut state = CoordinatorState::new(initial, base, wall);
+    let mut shorter = test_config(Duration::from_secs(30), Some(wall));
+    shorter.auto_scan_enabled = false;
+    let mut longer = test_config(Duration::from_secs(300), Some(wall));
+    longer.auto_scan_enabled = false;
+
+    let shortened = state.handle(
+      base + Duration::from_secs(45),
+      CoordinatorEvent::SettingsChanged(shorter),
+    );
+    let lengthened = state.handle(
+      base + Duration::from_secs(50),
+      CoordinatorEvent::SettingsChanged(longer),
+    );
+    let reenabled = state.handle(
+      base + Duration::from_secs(50),
+      CoordinatorEvent::SettingsChanged(test_config(Duration::from_secs(300), Some(wall))),
+    );
+
+    assert!(shortened.is_empty());
+    assert!(lengthened.is_empty());
+    assert_eq!(
+      state.token_next_deadline().duration_since(base),
+      Duration::from_secs(330)
+    );
+    assert_eq!(
+      state.live_next_deadline().duration_since(base),
+      Duration::from_secs(330)
+    );
+    assert_eq!(token_starts(&reenabled), 0);
+    assert_eq!(live_starts(&reenabled), 0);
+  }
+
+  #[test]
+  fn same_interval_reenable_preserves_due_disabled_refresh() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut initial = test_config(Duration::from_secs(300), Some(wall));
+    initial.auto_scan_enabled = false;
+    let mut state = CoordinatorState::new(initial, base, wall);
+    let mut shorter = test_config(Duration::from_secs(30), Some(wall));
+    shorter.auto_scan_enabled = false;
+
+    let shortened = state.handle(
+      base + Duration::from_secs(45),
+      CoordinatorEvent::SettingsChanged(shorter),
+    );
+    let reenabled = state.handle(
+      base + Duration::from_secs(50),
+      CoordinatorEvent::SettingsChanged(test_config(Duration::from_secs(30), Some(wall))),
+    );
+
+    assert!(shortened.is_empty());
+    assert_eq!(token_starts(&reenabled), 1);
+    assert_eq!(live_starts(&reenabled), 1);
+    assert_eq!(
+      state.token_next_deadline().duration_since(base),
+      Duration::from_secs(60)
+    );
+    assert_eq!(
+      state.live_next_deadline().duration_since(base),
+      Duration::from_secs(60)
+    );
   }
 
   #[test]
