@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -11,7 +11,6 @@ use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use tempfile::NamedTempFile;
 use walkdir::WalkDir;
 
 use crate::database::{
@@ -24,7 +23,7 @@ use crate::pricing::{
   calculate_value_usd, load_catalog_map, normalize_model_id, resolve_pricing, seed_pricing_catalog,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct SessionFile {
   path: PathBuf,
   bucket: String,
@@ -158,14 +157,6 @@ impl PreparedScan {
   }
 
   #[cfg(test)]
-  fn spool_path(&self) -> Option<&Path> {
-    match &self.storage {
-      PreparedStorage::Memory(_) => None,
-      PreparedStorage::Spool { file, .. } => Some(file.path()),
-    }
-  }
-
-  #[cfg(test)]
   fn parent_replay_cache_evictions(&self) -> usize {
     self.stats.parent_replay_cache_evictions
   }
@@ -227,7 +218,7 @@ struct ExistingSessionSource {
 }
 
 struct PreparedSession {
-  session_file: SessionFile,
+  session_file: PreparedSessionFile,
   parsed: ParsedSession,
   file_needs_rate_limit_repair: bool,
   file_needs_token_v2_repair: bool,
@@ -235,6 +226,25 @@ struct PreparedSession {
   replay_parent_unavailable: bool,
   related_pending_token_v2_paths: Vec<String>,
   related_pending_fork_replay_v3_paths: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PreparedSessionFile {
+  source_path: String,
+  bucket: String,
+  file_size: i64,
+  file_mtime_ms: i64,
+}
+
+impl From<SessionFile> for PreparedSessionFile {
+  fn from(session_file: SessionFile) -> Self {
+    Self {
+      source_path: session_file.path.to_string_lossy().into_owned(),
+      bucket: session_file.bucket,
+      file_size: session_file.file_size,
+      file_mtime_ms: session_file.file_mtime_ms,
+    }
+  }
 }
 
 struct PreparedParseFailure {
@@ -258,7 +268,7 @@ struct MissingSessionPlan {
 
 enum PreparedStorage {
   Memory(Vec<PreparedSession>),
-  Spool { file: NamedTempFile, records: usize },
+  Spool { file: File, records: usize },
 }
 
 enum PreparedStorageBuilder {
@@ -268,14 +278,13 @@ enum PreparedStorageBuilder {
   },
   Spool {
     writer: BufWriter<File>,
-    file: NamedTempFile,
     records: usize,
   },
 }
 
 #[derive(Serialize, Deserialize)]
 struct SpoolPreparedSession {
-  session_file: SessionFile,
+  session_file: PreparedSessionFile,
   raw_session: RawSession,
   snapshots: SpoolUsageSnapshots,
   rate_limit_samples: Vec<RateLimitSampleRecord>,
@@ -473,45 +482,50 @@ impl PreparedSession {
   fn estimated_bytes(&self) -> usize {
     let raw = &self.parsed.raw_session;
     let mut bytes = std::mem::size_of::<Self>()
-      .saturating_add(self.session_file.path.to_string_lossy().len())
-      .saturating_add(self.session_file.bucket.len())
-      .saturating_add(raw.session_id.len())
-      .saturating_add(option_string_len(&raw.parent_session_id))
-      .saturating_add(raw.root_session_id.len())
-      .saturating_add(option_string_len(&raw.title))
-      .saturating_add(raw.source_state.len())
-      .saturating_add(option_string_len(&raw.source_path))
-      .saturating_add(option_string_len(&raw.started_at))
-      .saturating_add(option_string_len(&raw.updated_at))
-      .saturating_add(option_string_len(&raw.agent_nickname))
-      .saturating_add(option_string_len(&raw.agent_role))
-      .saturating_add(raw.model_ids.iter().map(String::len).sum::<usize>())
+      .saturating_add(self.session_file.source_path.capacity())
+      .saturating_add(self.session_file.bucket.capacity())
+      .saturating_add(raw.session_id.capacity())
+      .saturating_add(option_string_capacity(&raw.parent_session_id))
+      .saturating_add(raw.root_session_id.capacity())
+      .saturating_add(option_string_capacity(&raw.title))
+      .saturating_add(raw.source_state.capacity())
+      .saturating_add(option_string_capacity(&raw.source_path))
+      .saturating_add(option_string_capacity(&raw.started_at))
+      .saturating_add(option_string_capacity(&raw.updated_at))
+      .saturating_add(option_string_capacity(&raw.agent_nickname))
+      .saturating_add(option_string_capacity(&raw.agent_role))
+      .saturating_add(estimated_string_vec_bytes(&raw.model_ids))
       .saturating_add(estimated_usage_snapshots_bytes(&self.parsed.snapshots))
-      .saturating_add(option_string_len(&self.parsed.explicit_forked_from_id))
-      .saturating_add(option_string_len(&self.parsed.latest_plan_type))
-      .saturating_add(option_string_len(&self.parsed.last_model_id));
+      .saturating_add(option_string_capacity(&self.parsed.explicit_forked_from_id))
+      .saturating_add(option_string_capacity(&self.parsed.latest_plan_type))
+      .saturating_add(option_string_capacity(&self.parsed.last_model_id))
+      .saturating_add(
+        self
+          .parsed
+          .rate_limit_samples
+          .capacity()
+          .saturating_mul(std::mem::size_of::<RateLimitSampleRecord>()),
+      );
 
     for sample in &self.parsed.rate_limit_samples {
       bytes = bytes
-        .saturating_add(std::mem::size_of::<RateLimitSampleRecord>())
-        .saturating_add(sample.source_kind.len())
-        .saturating_add(option_string_len(&sample.source_session_id))
-        .saturating_add(sample.bucket.len())
-        .saturating_add(sample.sample_timestamp.len())
-        .saturating_add(option_string_len(&sample.limit_id))
-        .saturating_add(option_string_len(&sample.limit_name))
-        .saturating_add(option_string_len(&sample.plan_type))
-        .saturating_add(sample.window_start.len())
-        .saturating_add(sample.resets_at.len());
-    }
-    for path in self
-      .related_pending_token_v2_paths
-      .iter()
-      .chain(&self.related_pending_fork_replay_v3_paths)
-    {
-      bytes = bytes.saturating_add(path.len());
+        .saturating_add(sample.source_kind.capacity())
+        .saturating_add(option_string_capacity(&sample.source_session_id))
+        .saturating_add(sample.bucket.capacity())
+        .saturating_add(sample.sample_timestamp.capacity())
+        .saturating_add(option_string_capacity(&sample.limit_id))
+        .saturating_add(option_string_capacity(&sample.limit_name))
+        .saturating_add(option_string_capacity(&sample.plan_type))
+        .saturating_add(sample.window_start.capacity())
+        .saturating_add(sample.resets_at.capacity());
     }
     bytes
+      .saturating_add(estimated_string_vec_bytes(
+        &self.related_pending_token_v2_paths,
+      ))
+      .saturating_add(estimated_string_vec_bytes(
+        &self.related_pending_fork_replay_v3_paths,
+      ))
   }
 }
 
@@ -537,49 +551,44 @@ impl PreparedStorageBuilder {
         mut entries,
         estimated_bytes,
       } => {
-        let next_bytes = estimated_bytes.saturating_add(entry.estimated_bytes());
-        if next_bytes <= PREPARED_SPOOL_THRESHOLD_BYTES {
-          entries.push(entry);
+        let previous_spare_bytes = entries
+          .capacity()
+          .saturating_sub(entries.len())
+          .saturating_mul(std::mem::size_of::<PreparedSession>());
+        let entries_bytes = estimated_bytes.saturating_sub(previous_spare_bytes);
+        let entry_bytes = entry.estimated_bytes();
+        entries.push(entry);
+        let next_spare_bytes = entries
+          .capacity()
+          .saturating_sub(entries.len())
+          .saturating_mul(std::mem::size_of::<PreparedSession>());
+        let next_bytes = entries_bytes
+          .saturating_add(entry_bytes)
+          .saturating_add(next_spare_bytes);
+        if entries.len() == 1 || next_bytes <= PREPARED_SPOOL_THRESHOLD_BYTES {
           Self::Memory {
             entries,
             estimated_bytes: next_bytes,
           }
         } else {
-          let file = tempfile::Builder::new()
-            .prefix("codex-pacer-prepared-")
-            .suffix(".jsons")
-            .tempfile()
+          let file = tempfile::tempfile()
             .map_err(|error| format!("Failed to create prepared scan spool: {error}"))?;
-          let writer_file = file
-            .reopen()
-            .map_err(|error| format!("Failed to open prepared scan spool: {error}"))?;
-          let mut writer = BufWriter::new(writer_file);
+          let mut writer = BufWriter::new(file);
           let mut records = 0usize;
           for buffered in entries {
             write_spool_record(&mut writer, buffered)?;
             records += 1;
           }
-          write_spool_record(&mut writer, entry)?;
-          records += 1;
-          Self::Spool {
-            file,
-            writer,
-            records,
-          }
+          Self::Spool { writer, records }
         }
       }
       Self::Spool {
-        file,
         mut writer,
         mut records,
       } => {
         write_spool_record(&mut writer, entry)?;
         records += 1;
-        Self::Spool {
-          file,
-          writer,
-          records,
-        }
+        Self::Spool { writer, records }
       }
     };
     Ok(())
@@ -589,14 +598,15 @@ impl PreparedStorageBuilder {
     match self {
       Self::Memory { entries, .. } => Ok(PreparedStorage::Memory(entries)),
       Self::Spool {
-        file,
         mut writer,
         records,
       } => {
         writer
           .flush()
           .map_err(|error| format!("Failed to flush prepared scan spool: {error}"))?;
-        drop(writer);
+        let file = writer
+          .into_inner()
+          .map_err(|error| format!("Failed to finish prepared scan spool: {}", error.error()))?;
         Ok(PreparedStorage::Spool { file, records })
       }
     }
@@ -628,12 +638,17 @@ impl ParentReplayCache {
   }
 
   fn insert(&mut self, session_id: String, snapshots: Option<Vec<UsageSnapshot>>) {
-    let entry_bytes = session_id.len().saturating_add(
-      snapshots
-        .as_deref()
-        .map(estimated_usage_snapshots_bytes)
-        .unwrap_or(1),
-    );
+    let insertion_order_id = session_id.clone();
+    let entry_bytes = std::mem::size_of::<ParentReplayCacheEntry>()
+      .saturating_add(std::mem::size_of::<String>().saturating_mul(2))
+      .saturating_add(session_id.capacity())
+      .saturating_add(insertion_order_id.capacity())
+      .saturating_add(
+        snapshots
+          .as_ref()
+          .map(estimated_usage_snapshots_bytes)
+          .unwrap_or(1),
+      );
     if entry_bytes > PARENT_REPLAY_CACHE_MAX_BYTES {
       self.oversized_bypasses += 1;
       return;
@@ -652,7 +667,7 @@ impl ParentReplayCache {
     }
 
     self.estimated_bytes = self.estimated_bytes.saturating_add(entry_bytes);
-    self.insertion_order.push_back(session_id.clone());
+    self.insertion_order.push_back(insertion_order_id);
     self.entries.insert(
       session_id,
       ParentReplayCacheEntry {
@@ -671,20 +686,31 @@ impl ParentReplayCache {
   }
 }
 
-fn option_string_len(value: &Option<String>) -> usize {
-  value.as_ref().map(String::len).unwrap_or_default()
+fn option_string_capacity(value: &Option<String>) -> usize {
+  value.as_ref().map(String::capacity).unwrap_or_default()
 }
 
-fn estimated_usage_snapshots_bytes(snapshots: &[UsageSnapshot]) -> usize {
-  snapshots.iter().fold(0usize, |bytes, snapshot| {
-    bytes
-      .saturating_add(std::mem::size_of::<UsageSnapshot>())
-      .saturating_add(snapshot.timestamp.len())
-      .saturating_add(snapshot.model_id.len())
-      .saturating_add(option_string_len(&snapshot.plan_type))
-      .saturating_add(option_string_len(&snapshot.limit_id))
-      .saturating_add(option_string_len(&snapshot.limit_name))
-  })
+fn estimated_string_vec_bytes(values: &Vec<String>) -> usize {
+  values
+    .capacity()
+    .saturating_mul(std::mem::size_of::<String>())
+    .saturating_add(values.iter().fold(0usize, |bytes, value| {
+      bytes.saturating_add(value.capacity())
+    }))
+}
+
+fn estimated_usage_snapshots_bytes(snapshots: &Vec<UsageSnapshot>) -> usize {
+  snapshots
+    .capacity()
+    .saturating_mul(std::mem::size_of::<UsageSnapshot>())
+    .saturating_add(snapshots.iter().fold(0usize, |bytes, snapshot| {
+      bytes
+        .saturating_add(snapshot.timestamp.capacity())
+        .saturating_add(snapshot.model_id.capacity())
+        .saturating_add(option_string_capacity(&snapshot.plan_type))
+        .saturating_add(option_string_capacity(&snapshot.limit_id))
+        .saturating_add(option_string_capacity(&snapshot.limit_name))
+    }))
 }
 
 pub fn perform_scan(
@@ -935,7 +961,7 @@ pub(crate) fn prepare_scan(
     }
 
     storage.push(PreparedSession {
-      session_file,
+      session_file: session_file.into(),
       parsed,
       file_needs_rate_limit_repair,
       file_needs_token_v2_repair,
@@ -946,6 +972,12 @@ pub(crate) fn prepare_scan(
     })?;
     updated_sessions += 1;
   }
+
+  let titles = if effective_kind == ScanKind::Full {
+    titles
+  } else {
+    HashMap::new()
+  };
 
   let parent_replay_cache_evictions = parent_snapshot_cache.evictions();
   let parent_replay_cache_oversized_bypasses = parent_snapshot_cache.oversized_bypasses();
@@ -1104,11 +1136,11 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
         commit_one_prepared_session(&tx, entry, &catalog).map_err(|error| error.to_string())?;
       }
     }
-    PreparedStorage::Spool { file, records } => {
-      let reader_file = file
-        .reopen()
-        .map_err(|error| format!("Failed to open prepared scan spool for commit: {error}"))?;
-      let reader = BufReader::new(reader_file);
+    PreparedStorage::Spool { mut file, records } => {
+      file
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("Failed to rewind prepared scan spool: {error}"))?;
+      let reader = BufReader::new(file);
       let mut stream =
         serde_json::Deserializer::from_reader(reader).into_iter::<SpoolPreparedSession>();
       let mut records_read = 0usize;
@@ -1120,9 +1152,6 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
         records_read += 1;
       }
       drop(stream);
-      file
-        .close()
-        .map_err(|error| format!("Failed to remove prepared scan spool: {error}"))?;
       if records_read != records {
         return Err(format!(
           "Prepared scan spool ended early: expected {records} records, read {records_read}."
@@ -1458,14 +1487,14 @@ fn commit_one_prepared_session(
     related_pending_token_v2_paths,
     related_pending_fork_replay_v3_paths,
   } = entry;
-  let source_path = session_file.path.to_string_lossy().to_string();
+  let source_path = &session_file.source_path;
 
   persist_session(conn, &session_file, &parsed, catalog)?;
   if file_needs_rate_limit_repair {
-    clear_pending_data_repair_file(conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &source_path)?;
+    clear_pending_data_repair_file(conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, source_path)?;
   }
   if file_needs_token_v2_repair {
-    clear_pending_data_repair_file(conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)?;
+    clear_pending_data_repair_file(conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, source_path)?;
     for related_source_path in related_pending_token_v2_paths {
       clear_pending_data_repair_file(conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &related_source_path)?;
     }
@@ -1475,11 +1504,11 @@ fn commit_one_prepared_session(
       mark_data_repair_file_pending(
         conn,
         TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
-        &source_path,
+        source_path,
         "fork replay parent unavailable",
       )?;
     } else {
-      clear_pending_data_repair_file(conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path)?;
+      clear_pending_data_repair_file(conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, source_path)?;
       for related_source_path in related_pending_fork_replay_v3_paths {
         clear_pending_data_repair_file(
           conn,
@@ -2538,7 +2567,7 @@ fn replayed_child_snapshot_cutoff(
 
 fn persist_session(
   conn: &Connection,
-  session_file: &SessionFile,
+  session_file: &PreparedSessionFile,
   parsed: &ParsedSession,
   catalog: &HashMap<String, crate::models::PricingCatalogEntry>,
 ) -> rusqlite::Result<()> {
@@ -2672,7 +2701,7 @@ fn persist_session(
       last_imported_at = excluded.last_imported_at
     ",
     params![
-      session_file.path.to_string_lossy().to_string(),
+      session_file.source_path,
       parsed.raw_session.session_id,
       session_file.bucket,
       session_file.file_size,
@@ -2686,10 +2715,7 @@ fn persist_session(
     DELETE FROM import_state
     WHERE session_id = ?1 AND source_path <> ?2
     ",
-    params![
-      parsed.raw_session.session_id,
-      session_file.path.to_string_lossy().to_string(),
-    ],
+    params![parsed.raw_session.session_id, session_file.source_path,],
   )?;
 
   Ok(())
@@ -3346,6 +3372,57 @@ mod tests {
     assert!(!right.last_completed_at.is_empty());
   }
 
+  #[cfg(unix)]
+  fn prepared_session_fixture(
+    source_path: PathBuf,
+    session_id: &str,
+    model_id_bytes: usize,
+  ) -> PreparedSession {
+    let model_id = "x".repeat(model_id_bytes.max(1));
+    let persisted_source_path = source_path.to_string_lossy().to_string();
+    PreparedSession {
+      session_file: PreparedSessionFile::from(SessionFile {
+        path: source_path,
+        bucket: "active".to_string(),
+        file_size: 1,
+        file_mtime_ms: 1,
+      }),
+      parsed: ParsedSession {
+        raw_session: RawSession {
+          session_id: session_id.to_string(),
+          root_session_id: session_id.to_string(),
+          source_state: "active".to_string(),
+          source_path: Some(persisted_source_path),
+          model_ids: vec![model_id.clone()],
+          ..Default::default()
+        },
+        snapshots: vec![UsageSnapshot {
+          timestamp: "2026-07-10T00:00:00Z".to_string(),
+          model_id,
+          usage: replay_usage((10, 0, 0, 0, 10)),
+          last_token_usage: Some(replay_usage((10, 0, 0, 0, 10))),
+          plan_type: None,
+          limit_id: None,
+          limit_name: None,
+          explicit_fast_mode: None,
+        }],
+        rate_limit_samples: Vec::new(),
+        explicit_forked_from_id: None,
+        explicit_fork_timestamp: None,
+        inherited_token_snapshot_cutoff: 0,
+        explicit_fast_mode: None,
+        latest_plan_type: None,
+        last_model_id: None,
+      },
+      file_needs_rate_limit_repair: false,
+      file_needs_token_v2_repair: false,
+      file_needs_fork_replay_v3_repair: false,
+      replay_parent_unavailable: false,
+      related_pending_token_v2_paths: Vec::new(),
+      related_pending_fork_replay_v3_paths: Vec::new(),
+    }
+  }
+
   #[test]
   fn prepare_scan_is_read_only() {
     let directory = tempdir().expect("tempdir");
@@ -3746,35 +3823,117 @@ mod tests {
     .expect("prepare incremental scan");
 
     assert!(!prepared.uses_spool());
-    assert!(prepared.spool_path().is_none());
   }
 
   #[test]
-  fn large_prepare_spills_and_drop_removes_spool() {
+  fn incremental_prepare_drops_full_title_index_after_parsing() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    let session_id = "67676767-6767-6767-6767-676767676767";
+    let session_path = sessions.join("title-update.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let mut title_index =
+      format!("{{\"id\":\"{session_id}\",\"thread_name\":\"Incremental title\"}}\n");
+    for index in 0..2_000 {
+      title_index.push_str(&format!(
+        "{{\"id\":\"unrelated-{index}\",\"thread_name\":\"Unused title {index}\"}}\n"
+      ));
+    }
+    std::fs::write(codex_home.join("session_index.jsonl"), title_index).expect("write title index");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-07-10T00:00:00Z", 100, 20, 10, 110),
+        ("2026-07-10T00:01:00Z", 180, 40, 20, 200),
+      ],
+    );
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare incremental title update");
+
+    assert_eq!(prepared.effective_kind, ScanKind::Incremental);
+    assert!(prepared.titles.is_empty());
+    assert_eq!(prepared.titles.capacity(), 0);
+    let parsed_title = match &prepared.storage {
+      PreparedStorage::Memory(entries) => entries[0].parsed.raw_session.title.as_deref(),
+      PreparedStorage::Spool { .. } => panic!("small title update should stay in memory"),
+    };
+    assert_eq!(parsed_title, Some("Incremental title"));
+    commit_prepared_scan(prepared).expect("commit incremental title update");
+    let conn = open_connection(&db_path).expect("open database");
+    let title: String = conn
+      .query_row(
+        "SELECT title FROM sessions WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get(0),
+      )
+      .expect("load updated title");
+    assert_eq!(title, "Incremental title");
+  }
+
+  #[test]
+  fn single_large_incremental_stays_in_memory() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions = codex_home.join("sessions");
     std::fs::create_dir_all(&sessions).expect("sessions");
     let session_id = "70707070-7070-7070-7070-707070707070";
-    let mut body = format!(
-      concat!(
-        "{{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",",
-        "\"payload\":{{\"id\":\"{}\"}}}}\n",
-        "{{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",",
-        "\"payload\":{{\"model\":\"gpt-5.6-sol\"}}}}\n"
-      ),
-      session_id
+    let session_path = sessions.join("large.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
     );
-    let mut total_tokens = 0i64;
-    while body.len() <= PREPARED_SPOOL_THRESHOLD_BYTES * 4 {
-      total_tokens += 10;
-      body.push_str(&token_count_line(TokenFixture {
-        timestamp: "2026-07-10T00:00:02Z",
-        total: (total_tokens, 0, 0, total_tokens),
-        last: (10, 0, 0, 10),
-      }));
-    }
-    std::fs::write(sessions.join("large.jsonl"), body).expect("write large session");
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+    write_large_session_file(
+      &session_path,
+      session_id,
+      PREPARED_SPOOL_THRESHOLD_BYTES * 4,
+    );
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare large scan");
+
+    assert!(!prepared.uses_spool());
+    assert!(!prepared.stats().used_spool);
+    assert_eq!(prepared.updated_sessions, 1);
+  }
+
+  #[test]
+  fn multiple_changed_sessions_spill() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    write_large_session_file(
+      &sessions.join("a-large.jsonl"),
+      "74747474-7474-7474-7474-747474747474",
+      PREPARED_SPOOL_THRESHOLD_BYTES * 2,
+    );
+    write_session_file(
+      &sessions.join("z-second.jsonl"),
+      "75757575-7575-7575-7575-757575757575",
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
     let db_path = directory.path().join("usage.sqlite");
     initialize_scan_database(&db_path);
 
@@ -3783,13 +3942,129 @@ mod tests {
       Some(codex_home.to_string_lossy().to_string()),
       ScanKind::Full,
     )
-    .expect("prepare large scan");
+    .expect("prepare multiple changed sessions");
 
     assert!(prepared.uses_spool());
-    let spool_path = prepared.spool_path().expect("spool path").to_path_buf();
-    assert!(spool_path.is_file());
-    drop(prepared);
-    assert!(!spool_path.exists());
+    assert!(prepared.stats().used_spool);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn spool_file_is_anonymous_and_unlinked() {
+    use std::os::unix::fs::MetadataExt;
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions");
+    write_large_session_file(
+      &sessions.join("a-large.jsonl"),
+      "76767676-7676-7676-7676-767676767676",
+      PREPARED_SPOOL_THRESHOLD_BYTES * 2,
+    );
+    write_session_file(
+      &sessions.join("z-second.jsonl"),
+      "77777777-7777-7777-7777-777777777777",
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    initialize_scan_database(&db_path);
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Full,
+    )
+    .expect("prepare anonymous spool");
+    let link_count = match &prepared.storage {
+      PreparedStorage::Memory(_) => panic!("expected spool storage"),
+      PreparedStorage::Spool { file, .. } => file.metadata().expect("spool metadata").nlink(),
+    };
+
+    assert_eq!(link_count, 0, "spool must have no directory entry");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn non_utf8_session_path_matches_memory_and_spool_round_trip() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let session_id = "78787878-7878-7878-7878-787878787878";
+    let non_utf8_path = PathBuf::from(std::ffi::OsString::from_vec(
+      b"/synthetic/00-non-utf8-\x80.jsonl".to_vec(),
+    ));
+    let expected_path = non_utf8_path.to_string_lossy().to_string();
+    let mut memory_builder = PreparedStorageBuilder::new();
+    memory_builder
+      .push(prepared_session_fixture(
+        non_utf8_path.clone(),
+        session_id,
+        1,
+      ))
+      .expect("keep non-UTF-8 entry in memory");
+    let memory_storage = memory_builder.finish().expect("finish memory storage");
+    assert!(matches!(&memory_storage, PreparedStorage::Memory(_)));
+
+    let mut spool_builder = PreparedStorageBuilder::new();
+    spool_builder
+      .push(prepared_session_fixture(non_utf8_path, session_id, 1))
+      .expect("buffer non-UTF-8 entry");
+    spool_builder
+      .push(prepared_session_fixture(
+        PathBuf::from("/synthetic/zz-large.jsonl"),
+        "79797979-7979-7979-7979-797979797979",
+        PREPARED_SPOOL_THRESHOLD_BYTES * 2,
+      ))
+      .expect("spill entries without serializing PathBuf directly");
+    let spool_storage = spool_builder.finish().expect("finish spool storage");
+    assert!(matches!(
+      &spool_storage,
+      PreparedStorage::Spool { records: 2, .. }
+    ));
+
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("Codex home");
+    let persist_and_load = |db_path: &Path, storage: PreparedStorage| {
+      initialize_scan_database(db_path);
+      let mut prepared = prepare_scan(
+        db_path,
+        Some(codex_home.to_string_lossy().to_string()),
+        ScanKind::Full,
+      )
+      .expect("prepare empty scan shell");
+      prepared.storage = storage;
+      prepared.imported_sessions = 1;
+      prepared.updated_sessions = 1;
+      commit_prepared_scan(prepared).expect("commit synthetic prepared scan");
+      let conn = open_connection(db_path).expect("open committed database");
+      conn
+        .query_row(
+          "
+          SELECT sessions.source_path, import_state.source_path,
+                 COALESCE(SUM(usage_events.total_tokens), 0)
+          FROM sessions
+          JOIN import_state USING (session_id)
+          LEFT JOIN usage_events USING (session_id)
+          WHERE sessions.session_id = ?1
+          GROUP BY sessions.source_path, import_state.source_path
+          ",
+          params![session_id],
+          |row| {
+            Ok((
+              row.get::<_, String>(0)?,
+              row.get::<_, String>(1)?,
+              row.get::<_, i64>(2)?,
+            ))
+          },
+        )
+        .expect("load persisted prepared entry")
+    };
+
+    let memory_result = persist_and_load(&directory.path().join("memory.sqlite"), memory_storage);
+    let spool_result = persist_and_load(&directory.path().join("spool.sqlite"), spool_storage);
+    assert_eq!(spool_result, memory_result);
+    assert_eq!(memory_result, (expected_path.clone(), expected_path, 10));
   }
 
   #[test]
@@ -3838,7 +4113,7 @@ mod tests {
   }
 
   #[test]
-  fn spooled_commit_preserves_last_usage_and_removes_spool() {
+  fn spooled_commit_preserves_last_usage_with_anonymous_file() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions = codex_home.join("sessions");
@@ -3867,7 +4142,12 @@ mod tests {
       }));
       snapshots += 1;
     }
-    std::fs::write(sessions.join("spooled-fork.jsonl"), body).expect("write fork session");
+    std::fs::write(sessions.join("a-spooled-fork.jsonl"), body).expect("write fork session");
+    write_session_file(
+      &sessions.join("z-spool-filler.jsonl"),
+      "72727272-7272-7272-7272-727272727273",
+      &[("2026-07-10T00:00:00Z", 100, 20, 10, 110)],
+    );
     let db_path = directory.path().join("usage.sqlite");
     initialize_scan_database(&db_path);
 
@@ -3878,13 +4158,33 @@ mod tests {
     )
     .expect("prepare spooled fork");
     assert!(prepared.stats().used_spool);
-    let spool_path = prepared.spool_path().expect("spool path").to_path_buf();
 
     commit_prepared_scan(prepared).expect("commit spooled fork");
 
-    assert!(!spool_path.exists());
     let conn = open_connection(&db_path).expect("open database");
     assert_eq!(session_usage_totals(&conn, session_id).3, snapshots * 10);
+  }
+
+  #[test]
+  fn prepared_estimates_include_reserved_vec_and_string_capacity() {
+    let mut model_id = String::with_capacity(4 * 1024);
+    model_id.push('x');
+    let mut snapshots = Vec::with_capacity(64);
+    snapshots.push(UsageSnapshot {
+      timestamp: "2026-07-10T00:00:00Z".to_string(),
+      model_id,
+      usage: replay_usage((10, 0, 0, 0, 10)),
+      last_token_usage: Some(replay_usage((10, 0, 0, 0, 10))),
+      plan_type: None,
+      limit_id: None,
+      limit_name: None,
+      explicit_fast_mode: None,
+    });
+
+    let estimate = estimated_usage_snapshots_bytes(&snapshots);
+
+    assert!(estimate >= snapshots.capacity() * std::mem::size_of::<UsageSnapshot>());
+    assert!(estimate >= snapshots[0].model_id.capacity());
   }
 
   #[test]
@@ -3935,6 +4235,40 @@ mod tests {
     assert_eq!(cache.evictions(), 0);
     assert_eq!(cache.oversized_bypasses(), 1);
     assert!(cache.get("oversized-parent").is_none());
+  }
+
+  #[test]
+  fn parent_replay_cache_counts_reserved_capacity_toward_its_limit() {
+    let mut reserved_key = String::with_capacity(PARENT_REPLAY_CACHE_MAX_BYTES + 1);
+    reserved_key.push('p');
+    let mut key_cache = ParentReplayCache::new();
+
+    key_cache.insert(reserved_key, None);
+
+    assert_eq!(key_cache.evictions(), 0);
+    assert_eq!(key_cache.oversized_bypasses(), 1);
+    assert!(key_cache.get("p").is_none());
+    assert!(key_cache.estimated_bytes <= PARENT_REPLAY_CACHE_MAX_BYTES);
+
+    let snapshot_capacity = PARENT_REPLAY_CACHE_MAX_BYTES
+      .checked_div(std::mem::size_of::<UsageSnapshot>())
+      .unwrap_or_default()
+      + 1;
+    let mut snapshots = Vec::with_capacity(snapshot_capacity);
+    snapshots.push(replay_snapshot(
+      "2026-07-10T00:00:00Z",
+      "gpt-5.6-sol",
+      (10, 0, 0, 10, 10),
+      Some((10, 0, 0, 10, 10)),
+    ));
+    let mut snapshot_cache = ParentReplayCache::new();
+
+    snapshot_cache.insert("reserved-snapshots".to_string(), Some(snapshots));
+
+    assert_eq!(snapshot_cache.evictions(), 0);
+    assert_eq!(snapshot_cache.oversized_bypasses(), 1);
+    assert!(snapshot_cache.get("reserved-snapshots").is_none());
+    assert!(snapshot_cache.estimated_bytes <= PARENT_REPLAY_CACHE_MAX_BYTES);
   }
 
   #[test]
@@ -7770,6 +8104,29 @@ mod tests {
       last_output,
       last_total,
     )
+  }
+
+  fn write_large_session_file(path: &Path, session_id: &str, minimum_bytes: usize) -> i64 {
+    let mut body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.6-sol\"}}}}\n"
+      ),
+      session_id
+    );
+    let mut total_tokens = 0i64;
+    while body.len() <= minimum_bytes {
+      total_tokens += 10;
+      body.push_str(&token_count_line(TokenFixture {
+        timestamp: "2026-07-10T00:00:02Z",
+        total: (total_tokens, 0, 0, total_tokens),
+        last: (10, 0, 0, 10),
+      }));
+    }
+    std::fs::write(path, body).expect("write large session");
+    total_tokens
   }
 
   fn write_session_file(path: &Path, session_id: &str, snapshots: &[(&str, i64, i64, i64, i64)]) {
