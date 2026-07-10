@@ -1308,7 +1308,16 @@ fn replayed_child_snapshot_cutoff(
     };
     child_pattern.push(key);
   }
-  if child_pattern.len() < 2 {
+  let parent_canonical = canonical_replay_snapshots(parent_snapshots);
+  let eligible_parent_snapshot_count = parent_canonical
+    .iter()
+    .filter(|parent| {
+      DateTime::parse_from_rfc3339(&parent.snapshot.timestamp)
+        .is_ok_and(|timestamp| timestamp <= explicit_fork_timestamp)
+    })
+    .count();
+  let minimum_match_length = if eligible_parent_snapshot_count == 1 { 1 } else { 2 };
+  if child_pattern.len() < minimum_match_length {
     return 0;
   }
 
@@ -1316,7 +1325,7 @@ fn replayed_child_snapshot_cutoff(
   let mut matched = 0;
   let mut longest_match = 0;
 
-  for parent in canonical_replay_snapshots(parent_snapshots) {
+  for parent in parent_canonical {
     let Ok(parent_timestamp) = DateTime::parse_from_rfc3339(&parent.snapshot.timestamp) else {
       continue;
     };
@@ -1341,7 +1350,7 @@ fn replayed_child_snapshot_cutoff(
     }
   }
 
-  if longest_match < 2 {
+  if longest_match < minimum_match_length {
     0
   } else {
     child_canonical[longest_match - 1].raw_index + 1
@@ -2260,17 +2269,23 @@ mod tests {
   }
 
   #[test]
-  fn replay_matching_rejects_one_exact_record() {
+  fn replay_matching_rejects_one_exact_record_from_longer_parent() {
     let record = replay_snapshot(
       "2026-03-24T00:00:00Z",
       "model",
       (100, 10, 20, 1, 121),
       Some((100, 10, 20, 1, 121)),
     );
+    let parent_second = replay_snapshot(
+      "2026-03-24T00:00:30Z",
+      "model",
+      (180, 20, 35, 2, 217),
+      Some((80, 10, 15, 1, 96)),
+    );
 
     assert_eq!(
       replayed_child_snapshot_cutoff(
-        std::slice::from_ref(&record),
+        &[record.clone(), parent_second],
         std::slice::from_ref(&record),
         Some(fork_instant("2026-03-24T00:01:00Z")),
       ),
@@ -4195,6 +4210,74 @@ mod tests {
     assert_eq!(parent_total, 260);
     assert_eq!(child_total, 50);
     assert_eq!(parent_total + child_total, 310);
+  }
+
+  #[test]
+  fn single_snapshot_parent_replay_counts_only_child_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "61616161-6161-4161-8161-616161616161";
+    let child_session_id = "62626262-6262-4262-8262-626262626262";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let inherited = TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    };
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    parent_body.push_str(&token_count_line(inherited));
+    std::fs::write(&parent_path, parent_body).expect("write single-snapshot parent");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:30:01Z",
+      ..inherited
+    }));
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (150, 0, 0, 150),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork child");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    let parent_total = session_usage_totals(&conn, parent_session_id).3;
+    let child_total = session_usage_totals(&conn, child_session_id).3;
+    assert_eq!(parent_total, 100);
+    assert_eq!(child_total, 50);
+    assert_eq!(parent_total + child_total, 150);
   }
 
   #[test]
