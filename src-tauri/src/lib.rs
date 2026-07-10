@@ -4,6 +4,7 @@ mod models;
 mod pricing;
 mod queries;
 mod rate_limits;
+mod refresh;
 
 use std::fs;
 use std::path::{Path, PathBuf};
