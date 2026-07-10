@@ -137,6 +137,14 @@ fn perform_scan_with_scope(
     data_repair_is_pending(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY).map_err(|error| error.to_string())?;
   let pending_fork_replay_v3_repair_paths =
     load_pending_data_repair_paths(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let pending_token_v2_repair_session_ids =
+    pending_repair_session_ids(&import_state, &pending_token_v2_repair_paths);
+  let pending_fork_replay_v3_repair_session_ids =
+    pending_repair_session_ids(&import_state, &pending_fork_replay_v3_repair_paths);
+  let pending_token_repair_session_ids = pending_token_v2_repair_session_ids
+    .union(&pending_fork_replay_v3_repair_session_ids)
+    .cloned()
+    .collect::<HashSet<_>>();
   let needs_token_usage_repair_sweep =
     needs_token_usage_v2_repair_sweep || needs_fork_replay_v3_repair_sweep;
   let effective_scope = effective_scan_scope(
@@ -149,7 +157,9 @@ fn perform_scan_with_scope(
 
   let (session_files, active_paths_kept_for_archive_retry) = match effective_scope {
     ScanScope::Full => (collect_session_files(&codex_home), HashSet::new()),
-    ScanScope::Incremental => collect_incremental_session_files(&codex_home, &import_state),
+    ScanScope::Incremental => {
+      collect_incremental_session_files(&codex_home, &import_state, &pending_token_repair_session_ids)
+    }
   };
   let session_source_paths =
     load_session_source_paths(&conn, &import_state, &session_files).map_err(|error| error.to_string())?;
@@ -165,11 +175,23 @@ fn perform_scan_with_scope(
   let mut changed_files = Vec::new();
   for session_file in &session_files {
     let source_path = session_file.path.to_string_lossy().to_string();
+    let session_id = import_state
+      .get(&source_path)
+      .and_then(|state| state.session_id.clone())
+      .or_else(|| fallback_session_id_from_filename(&session_file.path));
+    let session_has_pending_token_v2_repair = session_id
+      .as_ref()
+      .is_some_and(|session_id| pending_token_v2_repair_session_ids.contains(session_id));
+    let session_has_pending_fork_replay_v3_repair = session_id
+      .as_ref()
+      .is_some_and(|session_id| pending_fork_replay_v3_repair_session_ids.contains(session_id));
     if needs_rate_limit_backfill
       || pending_rate_limit_repair_paths.contains(&source_path)
       || needs_token_usage_repair_sweep
       || pending_token_v2_repair_paths.contains(&source_path)
       || pending_fork_replay_v3_repair_paths.contains(&source_path)
+      || session_has_pending_token_v2_repair
+      || session_has_pending_fork_replay_v3_repair
     {
       changed_files.push(session_file);
       continue;
@@ -208,9 +230,9 @@ fn perform_scan_with_scope(
       let source_path = session_file.path.to_string_lossy().to_string();
       let file_needs_rate_limit_repair =
         needs_rate_limit_backfill || pending_rate_limit_repair_paths.contains(&source_path);
-      let file_needs_token_v2_repair =
+      let mut file_needs_token_v2_repair =
         needs_token_usage_v2_repair_sweep || pending_token_v2_repair_paths.contains(&source_path);
-      let file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
+      let mut file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
         || pending_fork_replay_v3_repair_paths.contains(&source_path);
       let mut parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
@@ -241,6 +263,18 @@ fn perform_scan_with_scope(
         &session_source_paths,
         &mut parent_snapshot_cache,
       );
+      let related_pending_token_v2_paths = pending_repair_paths_for_session(
+        &import_state,
+        &pending_token_v2_repair_paths,
+        &parsed.raw_session.session_id,
+      );
+      let related_pending_fork_replay_v3_paths = pending_repair_paths_for_session(
+        &import_state,
+        &pending_fork_replay_v3_repair_paths,
+        &parsed.raw_session.session_id,
+      );
+      file_needs_token_v2_repair |= !related_pending_token_v2_paths.is_empty();
+      file_needs_fork_replay_v3_repair |= !related_pending_fork_replay_v3_paths.is_empty();
       imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
       match classify_topology_maintenance(
@@ -265,10 +299,18 @@ fn perform_scan_with_scope(
       if file_needs_token_v2_repair {
         clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
           .map_err(|error| error.to_string())?;
+        for related_source_path in related_pending_token_v2_paths {
+          clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &related_source_path)
+            .map_err(|error| error.to_string())?;
+        }
       }
       if file_needs_fork_replay_v3_repair {
         clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path)
           .map_err(|error| error.to_string())?;
+        for related_source_path in related_pending_fork_replay_v3_paths {
+          clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &related_source_path)
+            .map_err(|error| error.to_string())?;
+        }
       }
       changed_sessions += 1;
     }
@@ -593,6 +635,7 @@ fn collect_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
 fn collect_incremental_session_files(
   codex_home: &Path,
   import_state: &HashMap<String, ImportState>,
+  pending_repair_session_ids: &HashSet<String>,
 ) -> (Vec<SessionFile>, HashSet<String>) {
   let mut files = collect_active_session_files(codex_home);
   let mut collected_paths = files
@@ -609,7 +652,14 @@ fn collect_incremental_session_files(
       ) else {
         continue;
       };
-      if state.file_size == session_file.file_size && state.file_mtime_ms == session_file.file_mtime_ms {
+      let session_has_pending_repair = state
+        .session_id
+        .as_ref()
+        .is_some_and(|session_id| pending_repair_session_ids.contains(session_id));
+      if state.file_size == session_file.file_size
+        && state.file_mtime_ms == session_file.file_mtime_ms
+        && !session_has_pending_repair
+      {
         continue;
       }
       if collected_paths.insert(session_file.path.to_string_lossy().to_string()) {
@@ -1625,6 +1675,40 @@ fn load_pending_data_repair_paths(conn: &Connection, repair_key: &str) -> rusqli
     paths.insert(row?);
   }
   Ok(paths)
+}
+
+fn pending_repair_paths_for_session(
+  import_state: &HashMap<String, ImportState>,
+  pending_paths: &HashSet<String>,
+  session_id: &str,
+) -> Vec<String> {
+  pending_paths
+    .iter()
+    .filter(|source_path| {
+      let import_state_session_id = import_state
+        .get(*source_path)
+        .and_then(|state| state.session_id.as_deref());
+      import_state_session_id == Some(session_id)
+        || (import_state_session_id.is_none()
+          && fallback_session_id_from_filename(Path::new(source_path)).as_deref() == Some(session_id))
+    })
+    .cloned()
+    .collect()
+}
+
+fn pending_repair_session_ids(
+  import_state: &HashMap<String, ImportState>,
+  pending_paths: &HashSet<String>,
+) -> HashSet<String> {
+  pending_paths
+    .iter()
+    .filter_map(|source_path| {
+      import_state
+        .get(source_path)
+        .and_then(|state| state.session_id.clone())
+        .or_else(|| fallback_session_id_from_filename(Path::new(source_path)))
+    })
+    .collect()
 }
 
 fn mark_data_repair_file_pending(
@@ -3580,6 +3664,85 @@ mod tests {
         WHERE repair_key = 'token_usage_fork_replay_v3'
         ",
         [],
+        |row| row.get(0),
+      )
+      .expect("count pending v3 repair files");
+    assert_eq!(pending_v3_count, 0);
+  }
+
+  #[test]
+  fn moved_archive_clears_v3_pending_active_source() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions/2026/07/10");
+    let archived_sessions_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_sessions_dir).expect("archived sessions dir");
+
+    let session_id = "59595959-5959-4959-8959-595959595959";
+    let filename = format!("rollout-2026-07-10T00-00-00-{session_id}.jsonl");
+    let active_path = sessions_dir.join(&filename);
+    let archived_path = archived_sessions_dir.join(&filename);
+    write_session_file(
+      &active_path,
+      session_id,
+      &[("2026-07-10T00:00:01Z", 80, 0, 20, 100)],
+    );
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+    std::fs::rename(&active_path, &archived_path).expect("archive session during repair");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("record archived source before stale pending retry");
+
+    let conn = open_connection(&db_path).expect("open db");
+    conn
+      .execute(
+        "DELETE FROM usage_events WHERE session_id = ?1",
+        params![session_id],
+      )
+      .expect("delete corrected usage");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+          reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+        )
+        VALUES (?1, '2026-07-10T00:00:01Z', 'gpt-5.4', 160, 0, 40, 0, 200, 0.0, 0, 0)
+        ",
+        params![session_id],
+      )
+      .expect("insert stale usage");
+    conn
+      .execute(
+        "
+        INSERT INTO data_repair_pending_files (repair_key, source_path, last_error, updated_at)
+        VALUES (?1, ?2, 'source moved during repair', ?3)
+        ",
+        params![
+          TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY,
+          active_path.to_string_lossy().to_string(),
+          now_utc_string(),
+        ],
+      )
+      .expect("insert pending active source");
+    drop(conn);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("repair moved archive");
+
+    let conn = open_connection(&db_path).expect("open repaired db");
+    assert_eq!(result.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, session_id).3, 100);
+    let pending_v3_count: i64 = conn
+      .query_row(
+        "
+        SELECT COUNT(*)
+        FROM data_repair_pending_files
+        WHERE repair_key = ?1
+        ",
+        params![TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY],
         |row| row.get(0),
       )
       .expect("count pending v3 repair files");
