@@ -14,10 +14,13 @@ pub use subscriptions::{
 };
 pub use sync_settings::{
     get_last_full_scan_completed, get_sync_settings, save_sync_settings,
-    set_last_scan_started_for_source, set_scan_completed_for_source,
+    set_scan_completed_for_source,
+};
+pub(crate) use sync_settings::{
+    preview_scan_freshness_for_source, set_last_scan_started_for_source_in_transaction,
 };
 #[cfg(test)]
-pub use sync_settings::set_last_full_scan_completed;
+pub use sync_settings::{set_last_full_scan_completed, set_last_scan_started_for_source};
 
 pub fn now_utc_string() -> String {
     Utc::now().to_rfc3339()
@@ -99,6 +102,41 @@ mod tests {
     use crate::models::{SubscriptionProfile, SyncSettings};
 
     #[test]
+    fn init_db_adds_scan_commit_revision_to_existing_sync_settings() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(
+            "
+            CREATE TABLE sync_settings (
+              singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+              codex_home TEXT,
+              auto_scan_enabled INTEGER NOT NULL,
+              auto_scan_interval_minutes INTEGER NOT NULL,
+              last_scan_started_at TEXT,
+              last_scan_completed_at TEXT,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO sync_settings (
+              singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
+              last_scan_started_at, last_scan_completed_at, updated_at
+            )
+            VALUES (1, NULL, 1, 5, NULL, NULL, '2026-07-10T00:00:00Z');
+            ",
+        )
+        .expect("seed legacy schema");
+
+        init_db(&conn).expect("migrate schema");
+        let revision: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load scan commit revision");
+
+        assert_eq!(revision, 0);
+    }
+
+    #[test]
     fn init_db_adds_menu_bar_flag_to_existing_sync_settings() {
         let conn = Connection::open_in_memory().expect("open in-memory database");
 
@@ -146,7 +184,9 @@ mod tests {
         );
         assert!(settings.menu_bar_popup_show_reset_timeline);
         assert!(settings.menu_bar_popup_show_actions);
-        assert!(get_last_full_scan_completed(&conn).expect("load last full scan").is_none());
+        assert!(get_last_full_scan_completed(&conn)
+            .expect("load last full scan")
+            .is_none());
         assert!(!settings.hide_dock_icon_when_menu_bar_visible);
     }
 
@@ -210,9 +250,12 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory database");
         init_db(&conn).expect("init database");
 
-        assert!(get_last_full_scan_completed(&conn).expect("load initial value").is_none());
+        assert!(get_last_full_scan_completed(&conn)
+            .expect("load initial value")
+            .is_none());
 
-        set_last_full_scan_completed(&conn, "2026-03-27T00:00:00Z").expect("set full scan timestamp");
+        set_last_full_scan_completed(&conn, "2026-03-27T00:00:00Z")
+            .expect("set full scan timestamp");
 
         assert_eq!(
             get_last_full_scan_completed(&conn).expect("load saved value"),

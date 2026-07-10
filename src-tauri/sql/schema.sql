@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS session_overrides (
 CREATE TABLE IF NOT EXISTS sync_settings (
   singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
   sync_settings_schema_version INTEGER NOT NULL DEFAULT 2,
+  scan_commit_revision INTEGER NOT NULL DEFAULT 0,
   codex_home TEXT,
   auto_scan_enabled INTEGER NOT NULL,
   auto_scan_interval_minutes INTEGER NOT NULL,

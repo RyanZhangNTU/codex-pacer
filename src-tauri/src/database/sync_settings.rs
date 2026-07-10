@@ -1,4 +1,6 @@
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension};
+#[cfg(test)]
+use rusqlite::{Transaction, TransactionBehavior};
 
 use crate::models::SyncSettings;
 
@@ -60,6 +62,19 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
             "
       ALTER TABLE sync_settings
       ADD COLUMN sync_settings_schema_version INTEGER NOT NULL DEFAULT 1
+      ",
+            [],
+        )?;
+    }
+
+    if !column_names
+        .iter()
+        .any(|name| name == "scan_commit_revision")
+    {
+        conn.execute(
+            "
+      ALTER TABLE sync_settings
+      ADD COLUMN scan_commit_revision INTEGER NOT NULL DEFAULT 0
       ",
             [],
         )?;
@@ -289,12 +304,15 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
         .any(|name| name == "last_full_scan_completed_at")
     {
         conn.execute(
-      "ALTER TABLE sync_settings ADD COLUMN last_full_scan_completed_at TEXT",
-      [],
-    )?;
+            "ALTER TABLE sync_settings ADD COLUMN last_full_scan_completed_at TEXT",
+            [],
+        )?;
     }
 
-    if !column_names.iter().any(|name| name == "last_scan_codex_home") {
+    if !column_names
+        .iter()
+        .any(|name| name == "last_scan_codex_home")
+    {
         let transaction = conn.unchecked_transaction()?;
         transaction.execute(
             "ALTER TABLE sync_settings ADD COLUMN last_scan_codex_home TEXT",
@@ -378,7 +396,9 @@ pub fn get_sync_settings(conn: &Connection) -> rusqlite::Result<SyncSettings> {
                 codex_home: row.get(0)?,
                 auto_scan_enabled: i64_to_bool(row.get::<_, i64>(1)?),
                 auto_scan_interval_minutes,
-                live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(auto_scan_interval_minutes),
+                live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(
+                    auto_scan_interval_minutes,
+                ),
                 hide_dock_icon_when_menu_bar_visible: i64_to_bool(row.get::<_, i64>(4)?),
                 show_menu_bar_logo: i64_to_bool(row.get::<_, i64>(5)?),
                 show_menu_bar_daily_api_value: i64_to_bool(row.get::<_, i64>(6)?),
@@ -529,37 +549,37 @@ pub struct ScanFreshnessStart {
     pub full_scan_required: bool,
 }
 
+#[cfg(test)]
 pub fn set_last_scan_started_for_source(
     conn: &Connection,
     timestamp: &str,
     codex_home_selector: Option<&str>,
     resolved_codex_home: &str,
 ) -> rusqlite::Result<ScanFreshnessStart> {
-    let transaction =
-        Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
-    let previous_freshness = transaction
-        .query_row(
-            "
-            SELECT last_scan_codex_home, last_full_scan_completed_at
-            FROM sync_settings
-            WHERE singleton_id = 1
-              AND (
-                (codex_home IS NULL AND ?1 IS NULL)
-                OR codex_home = ?1
-              )
-            ",
-            params![codex_home_selector],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
-        )
-        .optional()?;
-    let Some((previous_source, last_full_scan_completed_at)) = previous_freshness else {
-        transaction.commit()?;
-        return Ok(ScanFreshnessStart::default());
-    };
-    let source_changed = previous_source.as_deref() != Some(resolved_codex_home);
-    let full_scan_required = source_changed || last_full_scan_completed_at.is_none();
+    let transaction = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let result = set_last_scan_started_for_source_in_transaction(
+        &transaction,
+        timestamp,
+        codex_home_selector,
+        resolved_codex_home,
+    )?;
+    transaction.commit()?;
+    Ok(result)
+}
 
-    let updated = transaction.execute(
+pub(crate) fn set_last_scan_started_for_source_in_transaction(
+    conn: &Connection,
+    timestamp: &str,
+    codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
+) -> rusqlite::Result<ScanFreshnessStart> {
+    let preview =
+        preview_scan_freshness_for_source(conn, codex_home_selector, resolved_codex_home)?;
+    if !preview.recorded {
+        return Ok(preview);
+    }
+
+    let updated = conn.execute(
         "
         UPDATE sync_settings
         SET last_scan_started_at = ?1,
@@ -581,12 +601,47 @@ pub fn set_last_scan_started_for_source(
         ",
         params![timestamp, codex_home_selector, resolved_codex_home],
     )?;
-    transaction.commit()?;
-
     Ok(ScanFreshnessStart {
         recorded: updated == 1,
-        source_changed: updated == 1 && source_changed,
-        full_scan_required: updated == 1 && full_scan_required,
+        source_changed: updated == 1 && preview.source_changed,
+        full_scan_required: updated == 1 && preview.full_scan_required,
+    })
+}
+
+pub(crate) fn preview_scan_freshness_for_source(
+    conn: &Connection,
+    codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
+) -> rusqlite::Result<ScanFreshnessStart> {
+    let previous_freshness = conn
+        .query_row(
+            "
+            SELECT last_scan_codex_home, last_full_scan_completed_at
+            FROM sync_settings
+            WHERE singleton_id = 1
+              AND (
+                (codex_home IS NULL AND ?1 IS NULL)
+                OR codex_home = ?1
+              )
+            ",
+            params![codex_home_selector],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((previous_source, last_full_scan_completed_at)) = previous_freshness else {
+        return Ok(ScanFreshnessStart::default());
+    };
+    let source_changed = previous_source.as_deref() != Some(resolved_codex_home);
+    let full_scan_required = source_changed || last_full_scan_completed_at.is_none();
+    Ok(ScanFreshnessStart {
+        recorded: true,
+        source_changed,
+        full_scan_required,
     })
 }
 
