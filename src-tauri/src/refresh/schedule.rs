@@ -1,4 +1,8 @@
-use super::{RefreshConfig, RefreshReason, TokenScanKind};
+use super::{
+  CommitMarker, DisplayInvalidation, ExecutionCompletion, LiveExecutionRequest, LiveRequest,
+  LiveWaiterId, ReasonSet, RefreshCompletedEvent, RefreshConfig, RefreshLane, RefreshReason,
+  TokenExecutionRequest, TokenRequest, TokenScanKind,
+};
 use chrono::{DateTime, Utc};
 use std::time::{Duration, Instant};
 
@@ -7,33 +11,58 @@ pub(crate) enum CoordinatorEvent {
   Timer,
   Wake,
   SettingsChanged(RefreshConfig),
+  RequestToken(TokenRequest),
+  RequestLive(LiveRequest),
+  TokenPrepared {
+    generation: u64,
+    source_generation: u64,
+  },
+  TokenFinished(ExecutionCompletion),
+  LiveFinished(ExecutionCompletion),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) enum CoordinatorAction {
-  StartToken {
-    kind: TokenScanKind,
-    reason: RefreshReason,
+  StartToken(TokenExecutionRequest),
+  StartLive(LiveExecutionRequest),
+  CommitToken {
+    generation: u64,
+    source_generation: u64,
   },
-  StartLive {
-    reason: RefreshReason,
+  DiscardToken {
+    generation: u64,
+    source_generation: u64,
+  },
+  PublishInvalidation(DisplayInvalidation),
+  PublishCompletion(RefreshCompletedEvent),
+  ResolveLiveWaiters {
+    waiter_ids: Vec<LiveWaiterId>,
+    generation: u64,
+    succeeded: bool,
+    failure: Option<String>,
   },
 }
 
 struct LaneState {
   next_deadline: Instant,
-  running: bool,
   startup_due: bool,
   immediate_due: bool,
+  last_generation: u64,
+  running_generation: Option<u64>,
+  failure_streak: u32,
+  retry_at: Option<Instant>,
 }
 
 impl LaneState {
   fn new(next_deadline: Instant, monotonic_now: Instant) -> Self {
     Self {
       next_deadline,
-      running: false,
       startup_due: next_deadline <= monotonic_now,
       immediate_due: false,
+      last_generation: 0,
+      running_generation: None,
+      failure_streak: 0,
+      retry_at: None,
     }
   }
 
@@ -66,7 +95,7 @@ impl LaneState {
     self.immediate_due = elapsed >= new_interval;
   }
 
-  fn take_due(
+  fn take_normal_due(
     &mut self,
     now: Instant,
     interval: Duration,
@@ -87,13 +116,21 @@ impl LaneState {
       trigger_reason
     };
     self.startup_due = false;
-
-    if self.running {
-      return None;
-    }
-
-    self.running = true;
     Some(reason)
+  }
+
+  fn start_generation(&mut self) -> u64 {
+    let generation = self
+      .last_generation
+      .checked_add(1)
+      .expect("refresh generation overflowed");
+    self.last_generation = generation;
+    self.running_generation = Some(generation);
+    generation
+  }
+
+  fn clear_running(&mut self) {
+    self.running_generation = None;
   }
 }
 
@@ -101,6 +138,19 @@ pub(crate) struct CoordinatorState {
   config: RefreshConfig,
   token: LaneState,
   live: LaneState,
+  token_running: Option<TokenExecutionRequest>,
+  token_pending: Option<TokenRequest>,
+  token_source_refresh_pending: Option<TokenRequest>,
+  token_retry_request: Option<TokenRequest>,
+  live_running: Option<LiveExecutionRequest>,
+  live_pending: ReasonSet,
+  live_retry_reasons: ReasonSet,
+  live_waiters: Vec<LiveWaiterId>,
+  source_generation: u64,
+  refresh_revision: u64,
+  usage_revision: u64,
+  quota_revision: u64,
+  settings_revision: u64,
 }
 
 impl CoordinatorState {
@@ -130,51 +180,557 @@ impl CoordinatorState {
       config,
       token: LaneState::new(token_next_deadline, monotonic_now),
       live: LaneState::new(live_next_deadline, monotonic_now),
+      token_running: None,
+      token_pending: None,
+      token_source_refresh_pending: None,
+      token_retry_request: None,
+      live_running: None,
+      live_pending: ReasonSet::default(),
+      live_retry_reasons: ReasonSet::default(),
+      live_waiters: Vec::new(),
+      source_generation: 0,
+      refresh_revision: 0,
+      usage_revision: 0,
+      quota_revision: 0,
+      settings_revision: 0,
     }
   }
 
   pub(crate) fn handle(&mut self, now: Instant, event: CoordinatorEvent) -> Vec<CoordinatorAction> {
-    let trigger_reason = match event {
-      CoordinatorEvent::Timer => RefreshReason::Scheduled,
-      CoordinatorEvent::Wake => RefreshReason::Wake,
-      CoordinatorEvent::SettingsChanged(config) => {
-        assert!(
-          !config.interval.is_zero(),
-          "refresh interval must be positive"
-        );
-        let old_interval = self.config.interval;
+    match event {
+      CoordinatorEvent::Timer => self.handle_due(now, RefreshReason::Scheduled),
+      CoordinatorEvent::Wake => self.handle_due(now, RefreshReason::Wake),
+      CoordinatorEvent::SettingsChanged(config) => self.handle_settings_changed(now, config),
+      CoordinatorEvent::RequestToken(request) => {
+        if !self.config.auto_scan_enabled && !request.reasons.contains(RefreshReason::Manual) {
+          return Vec::new();
+        }
+        let mut actions = Vec::with_capacity(1);
+        self.submit_token_request(request, &mut actions);
+        actions
+      }
+      CoordinatorEvent::RequestLive(request) => {
+        if !self.config.auto_scan_enabled && !request.reasons.contains(RefreshReason::Manual) {
+          return Vec::new();
+        }
+        let mut actions = Vec::with_capacity(1);
+        self.submit_live_request(request, &mut actions);
+        actions
+      }
+      CoordinatorEvent::TokenPrepared {
+        generation,
+        source_generation,
+      } => self.handle_token_prepared(generation, source_generation),
+      CoordinatorEvent::TokenFinished(completion) => {
+        self.handle_token_finished(now, completion)
+      }
+      CoordinatorEvent::LiveFinished(completion) => {
+        self.handle_live_finished(now, completion)
+      }
+    }
+  }
+
+  fn handle_due(&mut self, now: Instant, trigger_reason: RefreshReason) -> Vec<CoordinatorAction> {
+    let mut token_request = self.take_due_token_request(now, trigger_reason);
+    let mut live_reasons = self.take_due_live_reasons(now, trigger_reason);
+    let mut actions = Vec::with_capacity(2);
+
+    if let Some(request) = token_request.take() {
+      self.submit_token_request(request, &mut actions);
+    }
+    if !live_reasons.is_empty() {
+      self.submit_live_request(
+        LiveRequest {
+          reasons: std::mem::take(&mut live_reasons),
+          waiter: None,
+        },
+        &mut actions,
+      );
+    }
+
+    actions
+  }
+
+  fn handle_settings_changed(
+    &mut self,
+    now: Instant,
+    config: RefreshConfig,
+  ) -> Vec<CoordinatorAction> {
+    assert!(
+      !config.interval.is_zero(),
+      "refresh interval must be positive"
+    );
+    let old_interval = self.config.interval;
+    let source_changed = self.config.codex_home != config.codex_home;
+    let disabling_auto_scan = self.config.auto_scan_enabled && !config.auto_scan_enabled;
+    let settings_changed = self.config.auto_scan_enabled != config.auto_scan_enabled
+      || old_interval != config.interval
+      || source_changed;
+
+    self
+      .token
+      .recalculate_interval(now, old_interval, config.interval);
+    self
+      .live
+      .recalculate_interval(now, old_interval, config.interval);
+    self.config = config;
+
+    if disabling_auto_scan {
+      self.prune_automatic_pending_work();
+    }
+
+    if settings_changed {
+      self.settings_revision = self.settings_revision.saturating_add(1);
+    }
+
+    let mut token_request = None;
+    let mut live_reasons = ReasonSet::default();
+    if source_changed {
+      self.source_generation = self
+        .source_generation
+        .checked_add(1)
+        .expect("refresh source generation overflowed");
+      self.token.failure_streak = 0;
+      self.token.retry_at = None;
+      self.token_retry_request = None;
+      self.live.failure_streak = 0;
+      self.live.retry_at = None;
+      self.live_retry_reasons = ReasonSet::default();
+
+      let mut request = TokenRequest {
+        reasons: RefreshReason::SettingsChanged.into(),
+        kind: TokenScanKind::Full,
+        codex_home: self.config.codex_home.clone(),
+      };
+      if let Some(previous_source_refresh) = self.token_source_refresh_pending.take() {
+        request.reasons.merge(previous_source_refresh.reasons);
+      }
+      if let Some(mut pending) = self.token_pending.take() {
+        let manual_for_another_home = pending.reasons.contains(RefreshReason::Manual)
+          && pending.codex_home != self.config.codex_home;
+        if manual_for_another_home {
+          let mut automatic_reasons = pending.reasons;
+          automatic_reasons.remove(RefreshReason::Manual);
+          request.reasons.merge(automatic_reasons);
+          pending.reasons = RefreshReason::Manual.into();
+          self.token_pending = Some(pending);
+        } else {
+          request.reasons.merge(pending.reasons);
+        }
+      }
+      token_request = Some(request);
+      if self.config.auto_scan_enabled {
+        live_reasons.insert(RefreshReason::SettingsChanged);
+      }
+    }
+
+    if let Some(due) = self.take_due_token_request(now, RefreshReason::SettingsChanged) {
+      merge_token_request(&mut token_request, due);
+    }
+    live_reasons.merge(self.take_due_live_reasons(now, RefreshReason::SettingsChanged));
+
+    let mut actions = Vec::with_capacity(2);
+    if let Some(request) = token_request {
+      if source_changed {
+        self.submit_source_refresh_request(request, &mut actions);
+      } else {
+        self.submit_token_request(request, &mut actions);
+      }
+    }
+    if !live_reasons.is_empty() {
+      self.submit_live_request(
+        LiveRequest {
+          reasons: live_reasons,
+          waiter: None,
+        },
+        &mut actions,
+      );
+    }
+    actions
+  }
+
+  fn take_due_token_request(
+    &mut self,
+    now: Instant,
+    trigger_reason: RefreshReason,
+  ) -> Option<TokenRequest> {
+    let mut request = None;
+    if self.token.retry_at.is_some_and(|retry_at| retry_at <= now) {
+      let retry_allowed = self.config.auto_scan_enabled
+        || self
+          .token_retry_request
+          .as_ref()
+          .is_some_and(|value| value.reasons.contains(RefreshReason::Manual));
+      if retry_allowed {
+        self.token.retry_at = None;
+        if let Some(retry) = self.token_retry_request.take() {
+          merge_token_request(&mut request, retry);
+        }
+      }
+    }
+
+    if self.config.auto_scan_enabled {
+      if let Some(reason) =
         self
           .token
-          .recalculate_interval(now, old_interval, config.interval);
+          .take_normal_due(now, self.config.interval, trigger_reason)
+      {
+        merge_token_request(
+          &mut request,
+          TokenRequest {
+            reasons: reason.into(),
+            kind: TokenScanKind::Incremental,
+            codex_home: self.config.codex_home.clone(),
+          },
+        );
+      }
+    }
+    request
+  }
+
+  fn take_due_live_reasons(
+    &mut self,
+    now: Instant,
+    trigger_reason: RefreshReason,
+  ) -> ReasonSet {
+    let mut reasons = ReasonSet::default();
+    if self.live.retry_at.is_some_and(|retry_at| retry_at <= now) {
+      let retry_allowed = self.config.auto_scan_enabled
+        || self.live_retry_reasons.contains(RefreshReason::Manual);
+      if retry_allowed {
+        self.live.retry_at = None;
+        reasons.merge(std::mem::take(&mut self.live_retry_reasons));
+      }
+    }
+
+    if self.config.auto_scan_enabled {
+      if let Some(reason) =
         self
           .live
-          .recalculate_interval(now, old_interval, config.interval);
-        self.config = config;
-        RefreshReason::SettingsChanged
+          .take_normal_due(now, self.config.interval, trigger_reason)
+      {
+        reasons.insert(reason);
       }
+    }
+    reasons
+  }
+
+  fn submit_token_request(
+    &mut self,
+    mut request: TokenRequest,
+    actions: &mut Vec<CoordinatorAction>,
+  ) {
+    if request.reasons.is_empty() {
+      return;
+    }
+    if request.codex_home.is_none() {
+      request.codex_home = self.config.codex_home.clone();
+    }
+
+    if self.token.running_generation.is_some() {
+      if let Some(source_refresh) = self.token_source_refresh_pending.as_mut() {
+        if source_refresh.codex_home == request.codex_home {
+          source_refresh.merge(request);
+          return;
+        }
+      }
+      merge_token_request(&mut self.token_pending, request);
+      return;
+    }
+
+    if let Some(mut retry) = self.token_retry_request.take() {
+      retry.merge(request);
+      request = retry;
+    }
+    self.token.retry_at = None;
+    let generation = self.token.start_generation();
+    let execution = TokenExecutionRequest {
+      generation,
+      source_generation: self.source_generation,
+      request,
+    };
+    self.token_running = Some(execution.clone());
+    actions.push(CoordinatorAction::StartToken(execution));
+  }
+
+  fn submit_source_refresh_request(
+    &mut self,
+    mut request: TokenRequest,
+    actions: &mut Vec<CoordinatorAction>,
+  ) {
+    if self.token.running_generation.is_some() {
+      if let Some(previous) = self.token_source_refresh_pending.take() {
+        request.reasons.merge(previous.reasons);
+      }
+      self.token_source_refresh_pending = Some(request);
+      return;
+    }
+    self.submit_token_request(request, actions);
+  }
+
+  fn submit_live_request(
+    &mut self,
+    mut request: LiveRequest,
+    actions: &mut Vec<CoordinatorAction>,
+  ) {
+    if self.live.running_generation.is_some() {
+      if let Some(waiter) = request.waiter {
+        push_unique_waiter(&mut self.live_waiters, waiter);
+      }
+      request.reasons.remove(RefreshReason::Manual);
+      self.live_pending.merge(request.reasons);
+      return;
+    }
+
+    if let Some(waiter) = request.waiter {
+      push_unique_waiter(&mut self.live_waiters, waiter);
+    }
+    request.reasons.merge(std::mem::take(&mut self.live_retry_reasons));
+    self.live.retry_at = None;
+    if request.reasons.is_empty() {
+      return;
+    }
+
+    let generation = self.live.start_generation();
+    let execution = LiveExecutionRequest {
+      generation,
+      source_generation: self.source_generation,
+      reasons: request.reasons,
+    };
+    self.live_running = Some(execution.clone());
+    actions.push(CoordinatorAction::StartLive(execution));
+  }
+
+  fn handle_token_prepared(
+    &mut self,
+    generation: u64,
+    source_generation: u64,
+  ) -> Vec<CoordinatorAction> {
+    let mut actions = Vec::with_capacity(2);
+    let Some(running) = self.token_running.as_ref() else {
+      actions.push(CoordinatorAction::DiscardToken {
+        generation,
+        source_generation,
+      });
+      return actions;
     };
 
-    if !self.config.auto_scan_enabled {
+    if running.generation != generation {
+      actions.push(CoordinatorAction::DiscardToken {
+        generation,
+        source_generation,
+      });
+      return actions;
+    }
+
+    if running.source_generation == source_generation
+      && source_generation == self.source_generation
+    {
+      actions.push(CoordinatorAction::CommitToken {
+        generation,
+        source_generation,
+      });
+      return actions;
+    }
+
+    let stale = self
+      .token_running
+      .take()
+      .expect("matching token generation remains present");
+    self.token.clear_running();
+    actions.push(CoordinatorAction::DiscardToken {
+      generation,
+      source_generation,
+    });
+    if self.token_source_refresh_pending.is_none() {
+      let mut request = stale.request;
+      request.kind = TokenScanKind::Full;
+      request.codex_home = self.config.codex_home.clone();
+      request.reasons.insert(RefreshReason::SettingsChanged);
+      self.token_source_refresh_pending = Some(request);
+    }
+    self.start_pending_token(&mut actions);
+    actions
+  }
+
+  fn handle_token_finished(
+    &mut self,
+    now: Instant,
+    completion: ExecutionCompletion,
+  ) -> Vec<CoordinatorAction> {
+    let Some(running) = self.token_running.as_ref() else {
+      return Vec::new();
+    };
+    if running.generation != completion.generation {
       return Vec::new();
     }
 
-    let mut actions = Vec::with_capacity(2);
-    if let Some(reason) = self
-      .token
-      .take_due(now, self.config.interval, trigger_reason)
+    let running = self
+      .token_running
+      .take()
+      .expect("matching token generation remains present");
+    self.token.clear_running();
+    if running.source_generation != completion.source_generation
+      || completion.source_generation != self.source_generation
     {
-      actions.push(CoordinatorAction::StartToken {
-        kind: TokenScanKind::Incremental,
-        reason,
+      let mut actions = Vec::with_capacity(1);
+      self.start_pending_token(&mut actions);
+      return actions;
+    }
+
+    let completion = normalize_completion(completion);
+    let mut actions = Vec::with_capacity(3);
+    if completion.succeeded {
+      self.token.failure_streak = 0;
+      self.token.retry_at = None;
+      self.token_retry_request = None;
+      self.usage_revision = self.usage_revision.saturating_add(1);
+      actions.push(CoordinatorAction::PublishInvalidation(
+        self.invalidation(completion.commit.expect("normalized success has commit marker")),
+      ));
+    } else {
+      self.token.failure_streak = self.token.failure_streak.saturating_add(1);
+      let jitter = completion.retry_jitter.min(Duration::from_secs(1));
+      let delay = retry_delay(self.token.failure_streak, self.config.interval, jitter);
+      self.token.retry_at = Some(now.checked_add(delay).unwrap_or(now));
+      self.token_retry_request = Some(running.request);
+    }
+    actions.push(CoordinatorAction::PublishCompletion(
+      self.completed_event(RefreshLane::Token, &completion),
+    ));
+    self.start_pending_token(&mut actions);
+    actions
+  }
+
+  fn handle_live_finished(
+    &mut self,
+    now: Instant,
+    completion: ExecutionCompletion,
+  ) -> Vec<CoordinatorAction> {
+    let Some(running) = self.live_running.as_ref() else {
+      return Vec::new();
+    };
+    if running.generation != completion.generation {
+      return Vec::new();
+    }
+
+    let running = self
+      .live_running
+      .take()
+      .expect("matching live generation remains present");
+    self.live.clear_running();
+    let waiters = std::mem::take(&mut self.live_waiters);
+    if running.source_generation != completion.source_generation
+      || completion.source_generation != self.source_generation
+    {
+      let mut actions = Vec::with_capacity(2);
+      if !waiters.is_empty() {
+        actions.push(CoordinatorAction::ResolveLiveWaiters {
+          waiter_ids: waiters,
+          generation: completion.generation,
+          succeeded: false,
+          failure: Some("refresh source changed".to_string()),
+        });
+      }
+      self.start_pending_live(&mut actions);
+      return actions;
+    }
+
+    let completion = normalize_completion(completion);
+    let mut actions = Vec::with_capacity(4);
+    if completion.succeeded {
+      self.live.failure_streak = 0;
+      self.live.retry_at = None;
+      self.live_retry_reasons = ReasonSet::default();
+      self.quota_revision = self.quota_revision.saturating_add(1);
+      actions.push(CoordinatorAction::PublishInvalidation(
+        self.invalidation(completion.commit.expect("normalized success has commit marker")),
+      ));
+    } else {
+      self.live.failure_streak = self.live.failure_streak.saturating_add(1);
+      let jitter = completion.retry_jitter.min(Duration::from_secs(1));
+      let delay = retry_delay(self.live.failure_streak, self.config.interval, jitter);
+      self.live.retry_at = Some(now.checked_add(delay).unwrap_or(now));
+      self.live_retry_reasons = running.reasons;
+    }
+    actions.push(CoordinatorAction::PublishCompletion(
+      self.completed_event(RefreshLane::Live, &completion),
+    ));
+    if !waiters.is_empty() {
+      actions.push(CoordinatorAction::ResolveLiveWaiters {
+        waiter_ids: waiters,
+        generation: completion.generation,
+        succeeded: completion.succeeded,
+        failure: completion.failure.clone(),
       });
     }
-    if let Some(reason) = self
-      .live
-      .take_due(now, self.config.interval, trigger_reason)
-    {
-      actions.push(CoordinatorAction::StartLive { reason });
-    }
+    self.start_pending_live(&mut actions);
     actions
+  }
+
+  fn start_pending_token(&mut self, actions: &mut Vec<CoordinatorAction>) {
+    if let Some(request) = self.token_source_refresh_pending.take() {
+      self.submit_token_request(request, actions);
+      return;
+    }
+    if let Some(request) = self.token_pending.take() {
+      if !self.config.auto_scan_enabled && !request.reasons.contains(RefreshReason::Manual) {
+        return;
+      }
+      self.submit_token_request(request, actions);
+    }
+  }
+
+  fn prune_automatic_pending_work(&mut self) {
+    if let Some(mut pending) = self.token_pending.take() {
+      if pending.reasons.contains(RefreshReason::Manual) {
+        pending.reasons = RefreshReason::Manual.into();
+        self.token_pending = Some(pending);
+      }
+    }
+    self.live_pending = ReasonSet::default();
+  }
+
+  fn start_pending_live(&mut self, actions: &mut Vec<CoordinatorAction>) {
+    let reasons = std::mem::take(&mut self.live_pending);
+    if !reasons.is_empty() {
+      self.submit_live_request(
+        LiveRequest {
+          reasons,
+          waiter: None,
+        },
+        actions,
+      );
+    }
+  }
+
+  fn invalidation(&self, commit: CommitMarker) -> DisplayInvalidation {
+    DisplayInvalidation {
+      usage_revision: self.usage_revision,
+      quota_revision: self.quota_revision,
+      settings_revision: self.settings_revision,
+      source_generation: self.source_generation,
+      commit,
+    }
+  }
+
+  fn completed_event(
+    &mut self,
+    lane: RefreshLane,
+    completion: &ExecutionCompletion,
+  ) -> RefreshCompletedEvent {
+    self.refresh_revision = self.refresh_revision.saturating_add(1);
+    RefreshCompletedEvent {
+      refresh_revision: self.refresh_revision,
+      lane,
+      generation: completion.generation,
+      usage_revision: self.usage_revision,
+      quota_revision: self.quota_revision,
+      source_generation: self.source_generation,
+      succeeded: completion.succeeded,
+      failure: completion.failure.clone(),
+      completed_at: completion.completed_at.clone(),
+    }
   }
 
   pub(crate) fn token_next_deadline(&self) -> Instant {
@@ -184,6 +740,55 @@ impl CoordinatorState {
   pub(crate) fn live_next_deadline(&self) -> Instant {
     self.live.next_deadline
   }
+
+  pub(crate) fn token_retry_at(&self) -> Option<Instant> {
+    self.token.retry_at
+  }
+
+  pub(crate) fn live_retry_at(&self) -> Option<Instant> {
+    self.live.retry_at
+  }
+
+  pub(crate) fn source_generation(&self) -> u64 {
+    self.source_generation
+  }
+
+  pub(crate) fn usage_revision(&self) -> u64 {
+    self.usage_revision
+  }
+}
+
+fn merge_token_request(target: &mut Option<TokenRequest>, request: TokenRequest) {
+  if let Some(target) = target {
+    target.merge(request);
+  } else {
+    *target = Some(request);
+  }
+}
+
+fn push_unique_waiter(waiters: &mut Vec<LiveWaiterId>, waiter: LiveWaiterId) {
+  if !waiters.contains(&waiter) {
+    waiters.push(waiter);
+  }
+}
+
+fn normalize_completion(mut completion: ExecutionCompletion) -> ExecutionCompletion {
+  if completion.succeeded && completion.commit.is_none() {
+    completion.succeeded = false;
+    completion.failure = Some("successful refresh completion missing commit marker".to_string());
+  } else if !completion.succeeded && completion.failure.is_none() {
+    completion.failure = Some("refresh failed without an error".to_string());
+  }
+  completion
+}
+
+fn retry_delay(failure_streak: u32, interval: Duration, jitter: Duration) -> Duration {
+  const STEPS: [u64; 6] = [5, 15, 30, 60, 120, 300];
+  let index = failure_streak.saturating_sub(1) as usize;
+  Duration::from_secs(STEPS[index.min(STEPS.len() - 1)])
+    .saturating_add(jitter)
+    .min(interval)
+    .min(Duration::from_secs(300))
 }
 
 fn advance_fixed_deadline(
@@ -246,14 +851,14 @@ mod tests {
   fn token_starts(actions: &[CoordinatorAction]) -> usize {
     actions
       .iter()
-      .filter(|value| matches!(value, CoordinatorAction::StartToken { .. }))
+      .filter(|value| matches!(value, CoordinatorAction::StartToken(_)))
       .count()
   }
 
   fn live_starts(actions: &[CoordinatorAction]) -> usize {
     actions
       .iter()
-      .filter(|value| matches!(value, CoordinatorAction::StartLive { .. }))
+      .filter(|value| matches!(value, CoordinatorAction::StartLive(_)))
       .count()
   }
 
@@ -286,14 +891,11 @@ mod tests {
     assert!(matches!(
       first.as_slice(),
       [
-        CoordinatorAction::StartToken {
-          kind: TokenScanKind::Incremental,
-          reason: RefreshReason::Startup,
-        },
-        CoordinatorAction::StartLive {
-          reason: RefreshReason::Startup,
-        },
-      ]
+        CoordinatorAction::StartToken(token),
+        CoordinatorAction::StartLive(live),
+      ] if token.request.kind == TokenScanKind::Incremental
+        && token.request.reasons.contains(RefreshReason::Startup)
+        && live.reasons.contains(RefreshReason::Startup)
     ));
     assert!(duplicate.is_empty());
   }
@@ -352,10 +954,10 @@ mod tests {
 
     assert!(actions
       .iter()
-      .any(|value| matches!(value, CoordinatorAction::StartToken { .. })));
+      .any(|value| matches!(value, CoordinatorAction::StartToken(_))));
     assert!(actions
       .iter()
-      .any(|value| matches!(value, CoordinatorAction::StartLive { .. })));
+      .any(|value| matches!(value, CoordinatorAction::StartLive(_))));
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(600));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(600));
   }
@@ -382,9 +984,8 @@ mod tests {
     assert_eq!(live_starts(&live_due), 1);
     assert!(matches!(
       live_due.as_slice(),
-      [CoordinatorAction::StartLive {
-        reason: RefreshReason::Scheduled,
-      }]
+      [CoordinatorAction::StartLive(request)]
+        if request.reasons.contains(RefreshReason::Scheduled)
     ));
   }
 
@@ -402,14 +1003,10 @@ mod tests {
     assert!(matches!(
       actions.as_slice(),
       [
-        CoordinatorAction::StartToken {
-          reason: RefreshReason::Wake,
-          ..
-        },
-        CoordinatorAction::StartLive {
-          reason: RefreshReason::Wake,
-        },
-      ]
+        CoordinatorAction::StartToken(token),
+        CoordinatorAction::StartLive(live),
+      ] if token.request.reasons.contains(RefreshReason::Wake)
+        && live.reasons.contains(RefreshReason::Wake)
     ));
     assert_eq!(
       state.token_next_deadline(),
@@ -442,14 +1039,10 @@ mod tests {
     assert!(matches!(
       actions.as_slice(),
       [
-        CoordinatorAction::StartToken {
-          reason: RefreshReason::SettingsChanged,
-          ..
-        },
-        CoordinatorAction::StartLive {
-          reason: RefreshReason::SettingsChanged,
-        },
-      ]
+        CoordinatorAction::StartToken(token),
+        CoordinatorAction::StartLive(live),
+      ] if token.request.reasons.contains(RefreshReason::SettingsChanged)
+        && live.reasons.contains(RefreshReason::SettingsChanged)
     ));
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(90));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(90));
@@ -485,14 +1078,18 @@ mod tests {
   #[test]
   fn shorter_interval_recalculates_when_prior_anchor_predates_monotonic_epoch() {
     let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
     let old_interval = Duration::MAX;
     let old_next_deadline = base + Duration::from_secs(60);
     assert!(old_next_deadline.checked_sub(old_interval).is_none());
-    let mut state = CoordinatorState {
-      config: test_config(old_interval, None),
-      token: LaneState::new(old_next_deadline, base),
-      live: LaneState::new(old_next_deadline, base),
-    };
+    let mut state = CoordinatorState::new(
+      test_config(Duration::from_secs(60), Some(wall)),
+      base,
+      wall,
+    );
+    state.config.interval = old_interval;
+    state.token = LaneState::new(old_next_deadline, base);
+    state.live = LaneState::new(old_next_deadline, base);
 
     let actions = state.handle(
       base + Duration::from_secs(30),
@@ -504,14 +1101,10 @@ mod tests {
     assert!(matches!(
       actions.as_slice(),
       [
-        CoordinatorAction::StartToken {
-          reason: RefreshReason::SettingsChanged,
-          ..
-        },
-        CoordinatorAction::StartLive {
-          reason: RefreshReason::SettingsChanged,
-        },
-      ]
+        CoordinatorAction::StartToken(token),
+        CoordinatorAction::StartLive(live),
+      ] if token.request.reasons.contains(RefreshReason::SettingsChanged)
+        && live.reasons.contains(RefreshReason::SettingsChanged)
     ));
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(40));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(40));
@@ -613,5 +1206,603 @@ mod tests {
     assert_eq!(live_starts(&due), 1);
     assert_eq!(state.token_next_deadline(), base + Duration::from_secs(600));
     assert_eq!(state.live_next_deadline(), base + Duration::from_secs(600));
+  }
+
+  fn execution_success(
+    generation: u64,
+    source_generation: u64,
+    sequence: u64,
+    committed_at: Instant,
+  ) -> ExecutionCompletion {
+    ExecutionCompletion {
+      generation,
+      source_generation,
+      succeeded: true,
+      failure: None,
+      completed_at: "2026-07-10T10:00:00Z".to_string(),
+      commit: Some(CommitMarker {
+        sequence,
+        committed_at,
+      }),
+      retry_jitter: Duration::ZERO,
+    }
+  }
+
+  fn execution_failure(
+    generation: u64,
+    source_generation: u64,
+    retry_jitter: Duration,
+  ) -> ExecutionCompletion {
+    ExecutionCompletion {
+      generation,
+      source_generation,
+      succeeded: false,
+      failure: Some("test failure".to_string()),
+      completed_at: "2026-07-10T10:00:00Z".to_string(),
+      commit: None,
+      retry_jitter,
+    }
+  }
+
+  fn start_token_generation(state: &mut CoordinatorState, now: Instant) -> TokenExecutionRequest {
+    state
+      .handle(
+        now,
+        CoordinatorEvent::RequestToken(TokenRequest::scheduled()),
+      )
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("token generation starts")
+  }
+
+  fn start_live_generation(state: &mut CoordinatorState, now: Instant) -> LiveExecutionRequest {
+    state
+      .handle(
+        now,
+        CoordinatorEvent::RequestLive(LiveRequest::scheduled()),
+      )
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartLive(request) => Some(request),
+        _ => None,
+      })
+      .expect("live generation starts")
+  }
+
+  #[test]
+  fn triggers_during_run_create_one_follow_up_generation() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut state = CoordinatorState::new(
+      test_config(Duration::from_secs(300), Some(wall)),
+      base,
+      wall,
+    );
+    let first = start_token_generation(&mut state, base);
+
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::RequestToken(TokenRequest::scheduled()),
+    );
+    state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::RequestToken(TokenRequest::manual_full(None)),
+    );
+    let actions = state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::TokenFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(3),
+      )),
+    );
+
+    let starts = actions
+      .iter()
+      .filter_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].request.kind, TokenScanKind::Full);
+  }
+
+  #[test]
+  fn multiple_triggers_merge_reason_bits() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut state = CoordinatorState::new(
+      test_config(Duration::from_secs(300), Some(wall)),
+      base,
+      wall,
+    );
+    let first = start_live_generation(&mut state, base);
+
+    for reason in [
+      RefreshReason::Scheduled,
+      RefreshReason::Wake,
+      RefreshReason::SettingsChanged,
+    ] {
+      state.handle(
+        base + Duration::from_secs(1),
+        CoordinatorEvent::RequestLive(LiveRequest::for_reason(reason)),
+      );
+    }
+    let actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::LiveFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+
+    let starts = actions
+      .iter()
+      .filter_map(|action| match action {
+        CoordinatorAction::StartLive(request) => Some(request),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 1);
+    assert!(starts[0].reasons.contains(RefreshReason::Scheduled));
+    assert!(starts[0].reasons.contains(RefreshReason::Wake));
+    assert!(starts[0]
+      .reasons
+      .contains(RefreshReason::SettingsChanged));
+  }
+
+  #[test]
+  fn manual_live_waiter_joins_running_generation() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut state = CoordinatorState::new(
+      test_config(Duration::from_secs(300), Some(wall)),
+      base,
+      wall,
+    );
+    let first = start_live_generation(&mut state, base);
+    let waiter_id = LiveWaiterId(41);
+
+    let joined = state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::RequestLive(LiveRequest::manual(waiter_id)),
+    );
+    assert!(joined
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartLive(_))));
+
+    let actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::LiveFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+
+    assert!(actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartLive(_))));
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::ResolveLiveWaiters {
+        waiter_ids,
+        generation,
+        succeeded: true,
+        failure: None,
+      } if waiter_ids == &[waiter_id] && *generation == first.generation
+    )));
+  }
+
+  #[test]
+  fn failed_lanes_back_off_independently() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first_token = start_token_generation(&mut state, base);
+    let first_live = start_live_generation(&mut state, base);
+
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::TokenFinished(execution_failure(
+        first_token.generation,
+        first_token.source_generation,
+        Duration::ZERO,
+      )),
+    );
+    state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::LiveFinished(execution_failure(
+        first_live.generation,
+        first_live.source_generation,
+        Duration::ZERO,
+      )),
+    );
+
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(6)));
+    assert_eq!(state.live_retry_at(), Some(base + Duration::from_secs(7)));
+    assert_eq!(state.token_next_deadline(), base + interval);
+    assert_eq!(state.live_next_deadline(), base + interval);
+
+    let token_retry = state.handle(base + Duration::from_secs(6), CoordinatorEvent::Timer);
+    assert_eq!(token_starts(&token_retry), 1);
+    assert_eq!(live_starts(&token_retry), 0);
+    let second_token = token_retry
+      .into_iter()
+      .find_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .expect("token retry starts");
+    state.handle(
+      base + Duration::from_secs(6),
+      CoordinatorEvent::TokenFinished(execution_failure(
+        second_token.generation,
+        second_token.source_generation,
+        Duration::ZERO,
+      )),
+    );
+
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(21)));
+    assert_eq!(state.live_retry_at(), Some(base + Duration::from_secs(7)));
+    assert_eq!(
+      retry_delay(6, Duration::from_secs(600), Duration::ZERO),
+      Duration::from_secs(300)
+    );
+    assert_eq!(
+      retry_delay(1, Duration::from_secs(3), Duration::ZERO),
+      Duration::from_secs(3)
+    );
+
+    let mut jitter_state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let jittered = start_token_generation(&mut jitter_state, base);
+    jitter_state.handle(
+      base,
+      CoordinatorEvent::TokenFinished(execution_failure(
+        jittered.generation,
+        jittered.source_generation,
+        Duration::from_secs(2),
+      )),
+    );
+    assert_eq!(
+      jitter_state.token_retry_at(),
+      Some(base + Duration::from_secs(6))
+    );
+  }
+
+  #[test]
+  fn source_change_rejects_old_completion() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/new-home".to_string());
+
+    let settings_actions = state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    assert!(settings_actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartToken(_))));
+
+    let actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(2),
+      )),
+    );
+
+    assert_eq!(state.source_generation(), first.source_generation + 1);
+    assert_eq!(state.usage_revision(), 0);
+    assert!(actions.iter().all(|action| !matches!(
+      action,
+      CoordinatorAction::PublishCompletion(_) | CoordinatorAction::PublishInvalidation(_)
+    )));
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::StartToken(request)
+        if request.source_generation == first.source_generation + 1
+          && request.request.kind == TokenScanKind::Full
+          && request.request.codex_home.as_deref() == Some("/normalized/new-home")
+    )));
+  }
+
+  #[test]
+  fn source_change_discards_prepared_token_before_commit() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/new-home".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::TokenPrepared {
+        generation: first.generation,
+        source_generation: first.source_generation,
+      },
+    );
+
+    assert_eq!(state.usage_revision(), 0);
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::DiscardToken {
+        generation,
+        source_generation,
+      } if *generation == first.generation && *source_generation == first.source_generation
+    )));
+    assert!(actions.iter().all(|action| !matches!(
+      action,
+      CoordinatorAction::CommitToken { .. }
+        | CoordinatorAction::PublishCompletion(_)
+        | CoordinatorAction::PublishInvalidation(_)
+    )));
+    assert_eq!(
+      actions
+        .iter()
+        .filter(|action| matches!(action, CoordinatorAction::StartToken(_)))
+        .count(),
+      1
+    );
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::StartToken(request)
+        if request.source_generation == first.source_generation + 1
+          && request.request.kind == TokenScanKind::Full
+    )));
+  }
+
+  #[test]
+  fn success_without_commit_marker_is_rejected() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut state = CoordinatorState::new(
+      test_config(Duration::from_secs(300), Some(wall)),
+      base,
+      wall,
+    );
+    let first = start_token_generation(&mut state, base);
+    let completion = ExecutionCompletion {
+      generation: first.generation,
+      source_generation: first.source_generation,
+      succeeded: true,
+      failure: None,
+      completed_at: "2026-07-10T10:00:00Z".to_string(),
+      commit: None,
+      retry_jitter: Duration::ZERO,
+    };
+
+    let actions = state.handle(base, CoordinatorEvent::TokenFinished(completion));
+
+    assert_eq!(state.usage_revision(), 0);
+    assert_eq!(state.token_retry_at(), Some(base + Duration::from_secs(5)));
+    assert!(actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::PublishInvalidation(_))));
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::PublishCompletion(event)
+        if !event.succeeded
+          && event.failure.as_deref()
+            == Some("successful refresh completion missing commit marker")
+    )));
+  }
+
+  #[test]
+  fn stale_live_completion_resolves_waiters_without_publishing() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first = start_live_generation(&mut state, base);
+    let waiter_id = LiveWaiterId(73);
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::RequestLive(LiveRequest::manual(waiter_id)),
+    );
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/new-home".to_string());
+    state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::LiveFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(3),
+      )),
+    );
+
+    assert!(actions.iter().all(|action| !matches!(
+      action,
+      CoordinatorAction::PublishCompletion(_) | CoordinatorAction::PublishInvalidation(_)
+    )));
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::ResolveLiveWaiters {
+        waiter_ids,
+        generation,
+        succeeded: false,
+        failure: Some(failure),
+      } if waiter_ids == &[waiter_id]
+        && *generation == first.generation
+        && failure == "refresh source changed"
+    )));
+    assert_eq!(
+      actions
+        .iter()
+        .filter(|action| matches!(action, CoordinatorAction::StartLive(_)))
+        .count(),
+      1
+    );
+  }
+
+  #[test]
+  fn manual_full_request_supersedes_pending_retry_source() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let mut config = test_config(Duration::from_secs(300), Some(wall));
+    config.codex_home = Some("/normalized/configured-home".to_string());
+    let mut state = CoordinatorState::new(config, base, wall);
+    let first = start_token_generation(&mut state, base);
+    state.handle(
+      base,
+      CoordinatorEvent::TokenFinished(execution_failure(
+        first.generation,
+        first.source_generation,
+        Duration::ZERO,
+      )),
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::RequestToken(TokenRequest::manual_full(Some(
+        "/normalized/manual-home".to_string(),
+      ))),
+    );
+
+    assert!(actions.iter().any(|action| matches!(
+      action,
+      CoordinatorAction::StartToken(request)
+        if request.request.kind == TokenScanKind::Full
+          && request.request.reasons.contains(RefreshReason::Manual)
+          && request.request.codex_home.as_deref() == Some("/normalized/manual-home")
+    )));
+  }
+
+  #[test]
+  fn disabling_auto_scan_cancels_queued_automatic_token_follow_up() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first = start_token_generation(&mut state, base);
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::RequestToken(TokenRequest::scheduled()),
+    );
+    let mut disabled = test_config(interval, Some(wall));
+    disabled.auto_scan_enabled = false;
+    state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::SettingsChanged(disabled),
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::TokenFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(3),
+      )),
+    );
+
+    assert!(actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartToken(_))));
+  }
+
+  #[test]
+  fn disabling_auto_scan_cancels_queued_automatic_live_follow_up() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first = start_live_generation(&mut state, base);
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::RequestLive(LiveRequest::scheduled()),
+    );
+    let mut disabled = test_config(interval, Some(wall));
+    disabled.auto_scan_enabled = false;
+    state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::SettingsChanged(disabled),
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::LiveFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(3),
+      )),
+    );
+
+    assert!(actions
+      .iter()
+      .all(|action| !matches!(action, CoordinatorAction::StartLive(_))));
+  }
+
+  #[test]
+  fn source_refresh_precedes_manual_request_for_another_home() {
+    let base = Instant::now();
+    let wall = utc("2026-07-10T10:00:00Z");
+    let interval = Duration::from_secs(300);
+    let mut state = CoordinatorState::new(test_config(interval, Some(wall)), base, wall);
+    let first = start_token_generation(&mut state, base);
+    let mut changed = test_config(interval, Some(wall));
+    changed.codex_home = Some("/normalized/new-home".to_string());
+    state.handle(
+      base + Duration::from_secs(1),
+      CoordinatorEvent::SettingsChanged(changed),
+    );
+    state.handle(
+      base + Duration::from_secs(2),
+      CoordinatorEvent::RequestToken(TokenRequest::manual_full(Some(
+        "/normalized/manual-home".to_string(),
+      ))),
+    );
+
+    let actions = state.handle(
+      base + Duration::from_secs(3),
+      CoordinatorEvent::TokenFinished(execution_success(
+        first.generation,
+        first.source_generation,
+        1,
+        base + Duration::from_secs(3),
+      )),
+    );
+
+    let starts = actions
+      .iter()
+      .filter_map(|action| match action {
+        CoordinatorAction::StartToken(request) => Some(request),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].request.kind, TokenScanKind::Full);
+    assert_eq!(
+      starts[0].request.codex_home.as_deref(),
+      Some("/normalized/new-home")
+    );
   }
 }
