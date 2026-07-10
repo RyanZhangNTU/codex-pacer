@@ -68,6 +68,7 @@ enum SessionParseError {
 }
 
 const TOKEN_USAGE_MONOTONIC_REPAIR_KEY: &str = "token_usage_monotonic_v2";
+const TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY: &str = "token_usage_fork_replay_v3";
 const RATE_LIMIT_SAMPLE_BACKFILL_KEY: &str = "rate_limit_sample_backfill_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,10 +129,16 @@ fn perform_scan_with_scope(
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&conn).map_err(|error| error.to_string())?;
   let pending_rate_limit_repair_paths =
     load_pending_data_repair_paths(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY).map_err(|error| error.to_string())?;
-  let needs_token_usage_repair_sweep =
+  let needs_token_usage_v2_repair_sweep =
     data_repair_is_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
-  let pending_token_repair_paths =
+  let pending_token_v2_repair_paths =
     load_pending_data_repair_paths(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let needs_fork_replay_v3_repair_sweep =
+    data_repair_is_pending(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let pending_fork_replay_v3_repair_paths =
+    load_pending_data_repair_paths(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY).map_err(|error| error.to_string())?;
+  let needs_token_usage_repair_sweep =
+    needs_token_usage_v2_repair_sweep || needs_fork_replay_v3_repair_sweep;
   let effective_scope = effective_scan_scope(
     requested_scope,
     import_state.is_empty(),
@@ -161,7 +168,8 @@ fn perform_scan_with_scope(
     if needs_rate_limit_backfill
       || pending_rate_limit_repair_paths.contains(&source_path)
       || needs_token_usage_repair_sweep
-      || pending_token_repair_paths.contains(&source_path)
+      || pending_token_v2_repair_paths.contains(&source_path)
+      || pending_fork_replay_v3_repair_paths.contains(&source_path)
     {
       changed_files.push(session_file);
       continue;
@@ -200,8 +208,10 @@ fn perform_scan_with_scope(
       let source_path = session_file.path.to_string_lossy().to_string();
       let file_needs_rate_limit_repair =
         needs_rate_limit_backfill || pending_rate_limit_repair_paths.contains(&source_path);
-      let file_needs_token_repair =
-        needs_token_usage_repair_sweep || pending_token_repair_paths.contains(&source_path);
+      let file_needs_token_v2_repair =
+        needs_token_usage_v2_repair_sweep || pending_token_v2_repair_paths.contains(&source_path);
+      let file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
+        || pending_fork_replay_v3_repair_paths.contains(&source_path);
       let mut parsed = match parse_session_file(session_file, &titles) {
         Ok(parsed) => parsed,
         Err(error) => {
@@ -211,8 +221,12 @@ fn perform_scan_with_scope(
             session_file.path.display(),
             error
           );
-          if file_needs_token_repair {
+          if file_needs_token_v2_repair {
             mark_data_repair_file_pending(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path, &error)
+              .map_err(|error| error.to_string())?;
+          }
+          if file_needs_fork_replay_v3_repair {
+            mark_data_repair_file_pending(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path, &error)
               .map_err(|error| error.to_string())?;
           }
           if file_needs_rate_limit_repair {
@@ -248,8 +262,12 @@ fn perform_scan_with_scope(
         clear_pending_data_repair_file(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &source_path)
           .map_err(|error| error.to_string())?;
       }
-      if file_needs_token_repair {
+      if file_needs_token_v2_repair {
         clear_pending_data_repair_file(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &source_path)
+          .map_err(|error| error.to_string())?;
+      }
+      if file_needs_fork_replay_v3_repair {
+        clear_pending_data_repair_file(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &source_path)
           .map_err(|error| error.to_string())?;
       }
       changed_sessions += 1;
@@ -299,8 +317,12 @@ fn perform_scan_with_scope(
     mark_data_repair_complete(&conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
-  if needs_token_usage_repair_sweep {
+  if needs_token_usage_v2_repair_sweep {
     mark_data_repair_complete(&conn, TOKEN_USAGE_MONOTONIC_REPAIR_KEY, &completed_at)
+      .map_err(|error| error.to_string())?;
+  }
+  if needs_fork_replay_v3_repair_sweep {
+    mark_data_repair_complete(&conn, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY, &completed_at)
       .map_err(|error| error.to_string())?;
   }
   if scan_freshness_start.recorded {
@@ -3380,6 +3402,188 @@ mod tests {
       .optional()
       .expect("query data repair marker");
     assert!(repair_completed.is_some());
+  }
+
+  #[test]
+  fn v3_repair_rebuilds_unchanged_fork_usage() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let parent_session_id = "56565656-5656-4656-8656-565656565656";
+    let child_session_id = "57575757-5757-4757-8757-575757575757";
+    let parent_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let child_path = sessions_dir.join(format!(
+      "rollout-2026-03-24T00-30-00-{child_session_id}.jsonl"
+    ));
+    let repaired_session_id = "58585858-5858-4858-8858-585858585858";
+    let repaired_path = sessions_dir.join("unparseable-v3.jsonl");
+    let parent_fixtures = [
+      TokenFixture {
+        timestamp: "2026-03-24T00:00:01Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:10:01Z",
+        total: (180, 0, 0, 180),
+        last: (80, 0, 0, 80),
+      },
+      TokenFixture {
+        timestamp: "2026-03-24T00:20:01Z",
+        total: (260, 0, 0, 260),
+        last: (80, 0, 0, 80),
+      },
+    ];
+
+    let mut parent_body = format!(
+      concat!(
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",",
+        "\"payload\":{{\"id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      parent_session_id,
+    );
+    for fixture in parent_fixtures.iter().copied() {
+      parent_body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&parent_path, parent_body).expect("write parent session");
+
+    let child_created_at = "2026-03-24T00:30:00Z";
+    let mut child_body = format!(
+      concat!(
+        "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{",
+        "\"id\":\"{}\",\"forked_from_id\":\"{}\"}}}}\n",
+        "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",",
+        "\"payload\":{{\"model\":\"gpt-5.4\"}}}}\n"
+      ),
+      child_created_at,
+      child_session_id,
+      parent_session_id,
+      child_created_at,
+    );
+    for (index, fixture) in parent_fixtures.iter().copied().enumerate() {
+      let timestamp = match index {
+        0 => "2026-03-24T00:30:01Z",
+        1 => "2026-03-24T00:30:02Z",
+        _ => "2026-03-24T00:30:03Z",
+      };
+      child_body.push_str(&token_count_line(TokenFixture {
+        timestamp,
+        ..fixture
+      }));
+    }
+    child_body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:31:00Z",
+      total: (310, 0, 0, 310),
+      last: (50, 0, 0, 50),
+    }));
+    std::fs::write(&child_path, child_body).expect("write fork session");
+    std::fs::write(&repaired_path, "not json\n").expect("write unreadable repair fixture");
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("initial scan");
+
+    let conn = open_connection(&db_path).expect("open db");
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 260);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 50);
+    conn
+      .execute(
+        "DELETE FROM usage_events WHERE session_id = ?1",
+        params![child_session_id],
+      )
+      .expect("delete corrected child usage");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+          reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
+        )
+        VALUES (?1, '2026-03-24T00:31:00Z', 'gpt-5.4', 310, 0, 0, 0, 310, 0.0, 0, 0)
+        ",
+        params![child_session_id],
+      )
+      .expect("insert legacy overcounted child usage");
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = 'token_usage_fork_replay_v3'",
+        [],
+      )
+      .expect("simulate database upgraded from v2");
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 310);
+    drop(conn);
+
+    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("v3 repair scan");
+
+    let conn = open_connection(&db_path).expect("open repaired db");
+    assert_eq!(result.updated_sessions, 2);
+    assert_eq!(session_usage_totals(&conn, parent_session_id).3, 260);
+    assert_eq!(session_usage_totals(&conn, child_session_id).3, 50);
+    let v2_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = 'token_usage_monotonic_v2'",
+        [],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query v2 repair marker");
+    let v3_completed: Option<String> = conn
+      .query_row(
+        "SELECT completed_at FROM data_repairs WHERE repair_key = 'token_usage_fork_replay_v3'",
+        [],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query v3 repair marker");
+    let pending_v3_path: Option<String> = conn
+      .query_row(
+        "
+        SELECT source_path
+        FROM data_repair_pending_files
+        WHERE repair_key = 'token_usage_fork_replay_v3'
+        ",
+        [],
+        |row| row.get(0),
+      )
+      .optional()
+      .expect("query pending v3 repair file");
+    assert!(v2_completed.is_some());
+    assert!(v3_completed.is_some());
+    assert_eq!(
+      pending_v3_path.as_deref(),
+      Some(repaired_path.to_string_lossy().as_ref())
+    );
+    drop(conn);
+
+    write_session_file(
+      &repaired_path,
+      repaired_session_id,
+      &[("2026-03-24T01:00:01Z", 40, 0, 10, 50)],
+    );
+    let retry = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("retry v3 repair file");
+
+    let conn = open_connection(&db_path).expect("open retried db");
+    assert_eq!(retry.updated_sessions, 1);
+    assert_eq!(session_usage_totals(&conn, repaired_session_id).3, 50);
+    let pending_v3_count: i64 = conn
+      .query_row(
+        "
+        SELECT COUNT(*)
+        FROM data_repair_pending_files
+        WHERE repair_key = 'token_usage_fork_replay_v3'
+        ",
+        [],
+        |row| row.get(0),
+      )
+      .expect("count pending v3 repair files");
+    assert_eq!(pending_v3_count, 0);
   }
 
   #[test]
