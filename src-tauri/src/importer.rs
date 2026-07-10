@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset, Local, LocalResult, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Deserialize;
 use serde_json::Value;
 use walkdir::WalkDir;
 
@@ -1047,23 +1048,14 @@ fn read_parent_replay_snapshots(
 
   for line_result in BufReader::new(file).lines() {
     let line = line_result.map_err(|_| ())?;
-    let may_be_session_meta = json_line_has_string_field(&line, "type", "session_meta");
-    let may_be_token_count = json_line_has_string_field(&line, "type", "event_msg")
-      && json_line_has_string_field(&line, "type", "token_count");
-    if !may_be_session_meta && !may_be_token_count {
+    if !line.contains("\"session_meta\"") && !line.contains("\"token_count\"") {
       continue;
     }
 
-    let Ok(value) = serde_json::from_str::<Value>(&line) else {
-      continue;
-    };
-    match value.get("type").and_then(Value::as_str) {
+    let envelope = serde_json::from_str::<ReplayParentLineEnvelope<'_>>(&line).map_err(|_| ())?;
+    match envelope.record_type {
       Some("session_meta") if first_session_meta_id.is_none() => {
-        let Some(session_id) = value
-          .get("payload")
-          .and_then(|payload| payload.get("id"))
-          .and_then(Value::as_str)
-        else {
+        let Some(session_id) = envelope.payload.as_ref().and_then(|payload| payload.id) else {
           continue;
         };
         if filename_session_id.is_none() && session_id != requested_parent_id {
@@ -1071,28 +1063,25 @@ fn read_parent_replay_snapshots(
         }
         first_session_meta_id = Some(session_id.to_string());
       }
-      Some("event_msg") => {
-        let payload = value.get("payload").unwrap_or(&Value::Null);
-        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
-          continue;
-        }
-        let info = payload.get("info").unwrap_or(&Value::Null);
-        let total_usage = info.get("total_token_usage").unwrap_or(&Value::Null);
-        let Some(timestamp) = value.get("timestamp").and_then(Value::as_str) else {
-          continue;
-        };
-        if total_usage.is_null() {
-          continue;
-        }
+      Some("event_msg")
+        if envelope
+          .payload
+          .as_ref()
+          .and_then(|payload| payload.record_type)
+          == Some("token_count") =>
+      {
+        let timestamp = envelope.timestamp.ok_or(())?;
+        let details = serde_json::from_str::<ReplayParentTokenDetails>(&line).map_err(|_| ())?;
 
         snapshots.push(UsageSnapshot {
           timestamp: timestamp.to_string(),
           model_id: String::new(),
-          usage: token_usage_from_json(total_usage),
-          last_token_usage: info
-            .get("last_token_usage")
-            .filter(|last_usage| !last_usage.is_null())
-            .map(token_usage_from_json),
+          usage: details.payload.info.total_token_usage.into_token_usage(),
+          last_token_usage: details
+            .payload
+            .info
+            .last_token_usage
+            .map(ReplayParentTokenUsage::into_token_usage),
           plan_type: None,
           limit_id: None,
           limit_name: None,
@@ -1113,25 +1102,66 @@ fn read_parent_replay_snapshots(
   Ok(snapshots)
 }
 
-fn json_line_has_string_field(line: &str, field: &str, expected_value: &str) -> bool {
-  let field = format!("\"{field}\"");
-  let expected_value = format!("\"{expected_value}\"");
-
-  line.match_indices(&field).any(|(index, _)| {
-    line[index + field.len()..]
-      .trim_start()
-      .strip_prefix(':')
-      .is_some_and(|rest| rest.trim_start().starts_with(&expected_value))
-  })
+#[derive(Deserialize)]
+struct ReplayParentLineEnvelope<'a> {
+  #[serde(default)]
+  timestamp: Option<&'a str>,
+  #[serde(rename = "type", default)]
+  record_type: Option<&'a str>,
+  #[serde(default, borrow)]
+  payload: Option<ReplayParentPayloadEnvelope<'a>>,
 }
 
-fn token_usage_from_json(value: &Value) -> TokenUsage {
-  TokenUsage {
-    input_tokens: read_i64(value, "input_tokens"),
-    cached_input_tokens: read_i64(value, "cached_input_tokens"),
-    output_tokens: read_i64(value, "output_tokens"),
-    reasoning_output_tokens: read_i64(value, "reasoning_output_tokens"),
-    total_tokens: read_total_tokens(value),
+#[derive(Deserialize)]
+struct ReplayParentPayloadEnvelope<'a> {
+  #[serde(default)]
+  id: Option<&'a str>,
+  #[serde(rename = "type", default)]
+  record_type: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenDetails {
+  payload: ReplayParentTokenPayload,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenPayload {
+  info: ReplayParentTokenInfo,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenInfo {
+  total_token_usage: ReplayParentTokenUsage,
+  #[serde(default)]
+  last_token_usage: Option<ReplayParentTokenUsage>,
+}
+
+#[derive(Deserialize)]
+struct ReplayParentTokenUsage {
+  #[serde(default)]
+  input_tokens: i64,
+  #[serde(default)]
+  cached_input_tokens: i64,
+  #[serde(default)]
+  output_tokens: i64,
+  #[serde(default)]
+  reasoning_output_tokens: i64,
+  #[serde(default)]
+  total_tokens: Option<i64>,
+}
+
+impl ReplayParentTokenUsage {
+  fn into_token_usage(self) -> TokenUsage {
+    TokenUsage {
+      input_tokens: self.input_tokens,
+      cached_input_tokens: self.cached_input_tokens,
+      output_tokens: self.output_tokens,
+      reasoning_output_tokens: self.reasoning_output_tokens,
+      total_tokens: self
+        .total_tokens
+        .unwrap_or_else(|| self.input_tokens + self.output_tokens),
+    }
   }
 }
 
@@ -1905,6 +1935,130 @@ mod tests {
 
   fn fork_instant(timestamp: &str) -> chrono::DateTime<chrono::FixedOffset> {
     chrono::DateTime::parse_from_rfc3339(timestamp).expect("valid fork instant")
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_malformed_token_candidate_between_snapshots() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "10101010-1010-4010-8010-101010101010";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = format!(
+      "{{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{parent_session_id}\"}}}}\n"
+    );
+    body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    }));
+    body.push_str(
+      "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":\n",
+    );
+    body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:03Z",
+      total: (180, 0, 0, 180),
+      last: (80, 0, 0, 80),
+    }));
+    std::fs::write(&parent_path, body).expect("write malformed replay parent");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_token_count_without_timestamp() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "20202020-2020-4020-8020-202020202020";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(
+      concat!(
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{",
+        "\"total_token_usage\":{\"input_tokens\":180,\"cached_input_tokens\":0,",
+        "\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":180}}}}\n"
+      ),
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent without timestamp");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_token_count_without_total_usage() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "30303030-3030-4030-8030-303030303030";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(
+      concat!(
+        "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"event_msg\",",
+        "\"payload\":{\"type\":\"token_count\",\"info\":{",
+        "\"last_token_usage\":{\"input_tokens\":80,\"cached_input_tokens\":0,",
+        "\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":80}}}}\n"
+      ),
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent without total usage");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_rejects_non_numeric_token_usage() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "40404040-4040-4040-8040-404040404040";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let body = concat!(
+      "{\"timestamp\":\"2026-03-24T00:00:01Z\",\"type\":\"event_msg\",",
+      "\"payload\":{\"type\":\"token_count\",\"info\":{",
+      "\"total_token_usage\":{\"input_tokens\":\"not-a-number\",\"cached_input_tokens\":0,",
+      "\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":100}}}}\n"
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent with invalid usage");
+
+    assert!(read_parent_replay_snapshots(&parent_path, parent_session_id).is_err());
+  }
+
+  #[test]
+  fn parent_replay_reader_ignores_nested_token_types_in_unrelated_root_record() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "50505050-5050-4050-8050-505050505050";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(
+      concat!(
+        "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"response_item\",",
+        "\"payload\":{\"message\":{\"type\":\"event_msg\",\"payload\":{",
+        "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{",
+        "\"input_tokens\":900,\"cached_input_tokens\":0,\"output_tokens\":0,",
+        "\"reasoning_output_tokens\":0,\"total_tokens\":900}}}}}}\n"
+      ),
+    );
+    std::fs::write(&parent_path, body).expect("write replay parent with nested token types");
+
+    let snapshots = read_parent_replay_snapshots(&parent_path, parent_session_id)
+      .expect("ignore unrelated nested token fields");
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].usage.total_tokens, 100);
   }
 
   #[test]

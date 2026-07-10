@@ -99,3 +99,69 @@ Result: exit code 0.
 No known blocking concern remains. The conservative path is intentional: if a parent source is missing, unreadable, invalid, or points at another UUID, the importer uses cutoff zero and the explicit-fork first-snapshot fallback instead of guessing replay length.
 
 The required verification scope covers the importer suite and a locked compiler check, not the entire workspace test suite. A separate default `cargo fmt --check` was informational only and reported existing repository-wide formatting differences in untouched files; it did not modify the working tree.
+
+## Review follow-up: conservative parent metadata parsing
+
+The first Task 2B2 review found two reader boundary problems. The parent reader could deserialize an unrelated line into a full `serde_json::Value`, and damaged token candidates were skipped instead of making the parent unavailable. The follow-up is limited to `src-tauri/src/importer.rs` and keeps the existing source locator, cache, warnings, matcher, and persistence behavior.
+
+### Follow-up RED to GREEN evidence
+
+| Test | RED | GREEN |
+| --- | --- | --- |
+| `parent_replay_reader_rejects_malformed_token_candidate_between_snapshots` | `.is_err()` failed because two valid snapshots were stitched across malformed JSON | reader returns `Err(())` at the malformed candidate |
+| `parent_replay_reader_rejects_token_count_without_timestamp` | `.is_err()` failed because the incomplete candidate was skipped | reader returns `Err(())` when a structural token event has no timestamp |
+| `parent_replay_reader_rejects_token_count_without_total_usage` | `.is_err()` failed because the incomplete candidate was skipped | reader returns `Err(())` when token info has no cumulative total |
+| `parent_replay_reader_rejects_non_numeric_token_usage` | `.is_err()` failed because the string input count became zero | reader returns `Err(())` for an invalid numeric representation |
+| `parent_replay_reader_ignores_nested_token_types_in_unrelated_root_record` | guard passed with one snapshot totaling `100` | guard still passes with one snapshot totaling `100` |
+
+The first four tests failed at their intended assertions before production changed. The nested-type test is a structural guard, so it passed before and after the implementation.
+
+### Follow-up implementation
+
+- Replaced full-`Value` parsing in `read_parent_replay_snapshots()` with small serde structs.
+- The first envelope borrows only the root timestamp, root type, payload ID, and payload type from the JSONL line.
+- A second numeric envelope runs only after the first envelope identifies a root `event_msg` whose payload type is `token_count`.
+- Serde skips unknown fields. The reader does not retain or materialize message bodies, rate limits, model labels, titles, or other payload content.
+- Prefiltered candidate JSON that cannot be parsed now returns `Err(())`.
+- Structural token events require a timestamp, `info`, and `total_token_usage`. Invalid token numbers also return `Err(())`.
+- Non-token `event_msg` records and unrelated root records remain ignored, even when nested objects contain `event_msg` and `token_count` type fields.
+- Reader errors remain opaque. No file contents or parser details reach the existing warning path.
+
+### Follow-up commands and results
+
+Focused reader tests were run separately with exact filters:
+
+```bash
+tests=(
+  parent_replay_reader_rejects_malformed_token_candidate_between_snapshots
+  parent_replay_reader_rejects_token_count_without_timestamp
+  parent_replay_reader_rejects_token_count_without_total_usage
+  parent_replay_reader_rejects_non_numeric_token_usage
+  parent_replay_reader_ignores_nested_token_types_in_unrelated_root_record
+)
+for test_name in $tests; do
+  cargo test --manifest-path src-tauri/Cargo.toml "importer::tests::$test_name" --locked -- --exact --nocapture
+done
+```
+
+Result: all five focused filters passed after implementation.
+
+The six original Task 2B2 fork and thread-spawn filters were also rerun separately. All six passed with their previously recorded accounting values.
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml importer::tests --locked
+cargo check --manifest-path src-tauri/Cargo.toml --locked
+git diff --check
+```
+
+Final result: `69 passed; 0 failed; 83 filtered out` for the importer library tests. The binary target ran zero tests and passed. `cargo check` and `git diff --check` returned exit code 0, and the compiler emitted no warnings.
+
+### Follow-up self-review and concerns
+
+- Root and payload type checks, not raw substring matches, decide whether a line is a token snapshot.
+- The substring prefilter only avoids parsing clearly unrelated lines. A line admitted by the prefilter must pass the borrowed structural envelope.
+- Token details use integer fields with serde defaults for absent components, preserving the existing zero defaults and derived `total_tokens` behavior. Present values with the wrong JSON type are rejected.
+- A damaged candidate makes the cached parent unavailable, so the existing conservative explicit-fork fallback applies. Cache keys and warning content did not change.
+- No schema, repair key, query, pricing rule, UI, public response, or test expectation changed.
+
+No blocking concern remains. Allocation telemetry was not added; the privacy boundary is enforced by the small serde field set and verified by code inspection plus the nested-structure guard.
