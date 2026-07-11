@@ -7,6 +7,10 @@ use super::now_utc_string;
 const REPAIR_KEY: &str = "epoch_timestamp_backfill_v1";
 const USAGE_STREAM: &str = "usage_events";
 const QUOTA_STREAM: &str = "rate_limit_samples";
+// Production writers populate epoch fields, so a repair must not chase rows
+// appended after it starts.
+const USAGE_HIGH_WATER_STREAM: &str = "usage_events_high_water";
+const QUOTA_HIGH_WATER_STREAM: &str = "rate_limit_samples_high_water";
 const MAX_BATCH_SIZE: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,9 +129,25 @@ fn backfill_epoch_batch_with_cancel_check(
 
     ensure_cursor(&transaction, USAGE_STREAM)?;
     ensure_cursor(&transaction, QUOTA_STREAM)?;
+    ensure_high_water(
+        &transaction,
+        USAGE_HIGH_WATER_STREAM,
+        "SELECT COALESCE(MAX(id), 0) FROM usage_events",
+    )?;
+    ensure_high_water(
+        &transaction,
+        QUOTA_HIGH_WATER_STREAM,
+        "SELECT COALESCE(MAX(id), 0) FROM rate_limit_samples",
+    )?;
 
     let usage_cursor = load_cursor(&transaction, USAGE_STREAM)?;
-    let usage_rows = load_usage_rows(&transaction, usage_cursor, batch_size)?;
+    let usage_high_water = load_cursor(&transaction, USAGE_HIGH_WATER_STREAM)?;
+    let usage_rows = load_usage_rows(
+        &transaction,
+        usage_cursor,
+        usage_high_water,
+        batch_size,
+    )?;
     let usage_rows_updated = usage_rows.len();
     let usage_exhausted = usage_rows_updated < batch_size;
     for row in &usage_rows {
@@ -143,7 +163,13 @@ fn backfill_epoch_batch_with_cancel_check(
     let remaining = batch_size - usage_rows_updated;
     let (quota_rows_updated, quota_exhausted) = if usage_exhausted {
         let quota_cursor = load_cursor(&transaction, QUOTA_STREAM)?;
-        let quota_rows = load_quota_rows(&transaction, quota_cursor, remaining)?;
+        let quota_high_water = load_cursor(&transaction, QUOTA_HIGH_WATER_STREAM)?;
+        let quota_rows = load_quota_rows(
+            &transaction,
+            quota_cursor,
+            quota_high_water,
+            remaining,
+        )?;
         let rows_updated = quota_rows.len();
         let exhausted = rows_updated < remaining;
         for row in &quota_rows {
@@ -212,6 +238,39 @@ fn ensure_cursor(transaction: &Transaction<'_>, stream_key: &str) -> rusqlite::R
     Ok(())
 }
 
+fn ensure_high_water(
+    transaction: &Transaction<'_>,
+    stream_key: &str,
+    max_id_sql: &str,
+) -> rusqlite::Result<()> {
+    let exists = transaction
+        .query_row(
+            "
+            SELECT 1
+            FROM data_repair_progress
+            WHERE repair_key = ?1 AND stream_key = ?2
+            ",
+            params![REPAIR_KEY, stream_key],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if exists {
+        return Ok(());
+    }
+
+    let high_water = transaction.query_row(max_id_sql, [], |row| row.get::<_, i64>(0))?;
+    transaction.execute(
+        "
+        INSERT INTO data_repair_progress (repair_key, stream_key, progress_value)
+        VALUES (?1, ?2, ?3)
+        ON CONFLICT(repair_key, stream_key) DO NOTHING
+        ",
+        params![REPAIR_KEY, stream_key, high_water],
+    )?;
+    Ok(())
+}
+
 fn load_cursor(transaction: &Transaction<'_>, stream_key: &str) -> rusqlite::Result<i64> {
     transaction.query_row(
         "
@@ -243,6 +302,7 @@ fn save_cursor(
 fn load_usage_rows(
     transaction: &Transaction<'_>,
     cursor: i64,
+    high_water: i64,
     limit: usize,
 ) -> rusqlite::Result<Vec<UsageEpochRow>> {
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
@@ -250,13 +310,13 @@ fn load_usage_rows(
         "
         SELECT id, timestamp, timestamp_ms
         FROM usage_events
-        WHERE id > ?1
+        WHERE id > ?1 AND id <= ?2
         ORDER BY id
-        LIMIT ?2
+        LIMIT ?3
         ",
     )?;
     let rows = statement
-        .query_map(params![cursor, limit], |row| {
+        .query_map(params![cursor, high_water, limit], |row| {
             Ok(UsageEpochRow {
                 id: row.get(0)?,
                 timestamp: row.get(1)?,
@@ -270,6 +330,7 @@ fn load_usage_rows(
 fn load_quota_rows(
     transaction: &Transaction<'_>,
     cursor: i64,
+    high_water: i64,
     limit: usize,
 ) -> rusqlite::Result<Vec<QuotaEpochRow>> {
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
@@ -280,13 +341,13 @@ fn load_quota_rows(
                window_start, window_start_ms,
                resets_at, resets_at_ms
         FROM rate_limit_samples
-        WHERE id > ?1
+        WHERE id > ?1 AND id <= ?2
         ORDER BY id
-        LIMIT ?2
+        LIMIT ?3
         ",
     )?;
     let rows = statement
-        .query_map(params![cursor, limit], |row| {
+        .query_map(params![cursor, high_water, limit], |row| {
             Ok(QuotaEpochRow {
                 id: row.get(0)?,
                 sample_timestamp: row.get(1)?,
@@ -888,6 +949,166 @@ mod tests {
             )
             .expect("load durable usage cursor");
         assert_eq!(cursor, second_id);
+    }
+
+    #[test]
+    fn backfill_completion_ignores_new_epoch_rows_beyond_initial_high_water() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("initialize database");
+        insert_quota(&conn, "2026-07-10T03:00:00Z");
+        let malformed_id =
+            insert_quota_fields(&conn, "bad-sample", "bad-window", "bad-reset");
+
+        let first = backfill_epoch_batch(&conn, 1).expect("backfill initial quota row");
+        assert!(!first.complete);
+        assert_eq!(first.quota_rows_updated, 1);
+
+        let mut progress = first;
+        for minute in 1..=4 {
+            let appended_id = insert_quota(
+                &conn,
+                &format!("2026-07-10T03:0{minute}:00Z"),
+            );
+            conn.execute(
+                "
+                UPDATE rate_limit_samples
+                SET sample_timestamp_ms = 1, window_start_ms = 1, resets_at_ms = 1
+                WHERE id = ?1
+                ",
+                params![appended_id],
+            )
+            .expect("simulate an epoch-aware production append");
+            progress = backfill_epoch_batch(&conn, 1).expect("continue bounded legacy repair");
+            if progress.complete {
+                break;
+            }
+        }
+
+        assert!(
+            progress.complete,
+            "repair chased epoch-aware rows beyond its initial high-water"
+        );
+        let high_water: i64 = conn
+            .query_row(
+                "
+                SELECT progress_value
+                FROM data_repair_progress
+                WHERE repair_key = ?1 AND stream_key = 'rate_limit_samples_high_water'
+                ",
+                params![REPAIR_KEY],
+                |row| row.get(0),
+            )
+            .expect("load quota high-water");
+        assert_eq!(high_water, malformed_id);
+        let quarantined: i64 = conn
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM data_repair_quarantine
+                WHERE repair_key = ?1 AND table_name = 'rate_limit_samples'
+                  AND row_id = ?2
+                ",
+                params![REPAIR_KEY, malformed_id],
+                |row| row.get(0),
+            )
+            .expect("count malformed quota fields");
+        assert_eq!(quarantined, 3);
+        assert!(!epoch_backfill_pending(&conn).expect("read completion marker"));
+    }
+
+    #[test]
+    fn legacy_cursor_upgrade_persists_high_water_across_restart() {
+        let directory = tempdir().expect("create temporary directory");
+        let db_path = directory.path().join("epoch-high-water-upgrade.sqlite3");
+        let conn = open_initialized(&db_path);
+        let processed_id = insert_usage(&conn, "2026-07-10T03:00:00Z");
+        conn.execute(
+            "UPDATE usage_events SET timestamp_ms = 1 WHERE id = ?1",
+            params![processed_id],
+        )
+        .expect("simulate an already processed legacy row");
+        let valid_id = insert_usage(&conn, "2026-07-10T03:00:01Z");
+        let malformed_id = insert_usage(&conn, "bad-timestamp");
+        conn.execute(
+            "
+            INSERT INTO data_repair_progress (repair_key, stream_key, progress_value)
+            VALUES (?1, 'usage_events', ?2)
+            ",
+            params![REPAIR_KEY, processed_id],
+        )
+        .expect("seed legacy cursor without high-water");
+
+        let first = backfill_epoch_batch(&conn, 1).expect("upgrade legacy repair progress");
+
+        assert!(!first.complete);
+        let captured_high_water: i64 = conn
+            .query_row(
+                "
+                SELECT progress_value
+                FROM data_repair_progress
+                WHERE repair_key = ?1 AND stream_key = 'usage_events_high_water'
+                ",
+                params![REPAIR_KEY],
+                |row| row.get(0),
+            )
+            .expect("load captured usage high-water");
+        assert_eq!(captured_high_water, malformed_id);
+        let valid_epoch: Option<i64> = conn
+            .query_row(
+                "SELECT timestamp_ms FROM usage_events WHERE id = ?1",
+                params![valid_id],
+                |row| row.get(0),
+            )
+            .expect("load upgraded usage epoch");
+        assert!(valid_epoch.is_some());
+        drop(conn);
+
+        let reopened = open_initialized(&db_path);
+        let appended_id = insert_usage(&reopened, "2026-07-10T03:00:03Z");
+        reopened
+            .execute(
+                "UPDATE usage_events SET timestamp_ms = 1 WHERE id = ?1",
+                params![appended_id],
+            )
+            .expect("append epoch-aware row after captured high-water");
+        let second = backfill_epoch_batch(&reopened, 1).expect("resume bounded repair");
+        assert!(!second.complete);
+        let third = backfill_epoch_batch(&reopened, 1).expect("complete bounded repair");
+
+        assert!(third.complete);
+        let final_cursor: i64 = reopened
+            .query_row(
+                "
+                SELECT progress_value
+                FROM data_repair_progress
+                WHERE repair_key = ?1 AND stream_key = 'usage_events'
+                ",
+                params![REPAIR_KEY],
+                |row| row.get(0),
+            )
+            .expect("load final usage cursor");
+        assert_eq!(final_cursor, malformed_id);
+        let quarantine_count: i64 = reopened
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM data_repair_quarantine
+                WHERE repair_key = ?1 AND table_name = 'usage_events' AND row_id = ?2
+                ",
+                params![REPAIR_KEY, malformed_id],
+                |row| row.get(0),
+            )
+            .expect("count quarantined legacy row");
+        assert_eq!(quarantine_count, 1);
+        let appended_epoch: Option<i64> = reopened
+            .query_row(
+                "SELECT timestamp_ms FROM usage_events WHERE id = ?1",
+                params![appended_id],
+                |row| row.get(0),
+            )
+            .expect("load appended epoch-aware row");
+        assert_eq!(appended_epoch, Some(1));
+        assert!(!epoch_backfill_pending(&reopened).expect("read completion marker"));
     }
 
     #[test]
