@@ -28,6 +28,8 @@ struct ParsedRateLimitSample {
 pub struct RateLimitWriteStats {
     pub observed: usize,
     pub historical_inserted: usize,
+    pub historical_updated: usize,
+    pub historical_deleted: usize,
     pub latest_updated: usize,
 }
 
@@ -44,13 +46,7 @@ pub fn replace_session_rate_limit_samples(
             observed: parsed.len(),
             ..RateLimitWriteStats::default()
         };
-        if load_session_history(conn, session_id)? != compacted {
-            conn.execute(
-                "DELETE FROM rate_limit_samples WHERE source_kind = 'session' AND source_session_id = ?1",
-                params![session_id],
-            )?;
-            stats.historical_inserted = insert_parsed_rate_limit_samples(conn, &compacted)?;
-        }
+        reconcile_session_history(conn, session_id, &compacted, &mut stats)?;
         let buckets = compacted
             .iter()
             .map(|sample| sample.bucket.as_str())
@@ -250,6 +246,20 @@ fn same_history_point(left: &ParsedRateLimitSample, right: &ParsedRateLimitSampl
         && same_value(left, right)
 }
 
+fn same_history_point_except_observed_at(
+    left: &ParsedRateLimitSample,
+    right: &ParsedRateLimitSample,
+) -> bool {
+    left.source_kind == right.source_kind
+        && left.source_session_id == right.source_session_id
+        && left.bucket == right.bucket
+        && left.limit_id == right.limit_id
+        && left.limit_name == right.limit_name
+        && left.plan_type == right.plan_type
+        && same_window(left, right)
+        && same_value(left, right)
+}
+
 fn grouped_sorted(samples: &[ParsedRateLimitSample]) -> Vec<Vec<ParsedRateLimitSample>> {
     let mut ordered = samples.to_vec();
     ordered.sort_by(|left, right| {
@@ -295,6 +305,12 @@ fn compact_complete_session_history(
         let mut previous = first;
         for sample in group.iter().skip(1) {
             if !same_window(previous, sample) || !same_value(previous, sample) {
+                if compacted
+                    .last()
+                    .map_or(true, |point| !same_history_point(point, previous))
+                {
+                    compacted.push(previous.clone());
+                }
                 compacted.push(sample.clone());
             }
             previous = sample;
@@ -309,6 +325,85 @@ fn compact_complete_session_history(
         }
     }
     compacted
+}
+
+#[derive(Clone, Debug)]
+struct PersistedRateLimitSample {
+    id: i64,
+    sample: ParsedRateLimitSample,
+}
+
+fn reconcile_session_history(
+    conn: &Connection,
+    session_id: &str,
+    desired: &[ParsedRateLimitSample],
+    stats: &mut RateLimitWriteStats,
+) -> rusqlite::Result<()> {
+    let existing = load_session_history(conn, session_id)?;
+    let desired_groups = grouped_sorted(desired);
+    let desired_buckets = desired_groups
+        .iter()
+        .filter_map(|group| group.first().map(|sample| sample.bucket.clone()))
+        .collect::<std::collections::HashSet<_>>();
+
+    for group in desired_groups {
+        let Some(first) = group.first() else { continue };
+        let existing_group = existing
+            .iter()
+            .filter(|persisted| persisted.sample.bucket == first.bucket)
+            .collect::<Vec<_>>();
+        let matching_prefix = existing_group
+            .iter()
+            .zip(&group)
+            .take_while(|(left, right)| same_history_point(&left.sample, right))
+            .count();
+        if matching_prefix == existing_group.len() && matching_prefix == group.len() {
+            continue;
+        }
+        if matching_prefix == existing_group.len() && existing_group.len() < group.len() {
+            stats.historical_inserted +=
+                insert_parsed_rate_limit_samples(conn, &group[matching_prefix..])?;
+            continue;
+        }
+        if existing_group.len() == group.len()
+            && !group.is_empty()
+            && matching_prefix + 1 == group.len()
+            && same_history_point_except_observed_at(
+                &existing_group.last().expect("existing last").sample,
+                group.last().expect("desired last"),
+            )
+        {
+            let last = group.last().expect("desired last");
+            stats.historical_updated += conn.execute(
+                "UPDATE rate_limit_samples SET sample_timestamp = ?1, sample_timestamp_ms = ?2, created_at = ?3 WHERE id = ?4",
+                params![
+                    last.sample_timestamp,
+                    last.sample_timestamp_ms,
+                    now_utc_string(),
+                    existing_group.last().expect("existing last").id,
+                ],
+            )?;
+            continue;
+        }
+
+        stats.historical_deleted += conn.execute(
+            "DELETE FROM rate_limit_samples WHERE source_kind = 'session' AND source_session_id = ?1 AND bucket = ?2",
+            params![session_id, first.bucket],
+        )?;
+        stats.historical_inserted += insert_parsed_rate_limit_samples(conn, &group)?;
+    }
+
+    let existing_buckets = existing
+        .iter()
+        .map(|persisted| persisted.sample.bucket.clone())
+        .collect::<std::collections::HashSet<_>>();
+    for bucket in existing_buckets.difference(&desired_buckets) {
+        stats.historical_deleted += conn.execute(
+            "DELETE FROM rate_limit_samples WHERE source_kind = 'session' AND source_session_id = ?1 AND bucket = ?2",
+            params![session_id, bucket],
+        )?;
+    }
+    Ok(())
 }
 
 fn newest_per_owner_bucket(samples: &[ParsedRateLimitSample]) -> Vec<&ParsedRateLimitSample> {
@@ -463,10 +558,10 @@ fn parsed_sample_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ParsedRat
 fn load_session_history(
     conn: &Connection,
     session_id: &str,
-) -> rusqlite::Result<Vec<ParsedRateLimitSample>> {
+) -> rusqlite::Result<Vec<PersistedRateLimitSample>> {
     let mut stmt = conn.prepare(
         "
-        SELECT source_kind, source_session_id, bucket, sample_timestamp, sample_timestamp_ms,
+        SELECT id, source_kind, source_session_id, bucket, sample_timestamp, sample_timestamp_ms,
                limit_id, limit_name, plan_type, window_start, window_start_ms,
                resets_at, resets_at_ms, used_percent, remaining_percent
         FROM rate_limit_samples
@@ -475,21 +570,24 @@ fn load_session_history(
         ",
     )?;
     let rows = stmt.query_map(params![session_id], |row| {
-        Ok(ParsedRateLimitSample {
-            source_kind: row.get(0)?,
-            source_session_id: row.get(1)?,
-            bucket: row.get(2)?,
-            sample_timestamp: row.get(3)?,
-            sample_timestamp_ms: row.get::<_, Option<i64>>(4)?.unwrap_or(i64::MIN),
-            limit_id: row.get(5)?,
-            limit_name: row.get(6)?,
-            plan_type: row.get(7)?,
-            window_start: row.get(8)?,
-            window_start_ms: row.get::<_, Option<i64>>(9)?.unwrap_or(i64::MIN),
-            resets_at: row.get(10)?,
-            resets_at_ms: row.get::<_, Option<i64>>(11)?.unwrap_or(i64::MIN),
-            used_percent: row.get(12)?,
-            remaining_percent: row.get(13)?,
+        Ok(PersistedRateLimitSample {
+            id: row.get(0)?,
+            sample: ParsedRateLimitSample {
+                source_kind: row.get(1)?,
+                source_session_id: row.get(2)?,
+                bucket: row.get(3)?,
+                sample_timestamp: row.get(4)?,
+                sample_timestamp_ms: row.get::<_, Option<i64>>(5)?.unwrap_or(i64::MIN),
+                limit_id: row.get(6)?,
+                limit_name: row.get(7)?,
+                plan_type: row.get(8)?,
+                window_start: row.get(9)?,
+                window_start_ms: row.get::<_, Option<i64>>(10)?.unwrap_or(i64::MIN),
+                resets_at: row.get(11)?,
+                resets_at_ms: row.get::<_, Option<i64>>(12)?.unwrap_or(i64::MIN),
+                used_percent: row.get(13)?,
+                remaining_percent: row.get(14)?,
+            },
         })
     })?;
     rows.collect()
@@ -779,7 +877,7 @@ mod tests {
     }
 
     #[test]
-    fn session_batch_keeps_first_change_and_last() {
+    fn session_batch_keeps_change_boundaries_and_last() {
         let conn = Connection::open_in_memory().expect("open database");
         init_db(&conn).expect("initialize database");
         let mut samples = vec![
@@ -813,7 +911,7 @@ mod tests {
             .expect("replace session samples");
 
         assert_eq!(stats.observed, 4);
-        assert_eq!(stats.historical_inserted, 3);
+        assert_eq!(stats.historical_inserted, 4);
         let timestamps = conn
             .prepare(
                 "SELECT sample_timestamp FROM rate_limit_samples ORDER BY sample_timestamp_ms, id",
@@ -827,6 +925,7 @@ mod tests {
             timestamps,
             vec![
                 "2026-07-10T10:00:00Z",
+                "2026-07-10T10:01:00Z",
                 "2026-07-10T10:02:00Z",
                 "2026-07-10T10:03:00Z"
             ]
@@ -859,6 +958,108 @@ mod tests {
         assert_eq!(stats.historical_inserted, 0);
         assert_eq!(stats.latest_updated, 0);
         assert_eq!(conn.total_changes(), changes_before);
+    }
+
+    #[test]
+    fn growing_same_value_session_updates_only_last_history_point() {
+        let conn = Connection::open_in_memory().expect("open database");
+        init_db(&conn).expect("initialize database");
+        let mut samples = vec![
+            session_sample(
+                "2026-07-10T10:00:00Z",
+                "2026-07-10T08:00:00Z",
+                "2026-07-10T13:00:00Z",
+            ),
+            session_sample(
+                "2026-07-10T10:01:00Z",
+                "2026-07-10T08:00:00Z",
+                "2026-07-10T13:00:00Z",
+            ),
+        ];
+        replace_session_rate_limit_samples(&conn, "session-1", &samples)
+            .expect("insert initial session history");
+        let ids_before = history_ids(&conn, "session-1");
+        samples.push(session_sample(
+            "2026-07-10T10:02:00Z",
+            "2026-07-10T08:00:00Z",
+            "2026-07-10T13:00:00Z",
+        ));
+
+        let stats = replace_session_rate_limit_samples(&conn, "session-1", &samples)
+            .expect("advance final observation");
+
+        assert_eq!(stats.historical_inserted, 0);
+        assert_eq!(stats.historical_updated, 1);
+        assert_eq!(stats.historical_deleted, 0);
+        assert_eq!(history_ids(&conn, "session-1"), ids_before);
+        let timestamps = history_timestamps(&conn, "session-1");
+        assert_eq!(
+            timestamps,
+            vec!["2026-07-10T10:00:00Z", "2026-07-10T10:02:00Z"]
+        );
+    }
+
+    #[test]
+    fn appended_percent_change_preserves_existing_history_ids() {
+        let conn = Connection::open_in_memory().expect("open database");
+        init_db(&conn).expect("initialize database");
+        let mut samples = vec![
+            session_sample(
+                "2026-07-10T10:00:00Z",
+                "2026-07-10T08:00:00Z",
+                "2026-07-10T13:00:00Z",
+            ),
+            session_sample(
+                "2026-07-10T10:01:00Z",
+                "2026-07-10T08:00:00Z",
+                "2026-07-10T13:00:00Z",
+            ),
+        ];
+        replace_session_rate_limit_samples(&conn, "session-1", &samples)
+            .expect("insert initial session history");
+        let ids_before = history_ids(&conn, "session-1");
+        let mut changed = session_sample(
+            "2026-07-10T10:02:00Z",
+            "2026-07-10T08:00:00Z",
+            "2026-07-10T13:00:00Z",
+        );
+        changed.used_percent = 26;
+        changed.remaining_percent = 74;
+        let mut final_sample = changed.clone();
+        final_sample.sample_timestamp = "2026-07-10T10:03:00Z".to_string();
+        samples.extend([changed, final_sample]);
+
+        let stats = replace_session_rate_limit_samples(&conn, "session-1", &samples)
+            .expect("append changed history");
+        let ids_after = history_ids(&conn, "session-1");
+
+        assert_eq!(stats.historical_inserted, 2);
+        assert_eq!(stats.historical_updated, 0);
+        assert_eq!(stats.historical_deleted, 0);
+        assert_eq!(&ids_after[..ids_before.len()], ids_before.as_slice());
+        assert_eq!(ids_after.len(), 4);
+    }
+
+    fn history_ids(conn: &Connection, session_id: &str) -> Vec<i64> {
+        conn.prepare(
+            "SELECT id FROM rate_limit_samples WHERE source_kind = 'session' AND source_session_id = ?1 ORDER BY bucket, sample_timestamp_ms, id",
+        )
+        .expect("prepare history ids")
+        .query_map([session_id], |row| row.get(0))
+        .expect("query history ids")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect history ids")
+    }
+
+    fn history_timestamps(conn: &Connection, session_id: &str) -> Vec<String> {
+        conn.prepare(
+            "SELECT sample_timestamp FROM rate_limit_samples WHERE source_kind = 'session' AND source_session_id = ?1 ORDER BY bucket, sample_timestamp_ms, id",
+        )
+        .expect("prepare history timestamps")
+        .query_map([session_id], |row| row.get(0))
+        .expect("query history timestamps")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect history timestamps")
     }
 
     #[test]
