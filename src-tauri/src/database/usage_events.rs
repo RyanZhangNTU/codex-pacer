@@ -114,6 +114,29 @@ where
   }
 }
 
+pub fn append_session_usage_events<'a, Timestamps, EventAt>(
+  conn: &Connection,
+  session_id: &str,
+  timestamps: Timestamps,
+  mut event_at: EventAt,
+) -> rusqlite::Result<UsageEventWriteStats>
+where
+  Timestamps: ExactSizeIterator<Item = &'a str> + Clone,
+  EventAt: FnMut(usize) -> Option<NewUsageEvent<'a>>,
+{
+  let mut prepared = prepare_usage_events(timestamps, &mut event_at)?;
+  for event in &mut prepared {
+    event.session_id = session_id.to_string();
+  }
+  let inserted = insert_prepared_usage_events(conn, &prepared)?;
+  Ok(UsageEventWriteStats {
+    observed: prepared.len(),
+    inserted,
+    deleted: 0,
+    rebuilt: false,
+  })
+}
+
 fn prepare_usage_events<'a, Timestamps, EventAt>(
   timestamps: Timestamps,
   event_at: &mut EventAt,

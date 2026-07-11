@@ -15,8 +15,8 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::database::{
-  bool_to_i64, now_utc_string, open_connection,
-  preview_scan_freshness_for_source, replace_session_rate_limit_samples,
+  append_session_rate_limit_samples, append_session_usage_events, bool_to_i64, now_utc_string,
+  open_connection, preview_scan_freshness_for_source, replace_session_rate_limit_samples,
   replace_session_usage_events, set_last_scan_started_for_source_in_transaction,
   set_scan_completed_for_source, NewUsageEvent,
 };
@@ -46,6 +46,26 @@ struct ParsedSession {
   explicit_fast_mode: Option<bool>,
   latest_plan_type: Option<String>,
   last_model_id: Option<String>,
+  mode: ParsedSessionMode,
+  checkpoint: ParserCheckpoint,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ParsedSessionMode {
+  Full,
+  Tail {
+    previous_usage: Option<TokenUsage>,
+  },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ParserCheckpoint {
+  completed_offset: u64,
+  prefix_signature: Vec<u8>,
+  last_usage: Option<TokenUsage>,
+  current_model: Option<String>,
+  explicit_fast_mode: Option<bool>,
+  latest_plan_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +122,7 @@ const TOKEN_USAGE_MONOTONIC_REPAIR_KEY: &str = "token_usage_monotonic_v2";
 const TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY: &str = "token_usage_fork_replay_v3";
 const RATE_LIMIT_SAMPLE_BACKFILL_KEY: &str = "rate_limit_sample_backfill_v1";
 const PREPARED_SPOOL_THRESHOLD_BYTES: usize = 256 * 1024;
+const PARSER_PREFIX_SIGNATURE_BYTES: u64 = 128;
 const PARENT_REPLAY_CACHE_MAX_ENTRIES: usize = 4;
 const PARENT_REPLAY_CACHE_MAX_BYTES: usize = 256 * 1024;
 
@@ -298,6 +319,8 @@ struct SpoolPreparedSession {
   explicit_fast_mode: Option<bool>,
   latest_plan_type: Option<String>,
   last_model_id: Option<String>,
+  mode: ParsedSessionMode,
+  checkpoint: ParserCheckpoint,
   file_needs_rate_limit_repair: bool,
   file_needs_token_v2_repair: bool,
   file_needs_fork_replay_v3_repair: bool,
@@ -434,6 +457,8 @@ impl From<PreparedSession> for SpoolPreparedSession {
       explicit_fast_mode,
       latest_plan_type,
       last_model_id,
+      mode,
+      checkpoint,
     } = parsed;
 
     Self {
@@ -447,6 +472,8 @@ impl From<PreparedSession> for SpoolPreparedSession {
       explicit_fast_mode,
       latest_plan_type,
       last_model_id,
+      mode,
+      checkpoint,
       file_needs_rate_limit_repair,
       file_needs_token_v2_repair,
       file_needs_fork_replay_v3_repair,
@@ -471,6 +498,8 @@ impl From<SpoolPreparedSession> for PreparedSession {
         explicit_fast_mode: entry.explicit_fast_mode,
         latest_plan_type: entry.latest_plan_type,
         last_model_id: entry.last_model_id,
+        mode: entry.mode,
+        checkpoint: entry.checkpoint,
       },
       file_needs_rate_limit_repair: entry.file_needs_rate_limit_repair,
       file_needs_token_v2_repair: entry.file_needs_token_v2_repair,
@@ -908,7 +937,33 @@ pub(crate) fn prepare_scan(
       needs_token_usage_v2_repair_sweep || pending_token_v2_repair_paths.contains(&source_path);
     let mut file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
       || pending_fork_replay_v3_repair_paths.contains(&source_path);
-    let (mut parsed, bytes_read) = match parse_session_file_counted(&session_file, &titles) {
+    let tail_candidate = if effective_kind == ScanKind::Incremental
+      && !file_needs_rate_limit_repair
+      && !file_needs_token_v2_repair
+      && !file_needs_fork_replay_v3_repair
+    {
+      if let Some(state) = import_state.get(&source_path) {
+        try_parse_session_tail_counted(
+          &session_file,
+          state,
+          &titles,
+          state
+            .session_id
+            .as_ref()
+            .and_then(|session_id| existing_relations.get(session_id)),
+        )
+      } else {
+        Ok(None)
+      }
+    } else {
+      Ok(None)
+    };
+    let parsed_result = match tail_candidate {
+      Ok(Some(result)) => Ok(result),
+      Ok(None) => parse_session_file_counted(&session_file, &titles),
+      Err(error) => Err(error),
+    };
+    let (mut parsed, bytes_read) = match parsed_result {
       Ok(parsed) => parsed,
       Err((error, bytes_read)) => {
         source_bytes_read = source_bytes_read.saturating_add(bytes_read);
@@ -931,11 +986,15 @@ pub(crate) fn prepare_scan(
     source_bytes_read = source_bytes_read.saturating_add(bytes_read);
 
     let (replay_parent_unavailable, parent_replay_bytes_read) =
-      assign_inherited_token_snapshot_cutoff(
-        &mut parsed,
-        &session_source_paths,
-        &mut parent_snapshot_cache,
-      );
+      if matches!(parsed.mode, ParsedSessionMode::Full) {
+        assign_inherited_token_snapshot_cutoff(
+          &mut parsed,
+          &session_source_paths,
+          &mut parent_snapshot_cache,
+        )
+      } else {
+        (false, 0)
+      };
     source_bytes_read = source_bytes_read.saturating_add(parent_replay_bytes_read);
     let related_pending_token_v2_paths = pending_repair_paths_for_session(
       &import_state,
@@ -1875,6 +1934,231 @@ fn parse_session_file_counted(
   })
 }
 
+fn try_parse_session_tail_counted(
+  session_file: &SessionFile,
+  state: &ImportState,
+  titles: &HashMap<String, String>,
+  existing_relation: Option<&ExistingSessionRelation>,
+) -> Result<Option<(ParsedSession, u64)>, (String, u64)> {
+  let Some(session_id) = state.session_id.as_ref() else {
+    return Ok(None);
+  };
+  let Some(checkpoint) = state.parser_checkpoint.as_ref() else {
+    return Ok(None);
+  };
+  if state.source_bucket != "active"
+    || session_file.bucket != "active"
+    || session_file.file_size <= state.file_size
+    || checkpoint.completed_offset > session_file.file_size.max(0) as u64
+    || import_state_session_id_mismatch(state, session_file)
+  {
+    return Ok(None);
+  }
+  let current_signature = read_prefix_signature(&session_file.path, checkpoint.completed_offset)
+    .map_err(|error| {
+      (
+        format!(
+          "Failed to validate parser checkpoint for {}: {error}",
+          session_file.path.display()
+        ),
+        0,
+      )
+    })?;
+  if current_signature != checkpoint.prefix_signature {
+    return Ok(None);
+  }
+
+  let mut file = File::open(&session_file.path).map_err(|error| {
+    (
+      format!("Failed to open {}: {error}", session_file.path.display()),
+      0,
+    )
+  })?;
+  file
+    .seek(SeekFrom::Start(checkpoint.completed_offset))
+    .map_err(|error| {
+      (
+        format!(
+          "Failed to seek {} to parser checkpoint: {error}",
+          session_file.path.display()
+        ),
+        0,
+      )
+    })?;
+  let mut reader = BufReader::new(CountingReader::new(file));
+  let mut completed_offset = checkpoint.completed_offset;
+  let mut current_model = checkpoint.current_model.clone();
+  let mut explicit_fast_mode = checkpoint.explicit_fast_mode;
+  let mut latest_plan_type = checkpoint.latest_plan_type.clone();
+  let mut updated_at = None;
+  let mut snapshots = Vec::new();
+  let mut rate_limit_samples = Vec::new();
+  let mut seen_models = HashSet::new();
+  if let Some(model) = current_model.as_ref() {
+    seen_models.insert(model.clone());
+  }
+
+  let mut line = String::new();
+  loop {
+    line.clear();
+    let line_bytes = reader.read_line(&mut line).map_err(|error| {
+      (
+        format!("Failed to read {}: {error}", session_file.path.display()),
+        reader.get_ref().bytes_read,
+      )
+    })?;
+    if line_bytes == 0 || !line.ends_with('\n') {
+      break;
+    }
+    completed_offset = completed_offset.saturating_add(line_bytes as u64);
+    if line.contains("\"fast_mode\":true") || line.contains("\"quick_mode\":true") {
+      explicit_fast_mode = Some(true);
+    }
+    if line.contains("\"fast_mode\":false") || line.contains("\"quick_mode\":false") {
+      explicit_fast_mode = Some(false);
+    }
+    let Ok(value) = serde_json::from_str::<Value>(&line) else {
+      continue;
+    };
+    let timestamp = value
+      .get("timestamp")
+      .and_then(Value::as_str)
+      .map(ToString::to_string);
+    if timestamp.is_some() {
+      updated_at = timestamp.clone();
+    }
+    match value
+      .get("type")
+      .and_then(Value::as_str)
+      .unwrap_or_default()
+    {
+      "session_meta" => return Ok(None),
+      "turn_context" => {
+        if let Some(model) = value
+          .get("payload")
+          .and_then(|payload| payload.get("model"))
+          .and_then(Value::as_str)
+        {
+          let model = normalize_model_id(model);
+          seen_models.insert(model.clone());
+          current_model = Some(model);
+        }
+      }
+      "event_msg" => {
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+          continue;
+        }
+        let info = payload.get("info").unwrap_or(&Value::Null);
+        let total_usage = info.get("total_token_usage").unwrap_or(&Value::Null);
+        if total_usage.is_null() {
+          continue;
+        }
+        let usage = TokenUsage {
+          input_tokens: read_i64(total_usage, "input_tokens"),
+          cached_input_tokens: read_i64(total_usage, "cached_input_tokens"),
+          output_tokens: read_i64(total_usage, "output_tokens"),
+          reasoning_output_tokens: read_i64(total_usage, "reasoning_output_tokens"),
+          total_tokens: read_total_tokens(total_usage),
+        };
+        let last_token_usage = info
+          .get("last_token_usage")
+          .filter(|last_usage| !last_usage.is_null())
+          .map(|last_usage| TokenUsage {
+            input_tokens: read_i64(last_usage, "input_tokens"),
+            cached_input_tokens: read_i64(last_usage, "cached_input_tokens"),
+            output_tokens: read_i64(last_usage, "output_tokens"),
+            reasoning_output_tokens: read_i64(last_usage, "reasoning_output_tokens"),
+            total_tokens: read_total_tokens(last_usage),
+          });
+        let plan_type = payload
+          .get("rate_limits")
+          .and_then(|rate_limits| rate_limits.get("plan_type"))
+          .and_then(Value::as_str)
+          .map(ToString::to_string);
+        if plan_type.is_some() {
+          latest_plan_type = plan_type.clone();
+        }
+        let limit_id = nested_str(payload, &["rate_limits", "limit_id"])
+          .or_else(|| nested_str(payload, &["rate_limits", "primary", "limit_id"]));
+        let limit_name = nested_str(payload, &["rate_limits", "limit_name"])
+          .or_else(|| nested_str(payload, &["rate_limits", "primary", "limit_name"]));
+        let sample_timestamp = timestamp.unwrap_or_else(now_utc_string);
+        rate_limit_samples.extend(extract_rate_limit_samples(&sample_timestamp, payload));
+        let model_id = current_model
+          .clone()
+          .unwrap_or_else(|| "unknown".to_string());
+        seen_models.insert(model_id.clone());
+        snapshots.push(UsageSnapshot {
+          timestamp: sample_timestamp,
+          model_id,
+          usage,
+          last_token_usage,
+          plan_type,
+          limit_id,
+          limit_name,
+          explicit_fast_mode,
+        });
+      }
+      _ => {}
+    }
+  }
+  let bytes_read = reader.get_ref().bytes_read;
+  for sample in &mut rate_limit_samples {
+    sample.source_session_id = Some(session_id.clone());
+  }
+  let new_checkpoint = ParserCheckpoint {
+    completed_offset,
+    prefix_signature: read_prefix_signature(&session_file.path, completed_offset).map_err(
+      |error| {
+        (
+          format!(
+            "Failed to checkpoint {}: {error}",
+            session_file.path.display()
+          ),
+          bytes_read,
+        )
+      },
+    )?,
+    last_usage: monotonic_usage_high_water(checkpoint.last_usage.clone(), &snapshots),
+    current_model: current_model.clone(),
+    explicit_fast_mode,
+    latest_plan_type: latest_plan_type.clone(),
+  };
+  let parent_session_id = existing_relation.and_then(|relation| relation.parent_session_id.clone());
+  Ok(Some((
+    ParsedSession {
+      raw_session: RawSession {
+        session_id: session_id.clone(),
+        parent_session_id,
+        root_session_id: session_id.clone(),
+        title: titles.get(session_id).cloned(),
+        source_state: session_file.bucket.clone(),
+        source_path: Some(session_file.path.to_string_lossy().to_string()),
+        started_at: None,
+        updated_at,
+        model_ids: seen_models.into_iter().collect(),
+        contains_subagents: false,
+        agent_nickname: None,
+        agent_role: None,
+      },
+      snapshots,
+      rate_limit_samples,
+      explicit_forked_from_id: None,
+      explicit_fork_timestamp: None,
+      inherited_token_snapshot_cutoff: 0,
+      explicit_fast_mode,
+      latest_plan_type,
+      last_model_id: current_model.or_else(|| Some("unknown".to_string())),
+      mode: ParsedSessionMode::Tail {
+        previous_usage: checkpoint.last_usage.clone(),
+      },
+      checkpoint: new_checkpoint,
+    },
+    bytes_read,
+  )))
+}
+
 #[cfg(test)]
 fn parse_session_file(
   session_file: &SessionFile,
@@ -1912,6 +2196,7 @@ fn parse_session_file_once(
   let mut seen_models = HashSet::new();
   let mut first_session_meta: Option<SessionMetaCandidate> = None;
   let mut matching_session_meta: Option<SessionMetaCandidate> = None;
+  let mut completed_offset = 0u64;
 
   let mut line = String::new();
   loop {
@@ -1925,6 +2210,10 @@ fn parse_session_file_once(
     if line_bytes == 0 {
       break;
     }
+    if !line.ends_with('\n') {
+      break;
+    }
+    completed_offset = completed_offset.saturating_add(line_bytes as u64);
     if line.contains("\"fast_mode\":true") || line.contains("\"quick_mode\":true") {
       explicit_fast_mode = Some(true);
     }
@@ -2131,6 +2420,22 @@ fn parse_session_file_once(
 
   let title = titles.get(&session_id).cloned();
   let last_model_id = current_model.clone();
+  let checkpoint = ParserCheckpoint {
+    completed_offset,
+    prefix_signature: read_prefix_signature(&session_file.path, completed_offset).map_err(|error| {
+      SessionParseError::Fatal {
+        message: format!(
+          "Failed to checkpoint {}: {error}",
+          session_file.path.display()
+        ),
+        bytes_read,
+      }
+    })?,
+    last_usage: monotonic_usage_high_water(None, &snapshots),
+    current_model: current_model.clone(),
+    explicit_fast_mode,
+    latest_plan_type: latest_plan_type.clone(),
+  };
   let mut rate_limit_samples = rate_limit_samples;
   for sample in &mut rate_limit_samples {
     sample.source_session_id = Some(session_id.clone());
@@ -2160,9 +2465,36 @@ fn parse_session_file_once(
       explicit_fast_mode,
       latest_plan_type,
       last_model_id: last_model_id.or_else(|| Some("unknown".to_string())),
+      mode: ParsedSessionMode::Full,
+      checkpoint,
     },
     bytes_read,
   ))
+}
+
+fn read_prefix_signature(path: &Path, completed_offset: u64) -> std::io::Result<Vec<u8>> {
+  let signature_start = completed_offset.saturating_sub(PARSER_PREFIX_SIGNATURE_BYTES);
+  let signature_len = completed_offset.saturating_sub(signature_start) as usize;
+  let mut file = File::open(path)?;
+  file.seek(SeekFrom::Start(signature_start))?;
+  let mut signature = vec![0u8; signature_len];
+  file.read_exact(&mut signature)?;
+  Ok(signature)
+}
+
+fn monotonic_usage_high_water(
+  mut high_water: Option<TokenUsage>,
+  snapshots: &[UsageSnapshot],
+) -> Option<TokenUsage> {
+  for snapshot in snapshots {
+    if high_water
+      .as_ref()
+      .is_none_or(|previous| snapshot.usage.total_tokens > previous.total_tokens)
+    {
+      high_water = Some(snapshot.usage.clone());
+    }
+  }
+  high_water
 }
 
 fn fallback_session_id_from_filename(path: &Path) -> Option<String> {
@@ -2600,7 +2932,7 @@ fn persist_session(
       source_path = excluded.source_path,
       source_bucket = excluded.source_bucket,
       started_at = COALESCE(sessions.started_at, excluded.started_at),
-      updated_at = excluded.updated_at,
+      updated_at = COALESCE(excluded.updated_at, sessions.updated_at),
       agent_nickname = COALESCE(excluded.agent_nickname, sessions.agent_nickname),
       agent_role = COALESCE(excluded.agent_role, sessions.agent_role),
       explicit_fast_mode = excluded.explicit_fast_mode,
@@ -2630,17 +2962,30 @@ fn persist_session(
     ],
   )?;
 
-  replace_session_rate_limit_samples(
-    conn,
-    &parsed.raw_session.session_id,
-    &parsed.rate_limit_samples,
-  )?;
+  match &parsed.mode {
+    ParsedSessionMode::Full => replace_session_rate_limit_samples(
+      conn,
+      &parsed.raw_session.session_id,
+      &parsed.rate_limit_samples,
+    )?,
+    ParsedSessionMode::Tail { .. } => append_session_rate_limit_samples(
+      conn,
+      &parsed.raw_session.session_id,
+      &parsed.rate_limit_samples,
+    )?,
+  };
 
-  let snapshot_cutoff = parsed.inherited_token_snapshot_cutoff;
-  let mut previous_usage = snapshot_cutoff
-    .checked_sub(1)
-    .and_then(|index| parsed.snapshots.get(index))
-    .map(|snapshot| snapshot.usage.clone());
+  let (snapshot_cutoff, mut previous_usage) = match &parsed.mode {
+    ParsedSessionMode::Full => {
+      let snapshot_cutoff = parsed.inherited_token_snapshot_cutoff;
+      let previous_usage = snapshot_cutoff
+        .checked_sub(1)
+        .and_then(|index| parsed.snapshots.get(index))
+        .map(|snapshot| snapshot.usage.clone());
+      (snapshot_cutoff, previous_usage)
+    }
+    ParsedSessionMode::Tail { previous_usage } => (0, previous_usage.clone()),
+  };
 
   let mut usage_event_plan = Vec::new();
   for (snapshot_index, snapshot) in parsed.snapshots.iter().enumerate().skip(snapshot_cutoff) {
@@ -2669,17 +3014,14 @@ fn persist_session(
     usage_event_plan.push((snapshot_index, delta));
   }
 
-  replace_session_usage_events(
-    conn,
-    &parsed.raw_session.session_id,
-    usage_event_plan
-      .iter()
-      .map(|(snapshot_index, _)| parsed.snapshots[*snapshot_index].timestamp.as_str()),
-    |index| {
+  let timestamps = usage_event_plan
+    .iter()
+    .map(|(snapshot_index, _)| parsed.snapshots[*snapshot_index].timestamp.as_str());
+  let event_at = |index: usize| {
       let (snapshot_index, delta) = &usage_event_plan[index];
       let snapshot = &parsed.snapshots[*snapshot_index];
       let resolved_pricing = resolve_pricing(catalog, &snapshot.model_id);
-      let value_usd = calculate_value_usd(&delta, resolved_pricing.as_ref());
+      let value_usd = calculate_value_usd(delta, resolved_pricing.as_ref());
       Some(NewUsageEvent {
         session_id: &parsed.raw_session.session_id,
         model_id: normalize_model_id(&snapshot.model_id),
@@ -2692,18 +3034,38 @@ fn persist_session(
         fast_mode_auto: false,
         fast_mode_effective: false,
       })
-    },
-  )?;
+    };
+  match &parsed.mode {
+    ParsedSessionMode::Full => replace_session_usage_events(
+      conn,
+      &parsed.raw_session.session_id,
+      timestamps,
+      event_at,
+    )?,
+    ParsedSessionMode::Tail { .. } => append_session_usage_events(
+      conn,
+      &parsed.raw_session.session_id,
+      timestamps,
+      event_at,
+    )?,
+  };
+
+  let parser_checkpoint = serde_json::to_string(&parsed.checkpoint)
+    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
 
   conn.execute(
     "
-    INSERT INTO import_state (source_path, session_id, source_bucket, file_size, file_mtime_ms, last_imported_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+    INSERT INTO import_state (
+      source_path, session_id, source_bucket, file_size, file_mtime_ms,
+      parser_checkpoint, last_imported_at
+    )
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
     ON CONFLICT(source_path) DO UPDATE SET
       session_id = excluded.session_id,
       source_bucket = excluded.source_bucket,
       file_size = excluded.file_size,
       file_mtime_ms = excluded.file_mtime_ms,
+      parser_checkpoint = excluded.parser_checkpoint,
       last_imported_at = excluded.last_imported_at
     ",
     params![
@@ -2712,6 +3074,7 @@ fn persist_session(
       session_file.bucket,
       session_file.file_size,
       session_file.file_mtime_ms,
+      parser_checkpoint,
       now_utc_string(),
     ],
   )?;
@@ -2841,7 +3204,7 @@ fn normalize_local_timestamp(timestamp: chrono::DateTime<Local>) -> chrono::Date
 fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, ImportState>> {
   let mut stmt = conn.prepare(
     "
-    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms
+    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms, parser_checkpoint
     FROM import_state
     ",
   )?;
@@ -2853,6 +3216,9 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
       source_bucket: row.get(2)?,
       file_size: row.get(3)?,
       file_mtime_ms: row.get(4)?,
+      parser_checkpoint: row
+        .get::<_, Option<String>>(5)?
+        .and_then(|checkpoint| serde_json::from_str(&checkpoint).ok()),
     })
   })?;
 
@@ -3152,6 +3518,7 @@ struct ImportState {
   source_bucket: String,
   file_size: i64,
   file_mtime_ms: i64,
+  parser_checkpoint: Option<ParserCheckpoint>,
 }
 
 #[cfg(test)]
@@ -3419,6 +3786,8 @@ mod tests {
         explicit_fast_mode: None,
         latest_plan_type: None,
         last_model_id: None,
+        mode: ParsedSessionMode::Full,
+        checkpoint: ParserCheckpoint::default(),
       },
       file_needs_rate_limit_repair: false,
       file_needs_token_v2_repair: false,
@@ -6737,6 +7106,152 @@ mod tests {
     assert_eq!(
       session_usage_totals(&conn, session_id),
       (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn growing_active_session_reads_only_completed_tail_after_checkpoint() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "45454545-4545-4545-4545-454545454545";
+    let session_path = sessions_dir.join("growing.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let filler = "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"ignored\",\"payload\":{}}\n";
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open initial session for append");
+    for _ in 0..4_096 {
+      file.write_all(filler.as_bytes()).expect("append filler");
+    }
+    drop(file);
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial full scan");
+
+    let appended = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:01:01Z",
+      total: (180, 40, 45, 225),
+      last: (80, 20, 20, 100),
+    });
+    std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open growing session")
+      .write_all(appended.as_bytes())
+      .expect("append completed token line");
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare incremental tail");
+    assert!(
+      prepared.stats().source_bytes_read < appended.len() as u64 * 4,
+      "incremental parse should avoid rereading the historical prefix; read {} bytes",
+      prepared.stats().source_bytes_read
+    );
+    commit_prepared_scan(prepared).expect("commit incremental tail");
+
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, session_id),
+      (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn changed_checkpoint_suffix_falls_back_to_full_session_parse() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_id = "46464646-4646-4646-4646-464646464646";
+    let session_path = sessions_dir.join("rewritten.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial scan");
+
+    let mut body = std::fs::read_to_string(&session_path).expect("read initial session");
+    let suffix_index = body.rfind('\n').expect("session ends with newline");
+    body.insert(suffix_index, ' ');
+    body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:01:01Z",
+      total: (180, 40, 45, 225),
+      last: (80, 20, 20, 100),
+    }));
+    std::fs::write(&session_path, body).expect("rewrite checkpoint suffix and append");
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare safe fallback");
+    assert!(
+      prepared.stats().source_bytes_read > 500,
+      "signature mismatch must re-read the complete session"
+    );
+    commit_prepared_scan(prepared).expect("commit fallback scan");
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, session_id),
+      (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn tail_checkpoint_keeps_monotonic_usage_high_water() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_id = "47474747-4747-4747-4747-474747474747";
+    let session_path = sessions_dir.join("rollback.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[
+        ("2026-03-24T00:00:01Z", 100, 0, 0, 100),
+        ("2026-03-24T00:00:02Z", 80, 0, 0, 80),
+      ],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial scan with rollback");
+
+    let appended = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:01:01Z",
+      total: (150, 0, 0, 150),
+      last: (50, 0, 0, 50),
+    });
+    std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open session")
+      .write_all(appended.as_bytes())
+      .expect("append recovery after rollback");
+    perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("incremental tail scan");
+
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, session_id),
+      (150, 0, 0, 150, 2)
     );
   }
 

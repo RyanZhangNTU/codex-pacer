@@ -28,7 +28,9 @@ pub use sync_settings::{
     get_last_full_scan_completed, get_sync_settings, save_sync_settings,
     set_scan_completed_for_source,
 };
-pub use usage_events::{replace_session_usage_events, NewUsageEvent};
+pub use usage_events::{
+    append_session_usage_events, replace_session_usage_events, NewUsageEvent,
+};
 pub(crate) use sync_settings::{
     preview_scan_freshness_for_source, set_last_scan_started_for_source_in_transaction,
 };
@@ -75,10 +77,22 @@ fn open_connection_with_busy_timeout(
 
 pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(include_str!("../sql/schema.sql"))?;
+    ensure_import_state_schema(conn)?;
     epoch_backfill::ensure_epoch_schema(conn)?;
     sync_settings::ensure_sync_settings_schema(conn)?;
     ensure_singletons(conn)?;
     conn.execute_batch(include_str!("../sql/indexes.sql"))?;
+    Ok(())
+}
+
+fn ensure_import_state_schema(conn: &Connection) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare("PRAGMA table_info(import_state)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if !columns.iter().any(|column| column == "parser_checkpoint") {
+        conn.execute("ALTER TABLE import_state ADD COLUMN parser_checkpoint TEXT", [])?;
+    }
     Ok(())
 }
 
@@ -152,6 +166,34 @@ mod tests {
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(synchronous, 1, "SQLite NORMAL synchronous mode");
+    }
+
+    #[test]
+    fn init_db_adds_parser_checkpoint_to_legacy_import_state() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(
+            "
+            CREATE TABLE import_state (
+              source_path TEXT PRIMARY KEY,
+              session_id TEXT,
+              source_bucket TEXT NOT NULL,
+              file_size INTEGER NOT NULL,
+              file_mtime_ms INTEGER NOT NULL,
+              last_imported_at TEXT NOT NULL
+            );
+            ",
+        )
+        .expect("seed legacy import state");
+
+        init_db(&conn).expect("migrate database");
+        let columns = conn
+            .prepare("PRAGMA table_info(import_state)")
+            .expect("prepare column query")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query columns")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect columns");
+        assert!(columns.iter().any(|column| column == "parser_checkpoint"));
     }
 
     #[test]

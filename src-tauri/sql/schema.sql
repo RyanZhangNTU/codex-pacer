@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS import_state (
   source_bucket TEXT NOT NULL,
   file_size INTEGER NOT NULL,
   file_mtime_ms INTEGER NOT NULL,
+  parser_checkpoint TEXT,
   last_imported_at TEXT NOT NULL
 );
 
