@@ -6,6 +6,9 @@ mod queries;
 mod rate_limits;
 mod refresh;
 
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
