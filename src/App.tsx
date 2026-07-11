@@ -27,7 +27,11 @@ import {
   runScanWithOverlapRetry,
   shouldKeepConversationDetail,
 } from './app/dataFreshness'
-import { SurfaceRevisionGate } from './app/refreshEvents'
+import {
+  shouldLoadDashboardAfterManualRefresh,
+  shouldLoadDashboardAfterSettingsSave,
+  SurfaceRevisionGate,
+} from './app/refreshEvents'
 import { saveSettingsWithCodexHomeRollback } from './app/settingsSave'
 import {
   formatCompactDateTime,
@@ -112,6 +116,7 @@ function App() {
   const detailCacheRef = useRef(new Map<string, ConversationDetail>())
   const latestDetailRequestIdRef = useRef(0)
   const refreshRevisionGateRef = useRef(new SurfaceRevisionGate())
+  const refreshCompletionListenerReadyRef = useRef<Promise<boolean>>(Promise.resolve(false))
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
 
   const waitForScanToSettle = useCallback(async (timeoutMs = 15000) => {
@@ -336,11 +341,22 @@ function App() {
       void handleVisible()
     }
 
-    trackRegistration(
-      listen<RefreshCompletedEvent>('codex-counter://refresh-completed', (event) => {
+    const completionRegistration = listen<RefreshCompletedEvent>(
+      'codex-counter://refresh-completed',
+      (event) => {
         void handleCompletion(event.payload)
-      }),
+      },
     )
+    refreshCompletionListenerReadyRef.current = completionRegistration
+      .then((dispose) => {
+        if (cancelled) {
+          dispose()
+          return false
+        }
+        disposers.add(dispose)
+        return true
+      })
+      .catch(() => false)
     trackRegistration(
       appWindow.onFocusChanged(({ payload: focused }) => {
         if (focused) {
@@ -353,6 +369,7 @@ function App() {
 
     return () => {
       cancelled = true
+      refreshCompletionListenerReadyRef.current = Promise.resolve(false)
       document.removeEventListener('visibilitychange', handleDocumentVisibility)
       window.removeEventListener('focus', handleWindowFocus)
       for (const dispose of disposers) {
@@ -425,12 +442,16 @@ function App() {
   async function handleRescan() {
     setIsBusy(true)
     try {
+      const listenerReady = await refreshCompletionListenerReadyRef.current
       const scan = await runScanWithOverlapRetry(
         () => scanCodexUsage(syncSettingsRef.current?.codexHome ?? null),
         (error) => String(error).includes('already running'),
         waitForScanToSettle,
         () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
       )
+      if (shouldLoadDashboardAfterManualRefresh(listenerReady)) {
+        await loadShell(true)
+      }
       setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
     } catch (error) {
       setStatusMessage(String(error))
@@ -462,6 +483,7 @@ function App() {
       throw new Error(t.status.settingsStillLoading)
     }
 
+    const listenerReady = await refreshCompletionListenerReadyRef.current
     const saved = await saveSettingsWithCodexHomeRollback({
       previousSyncSettings,
       nextSyncSettings: payload.syncSettings,
@@ -480,7 +502,9 @@ function App() {
     syncSettingsRef.current = saved.syncSettings
     setSyncSettings(saved.syncSettings)
     setSubscriptionProfile(saved.subscriptionProfile)
-    await loadShell(false)
+    if (shouldLoadDashboardAfterSettingsSave(saved.codexHomeChanged, listenerReady)) {
+      await loadShell(true)
+    }
     if (isTauri()) {
       await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
     }

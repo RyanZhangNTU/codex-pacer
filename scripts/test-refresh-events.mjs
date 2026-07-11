@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { settleRefreshFailure, SurfaceRevisionGate } from '../src/app/refreshEvents.ts'
+import * as refreshEvents from '../src/app/refreshEvents.ts'
+
+const { settleRefreshFailure, SurfaceRevisionGate } = refreshEvents
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const appSource = readFileSync(join(repoRoot, 'src/App.tsx'), 'utf8')
@@ -24,6 +26,28 @@ function completion(refreshRevision, succeeded = true) {
     failure: succeeded ? null : 'refresh failed',
     completedAt: '2026-07-11T00:00:00Z',
   }
+}
+
+function deferred() {
+  let resolve
+  const promise = new Promise((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
+}
+
+function extractFunction(source, signature) {
+  const signatureStart = source.indexOf(signature)
+  assert.notEqual(signatureStart, -1, `missing function: ${signature}`)
+  const bodyStart = source.indexOf(') {', signatureStart) + 2
+  assert.ok(bodyStart > 1, `missing function body: ${signature}`)
+  let depth = 0
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1
+    if (source[index] === '}') depth -= 1
+    if (depth === 0) return source.slice(signatureStart, index + 1)
+  }
+  assert.fail(`unterminated function: ${signature}`)
 }
 
 test('surface_revision_gate_deduplicates_visible_completions', () => {
@@ -117,9 +141,121 @@ test('frontend_refresh_sources_are_event_driven_without_automatic_polling', () =
 })
 
 test('manual_rescan_waits_for_its_ticket_without_loading_dashboard_twice', () => {
-  const handleRescan = appSource.match(/async function handleRescan\(\) \{([\s\S]*?)\n  \}/)?.[1]
-  assert.ok(handleRescan, 'App should retain the manual rescan handler')
+  const handleRescan = extractFunction(appSource, 'async function handleRescan()')
   assert.match(handleRescan, /scanCodexUsage/)
-  assert.doesNotMatch(handleRescan, /loadShell|loadDashboard/)
   assert.match(handleRescan, /finally[\s\S]*setIsBusy\(false\)/)
+})
+
+test('app_manual_reload_decisions_use_completion_only_when_listener_is_ready', () => {
+  const manualDecision = refreshEvents.shouldLoadDashboardAfterManualRefresh
+  const settingsDecision = refreshEvents.shouldLoadDashboardAfterSettingsSave
+
+  assert.equal(typeof manualDecision, 'function')
+  assert.equal(typeof settingsDecision, 'function')
+  assert.equal(manualDecision(true), false, 'a registered listener owns the manual scan reload')
+  assert.equal(manualDecision(false), true, 'a missing listener requires one post-ticket fallback')
+  assert.equal(settingsDecision(true, true), false, 'a source change with a listener must not read twice')
+  assert.equal(settingsDecision(true, false), true, 'a source change without a listener needs a fallback')
+  assert.equal(settingsDecision(false, true), true, 'a normal settings save still needs an explicit read')
+})
+
+test('app_awaits_listener_readiness_and_does_not_bypass_hidden_source_change_defer', () => {
+  const handleRescan = extractFunction(appSource, 'async function handleRescan()')
+  const handleSaveSettings = extractFunction(appSource, 'async function handleSaveSettings(')
+  const rescanReady = handleRescan.indexOf('await refreshCompletionListenerReadyRef.current')
+  const rescanCommand = handleRescan.indexOf('scanCodexUsage(')
+  const settingsReady = handleSaveSettings.indexOf('await refreshCompletionListenerReadyRef.current')
+  const settingsSave = handleSaveSettings.indexOf('saveSettingsWithCodexHomeRollback(')
+
+  assert.ok(rescanReady >= 0 && rescanReady < rescanCommand)
+  assert.ok(settingsReady >= 0 && settingsReady < settingsSave)
+  assert.match(
+    handleRescan,
+    /shouldLoadDashboardAfterManualRefresh\(listenerReady\)[\s\S]*await loadShell\(true\)/,
+  )
+  assert.match(
+    handleSaveSettings,
+    /shouldLoadDashboardAfterSettingsSave\(saved\.codexHomeChanged, listenerReady\)[\s\S]*await loadShell\(true\)/,
+  )
+  assert.match(appSource, /const completionRegistration = listen<RefreshCompletedEvent>/)
+  assert.match(
+    appSource,
+    /refreshCompletionListenerReadyRef\.current = completionRegistration[\s\S]*\.then\([\s\S]*return true[\s\S]*\.catch\([\s\S]*false/,
+  )
+})
+
+test('surface_request_controller_ignores_an_older_response_that_finishes_last', async () => {
+  const Controller = refreshEvents.SurfaceRequestController
+  assert.equal(typeof Controller, 'function')
+  const controller = new Controller()
+  const older = deferred()
+  const newer = deferred()
+  let displayed = 'initial'
+
+  const load = async (pending) => {
+    const claim = controller.claim('passive')
+    const value = await pending
+    if (controller.isLatest(claim)) displayed = value
+    controller.finish(claim)
+  }
+  const olderLoad = load(older.promise)
+  const newerLoad = load(newer.promise)
+
+  newer.resolve('newer snapshot')
+  await newerLoad
+  older.resolve('older snapshot')
+  await olderLoad
+
+  assert.equal(displayed, 'newer snapshot')
+})
+
+test('surface_request_controller_keeps_manual_spinner_single_flight_and_independent', async () => {
+  const Controller = refreshEvents.SurfaceRequestController
+  assert.equal(typeof Controller, 'function')
+  const controller = new Controller()
+  const manual = deferred()
+  const passive = deferred()
+  let displayed = 'existing snapshot'
+  let refreshing = false
+
+  const load = async (kind, pending) => {
+    const claim = controller.claim(kind)
+    if (claim === null) return false
+    refreshing = controller.manualInFlight
+    try {
+      const value = await pending
+      if (controller.isLatest(claim)) displayed = value
+    } finally {
+      controller.finish(claim)
+      refreshing = controller.manualInFlight
+    }
+    return true
+  }
+
+  const manualLoad = load('manual', manual.promise)
+  await Promise.resolve()
+  assert.equal(refreshing, true)
+  assert.equal(controller.claim('manual'), null, 'a second manual request must be rejected synchronously')
+
+  const passiveLoad = load('passive', passive.promise)
+  passive.resolve('newer passive snapshot')
+  await passiveLoad
+  assert.equal(displayed, 'newer passive snapshot')
+  assert.equal(refreshing, true, 'a passive completion must not clear a manual spinner')
+
+  manual.resolve('older forced snapshot')
+  await manualLoad
+  assert.equal(displayed, 'newer passive snapshot')
+  assert.equal(refreshing, false)
+})
+
+test('popup_wires_latest_request_controller_and_disables_duplicate_manual_refresh', () => {
+  assert.match(popupSource, /useRef\(new SurfaceRequestController\(\)\)/)
+  assert.match(popupSource, /\.claim\(forceRefresh \? 'manual' : 'passive'\)/)
+  assert.match(popupSource, /\.isLatest\(claim\)/)
+  assert.match(popupSource, /\.finish\(claim\)/)
+  assert.match(
+    popupSource,
+    /aria-label=\{t\.popup\.actions\.refresh\}[\s\S]{0,220}disabled=\{refreshing\}/,
+  )
 })

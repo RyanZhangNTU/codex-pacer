@@ -13,7 +13,11 @@ import {
   formatTokenCount,
   formatUsd,
 } from '../app/format'
-import { settleRefreshFailure, type RefreshSurfaceState } from '../app/refreshEvents'
+import {
+  settleRefreshFailure,
+  SurfaceRequestController,
+  type RefreshSurfaceState,
+} from '../app/refreshEvents'
 import type { MenuBarPopupModuleId, MenuBarPopupSnapshot } from '../app/types'
 import { useI18n } from '../app/useI18n'
 import { PopupStatModuleGrid } from '../components/PopupStatModuleGrid'
@@ -47,6 +51,7 @@ export function MenuBarPopup() {
   const panelRef = useRef<HTMLDivElement | null>(null)
   const lastMeasuredHeightRef = useRef<number | null>(null)
   const resizeFrameRef = useRef(0)
+  const requestControllerRef = useRef(new SurfaceRequestController())
   const [loadState, setLoadState] = useState<RefreshSurfaceState<MenuBarPopupSnapshot>>({
     data: null,
     loading: true,
@@ -56,35 +61,45 @@ export function MenuBarPopup() {
   const { data: snapshot, loading, refreshing, error } = loadState
 
   const loadSnapshot = useCallback(async (forceRefresh = false) => {
+    const claim = requestControllerRef.current.claim(forceRefresh ? 'manual' : 'passive')
+    if (claim === null) return
+    const manualInFlight = requestControllerRef.current.manualInFlight
     setLoadState((current) => {
-      if (forceRefresh) {
-        return { ...current, refreshing: true }
+      return {
+        ...current,
+        loading: forceRefresh ? current.loading : current.data === null,
+        refreshing: manualInFlight,
       }
-      return current.data === null ? { ...current, loading: true } : current
     })
 
     let failed = false
     let failure: unknown
+    let nextSnapshot: MenuBarPopupSnapshot | null = null
     try {
-      const nextSnapshot = await getMenuBarPopupSnapshot(forceRefresh)
-      setLoadState((current) => ({
-        ...current,
-        data: nextSnapshot,
-        loading: false,
-        error: null,
-      }))
+      nextSnapshot = await getMenuBarPopupSnapshot(forceRefresh)
     } catch (loadError) {
       failed = true
       failure = loadError
     } finally {
+      requestControllerRef.current.finish(claim)
       setLoadState((current) => {
-        if (failed) {
-          const settled = settleRefreshFailure(current, failure)
-          return forceRefresh ? settled : { ...settled, refreshing: current.refreshing }
+        let nextState = current
+        if (requestControllerRef.current.isLatest(claim)) {
+          if (failed) {
+            nextState = settleRefreshFailure(current, failure)
+          } else if (nextSnapshot !== null) {
+            nextState = {
+              ...current,
+              data: nextSnapshot,
+              loading: false,
+              error: null,
+            }
+          }
         }
-        return forceRefresh
-          ? { ...current, refreshing: false }
-          : { ...current, loading: false }
+        return {
+          ...nextState,
+          refreshing: requestControllerRef.current.manualInFlight,
+        }
       })
     }
   }, [])
@@ -249,6 +264,7 @@ export function MenuBarPopup() {
               <button
                 aria-label={t.popup.actions.refresh}
                 className="ghost-button popup-icon-button"
+                disabled={refreshing}
                 onClick={() => void loadSnapshot(true)}
                 type="button"
               >
