@@ -161,3 +161,22 @@ CREATE TABLE IF NOT EXISTS rate_limit_samples (
   remaining_percent INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS latest_rate_limits (
+  source_kind TEXT NOT NULL,
+  source_session_id TEXT NOT NULL DEFAULT '',
+  bucket TEXT NOT NULL,
+  sample_timestamp TEXT NOT NULL,
+  sample_timestamp_ms INTEGER NOT NULL,
+  limit_id TEXT NOT NULL DEFAULT '',
+  limit_name TEXT NOT NULL DEFAULT '',
+  plan_type TEXT NOT NULL DEFAULT '',
+  window_start TEXT NOT NULL,
+  window_start_ms INTEGER NOT NULL,
+  resets_at TEXT NOT NULL,
+  resets_at_ms INTEGER NOT NULL,
+  used_percent INTEGER NOT NULL,
+  remaining_percent INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (source_kind, source_session_id, bucket)
+);

@@ -16,3 +16,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_limit_samples_dedupe
   ON rate_limit_samples(
     bucket, sample_timestamp, source_kind, source_session_id, limit_id, window_start, resets_at
   );
+CREATE INDEX IF NOT EXISTS idx_rate_limit_samples_owner
+  ON rate_limit_samples(source_kind, source_session_id, bucket, sample_timestamp_ms, id);
+CREATE INDEX IF NOT EXISTS idx_latest_rate_limits_lookup
+  ON latest_rate_limits(bucket, source_kind, sample_timestamp_ms DESC, source_session_id);

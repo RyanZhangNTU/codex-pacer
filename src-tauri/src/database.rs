@@ -16,7 +16,11 @@ pub use epoch_backfill::{
     backfill_epoch_batch, backfill_epoch_batch_cancellable, epoch_backfill_pending,
     parse_epoch_millis, EpochBackfillProgress,
 };
-pub use rate_limit_samples::{insert_live_rate_limit_snapshot, replace_session_rate_limit_samples};
+#[allow(unused_imports)]
+pub use rate_limit_samples::{
+    append_session_rate_limit_samples, insert_live_rate_limit_snapshot, load_latest_rate_limits,
+    replace_session_rate_limit_samples, RateLimitWriteStats,
+};
 pub use subscriptions::{
     canonical_subscription_currency, get_subscription_profile, save_subscription_profile,
 };

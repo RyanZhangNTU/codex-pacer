@@ -20,7 +20,8 @@ use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use rusqlite::params;
 use database::{
   canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
-  insert_live_rate_limit_snapshot, open_connection, save_subscription_profile, save_sync_settings,
+  insert_live_rate_limit_snapshot, load_latest_rate_limits, open_connection,
+  save_subscription_profile, save_sync_settings,
 };
 use importer::{commit_prepared_scan, prepare_scan, recalculate_all_session_values, ScanKind};
 use models::{
@@ -157,7 +158,9 @@ struct AppLiveQuotaPersister {
 impl refresh::LiveQuotaPersister for AppLiveQuotaPersister {
   fn persist(&self, snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
     let conn = open_connection(&self.db_path).map_err(|error| error.to_string())?;
-    insert_live_rate_limit_snapshot(&conn, snapshot).map_err(|error| error.to_string())
+    insert_live_rate_limit_snapshot(&conn, snapshot)
+      .map(|_| ())
+      .map_err(|error| error.to_string())
   }
 }
 
@@ -1361,6 +1364,9 @@ fn load_persisted_live_rate_limits_from_connection(
   conn: &rusqlite::Connection,
   source_kind: Option<&str>,
 ) -> Option<LiveRateLimitSnapshot> {
+  if let Ok(Some(snapshot)) = load_latest_rate_limits(conn, source_kind) {
+    return Some(snapshot);
+  }
   let mut primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
     .ok()
     .flatten();

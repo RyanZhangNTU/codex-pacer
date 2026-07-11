@@ -785,11 +785,7 @@ mod tests {
                     FROM sqlite_master
                     WHERE type = 'index'
                       AND sql IS NOT NULL
-                      AND (
-                        sql LIKE '%timestamp_ms%'
-                        OR sql LIKE '%window_start_ms%'
-                        OR sql LIKE '%resets_at_ms%'
-                      )
+                      AND name IN ('idx_rate_limit_samples_window_ms', 'idx_usage_events_timestamp_ms')
                     ORDER BY name
                     ",
                 )
