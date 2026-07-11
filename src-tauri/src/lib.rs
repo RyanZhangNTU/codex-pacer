@@ -60,7 +60,6 @@ const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 const SCHEDULER_MAX_SLEEP_SECONDS: u64 = 5;
-const FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS: u64 = 5;
 const PRICING_VALUE_RESOLUTION_REPAIR_KEY: &str = "pricing_value_resolution_v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,12 +68,6 @@ enum BackgroundRefreshDecision {
   Wait(Duration),
   Incremental,
   Full,
-}
-
-#[derive(Clone)]
-struct CachedRateLimitSnapshot {
-  fetched_at: Instant,
-  snapshot: LiveRateLimitSnapshot,
 }
 
 #[derive(Clone)]
@@ -92,7 +85,7 @@ struct AppState {
   live_refresh_in_progress: Arc<AtomicBool>,
   menu_bar_refresh_in_progress: Arc<AtomicBool>,
   daily_value_tray: Option<TrayIcon>,
-  live_rate_limits: Arc<Mutex<Option<CachedRateLimitSnapshot>>>,
+  live_rate_limits: refresh::LiveQuotaCache,
   menu_bar_popup_anchor: Arc<Mutex<Option<MenuBarPopupAnchor>>>,
 }
 
@@ -1052,74 +1045,86 @@ fn get_live_rate_limits_cached(state: &AppState) -> Result<LiveRateLimitSnapshot
 }
 
 fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
-  get_live_rate_limits_with_fallback(
-    state,
-    force_refresh,
-    true,
-    live_rate_limit_foreground_query_timeout(),
-  )
+  get_live_rate_limits_with_fallback(state, force_refresh, live_rate_limit_foreground_query_timeout())
 }
 
 fn get_live_rate_limits_background(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
-  let ttl = live_rate_limit_cache_ttl(state);
-  get_live_rate_limits_with_fallback(
-    state,
-    force_refresh,
-    false,
-    live_rate_limit_background_query_timeout_for_interval(ttl),
-  )
+  get_live_rate_limits_with_fallback(state, force_refresh, live_rate_limit_background_query_timeout())
 }
 
 fn get_live_rate_limits_with_fallback(
   state: &AppState,
   force_refresh: bool,
-  refresh_history_on_failure: bool,
   query_timeout: Duration,
 ) -> Result<LiveRateLimitSnapshot, String> {
-  let ttl = live_rate_limit_cache_ttl(state);
-
-  if !force_refresh {
-    let cache = state
-      .live_rate_limits
-      .lock()
-      .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
-    if let Some(snapshot) = cache.as_ref() {
-      if snapshot.fetched_at.elapsed() <= ttl {
-        return Ok(snapshot.snapshot.clone());
-      }
-    }
+  if let Some(snapshot) =
+    get_fresh_cached_live_rate_limits(state, force_refresh, || live_rate_limit_cache_ttl(state))
+  {
+    return Ok(snapshot);
   }
 
+  state.live_rate_limits.set_refreshing(true);
   let query_result = {
     let _activity = begin_scheduler_activity();
     query_live_rate_limits(query_timeout)
   };
   match query_result {
-    Ok(snapshot) => {
-      {
+    Ok(snapshot) => Ok(publish_live_rate_limits_and_persist(
+      state,
+      snapshot,
+      |snapshot| {
         let _activity = begin_scheduler_activity();
         let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-        insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
-      }
-      store_live_rate_limits_cache(state, &snapshot)?;
-      Ok(snapshot)
-    }
+        insert_live_rate_limit_snapshot(&conn, snapshot).map_err(|error| error.to_string())
+      },
+    )),
     Err(error) => {
       log::warn!("Failed to refresh live rate limits from Codex app-server: {error}");
-      let fallback = if refresh_history_on_failure {
-        get_live_rate_limits_history_fallback(state)
-      } else {
-        get_live_rate_limits_stored_fallback(state)
-      };
-      if let Some(snapshot) = fallback {
-        if let Err(cache_error) = store_live_rate_limits_cache(state, &snapshot) {
-          log::warn!("Failed to cache fallback live rate limits: {cache_error}");
+      if let Some(fallback) = get_live_rate_limits_stored_fallback(state) {
+        state.live_rate_limits.publish_fallback(
+          Arc::new(fallback),
+          Instant::now(),
+          Utc::now(),
+        );
+        if let Some(effective) = get_cached_live_rate_limits(state) {
+          return Ok(effective);
         }
-        return Ok(snapshot);
       }
+      state.live_rate_limits.set_refreshing(false);
       Err(error)
     }
   }
+}
+
+fn get_fresh_cached_live_rate_limits(
+  state: &AppState,
+  force_refresh: bool,
+  load_ttl: impl FnOnce() -> Duration,
+) -> Option<LiveRateLimitSnapshot> {
+  if force_refresh {
+    return None;
+  }
+  let ttl = load_ttl();
+  if state.live_rate_limits.needs_live_refresh(ttl, Instant::now()) {
+    None
+  } else {
+    get_cached_live_rate_limits(state)
+  }
+}
+
+fn publish_live_rate_limits_and_persist(
+  state: &AppState,
+  snapshot: LiveRateLimitSnapshot,
+  persist: impl FnOnce(&LiveRateLimitSnapshot) -> Result<(), String>,
+) -> LiveRateLimitSnapshot {
+  let snapshot = Arc::new(snapshot);
+  state
+    .live_rate_limits
+    .publish_live(Arc::clone(&snapshot), Instant::now(), Utc::now());
+  if let Err(error) = persist(&snapshot) {
+    log::warn!("Failed to persist live rate-limit snapshot: {error}");
+  }
+  snapshot.as_ref().clone()
 }
 
 #[derive(Clone)]
@@ -1196,19 +1201,24 @@ fn load_latest_persisted_rate_limit_window(
   }))
 }
 
+#[cfg(test)]
 fn load_persisted_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
   load_persisted_live_rate_limits_for_source(state, None)
 }
 
-fn load_history_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  load_persisted_live_rate_limits_for_source(state, Some("session"))
-}
-
+#[cfg(test)]
 fn load_persisted_live_rate_limits_for_source(
   state: &AppState,
   source_kind: Option<&str>,
 ) -> Option<LiveRateLimitSnapshot> {
   let conn = open_connection(&state.db_path).ok()?;
+  load_persisted_live_rate_limits_from_connection(&conn, source_kind)
+}
+
+fn load_persisted_live_rate_limits_from_connection(
+  conn: &rusqlite::Connection,
+  source_kind: Option<&str>,
+) -> Option<LiveRateLimitSnapshot> {
   let mut primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
     .ok()
     .flatten();
@@ -1258,47 +1268,67 @@ fn load_persisted_live_rate_limits_for_source(
 }
 
 fn get_live_rate_limits_local(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  get_cached_live_rate_limits(state).or_else(|| load_persisted_live_rate_limits(state))
+  if let Some(cached) = get_cached_live_rate_limits(state) {
+    return Some(cached);
+  }
+  let fallback = get_live_rate_limits_stored_fallback(state)?;
+  state.live_rate_limits.publish_fallback(
+    Arc::new(fallback),
+    Instant::now(),
+    Utc::now(),
+  );
+  get_cached_live_rate_limits(state)
 }
 
 fn get_live_rate_limits_stored_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  load_persisted_live_rate_limits(state)
-    .or_else(|| load_history_live_rate_limits(state))
-    .or_else(|| get_cached_live_rate_limits(state))
-}
-
-fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  refresh_rate_limit_history_if_idle(state);
-  get_live_rate_limits_stored_fallback(state)
-}
-
-fn refresh_rate_limit_history_if_idle(state: &AppState) {
-  if let Err(error) = run_background_incremental_scan_if_idle(state.clone(), None) {
-    if error == "A scan is already running." {
-      return;
-    }
-    log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
-  }
+  let memory = get_cached_live_rate_limits(state);
+  let Ok(conn) = open_connection(&state.db_path) else {
+    return memory;
+  };
+  let persisted = load_persisted_live_rate_limits_from_connection(&conn, None);
+  let session_only = if persisted.is_none() {
+    load_persisted_live_rate_limits_from_connection(&conn, Some("session"))
+  } else {
+    None
+  };
+  newest_live_rate_limit_snapshot([memory, persisted, session_only])
 }
 
 fn get_cached_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
   state
     .live_rate_limits
-    .lock()
-    .ok()
-    .and_then(|cache| cache.as_ref().map(|snapshot| snapshot.snapshot.clone()))
+    .rate_limits()
+    .map(|snapshot| snapshot.as_ref().clone())
 }
 
-fn store_live_rate_limits_cache(state: &AppState, snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
-  let mut cache = state
-    .live_rate_limits
-    .lock()
-    .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
-  *cache = Some(CachedRateLimitSnapshot {
-    fetched_at: Instant::now(),
-    snapshot: snapshot.clone(),
-  });
-  Ok(())
+fn newest_live_rate_limit_snapshot(
+  snapshots: impl IntoIterator<Item = Option<LiveRateLimitSnapshot>>,
+) -> Option<LiveRateLimitSnapshot> {
+  snapshots.into_iter().flatten().fold(None, |newest, candidate| {
+    let Some(current) = newest else {
+      return Some(candidate);
+    };
+    if live_snapshot_is_newer(&candidate, &current) {
+      Some(candidate)
+    } else {
+      Some(current)
+    }
+  })
+}
+
+fn live_snapshot_is_newer(
+  candidate: &LiveRateLimitSnapshot,
+  current: &LiveRateLimitSnapshot,
+) -> bool {
+  match (
+    DateTime::parse_from_rfc3339(&candidate.fetched_at).ok(),
+    DateTime::parse_from_rfc3339(&current.fetched_at).ok(),
+  ) {
+    (Some(candidate), Some(current)) => candidate > current,
+    (Some(_), None) => true,
+    (None, Some(_)) => false,
+    (None, None) => candidate.fetched_at > current.fetched_at,
+  }
 }
 
 fn best_effort_live_rate_limits(state: &AppState, force_refresh: bool) -> Option<LiveRateLimitSnapshot> {
@@ -1462,13 +1492,11 @@ fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
 }
 
 fn live_rate_limit_foreground_query_timeout() -> Duration {
-  Duration::from_secs(FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS)
+  refresh::LIVE_QUERY_TIMEOUT
 }
 
-fn live_rate_limit_background_query_timeout_for_interval(interval: Duration) -> Duration {
-  interval
-    .checked_sub(Duration::from_secs(FOREGROUND_LIVE_RATE_LIMIT_QUERY_TIMEOUT_SECONDS))
-    .unwrap_or_else(|| Duration::from_secs(1))
+fn live_rate_limit_background_query_timeout() -> Duration {
+  refresh::LIVE_QUERY_TIMEOUT
 }
 
 fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
@@ -2109,7 +2137,7 @@ pub fn run() {
         live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
         daily_value_tray,
-        live_rate_limits: Arc::new(Mutex::new(None)),
+        live_rate_limits: refresh::LiveQuotaCache::new(),
         menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
       };
       app.manage(state.clone());
@@ -2263,20 +2291,81 @@ mod tests {
   }
 
   #[test]
-  fn live_rate_limit_query_timeout_finishes_before_next_refresh() {
+  fn live_rate_limit_background_query_timeout_is_fixed() {
     assert_eq!(
-      live_rate_limit_background_query_timeout_for_interval(Duration::from_secs(60)),
-      Duration::from_secs(55)
-    );
-    assert_eq!(
-      live_rate_limit_background_query_timeout_for_interval(Duration::from_secs(180)),
-      Duration::from_secs(175)
+      live_rate_limit_background_query_timeout(),
+      Duration::from_secs(10)
     );
   }
 
   #[test]
   fn live_rate_limit_foreground_query_timeout_stays_short() {
-    assert_eq!(live_rate_limit_foreground_query_timeout(), Duration::from_secs(5));
+    assert_eq!(live_rate_limit_foreground_query_timeout(), Duration::from_secs(10));
+  }
+
+  #[test]
+  fn legacy_live_publication_survives_persistence_failure() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: refresh::LiveQuotaCache::new(),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+    let snapshot = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: Some("Codex".to_string()),
+      plan_type: Some("pro".to_string()),
+      primary: None,
+      secondary: None,
+      fetched_at: "2026-07-11T00:00:00Z".to_string(),
+    };
+
+    let returned = publish_live_rate_limits_and_persist(&state, snapshot, |_| {
+      Err("intentional persistence failure".to_string())
+    });
+
+    assert_eq!(returned.fetched_at, "2026-07-11T00:00:00Z");
+    assert_eq!(
+      get_cached_live_rate_limits(&state)
+        .expect("fresh cache survives persistence failure")
+        .fetched_at,
+      "2026-07-11T00:00:00Z"
+    );
+  }
+
+  #[test]
+  fn forced_live_refresh_does_not_read_cache_ttl() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let state = AppState {
+      app_handle: None,
+      db_path,
+      scan_in_progress: Arc::new(AtomicBool::new(false)),
+      usage_mutation_lock: Arc::new(Mutex::new(())),
+      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
+      daily_value_tray: None,
+      live_rate_limits: refresh::LiveQuotaCache::new(),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    };
+    let ttl_reads = std::cell::Cell::new(0_u32);
+
+    let cached = get_fresh_cached_live_rate_limits(&state, true, || {
+      ttl_reads.set(ttl_reads.get() + 1);
+      Duration::from_secs(300)
+    });
+
+    assert!(cached.is_none());
+    assert_eq!(ttl_reads.get(), 0);
   }
 
   #[test]
@@ -2441,7 +2530,7 @@ mod tests {
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
+      live_rate_limits: refresh::LiveQuotaCache::new(),
       menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
     };
 
@@ -3021,7 +3110,7 @@ mod tests {
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
+      live_rate_limits: refresh::LiveQuotaCache::new(),
       menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
     };
     let (scan_loaded_sender, scan_loaded_receiver) = std::sync::mpsc::channel();
@@ -3081,54 +3170,6 @@ mod tests {
   }
 
   #[test]
-  fn history_fallback_scan_waits_for_usage_mutation_lock() {
-    let directory = tempdir().expect("tempdir");
-    let db_path = directory.path().join("usage.sqlite");
-    let codex_home = directory.path().join("codex-home");
-    std::fs::create_dir_all(&codex_home).expect("create Codex home");
-    prepare_app_database(&db_path).expect("prepare app database");
-    let conn = open_connection(&db_path).expect("open database");
-    let settings = SyncSettings {
-      codex_home: Some(codex_home.to_string_lossy().to_string()),
-      ..get_sync_settings(&conn).expect("load settings")
-    };
-    save_sync_settings(&conn, &settings).expect("save settings");
-    drop(conn);
-
-    let state = AppState {
-      app_handle: None,
-      db_path,
-      scan_in_progress: Arc::new(AtomicBool::new(false)),
-      usage_mutation_lock: Arc::new(Mutex::new(())),
-      live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
-      menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
-      daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
-      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
-    };
-    let mutation_guard = lock_usage_mutations(&state);
-    let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
-    let scan_state = state.clone();
-    let scan_thread = std::thread::spawn(move || {
-      refresh_rate_limit_history_if_idle(&scan_state);
-      completed_sender.send(()).expect("report completion");
-    });
-
-    let completed_while_locked = completed_receiver
-      .recv_timeout(Duration::from_millis(100))
-      .is_ok();
-    drop(mutation_guard);
-    if !completed_while_locked {
-      completed_receiver
-        .recv_timeout(Duration::from_secs(2))
-        .expect("history scan should complete after unlock");
-    }
-    scan_thread.join().expect("join history scan");
-
-    assert!(!completed_while_locked, "history scan bypassed the shared usage mutation lock");
-  }
-
-  #[test]
   fn menu_bar_title_parts_can_use_local_live_rate_limits_without_refresh() {
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");
@@ -3169,7 +3210,7 @@ mod tests {
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
+      live_rate_limits: refresh::LiveQuotaCache::new(),
       menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
     };
 
@@ -3179,6 +3220,10 @@ mod tests {
 
     assert_eq!(api_value_title, None);
     assert_eq!(live_metric_title.as_deref(), Some("88%"));
+    assert!(state.live_rate_limits.state().is_fallback);
+    assert!(state
+      .live_rate_limits
+      .needs_live_refresh(Duration::from_secs(300), Instant::now()));
   }
 
   #[test]
@@ -3232,7 +3277,7 @@ mod tests {
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
+      live_rate_limits: refresh::LiveQuotaCache::new(),
       menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
     };
 
@@ -3242,6 +3287,31 @@ mod tests {
     assert_eq!(
       snapshot.primary.as_ref().map(|window| window.remaining_percent),
       Some(88)
+    );
+
+    state.live_rate_limits.publish_live(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 23,
+          remaining_percent: 77,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-03-27T05:10:00+08:00".to_string()),
+          window_start: Some("2026-03-27T00:10:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:10:00+08:00".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+    let memory = get_live_rate_limits_stored_fallback(&state).expect("prefer newer memory");
+    assert_eq!(memory.fetched_at, "2026-03-27T00:10:00+08:00");
+    assert_eq!(
+      memory.primary.as_ref().map(|window| window.remaining_percent),
+      Some(77)
     );
   }
 
@@ -3296,7 +3366,7 @@ mod tests {
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
+      live_rate_limits: refresh::LiveQuotaCache::new(),
       menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
     };
 
@@ -3366,7 +3436,7 @@ mod tests {
       live_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       menu_bar_refresh_in_progress: Arc::new(AtomicBool::new(false)),
       daily_value_tray: None,
-      live_rate_limits: Arc::new(Mutex::new(None)),
+      live_rate_limits: refresh::LiveQuotaCache::new(),
       menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
     };
 

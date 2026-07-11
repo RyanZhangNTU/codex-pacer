@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
+mod live_cache;
 mod mutation;
 mod power;
 mod runtime;
 mod schedule;
 
+pub(crate) use live_cache::{LivePersistenceRetryState, LivePersistenceWork, LiveQuotaCache};
 #[allow(unused_imports)]
 pub(crate) use mutation::{MutationOutcome, MutationPriority, UsageMutationCoordinator};
 #[allow(unused_imports)]

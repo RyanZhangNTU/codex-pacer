@@ -2,7 +2,7 @@
 mod tests {
   use super::{
     MetricsState, PanicPhase, RefreshClock, RefreshConfig, RefreshError, RefreshStatus,
-    RuntimeTestRig, SaturatingCounter, TestClock,
+    RuntimeTestRig, SaturatingCounter, TestClock, TestLiveExecutor,
   };
   use crate::refresh::{RefreshFailureCode, RefreshRejectionCode, REFRESH_WAITER_CAPACITY};
   use chrono::{DateTime, Duration as ChronoDuration};
@@ -10,6 +10,22 @@ mod tests {
   use std::time::Duration;
 
   const TEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+  fn assert_same_deadline(expected: &Option<String>, actual: &Option<String>) {
+    let expected = DateTime::parse_from_rfc3339(expected.as_deref().expect("expected deadline"))
+      .expect("expected RFC3339 deadline");
+    let actual = DateTime::parse_from_rfc3339(actual.as_deref().expect("actual deadline"))
+      .expect("actual RFC3339 deadline");
+    assert!(
+      actual
+        .signed_duration_since(expected)
+        .num_microseconds()
+        .unwrap_or(i64::MAX)
+        .unsigned_abs()
+        <= 1_000,
+      "normal live deadline moved: expected {expected}, actual {actual}"
+    );
+  }
 
   #[test]
   fn token_worker_does_not_delay_live_worker_start() {
@@ -325,6 +341,7 @@ mod tests {
       .expect("recovery live ticket")
       .wait_timeout(TEST_TIMEOUT)
       .is_ok());
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
     assert_eq!(rig.live.fetch_calls(), 2);
     assert_eq!(rig.live.unique_fetch_worker_ids(), 1);
     assert_eq!(rig.live.worker_name(), "codex-pacer-refresh-live");
@@ -333,31 +350,28 @@ mod tests {
   }
 
   #[test]
-  fn persist_panic_becomes_failure_and_worker_recovers() {
+  fn persist_panic_does_not_fail_live_and_retry_recovers() {
     let rig = RuntimeTestRig::disabled();
     rig.live.panic_once(PanicPhase::Persist);
-    let failed = rig
+    let result = rig
       .handle
       .request_manual_live()
       .expect("failed live ticket")
       .wait_timeout(TEST_TIMEOUT);
-    assert!(matches!(
-      failed,
-      Err(RefreshError::Failed {
-        code: RefreshFailureCode::WorkerPanicked,
-        ..
-      })
-    ));
+    assert!(
+      result.is_ok(),
+      "persistence panic cannot fail fetched live quota"
+    );
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+    assert_eq!(rig.live.fetch_calls(), 1);
+    assert_eq!(rig.live.persist_calls(), 1);
+    assert_eq!(rig.events.invalidation_count(), 1);
 
-    assert!(rig
-      .handle
-      .request_manual_live()
-      .expect("recovery live ticket")
-      .wait_timeout(TEST_TIMEOUT)
-      .is_ok());
+    rig.clock.advance(Duration::from_secs(5));
+    rig.handle.wake().expect("wake persistence retry");
+    rig.wait_for_persist_outcomes(2, TEST_TIMEOUT);
     assert_eq!(rig.live.persist_calls(), 2);
-    assert_eq!(rig.live.unique_persist_worker_ids(), 1);
-    assert_eq!(rig.live.worker_name(), "codex-pacer-refresh-live");
+    assert_eq!(rig.live.fetch_calls(), 1, "retry cannot refetch");
     assert_eq!(rig.activities.active(), 0);
     rig.shutdown();
   }
@@ -371,6 +385,7 @@ mod tests {
     let live = rig.handle.request_manual_live().expect("live ticket");
     assert!(token.wait_timeout(TEST_TIMEOUT).is_ok());
     assert!(live.wait_timeout(TEST_TIMEOUT).is_ok());
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
     assert_eq!(rig.token.commit_calls(), 1);
     assert_eq!(rig.live.persist_calls(), 1);
     rig.shutdown();
@@ -814,6 +829,28 @@ mod tests {
   }
 
   #[test]
+  fn shutdown_drains_saturated_channel_and_joins_persistence_task() {
+    let rig = RuntimeTestRig::disabled();
+    let persist = rig.live.block_next_persist();
+    let ticket = rig.handle.request_manual_live().expect("live ticket");
+    persist.wait_entered(TEST_TIMEOUT);
+    assert!(ticket.wait_timeout(TEST_TIMEOUT).is_ok());
+
+    let pause = rig.pause_coordinator();
+    rig.fill_runtime_channel_until_busy();
+    let shutdown = rig.shutdown_in_background();
+    rig.wait_for_shutdown_requested(TEST_TIMEOUT);
+    persist.release();
+    pause.release();
+
+    let joined = shutdown.wait(TEST_TIMEOUT);
+    assert!(joined.token_joined && joined.live_joined && joined.coordinator_joined);
+    assert_eq!(rig.activities.active(), 0);
+    assert!(!rig.live_cache.state().refreshing);
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+  }
+
+  #[test]
   fn shutdown_during_live_fetch_joins_after_bounded_completion() {
     let rig = RuntimeTestRig::disabled();
     let fetch = rig.live.block_next_fetch();
@@ -874,30 +911,38 @@ mod tests {
   }
 
   #[test]
-  fn source_change_during_live_persist_is_not_published_as_success() {
+  fn stale_persist_outcome_does_not_clear_newer_pending_snapshot() {
     let rig = RuntimeTestRig::disabled();
     let persist = rig.live.block_next_persist();
     let replacement = rig.token.block_parse_call(1);
-    let previous_success = rig.handle.status().live.last_success_at;
     let invalidations = rig.events.invalidation_count();
     let ticket = rig.handle.request_manual_live().expect("live ticket");
     persist.wait_entered(TEST_TIMEOUT);
+    assert!(ticket.wait_timeout(TEST_TIMEOUT).is_ok());
+    assert_eq!(rig.events.invalidation_count(), invalidations + 1);
     rig
       .handle
       .update_settings(rig.config_with_source("replacement"))
       .expect("source update during persistence");
-    persist.release();
-
-    assert!(matches!(
-      ticket.wait_timeout(TEST_TIMEOUT),
-      Err(RefreshError::Failed {
-        code: RefreshFailureCode::SourceChanged,
-        ..
-      })
-    ));
     replacement.wait_worker_ready(TEST_TIMEOUT);
-    assert_eq!(rig.events.invalidation_count(), invalidations);
-    assert_eq!(rig.handle.status().live.last_success_at, previous_success);
+
+    let newer = TestLiveExecutor::snapshot_at("2026-07-11T00:02:00Z");
+    rig.live.queue_snapshot(Arc::clone(&newer));
+    let latest = rig
+      .handle
+      .request_manual_live()
+      .expect("new-source live ticket")
+      .wait_timeout(TEST_TIMEOUT)
+      .expect("new-source live result");
+    assert_eq!(latest.fetched_at, newer.fetched_at);
+    persist.release();
+    rig.wait_for_persist_outcomes(2, TEST_TIMEOUT);
+    assert_eq!(rig.events.invalidation_count(), invalidations + 2);
+    assert_eq!(rig.live.persist_calls(), 2);
+    assert_eq!(
+      rig.live.persisted_fetched_at(),
+      ["2026-07-11T00:00:00Z", "2026-07-11T00:02:00Z"]
+    );
     let shutdown = rig.shutdown_in_background();
     rig.wait_for_shutdown_requested(TEST_TIMEOUT);
     replacement.release();
@@ -974,15 +1019,199 @@ mod tests {
     assert_eq!(rig.activities.active(), 1, "persist body owns one guard");
     persist.release();
     assert!(live.wait_timeout(TEST_TIMEOUT).is_ok());
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
     assert_eq!(rig.activities.active(), 0);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn fresh_value_is_visible_before_persistence_finishes() {
+    let rig = RuntimeTestRig::disabled();
+    let persist = rig.live.block_next_persist();
+    let ticket = rig.handle.request_manual_live().expect("live ticket");
+    persist.wait_entered(TEST_TIMEOUT);
+
+    let result = ticket
+      .wait_timeout(TEST_TIMEOUT)
+      .expect("waiter resolves before persistence finishes");
+    let produced = rig.live.fetched_arc(1, TEST_TIMEOUT);
+    let cached = rig.live_cache.rate_limits().expect("published live cache");
+    assert!(Arc::ptr_eq(&result, &produced));
+    assert!(Arc::ptr_eq(&result, &cached));
+    assert_eq!(
+      rig.events.trace_prefix(),
+      [
+        "live_cache_publish",
+        "live_invalidation",
+        "live_completion",
+        "live_waiter_reply",
+        "live_persist_start",
+      ]
+    );
+
+    persist.release();
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn fetch_receives_ten_second_timeout() {
+    let rig = RuntimeTestRig::disabled();
+    assert!(rig
+      .handle
+      .request_manual_live()
+      .expect("live ticket")
+      .wait_timeout(TEST_TIMEOUT)
+      .is_ok());
+    assert_eq!(
+      rig.live.last_timeout(),
+      Some(crate::refresh::LIVE_QUERY_TIMEOUT)
+    );
+    assert_eq!(rig.live.last_timeout(), Some(Duration::from_secs(10)));
+    rig.shutdown();
+  }
+
+  #[test]
+  fn live_failure_does_not_run_token_inline() {
+    let rig = RuntimeTestRig::paused_clock();
+    let fallback = TestLiveExecutor::snapshot_at("2026-07-10T23:59:00Z");
+    rig
+      .live
+      .fail_next_fetch_with_fallback(Arc::clone(&fallback));
+    let parse = rig.token.block_next_parse();
+    let ticket = rig.handle.request_manual_live().expect("live ticket");
+
+    assert!(matches!(
+      ticket.wait_timeout(TEST_TIMEOUT),
+      Err(RefreshError::Failed {
+        code: RefreshFailureCode::ExecutionFailed,
+        ..
+      })
+    ));
+    parse.wait_entered(TEST_TIMEOUT);
+    assert_eq!(rig.live.fallback_calls(), 1);
+    assert!(rig.live_cache.state().is_fallback);
+    assert_eq!(
+      rig.events.trace_prefix(),
+      [
+        "live_cache_fallback",
+        "live_completion",
+        "live_waiter_reply",
+        "token_fallback_start",
+      ]
+    );
+
+    parse.release();
+    rig.token.wait_for_commit_calls(1, TEST_TIMEOUT);
+    rig.shutdown();
+
+    let no_fallback = RuntimeTestRig::paused_clock();
+    no_fallback.live.fail_next_fetch();
+    let parse = no_fallback.token.block_next_parse();
+    let ticket = no_fallback
+      .handle
+      .request_manual_live()
+      .expect("live ticket without fallback");
+    assert!(ticket.wait_timeout(TEST_TIMEOUT).is_err());
+    parse.wait_entered(TEST_TIMEOUT);
+    assert_eq!(
+      no_fallback.events.trace_prefix(),
+      [
+        "live_completion",
+        "live_waiter_reply",
+        "token_fallback_start",
+      ]
+    );
+    parse.release();
+    no_fallback.token.wait_for_commit_calls(1, TEST_TIMEOUT);
+    no_fallback.shutdown();
+  }
+
+  #[test]
+  fn persistence_failure_retries_without_refetch() {
+    let rig = RuntimeTestRig::disabled();
+    rig.live.fail_next_persist();
+    assert!(rig
+      .handle
+      .request_manual_live()
+      .expect("live ticket")
+      .wait_timeout(TEST_TIMEOUT)
+      .is_ok());
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+    assert_eq!(rig.live.fetch_calls(), 1);
+    assert_eq!(rig.live.persist_calls(), 1);
+
+    rig.clock.advance(Duration::from_secs(5));
+    rig.handle.wake().expect("wake persistence retry");
+    rig.live.wait_for_persist_calls(2, TEST_TIMEOUT);
+    rig.wait_for_persist_outcomes(2, TEST_TIMEOUT);
+    assert_eq!(rig.live.fetch_calls(), 1, "retry must not refetch");
+    assert_eq!(rig.live.persist_calls(), 2);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn newer_live_snapshot_supersedes_pending_persistence_retry() {
+    let rig = RuntimeTestRig::disabled();
+    rig.live.fail_next_persist();
+    assert!(rig
+      .handle
+      .request_manual_live()
+      .expect("first live ticket")
+      .wait_timeout(TEST_TIMEOUT)
+      .is_ok());
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+
+    let newer = TestLiveExecutor::snapshot_at("2026-07-11T00:01:00Z");
+    rig.live.queue_snapshot(Arc::clone(&newer));
+    let second = rig
+      .handle
+      .request_manual_live()
+      .expect("second live ticket")
+      .wait_timeout(TEST_TIMEOUT)
+      .expect("second live result");
+    assert_eq!(second.fetched_at, newer.fetched_at);
+    rig.wait_for_persist_outcomes(2, TEST_TIMEOUT);
+    assert_eq!(
+      rig.live.persisted_fetched_at(),
+      ["2026-07-11T00:00:00Z", "2026-07-11T00:01:00Z"]
+    );
+
+    rig.clock.advance(Duration::from_secs(5));
+    rig.handle.wake().expect("wake past superseded retry");
+    rig.handle.barrier().expect("drain wake");
+    assert_eq!(rig.live.persist_calls(), 2, "old retry stays superseded");
+    rig.shutdown();
+  }
+
+  #[test]
+  fn persistence_retry_does_not_move_live_deadline() {
+    let rig = RuntimeTestRig::disabled();
+    let initial_deadline = rig.handle.status().live.next_due_at;
+    rig.live.fail_next_persist();
+    assert!(rig
+      .handle
+      .request_manual_live()
+      .expect("live ticket")
+      .wait_timeout(TEST_TIMEOUT)
+      .is_ok());
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+    assert_same_deadline(&initial_deadline, &rig.handle.status().live.next_due_at);
+
+    rig.clock.advance(Duration::from_secs(5));
+    rig.handle.wake().expect("wake persistence retry");
+    rig.wait_for_persist_outcomes(2, TEST_TIMEOUT);
+    assert_same_deadline(&initial_deadline, &rig.handle.status().live.next_due_at);
+    assert_eq!(rig.live.fetch_calls(), 1);
     rig.shutdown();
   }
 }
 use super::power::{ActivityFactory, SystemActivityFactory};
 use super::{
   CommitMarker, CoordinatorAction, CoordinatorEvent, CoordinatorState, DisplayInvalidation,
-  ExecutionCompletion, LiveExecutionRequest, LiveRequest, LiveWaiterId, MutationPriority,
-  RefreshCompletedEvent, RefreshConfig, RefreshDetail, RefreshFailureCode, RefreshRejectionCode,
+  ExecutionCompletion, LiveExecutionRequest, LivePersistenceRetryState, LivePersistenceWork,
+  LiveQuotaCache, LiveRequest, LiveWaiterId, MutationPriority, RefreshCompletedEvent,
+  RefreshConfig, RefreshDetail, RefreshFailureCode, RefreshReason, RefreshRejectionCode,
   RefreshWaiterOutcome, TokenExecutionRequest, TokenRequest, TokenWaiterId,
   UsageMutationCoordinator, LIVE_QUERY_TIMEOUT, REFRESH_WAITER_CAPACITY,
 };
@@ -991,6 +1220,8 @@ use crate::models::{LiveRateLimitSnapshot, ScanResult};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::array;
 use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::VecDeque;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvError, RecvTimeoutError, SyncSender, TrySendError};
@@ -1536,6 +1767,7 @@ pub(crate) struct RefreshRuntimeDependencies {
   pub token_executor: Arc<dyn TokenRefreshExecutor>,
   pub live_fetcher: Arc<dyn LiveQuotaFetcher>,
   pub live_persister: Arc<dyn LiveQuotaPersister>,
+  pub live_cache: LiveQuotaCache,
   pub event_sink: Arc<dyn RefreshEventSink>,
   pub mutation: UsageMutationCoordinator,
   pub activity_factory: Arc<dyn ActivityFactory>,
@@ -1551,6 +1783,7 @@ impl RefreshRuntimeDependencies {
     token_executor: Arc<dyn TokenRefreshExecutor>,
     live_fetcher: Arc<dyn LiveQuotaFetcher>,
     live_persister: Arc<dyn LiveQuotaPersister>,
+    live_cache: LiveQuotaCache,
     event_sink: Arc<dyn RefreshEventSink>,
     mutation: UsageMutationCoordinator,
   ) -> Self {
@@ -1559,6 +1792,7 @@ impl RefreshRuntimeDependencies {
       token_executor,
       live_fetcher,
       live_persister,
+      live_cache,
       event_sink,
       mutation,
       activity_factory: Arc::new(SystemActivityFactory),
@@ -1715,6 +1949,7 @@ enum RuntimeMessage {
   WakeNoReply,
   Barrier(SyncSender<()>),
   Worker(WorkerOutcome),
+  Persistence(PersistenceWorkerOutcome),
   Shutdown(SyncSender<ShutdownResult>),
   #[cfg(test)]
   PauseCoordinator(Arc<TestGateState>, SyncSender<()>),
@@ -1789,11 +2024,22 @@ enum LiveWorkerOutcome {
     code: RefreshFailureCode,
     detail: RefreshDetail,
     fetch_duration: Duration,
+    fallback: Option<Arc<LiveRateLimitSnapshot>>,
   },
   Stale {
     generation: u64,
     source_generation: u64,
   },
+}
+
+enum PersistenceWorkerResult {
+  Completed(Result<(), String>),
+  Stale,
+}
+
+struct PersistenceWorkerOutcome {
+  work: LivePersistenceWork,
+  result: PersistenceWorkerResult,
 }
 
 struct PreparedSlot {
@@ -1810,10 +2056,16 @@ struct CoordinatorRuntime {
   current_live_result: Option<(u64, Arc<LiveRateLimitSnapshot>)>,
   token_sender: Option<SyncSender<TokenWorkerCommand>>,
   live_sender: Option<SyncSender<LiveWorkerCommand>>,
+  runtime_sender: SyncSender<RuntimeMessage>,
   waiters: Arc<Mutex<WaiterRegistries>>,
   status: Arc<Mutex<RefreshStatus>>,
   metrics: Arc<MetricsState>,
   event_sink: Arc<dyn RefreshEventSink>,
+  live_cache: LiveQuotaCache,
+  live_persister: Arc<dyn LiveQuotaPersister>,
+  activity_factory: Arc<dyn ActivityFactory>,
+  persistence: LivePersistenceRetryState,
+  persistence_handle: Option<JoinHandle<()>>,
   clock: Arc<dyn RefreshClock>,
   source_generation: Arc<AtomicU64>,
   shutdown: Arc<AtomicBool>,
@@ -1832,6 +2084,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     token_executor,
     live_fetcher,
     live_persister,
+    live_cache,
     event_sink,
     mutation,
     activity_factory,
@@ -1874,8 +2127,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     receiver: live_rx,
     runtime_sender: runtime_tx.clone(),
     fetcher: live_fetcher,
-    persister: live_persister,
-    activity_factory,
+    activity_factory: Arc::clone(&activity_factory),
     status: Arc::clone(&status),
     metrics: Arc::clone(&metrics),
     source_generation: Arc::clone(&source_generation),
@@ -1889,7 +2141,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
 
   let shared_intake = Arc::new(Mutex::new(IntakeState {
     accepting: true,
-    sender: runtime_tx,
+    sender: runtime_tx.clone(),
     #[cfg(test)]
     pause_after_check: None,
   }));
@@ -1914,10 +2166,16 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     current_live_result: None,
     token_sender: Some(token_tx),
     live_sender: Some(live_tx),
+    runtime_sender: runtime_tx.clone(),
     waiters,
     status,
     metrics,
     event_sink,
+    live_cache,
+    live_persister,
+    activity_factory,
+    persistence: LivePersistenceRetryState::new(),
+    persistence_handle: None,
     clock,
     source_generation,
     shutdown: Arc::clone(&shutdown),
@@ -2160,7 +2418,6 @@ struct LiveWorkerParameters {
   receiver: Receiver<LiveWorkerCommand>,
   runtime_sender: SyncSender<RuntimeMessage>,
   fetcher: Arc<dyn LiveQuotaFetcher>,
-  persister: Arc<dyn LiveQuotaPersister>,
   activity_factory: Arc<dyn ActivityFactory>,
   status: Arc<Mutex<RefreshStatus>>,
   metrics: Arc<MetricsState>,
@@ -2249,12 +2506,26 @@ fn run_live_refresh(
       if normalized.contains("timeout") || normalized.contains("timed out") {
         parameters.metrics.live_timeout_count.increment();
       }
+      if parameters.shutdown_requested.load(Ordering::Acquire)
+        || parameters.shutdown.load(Ordering::Acquire)
+        || parameters.source_generation.load(Ordering::Acquire) != request.source_generation
+      {
+        return LiveWorkerOutcome::Stale {
+          generation: request.generation,
+          source_generation: request.source_generation,
+        };
+      }
+      let fallback = panic::catch_unwind(AssertUnwindSafe(|| parameters.fetcher.fallback()))
+        .ok()
+        .flatten()
+        .map(Arc::new);
       return LiveWorkerOutcome::Failed {
         generation: request.generation,
         source_generation: request.source_generation,
         code: RefreshFailureCode::ExecutionFailed,
         detail: RefreshDetail::new(detail),
         fetch_duration,
+        fallback,
       };
     }
     Err(_) => {
@@ -2264,6 +2535,7 @@ fn run_live_refresh(
         code: RefreshFailureCode::WorkerPanicked,
         detail: RefreshDetail::new("live fetch executor panicked"),
         fetch_duration,
+        fallback: None,
       };
     }
   };
@@ -2277,53 +2549,20 @@ fn run_live_refresh(
       source_generation: request.source_generation,
     };
   }
+  let snapshot = Arc::new(snapshot);
   #[cfg(test)]
-  parameters.hooks.before_live_persist();
-  let persisted = panic::catch_unwind(AssertUnwindSafe(|| {
-    let _activity = parameters.activity_factory.begin();
-    parameters.persister.persist(&snapshot)
-  }));
-  match persisted {
-    Ok(Ok(())) => {
-      if parameters.shutdown_requested.load(Ordering::Acquire)
-        || parameters.shutdown.load(Ordering::Acquire)
-        || parameters.source_generation.load(Ordering::Acquire) != request.source_generation
-      {
-        return LiveWorkerOutcome::Stale {
-          generation: request.generation,
-          source_generation: request.source_generation,
-        };
-      }
-      let snapshot = Arc::new(snapshot);
-      #[cfg(test)]
-      parameters
-        .hooks
-        .record_live_arc(request.generation, Arc::clone(&snapshot));
-      LiveWorkerOutcome::Completed {
-        generation: request.generation,
-        source_generation: request.source_generation,
-        snapshot,
-        commit: CommitMarker {
-          sequence: parameters.commit_sequence.increment(),
-          committed_at: parameters.clock.monotonic_now(),
-        },
-        fetch_duration,
-      }
-    }
-    Ok(Err(detail)) => LiveWorkerOutcome::Failed {
-      generation: request.generation,
-      source_generation: request.source_generation,
-      code: RefreshFailureCode::ExecutionFailed,
-      detail: RefreshDetail::new(detail),
-      fetch_duration,
+  parameters
+    .hooks
+    .record_live_arc(request.generation, Arc::clone(&snapshot));
+  LiveWorkerOutcome::Completed {
+    generation: request.generation,
+    source_generation: request.source_generation,
+    snapshot,
+    commit: CommitMarker {
+      sequence: parameters.commit_sequence.increment(),
+      committed_at: parameters.clock.monotonic_now(),
     },
-    Err(_) => LiveWorkerOutcome::Failed {
-      generation: request.generation,
-      source_generation: request.source_generation,
-      code: RefreshFailureCode::WorkerPanicked,
-      detail: RefreshDetail::new("live persist executor panicked"),
-      fetch_duration,
-    },
+    fetch_duration,
   }
 }
 
@@ -2422,6 +2661,64 @@ impl Drop for ActiveLiveGuard<'_> {
   }
 }
 
+struct PersistenceTaskParameters {
+  work: LivePersistenceWork,
+  runtime_sender: SyncSender<RuntimeMessage>,
+  persister: Arc<dyn LiveQuotaPersister>,
+  activity_factory: Arc<dyn ActivityFactory>,
+  source_generation: Arc<AtomicU64>,
+  shutdown: Arc<AtomicBool>,
+  shutdown_requested: Arc<AtomicBool>,
+  #[cfg(test)]
+  hooks: Arc<RuntimeTestHooks>,
+}
+
+fn spawn_persistence_task(parameters: PersistenceTaskParameters) -> Result<JoinHandle<()>, String> {
+  thread::Builder::new()
+    .name("codex-pacer-live-persist".to_string())
+    .spawn(move || {
+      let result = run_persistence_task(&parameters);
+      let _ =
+        parameters
+          .runtime_sender
+          .send(RuntimeMessage::Persistence(PersistenceWorkerOutcome {
+            work: parameters.work.clone(),
+            result,
+          }));
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn run_persistence_task(parameters: &PersistenceTaskParameters) -> PersistenceWorkerResult {
+  if persistence_task_is_stale(parameters) {
+    return PersistenceWorkerResult::Stale;
+  }
+  #[cfg(test)]
+  parameters.hooks.before_live_persist();
+  if persistence_task_is_stale(parameters) {
+    return PersistenceWorkerResult::Stale;
+  }
+  let result = panic::catch_unwind(AssertUnwindSafe(|| {
+    let _activity = parameters.activity_factory.begin();
+    parameters.persister.persist(parameters.work.snapshot())
+  }));
+  if persistence_task_is_stale(parameters) {
+    return PersistenceWorkerResult::Stale;
+  }
+  match result {
+    Ok(result) => PersistenceWorkerResult::Completed(result),
+    Err(_) => PersistenceWorkerResult::Completed(Err(
+      "live quota persistence executor panicked".to_string(),
+    )),
+  }
+}
+
+fn persistence_task_is_stale(parameters: &PersistenceTaskParameters) -> bool {
+  parameters.shutdown.load(Ordering::Acquire)
+    || parameters.shutdown_requested.load(Ordering::Acquire)
+    || parameters.source_generation.load(Ordering::Acquire) != parameters.work.source_generation()
+}
+
 fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: CoordinatorRuntime) {
   #[cfg(test)]
   runtime.hooks.record_thread_name();
@@ -2429,11 +2726,12 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
     let message = if runtime.shutdown_requested.load(Ordering::Acquire) {
       receiver.recv().map_err(|_| RecvError)
     } else {
-      match runtime.schedule.next_wait(runtime.clock.monotonic_now()) {
+      match runtime.next_wait() {
         Some(wait) => match receiver.recv_timeout(wait) {
           Ok(message) => Ok(message),
           Err(RecvTimeoutError::Timeout) => {
             runtime.process_schedule_event(CoordinatorEvent::Timer);
+            runtime.maybe_start_persistence();
             continue;
           }
           Err(RecvTimeoutError::Disconnected) => Err(RecvError),
@@ -2455,11 +2753,14 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
     match message {
       RuntimeMessage::RequestToken(request) => {
         runtime.process_schedule_event(CoordinatorEvent::RequestToken(request));
+        runtime.maybe_start_persistence();
       }
       RuntimeMessage::RequestLive(request) => {
         runtime.process_schedule_event(CoordinatorEvent::RequestLive(request));
+        runtime.maybe_start_persistence();
       }
       RuntimeMessage::SettingsChanged(config, reply) => {
+        let previous_source_generation = runtime.schedule.snapshot().source_generation;
         let actions = runtime.schedule.handle(
           runtime.clock.monotonic_now(),
           CoordinatorEvent::SettingsChanged(config),
@@ -2468,19 +2769,31 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
         runtime
           .source_generation
           .store(snapshot.source_generation, Ordering::Release);
+        if snapshot.source_generation != previous_source_generation {
+          runtime.persistence.reset_source(snapshot.source_generation);
+        }
         runtime.sync_schedule_snapshot();
         runtime.process_actions(actions);
+        runtime.maybe_start_persistence();
         let _ = reply.send(());
       }
       RuntimeMessage::Wake(reply) => {
         runtime.process_schedule_event(CoordinatorEvent::Wake);
+        runtime.maybe_start_persistence();
         let _ = reply.send(());
       }
-      RuntimeMessage::WakeNoReply => runtime.process_schedule_event(CoordinatorEvent::Wake),
+      RuntimeMessage::WakeNoReply => {
+        runtime.process_schedule_event(CoordinatorEvent::Wake);
+        runtime.maybe_start_persistence();
+      }
       RuntimeMessage::Barrier(reply) => {
         let _ = reply.send(());
       }
-      RuntimeMessage::Worker(outcome) => runtime.process_worker_outcome(outcome),
+      RuntimeMessage::Worker(outcome) => {
+        runtime.process_worker_outcome(outcome);
+        runtime.maybe_start_persistence();
+      }
+      RuntimeMessage::Persistence(outcome) => runtime.process_persistence_outcome(outcome),
       RuntimeMessage::Shutdown(reply) => {
         runtime.shutdown_and_join_workers(&receiver, reply);
         return;
@@ -2509,6 +2822,92 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
 }
 
 impl CoordinatorRuntime {
+  fn next_wait(&self) -> Option<Duration> {
+    let now = self.clock.monotonic_now();
+    let schedule = self.schedule.next_wait(now);
+    let live_running = self.schedule.snapshot().live.running_generation.is_some();
+    let persistence = self.persistence.next_wait(now, live_running);
+    match (schedule, persistence) {
+      (Some(schedule), Some(persistence)) => Some(schedule.min(persistence)),
+      (Some(wait), None) | (None, Some(wait)) => Some(wait),
+      (None, None) => None,
+    }
+  }
+
+  fn maybe_start_persistence(&mut self) {
+    if self.shutdown_requested.load(Ordering::Acquire)
+      || self.shutdown.load(Ordering::Acquire)
+      || self.persistence_handle.is_some()
+    {
+      return;
+    }
+    let live_running = self.schedule.snapshot().live.running_generation.is_some();
+    let Some(work) = self
+      .persistence
+      .take_ready(self.clock.monotonic_now(), live_running)
+    else {
+      return;
+    };
+    #[cfg(test)]
+    self.hooks.trace("live_persist_start");
+    let spawn = spawn_persistence_task(PersistenceTaskParameters {
+      work: work.clone(),
+      runtime_sender: self.runtime_sender.clone(),
+      persister: Arc::clone(&self.live_persister),
+      activity_factory: Arc::clone(&self.activity_factory),
+      source_generation: Arc::clone(&self.source_generation),
+      shutdown: Arc::clone(&self.shutdown),
+      shutdown_requested: Arc::clone(&self.shutdown_requested),
+      #[cfg(test)]
+      hooks: Arc::clone(&self.hooks),
+    });
+    match spawn {
+      Ok(handle) => self.persistence_handle = Some(handle),
+      Err(error) => {
+        log::warn!("Failed to start live quota persistence task: {error}");
+        self.persistence.finish(
+          &work,
+          Err(error),
+          self.clock.monotonic_now(),
+          self.schedule.snapshot().interval,
+        );
+        #[cfg(test)]
+        self.hooks.record_persistence_outcome();
+      }
+    }
+  }
+
+  fn process_persistence_outcome(&mut self, outcome: PersistenceWorkerOutcome) {
+    if let Some(handle) = self.persistence_handle.take() {
+      if handle.join().is_err() {
+        log::warn!("Live quota persistence task panicked after reporting its outcome.");
+      }
+    }
+    match outcome.result {
+      PersistenceWorkerResult::Completed(result) => {
+        if let Err(error) = &result {
+          log::warn!("Failed to persist live quota snapshot: {error}");
+        }
+        self.persistence.finish(
+          &outcome.work,
+          result,
+          self.clock.monotonic_now(),
+          self.schedule.snapshot().interval,
+        );
+      }
+      PersistenceWorkerResult::Stale => {
+        self.persistence.abandon(&outcome.work);
+      }
+    }
+    #[cfg(test)]
+    self.hooks.record_persistence_outcome();
+    if self.shutdown_requested.load(Ordering::Acquire) || self.shutdown.load(Ordering::Acquire) {
+      self.persistence.cancel_pending();
+    } else {
+      self.maybe_start_persistence();
+    }
+  }
+
   fn handle_message_while_shutdown_pending(&mut self, message: RuntimeMessage) {
     match message {
       RuntimeMessage::SettingsChanged(_, reply)
@@ -2521,6 +2920,10 @@ impl CoordinatorRuntime {
       }
       RuntimeMessage::Worker(WorkerOutcome::Exited(WorkerLane::Live)) => {
         self.live_exited = true;
+      }
+      RuntimeMessage::Persistence(outcome) => {
+        self.process_persistence_outcome(outcome);
+        self.persistence.cancel_pending();
       }
       RuntimeMessage::Worker(_)
       | RuntimeMessage::RequestToken(_)
@@ -2712,17 +3115,25 @@ impl CoordinatorRuntime {
             generation,
             source_generation,
             RefreshFailureCode::SourceChanged,
-            RefreshDetail::new("refresh source changed during live persistence"),
+            RefreshDetail::new("refresh source changed before live publication"),
             self.clock.wall_now(),
           )));
           return;
         }
         lock(&self.metrics.mutable).live.app_server_duration_ms =
           nonzero_duration_millis(fetch_duration);
+        self.live_cache.publish_live(
+          Arc::clone(&snapshot),
+          self.clock.monotonic_now(),
+          self.clock.wall_now(),
+        );
+        lock(&self.metrics.mutable).live.fallback_age_ms = None;
+        #[cfg(test)]
+        self.hooks.trace("live_cache_publish");
         self.finish_live_timing(true);
         #[cfg(test)]
         self.hooks.set_completion_slots_empty(false);
-        self.current_live_result = Some((generation, snapshot));
+        self.current_live_result = Some((generation, Arc::clone(&snapshot)));
         self.process_schedule_event(CoordinatorEvent::LiveFinished(successful_completion(
           generation,
           source_generation,
@@ -2732,6 +3143,9 @@ impl CoordinatorRuntime {
         self.current_live_result = None;
         #[cfg(test)]
         self.hooks.set_completion_slots_empty(true);
+        self
+          .persistence
+          .publish(snapshot, source_generation, self.clock.monotonic_now());
       }
       LiveWorkerOutcome::Failed {
         generation,
@@ -2739,12 +3153,40 @@ impl CoordinatorRuntime {
         code,
         detail,
         fetch_duration,
+        fallback,
       } => {
-        if self.schedule.snapshot().live.running_generation != Some(generation) {
+        let coordinator_snapshot = self.schedule.snapshot();
+        if coordinator_snapshot.live.running_generation != Some(generation) {
+          return;
+        }
+        if coordinator_snapshot.source_generation != source_generation {
+          self.live_cache.set_refreshing(false);
+          self.finish_live_timing(false);
+          self.process_schedule_event(CoordinatorEvent::LiveFinished(failed_completion(
+            generation,
+            source_generation,
+            RefreshFailureCode::SourceChanged,
+            RefreshDetail::new("refresh source changed before live fallback publication"),
+            self.clock.wall_now(),
+          )));
           return;
         }
         lock(&self.metrics.mutable).live.app_server_duration_ms =
           nonzero_duration_millis(fetch_duration);
+        let submit_fallback_intent = code == RefreshFailureCode::ExecutionFailed;
+        if let Some(fallback) = fallback {
+          let state = self.live_cache.publish_fallback(
+            fallback,
+            self.clock.monotonic_now(),
+            self.clock.wall_now(),
+          );
+          self.record_fallback_age(state.source_fetched_at.as_deref());
+          #[cfg(test)]
+          self.hooks.trace("live_cache_fallback");
+        } else {
+          let state = self.live_cache.mark_current_as_fallback();
+          self.record_fallback_age(state.source_fetched_at.as_deref());
+        }
         self.finish_live_timing(false);
         self.process_schedule_event(CoordinatorEvent::LiveFinished(failed_completion(
           generation,
@@ -2753,6 +3195,11 @@ impl CoordinatorRuntime {
           detail,
           self.clock.wall_now(),
         )));
+        if submit_fallback_intent {
+          self.process_schedule_event(CoordinatorEvent::RequestToken(TokenRequest::for_reason(
+            RefreshReason::Fallback,
+          )));
+        }
       }
       LiveWorkerOutcome::Stale {
         generation,
@@ -2761,6 +3208,7 @@ impl CoordinatorRuntime {
         if self.schedule.snapshot().live.running_generation != Some(generation) {
           return;
         }
+        self.live_cache.set_refreshing(false);
         self.finish_live_timing(false);
         self.process_schedule_event(CoordinatorEvent::LiveFinished(failed_completion(
           generation,
@@ -2819,9 +3267,15 @@ impl CoordinatorRuntime {
           }
         }
         CoordinatorAction::PublishInvalidation(value) => {
+          #[cfg(test)]
+          let is_live = self.current_live_result.is_some();
           self.event_sink.publish_invalidation(value);
           #[cfg(test)]
-          self.hooks.trace("token_invalidation");
+          self.hooks.trace(if is_live {
+            "live_invalidation"
+          } else {
+            "token_invalidation"
+          });
         }
         CoordinatorAction::PublishCompletion(value) => {
           #[cfg(test)]
@@ -2847,7 +3301,9 @@ impl CoordinatorRuntime {
     self.record_lane_start(true, request.generation, request.request.planned_due_at);
     set_mutation_phase(&self.status, MutationPhase::Parsing);
     #[cfg(test)]
-    if request.generation > 1 {
+    if request.request.reasons.contains(RefreshReason::Fallback) {
+      self.hooks.trace("token_fallback_start");
+    } else if request.generation > 1 {
       self.hooks.trace("token_follow_up_start");
     }
     let result = self.token_sender.as_ref().ok_or(()).and_then(|sender| {
@@ -2867,12 +3323,14 @@ impl CoordinatorRuntime {
 
   fn start_live(&mut self, request: LiveExecutionRequest) {
     self.record_lane_start(false, request.generation, request.planned_due_at);
+    self.live_cache.set_refreshing(true);
     let result = self.live_sender.as_ref().ok_or(()).and_then(|sender| {
       sender
         .try_send(LiveWorkerCommand::Run(request.clone()))
         .map_err(|_| ())
     });
     if result.is_err() {
+      self.live_cache.set_refreshing(false);
       self.finish_live_timing(false);
       self.process_schedule_event(CoordinatorEvent::LiveFinished(failed_completion(
         request.generation,
@@ -2950,6 +3408,24 @@ impl CoordinatorRuntime {
         let _ = reply.send(clone_result(&result));
       }
     }
+    drop(waiters);
+    #[cfg(test)]
+    self.hooks.trace("live_waiter_reply");
+  }
+
+  fn record_fallback_age(&self, source_fetched_at: Option<&str>) {
+    let age = source_fetched_at
+      .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+      .and_then(|fetched| {
+        self
+          .clock
+          .wall_now()
+          .signed_duration_since(fetched.with_timezone(&Utc))
+          .to_std()
+          .ok()
+      })
+      .map(duration_as_millis);
+    lock(&self.metrics.mutable).live.fallback_age_ms = age;
   }
 
   fn record_lane_start(&mut self, token: bool, generation: u64, due: Option<Instant>) {
@@ -3059,6 +3535,8 @@ impl CoordinatorRuntime {
   ) {
     // Required order: deny is linearized by the owner, then drain, drop, flag, close.
     drain_waiters_for_shutdown(&self.waiters);
+    self.live_cache.set_refreshing(false);
+    self.persistence.cancel_pending();
     self.prepared_slot = None;
     #[cfg(test)]
     self.hooks.set_prepared_slot_empty(true);
@@ -3074,7 +3552,7 @@ impl CoordinatorRuntime {
       status.mutation_phase = None;
     }
 
-    while !self.token_exited || !self.live_exited {
+    while !self.token_exited || !self.live_exited || self.persistence_handle.is_some() {
       let Ok(message) = receiver.recv() else {
         break;
       };
@@ -3084,6 +3562,10 @@ impl CoordinatorRuntime {
         }
         RuntimeMessage::Worker(WorkerOutcome::Exited(WorkerLane::Live)) => {
           self.live_exited = true;
+        }
+        RuntimeMessage::Persistence(outcome) => {
+          self.process_persistence_outcome(outcome);
+          self.persistence.cancel_pending();
         }
         RuntimeMessage::Worker(_) => {}
         RuntimeMessage::SettingsChanged(_, ack)
@@ -3431,6 +3913,7 @@ struct TestHookData {
   token_waiting_count: u64,
   prepared_slot_empty: bool,
   completion_slots_empty: bool,
+  persistence_outcomes: u64,
 }
 
 #[cfg(test)]
@@ -3502,6 +3985,13 @@ impl RuntimeTestHooks {
 
   fn set_completion_slots_empty(&self, empty: bool) {
     lock(&self.data).completion_slots_empty = empty;
+    self.changed.notify_all();
+  }
+
+  fn record_persistence_outcome(&self) {
+    let mut data = lock(&self.data);
+    data.persistence_outcomes = data.persistence_outcomes.saturating_add(1);
+    drop(data);
     self.changed.notify_all();
   }
 
@@ -3955,6 +4445,11 @@ struct TestLiveBehavior {
   fetch_thread_ids: Vec<String>,
   persist_thread_ids: Vec<String>,
   last_timeout: Option<Duration>,
+  fail_next_fetch: bool,
+  fallback_snapshot: Option<Arc<LiveRateLimitSnapshot>>,
+  queued_snapshots: VecDeque<Arc<LiveRateLimitSnapshot>>,
+  fail_next_persist: bool,
+  persisted_fetched_at: Vec<String>,
 }
 
 #[cfg(test)]
@@ -3966,6 +4461,7 @@ struct TestLiveExecutor {
   persist_calls: AtomicU64,
   active: AtomicU64,
   maximum_active: AtomicU64,
+  fallback_calls: AtomicU64,
 }
 
 #[cfg(test)]
@@ -3979,6 +4475,7 @@ impl TestLiveExecutor {
       persist_calls: AtomicU64::new(0),
       active: AtomicU64::new(0),
       maximum_active: AtomicU64::new(0),
+      fallback_calls: AtomicU64::new(0),
     }
   }
 
@@ -4013,6 +4510,30 @@ impl TestLiveExecutor {
     lock(&self.behavior).panic_once.insert(phase, 1);
   }
 
+  fn fail_next_fetch_with_fallback(&self, fallback: Arc<LiveRateLimitSnapshot>) {
+    let mut behavior = lock(&self.behavior);
+    behavior.fail_next_fetch = true;
+    behavior.fallback_snapshot = Some(fallback);
+  }
+
+  fn fail_next_fetch(&self) {
+    let mut behavior = lock(&self.behavior);
+    behavior.fail_next_fetch = true;
+    behavior.fallback_snapshot = None;
+  }
+
+  fn fallback_calls(&self) -> u64 {
+    self.fallback_calls.load(Ordering::Acquire)
+  }
+
+  fn fail_next_persist(&self) {
+    lock(&self.behavior).fail_next_persist = true;
+  }
+
+  fn queue_snapshot(&self, snapshot: Arc<LiveRateLimitSnapshot>) {
+    lock(&self.behavior).queued_snapshots.push_back(snapshot);
+  }
+
   fn fetch_calls(&self) -> u64 {
     self.fetch_calls.load(Ordering::Acquire)
   }
@@ -4029,6 +4550,19 @@ impl TestLiveExecutor {
       .unwrap_or_else(|poisoned| poisoned.into_inner());
     assert!(self.fetch_calls() >= expected);
     assert!(!timed_out.timed_out(), "timed out waiting for live fetch");
+  }
+
+  fn wait_for_persist_calls(&self, expected: u64, timeout: Duration) {
+    let behavior = lock(&self.behavior);
+    let (_behavior, timed_out) = self
+      .changed
+      .wait_timeout_while(behavior, timeout, |_| self.persist_calls() < expected)
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(self.persist_calls() >= expected);
+    assert!(
+      !timed_out.timed_out(),
+      "timed out waiting for live persistence"
+    );
   }
 
   fn maximum_active_fetches(&self) -> u64 {
@@ -4071,6 +4605,17 @@ impl TestLiveExecutor {
     lock(&self.behavior).last_timeout
   }
 
+  fn persisted_fetched_at(&self) -> Vec<String> {
+    lock(&self.behavior).persisted_fetched_at.clone()
+  }
+
+  fn snapshot_at(fetched_at: &str) -> Arc<LiveRateLimitSnapshot> {
+    Arc::new(LiveRateLimitSnapshot {
+      fetched_at: fetched_at.to_string(),
+      ..Self::snapshot()
+    })
+  }
+
   fn snapshot() -> LiveRateLimitSnapshot {
     LiveRateLimitSnapshot {
       limit_id: Some("runtime-test".to_string()),
@@ -4100,7 +4645,7 @@ impl LiveQuotaFetcher for TestLiveExecutor {
         Err(observed) => maximum = observed,
       }
     }
-    let (body_gate, pre_body, panic_now) = {
+    let (body_gate, pre_body, panic_now, fail_now, snapshot) = {
       let mut behavior = lock(&self.behavior);
       behavior
         .fetch_thread_ids
@@ -4111,6 +4656,8 @@ impl LiveQuotaFetcher for TestLiveExecutor {
         behavior.fetch_body_gates.remove(&call),
         behavior.pre_body_fetch_states.remove(&call),
         panic_now,
+        std::mem::take(&mut behavior.fail_next_fetch),
+        behavior.queued_snapshots.pop_front(),
       )
     };
     self.changed.notify_all();
@@ -4124,21 +4671,43 @@ impl LiveQuotaFetcher for TestLiveExecutor {
     if panic_now {
       panic!("intentional fetch panic");
     }
-    Ok(Self::snapshot())
+    if fail_now {
+      return Err("intentional live fetch failure".to_string());
+    }
+    Ok(
+      snapshot
+        .map(|snapshot| snapshot.as_ref().clone())
+        .unwrap_or_else(Self::snapshot),
+    )
+  }
+
+  fn fallback(&self) -> Option<LiveRateLimitSnapshot> {
+    self.fallback_calls.fetch_add(1, Ordering::AcqRel);
+    lock(&self.behavior)
+      .fallback_snapshot
+      .as_ref()
+      .map(|snapshot| snapshot.as_ref().clone())
   }
 }
 
 #[cfg(test)]
 impl LiveQuotaPersister for TestLiveExecutor {
-  fn persist(&self, _snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
+  fn persist(&self, snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
     let call = self.persist_calls.fetch_add(1, Ordering::AcqRel) + 1;
-    let (body_gate, panic_now) = {
+    let (body_gate, panic_now, fail_now) = {
       let mut behavior = lock(&self.behavior);
       behavior
         .persist_thread_ids
         .push(format!("{:?}", thread::current().id()));
       let panic_now = take_panic(&mut behavior.panic_once, PanicPhase::Persist);
-      (behavior.persist_body_gates.remove(&call), panic_now)
+      behavior
+        .persisted_fetched_at
+        .push(snapshot.fetched_at.clone());
+      (
+        behavior.persist_body_gates.remove(&call),
+        panic_now,
+        std::mem::take(&mut behavior.fail_next_persist),
+      )
     };
     self.changed.notify_all();
     if let Some(body_gate) = body_gate {
@@ -4146,6 +4715,9 @@ impl LiveQuotaPersister for TestLiveExecutor {
     }
     if panic_now {
       panic!("intentional persist panic");
+    }
+    if fail_now {
+      return Err("intentional persistence failure".to_string());
     }
     Ok(())
   }
@@ -4283,6 +4855,7 @@ struct RuntimeTestRig {
   handle: RefreshCoordinatorHandle,
   token: Arc<TestTokenExecutor>,
   live: Arc<TestLiveExecutor>,
+  live_cache: LiveQuotaCache,
   events: Arc<TestEvents>,
   mutation: UsageMutationCoordinator,
   activities: super::power::CountingActivityFactory,
@@ -4368,11 +4941,13 @@ impl RuntimeTestRig {
     let events = Arc::new(TestEvents::new(Arc::clone(&hooks)));
     let mutation = UsageMutationCoordinator::new();
     let activities = super::power::CountingActivityFactory::default();
+    let live_cache = LiveQuotaCache::new();
     let dependencies = RefreshRuntimeDependencies {
       config,
       token_executor: token.clone(),
       live_fetcher: live.clone(),
       live_persister: live.clone(),
+      live_cache: live_cache.clone(),
       event_sink: events.clone(),
       mutation: mutation.clone(),
       activity_factory: Arc::new(activities.clone()),
@@ -4387,6 +4962,7 @@ impl RuntimeTestRig {
       handle,
       token,
       live,
+      live_cache,
       events,
       mutation,
       activities,
@@ -4410,6 +4986,13 @@ impl RuntimeTestRig {
       let status = self.handle.status();
       !status.token.running && !status.live.running
     });
+  }
+
+  fn wait_for_persist_outcomes(&self, expected: u64, timeout: Duration) {
+    self
+      .runtime
+      .test_hooks
+      .wait_for(timeout, |data| data.persistence_outcomes >= expected);
   }
 
   fn shutdown(&self) {
