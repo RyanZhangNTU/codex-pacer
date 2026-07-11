@@ -2642,38 +2642,41 @@ fn persist_session(
     .and_then(|index| parsed.snapshots.get(index))
     .map(|snapshot| snapshot.usage.clone());
 
+  let mut usage_event_plan = Vec::new();
+  for (snapshot_index, snapshot) in parsed.snapshots.iter().enumerate().skip(snapshot_cutoff) {
+    if previous_usage.as_ref() == Some(&snapshot.usage) {
+      continue;
+    }
+
+    let delta = if let Some(previous) = previous_usage.as_ref() {
+      if snapshot.usage.total_tokens <= previous.total_tokens {
+        continue;
+      }
+      diff_usage(previous, &snapshot.usage)
+    } else if parsed.explicit_forked_from_id.is_some() {
+      snapshot
+        .last_token_usage
+        .clone()
+        .unwrap_or_else(|| snapshot.usage.clone())
+    } else {
+      snapshot.usage.clone()
+    };
+
+    previous_usage = Some(snapshot.usage.clone());
+    if is_zero_delta(&delta) {
+      continue;
+    }
+    usage_event_plan.push((snapshot_index, delta));
+  }
+
   insert_usage_events(
     conn,
-    parsed
-      .snapshots
+    usage_event_plan
       .iter()
-      .skip(snapshot_cutoff)
-      .map(|snapshot| snapshot.timestamp.as_str()),
+      .map(|(snapshot_index, _)| parsed.snapshots[*snapshot_index].timestamp.as_str()),
     |index| {
-      let snapshot = &parsed.snapshots[snapshot_cutoff + index];
-      if previous_usage.as_ref() == Some(&snapshot.usage) {
-        return None;
-      }
-
-      let delta = if let Some(previous) = previous_usage.as_ref() {
-        if snapshot.usage.total_tokens <= previous.total_tokens {
-          return None;
-        }
-        diff_usage(previous, &snapshot.usage)
-      } else if parsed.explicit_forked_from_id.is_some() {
-        snapshot
-          .last_token_usage
-          .clone()
-          .unwrap_or_else(|| snapshot.usage.clone())
-      } else {
-        snapshot.usage.clone()
-      };
-
-      previous_usage = Some(snapshot.usage.clone());
-      if is_zero_delta(&delta) {
-        return None;
-      }
-
+      let (snapshot_index, delta) = &usage_event_plan[index];
+      let snapshot = &parsed.snapshots[*snapshot_index];
       let resolved_pricing = resolve_pricing(catalog, &snapshot.model_id);
       let value_usd = calculate_value_usd(&delta, resolved_pricing.as_ref());
       Some(NewUsageEvent {
@@ -5265,6 +5268,156 @@ mod tests {
         crate::database::parse_epoch_millis(&persisted.0).expect("parse expected usage epoch")
       )
     );
+  }
+
+  #[test]
+  fn scan_ignores_malformed_timestamps_on_skipped_usage_snapshots() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_path = sessions_dir.join("skipped-usage-timestamps.jsonl");
+    let mut body = concat!(
+      "{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"97979797-9797-4797-8797-979797979797\"}}\n",
+      "{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n"
+    )
+    .to_string();
+    for fixture in [
+      TokenFixture {
+        timestamp: "invalid-zero-delta",
+        total: (0, 0, 0, 0),
+        last: (0, 0, 0, 0),
+      },
+      TokenFixture {
+        timestamp: "2026-07-10T00:00:02Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "invalid-duplicate",
+        total: (100, 0, 0, 100),
+        last: (0, 0, 0, 0),
+      },
+      TokenFixture {
+        timestamp: "invalid-non-monotonic",
+        total: (90, 0, 0, 90),
+        last: (0, 0, 0, 0),
+      },
+    ] {
+      body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&session_path, body).expect("write session");
+    let db_path = directory.path().join("usage.sqlite");
+
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open database");
+    let persisted = conn
+      .query_row(
+        "
+        SELECT COUNT(*), MIN(timestamp), MIN(timestamp_ms), SUM(total_tokens)
+        FROM usage_events
+        ",
+        [],
+        |row| {
+          Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+          ))
+        },
+      )
+      .expect("load persisted usage");
+    assert_eq!(persisted.0, 1);
+    assert_eq!(persisted.1, "2026-07-10T00:00:02Z");
+    assert_eq!(
+      persisted.2,
+      crate::database::parse_epoch_millis(&persisted.1).expect("parse persisted timestamp")
+    );
+    assert_eq!(persisted.3, 100);
+  }
+
+  #[test]
+  fn malformed_timestamp_on_written_usage_event_rolls_back_batch_and_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_path = sessions_dir.join("written-usage-timestamps.jsonl");
+    let mut body = concat!(
+      "{\"timestamp\":\"2026-07-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"96969696-9696-4696-8696-969696969696\"}}\n",
+      "{\"timestamp\":\"2026-07-10T00:00:01Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n"
+    )
+    .to_string();
+    for fixture in [
+      TokenFixture {
+        timestamp: "2026-07-10T00:00:02Z",
+        total: (100, 0, 0, 100),
+        last: (100, 0, 0, 100),
+      },
+      TokenFixture {
+        timestamp: "invalid-written-event",
+        total: (200, 0, 0, 200),
+        last: (100, 0, 0, 100),
+      },
+    ] {
+      body.push_str(&token_count_line(fixture));
+    }
+    std::fs::write(&session_path, body).expect("write session");
+    let db_path = directory.path().join("usage.sqlite");
+    initialize_scan_database(&db_path);
+    configure_codex_home(&db_path, &codex_home);
+    let conn = open_connection(&db_path).expect("open database");
+    let freshness_before = conn
+      .query_row(
+        "
+        SELECT last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at, scan_commit_revision
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| {
+          Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+          ))
+        },
+      )
+      .expect("load initial freshness");
+    drop(conn);
+
+    let error = perform_scan(&db_path, None).expect_err("reject malformed written event");
+
+    assert!(error.contains("Invalid usage event timestamp"));
+    let conn = open_connection(&db_path).expect("reopen database");
+    let usage_count: i64 = conn
+      .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
+      .expect("count usage events");
+    let freshness_after = conn
+      .query_row(
+        "
+        SELECT last_scan_started_at, last_scan_completed_at,
+               last_full_scan_completed_at, scan_commit_revision
+        FROM sync_settings
+        WHERE singleton_id = 1
+        ",
+        [],
+        |row| {
+          Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+          ))
+        },
+      )
+      .expect("load rolled back freshness");
+    assert_eq!(usage_count, 0);
+    assert_eq!(freshness_after, freshness_before);
   }
 
   #[test]
