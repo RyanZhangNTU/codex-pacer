@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, Local, LocalResult, TimeZone, Timelike};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -280,7 +281,7 @@ enum PreparedStorageBuilder {
     estimated_bytes: usize,
   },
   Spool {
-    writer: BufWriter<File>,
+    writer: GzEncoder<BufWriter<File>>,
     records: usize,
   },
 }
@@ -576,7 +577,7 @@ impl PreparedStorageBuilder {
         } else {
           let file = tempfile::tempfile()
             .map_err(|error| format!("Failed to create prepared scan spool: {error}"))?;
-          let mut writer = BufWriter::new(file);
+          let mut writer = GzEncoder::new(BufWriter::new(file), Compression::fast());
           let mut records = 0usize;
           for buffered in entries {
             write_spool_record(&mut writer, buffered)?;
@@ -601,13 +602,12 @@ impl PreparedStorageBuilder {
     match self {
       Self::Memory { entries, .. } => Ok(PreparedStorage::Memory(entries)),
       Self::Spool {
-        mut writer,
+        writer,
         records,
       } => {
-        writer
-          .flush()
-          .map_err(|error| format!("Failed to flush prepared scan spool: {error}"))?;
         let file = writer
+          .finish()
+          .map_err(|error| format!("Failed to compress prepared scan spool: {error}"))?
           .into_inner()
           .map_err(|error| format!("Failed to finish prepared scan spool: {}", error.error()))?;
         Ok(PreparedStorage::Spool { file, records })
@@ -616,7 +616,10 @@ impl PreparedStorageBuilder {
   }
 }
 
-fn write_spool_record(writer: &mut BufWriter<File>, entry: PreparedSession) -> Result<(), String> {
+fn write_spool_record(
+  writer: &mut GzEncoder<BufWriter<File>>,
+  entry: PreparedSession,
+) -> Result<(), String> {
   let entry = SpoolPreparedSession::from(entry);
   serde_json::to_writer(&mut *writer, &entry)
     .map_err(|error| format!("Failed to write prepared scan spool: {error}"))?;
@@ -1146,7 +1149,7 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
       file
         .seek(SeekFrom::Start(0))
         .map_err(|error| format!("Failed to rewind prepared scan spool: {error}"))?;
-      let reader = BufReader::new(file);
+      let reader = GzDecoder::new(BufReader::new(file));
       let mut stream =
         serde_json::Deserializer::from_reader(reader).into_iter::<SpoolPreparedSession>();
       let mut records_read = 0usize;
@@ -3985,6 +3988,40 @@ mod tests {
     };
 
     assert_eq!(link_count, 0, "spool must have no directory entry");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn spool_compresses_repetitive_prepared_records() {
+    let mut builder = PreparedStorageBuilder::new();
+    builder
+      .push(prepared_session_fixture(
+        PathBuf::from("/synthetic/a-large.jsonl"),
+        "80808080-8080-8080-8080-808080808080",
+        PREPARED_SPOOL_THRESHOLD_BYTES * 2,
+      ))
+      .expect("buffer first large record");
+    builder
+      .push(prepared_session_fixture(
+        PathBuf::from("/synthetic/b-large.jsonl"),
+        "81818181-8181-8181-8181-818181818181",
+        PREPARED_SPOOL_THRESHOLD_BYTES * 2,
+      ))
+      .expect("spill second large record");
+
+    let storage = builder.finish().expect("finish compressed spool");
+    let bytes = match storage {
+      PreparedStorage::Memory(_) => panic!("expected spool storage"),
+      PreparedStorage::Spool { file, records } => {
+        assert_eq!(records, 2);
+        file.metadata().expect("spool metadata").len()
+      }
+    };
+
+    assert!(
+      bytes < 64 * 1024,
+      "repetitive prepared records should compress below 64 KiB, got {bytes}"
+    );
   }
 
   #[cfg(unix)]
