@@ -223,6 +223,17 @@ pub struct LiveRateLimitSnapshot {
   pub fetched_at: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveQuotaState {
+  pub rate_limits: Option<LiveRateLimitSnapshot>,
+  pub source_fetched_at: Option<String>,
+  pub cached_at: String,
+  pub is_fallback: bool,
+  pub last_live_success_at: Option<String>,
+  pub refreshing: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuBarPopupQuotaSnapshot {

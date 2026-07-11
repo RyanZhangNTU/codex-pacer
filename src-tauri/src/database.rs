@@ -4,20 +4,38 @@ use std::time::Duration;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 
+#[allow(dead_code)]
+mod epoch_backfill;
 mod rate_limit_samples;
 mod subscriptions;
 mod sync_settings;
+mod usage_events;
 
-pub use rate_limit_samples::{insert_live_rate_limit_snapshot, replace_session_rate_limit_samples};
+#[allow(unused_imports)]
+pub use epoch_backfill::{
+    backfill_epoch_batch, backfill_epoch_batch_cancellable, epoch_backfill_pending,
+    parse_epoch_millis, EpochBackfillProgress,
+};
+#[allow(unused_imports)]
+pub use rate_limit_samples::{
+    append_session_rate_limit_samples, insert_live_rate_limit_snapshot, load_latest_rate_limits,
+    replace_session_rate_limit_samples, RateLimitWriteStats,
+};
 pub use subscriptions::{
     canonical_subscription_currency, get_subscription_profile, save_subscription_profile,
 };
 pub use sync_settings::{
     get_last_full_scan_completed, get_sync_settings, save_sync_settings,
-    set_last_scan_started_for_source, set_scan_completed_for_source,
+    set_scan_completed_for_source,
+};
+pub use usage_events::{
+    append_session_usage_events, replace_session_usage_events, NewUsageEvent,
+};
+pub(crate) use sync_settings::{
+    preview_scan_freshness_for_source, set_last_scan_started_for_source_in_transaction,
 };
 #[cfg(test)]
-pub use sync_settings::set_last_full_scan_completed;
+pub use sync_settings::{set_last_full_scan_completed, set_last_scan_started_for_source};
 
 pub fn now_utc_string() -> String {
     Utc::now().to_rfc3339()
@@ -36,8 +54,21 @@ pub fn i64_to_bool(value: i64) -> bool {
 }
 
 pub fn open_connection(db_path: &Path) -> rusqlite::Result<Connection> {
+    open_connection_with_busy_timeout(db_path, Duration::from_secs(10))
+}
+
+pub(crate) fn open_epoch_maintenance_connection(
+    db_path: &Path,
+) -> rusqlite::Result<Connection> {
+    open_connection_with_busy_timeout(db_path, Duration::from_millis(200))
+}
+
+fn open_connection_with_busy_timeout(
+    db_path: &Path,
+    busy_timeout: Duration,
+) -> rusqlite::Result<Connection> {
     let conn = Connection::open(db_path)?;
-    conn.busy_timeout(Duration::from_secs(10))?;
+    conn.busy_timeout(busy_timeout)?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -46,9 +77,22 @@ pub fn open_connection(db_path: &Path) -> rusqlite::Result<Connection> {
 
 pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(include_str!("../sql/schema.sql"))?;
+    ensure_import_state_schema(conn)?;
+    epoch_backfill::ensure_epoch_schema(conn)?;
     sync_settings::ensure_sync_settings_schema(conn)?;
     ensure_singletons(conn)?;
     conn.execute_batch(include_str!("../sql/indexes.sql"))?;
+    Ok(())
+}
+
+fn ensure_import_state_schema(conn: &Connection) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare("PRAGMA table_info(import_state)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if !columns.iter().any(|column| column == "parser_checkpoint") {
+        conn.execute("ALTER TABLE import_state ADD COLUMN parser_checkpoint TEXT", [])?;
+    }
     Ok(())
 }
 
@@ -99,6 +143,95 @@ mod tests {
     use crate::models::{SubscriptionProfile, SyncSettings};
 
     #[test]
+    fn epoch_maintenance_connection_uses_short_busy_timeout_and_normal_pragmas() {
+        let directory = tempfile::tempdir().expect("create maintenance connection directory");
+        let path = directory.path().join("maintenance.sqlite3");
+
+        let conn = open_epoch_maintenance_connection(&path)
+            .expect("open epoch maintenance connection");
+
+        let busy_timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("read busy timeout");
+        let foreign_keys: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("read foreign key mode");
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("read journal mode");
+        let synchronous: i64 = conn
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .expect("read synchronous mode");
+        assert_eq!(busy_timeout, 200);
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        assert_eq!(synchronous, 1, "SQLite NORMAL synchronous mode");
+    }
+
+    #[test]
+    fn init_db_adds_parser_checkpoint_to_legacy_import_state() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(
+            "
+            CREATE TABLE import_state (
+              source_path TEXT PRIMARY KEY,
+              session_id TEXT,
+              source_bucket TEXT NOT NULL,
+              file_size INTEGER NOT NULL,
+              file_mtime_ms INTEGER NOT NULL,
+              last_imported_at TEXT NOT NULL
+            );
+            ",
+        )
+        .expect("seed legacy import state");
+
+        init_db(&conn).expect("migrate database");
+        let columns = conn
+            .prepare("PRAGMA table_info(import_state)")
+            .expect("prepare column query")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query columns")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect columns");
+        assert!(columns.iter().any(|column| column == "parser_checkpoint"));
+    }
+
+    #[test]
+    fn init_db_adds_scan_commit_revision_to_existing_sync_settings() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(
+            "
+            CREATE TABLE sync_settings (
+              singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+              codex_home TEXT,
+              auto_scan_enabled INTEGER NOT NULL,
+              auto_scan_interval_minutes INTEGER NOT NULL,
+              last_scan_started_at TEXT,
+              last_scan_completed_at TEXT,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO sync_settings (
+              singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
+              last_scan_started_at, last_scan_completed_at, updated_at
+            )
+            VALUES (1, NULL, 1, 5, NULL, NULL, '2026-07-10T00:00:00Z');
+            ",
+        )
+        .expect("seed legacy schema");
+
+        init_db(&conn).expect("migrate schema");
+        let revision: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load scan commit revision");
+
+        assert_eq!(revision, 0);
+    }
+
+    #[test]
     fn init_db_adds_menu_bar_flag_to_existing_sync_settings() {
         let conn = Connection::open_in_memory().expect("open in-memory database");
 
@@ -146,7 +279,9 @@ mod tests {
         );
         assert!(settings.menu_bar_popup_show_reset_timeline);
         assert!(settings.menu_bar_popup_show_actions);
-        assert!(get_last_full_scan_completed(&conn).expect("load last full scan").is_none());
+        assert!(get_last_full_scan_completed(&conn)
+            .expect("load last full scan")
+            .is_none());
         assert!(!settings.hide_dock_icon_when_menu_bar_visible);
     }
 
@@ -210,9 +345,12 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory database");
         init_db(&conn).expect("init database");
 
-        assert!(get_last_full_scan_completed(&conn).expect("load initial value").is_none());
+        assert!(get_last_full_scan_completed(&conn)
+            .expect("load initial value")
+            .is_none());
 
-        set_last_full_scan_completed(&conn, "2026-03-27T00:00:00Z").expect("set full scan timestamp");
+        set_last_full_scan_completed(&conn, "2026-03-27T00:00:00Z")
+            .expect("set full scan timestamp");
 
         assert_eq!(
             get_last_full_scan_completed(&conn).expect("load saved value"),
@@ -392,6 +530,291 @@ mod tests {
 
         assert_eq!(settings.auto_scan_interval_minutes, 180);
         assert_eq!(settings.live_quota_refresh_interval_seconds, 10800);
+    }
+
+    #[test]
+    fn settings_save_does_not_overwrite_newer_scan_freshness() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        let mut stale_settings = save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-a".to_string()),
+                ..SyncSettings::default()
+            },
+        )
+        .expect("save initial settings");
+
+        set_last_scan_started_for_source(
+            &conn,
+            "2026-07-11T01:00:00Z",
+            Some("/tmp/codex-home-a"),
+            "/tmp/codex-home-a",
+        )
+        .expect("record newer scan start");
+        assert!(set_scan_completed_for_source(
+            &conn,
+            "2026-07-11T01:01:00Z",
+            Some("/tmp/codex-home-a"),
+            "/tmp/codex-home-a",
+            true,
+            false,
+        )
+        .expect("record newer scan completion"));
+
+        stale_settings.auto_scan_interval_minutes = 17;
+        save_sync_settings(&conn, &stale_settings).expect("save stale config snapshot");
+
+        let saved = get_sync_settings(&conn).expect("reload settings");
+        assert_eq!(
+            saved.last_scan_started_at.as_deref(),
+            Some("2026-07-11T01:00:00Z")
+        );
+        assert_eq!(
+            saved.last_scan_completed_at.as_deref(),
+            Some("2026-07-11T01:01:00Z")
+        );
+    }
+
+    #[test]
+    fn home_change_clears_all_scan_freshness_in_one_transaction() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        let settings = save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-a".to_string()),
+                ..SyncSettings::default()
+            },
+        )
+        .expect("save first Codex home");
+        set_last_scan_started_for_source(
+            &conn,
+            "2026-07-11T02:00:00Z",
+            Some("/tmp/codex-home-a"),
+            "/tmp/resolved-home-a",
+        )
+        .expect("record scan start");
+        assert!(set_scan_completed_for_source(
+            &conn,
+            "2026-07-11T02:01:00Z",
+            Some("/tmp/codex-home-a"),
+            "/tmp/resolved-home-a",
+            true,
+            false,
+        )
+        .expect("record full scan completion"));
+        let revision_before: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load revision before home change");
+
+        save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-b".to_string()),
+                ..settings
+            },
+        )
+        .expect("change Codex home");
+
+        let (started, completed, full_completed, resolved_home, revision): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+        ) = conn
+            .query_row(
+                "
+                SELECT last_scan_started_at, last_scan_completed_at,
+                       last_full_scan_completed_at, last_scan_codex_home,
+                       scan_commit_revision
+                FROM sync_settings
+                WHERE singleton_id = 1
+                ",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("load freshness after home change");
+
+        assert_eq!(
+            (started, completed, full_completed, resolved_home),
+            (None, None, None, None)
+        );
+        assert_eq!(revision, revision_before + 1);
+    }
+
+    #[test]
+    fn codex_home_aba_advances_scan_commit_revision() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        let initial_revision: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load initial revision");
+        let settings_a = save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-a".to_string()),
+                ..SyncSettings::default()
+            },
+        )
+        .expect("save home A");
+        let revision_a: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load home A revision");
+        let settings_b = save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-b".to_string()),
+                ..settings_a
+            },
+        )
+        .expect("save home B");
+        let revision_b: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load home B revision");
+        save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-a".to_string()),
+                ..settings_b
+            },
+        )
+        .expect("return to home A");
+        let final_revision: i64 = conn
+            .query_row(
+                "SELECT scan_commit_revision FROM sync_settings WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load final revision");
+
+        assert_eq!(revision_a, initial_revision + 1);
+        assert_eq!(revision_b, revision_a + 1);
+        assert_eq!(final_revision, revision_b + 1);
+    }
+
+    #[test]
+    fn unchanged_home_config_save_preserves_revision_and_hidden_freshness_columns() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+
+        let mut settings = save_sync_settings(
+            &conn,
+            &SyncSettings {
+                codex_home: Some("/tmp/codex-home-a".to_string()),
+                ..SyncSettings::default()
+            },
+        )
+        .expect("save Codex home");
+        set_last_scan_started_for_source(
+            &conn,
+            "2026-07-11T03:00:00Z",
+            Some("/tmp/codex-home-a"),
+            "/tmp/resolved-home-a",
+        )
+        .expect("record scan start");
+        assert!(set_scan_completed_for_source(
+            &conn,
+            "2026-07-11T03:01:00Z",
+            Some("/tmp/codex-home-a"),
+            "/tmp/resolved-home-a",
+            true,
+            false,
+        )
+        .expect("record full scan completion"));
+        conn.execute(
+            "UPDATE sync_settings SET scan_commit_revision = 41 WHERE singleton_id = 1",
+            [],
+        )
+        .expect("seed revision");
+        let before: (i64, Option<String>, Option<String>) = conn
+            .query_row(
+                "
+                SELECT scan_commit_revision, last_scan_codex_home,
+                       last_full_scan_completed_at
+                FROM sync_settings
+                WHERE singleton_id = 1
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load hidden freshness before save");
+
+        settings.auto_scan_interval_minutes = 19;
+        save_sync_settings(&conn, &settings).expect("save unchanged-home config");
+
+        let after: (i64, Option<String>, Option<String>) = conn
+            .query_row(
+                "
+                SELECT scan_commit_revision, last_scan_codex_home,
+                       last_full_scan_completed_at
+                FROM sync_settings
+                WHERE singleton_id = 1
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load hidden freshness after save");
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn settings_insert_ignores_payload_freshness() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("init database");
+        conn.execute("DELETE FROM sync_settings WHERE singleton_id = 1", [])
+            .expect("remove singleton to exercise insert path");
+
+        save_sync_settings(
+            &conn,
+            &SyncSettings {
+                last_scan_started_at: Some("stale-start".to_string()),
+                last_scan_completed_at: Some("stale-complete".to_string()),
+                ..SyncSettings::default()
+            },
+        )
+        .expect("insert settings singleton");
+
+        let freshness: (Option<String>, Option<String>) = conn
+            .query_row(
+                "
+                SELECT last_scan_started_at, last_scan_completed_at
+                FROM sync_settings
+                WHERE singleton_id = 1
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("load inserted freshness");
+        assert_eq!(freshness, (None, None));
     }
 
     #[test]

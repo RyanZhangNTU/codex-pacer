@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
+  timestamp_ms INTEGER,
   model_id TEXT NOT NULL,
   input_tokens INTEGER NOT NULL,
   cached_input_tokens INTEGER NOT NULL,
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS session_overrides (
 CREATE TABLE IF NOT EXISTS sync_settings (
   singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
   sync_settings_schema_version INTEGER NOT NULL DEFAULT 2,
+  scan_commit_revision INTEGER NOT NULL DEFAULT 0,
   codex_home TEXT,
   auto_scan_enabled INTEGER NOT NULL,
   auto_scan_interval_minutes INTEGER NOT NULL,
@@ -107,12 +109,31 @@ CREATE TABLE IF NOT EXISTS import_state (
   source_bucket TEXT NOT NULL,
   file_size INTEGER NOT NULL,
   file_mtime_ms INTEGER NOT NULL,
+  parser_checkpoint TEXT,
   last_imported_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS data_repairs (
   repair_key TEXT PRIMARY KEY,
   completed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS data_repair_progress (
+  repair_key TEXT NOT NULL,
+  stream_key TEXT NOT NULL,
+  progress_value INTEGER NOT NULL,
+  PRIMARY KEY (repair_key, stream_key)
+);
+
+CREATE TABLE IF NOT EXISTS data_repair_quarantine (
+  repair_key TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  row_id INTEGER NOT NULL,
+  column_name TEXT NOT NULL,
+  raw_value TEXT NOT NULL,
+  error_message TEXT NOT NULL,
+  quarantined_at TEXT NOT NULL,
+  PRIMARY KEY (repair_key, table_name, row_id, column_name)
 );
 
 CREATE TABLE IF NOT EXISTS data_repair_pending_files (
@@ -129,12 +150,34 @@ CREATE TABLE IF NOT EXISTS rate_limit_samples (
   source_session_id TEXT NOT NULL DEFAULT '',
   bucket TEXT NOT NULL,
   sample_timestamp TEXT NOT NULL,
+  sample_timestamp_ms INTEGER,
   limit_id TEXT NOT NULL DEFAULT '',
   limit_name TEXT NOT NULL DEFAULT '',
   plan_type TEXT NOT NULL DEFAULT '',
   window_start TEXT NOT NULL,
+  window_start_ms INTEGER,
   resets_at TEXT NOT NULL,
+  resets_at_ms INTEGER,
   used_percent INTEGER NOT NULL,
   remaining_percent INTEGER NOT NULL,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS latest_rate_limits (
+  source_kind TEXT NOT NULL,
+  source_session_id TEXT NOT NULL DEFAULT '',
+  bucket TEXT NOT NULL,
+  sample_timestamp TEXT NOT NULL,
+  sample_timestamp_ms INTEGER NOT NULL,
+  limit_id TEXT NOT NULL DEFAULT '',
+  limit_name TEXT NOT NULL DEFAULT '',
+  plan_type TEXT NOT NULL DEFAULT '',
+  window_start TEXT NOT NULL,
+  window_start_ms INTEGER NOT NULL,
+  resets_at TEXT NOT NULL,
+  resets_at_ms INTEGER NOT NULL,
+  used_percent INTEGER NOT NULL,
+  remaining_percent INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (source_kind, source_session_id, bucket)
 );

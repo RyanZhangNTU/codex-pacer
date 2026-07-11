@@ -176,7 +176,6 @@ pub fn get_window_api_value(
     return sum_all_api_value(&conn).map_err(|error| error.to_string());
   }
 
-  let events = load_events(&conn).map_err(|error| error.to_string())?;
   let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
   let resolved_window = resolve_window(
     &conn,
@@ -184,12 +183,12 @@ pub fn get_window_api_value(
     anchor,
     custom_start,
     custom_end,
-    &events,
+    &[],
     profile.billing_anchor_day,
     live_rate_limits.as_ref(),
     live_window_offset,
   )?;
-  Ok(sum_window_api_value(&events, &resolved_window.window))
+  sum_window_api_value_sql(&conn, &resolved_window.window).map_err(|error| error.to_string())
 }
 
 pub fn list_conversations(
@@ -1198,12 +1197,28 @@ fn sum_all_api_value(conn: &Connection) -> rusqlite::Result<f64> {
   })
 }
 
-fn sum_window_api_value(events: &[EventRow], window: &Window) -> f64 {
-  events
-    .iter()
-    .filter(|event| event_in_window(event, window))
-    .map(|event| event.value_usd)
-    .sum()
+fn sum_window_api_value_sql(conn: &Connection, window: &Window) -> rusqlite::Result<f64> {
+  let start_ms = window.start.timestamp_millis();
+  let end_ms = window.end.timestamp_millis();
+  conn.query_row(
+    "
+    SELECT
+      COALESCE((
+        SELECT SUM(value_usd)
+        FROM usage_events
+        WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2
+      ), 0.0)
+      + COALESCE((
+        SELECT SUM(value_usd)
+        FROM usage_events
+        WHERE timestamp_ms IS NULL
+          AND unixepoch(timestamp) * 1000 >= ?1
+          AND unixepoch(timestamp) * 1000 < ?2
+      ), 0.0)
+    ",
+    rusqlite::params![start_ms, end_ms],
+    |row| row.get(0),
+  )
 }
 
 fn resolve_window(
