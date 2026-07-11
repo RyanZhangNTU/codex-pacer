@@ -3,6 +3,9 @@ CREATE INDEX IF NOT EXISTS idx_usage_events_timestamp ON usage_events(timestamp)
 CREATE INDEX IF NOT EXISTS idx_usage_events_timestamp_ms
   ON usage_events(timestamp_ms, id)
   WHERE timestamp_ms IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_usage_events_missing_timestamp_ms
+  ON usage_events(id)
+  WHERE timestamp_ms IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_root_session_id ON sessions(root_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent_session_id ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_source_state ON sessions(source_state);
