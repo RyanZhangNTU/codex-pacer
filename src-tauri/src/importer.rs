@@ -14,9 +14,10 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::database::{
-  bool_to_i64, insert_usage_events, now_utc_string, open_connection,
+  bool_to_i64, now_utc_string, open_connection,
   preview_scan_freshness_for_source, replace_session_rate_limit_samples,
-  set_last_scan_started_for_source_in_transaction, set_scan_completed_for_source, NewUsageEvent,
+  replace_session_usage_events, set_last_scan_started_for_source_in_transaction,
+  set_scan_completed_for_source, NewUsageEvent,
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
@@ -2626,10 +2627,6 @@ fn persist_session(
     ],
   )?;
 
-  conn.execute(
-    "DELETE FROM usage_events WHERE session_id = ?1",
-    params![parsed.raw_session.session_id],
-  )?;
   replace_session_rate_limit_samples(
     conn,
     &parsed.raw_session.session_id,
@@ -2669,8 +2666,9 @@ fn persist_session(
     usage_event_plan.push((snapshot_index, delta));
   }
 
-  insert_usage_events(
+  replace_session_usage_events(
     conn,
+    &parsed.raw_session.session_id,
     usage_event_plan
       .iter()
       .map(|(snapshot_index, _)| parsed.snapshots[*snapshot_index].timestamp.as_str()),
@@ -5431,7 +5429,7 @@ mod tests {
       .next()
       .expect("persist_session body");
 
-    assert!(persist_session_source.contains("insert_usage_events("));
+    assert!(persist_session_source.contains("replace_session_usage_events("));
     assert!(!persist_session_source.contains("INSERT INTO usage_events"));
   }
 
