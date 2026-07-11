@@ -126,6 +126,31 @@ const PARSER_PREFIX_SIGNATURE_BYTES: u64 = 128;
 const PARENT_REPLAY_CACHE_MAX_ENTRIES: usize = 4;
 const PARENT_REPLAY_CACHE_MAX_BYTES: usize = 256 * 1024;
 
+struct RefreshMemoryRelief;
+
+impl Drop for RefreshMemoryRelief {
+  fn drop(&mut self) {
+    release_unused_process_memory();
+  }
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+  fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+}
+
+#[cfg(target_os = "macos")]
+fn release_unused_process_memory() {
+  // SAFETY: A null zone asks the macOS allocator to visit every registered zone.
+  // The call only releases pages currently unused by those zones.
+  unsafe {
+    malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+  }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn release_unused_process_memory() {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanKind {
   Full,
@@ -1105,6 +1130,7 @@ pub(crate) fn prepare_scan(
 }
 
 pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult, String> {
+  let _memory_relief = RefreshMemoryRelief;
   let PreparedScan {
     db_path,
     source_identity,
