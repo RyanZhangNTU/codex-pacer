@@ -214,10 +214,6 @@ export async function getScanInProgress() {
   return invokeOrMock('getScanInProgress', {}, () => false)
 }
 
-export async function refreshBackgroundData(): Promise<import('./types').ScanResult | null> {
-  return invokeOrMock('refreshBackgroundData', {}, () => null)
-}
-
 export async function refreshPricing() {
   return invokeOrMock('refreshPricing', {}, () => [])
 }

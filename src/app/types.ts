@@ -64,6 +64,18 @@ export interface ScanResult {
   lastCompletedAt: string
 }
 
+export interface RefreshCompletedEvent {
+  refreshRevision: number
+  lane: 'token' | 'live'
+  generation: number
+  usageRevision: number
+  quotaRevision: number
+  sourceGeneration: number
+  succeeded: boolean
+  failure: string | null
+  completedAt: string
+}
+
 export interface OverviewStats {
   apiValueUsd: number
   subscriptionCostUsd: number

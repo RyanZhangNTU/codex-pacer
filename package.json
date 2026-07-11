@@ -10,10 +10,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "npm run test:issue-1 && npm run test:issue-3 && npm run test:data-freshness && npm run test:settings-save",
+    "test": "npm run test:issue-1 && npm run test:issue-3 && npm run test:data-freshness && npm run test:refresh-events && npm run test:settings-save",
     "test:issue-1": "node scripts/test-issue-1-view-controls.mjs",
     "test:issue-3": "node scripts/test-issue-3-custom-range.mjs",
     "test:data-freshness": "node --experimental-strip-types scripts/test-data-freshness.mjs",
+    "test:refresh-events": "node --experimental-strip-types scripts/test-refresh-events.mjs",
     "test:settings-save": "node --experimental-strip-types scripts/test-settings-save.mjs",
     "preview": "vite preview",
     "tauri": "tauri"

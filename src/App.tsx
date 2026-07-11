@@ -1,6 +1,7 @@
 import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   BadgeDollarSign,
   ChartNoAxesCombined,
@@ -15,9 +16,7 @@ import {
 import {
   getScanInProgress,
   getConversationDetail,
-  getLiveRateLimits,
   loadDashboard,
-  refreshBackgroundData,
   refreshPricing,
   scanCodexUsage,
   updateSubscriptionProfile,
@@ -25,11 +24,10 @@ import {
 } from './app/api'
 import {
   loadConversationDetailForGeneration,
-  refreshDashboardAfterBackgroundScan,
   runScanWithOverlapRetry,
   shouldKeepConversationDetail,
-  waitForScanToSettleUntilCancelled,
 } from './app/dataFreshness'
+import { SurfaceRevisionGate } from './app/refreshEvents'
 import { saveSettingsWithCodexHomeRollback } from './app/settingsSave'
 import {
   formatCompactDateTime,
@@ -54,6 +52,7 @@ import type {
   ModelShare,
   OverviewBucket,
   OverviewResponse,
+  RefreshCompletedEvent,
   ShareDimension,
   ShareMode,
   ShareSlice,
@@ -82,10 +81,6 @@ const BUCKETS: OverviewBucket[] = [
   'total',
 ]
 
-function unifiedRefreshIntervalMs(autoScanIntervalMinutes: number | null | undefined) {
-  return Math.max(60000, (autoScanIntervalMinutes ?? 5) * 60 * 1000)
-}
-
 function App() {
   const { language, setLanguage, t } = useI18n()
   const [view, setView] = useState<AppView>('overview')
@@ -111,11 +106,12 @@ function App() {
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const syncSettingsRef = useRef<SyncSettings | null>(null)
-  const loadShellRef = useRef<(requestScan?: boolean) => Promise<void>>(async () => {})
+  const loadShellRef = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
   const lastRequestedQueryKeyRef = useRef<string | null>(null)
   const latestLoadRequestIdRef = useRef(0)
   const detailCacheRef = useRef(new Map<string, ConversationDetail>())
   const latestDetailRequestIdRef = useRef(0)
+  const refreshRevisionGateRef = useRef(new SurfaceRevisionGate())
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
 
   const waitForScanToSettle = useCallback(async (timeoutMs = 15000) => {
@@ -133,7 +129,7 @@ function App() {
     syncSettingsRef.current = syncSettings
   }, [syncSettings])
 
-  const loadShell = useCallback(async (requestScan = false) => {
+  const loadShell = useCallback(async (quiet = false) => {
     const requestId = latestLoadRequestIdRef.current + 1
     latestLoadRequestIdRef.current = requestId
     const requestBucket = bucket
@@ -150,21 +146,14 @@ function App() {
       requestSearch,
       requestLiveWindowOffset,
     )
-    setIsBusy(true)
-    if ((requestBucket === 'five_hour' || requestBucket === 'seven_day') && requestLiveWindowOffset === 0) {
+    if (
+      !quiet &&
+      (requestBucket === 'five_hour' || requestBucket === 'seven_day') &&
+      requestLiveWindowOffset === 0
+    ) {
       setStatusMessage(t.status.fetchingLiveQuotaWindow)
     }
     try {
-      if (requestScan) {
-        const scan = await runScanWithOverlapRetry(
-          () => scanCodexUsage(syncSettingsRef.current?.codexHome ?? null),
-          (error) => String(error).includes('already running'),
-          waitForScanToSettle,
-          () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
-        )
-        setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
-      }
-
       const snapshot = await loadDashboard(
         requestBucket,
         requestAnchor,
@@ -225,16 +214,11 @@ function App() {
       if (requestId !== latestLoadRequestIdRef.current) {
         return
       }
-      startTransition(() => {
-        setLoadedQueryKey(null)
-      })
-      setStatusMessage(t.status.failedToLoad(t.buckets[requestBucket], String(error)))
-    } finally {
-      if (requestId === latestLoadRequestIdRef.current) {
-        setIsBusy(false)
+      if (!quiet) {
+        setStatusMessage(t.status.failedToLoad(t.buckets[requestBucket], String(error)))
       }
     }
-  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t, waitForScanToSettle])
+  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t])
 
   const currentQueryKey = buildQueryKey(
     bucket,
@@ -272,14 +256,24 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return
 
+    let cancelled = false
     let dispose: (() => void) | undefined
     void listen('codex-counter://open-settings', () => {
-      setSettingsOpen(true)
-    }).then((unlisten) => {
-      dispose = unlisten
+      if (!cancelled) {
+        setSettingsOpen(true)
+      }
     })
+      .then((unlisten) => {
+        if (cancelled) {
+          unlisten()
+        } else {
+          dispose = unlisten
+        }
+      })
+      .catch(() => {})
 
     return () => {
+      cancelled = true
       dispose?.()
     }
   }, [])
@@ -288,6 +282,85 @@ function App() {
     if (!isTauri()) return
     void emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_LANGUAGE_EVENT, { language }).catch(() => {})
   }, [language])
+
+  useEffect(() => {
+    if (!isTauri()) return
+
+    let cancelled = false
+    const disposers = new Set<() => void>()
+    const appWindow = getCurrentWindow()
+    const trackRegistration = (registration: Promise<() => void>) => {
+      void registration
+        .then((dispose) => {
+          if (cancelled) {
+            dispose()
+          } else {
+            disposers.add(dispose)
+          }
+        })
+        .catch(() => {})
+    }
+    const reloadDashboard = () => {
+      void loadShellRef.current(true)
+    }
+    const handleCompletion = async (event: RefreshCompletedEvent) => {
+      let visible: boolean
+      try {
+        visible = await getCurrentWindow().isVisible()
+      } catch {
+        return
+      }
+      if (cancelled) return
+      if (refreshRevisionGateRef.current.accept(event, visible) === 'reload') {
+        reloadDashboard()
+      }
+    }
+    const handleVisible = async () => {
+      let visible: boolean
+      try {
+        visible = await getCurrentWindow().isVisible()
+      } catch {
+        return
+      }
+      if (cancelled || !visible) return
+      if (refreshRevisionGateRef.current.onVisible() === 'reload') {
+        reloadDashboard()
+      }
+    }
+    const handleDocumentVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void handleVisible()
+      }
+    }
+    const handleWindowFocus = () => {
+      void handleVisible()
+    }
+
+    trackRegistration(
+      listen<RefreshCompletedEvent>('codex-counter://refresh-completed', (event) => {
+        void handleCompletion(event.payload)
+      }),
+    )
+    trackRegistration(
+      appWindow.onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          void handleVisible()
+        }
+      }),
+    )
+    document.addEventListener('visibilitychange', handleDocumentVisibility)
+    window.addEventListener('focus', handleWindowFocus)
+
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', handleDocumentVisibility)
+      window.removeEventListener('focus', handleWindowFocus)
+      for (const dispose of disposers) {
+        dispose()
+      }
+      disposers.clear()
+    }
+  }, [])
 
   const loadDetail = useCallback(async (rootSessionId: string | null) => {
     const requestId = latestDetailRequestIdRef.current + 1
@@ -327,27 +400,16 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-
-    const bootstrap = async () => {
-      const settled = await waitForScanToSettleUntilCancelled(
-        () => waitForScanToSettle(60000),
-        () => cancelled,
-      )
-      if (!settled || cancelled) {
-        return
-      }
-      await loadShellRef.current(false)
+    void loadShellRef.current(false).then(() => {
       if (!cancelled) {
         setHasBootstrapped(true)
       }
-    }
-
-    void bootstrap()
+    })
 
     return () => {
       cancelled = true
     }
-  }, [waitForScanToSettle])
+  }, [])
 
   useEffect(() => {
     if (!hasBootstrapped) return
@@ -360,46 +422,21 @@ function App() {
     void loadDetail(selectedRootSessionId)
   }, [dashboardRevision, loadDetail, loadedQueryKey, selectedRootSessionId])
 
-  useEffect(() => {
-    if (!hasBootstrapped || !syncSettings?.autoScanEnabled) return
-    let cancelled = false
-    const refresh = () => {
-      void refreshDashboardAfterBackgroundScan(
-        refreshBackgroundData,
-        getScanInProgress,
-        waitForScanToSettle,
-        () => loadShell(false),
-        () => cancelled,
-      )
-    }
-    const interval = window.setInterval(refresh, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [bucket, hasBootstrapped, loadShell, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes, waitForScanToSettle])
-
-  useEffect(() => {
-    if (!settingsOpen || !syncSettings?.autoScanEnabled) return
-    let cancelled = false
-    const refresh = () =>
-      void getLiveRateLimits()
-        .then((snapshot) => {
-          if (!cancelled) {
-            setLiveRateLimits(snapshot)
-          }
-        })
-        .catch(() => {})
-    refresh()
-    const interval = window.setInterval(refresh, unifiedRefreshIntervalMs(syncSettings?.autoScanIntervalMinutes))
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [settingsOpen, syncSettings?.autoScanEnabled, syncSettings?.autoScanIntervalMinutes])
-
   async function handleRescan() {
-    await loadShell(true)
+    setIsBusy(true)
+    try {
+      const scan = await runScanWithOverlapRetry(
+        () => scanCodexUsage(syncSettingsRef.current?.codexHome ?? null),
+        (error) => String(error).includes('already running'),
+        waitForScanToSettle,
+        () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
+      )
+      setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
+    } catch (error) {
+      setStatusMessage(String(error))
+    } finally {
+      setIsBusy(false)
+    }
   }
 
   async function handleRefreshPricing() {
