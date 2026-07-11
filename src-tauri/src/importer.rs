@@ -2033,9 +2033,18 @@ fn try_parse_session_tail_counted(
         reader.get_ref().bytes_read,
       )
     })?;
-    if line_bytes == 0 || !line.ends_with('\n') {
+    if line_bytes == 0 {
       break;
     }
+    let has_trailing_newline = line.ends_with('\n');
+    let value = match serde_json::from_str::<Value>(&line) {
+      Ok(value) => value,
+      Err(_) if !has_trailing_newline => break,
+      Err(_) => {
+        completed_offset = completed_offset.saturating_add(line_bytes as u64);
+        continue;
+      }
+    };
     completed_offset = completed_offset.saturating_add(line_bytes as u64);
     if line.contains("\"fast_mode\":true") || line.contains("\"quick_mode\":true") {
       explicit_fast_mode = Some(true);
@@ -2043,9 +2052,6 @@ fn try_parse_session_tail_counted(
     if line.contains("\"fast_mode\":false") || line.contains("\"quick_mode\":false") {
       explicit_fast_mode = Some(false);
     }
-    let Ok(value) = serde_json::from_str::<Value>(&line) else {
-      continue;
-    };
     let timestamp = value
       .get("timestamp")
       .and_then(Value::as_str)
@@ -2236,9 +2242,15 @@ fn parse_session_file_once(
     if line_bytes == 0 {
       break;
     }
-    if !line.ends_with('\n') {
-      break;
-    }
+    let has_trailing_newline = line.ends_with('\n');
+    let value = match serde_json::from_str::<Value>(&line) {
+      Ok(value) => value,
+      Err(_) if !has_trailing_newline => break,
+      Err(_) => {
+        completed_offset = completed_offset.saturating_add(line_bytes as u64);
+        continue;
+      }
+    };
     completed_offset = completed_offset.saturating_add(line_bytes as u64);
     if line.contains("\"fast_mode\":true") || line.contains("\"quick_mode\":true") {
       explicit_fast_mode = Some(true);
@@ -2246,10 +2258,6 @@ fn parse_session_file_once(
     if line.contains("\"fast_mode\":false") || line.contains("\"quick_mode\":false") {
       explicit_fast_mode = Some(false);
     }
-
-    let Ok(value) = serde_json::from_str::<Value>(&line) else {
-      continue;
-    };
 
     if session_id.is_empty() {
       if let Some(id) = value.get("id").and_then(Value::as_str) {
@@ -7282,7 +7290,7 @@ mod tests {
   }
 
   #[test]
-  fn incomplete_trailing_token_line_is_ignored_until_next_rescan() {
+  fn complete_trailing_token_line_without_newline_is_imported_once() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
@@ -7312,31 +7320,24 @@ mod tests {
         "{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"55555555-5555-5555-5555-555555555555\"}}\n",
         "{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n",
         "{\"timestamp\":\"2026-03-24T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":25,\"reasoning_output_tokens\":0,\"total_tokens\":125}},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n",
-        "{\"timestamp\":\"2026-03-24T00:00:10Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":180,\"cached_input_tokens\":40,\"output_tokens\":45,\"reasoning_output_tokens\":0,\"total_tokens\":225}},\"rate_limits\":{\"plan_type\":\"pro\"}}"
+        "{\"timestamp\":\"2026-03-24T00:00:10Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":180,\"cached_input_tokens\":40,\"output_tokens\":45,\"reasoning_output_tokens\":0,\"total_tokens\":225}},\"rate_limits\":{\"plan_type\":\"pro\"}}}"
       ),
     )
-    .expect("write incomplete session");
+    .expect("write complete session without trailing newline");
 
     perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("second scan");
 
-    let conn = open_connection(&db_path).expect("open db after incomplete rescan");
+    let conn = open_connection(&db_path).expect("open db after no-newline rescan");
     assert_eq!(
       session_usage_totals(&conn, session_id),
-      (100, 20, 25, 125, 1)
+      (180, 40, 45, 225, 2)
     );
     drop(conn);
 
-    write_session_file(
-      &session_path,
-      session_id,
-      &[
-        ("2026-03-24T00:00:01Z", 100, 20, 25, 125),
-        ("2026-03-24T00:00:10Z", 180, 40, 45, 225),
-      ],
-    );
-    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("third scan");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("unchanged third scan");
 
-    let conn = open_connection(&db_path).expect("open db after third scan");
+    let conn = open_connection(&db_path).expect("open db after unchanged scan");
     assert_eq!(
       session_usage_totals(&conn, session_id),
       (180, 40, 45, 225, 2)
