@@ -1,10 +1,21 @@
 #![allow(dead_code)]
 
 mod mutation;
+mod power;
+mod runtime;
 mod schedule;
 
 #[allow(unused_imports)]
 pub(crate) use mutation::{MutationOutcome, MutationPriority, UsageMutationCoordinator};
+#[allow(unused_imports)]
+pub(crate) use power::{begin_scheduler_activity, ActivityFactory, SystemActivityFactory};
+#[allow(unused_imports)]
+pub(crate) use runtime::{
+  LaneStatus, LiveQuotaFetcher, LiveQuotaPersister, ManualLiveTicket, ManualRefreshTicket,
+  ManualTokenTicket, MutationPhase, PreparedTokenRefresh, RefreshCoordinatorHandle, RefreshError,
+  RefreshEventSink, RefreshLaneMetrics, RefreshMetricsSnapshot, RefreshRuntime,
+  RefreshRuntimeDependencies, RefreshStatus, ShutdownResult, TokenRefreshExecutor,
+};
 
 use chrono::{DateTime, Utc};
 use std::time::{Duration, Instant};

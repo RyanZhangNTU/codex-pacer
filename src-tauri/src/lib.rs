@@ -15,13 +15,6 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
-#[cfg(target_os = "macos")]
-use objc2::{
-  rc::Retained,
-  runtime::{NSObjectProtocol, ProtocolObject},
-};
-#[cfg(target_os = "macos")]
-use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 use rusqlite::params;
 use database::{
   canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
@@ -42,6 +35,7 @@ use queries::{
   get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
 };
 use rate_limits::query_live_rate_limits;
+use refresh::begin_scheduler_activity;
 use tauri::{
   Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
   WebviewWindowBuilder,
@@ -130,38 +124,6 @@ fn lock_usage_mutations(state: &AppState) -> std::sync::MutexGuard<'_, ()> {
     .usage_mutation_lock
     .lock()
     .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-#[cfg(target_os = "macos")]
-struct SchedulerActivity {
-  activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for SchedulerActivity {
-  fn drop(&mut self) {
-    unsafe {
-      NSProcessInfo::processInfo().endActivity(&self.activity);
-    }
-  }
-}
-
-#[cfg(target_os = "macos")]
-fn begin_scheduler_activity() -> Option<SchedulerActivity> {
-  let reason = NSString::from_str("Codex Pacer background refresh");
-  let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
-    NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
-    &reason,
-  );
-  Some(SchedulerActivity { activity })
-}
-
-#[cfg(not(target_os = "macos"))]
-struct SchedulerActivity;
-
-#[cfg(not(target_os = "macos"))]
-fn begin_scheduler_activity() -> Option<SchedulerActivity> {
-  None
 }
 
 #[allow(non_snake_case)]
@@ -490,7 +452,10 @@ where
   let guard = try_acquire_flag(&state.scan_in_progress, "A scan is already running.")?;
   let mutation_guard = lock_usage_mutations(&state);
 
-  let result = scan(&state.db_path, codex_home);
+  let result = {
+    let _activity = begin_scheduler_activity();
+    scan(&state.db_path, codex_home)
+  };
   drop(mutation_guard);
   drop(guard);
   refresh_daily_value_menu_bar_with_live_refresh(&state, allow_menu_bar_live_refresh);
@@ -1125,10 +1090,17 @@ fn get_live_rate_limits_with_fallback(
     }
   }
 
-  match query_live_rate_limits(query_timeout) {
+  let query_result = {
+    let _activity = begin_scheduler_activity();
+    query_live_rate_limits(query_timeout)
+  };
+  match query_result {
     Ok(snapshot) => {
-      let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-      insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
+      {
+        let _activity = begin_scheduler_activity();
+        let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+        insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
+      }
       store_live_rate_limits_cache(state, &snapshot)?;
       Ok(snapshot)
     }
@@ -1950,7 +1922,6 @@ fn spawn_scheduler(state: AppState) {
   std::thread::Builder::new()
     .name("codex-pacer-scheduler".to_string())
     .spawn(move || {
-      let _scheduler_activity = begin_scheduler_activity();
       loop {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_scheduler_tick(&state)));
         let delay = match result {
