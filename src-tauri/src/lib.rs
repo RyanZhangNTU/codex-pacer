@@ -160,6 +160,49 @@ impl refresh::LiveQuotaPersister for AppLiveQuotaPersister {
 }
 
 #[derive(Clone)]
+struct AppEpochMaintenanceExecutor {
+  db_path: PathBuf,
+}
+
+impl refresh::EpochMaintenanceExecutor for AppEpochMaintenanceExecutor {
+  fn run_batch(
+    &self,
+    limit: usize,
+    cancellation: Arc<AtomicBool>,
+  ) -> Result<refresh::EpochMaintenanceBatch, String> {
+    let conn = database::open_epoch_maintenance_connection(&self.db_path)
+      .map_err(|error| error.to_string())?;
+    let progress = database::backfill_epoch_batch_cancellable(
+      &conn,
+      limit,
+      cancellation.as_ref(),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(match progress {
+      Some(progress) => refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: progress
+          .usage_rows_updated
+          .saturating_add(progress.quota_rows_updated),
+        complete: progress.complete,
+      },
+      None => refresh::EpochMaintenanceBatch::Cancelled,
+    })
+  }
+}
+
+fn configure_epoch_maintenance(
+  dependencies: refresh::RefreshRuntimeDependencies,
+  db_path: PathBuf,
+  pending: bool,
+) -> refresh::RefreshRuntimeDependencies {
+  if pending {
+    dependencies.with_epoch_maintenance(Arc::new(AppEpochMaintenanceExecutor { db_path }))
+  } else {
+    dependencies
+  }
+}
+
+#[derive(Clone)]
 struct TauriRefreshEventSink {
   app_handle: AppHandle,
 }
@@ -2077,6 +2120,8 @@ pub fn run() {
         .or_else(|| load_persisted_live_rate_limits_from_connection(&conn, Some("session")));
       let live_last_success_at = load_persisted_live_rate_limits_from_connection(&conn, Some("live"))
         .map(|snapshot| snapshot.fetched_at);
+      let epoch_backfill_is_pending =
+        database::epoch_backfill_pending(&conn).map_err(|error| error.to_string())?;
       drop(conn);
 
       let live_rate_limits = refresh::LiveQuotaCache::new();
@@ -2090,8 +2135,7 @@ pub fn run() {
 
       let app_handle = app.app_handle();
       let usage_mutations = refresh::UsageMutationCoordinator::new();
-      let runtime = refresh::RefreshRuntime::start(
-        refresh::RefreshRuntimeDependencies::with_system_defaults(
+      let runtime_dependencies = refresh::RefreshRuntimeDependencies::with_system_defaults(
           refresh_config_from_saved_settings(&settings, live_last_success_at.as_deref()),
           Arc::new(AppTokenRefreshExecutor {
             db_path: db_path.clone(),
@@ -2108,8 +2152,13 @@ pub fn run() {
             app_handle: app_handle.clone(),
           }),
           usage_mutations.clone(),
-        ),
-      )?;
+        );
+      let runtime_dependencies = configure_epoch_maintenance(
+        runtime_dependencies,
+        db_path.clone(),
+        epoch_backfill_is_pending,
+      );
+      let runtime = refresh::RefreshRuntime::start(runtime_dependencies)?;
       let refresh = runtime.handle();
       *setup_runtime_owner
         .lock()
@@ -2197,7 +2246,7 @@ pub fn run() {
 mod tests {
   use super::*;
   use std::sync::mpsc::{self, Receiver, Sender};
-  use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+  use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
   use tempfile::tempdir;
 
   struct RecordingTokenExecutor {
@@ -2280,6 +2329,116 @@ mod tests {
     fn publish_invalidation(&self, _: refresh::DisplayInvalidation) {}
 
     fn publish_completion(&self, _: refresh::RefreshCompletedEvent) {}
+  }
+
+  #[test]
+  fn production_epoch_maintenance_adapter_is_bounded_and_resumes_from_cursor() {
+    let directory = tempdir().expect("create adapter test directory");
+    let db_path = directory.path().join("epoch-maintenance.sqlite3");
+    let conn = open_connection(&db_path).expect("open adapter database");
+    init_db(&conn).expect("initialize adapter database");
+    conn.execute_batch(
+      "
+      WITH RECURSIVE rows(value) AS (
+        SELECT 1
+        UNION ALL
+        SELECT value + 1 FROM rows WHERE value < 1501
+      )
+      INSERT INTO usage_events (
+        session_id, timestamp, timestamp_ms, model_id,
+        input_tokens, cached_input_tokens, output_tokens,
+        reasoning_output_tokens, total_tokens, value_usd,
+        fast_mode_auto, fast_mode_effective
+      )
+      SELECT
+        'legacy-' || value, '2026-07-10T03:00:00Z', NULL, 'gpt-5',
+        1, 0, 1, 0, 2, 0.01, 0, 0
+      FROM rows;
+      ",
+    )
+    .expect("seed legacy epoch rows");
+    assert!(database::epoch_backfill_pending(&conn).expect("read repair marker"));
+    drop(conn);
+
+    let first_adapter = AppEpochMaintenanceExecutor {
+      db_path: db_path.clone(),
+    };
+    let first = refresh::EpochMaintenanceExecutor::run_batch(
+      &first_adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("run first production slice");
+    assert_eq!(
+      first,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 1_000,
+        complete: false,
+      }
+    );
+    let reopened = open_connection(&db_path).expect("reopen after first slice");
+    let cursor: i64 = reopened
+      .query_row(
+        "SELECT progress_value FROM data_repair_progress WHERE repair_key = 'epoch_timestamp_backfill_v1' AND stream_key = 'usage_events'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load persisted cursor");
+    assert_eq!(cursor, 1_000);
+    drop(reopened);
+
+    let resumed_adapter = AppEpochMaintenanceExecutor { db_path };
+    let resumed = refresh::EpochMaintenanceExecutor::run_batch(
+      &resumed_adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("resume production slice");
+    assert_eq!(
+      resumed,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 501,
+        complete: true,
+      }
+    );
+  }
+
+  #[test]
+  fn completed_epoch_repair_does_not_inject_a_runtime_worker() {
+    let directory = tempdir().expect("create completed repair directory");
+    let db_path = directory.path().join("completed.sqlite3");
+    let conn = open_connection(&db_path).expect("open completed database");
+    init_db(&conn).expect("initialize completed database");
+    conn.execute(
+      "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-11T00:00:00Z')",
+      [],
+    )
+    .expect("mark epoch repair complete");
+    let pending = database::epoch_backfill_pending(&conn).expect("check completion marker");
+    drop(conn);
+    let (requests, _) = mpsc::channel();
+    let dependencies = refresh::RefreshRuntimeDependencies::with_system_defaults(
+      refresh::RefreshConfig {
+        auto_scan_enabled: false,
+        interval: Duration::from_secs(60),
+        codex_home: None,
+        token_last_success_wall: None,
+        live_last_success_wall: None,
+      },
+      Arc::new(RecordingTokenExecutor { requests }),
+      Arc::new(CountingLiveFetcher {
+        calls: Arc::new(AtomicUsize::new(0)),
+      }),
+      Arc::new(NoopLivePersister),
+      refresh::LiveQuotaCache::new(),
+      Arc::new(NoopRefreshEvents),
+      refresh::UsageMutationCoordinator::new(),
+    );
+
+    let dependencies = configure_epoch_maintenance(dependencies, db_path, pending);
+
+    assert!(!pending);
+    assert!(dependencies.epoch_maintenance_executor.is_none());
   }
 
   struct GatedFailingTokenExecutor {

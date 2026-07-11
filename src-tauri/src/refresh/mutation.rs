@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,42 @@ impl UsageMutationCoordinator {
     MutationOutcome { value, queue_wait }
   }
 
+  pub(crate) fn run_cancellable<T>(
+    &self,
+    priority: MutationPriority,
+    cancelled: &AtomicBool,
+    mutation: impl FnOnce() -> T,
+  ) -> Option<MutationOutcome<T>> {
+    let queued_at = Instant::now();
+    let ticket = self.enqueue(priority);
+    let slot = self.wait_for_turn_cancellable(ticket, cancelled)?;
+    let queue_wait = queued_at.elapsed();
+
+    let value = mutation();
+    drop(slot);
+
+    Some(MutationOutcome { value, queue_wait })
+  }
+
+  pub(crate) fn cancel(&self, cancelled: &AtomicBool) {
+    cancelled.store(true, Ordering::Release);
+    let state = lock_state(&self.inner.state);
+    drop(state);
+    self.inner.changed.notify_all();
+  }
+
+  #[cfg(test)]
+  pub(crate) fn wait_for_queued_for_test(&self, expected: usize, timeout: Duration) {
+    let state = lock_state(&self.inner.state);
+    let (state, timed_out) = self
+      .inner
+      .changed
+      .wait_timeout_while(state, timeout, |state| state.queued.len() < expected)
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(state.queued.len(), expected, "mutation queue length");
+    assert!(!timed_out.timed_out(), "timed out waiting for mutation queue");
+  }
+
   fn enqueue(&self, priority: MutationPriority) -> QueuedTicket {
     let mut state = lock_state(&self.inner.state);
     let ticket = QueuedTicket {
@@ -76,6 +113,43 @@ impl UsageMutationCoordinator {
         return ActiveMutationSlot {
           inner: Arc::clone(&self.inner),
         };
+      }
+
+      state = self
+        .inner
+        .changed
+        .wait(state)
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+  }
+
+  fn wait_for_turn_cancellable(
+    &self,
+    ticket: QueuedTicket,
+    cancelled: &AtomicBool,
+  ) -> Option<ActiveMutationSlot> {
+    let mut state = lock_state(&self.inner.state);
+    loop {
+      if cancelled.load(Ordering::Acquire) {
+        if let Some(position) = state.queued.iter().position(|queued| *queued == ticket) {
+          state.queued.remove(position);
+        }
+        drop(state);
+        self.inner.changed.notify_all();
+        return None;
+      }
+
+      if !state.active && state.next_ticket() == Some(ticket) {
+        let position = state
+          .queued
+          .iter()
+          .position(|queued| *queued == ticket)
+          .expect("selected usage mutation ticket remains queued");
+        state.queued.remove(position);
+        state.active = true;
+        return Some(ActiveMutationSlot {
+          inner: Arc::clone(&self.inner),
+        });
       }
 
       state = self
@@ -143,9 +217,11 @@ fn lock_state(state: &Mutex<MutationState>) -> MutexGuard<'_, MutationState> {
 
 #[cfg(test)]
 mod tests {
-  use super::{MutationOutcome, MutationPriority, UsageMutationCoordinator};
+  use super::{lock_state, MutationOutcome, MutationPriority, UsageMutationCoordinator};
   use std::panic::{self, AssertUnwindSafe};
+  use std::sync::atomic::{AtomicBool, Ordering};
   use std::sync::mpsc::{self, Receiver, Sender};
+  use std::sync::Arc;
   use std::thread::{self, JoinHandle};
   use std::time::Duration;
 
@@ -351,5 +427,139 @@ mod tests {
     assert!(panic_result.is_err());
     let outcome = coordinator.run(MutationPriority::Pricing, || 42);
     assert_eq!(outcome.value, 42);
+  }
+
+  #[test]
+  fn queued_cancellation_removes_maintenance_ticket_promptly() {
+    let coordinator = UsageMutationCoordinator::new();
+    let (release_blocker, blocker) = start_blocker(&coordinator, MutationPriority::Pricing);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_coordinator = coordinator.clone();
+    let worker_cancelled = Arc::clone(&cancelled);
+    let (finished_tx, finished_rx) = mpsc::sync_channel(1);
+    let maintenance = thread::spawn(move || {
+      let outcome = worker_coordinator.run_cancellable(
+        MutationPriority::Maintenance,
+        &worker_cancelled,
+        || "unexpected",
+      );
+      finished_tx.send(outcome).expect("report cancellation");
+    });
+    wait_for_queued(&coordinator, 1);
+
+    coordinator.cancel(&cancelled);
+
+    assert!(finished_rx
+      .recv_timeout(TEST_TIMEOUT)
+      .expect("queued waiter wakes")
+      .is_none());
+    assert!(lock_state(&coordinator.inner.state).queued.is_empty());
+    release_blocker.send(()).expect("release blocker");
+    blocker.join().expect("blocker exits");
+    maintenance.join().expect("maintenance exits");
+  }
+
+  #[test]
+  fn queued_cancellation_preserves_other_priority_and_fifo_order() {
+    let coordinator = UsageMutationCoordinator::new();
+    let (release_blocker, blocker) = start_blocker(&coordinator, MutationPriority::Pricing);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled_coordinator = coordinator.clone();
+    let cancelled_token = Arc::clone(&cancelled);
+    let cancelled_handle = thread::spawn(move || {
+      cancelled_coordinator.run_cancellable(
+        MutationPriority::Maintenance,
+        &cancelled_token,
+        || "cancelled",
+      )
+    });
+    wait_for_queued(&coordinator, 1);
+    let (order_tx, order_rx) = mpsc::channel();
+    let first_maintenance = start_ordered_mutation(
+      &coordinator,
+      MutationPriority::Maintenance,
+      "maintenance-first",
+      order_tx.clone(),
+    );
+    wait_for_queued(&coordinator, 2);
+    let second_maintenance = start_ordered_mutation(
+      &coordinator,
+      MutationPriority::Maintenance,
+      "maintenance-second",
+      order_tx.clone(),
+    );
+    wait_for_queued(&coordinator, 3);
+    let refresh = start_ordered_mutation(
+      &coordinator,
+      MutationPriority::Refresh,
+      "refresh",
+      order_tx,
+    );
+    wait_for_queued(&coordinator, 4);
+
+    coordinator.cancel(&cancelled);
+    assert!(cancelled.load(Ordering::Acquire));
+    release_blocker.send(()).expect("release blocker");
+
+    assert_eq!(recv_order(&order_rx), "refresh");
+    assert_eq!(recv_order(&order_rx), "maintenance-first");
+    assert_eq!(recv_order(&order_rx), "maintenance-second");
+    assert!(cancelled_handle
+      .join()
+      .expect("cancelled waiter exits")
+      .is_none());
+    blocker.join().expect("blocker exits");
+    first_maintenance.join().expect("first maintenance exits");
+    second_maintenance.join().expect("second maintenance exits");
+    refresh.join().expect("refresh exits");
+  }
+
+  #[test]
+  fn active_cancellation_releases_slot_only_after_closure_returns() {
+    let coordinator = UsageMutationCoordinator::new();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let active_coordinator = coordinator.clone();
+    let active_cancelled = Arc::clone(&cancelled);
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
+    let active = thread::spawn(move || {
+      active_coordinator.run_cancellable(
+        MutationPriority::Maintenance,
+        &active_cancelled,
+        || {
+          entered_tx.send(()).expect("report active entry");
+          release_rx.recv().expect("release active mutation");
+          "finished"
+        },
+      )
+    });
+    entered_rx
+      .recv_timeout(TEST_TIMEOUT)
+      .expect("maintenance owns slot");
+    coordinator.cancel(&cancelled);
+
+    let (follower_tx, follower_rx) = mpsc::sync_channel(1);
+    let follower_coordinator = coordinator.clone();
+    let follower = thread::spawn(move || {
+      follower_coordinator.run(MutationPriority::Refresh, || {
+        follower_tx.send(()).expect("report follower entry");
+      })
+    });
+    wait_for_queued(&coordinator, 1);
+    assert!(follower_rx.try_recv().is_err(), "active closure still owns slot");
+
+    release_tx.send(()).expect("release active closure");
+    follower_rx
+      .recv_timeout(TEST_TIMEOUT)
+      .expect("follower enters after active closure returns");
+    assert_eq!(
+      active
+        .join()
+        .expect("active thread exits")
+        .expect("active mutation had acquired slot")
+        .value,
+      "finished"
+    );
+    follower.join().expect("follower exits");
   }
 }

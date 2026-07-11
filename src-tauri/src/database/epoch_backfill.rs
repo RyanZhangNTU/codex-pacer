@@ -1,5 +1,6 @@
 use chrono::DateTime;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::now_utc_string;
 
@@ -13,6 +14,15 @@ pub struct EpochBackfillProgress {
     pub usage_rows_updated: usize,
     pub quota_rows_updated: usize,
     pub complete: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EpochBackfillCancellationPoint {
+    Transaction,
+    UsageRow,
+    QuotaRow,
+    CompletionMarker,
+    Commit,
 }
 
 struct UsageEpochRow {
@@ -69,23 +79,48 @@ pub fn backfill_epoch_batch(
     conn: &Connection,
     batch_size: usize,
 ) -> rusqlite::Result<EpochBackfillProgress> {
+    backfill_epoch_batch_with_cancel_check(conn, batch_size, |_| false)
+        .map(|progress| progress.expect("non-cancellable epoch backfill returns progress"))
+}
+
+pub fn backfill_epoch_batch_cancellable(
+    conn: &Connection,
+    batch_size: usize,
+    cancelled: &AtomicBool,
+) -> rusqlite::Result<Option<EpochBackfillProgress>> {
+    backfill_epoch_batch_with_cancel_check(conn, batch_size, |_| {
+        cancelled.load(Ordering::Acquire)
+    })
+}
+
+fn backfill_epoch_batch_with_cancel_check(
+    conn: &Connection,
+    batch_size: usize,
+    mut is_cancelled: impl FnMut(EpochBackfillCancellationPoint) -> bool,
+) -> rusqlite::Result<Option<EpochBackfillProgress>> {
+    if is_cancelled(EpochBackfillCancellationPoint::Transaction) {
+        return Ok(None);
+    }
     let batch_size = batch_size.min(MAX_BATCH_SIZE);
     if batch_size == 0 {
-        return Ok(EpochBackfillProgress {
+        return Ok(Some(EpochBackfillProgress {
             usage_rows_updated: 0,
             quota_rows_updated: 0,
             complete: repair_is_complete(conn)?,
-        });
+        }));
     }
 
     let transaction = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
     if repair_is_complete(&transaction)? {
+        if is_cancelled(EpochBackfillCancellationPoint::Commit) {
+            return Ok(None);
+        }
         transaction.commit()?;
-        return Ok(EpochBackfillProgress {
+        return Ok(Some(EpochBackfillProgress {
             usage_rows_updated: 0,
             quota_rows_updated: 0,
             complete: true,
-        });
+        }));
     }
 
     ensure_cursor(&transaction, USAGE_STREAM)?;
@@ -96,6 +131,9 @@ pub fn backfill_epoch_batch(
     let usage_rows_updated = usage_rows.len();
     let usage_exhausted = usage_rows_updated < batch_size;
     for row in &usage_rows {
+        if is_cancelled(EpochBackfillCancellationPoint::UsageRow) {
+            return Ok(None);
+        }
         migrate_usage_row(&transaction, row)?;
     }
     if let Some(last_row) = usage_rows.last() {
@@ -109,6 +147,9 @@ pub fn backfill_epoch_batch(
         let rows_updated = quota_rows.len();
         let exhausted = rows_updated < remaining;
         for row in &quota_rows {
+            if is_cancelled(EpochBackfillCancellationPoint::QuotaRow) {
+                return Ok(None);
+            }
             migrate_quota_row(&transaction, row)?;
         }
         if let Some(last_row) = quota_rows.last() {
@@ -121,6 +162,9 @@ pub fn backfill_epoch_batch(
 
     let complete = usage_exhausted && quota_exhausted;
     if complete {
+        if is_cancelled(EpochBackfillCancellationPoint::CompletionMarker) {
+            return Ok(None);
+        }
         transaction.execute(
             "
             INSERT INTO data_repairs (repair_key, completed_at)
@@ -130,23 +174,30 @@ pub fn backfill_epoch_batch(
             params![REPAIR_KEY, now_utc_string()],
         )?;
     }
+    if is_cancelled(EpochBackfillCancellationPoint::Commit) {
+        return Ok(None);
+    }
     transaction.commit()?;
 
-    Ok(EpochBackfillProgress {
+    Ok(Some(EpochBackfillProgress {
         usage_rows_updated,
         quota_rows_updated,
         complete,
-    })
+    }))
 }
 
 fn repair_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    epoch_backfill_pending(conn).map(|pending| !pending)
+}
+
+pub fn epoch_backfill_pending(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT 1 FROM data_repairs WHERE repair_key = ?1",
         params![REPAIR_KEY],
         |_| Ok(()),
     )
     .optional()
-    .map(|value| value.is_some())
+    .map(|value| value.is_none())
 }
 
 fn ensure_cursor(transaction: &Transaction<'_>, stream_key: &str) -> rusqlite::Result<()> {
@@ -391,14 +442,64 @@ fn quarantine_value(
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use rusqlite::{params, Connection};
     use tempfile::tempdir;
 
-    use super::{backfill_epoch_batch, parse_epoch_millis};
+    use super::{
+        backfill_epoch_batch, backfill_epoch_batch_cancellable,
+        backfill_epoch_batch_with_cancel_check, epoch_backfill_pending,
+        EpochBackfillCancellationPoint, parse_epoch_millis,
+    };
     use crate::database::init_db;
 
     const REPAIR_KEY: &str = "epoch_timestamp_backfill_v1";
+
+    fn assert_repair_transaction_is_empty(conn: &Connection) {
+        let usage_epochs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE timestamp_ms IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count usage epochs");
+        let quota_epochs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM rate_limit_samples WHERE sample_timestamp_ms IS NOT NULL OR window_start_ms IS NOT NULL OR resets_at_ms IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count quota epochs");
+        let cursors: i64 = conn
+            .query_row("SELECT COUNT(*) FROM data_repair_progress", [], |row| row.get(0))
+            .expect("count repair cursors");
+        let quarantine: i64 = conn
+            .query_row("SELECT COUNT(*) FROM data_repair_quarantine", [], |row| row.get(0))
+            .expect("count quarantine rows");
+        let completion: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+                params![REPAIR_KEY],
+                |row| row.get(0),
+            )
+            .expect("count completion markers");
+        assert_eq!((usage_epochs, quota_epochs, cursors, quarantine, completion), (0, 0, 0, 0, 0));
+    }
+
+    fn assert_cancel_at(point: EpochBackfillCancellationPoint, seed: impl FnOnce(&Connection)) {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("initialize database");
+        seed(&conn);
+
+        let outcome = backfill_epoch_batch_with_cancel_check(&conn, 1_000, |observed| {
+            observed == point
+        })
+        .expect("cancel bounded epoch repair");
+
+        assert!(outcome.is_none(), "cancelled repair returns no progress");
+        assert_repair_transaction_is_empty(&conn);
+    }
 
     fn create_legacy_epoch_tables(conn: &Connection) {
         conn.execute_batch(
@@ -539,6 +640,75 @@ mod tests {
             )
             .expect("load migrated quota sample");
         assert_eq!(quota_epochs, (None, None, None));
+    }
+
+    #[test]
+    fn epoch_backfill_pending_reads_only_completion_marker() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("initialize database");
+        conn.execute_batch(
+            "
+            DROP TABLE usage_events;
+            DROP TABLE rate_limit_samples;
+            DROP TABLE data_repair_progress;
+            DROP TABLE data_repair_quarantine;
+            ",
+        )
+        .expect("remove every repair history source");
+
+        assert!(epoch_backfill_pending(&conn).expect("read pending marker"));
+        conn.execute(
+            "INSERT INTO data_repairs (repair_key, completed_at) VALUES (?1, ?2)",
+            params![REPAIR_KEY, "2026-07-11T00:00:00Z"],
+        )
+        .expect("mark repair complete");
+        assert!(!epoch_backfill_pending(&conn).expect("read completed marker"));
+    }
+
+    #[test]
+    fn pre_cancelled_epoch_backfill_does_not_open_a_transaction() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        init_db(&conn).expect("initialize database");
+        insert_usage(&conn, "2026-07-10T03:00:00Z");
+        let cancelled = AtomicBool::new(true);
+
+        let outcome = backfill_epoch_batch_cancellable(&conn, 1_000, &cancelled)
+            .expect("observe pre-cancelled repair");
+
+        assert!(outcome.is_none());
+        assert!(cancelled.load(Ordering::Acquire));
+        assert_repair_transaction_is_empty(&conn);
+    }
+
+    #[test]
+    fn epoch_backfill_cancellation_before_usage_mutation_rolls_back_everything() {
+        assert_cancel_at(EpochBackfillCancellationPoint::UsageRow, |conn| {
+            insert_usage(conn, "2026-07-10T03:00:00Z");
+        });
+    }
+
+    #[test]
+    fn epoch_backfill_cancellation_before_quota_mutation_rolls_back_everything() {
+        assert_cancel_at(EpochBackfillCancellationPoint::QuotaRow, |conn| {
+            insert_usage(conn, "malformed-usage");
+            insert_quota(conn, "2026-07-10T03:00:00Z");
+        });
+    }
+
+    #[test]
+    fn epoch_backfill_cancellation_before_completion_marker_rolls_back_everything() {
+        assert_cancel_at(EpochBackfillCancellationPoint::CompletionMarker, |conn| {
+            insert_usage(conn, "malformed-usage");
+            insert_quota(conn, "malformed-quota");
+        });
+    }
+
+    #[test]
+    fn epoch_backfill_cancellation_before_commit_rolls_back_everything() {
+        assert_cancel_at(EpochBackfillCancellationPoint::Commit, |conn| {
+            insert_usage(conn, "malformed-usage");
+            insert_quota(conn, "malformed-quota");
+        });
     }
 
     #[test]

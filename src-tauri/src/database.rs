@@ -12,7 +12,10 @@ mod sync_settings;
 mod usage_events;
 
 #[allow(unused_imports)]
-pub use epoch_backfill::{backfill_epoch_batch, parse_epoch_millis, EpochBackfillProgress};
+pub use epoch_backfill::{
+    backfill_epoch_batch, backfill_epoch_batch_cancellable, epoch_backfill_pending,
+    parse_epoch_millis, EpochBackfillProgress,
+};
 pub use rate_limit_samples::{insert_live_rate_limit_snapshot, replace_session_rate_limit_samples};
 pub use subscriptions::{
     canonical_subscription_currency, get_subscription_profile, save_subscription_profile,
@@ -45,8 +48,21 @@ pub fn i64_to_bool(value: i64) -> bool {
 }
 
 pub fn open_connection(db_path: &Path) -> rusqlite::Result<Connection> {
+    open_connection_with_busy_timeout(db_path, Duration::from_secs(10))
+}
+
+pub(crate) fn open_epoch_maintenance_connection(
+    db_path: &Path,
+) -> rusqlite::Result<Connection> {
+    open_connection_with_busy_timeout(db_path, Duration::from_millis(200))
+}
+
+fn open_connection_with_busy_timeout(
+    db_path: &Path,
+    busy_timeout: Duration,
+) -> rusqlite::Result<Connection> {
     let conn = Connection::open(db_path)?;
-    conn.busy_timeout(Duration::from_secs(10))?;
+    conn.busy_timeout(busy_timeout)?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -107,6 +123,32 @@ fn ensure_singletons(conn: &Connection) -> rusqlite::Result<()> {
 mod tests {
     use super::*;
     use crate::models::{SubscriptionProfile, SyncSettings};
+
+    #[test]
+    fn epoch_maintenance_connection_uses_short_busy_timeout_and_normal_pragmas() {
+        let directory = tempfile::tempdir().expect("create maintenance connection directory");
+        let path = directory.path().join("maintenance.sqlite3");
+
+        let conn = open_epoch_maintenance_connection(&path)
+            .expect("open epoch maintenance connection");
+
+        let busy_timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("read busy timeout");
+        let foreign_keys: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("read foreign key mode");
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("read journal mode");
+        let synchronous: i64 = conn
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .expect("read synchronous mode");
+        assert_eq!(busy_timeout, 200);
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        assert_eq!(synchronous, 1, "SQLite NORMAL synchronous mode");
+    }
 
     #[test]
     fn init_db_adds_scan_commit_revision_to_existing_sync_settings() {

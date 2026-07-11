@@ -1,12 +1,15 @@
 #[cfg(test)]
 mod tests {
   use super::{
-    MetricsState, PanicPhase, PreparedTokenRefresh, RefreshClock, RefreshConfig, RefreshError,
-    RefreshStatus, RuntimeTestRig, SaturatingCounter, TestClock, TestLiveExecutor,
+    EpochMaintenanceBatch, MetricsState, PanicPhase, PreparedTokenRefresh, RefreshClock,
+    RefreshConfig, RefreshError, RefreshStatus, RuntimeTestRig, SaturatingCounter, TestClock,
+    TestEpochMaintenanceExecutor, TestLiveExecutor, TestRigSchedule,
   };
   use crate::refresh::{RefreshFailureCode, RefreshRejectionCode, REFRESH_WAITER_CAPACITY};
   use chrono::{DateTime, Duration as ChronoDuration};
-  use std::sync::Arc;
+  use std::sync::atomic::Ordering;
+  use std::sync::{mpsc, Arc};
+  use std::thread;
   use std::time::Duration;
 
   const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -389,6 +392,362 @@ mod tests {
     assert_eq!(rig.token.commit_calls(), 1);
     assert_eq!(rig.live.persist_calls(), 1);
     rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_runs_one_batch_per_maintenance_dispatch() {
+    assert_eq!(super::EPOCH_MAINTENANCE_COMMAND_CAPACITY, 1);
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 1_000,
+      complete: false,
+    }));
+    let first = maintenance.block_batch(1);
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+
+    first.wait_entered(TEST_TIMEOUT);
+    assert_eq!(maintenance.limits(), [1_000]);
+    for _ in 0..4 {
+      rig.handle.wake().expect("wake gated maintenance");
+      rig.handle.barrier().expect("drain wake");
+    }
+    assert_eq!(maintenance.calls(), 1, "only one bounded batch is active");
+
+    first.release();
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+    rig.handle.wake().expect("wake before pacing deadline");
+    rig.handle.barrier().expect("drain early wake");
+    assert_eq!(maintenance.calls(), 1, "outcome alone cannot chain a batch");
+    rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_progresses_when_auto_scan_is_disabled() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 0,
+      complete: true,
+    }));
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+
+    maintenance.wait_for_calls(1, TEST_TIMEOUT);
+    assert!(!rig.handle.status().auto_scan_enabled);
+    rig.wait_for_maintenance_exit(TEST_TIMEOUT);
+    assert_eq!(maintenance.calls(), 1);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_waits_while_token_or_live_lane_is_busy() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 0,
+      complete: true,
+    }));
+    let (rig, parse, fetch) =
+      RuntimeTestRig::startup_due_with_pre_body_gates_and_maintenance(Arc::clone(&maintenance));
+    parse.wait_worker_ready(TEST_TIMEOUT);
+    fetch.wait_worker_ready(TEST_TIMEOUT);
+    rig.handle.barrier().expect("observe both busy lanes");
+    assert_eq!(maintenance.calls(), 0);
+
+    parse.release();
+    rig.token.wait_for_commit_calls(1, TEST_TIMEOUT);
+    rig.handle.barrier().expect("observe live lane still busy");
+    assert_eq!(maintenance.calls(), 0);
+
+    fetch.release();
+    maintenance.wait_for_calls(1, TEST_TIMEOUT);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_respects_thirty_second_refresh_deadline_guard() {
+    let exact = Arc::new(TestEpochMaintenanceExecutor::new());
+    let exact_rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::ThirtySecondDeadline,
+      Arc::clone(&exact),
+    );
+    exact_rig.handle.barrier().expect("observe exact deadline");
+    assert_eq!(exact.calls(), 0, "exactly thirty seconds is guarded");
+    exact_rig.shutdown();
+
+    let beyond = Arc::new(TestEpochMaintenanceExecutor::new());
+    beyond.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 0,
+      complete: true,
+    }));
+    let beyond_rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::ThirtyOneSecondDeadline,
+      Arc::clone(&beyond),
+    );
+    beyond.wait_for_calls(1, TEST_TIMEOUT);
+    beyond_rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_incomplete_batches_are_paced_without_busy_loop() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 1_000,
+      complete: false,
+    }));
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 7,
+      complete: true,
+    }));
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+    rig.handle.wake().expect("wake before two-second pace");
+    rig.handle.barrier().expect("drain early wake");
+    assert_eq!(maintenance.calls(), 1);
+
+    rig.clock.advance(Duration::from_secs(2));
+    rig.handle.wake().expect("wake at pacing deadline");
+    maintenance.wait_for_calls(2, TEST_TIMEOUT);
+    rig.wait_for_maintenance_exit(TEST_TIMEOUT);
+    assert_eq!(maintenance.unique_worker_ids(), 1);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn stale_or_duplicate_epoch_backfill_outcomes_are_ignored() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 1_000,
+      complete: false,
+    }));
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 0,
+      complete: true,
+    }));
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+
+    rig.inject_maintenance_outcome(
+      1,
+      Ok(EpochMaintenanceBatch::Progress {
+        processed_rows: 0,
+        complete: true,
+      }),
+    );
+    rig.handle.barrier().expect("drain duplicate outcome");
+    rig.clock.advance(Duration::from_secs(2));
+    rig.handle.wake().expect("wake next real attempt");
+
+    maintenance.wait_for_calls(2, TEST_TIMEOUT);
+    rig.wait_for_maintenance_exit(TEST_TIMEOUT);
+    assert_eq!(maintenance.calls(), 2, "duplicate did not complete the repair");
+    rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_failure_uses_backoff_without_hot_loop() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.queue_result(Err("injected maintenance failure".to_string()));
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 0,
+      complete: true,
+    }));
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+
+    rig.clock.advance(Duration::from_secs(29));
+    rig.handle.wake().expect("wake before retry backoff");
+    rig.handle.barrier().expect("drain early retry wake");
+    assert_eq!(maintenance.calls(), 1);
+    rig.clock.advance(Duration::from_secs(1));
+    rig.handle.wake().expect("wake at retry backoff");
+    maintenance.wait_for_calls(2, TEST_TIMEOUT);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_failure_backoff_is_bounded_to_five_minutes() {
+    assert_eq!(
+      super::epoch_maintenance_retry_delay(1),
+      Duration::from_secs(30)
+    );
+    assert_eq!(
+      super::epoch_maintenance_retry_delay(2),
+      Duration::from_secs(60)
+    );
+    assert_eq!(
+      super::epoch_maintenance_retry_delay(5),
+      Duration::from_secs(5 * 60)
+    );
+    assert_eq!(
+      super::epoch_maintenance_retry_delay(u32::MAX),
+      Duration::from_secs(5 * 60)
+    );
+  }
+
+  #[test]
+  fn epoch_backfill_panic_uses_backoff_and_worker_recovers() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    maintenance.panic_batch(1);
+    maintenance.queue_result(Ok(EpochMaintenanceBatch::Progress {
+      processed_rows: 0,
+      complete: true,
+    }));
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+    assert_eq!(maintenance.calls(), 1);
+
+    rig.clock.advance(Duration::from_secs(30));
+    rig.handle.wake().expect("wake after panic backoff");
+    maintenance.wait_for_calls(2, TEST_TIMEOUT);
+    rig.wait_for_maintenance_exit(TEST_TIMEOUT);
+    assert_eq!(maintenance.unique_worker_ids(), 1);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn snapshot_getter_remains_available_while_epoch_backfill_waits() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    let gate = maintenance.block_batch(1);
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    gate.wait_entered(TEST_TIMEOUT);
+
+    let status = rig.handle.status();
+    let metrics = rig.handle.metrics();
+    assert!(!status.token.running && !status.live.running);
+    assert_eq!(metrics.token.lane.running_generation, None);
+
+    gate.release();
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+    rig.shutdown();
+  }
+
+  #[test]
+  fn refresh_priority_overtakes_queued_epoch_maintenance() {
+    let mutation = crate::refresh::UsageMutationCoordinator::new();
+    let blocker_mutation = mutation.clone();
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
+    let blocker = thread::spawn(move || {
+      blocker_mutation.run(crate::refresh::MutationPriority::Pricing, || {
+        entered_tx.send(()).expect("report blocker entry");
+        release_rx.recv().expect("release blocker");
+      });
+    });
+    entered_rx
+      .recv_timeout(TEST_TIMEOUT)
+      .expect("pricing blocker owns mutation slot");
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    let retry_gate = maintenance.block_batch(1);
+    let rig = RuntimeTestRig::build_with_maintenance_and_mutation(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+      mutation,
+    );
+    rig.wait_for_mutation_queue(1, TEST_TIMEOUT);
+    let token = rig.handle.request_manual_token(None).expect("token ticket");
+    rig.token.wait_until_waiting_to_commit(TEST_TIMEOUT);
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+    rig.wait_for_mutation_queue(1, TEST_TIMEOUT);
+    assert_eq!(maintenance.calls(), 0, "queued maintenance never enters executor");
+
+    release_tx.send(()).expect("release blocker");
+    assert!(token.wait_timeout(TEST_TIMEOUT).is_ok());
+    assert_eq!(rig.token.commit_calls(), 1);
+
+    rig.clock.advance(Duration::from_secs(2));
+    rig.handle.wake().expect("wake paced maintenance retry");
+    retry_gate.wait_entered(TEST_TIMEOUT);
+    retry_gate.release();
+    blocker.join().expect("blocker exits");
+    rig.shutdown();
+  }
+
+  #[test]
+  fn ready_live_persistence_cancels_epoch_maintenance_then_persists_first() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    let first = maintenance.block_batch(1);
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    first.wait_entered(TEST_TIMEOUT);
+
+    let live = rig.handle.request_manual_live().expect("live ticket");
+    assert!(live.wait_timeout(TEST_TIMEOUT).is_ok());
+    rig.handle.barrier().expect("process ready persistence");
+    assert!(maintenance.cancellation(1).load(Ordering::Acquire));
+    assert_eq!(rig.live.persist_calls(), 0, "persistence waits for batch outcome");
+
+    first.release();
+    rig.wait_for_maintenance_outcomes(1, TEST_TIMEOUT);
+    rig.wait_for_persist_outcomes(1, TEST_TIMEOUT);
+    assert_eq!(rig.live.persist_calls(), 1);
+    assert_eq!(maintenance.calls(), 1, "maintenance retry remains paced");
+    rig.shutdown();
+  }
+
+  #[test]
+  fn epoch_backfill_shutdown_joins_worker_without_followup() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    let first = maintenance.block_batch(1);
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    first.wait_entered(TEST_TIMEOUT);
+
+    let shutdown = rig.shutdown_in_background();
+    rig.wait_for_shutdown_requested(TEST_TIMEOUT);
+    assert!(maintenance.cancellation(1).load(Ordering::Acquire));
+    assert!(!shutdown.is_finished());
+    first.release();
+
+    let joined = shutdown.wait(TEST_TIMEOUT);
+    assert!(joined.coordinator_joined && joined.token_joined && joined.live_joined);
+    assert_eq!(maintenance.calls(), 1);
+    assert_eq!(maintenance.unique_worker_ids(), 1);
+  }
+
+  #[test]
+  fn epoch_backfill_shutdown_drains_saturated_outcome_without_deadlock() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    let first = maintenance.block_batch(1);
+    let rig = RuntimeTestRig::build_with_maintenance(
+      TestRigSchedule::Disabled,
+      Arc::clone(&maintenance),
+    );
+    first.wait_entered(TEST_TIMEOUT);
+    let pause = rig.pause_coordinator();
+    rig.fill_runtime_channel_until_busy();
+
+    let shutdown = rig.shutdown_in_background();
+    rig.wait_for_shutdown_requested(TEST_TIMEOUT);
+    first.release();
+    pause.release();
+
+    let joined = shutdown.wait(TEST_TIMEOUT);
+    assert!(joined.coordinator_joined && joined.token_joined && joined.live_joined);
+    assert_eq!(maintenance.calls(), 1);
+    assert_eq!(maintenance.unique_worker_ids(), 1);
   }
 
   #[test]
@@ -1308,6 +1667,13 @@ use std::time::{Duration, Instant};
 
 pub(crate) const RUNTIME_COMMAND_CAPACITY: usize = REFRESH_WAITER_CAPACITY;
 const WORKER_COMMAND_CAPACITY: usize = 1;
+pub(crate) const EPOCH_MAINTENANCE_COMMAND_CAPACITY: usize = 1;
+const EPOCH_MAINTENANCE_STACK_SIZE: usize = 512 * 1024;
+const EPOCH_MAINTENANCE_BATCH_SIZE: usize = 1_000;
+const EPOCH_MAINTENANCE_PACE: Duration = Duration::from_secs(2);
+const EPOCH_MAINTENANCE_DEADLINE_GUARD: Duration = Duration::from_secs(30);
+const EPOCH_MAINTENANCE_RETRY_BASE: Duration = Duration::from_secs(30);
+const EPOCH_MAINTENANCE_RETRY_MAX: Duration = Duration::from_secs(5 * 60);
 pub(crate) const HISTOGRAM_BUCKETS: usize = 8;
 const START_LAG_WARNING: Duration = Duration::from_secs(5);
 const HISTOGRAM_UPPER_BOUNDS_MS: [u64; HISTOGRAM_BUCKETS] =
@@ -1359,6 +1725,23 @@ pub(crate) trait LiveQuotaFetcher: Send + Sync {
 
 pub(crate) trait LiveQuotaPersister: Send + Sync {
   fn persist(&self, snapshot: &LiveRateLimitSnapshot) -> Result<(), String>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EpochMaintenanceBatch {
+  Progress {
+    processed_rows: usize,
+    complete: bool,
+  },
+  Cancelled,
+}
+
+pub(crate) trait EpochMaintenanceExecutor: Send + Sync {
+  fn run_batch(
+    &self,
+    limit: usize,
+    cancellation: Arc<AtomicBool>,
+  ) -> Result<EpochMaintenanceBatch, String>;
 }
 
 pub(crate) trait RefreshEventSink: Send + Sync {
@@ -1922,6 +2305,7 @@ pub(crate) struct RefreshRuntimeDependencies {
   pub mutation: UsageMutationCoordinator,
   pub activity_factory: Arc<dyn ActivityFactory>,
   pub clock: Arc<dyn RefreshClock>,
+  pub epoch_maintenance_executor: Option<Arc<dyn EpochMaintenanceExecutor>>,
   #[cfg(test)]
   test_hooks: Option<Arc<RuntimeTestHooks>>,
 }
@@ -1947,9 +2331,18 @@ impl RefreshRuntimeDependencies {
       mutation,
       activity_factory: Arc::new(SystemActivityFactory),
       clock: Arc::new(SystemRefreshClock),
+      epoch_maintenance_executor: None,
       #[cfg(test)]
       test_hooks: None,
     }
+  }
+
+  pub(crate) fn with_epoch_maintenance(
+    mut self,
+    executor: Arc<dyn EpochMaintenanceExecutor>,
+  ) -> Self {
+    self.epoch_maintenance_executor = Some(executor);
+    self
   }
 }
 
@@ -1968,6 +2361,38 @@ struct RuntimeLifecycle {
   reliable_changed: Arc<Condvar>,
   shutdown_requested: Arc<AtomicBool>,
   shutdown: Arc<AtomicBool>,
+  maintenance_control: Option<Arc<EpochMaintenanceControl>>,
+}
+
+struct EpochMaintenanceControl {
+  current: Mutex<Option<(u64, Arc<AtomicBool>)>>,
+  mutation: UsageMutationCoordinator,
+}
+
+impl EpochMaintenanceControl {
+  fn new(mutation: UsageMutationCoordinator) -> Self {
+    Self {
+      current: Mutex::new(None),
+      mutation,
+    }
+  }
+
+  fn install(&self, attempt_id: u64, cancellation: Arc<AtomicBool>) {
+    *lock(&self.current) = Some((attempt_id, cancellation));
+  }
+
+  fn clear(&self, attempt_id: u64) {
+    let mut current = lock(&self.current);
+    if current.as_ref().is_some_and(|(id, _)| *id == attempt_id) {
+      *current = None;
+    }
+  }
+
+  fn cancel_current(&self) {
+    if let Some((_, cancellation)) = lock(&self.current).as_ref() {
+      self.mutation.cancel(cancellation.as_ref());
+    }
+  }
 }
 
 pub(crate) struct RefreshRuntime {
@@ -2031,6 +2456,9 @@ impl RefreshRuntime {
         }
         {
           let shutdown_state = lock(&self.lifecycle.state);
+          if let Some(control) = &self.lifecycle.maintenance_control {
+            control.cancel_current();
+          }
           self
             .lifecycle
             .shutdown_requested
@@ -2128,6 +2556,7 @@ enum RuntimeMessage {
 enum WorkerOutcome {
   Token(TokenWorkerOutcome),
   Live(LiveWorkerOutcome),
+  Maintenance(EpochMaintenanceWorkerOutcome),
   Exited(WorkerLane),
 }
 
@@ -2135,6 +2564,7 @@ enum WorkerOutcome {
 enum WorkerLane {
   Token,
   Live,
+  Maintenance,
 }
 
 enum TokenWorkerCommand {
@@ -2144,6 +2574,16 @@ enum TokenWorkerCommand {
 
 enum LiveWorkerCommand {
   Run(LiveExecutionRequest),
+}
+
+struct EpochMaintenanceWorkerCommand {
+  attempt_id: u64,
+  cancellation: Arc<AtomicBool>,
+}
+
+struct EpochMaintenanceWorkerOutcome {
+  attempt_id: u64,
+  result: Result<EpochMaintenanceBatch, String>,
 }
 
 enum TokenWorkerOutcome {
@@ -2214,6 +2654,30 @@ struct PreparedSlot {
   prepared: PreparedTokenRefresh,
 }
 
+struct EpochMaintenanceAttempt {
+  id: u64,
+}
+
+struct EpochMaintenanceState {
+  pending: bool,
+  running: Option<EpochMaintenanceAttempt>,
+  next_attempt_id: u64,
+  next_eligible_at: Option<Instant>,
+  failure_streak: u32,
+}
+
+impl EpochMaintenanceState {
+  fn new(pending: bool) -> Self {
+    Self {
+      pending,
+      running: None,
+      next_attempt_id: 0,
+      next_eligible_at: None,
+      failure_streak: 0,
+    }
+  }
+}
+
 struct CoordinatorRuntime {
   schedule: CoordinatorState,
   prepared_slot: Option<PreparedSlot>,
@@ -2222,6 +2686,8 @@ struct CoordinatorRuntime {
   current_live_result: Option<(u64, Arc<LiveRateLimitSnapshot>)>,
   token_sender: Option<SyncSender<TokenWorkerCommand>>,
   live_sender: Option<SyncSender<LiveWorkerCommand>>,
+  maintenance_sender: Option<SyncSender<EpochMaintenanceWorkerCommand>>,
+  maintenance_control: Arc<EpochMaintenanceControl>,
   runtime_sender: SyncSender<RuntimeMessage>,
   waiters: Arc<Mutex<WaiterRegistries>>,
   status: Arc<Mutex<RefreshStatus>>,
@@ -2238,8 +2704,11 @@ struct CoordinatorRuntime {
   shutdown_requested: Arc<AtomicBool>,
   token_handle: Option<JoinHandle<()>>,
   live_handle: Option<JoinHandle<()>>,
+  maintenance_handle: Option<JoinHandle<()>>,
+  maintenance: EpochMaintenanceState,
   token_exited: bool,
   live_exited: bool,
+  maintenance_exited: bool,
   #[cfg(test)]
   hooks: Arc<RuntimeTestHooks>,
 }
@@ -2255,6 +2724,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     mutation,
     activity_factory,
     clock,
+    epoch_maintenance_executor,
     #[cfg(test)]
     test_hooks,
   } = dependencies;
@@ -2272,12 +2742,14 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
   let hooks = test_hooks.unwrap_or_else(|| Arc::new(RuntimeTestHooks::default()));
   #[cfg(test)]
   let returned_hooks = Arc::clone(&hooks);
+  let maintenance_pending = epoch_maintenance_executor.is_some();
+  let maintenance_control = Arc::new(EpochMaintenanceControl::new(mutation.clone()));
 
   let token_handle = spawn_token_worker(TokenWorkerParameters {
     receiver: token_rx,
     runtime_sender: runtime_tx.clone(),
     executor: token_executor,
-    mutation,
+    mutation: mutation.clone(),
     activity_factory: Arc::clone(&activity_factory),
     status: Arc::clone(&status),
     metrics: Arc::clone(&metrics),
@@ -2289,6 +2761,22 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     #[cfg(test)]
     hooks: Arc::clone(&hooks),
   })?;
+  let (maintenance_sender, maintenance_handle) = match epoch_maintenance_executor {
+    Some(executor) => {
+      let (sender, receiver) =
+        mpsc::sync_channel(EPOCH_MAINTENANCE_COMMAND_CAPACITY);
+      let handle = spawn_epoch_maintenance_worker(EpochMaintenanceWorkerParameters {
+        receiver,
+        runtime_sender: runtime_tx.clone(),
+        executor,
+        mutation: mutation.clone(),
+        #[cfg(test)]
+        hooks: Arc::clone(&hooks),
+      })?;
+      (Some(sender), Some(handle))
+    }
+    None => (None, None),
+  };
   let live_handle = spawn_live_worker(LiveWorkerParameters {
     receiver: live_rx,
     runtime_sender: runtime_tx.clone(),
@@ -2335,6 +2823,8 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     current_live_result: None,
     token_sender: Some(token_tx),
     live_sender: Some(live_tx),
+    maintenance_sender,
+    maintenance_control: Arc::clone(&maintenance_control),
     runtime_sender: runtime_tx.clone(),
     waiters,
     status,
@@ -2351,8 +2841,11 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     shutdown_requested: Arc::clone(&shutdown_requested),
     token_handle: Some(token_handle),
     live_handle: Some(live_handle),
+    maintenance_handle,
+    maintenance: EpochMaintenanceState::new(maintenance_pending),
     token_exited: false,
     live_exited: false,
+    maintenance_exited: !maintenance_pending,
     #[cfg(test)]
     hooks,
   };
@@ -2370,6 +2863,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     reliable_changed,
     shutdown_requested,
     shutdown,
+    maintenance_control: maintenance_pending.then_some(maintenance_control),
   });
   Ok(RefreshRuntime {
     handle,
@@ -2377,6 +2871,72 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     #[cfg(test)]
     test_hooks: returned_hooks,
   })
+}
+
+struct EpochMaintenanceWorkerParameters {
+  receiver: Receiver<EpochMaintenanceWorkerCommand>,
+  runtime_sender: SyncSender<RuntimeMessage>,
+  executor: Arc<dyn EpochMaintenanceExecutor>,
+  mutation: UsageMutationCoordinator,
+  #[cfg(test)]
+  hooks: Arc<RuntimeTestHooks>,
+}
+
+fn spawn_epoch_maintenance_worker(
+  parameters: EpochMaintenanceWorkerParameters,
+) -> Result<JoinHandle<()>, String> {
+  thread::Builder::new()
+    .name("codex-pacer-epoch-maintenance".to_string())
+    .stack_size(EPOCH_MAINTENANCE_STACK_SIZE)
+    .spawn(move || {
+      let sender = parameters.runtime_sender.clone();
+      #[cfg(test)]
+      parameters.hooks.record_thread_name();
+      let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        while let Ok(command) = parameters.receiver.recv() {
+          let attempt_id = command.attempt_id;
+          let result = run_epoch_maintenance_batch(&parameters, command.cancellation);
+          if sender
+            .send(RuntimeMessage::Worker(WorkerOutcome::Maintenance(
+              EpochMaintenanceWorkerOutcome { attempt_id, result },
+            )))
+            .is_err()
+          {
+            return;
+          }
+        }
+      }));
+      let _ = sender.send(RuntimeMessage::Worker(WorkerOutcome::Exited(
+        WorkerLane::Maintenance,
+      )));
+    })
+    .map_err(|error| format!("Failed to start epoch maintenance worker: {error}"))
+}
+
+fn run_epoch_maintenance_batch(
+  parameters: &EpochMaintenanceWorkerParameters,
+  cancellation: Arc<AtomicBool>,
+) -> Result<EpochMaintenanceBatch, String> {
+  let mutation = parameters.mutation.run_cancellable(
+    MutationPriority::Maintenance,
+    &cancellation,
+    || {
+      if cancellation.load(Ordering::Acquire) {
+        return Ok(EpochMaintenanceBatch::Cancelled);
+      }
+      match panic::catch_unwind(AssertUnwindSafe(|| {
+        parameters
+          .executor
+          .run_batch(EPOCH_MAINTENANCE_BATCH_SIZE, Arc::clone(&cancellation))
+      })) {
+        Ok(result) => result,
+        Err(_) => Err("epoch maintenance executor panicked".to_string()),
+      }
+    },
+  );
+  mutation
+    .map(|outcome| outcome.value)
+    .unwrap_or(Ok(EpochMaintenanceBatch::Cancelled))
 }
 
 struct TokenWorkerParameters {
@@ -2753,6 +3313,17 @@ fn nonzero_duration_millis(value: Duration) -> u64 {
   }
 }
 
+fn epoch_maintenance_retry_delay(failure_streak: u32) -> Duration {
+  let shift = failure_streak.saturating_sub(1).min(4);
+  let multiplier = 1_u64 << shift;
+  Duration::from_secs(
+    EPOCH_MAINTENANCE_RETRY_BASE
+      .as_secs()
+      .saturating_mul(multiplier)
+      .min(EPOCH_MAINTENANCE_RETRY_MAX.as_secs()),
+  )
+}
+
 fn wall_time_for_instant(clock: &dyn RefreshClock, target: Instant) -> DateTime<Utc> {
   let monotonic_now = clock.monotonic_now();
   let wall_now = clock.wall_now();
@@ -2892,6 +3463,7 @@ fn persistence_task_is_stale(parameters: &PersistenceTaskParameters) -> bool {
 fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: CoordinatorRuntime) {
   #[cfg(test)]
   runtime.hooks.record_thread_name();
+  runtime.drive_background_work();
   loop {
     let message = if runtime.shutdown_requested.load(Ordering::Acquire) {
       receiver.recv().map_err(|_| RecvError)
@@ -2901,7 +3473,7 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
           Ok(message) => Ok(message),
           Err(RecvTimeoutError::Timeout) => {
             runtime.process_schedule_event(CoordinatorEvent::Timer);
-            runtime.maybe_start_persistence();
+            runtime.drive_background_work();
             continue;
           }
           Err(RecvTimeoutError::Disconnected) => Err(RecvError),
@@ -2923,11 +3495,11 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
     match message {
       RuntimeMessage::RequestToken(request) => {
         runtime.process_schedule_event(CoordinatorEvent::RequestToken(request));
-        runtime.maybe_start_persistence();
+        runtime.drive_background_work();
       }
       RuntimeMessage::RequestLive(request) => {
         runtime.process_schedule_event(CoordinatorEvent::RequestLive(request));
-        runtime.maybe_start_persistence();
+        runtime.drive_background_work();
       }
       RuntimeMessage::SettingsChanged(config, reply) => {
         let previous_source_generation = runtime.schedule.snapshot().source_generation;
@@ -2944,26 +3516,30 @@ fn coordinator_loop(receiver: Receiver<RuntimeMessage>, mut runtime: Coordinator
         }
         runtime.sync_schedule_snapshot();
         runtime.process_actions(actions);
-        runtime.maybe_start_persistence();
+        runtime.drive_background_work();
         let _ = reply.send(());
       }
       RuntimeMessage::Wake(reply) => {
         runtime.process_schedule_event(CoordinatorEvent::Wake);
-        runtime.maybe_start_persistence();
+        runtime.drive_background_work();
         let _ = reply.send(());
       }
       RuntimeMessage::WakeNoReply => {
         runtime.process_schedule_event(CoordinatorEvent::Wake);
-        runtime.maybe_start_persistence();
+        runtime.drive_background_work();
       }
       RuntimeMessage::Barrier(reply) => {
+        runtime.drive_background_work();
         let _ = reply.send(());
       }
       RuntimeMessage::Worker(outcome) => {
         runtime.process_worker_outcome(outcome);
-        runtime.maybe_start_persistence();
+        runtime.drive_background_work();
       }
-      RuntimeMessage::Persistence(outcome) => runtime.process_persistence_outcome(outcome),
+      RuntimeMessage::Persistence(outcome) => {
+        runtime.process_persistence_outcome(outcome);
+        runtime.drive_background_work();
+      }
       RuntimeMessage::Shutdown(reply) => {
         runtime.shutdown_and_join_workers(&receiver, reply);
         return;
@@ -2997,11 +3573,16 @@ impl CoordinatorRuntime {
     let schedule = self.schedule.next_wait(now);
     let live_running = self.schedule.snapshot().live.running_generation.is_some();
     let persistence = self.persistence.next_wait(now, live_running);
-    match (schedule, persistence) {
-      (Some(schedule), Some(persistence)) => Some(schedule.min(persistence)),
-      (Some(wait), None) | (None, Some(wait)) => Some(wait),
-      (None, None) => None,
-    }
+    let maintenance = self.maintenance_wait(now);
+    [schedule, persistence, maintenance]
+      .into_iter()
+      .flatten()
+      .min()
+  }
+
+  fn drive_background_work(&mut self) {
+    self.maybe_start_persistence();
+    self.maybe_start_maintenance();
   }
 
   fn maybe_start_persistence(&mut self) {
@@ -3011,10 +3592,17 @@ impl CoordinatorRuntime {
     {
       return;
     }
+    let now = self.clock.monotonic_now();
     let live_running = self.schedule.snapshot().live.running_generation.is_some();
+    if self.persistence.next_wait(now, live_running) == Some(Duration::ZERO)
+      && self.maintenance.running.is_some()
+    {
+      self.cancel_epoch_maintenance();
+      return;
+    }
     let Some(work) = self
       .persistence
-      .take_ready(self.clock.monotonic_now(), live_running)
+      .take_ready(now, live_running)
     else {
       return;
     };
@@ -3047,6 +3635,139 @@ impl CoordinatorRuntime {
     }
   }
 
+  fn maintenance_wait(&self, now: Instant) -> Option<Duration> {
+    if !self.maintenance_dispatch_gates_open(now) {
+      return None;
+    }
+    Some(
+      self
+        .maintenance
+        .next_eligible_at
+        .map(|deadline| deadline.saturating_duration_since(now))
+        .unwrap_or(Duration::ZERO),
+    )
+  }
+
+  fn maintenance_dispatch_gates_open(&self, now: Instant) -> bool {
+    if !self.maintenance.pending
+      || self.maintenance.running.is_some()
+      || self.maintenance_sender.is_none()
+      || self.shutdown_requested.load(Ordering::Acquire)
+      || self.shutdown.load(Ordering::Acquire)
+      || self.persistence_handle.is_some()
+    {
+      return false;
+    }
+    let snapshot = self.schedule.snapshot();
+    if snapshot.token.running_generation.is_some()
+      || snapshot.live.running_generation.is_some()
+      || snapshot.token.pending
+      || snapshot.live.pending
+    {
+      return false;
+    }
+    if self
+      .schedule
+      .next_wait(now)
+      .is_some_and(|wait| wait <= EPOCH_MAINTENANCE_DEADLINE_GUARD)
+    {
+      return false;
+    }
+    self.persistence.next_wait(now, false) != Some(Duration::ZERO)
+  }
+
+  fn maybe_start_maintenance(&mut self) {
+    let now = self.clock.monotonic_now();
+    if self.maintenance_wait(now) != Some(Duration::ZERO) {
+      return;
+    }
+    let Some(sender) = self.maintenance_sender.clone() else {
+      return;
+    };
+    let Some(attempt_id) = self.maintenance.next_attempt_id.checked_add(1) else {
+      log::error!("Epoch maintenance attempt ID overflowed; disabling the repair worker.");
+      self.maintenance.pending = false;
+      self.maintenance_sender = None;
+      return;
+    };
+    let cancellation = Arc::new(AtomicBool::new(false));
+    let command = EpochMaintenanceWorkerCommand {
+      attempt_id,
+      cancellation: Arc::clone(&cancellation),
+    };
+    match sender.try_send(command) {
+      Ok(()) => {
+        self.maintenance.next_attempt_id = attempt_id;
+        self.maintenance.next_eligible_at = None;
+        self
+          .maintenance_control
+          .install(attempt_id, Arc::clone(&cancellation));
+        self.maintenance.running = Some(EpochMaintenanceAttempt { id: attempt_id });
+        if self.shutdown_requested.load(Ordering::Acquire) {
+          self.maintenance_control.cancel_current();
+        }
+      }
+      Err(TrySendError::Full(_)) => {
+        log::warn!("Epoch maintenance command queue was unexpectedly full.");
+        self.maintenance.next_eligible_at = now.checked_add(EPOCH_MAINTENANCE_PACE);
+      }
+      Err(TrySendError::Disconnected(_)) => {
+        log::warn!("Epoch maintenance worker became unavailable.");
+        self.maintenance.pending = false;
+        self.maintenance_sender = None;
+      }
+    }
+  }
+
+  fn cancel_epoch_maintenance(&self) {
+    if self.maintenance.running.is_some() {
+      self.maintenance_control.cancel_current();
+    }
+  }
+
+  fn process_maintenance_outcome(&mut self, outcome: EpochMaintenanceWorkerOutcome) {
+    let Some(attempt) = self.maintenance.running.as_ref() else {
+      return;
+    };
+    if attempt.id != outcome.attempt_id {
+      return;
+    }
+    self.maintenance_control.clear(outcome.attempt_id);
+    self.maintenance.running = None;
+    #[cfg(test)]
+    self.hooks.record_maintenance_outcome();
+    if self.shutdown_requested.load(Ordering::Acquire) || self.shutdown.load(Ordering::Acquire) {
+      return;
+    }
+    let now = self.clock.monotonic_now();
+    match outcome.result {
+      Ok(EpochMaintenanceBatch::Progress {
+        processed_rows,
+        complete,
+      }) => {
+        self.maintenance.failure_streak = 0;
+        if complete {
+          log::debug!("Epoch maintenance completed after a {processed_rows}-row slice.");
+          self.maintenance.pending = false;
+          self.maintenance.next_eligible_at = None;
+          self.maintenance_sender = None;
+        } else {
+          self.maintenance.next_eligible_at = now.checked_add(EPOCH_MAINTENANCE_PACE);
+        }
+      }
+      Ok(EpochMaintenanceBatch::Cancelled) => {
+        self.maintenance.failure_streak = 0;
+        self.maintenance.next_eligible_at = now.checked_add(EPOCH_MAINTENANCE_PACE);
+      }
+      Err(error) => {
+        self.maintenance.failure_streak = self.maintenance.failure_streak.saturating_add(1);
+        self.maintenance.next_eligible_at =
+          now.checked_add(epoch_maintenance_retry_delay(self.maintenance.failure_streak));
+        log::warn!("Epoch maintenance slice failed; retrying later: {error}");
+      }
+    }
+  }
+
   fn process_persistence_outcome(&mut self, outcome: PersistenceWorkerOutcome) {
     if let Some(handle) = self.persistence_handle.take() {
       if handle.join().is_err() {
@@ -3073,8 +3794,6 @@ impl CoordinatorRuntime {
     self.hooks.record_persistence_outcome();
     if self.shutdown_requested.load(Ordering::Acquire) || self.shutdown.load(Ordering::Acquire) {
       self.persistence.cancel_pending();
-    } else {
-      self.maybe_start_persistence();
     }
   }
 
@@ -3090,6 +3809,12 @@ impl CoordinatorRuntime {
       }
       RuntimeMessage::Worker(WorkerOutcome::Exited(WorkerLane::Live)) => {
         self.live_exited = true;
+      }
+      RuntimeMessage::Worker(WorkerOutcome::Exited(WorkerLane::Maintenance)) => {
+        self.finish_maintenance_worker_exit();
+      }
+      RuntimeMessage::Worker(WorkerOutcome::Maintenance(outcome)) => {
+        self.process_maintenance_outcome(outcome);
       }
       RuntimeMessage::Persistence(outcome) => {
         self.process_persistence_outcome(outcome);
@@ -3127,9 +3852,28 @@ impl CoordinatorRuntime {
     match outcome {
       WorkerOutcome::Token(outcome) => self.process_token_outcome(outcome),
       WorkerOutcome::Live(outcome) => self.process_live_outcome(outcome),
+      WorkerOutcome::Maintenance(outcome) => self.process_maintenance_outcome(outcome),
       WorkerOutcome::Exited(WorkerLane::Token) => self.token_exited = true,
       WorkerOutcome::Exited(WorkerLane::Live) => self.live_exited = true,
+      WorkerOutcome::Exited(WorkerLane::Maintenance) => self.finish_maintenance_worker_exit(),
     }
+  }
+
+  fn finish_maintenance_worker_exit(&mut self) {
+    self.maintenance_exited = true;
+    if let Some(handle) = self.maintenance_handle.take() {
+      if handle.join().is_err() {
+        log::warn!("Epoch maintenance worker panicked while exiting.");
+      }
+    }
+    if let Some(attempt) = self.maintenance.running.take() {
+      self.maintenance_control.clear(attempt.id);
+      log::warn!("Epoch maintenance worker exited before reporting its active attempt.");
+    }
+    self.maintenance.pending = false;
+    self.maintenance_sender = None;
+    #[cfg(test)]
+    self.hooks.record_maintenance_exit();
   }
 
   fn process_token_outcome(&mut self, outcome: TokenWorkerOutcome) {
@@ -3468,6 +4212,7 @@ impl CoordinatorRuntime {
   }
 
   fn start_token(&mut self, request: TokenExecutionRequest) {
+    self.cancel_epoch_maintenance();
     self.record_lane_start(true, request.generation, request.request.planned_due_at);
     set_mutation_phase(&self.status, MutationPhase::Parsing);
     #[cfg(test)]
@@ -3492,6 +4237,7 @@ impl CoordinatorRuntime {
   }
 
   fn start_live(&mut self, request: LiveExecutionRequest) {
+    self.cancel_epoch_maintenance();
     self.record_lane_start(false, request.generation, request.planned_due_at);
     self.live_cache.set_refreshing(true);
     let result = self.live_sender.as_ref().ok_or(()).and_then(|sender| {
@@ -3707,6 +4453,9 @@ impl CoordinatorRuntime {
     drain_waiters_for_shutdown(&self.waiters);
     self.live_cache.set_refreshing(false);
     self.persistence.cancel_pending();
+    self.cancel_epoch_maintenance();
+    self.maintenance.pending = false;
+    self.maintenance_sender = None;
     self.prepared_slot = None;
     #[cfg(test)]
     self.hooks.set_prepared_slot_empty(true);
@@ -3722,7 +4471,11 @@ impl CoordinatorRuntime {
       status.mutation_phase = None;
     }
 
-    while !self.token_exited || !self.live_exited || self.persistence_handle.is_some() {
+    while !self.token_exited
+      || !self.live_exited
+      || !self.maintenance_exited
+      || self.persistence_handle.is_some()
+    {
       let Ok(message) = receiver.recv() else {
         break;
       };
@@ -3732,6 +4485,12 @@ impl CoordinatorRuntime {
         }
         RuntimeMessage::Worker(WorkerOutcome::Exited(WorkerLane::Live)) => {
           self.live_exited = true;
+        }
+        RuntimeMessage::Worker(WorkerOutcome::Exited(WorkerLane::Maintenance)) => {
+          self.finish_maintenance_worker_exit();
+        }
+        RuntimeMessage::Worker(WorkerOutcome::Maintenance(outcome)) => {
+          self.process_maintenance_outcome(outcome);
         }
         RuntimeMessage::Persistence(outcome) => {
           self.process_persistence_outcome(outcome);
@@ -4084,6 +4843,8 @@ struct TestHookData {
   prepared_slot_empty: bool,
   completion_slots_empty: bool,
   persistence_outcomes: u64,
+  maintenance_outcomes: u64,
+  maintenance_exited: bool,
 }
 
 #[cfg(test)]
@@ -4162,6 +4923,18 @@ impl RuntimeTestHooks {
     let mut data = lock(&self.data);
     data.persistence_outcomes = data.persistence_outcomes.saturating_add(1);
     drop(data);
+    self.changed.notify_all();
+  }
+
+  fn record_maintenance_outcome(&self) {
+    let mut data = lock(&self.data);
+    data.maintenance_outcomes = data.maintenance_outcomes.saturating_add(1);
+    drop(data);
+    self.changed.notify_all();
+  }
+
+  fn record_maintenance_exit(&self) {
+    lock(&self.data).maintenance_exited = true;
     self.changed.notify_all();
   }
 
@@ -4408,6 +5181,12 @@ impl TestTokenExecutor {
 
   fn wait_for_commit_calls(&self, expected: u64, timeout: Duration) {
     self.wait_for_counter(&self.commit_calls, expected, timeout);
+  }
+
+  fn wait_until_waiting_to_commit(&self, timeout: Duration) {
+    self
+      .hooks
+      .wait_for(timeout, |data| data.token_waiting_count > 0);
   }
 
   fn wait_for_counter(&self, counter: &AtomicU64, expected: u64, timeout: Duration) {
@@ -4894,6 +5673,124 @@ impl LiveQuotaPersister for TestLiveExecutor {
 }
 
 #[cfg(test)]
+#[derive(Default)]
+struct TestEpochMaintenanceBehavior {
+  body_gates: HashMap<u64, Arc<TestGateState>>,
+  results: VecDeque<Result<EpochMaintenanceBatch, String>>,
+  limits: Vec<usize>,
+  cancellations: Vec<Arc<AtomicBool>>,
+  worker_ids: Vec<String>,
+  panic_calls: std::collections::HashSet<u64>,
+}
+
+#[cfg(test)]
+struct TestEpochMaintenanceExecutor {
+  behavior: Mutex<TestEpochMaintenanceBehavior>,
+  changed: Condvar,
+  calls: AtomicU64,
+}
+
+#[cfg(test)]
+impl TestEpochMaintenanceExecutor {
+  fn new() -> Self {
+    Self {
+      behavior: Mutex::new(TestEpochMaintenanceBehavior::default()),
+      changed: Condvar::new(),
+      calls: AtomicU64::new(0),
+    }
+  }
+
+  fn queue_result(&self, result: Result<EpochMaintenanceBatch, String>) {
+    lock(&self.behavior).results.push_back(result);
+  }
+
+  fn block_batch(&self, call: u64) -> PhaseGateControl {
+    let state = Arc::new(TestGateState::default());
+    lock(&self.behavior)
+      .body_gates
+      .insert(call, Arc::clone(&state));
+    PhaseGateControl { state }
+  }
+
+  fn panic_batch(&self, call: u64) {
+    lock(&self.behavior).panic_calls.insert(call);
+  }
+
+  fn wait_for_calls(&self, expected: u64, timeout: Duration) {
+    let behavior = lock(&self.behavior);
+    let (_behavior, timed_out) = self
+      .changed
+      .wait_timeout_while(behavior, timeout, |_| self.calls() < expected)
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(self.calls() >= expected, "maintenance call count");
+    assert!(!timed_out.timed_out(), "timed out waiting for maintenance call");
+  }
+
+  fn calls(&self) -> u64 {
+    self.calls.load(Ordering::Acquire)
+  }
+
+  fn limits(&self) -> Vec<usize> {
+    lock(&self.behavior).limits.clone()
+  }
+
+  fn cancellation(&self, call: usize) -> Arc<AtomicBool> {
+    Arc::clone(
+      lock(&self.behavior)
+        .cancellations
+        .get(call.saturating_sub(1))
+        .expect("recorded maintenance cancellation token"),
+    )
+  }
+
+  fn unique_worker_ids(&self) -> usize {
+    lock(&self.behavior)
+      .worker_ids
+      .iter()
+      .collect::<std::collections::HashSet<_>>()
+      .len()
+  }
+}
+
+#[cfg(test)]
+impl EpochMaintenanceExecutor for TestEpochMaintenanceExecutor {
+  fn run_batch(
+    &self,
+    limit: usize,
+    cancellation: Arc<AtomicBool>,
+  ) -> Result<EpochMaintenanceBatch, String> {
+    let call = self.calls.fetch_add(1, Ordering::AcqRel) + 1;
+    let (gate, result, panic_now) = {
+      let mut behavior = lock(&self.behavior);
+      behavior.limits.push(limit);
+      behavior.cancellations.push(Arc::clone(&cancellation));
+      behavior
+        .worker_ids
+        .push(format!("{:?}", thread::current().id()));
+      let panic_now = behavior.panic_calls.remove(&call);
+      let result = (!panic_now).then(|| {
+        behavior.results.pop_front().unwrap_or(Ok(EpochMaintenanceBatch::Progress {
+          processed_rows: 1_000,
+          complete: false,
+        }))
+      });
+      (behavior.body_gates.remove(&call), result, panic_now)
+    };
+    self.changed.notify_all();
+    if let Some(gate) = gate {
+      gate.mark_entered_and_wait();
+    }
+    if panic_now {
+      panic!("intentional epoch maintenance panic");
+    }
+    if cancellation.load(Ordering::Acquire) {
+      return Ok(EpochMaintenanceBatch::Cancelled);
+    }
+    result.expect("non-panicking maintenance call has a result")
+  }
+}
+
+#[cfg(test)]
 fn decrement_saturating_atomic(value: &AtomicU64) {
   let mut current = value.load(Ordering::Acquire);
   loop {
@@ -5017,6 +5914,8 @@ enum TestRigSchedule {
   StartupDue,
   Paused,
   HugeInterval,
+  ThirtySecondDeadline,
+  ThirtyOneSecondDeadline,
 }
 
 #[cfg(test)]
@@ -5053,6 +5952,29 @@ impl RuntimeTestRig {
     )
   }
 
+  fn startup_due_with_pre_body_gates_and_maintenance(
+    maintenance: Arc<TestEpochMaintenanceExecutor>,
+  ) -> (Self, PhaseGateControl, PhaseGateControl) {
+    let hooks = Arc::new(RuntimeTestHooks::default());
+    initialize_test_hooks(&hooks);
+    let token = Arc::new(TestTokenExecutor::new(Arc::clone(&hooks)));
+    let live = Arc::new(TestLiveExecutor::new(Arc::clone(&hooks)));
+    let parse = token.block_parse_call(1);
+    let fetch = live.block_fetch_call_before_body(1);
+    (
+      Self::build_with_components_and_options(
+        TestRigSchedule::StartupDue,
+        hooks,
+        token,
+        live,
+        Some(maintenance),
+        None,
+      ),
+      parse,
+      fetch,
+    )
+  }
+
   fn scheduled_overdue(overdue: Duration) -> Self {
     let rig = Self::build(TestRigSchedule::Paused).0;
     rig
@@ -5079,17 +6001,66 @@ impl RuntimeTestRig {
     (rig, hooks)
   }
 
+  fn build_with_maintenance(
+    schedule: TestRigSchedule,
+    maintenance: Arc<TestEpochMaintenanceExecutor>,
+  ) -> Self {
+    let hooks = Arc::new(RuntimeTestHooks::default());
+    initialize_test_hooks(&hooks);
+    let token = Arc::new(TestTokenExecutor::new(Arc::clone(&hooks)));
+    let live = Arc::new(TestLiveExecutor::new(Arc::clone(&hooks)));
+    Self::build_with_components_and_options(
+      schedule,
+      hooks,
+      token,
+      live,
+      Some(maintenance),
+      None,
+    )
+  }
+
+  fn build_with_maintenance_and_mutation(
+    schedule: TestRigSchedule,
+    maintenance: Arc<TestEpochMaintenanceExecutor>,
+    mutation: UsageMutationCoordinator,
+  ) -> Self {
+    let hooks = Arc::new(RuntimeTestHooks::default());
+    initialize_test_hooks(&hooks);
+    let token = Arc::new(TestTokenExecutor::new(Arc::clone(&hooks)));
+    let live = Arc::new(TestLiveExecutor::new(Arc::clone(&hooks)));
+    Self::build_with_components_and_options(
+      schedule,
+      hooks,
+      token,
+      live,
+      Some(maintenance),
+      Some(mutation),
+    )
+  }
+
   fn build_with_components(
     schedule: TestRigSchedule,
     hooks: Arc<RuntimeTestHooks>,
     token: Arc<TestTokenExecutor>,
     live: Arc<TestLiveExecutor>,
   ) -> Self {
+    Self::build_with_components_and_options(schedule, hooks, token, live, None, None)
+  }
+
+  fn build_with_components_and_options(
+    schedule: TestRigSchedule,
+    hooks: Arc<RuntimeTestHooks>,
+    token: Arc<TestTokenExecutor>,
+    live: Arc<TestLiveExecutor>,
+    maintenance: Option<Arc<TestEpochMaintenanceExecutor>>,
+    mutation: Option<UsageMutationCoordinator>,
+  ) -> Self {
     let clock = Arc::new(TestClock::new());
-    let interval = if matches!(schedule, TestRigSchedule::HugeInterval) {
-      Duration::MAX
-    } else {
-      Duration::from_secs(60)
+    let interval = match schedule {
+      TestRigSchedule::HugeInterval => Duration::MAX,
+      TestRigSchedule::ThirtySecondDeadline => Duration::from_secs(30),
+      TestRigSchedule::ThirtyOneSecondDeadline => Duration::from_secs(31),
+      _ => Duration::from_secs(60),
     };
     let wall_now = clock.wall_now();
     let (auto_scan_enabled, success_wall) = match schedule {
@@ -5100,6 +6071,9 @@ impl RuntimeTestRig {
       ),
       TestRigSchedule::Paused => (true, Some(wall_now)),
       TestRigSchedule::HugeInterval => (false, Some(wall_now)),
+      TestRigSchedule::ThirtySecondDeadline | TestRigSchedule::ThirtyOneSecondDeadline => {
+        (true, Some(wall_now))
+      }
     };
     let config = RefreshConfig {
       auto_scan_enabled,
@@ -5109,7 +6083,7 @@ impl RuntimeTestRig {
       live_last_success_wall: success_wall,
     };
     let events = Arc::new(TestEvents::new(Arc::clone(&hooks)));
-    let mutation = UsageMutationCoordinator::new();
+    let mutation = mutation.unwrap_or_default();
     let activities = super::power::CountingActivityFactory::default();
     let live_cache = LiveQuotaCache::new();
     let dependencies = RefreshRuntimeDependencies {
@@ -5122,6 +6096,9 @@ impl RuntimeTestRig {
       mutation: mutation.clone(),
       activity_factory: Arc::new(activities.clone()),
       clock: clock.clone(),
+      epoch_maintenance_executor: maintenance
+        .as_ref()
+        .map(|executor| executor.clone() as Arc<dyn EpochMaintenanceExecutor>),
       test_hooks: Some(Arc::clone(&hooks)),
     };
     let runtime = Arc::new(RefreshRuntime::start(dependencies).expect("start test runtime"));
@@ -5163,6 +6140,24 @@ impl RuntimeTestRig {
       .runtime
       .test_hooks
       .wait_for(timeout, |data| data.persistence_outcomes >= expected);
+  }
+
+  fn wait_for_maintenance_outcomes(&self, expected: u64, timeout: Duration) {
+    self
+      .runtime
+      .test_hooks
+      .wait_for(timeout, |data| data.maintenance_outcomes >= expected);
+  }
+
+  fn wait_for_maintenance_exit(&self, timeout: Duration) {
+    self
+      .runtime
+      .test_hooks
+      .wait_for(timeout, |data| data.maintenance_exited);
+  }
+
+  fn wait_for_mutation_queue(&self, expected: usize, timeout: Duration) {
+    self.mutation.wait_for_queued_for_test(expected, timeout);
   }
 
   fn shutdown(&self) {
@@ -5242,6 +6237,19 @@ impl RuntimeTestRig {
         },
       )))
       .expect("inject duplicate token completion");
+  }
+
+  fn inject_maintenance_outcome(
+    &self,
+    attempt_id: u64,
+    result: Result<EpochMaintenanceBatch, String>,
+  ) {
+    self
+      .runtime_sender()
+      .send(RuntimeMessage::Worker(WorkerOutcome::Maintenance(
+        EpochMaintenanceWorkerOutcome { attempt_id, result },
+      )))
+      .expect("inject maintenance outcome");
   }
 
   fn pause_coordinator(&self) -> CoordinatorPause {

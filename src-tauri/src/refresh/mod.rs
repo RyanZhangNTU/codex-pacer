@@ -13,10 +13,11 @@ pub(crate) use mutation::{MutationOutcome, MutationPriority, UsageMutationCoordi
 pub(crate) use power::{ActivityFactory, SystemActivityFactory};
 #[allow(unused_imports)]
 pub(crate) use runtime::{
-  LaneStatus, LiveQuotaFetcher, LiveQuotaPersister, ManualLiveTicket, ManualRefreshTicket,
-  ManualTokenTicket, MutationPhase, PreparedTokenRefresh, RefreshCoordinatorHandle, RefreshError,
-  RefreshEventSink, RefreshLaneMetrics, RefreshMetricsSnapshot, RefreshRuntime,
-  RefreshRuntimeDependencies, RefreshStatus, ShutdownResult, TokenRefreshExecutor,
+  EpochMaintenanceBatch, EpochMaintenanceExecutor, LaneStatus, LiveQuotaFetcher,
+  LiveQuotaPersister, ManualLiveTicket, ManualRefreshTicket, ManualTokenTicket, MutationPhase,
+  PreparedTokenRefresh, RefreshCoordinatorHandle, RefreshError, RefreshEventSink,
+  RefreshLaneMetrics, RefreshMetricsSnapshot, RefreshRuntime, RefreshRuntimeDependencies,
+  RefreshStatus, ShutdownResult, TokenRefreshExecutor,
 };
 
 use chrono::{DateTime, Utc};
