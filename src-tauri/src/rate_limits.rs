@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use chrono::{Local, LocalResult, TimeZone, Timelike};
@@ -50,28 +51,63 @@ struct AppServerCommandSpec {
   hide_window: bool,
 }
 
+struct AppServerSession {
+  child: Child,
+  stdout_reader: Option<JoinHandle<()>>,
+}
+
+impl Drop for AppServerSession {
+  fn drop(&mut self) {
+    let _ = self.child.stdin.take();
+
+    if !matches!(self.child.try_wait(), Ok(Some(_))) {
+      let _ = self.child.kill();
+    }
+    let _ = self.child.wait();
+
+    if let Some(stdout_reader) = self.stdout_reader.take() {
+      let _ = stdout_reader.join();
+    }
+  }
+}
+
 pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
   let started_at = Instant::now();
   let codex_binary = resolve_codex_binary();
   let command_spec = app_server_command_spec(&codex_binary);
+  query_live_rate_limits_with_command(started_at, timeout, command_spec, &codex_binary)
+}
+
+fn query_live_rate_limits_with_command(
+  started_at: Instant,
+  timeout: Duration,
+  command_spec: AppServerCommandSpec,
+  command_path: &Path,
+) -> Result<LiveRateLimitSnapshot, String> {
   let mut command = app_server_command(&command_spec);
-  let mut child = command
+  let child = command
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::null())
     .spawn()
-    .map_err(|error| format!("Failed to launch codex app-server from {}: {error}", codex_binary.display()))?;
+    .map_err(|error| {
+      format!(
+        "Failed to launch codex app-server from {}: {error}",
+        command_path.display()
+      )
+    })?;
+  let mut session = AppServerSession {
+    child,
+    stdout_reader: None,
+  };
 
-  let stdout = match child.stdout.take() {
+  let stdout = match session.child.stdout.take() {
     Some(stdout) => stdout,
-    None => {
-      stop_app_server(&mut child);
-      return Err("Failed to capture codex app-server stdout.".to_string());
-    }
+    None => return Err("Failed to capture codex app-server stdout.".to_string()),
   };
   let (sender, receiver) = mpsc::channel();
 
-  std::thread::spawn(move || {
+  session.stdout_reader = Some(std::thread::spawn(move || {
     let mut init_ok = false;
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
       let parsed: Value = match serde_json::from_str(&line) {
@@ -134,10 +170,10 @@ pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot
     }
 
     let _ = sender.send(AppServerMessage::Closed);
-  });
+  }));
 
   if let Err(error) = send_app_server_request(
-    &mut child,
+    &mut session.child,
     json!({
       "id": INIT_REQUEST_ID,
       "method": "initialize",
@@ -154,49 +190,31 @@ pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot
     "Failed to initialize codex app-server",
     "Failed to flush codex app-server init request",
   ) {
-    stop_app_server(&mut child);
     return Err(error);
   }
 
   let init_timeout = match remaining_app_server_timeout(started_at, timeout) {
     Some(timeout) => timeout,
-    None => {
-      stop_app_server(&mut child);
-      return Err("Timed out while initializing Codex app-server.".to_string());
-    }
+    None => return Err("Timed out while initializing Codex app-server.".to_string()),
   };
   let init_response = match receiver.recv_timeout(init_timeout) {
     Ok(message) => message,
-    Err(_) => {
-      stop_app_server(&mut child);
-      return Err("Timed out while initializing Codex app-server.".to_string());
-    }
+    Err(_) => return Err("Timed out while initializing Codex app-server.".to_string()),
   };
 
   match init_response {
     AppServerMessage::Initialized(Ok(())) => {}
-    AppServerMessage::Initialized(Err(error)) => {
-      stop_app_server(&mut child);
-      return Err(error);
-    }
-    AppServerMessage::RateLimits(result) => {
-      stop_app_server(&mut child);
-      return result;
-    }
+    AppServerMessage::Initialized(Err(error)) => return Err(error),
+    AppServerMessage::RateLimits(result) => return result,
     AppServerMessage::Closed => {
-      stop_app_server(&mut child);
-      return Err("Codex app-server closed before initialization completed.".to_string());
+      return Err("Codex app-server closed before initialization completed.".to_string())
     }
   }
 
   for (message, write_context, flush_context) in post_initialize_messages() {
-    if let Err(error) = send_app_server_request(
-      &mut child,
-      message,
-      write_context,
-      flush_context,
-    ) {
-      stop_app_server(&mut child);
+    if let Err(error) =
+      send_app_server_request(&mut session.child, message, write_context, flush_context)
+    {
       return Err(error);
     }
   }
@@ -204,17 +222,11 @@ pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot
   let response = loop {
     let timeout = match remaining_app_server_timeout(started_at, timeout) {
       Some(timeout) => timeout,
-      None => {
-        stop_app_server(&mut child);
-        return Err("Timed out while querying live rate limits from Codex.".to_string());
-      }
+      None => return Err("Timed out while querying live rate limits from Codex.".to_string()),
     };
     let message = match receiver.recv_timeout(timeout) {
       Ok(message) => message,
-      Err(_) => {
-        stop_app_server(&mut child);
-        return Err("Timed out while querying live rate limits from Codex.".to_string());
-      }
+      Err(_) => return Err("Timed out while querying live rate limits from Codex.".to_string()),
     };
 
     match message {
@@ -227,7 +239,6 @@ pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot
     }
   };
 
-  stop_app_server(&mut child);
   response
 }
 
@@ -348,12 +359,6 @@ fn send_app_server_request(
   stdin
     .flush()
     .map_err(|error| format!("{flush_context}: {error}"))
-}
-
-fn stop_app_server(child: &mut Child) {
-  let _ = child.stdin.take();
-  let _ = child.kill();
-  let _ = child.wait();
 }
 
 fn convert_live_rate_limits(snapshot: AppServerRateLimitSnapshot) -> LiveRateLimitSnapshot {
@@ -500,10 +505,106 @@ mod tests {
   #[cfg(windows)]
   use std::ffi::OsString;
   use std::path::{Path, PathBuf};
+  #[cfg(unix)]
+  use std::time::{Duration, Instant};
 
   fn existing_paths(paths: &[&str]) -> impl Fn(&Path) -> bool {
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     move |candidate| paths.iter().any(|path| path == candidate)
+  }
+
+  #[test]
+  #[cfg(unix)]
+  fn live_timeout_terminates_and_reaps_child() {
+    fn assert_not_running_or_waitable(pid: i32) {
+      const ESRCH: i32 = 3;
+      const ECHILD: i32 = 10;
+      const SIGKILL: i32 = 9;
+      const WNOHANG: i32 = 1;
+
+      extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+        fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+      }
+
+      let kill_result = unsafe { kill(pid, 0) };
+      let kill_error = (kill_result == -1).then(std::io::Error::last_os_error);
+
+      let mut status = 0;
+      let wait_result = unsafe { waitpid(pid, &mut status, WNOHANG) };
+      let wait_error = (wait_result == -1).then(std::io::Error::last_os_error);
+
+      if wait_result == 0 {
+        let _ = unsafe { kill(pid, SIGKILL) };
+        let _ = unsafe { waitpid(pid, &mut status, 0) };
+      }
+
+      assert_eq!(
+        kill_result, -1,
+        "app-server fixture PID {pid} is still alive or a zombie"
+      );
+      assert_eq!(
+        kill_error.and_then(|error| error.raw_os_error()),
+        Some(ESRCH),
+        "unexpected kill probe result for PID {pid}"
+      );
+      assert_eq!(
+        wait_result, -1,
+        "app-server fixture PID {pid} was not reaped"
+      );
+      assert_eq!(
+        wait_error.and_then(|error| error.raw_os_error()),
+        Some(ECHILD),
+        "unexpected waitpid result for PID {pid}"
+      );
+    }
+
+    let fixtures = [
+      (
+        "echo $$ > \"$1\"; while IFS= read -r _line; do :; done",
+        "Timed out while initializing Codex app-server.",
+      ),
+      (
+        concat!(
+          "echo $$ > \"$1\"; ",
+          "IFS= read -r _line; ",
+          "printf '%s\\n' '{\"id\":\"codex-counter.init\",\"result\":{}}'; ",
+          "while IFS= read -r _line; do :; done"
+        ),
+        "Timed out while querying live rate limits from Codex.",
+      ),
+    ];
+
+    for (index, (script, expected_error)) in fixtures.into_iter().enumerate() {
+      let temp_dir = tempfile::tempdir().expect("create app-server fixture directory");
+      let pid_path = temp_dir.path().join(format!("fixture-{index}.pid"));
+      let command_spec = super::AppServerCommandSpec {
+        program: "/bin/sh".into(),
+        args: vec![
+          "-c".into(),
+          script.into(),
+          "codex-pacer-app-server-fixture".into(),
+          pid_path.as_os_str().to_owned(),
+        ],
+        hide_window: false,
+      };
+
+      let error = super::query_live_rate_limits_with_command(
+        Instant::now(),
+        Duration::from_millis(100),
+        command_spec,
+        Path::new("local app-server fixture"),
+      )
+      .expect_err("fixture should force a timeout");
+      assert_eq!(error, expected_error);
+
+      let pid = std::fs::read_to_string(&pid_path)
+        .expect("fixture should record its PID")
+        .trim()
+        .parse::<i32>()
+        .expect("fixture PID should be numeric");
+      assert_not_running_or_waitable(pid);
+    }
   }
 
   #[test]
