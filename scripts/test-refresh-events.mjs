@@ -50,6 +50,14 @@ function extractFunction(source, signature) {
   assert.fail(`unterminated function: ${signature}`)
 }
 
+function enclosingEffect(source, needle) {
+  const needleIndex = source.indexOf(needle)
+  assert.notEqual(needleIndex, -1, `missing effect content: ${needle}`)
+  const layoutEffectIndex = source.lastIndexOf('useLayoutEffect(() => {', needleIndex)
+  const passiveEffectIndex = source.lastIndexOf('useEffect(() => {', needleIndex)
+  return layoutEffectIndex > passiveEffectIndex ? 'layout' : 'passive'
+}
+
 test('surface_revision_gate_deduplicates_visible_completions', () => {
   const gate = new SurfaceRevisionGate()
 
@@ -171,17 +179,60 @@ test('app_awaits_listener_readiness_and_does_not_bypass_hidden_source_change_def
   assert.ok(settingsReady >= 0 && settingsReady < settingsSave)
   assert.match(
     handleRescan,
-    /shouldLoadDashboardAfterManualRefresh\(listenerReady\)[\s\S]*await loadShell\(true\)/,
+    /shouldLoadDashboardAfterManualRefresh\(listenerReady\)[\s\S]*await loadShellRef\.current\(true\)/,
   )
   assert.match(
     handleSaveSettings,
-    /shouldLoadDashboardAfterSettingsSave\(saved\.codexHomeChanged, listenerReady\)[\s\S]*await loadShell\(true\)/,
+    /shouldLoadDashboardAfterSettingsSave\(saved\.codexHomeChanged, listenerReady\)[\s\S]*await loadShellRef\.current\(true\)/,
   )
+  assert.doesNotMatch(handleRescan, /await loadShell\(true\)/)
+  assert.doesNotMatch(handleSaveSettings, /await loadShell\(true\)/)
   assert.match(appSource, /const completionRegistration = listen<RefreshCompletedEvent>/)
   assert.match(
     appSource,
     /refreshCompletionListenerReadyRef\.current = completionRegistration[\s\S]*\.then\([\s\S]*return true[\s\S]*\.catch\([\s\S]*false/,
   )
+})
+
+test('app_commits_listener_readiness_and_latest_loader_before_browser_interaction', () => {
+  assert.equal(
+    enclosingEffect(appSource, 'loadShellRef.current = loadShell'),
+    'layout',
+    'query changes must update the latest loader before paint',
+  )
+  assert.equal(
+    enclosingEffect(appSource, 'const completionRegistration = listen<RefreshCompletedEvent>'),
+    'layout',
+    'manual actions must see the real registration promise before paint',
+  )
+})
+
+test('manual_fallback_after_a_pending_ticket_uses_the_latest_loader_once', async () => {
+  const handleRescan = extractFunction(appSource, 'async function handleRescan()')
+  assert.match(handleRescan, /await loadShellRef\.current\(true\)/)
+  const ticket = deferred()
+  const calls = []
+  const loaderRef = {
+    current: async (quiet) => {
+      calls.push(['old query', quiet])
+    },
+  }
+  const runManual = async () => {
+    const listenerReady = await Promise.resolve(false)
+    await ticket.promise
+    if (refreshEvents.shouldLoadDashboardAfterManualRefresh(listenerReady)) {
+      await loaderRef.current(true)
+    }
+  }
+
+  const pending = runManual()
+  loaderRef.current = async (quiet) => {
+    calls.push(['latest query', quiet])
+  }
+  ticket.resolve()
+  await pending
+
+  assert.deepEqual(calls, [['latest query', true]])
 })
 
 test('surface_request_controller_ignores_an_older_response_that_finishes_last', async () => {

@@ -1,4 +1,12 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -234,7 +242,7 @@ function App() {
     bucket === 'five_hour' || bucket === 'seven_day' ? liveWindowOffset : 0,
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     loadShellRef.current = loadShell
   }, [loadShell])
 
@@ -288,7 +296,7 @@ function App() {
     void emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_LANGUAGE_EVENT, { language }).catch(() => {})
   }, [language])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isTauri()) return
 
     let cancelled = false
@@ -450,7 +458,7 @@ function App() {
         () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
       )
       if (shouldLoadDashboardAfterManualRefresh(listenerReady)) {
-        await loadShell(true)
+        await loadShellRef.current(true)
       }
       setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
     } catch (error) {
@@ -503,7 +511,7 @@ function App() {
     setSyncSettings(saved.syncSettings)
     setSubscriptionProfile(saved.subscriptionProfile)
     if (shouldLoadDashboardAfterSettingsSave(saved.codexHomeChanged, listenerReady)) {
-      await loadShell(true)
+      await loadShellRef.current(true)
     }
     if (isTauri()) {
       await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
