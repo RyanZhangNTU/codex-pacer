@@ -2,7 +2,7 @@
 
 ## Windows 测试阶段状态
 
-`v1.1.2` 暂缓发布 Windows 安装包。当前稳定版 GitHub Release 不附加 Windows setup `.exe`。
+`v1.2.0` 暂缓发布 Windows 安装包。当前稳定版 GitHub Release 不附加 Windows setup `.exe`。
 
 Windows 支持目前仍处于测试阶段。后续某个版本如果包含 Windows 安装包，除非该版本单独配置了 Windows code signing，否则安装包默认未签名，Windows SmartScreen 可能会提示发布者未知。
 
@@ -12,7 +12,7 @@ Windows 支持目前仍处于测试阶段。后续某个版本如果包含 Windo
 2. 安装 Windows Tauri 前置依赖。
 3. 运行 `npm ci`。
 4. 运行 `npm run lint`、`npm run build` 和 `cargo test --manifest-path src-tauri/Cargo.toml --locked`。
-5. 仅用于本地安装包验证时，在 Windows 上运行 `.\scripts\release\build-windows-release.ps1 1.1.2`。
+5. 仅用于本地安装包验证时，在 Windows 上运行 `.\scripts\release\build-windows-release.ps1 1.2.0`。
 
 ## 安装后
 
@@ -27,7 +27,7 @@ Windows 支持目前仍处于测试阶段。后续某个版本如果包含 Windo
 ## 说明
 
 - GitHub Releases 是官方分发渠道。
-- `v1.1.2` 只发布 macOS Apple Silicon DMG 资产。
+- `v1.2.0` 只发布 macOS Apple Silicon DMG 资产。
 - 任何本地构建的 Windows setup `.exe` 仍是测试阶段的 NSIS 安装包。
 - Windows 安装包不会安装 Codex CLI，也不会创建 Codex 使用历史。
 - Windows 稳定支持、Windows code signing 和自动更新交付目前都不承诺。

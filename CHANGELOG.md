@@ -4,18 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-11
+
 ### Added
 - GPT-5.6 Sol, Terra, and Luna model recognition with bundled Standard API pricing; the `gpt-5.6` alias uses Sol pricing
 - automatic discovery of the Codex CLI bundled with the ChatGPT desktop app on macOS, while retaining standalone CLI and `CODEX_BIN` support
+- independent background refresh lanes for local token usage and online quota data, with bounded retries and missed-refresh recovery
 
 ### Changed
-- changing a custom Codex home now starts a full refresh without reusing scan times from the previous directory
-- dashboard refreshes now wait for an active scan to finish and reload conversation details when their source values have changed
+- active session logs are parsed from durable checkpoints instead of being reread from the beginning on every refresh
+- usage and quota records are appended or reconciled in place instead of deleting and rebuilding unchanged history
+- menu bar totals are calculated with bounded SQLite aggregates, and frontend refresh polling has been replaced with backend events
+- database timestamp migration now runs in small resumable batches so startup remains responsive on larger histories
+- changing a custom Codex home starts a full refresh without reusing scan times from the previous directory
 
 ### Fixed
 - GPT-5.6 API-equivalent values now recalculate at startup, including rows that were zero or used a cache-write price as the output price
 - incremental imports now capture final snapshots moved into `archived_sessions`, refresh titles from `session_index.jsonl`, avoid saving partial results from unreadable files, and repair missing conversation links
 - persisted quota fallback now chooses the latest timestamp by its actual instant and never combines windows from different samples
+- forked and nested sessions no longer rebill usage inherited from their parent, including single-snapshot and temporarily missing-parent cases
+- token and quota refreshes no longer overwrite newer results, block one another, or lose a scheduled retry when settings change
+- complete JSONL records without a trailing newline are imported instead of being skipped permanently
+- refresh scratch memory and temporary spool files are released promptly after commits and menu bar updates
+
+### Upgrade notes
+- macOS users can install 1.2.0 over 1.1.1 or 1.1.2 without uninstalling the previous version
+- the existing local database is migrated in place; session history, token usage, quota samples, subscription settings, menu bar preferences, and custom Codex paths are retained
+- the first launch may perform a bounded background timestamp backfill, but token and online quota refresh continue independently while it runs
 
 ## [1.1.2] - 2026-05-19
 
