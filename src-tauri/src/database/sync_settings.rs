@@ -1,6 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
-#[cfg(test)]
-use rusqlite::{Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::models::SyncSettings;
 
@@ -428,7 +426,7 @@ pub fn save_sync_settings(
     conn: &Connection,
     settings: &SyncSettings,
 ) -> rusqlite::Result<SyncSettings> {
-    let transaction = conn.unchecked_transaction()?;
+    let transaction = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
     let current_codex_home = transaction
         .query_row(
             "SELECT codex_home FROM sync_settings WHERE singleton_id = 1",
@@ -440,14 +438,6 @@ pub fn save_sync_settings(
     let codex_home_changed = current_codex_home.as_deref() != settings.codex_home.as_deref();
     let updated_at = now_utc_string();
     let auto_scan_interval_minutes = settings.auto_scan_interval_minutes.max(1);
-    let (last_scan_started_at, last_scan_completed_at) = if codex_home_changed {
-        (None, None)
-    } else {
-        (
-            settings.last_scan_started_at.as_deref(),
-            settings.last_scan_completed_at.as_deref(),
-        )
-    };
     transaction.execute(
     "
     INSERT INTO sync_settings (
@@ -465,7 +455,7 @@ pub fn save_sync_settings(
       menu_bar_popup_show_reset_timeline, menu_bar_popup_show_actions,
       last_scan_started_at, last_scan_completed_at, updated_at
     )
-    VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+    VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, NULL, NULL, ?22)
     ON CONFLICT(singleton_id) DO UPDATE SET
       codex_home = excluded.codex_home,
       auto_scan_enabled = excluded.auto_scan_enabled,
@@ -488,8 +478,6 @@ pub fn save_sync_settings(
       menu_bar_popup_modules = excluded.menu_bar_popup_modules,
       menu_bar_popup_show_reset_timeline = excluded.menu_bar_popup_show_reset_timeline,
       menu_bar_popup_show_actions = excluded.menu_bar_popup_show_actions,
-      last_scan_started_at = excluded.last_scan_started_at,
-      last_scan_completed_at = excluded.last_scan_completed_at,
       updated_at = excluded.updated_at
     ",
     params![
@@ -514,8 +502,6 @@ pub fn save_sync_settings(
       serialize_menu_bar_popup_modules(&settings.menu_bar_popup_modules),
       bool_to_i64(settings.menu_bar_popup_show_reset_timeline),
       bool_to_i64(settings.menu_bar_popup_show_actions),
-      last_scan_started_at,
-      last_scan_completed_at,
       updated_at,
     ],
     )?;
@@ -534,7 +520,8 @@ fn clear_scan_timestamps(conn: &Connection) -> rusqlite::Result<()> {
     SET last_scan_started_at = NULL,
         last_scan_completed_at = NULL,
         last_full_scan_completed_at = NULL,
-        last_scan_codex_home = NULL
+        last_scan_codex_home = NULL,
+        scan_commit_revision = scan_commit_revision + 1
     WHERE singleton_id = 1
     ",
         [],

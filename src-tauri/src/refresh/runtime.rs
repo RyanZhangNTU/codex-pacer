@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
   use super::{
-    MetricsState, PanicPhase, RefreshClock, RefreshConfig, RefreshError, RefreshStatus,
-    RuntimeTestRig, SaturatingCounter, TestClock, TestLiveExecutor,
+    MetricsState, PanicPhase, PreparedTokenRefresh, RefreshClock, RefreshConfig, RefreshError,
+    RefreshStatus, RuntimeTestRig, SaturatingCounter, TestClock, TestLiveExecutor,
   };
   use crate::refresh::{RefreshFailureCode, RefreshRejectionCode, REFRESH_WAITER_CAPACITY};
   use chrono::{DateTime, Duration as ChronoDuration};
@@ -677,6 +677,66 @@ mod tests {
   }
 
   #[test]
+  fn settings_update_waits_for_saturated_queue_and_is_not_lost() {
+    let rig = RuntimeTestRig::disabled();
+    let pause = rig.pause_coordinator();
+    rig.fill_runtime_channel_until_busy();
+    let mut replacement = rig.config_with_source("replacement");
+    replacement.auto_scan_enabled = true;
+    let handle = rig.handle.clone();
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+    let update = std::thread::spawn(move || {
+      let _ = result_tx.send(handle.update_settings(replacement));
+    });
+
+    rig.wait_for_reliable_in_flight(1, TEST_TIMEOUT);
+    assert_eq!(rig.handle.try_wake(), Err(RefreshError::Busy));
+    assert!(matches!(
+      rig.handle.request_manual_token(None),
+      Err(RefreshError::Busy)
+    ));
+    assert!(matches!(
+      rig.handle.request_manual_live(),
+      Err(RefreshError::Busy)
+    ));
+    let shutdown = rig.shutdown_in_background();
+    rig.wait_for_intake_closed(TEST_TIMEOUT);
+    assert!(
+      !rig
+        .runtime
+        .lifecycle
+        .shutdown_requested
+        .load(std::sync::atomic::Ordering::Acquire),
+      "shutdown waits for the accepted settings update to finish"
+    );
+    assert!(matches!(
+      rig
+        .handle
+        .update_settings(rig.config_with_source("rejected-after-shutdown")),
+      Err(RefreshError::Rejected {
+        code: RefreshRejectionCode::Shutdown,
+        ..
+      })
+    ));
+    pause.release();
+    let result = result_rx
+      .recv_timeout(TEST_TIMEOUT)
+      .expect("settings update is acknowledged after capacity recovers");
+    update.join().expect("settings update thread exits");
+    let joined = shutdown.wait(TEST_TIMEOUT);
+
+    assert_eq!(result, Ok(()));
+    assert!(joined.coordinator_joined && joined.token_joined && joined.live_joined);
+    assert_eq!(
+      super::lock(&rig.handle.inner.intake).reliable_in_flight,
+      0
+    );
+    let status = rig.handle.status();
+    assert_eq!(status.source_generation, 1);
+    assert!(status.auto_scan_enabled);
+  }
+
+  #[test]
   fn fixed_counters_saturate_without_wrap() {
     let counter = SaturatingCounter::new(u64::MAX - 1);
     counter.increment();
@@ -697,6 +757,23 @@ mod tests {
       metrics.start_lag_histogram[super::HISTOGRAM_BUCKETS - 2],
       u64::MAX
     );
+    rig.shutdown();
+  }
+
+  #[test]
+  fn prepared_token_refresh_constructor_initializes_test_defaults() {
+    let rig = RuntimeTestRig::disabled();
+    let (seed, _) = rig.token.make_prepared_for_test(1, 0, false);
+    let super::PreparedTokenRefresh { prepared_scan, .. } = seed;
+    let started_at = rig.clock.wall_now();
+
+    let prepared = PreparedTokenRefresh::new(7, 3, started_at, prepared_scan);
+
+    assert_eq!(prepared.generation, 7);
+    assert_eq!(prepared.source_generation, 3);
+    assert_eq!(prepared.started_at, started_at);
+    assert!(!prepared.omit_payload_for_test());
+    assert!(prepared.drop_probe.is_none());
     rig.shutdown();
   }
 
@@ -1252,6 +1329,26 @@ pub(crate) struct PreparedTokenRefresh {
   omit_payload: bool,
 }
 
+impl PreparedTokenRefresh {
+  pub(crate) fn new(
+    generation: u64,
+    source_generation: u64,
+    started_at: DateTime<Utc>,
+    prepared_scan: PreparedScan,
+  ) -> Self {
+    Self {
+      generation,
+      source_generation,
+      started_at,
+      prepared_scan,
+      #[cfg(test)]
+      drop_probe: None,
+      #[cfg(test)]
+      omit_payload: false,
+    }
+  }
+}
+
 pub(crate) trait LiveQuotaFetcher: Send + Sync {
   fn fetch(&self, timeout: Duration) -> Result<LiveRateLimitSnapshot, String>;
 
@@ -1637,6 +1734,7 @@ impl WaiterRegistries {
 
 struct IntakeState {
   accepting: bool,
+  reliable_in_flight: usize,
   sender: SyncSender<RuntimeMessage>,
   #[cfg(test)]
   pause_after_check: Option<Arc<TestGateState>>,
@@ -1644,12 +1742,31 @@ struct IntakeState {
 
 struct HandleInner {
   intake: Arc<Mutex<IntakeState>>,
+  reliable_changed: Arc<Condvar>,
   waiters: Arc<Mutex<WaiterRegistries>>,
   status: Arc<Mutex<RefreshStatus>>,
   metrics: Arc<MetricsState>,
   clock: Arc<dyn RefreshClock>,
   next_token_waiter: AtomicU64,
   next_live_waiter: AtomicU64,
+}
+
+struct ReliableInFlightGuard {
+  intake: Arc<Mutex<IntakeState>>,
+  changed: Arc<Condvar>,
+}
+
+impl Drop for ReliableInFlightGuard {
+  fn drop(&mut self) {
+    let mut intake = lock(&self.intake);
+    if intake.reliable_in_flight == 0 {
+      log::error!("Reliable refresh intake guard dropped without registration.");
+    } else {
+      intake.reliable_in_flight -= 1;
+    }
+    drop(intake);
+    self.changed.notify_all();
+  }
 }
 
 #[derive(Clone)]
@@ -1714,7 +1831,7 @@ impl RefreshCoordinatorHandle {
   }
 
   pub(crate) fn update_settings(&self, config: RefreshConfig) -> Result<(), RefreshError> {
-    self.send_acknowledged(|reply| RuntimeMessage::SettingsChanged(config, reply))
+    self.send_reliable_acknowledged(|reply| RuntimeMessage::SettingsChanged(config, reply))
   }
 
   pub(crate) fn wake(&self) -> Result<(), RefreshError> {
@@ -1747,6 +1864,39 @@ impl RefreshCoordinatorHandle {
     reply_rx
       .recv()
       .map_err(|_| RefreshError::CoordinatorUnavailable)
+  }
+
+  fn send_reliable_acknowledged(
+    &self,
+    build: impl FnOnce(SyncSender<()>) -> RuntimeMessage,
+  ) -> Result<(), RefreshError> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    let (sender, in_flight) = {
+      let mut intake = lock(&self.inner.intake);
+      if !intake.accepting {
+        return Err(shutdown_error());
+      }
+      intake.reliable_in_flight = intake
+        .reliable_in_flight
+        .checked_add(1)
+        .ok_or(RefreshError::Busy)?;
+      (
+        intake.sender.clone(),
+        ReliableInFlightGuard {
+          intake: Arc::clone(&self.inner.intake),
+          changed: Arc::clone(&self.inner.reliable_changed),
+        },
+      )
+    };
+    self.inner.reliable_changed.notify_all();
+    sender
+      .send(build(reply_tx))
+      .map_err(|_| RefreshError::CoordinatorUnavailable)?;
+    let result = reply_rx
+      .recv()
+      .map_err(|_| RefreshError::CoordinatorUnavailable);
+    drop(in_flight);
+    result
   }
 
   pub(crate) fn status(&self) -> RefreshStatus {
@@ -1815,6 +1965,7 @@ struct RuntimeLifecycle {
   changed: Condvar,
   coordinator: Mutex<Option<JoinHandle<()>>>,
   intake: Arc<Mutex<IntakeState>>,
+  reliable_changed: Arc<Condvar>,
   shutdown_requested: Arc<AtomicBool>,
   shutdown: Arc<AtomicBool>,
 }
@@ -1860,9 +2011,25 @@ impl RefreshRuntime {
     if owns_shutdown {
       let operation: Result<Arc<ShutdownResult>, RefreshError> = (|| {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        {
+        let sender = {
           let mut intake = lock(&self.lifecycle.intake);
           intake.accepting = false;
+          intake.sender.clone()
+        };
+        self.lifecycle.reliable_changed.notify_all();
+        // Accepted settings updates finish before shutdown is published, while
+        // ordinary intake remains free to observe the closed state.
+        {
+          let mut intake = lock(&self.lifecycle.intake);
+          while intake.reliable_in_flight != 0 {
+            intake = self
+              .lifecycle
+              .reliable_changed
+              .wait(intake)
+              .unwrap_or_else(|poisoned| poisoned.into_inner());
+          }
+        }
+        {
           let shutdown_state = lock(&self.lifecycle.state);
           self
             .lifecycle
@@ -1870,11 +2037,10 @@ impl RefreshRuntime {
             .store(true, Ordering::Release);
           self.lifecycle.changed.notify_all();
           drop(shutdown_state);
-          intake
-            .sender
-            .send(RuntimeMessage::Shutdown(reply_tx))
-            .map_err(|_| RefreshError::CoordinatorUnavailable)?;
         }
+        sender
+          .send(RuntimeMessage::Shutdown(reply_tx))
+          .map_err(|_| RefreshError::CoordinatorUnavailable)?;
         let mut result = reply_rx
           .recv()
           .map_err(|_| RefreshError::CoordinatorUnavailable)?;
@@ -2139,8 +2305,10 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     hooks: Arc::clone(&hooks),
   })?;
 
+  let reliable_changed = Arc::new(Condvar::new());
   let shared_intake = Arc::new(Mutex::new(IntakeState {
     accepting: true,
+    reliable_in_flight: 0,
     sender: runtime_tx.clone(),
     #[cfg(test)]
     pause_after_check: None,
@@ -2148,6 +2316,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
   let handle = RefreshCoordinatorHandle {
     inner: Arc::new(HandleInner {
       intake: Arc::clone(&shared_intake),
+      reliable_changed: Arc::clone(&reliable_changed),
       waiters: Arc::clone(&waiters),
       status: Arc::clone(&status),
       metrics: Arc::clone(&metrics),
@@ -2198,6 +2367,7 @@ fn start_runtime(dependencies: RefreshRuntimeDependencies) -> Result<RefreshRunt
     changed: Condvar::new(),
     coordinator: Mutex::new(Some(coordinator)),
     intake: shared_intake,
+    reliable_changed,
     shutdown_requested,
     shutdown,
   });
@@ -5098,6 +5268,35 @@ impl RuntimeTestRig {
         Err(error) => panic!("unexpected command fill error: {error:?}"),
       }
     }
+  }
+
+  fn wait_for_reliable_in_flight(&self, expected: usize, timeout: Duration) {
+    let intake = lock(&self.handle.inner.intake);
+    let (intake, timed_out) = self
+      .handle
+      .inner
+      .reliable_changed
+      .wait_timeout_while(intake, timeout, |state| {
+        state.reliable_in_flight < expected
+      })
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(intake.reliable_in_flight, expected);
+    assert!(
+      !timed_out.timed_out(),
+      "timed out waiting for reliable refresh intake"
+    );
+  }
+
+  fn wait_for_intake_closed(&self, timeout: Duration) {
+    let intake = lock(&self.handle.inner.intake);
+    let (intake, timed_out) = self
+      .handle
+      .inner
+      .reliable_changed
+      .wait_timeout_while(intake, timeout, |state| state.accepting)
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(!intake.accepting);
+    assert!(!timed_out.timed_out(), "timed out waiting for intake close");
   }
 
   fn start_intake_race_after_accept_check(&self) -> IntakeRace {

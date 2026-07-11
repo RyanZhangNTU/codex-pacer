@@ -24,10 +24,6 @@ impl ActivityFactory for SystemActivityFactory {
   }
 }
 
-pub(crate) fn begin_scheduler_activity() -> Box<dyn ActivityGuard> {
-  SystemActivityFactory.begin()
-}
-
 #[cfg(target_os = "macos")]
 struct SchedulerActivity {
   activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
@@ -174,20 +170,19 @@ mod tests {
   }
 
   #[test]
-  fn legacy_scheduler_activity_scope_is_narrow() {
+  fn lib_removes_legacy_scheduler_activity_paths() {
     let source = include_str!("../lib.rs");
     assert!(
-      !source.contains("spawn(move || {\n      let _scheduler_activity"),
-      "the infinite scheduler loop must not own an activity"
+      !source.contains("spawn_scheduler"),
+      "the legacy scheduler entry point must stay removed"
     );
     assert!(
-      source.contains("let result = {\n    let _activity = begin_scheduler_activity();\n    scan(")
+      !source.contains("run_due_background_refresh"),
+      "commands and popup reads must not run legacy refresh work"
     );
-    assert!(source.contains(
-      "let query_result = {\n    let _activity = begin_scheduler_activity();\n    query_live_rate_limits("
-    ));
-    assert!(source.contains(
-      "let _activity = begin_scheduler_activity();\n        let conn = open_connection("
-    ));
+    assert!(
+      !source.contains("begin_scheduler_activity"),
+      "runtime executors own the only refresh activity scopes"
+    );
   }
 }

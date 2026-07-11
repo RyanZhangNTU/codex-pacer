@@ -10,7 +10,7 @@ pub(crate) use live_cache::{LivePersistenceRetryState, LivePersistenceWork, Live
 #[allow(unused_imports)]
 pub(crate) use mutation::{MutationOutcome, MutationPriority, UsageMutationCoordinator};
 #[allow(unused_imports)]
-pub(crate) use power::{begin_scheduler_activity, ActivityFactory, SystemActivityFactory};
+pub(crate) use power::{ActivityFactory, SystemActivityFactory};
 #[allow(unused_imports)]
 pub(crate) use runtime::{
   LaneStatus, LiveQuotaFetcher, LiveQuotaPersister, ManualLiveTicket, ManualRefreshTicket,

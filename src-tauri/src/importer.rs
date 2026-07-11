@@ -14,14 +14,16 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::database::{
-  bool_to_i64, init_db, now_utc_string, open_connection, preview_scan_freshness_for_source,
+  bool_to_i64, now_utc_string, open_connection, preview_scan_freshness_for_source,
   replace_session_rate_limit_samples, set_last_scan_started_for_source_in_transaction,
   set_scan_completed_for_source,
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
-  calculate_value_usd, load_catalog_map, normalize_model_id, resolve_pricing, seed_pricing_catalog,
+  calculate_value_usd, load_catalog_map, normalize_model_id, resolve_pricing,
 };
+#[cfg(test)]
+use crate::{database::init_db, pricing::seed_pricing_catalog};
 
 #[derive(Debug, Clone)]
 struct SessionFile {
@@ -713,6 +715,7 @@ fn estimated_usage_snapshots_bytes(snapshots: &Vec<UsageSnapshot>) -> usize {
     }))
 }
 
+#[cfg(test)]
 pub fn perform_scan(
   db_path: &Path,
   codex_home_override: Option<String>,
@@ -720,6 +723,7 @@ pub fn perform_scan(
   perform_scan_with_kind(db_path, codex_home_override, ScanKind::Full)
 }
 
+#[cfg(test)]
 pub fn perform_incremental_scan(
   db_path: &Path,
   codex_home_override: Option<String>,
@@ -727,6 +731,7 @@ pub fn perform_incremental_scan(
   perform_scan_with_kind(db_path, codex_home_override, ScanKind::Incremental)
 }
 
+#[cfg(test)]
 fn perform_scan_with_kind(
   db_path: &Path,
   codex_home_override: Option<String>,
