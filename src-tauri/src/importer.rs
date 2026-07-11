@@ -14,9 +14,9 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::database::{
-  bool_to_i64, now_utc_string, open_connection, preview_scan_freshness_for_source,
-  replace_session_rate_limit_samples, set_last_scan_started_for_source_in_transaction,
-  set_scan_completed_for_source,
+  bool_to_i64, insert_usage_events, now_utc_string, open_connection,
+  preview_scan_freshness_for_source, replace_session_rate_limit_samples,
+  set_last_scan_started_for_source_in_transaction, set_scan_completed_for_source, NewUsageEvent,
 };
 use crate::models::{RateLimitSampleRecord, RawSession, ScanResult, TokenUsage, UsageSnapshot};
 use crate::pricing::{
@@ -2642,57 +2642,54 @@ fn persist_session(
     .and_then(|index| parsed.snapshots.get(index))
     .map(|snapshot| snapshot.usage.clone());
 
-  for snapshot in parsed.snapshots.iter().skip(snapshot_cutoff) {
-    if previous_usage.as_ref() == Some(&snapshot.usage) {
-      continue;
-    }
-
-    let delta = if let Some(previous) = previous_usage.as_ref() {
-      if snapshot.usage.total_tokens <= previous.total_tokens {
-        continue;
+  insert_usage_events(
+    conn,
+    parsed
+      .snapshots
+      .iter()
+      .skip(snapshot_cutoff)
+      .map(|snapshot| snapshot.timestamp.as_str()),
+    |index| {
+      let snapshot = &parsed.snapshots[snapshot_cutoff + index];
+      if previous_usage.as_ref() == Some(&snapshot.usage) {
+        return None;
       }
-      diff_usage(previous, &snapshot.usage)
-    } else if parsed.explicit_forked_from_id.is_some() {
-      snapshot
-        .last_token_usage
-        .clone()
-        .unwrap_or_else(|| snapshot.usage.clone())
-    } else {
-      snapshot.usage.clone()
-    };
 
-    previous_usage = Some(snapshot.usage.clone());
+      let delta = if let Some(previous) = previous_usage.as_ref() {
+        if snapshot.usage.total_tokens <= previous.total_tokens {
+          return None;
+        }
+        diff_usage(previous, &snapshot.usage)
+      } else if parsed.explicit_forked_from_id.is_some() {
+        snapshot
+          .last_token_usage
+          .clone()
+          .unwrap_or_else(|| snapshot.usage.clone())
+      } else {
+        snapshot.usage.clone()
+      };
 
-    if is_zero_delta(&delta) {
-      continue;
-    }
+      previous_usage = Some(snapshot.usage.clone());
+      if is_zero_delta(&delta) {
+        return None;
+      }
 
-    let resolved_pricing = resolve_pricing(catalog, &snapshot.model_id);
-    let value_usd = calculate_value_usd(&delta, resolved_pricing.as_ref());
-
-    conn.execute(
-      "
-      INSERT INTO usage_events (
-        session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
-        reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective
-      )
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-      ",
-      params![
-        parsed.raw_session.session_id,
-        snapshot.timestamp,
-        normalize_model_id(&snapshot.model_id),
-        delta.input_tokens,
-        delta.cached_input_tokens,
-        delta.output_tokens,
-        delta.reasoning_output_tokens,
-        delta.total_tokens,
+      let resolved_pricing = resolve_pricing(catalog, &snapshot.model_id);
+      let value_usd = calculate_value_usd(&delta, resolved_pricing.as_ref());
+      Some(NewUsageEvent {
+        session_id: &parsed.raw_session.session_id,
+        model_id: normalize_model_id(&snapshot.model_id),
+        input_tokens: delta.input_tokens,
+        cached_input_tokens: delta.cached_input_tokens,
+        output_tokens: delta.output_tokens,
+        reasoning_output_tokens: delta.reasoning_output_tokens,
+        total_tokens: delta.total_tokens,
         value_usd,
-        0,
-        0,
-      ],
-    )?;
-  }
+        fast_mode_auto: false,
+        fast_mode_effective: false,
+      })
+    },
+  )?;
 
   conn.execute(
     "
@@ -5231,6 +5228,58 @@ mod tests {
     assert_eq!(samples.2, "seven_day".to_string());
     assert_eq!(samples.3, 79);
     assert_eq!(samples.4, 88);
+  }
+
+  #[test]
+  fn scan_persists_usage_event_epoch_timestamp() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_path = sessions_dir.join("usage-epoch.jsonl");
+    std::fs::write(
+      &session_path,
+      concat!(
+        "{\"timestamp\":\"2026-07-10T10:00:00+08:00\",\"type\":\"session_meta\",\"payload\":{\"id\":\"98989898-9898-4898-8898-989898989898\"}}\n",
+        "{\"timestamp\":\"2026-07-10T10:00:01+08:00\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n",
+        "{\"timestamp\":\"2026-07-10T10:00:02+08:00\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":25,\"reasoning_output_tokens\":0,\"total_tokens\":125}}}}\n"
+      ),
+    )
+    .expect("write session");
+    let db_path = directory.path().join("usage.sqlite");
+
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+
+    let conn = open_connection(&db_path).expect("open database");
+    let persisted = conn
+      .query_row(
+        "SELECT timestamp, timestamp_ms FROM usage_events",
+        [],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
+      )
+      .expect("load usage epoch");
+    assert_eq!(persisted.0, "2026-07-10T10:00:02+08:00");
+    assert_eq!(
+      persisted.1,
+      Some(
+        crate::database::parse_epoch_millis(&persisted.0).expect("parse expected usage epoch")
+      )
+    );
+  }
+
+  #[test]
+  fn persist_session_delegates_usage_inserts_to_database_writer() {
+    let source = include_str!("importer.rs");
+    let persist_session_source = source
+      .split("fn persist_session(")
+      .nth(1)
+      .expect("persist_session source")
+      .split("fn diff_usage(")
+      .next()
+      .expect("persist_session body");
+
+    assert!(persist_session_source.contains("insert_usage_events("));
+    assert!(!persist_session_source.contains("INSERT INTO usage_events"));
   }
 
   #[test]

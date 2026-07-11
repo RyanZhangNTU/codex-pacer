@@ -9,6 +9,7 @@ mod epoch_backfill;
 mod rate_limit_samples;
 mod subscriptions;
 mod sync_settings;
+mod usage_events;
 
 #[allow(unused_imports)]
 pub use epoch_backfill::{backfill_epoch_batch, parse_epoch_millis, EpochBackfillProgress};
@@ -20,6 +21,7 @@ pub use sync_settings::{
     get_last_full_scan_completed, get_sync_settings, save_sync_settings,
     set_scan_completed_for_source,
 };
+pub use usage_events::{insert_usage_events, NewUsageEvent};
 pub(crate) use sync_settings::{
     preview_scan_freshness_for_source, set_last_scan_started_for_source_in_transaction,
 };
