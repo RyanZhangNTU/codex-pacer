@@ -751,6 +751,31 @@ mod tests {
   }
 
   #[test]
+  fn epoch_backfill_shutdown_publish_cancels_attempt_installed_across_race() {
+    let maintenance = Arc::new(TestEpochMaintenanceExecutor::new());
+    let (rig, before_install, shutdown_gap, between_install_and_send) =
+      RuntimeTestRig::build_with_maintenance_shutdown_install_gates(Arc::clone(&maintenance));
+    before_install.wait_worker_ready(TEST_TIMEOUT);
+
+    let shutdown = rig.shutdown_in_background();
+    shutdown_gap.wait_worker_ready(TEST_TIMEOUT);
+    before_install.release();
+    between_install_and_send.wait_worker_ready(TEST_TIMEOUT);
+    let was_cancelled_before_send = rig.maintenance_cancelled_between_install_and_send();
+    between_install_and_send.release();
+    shutdown_gap.release();
+    rig.wait_for_shutdown_requested(TEST_TIMEOUT);
+
+    let joined = shutdown.wait(TEST_TIMEOUT);
+    assert!(joined.coordinator_joined && joined.token_joined && joined.live_joined);
+    assert!(
+      was_cancelled_before_send,
+      "shutdown is visible and cancels the attempt before its command is sent"
+    );
+    assert_eq!(maintenance.calls(), 0, "shutdown enters no maintenance executor");
+  }
+
+  #[test]
   fn scheduled_start_lag_is_recorded() {
     let rig = RuntimeTestRig::scheduled_overdue(Duration::from_secs(2));
     rig.token.wait_for_parse_calls(1, TEST_TIMEOUT);
@@ -2456,13 +2481,15 @@ impl RefreshRuntime {
         }
         {
           let shutdown_state = lock(&self.lifecycle.state);
-          if let Some(control) = &self.lifecycle.maintenance_control {
-            control.cancel_current();
-          }
           self
             .lifecycle
             .shutdown_requested
             .store(true, Ordering::Release);
+          #[cfg(test)]
+          self.test_hooks.between_shutdown_publish_and_cancel();
+          if let Some(control) = &self.lifecycle.maintenance_control {
+            control.cancel_current();
+          }
           self.lifecycle.changed.notify_all();
           drop(shutdown_state);
         }
@@ -3681,6 +3708,8 @@ impl CoordinatorRuntime {
     if self.maintenance_wait(now) != Some(Duration::ZERO) {
       return;
     }
+    #[cfg(test)]
+    self.hooks.before_maintenance_install();
     let Some(sender) = self.maintenance_sender.clone() else {
       return;
     };
@@ -3691,6 +3720,16 @@ impl CoordinatorRuntime {
       return;
     };
     let cancellation = Arc::new(AtomicBool::new(false));
+    self
+      .maintenance_control
+      .install(attempt_id, Arc::clone(&cancellation));
+    if self.shutdown_requested.load(Ordering::Acquire) {
+      self.maintenance_control.cancel_current();
+    }
+    #[cfg(test)]
+    self
+      .hooks
+      .between_maintenance_install_and_send(&cancellation);
     let command = EpochMaintenanceWorkerCommand {
       attempt_id,
       cancellation: Arc::clone(&cancellation),
@@ -3699,19 +3738,18 @@ impl CoordinatorRuntime {
       Ok(()) => {
         self.maintenance.next_attempt_id = attempt_id;
         self.maintenance.next_eligible_at = None;
-        self
-          .maintenance_control
-          .install(attempt_id, Arc::clone(&cancellation));
         self.maintenance.running = Some(EpochMaintenanceAttempt { id: attempt_id });
         if self.shutdown_requested.load(Ordering::Acquire) {
           self.maintenance_control.cancel_current();
         }
       }
       Err(TrySendError::Full(_)) => {
+        self.maintenance_control.clear(attempt_id);
         log::warn!("Epoch maintenance command queue was unexpectedly full.");
         self.maintenance.next_eligible_at = now.checked_add(EPOCH_MAINTENANCE_PACE);
       }
       Err(TrySendError::Disconnected(_)) => {
+        self.maintenance_control.clear(attempt_id);
         log::warn!("Epoch maintenance worker became unavailable.");
         self.maintenance.pending = false;
         self.maintenance_sender = None;
@@ -4845,6 +4883,7 @@ struct TestHookData {
   persistence_outcomes: u64,
   maintenance_outcomes: u64,
   maintenance_exited: bool,
+  maintenance_cancelled_between_install_and_send: Option<bool>,
 }
 
 #[cfg(test)]
@@ -4854,6 +4893,9 @@ struct RuntimeTestHooks {
   token_commit_pre_body: IndexedPreBodyGates,
   live_fetch_pre_body: IndexedPreBodyGates,
   live_persist_pre_body: IndexedPreBodyGates,
+  maintenance_before_install: Mutex<Option<Arc<TestGateState>>>,
+  shutdown_between_publish_and_cancel: Mutex<Option<Arc<TestGateState>>>,
+  maintenance_between_install_and_send: Mutex<Option<Arc<TestGateState>>>,
   data: Mutex<TestHookData>,
   changed: Condvar,
 }
@@ -4874,6 +4916,45 @@ impl RuntimeTestHooks {
 
   fn before_live_persist(&self) {
     self.live_persist_pre_body.before_call();
+  }
+
+  fn block_maintenance_before_install(&self) -> PhaseGateControl {
+    let state = Arc::new(TestGateState::default());
+    *lock(&self.maintenance_before_install) = Some(Arc::clone(&state));
+    PhaseGateControl { state }
+  }
+
+  fn before_maintenance_install(&self) {
+    if let Some(gate) = lock(&self.maintenance_before_install).take() {
+      gate.mark_worker_ready_and_wait();
+    }
+  }
+
+  fn block_shutdown_between_publish_and_cancel(&self) -> PhaseGateControl {
+    let state = Arc::new(TestGateState::default());
+    *lock(&self.shutdown_between_publish_and_cancel) = Some(Arc::clone(&state));
+    PhaseGateControl { state }
+  }
+
+  fn between_shutdown_publish_and_cancel(&self) {
+    if let Some(gate) = lock(&self.shutdown_between_publish_and_cancel).take() {
+      gate.mark_worker_ready_and_wait();
+    }
+  }
+
+  fn block_between_maintenance_install_and_send(&self) -> PhaseGateControl {
+    let state = Arc::new(TestGateState::default());
+    *lock(&self.maintenance_between_install_and_send) = Some(Arc::clone(&state));
+    PhaseGateControl { state }
+  }
+
+  fn between_maintenance_install_and_send(&self, cancellation: &AtomicBool) {
+    lock(&self.data).maintenance_cancelled_between_install_and_send =
+      Some(cancellation.load(Ordering::Acquire));
+    self.changed.notify_all();
+    if let Some(gate) = lock(&self.maintenance_between_install_and_send).take() {
+      gate.mark_worker_ready_and_wait();
+    }
   }
 
   fn notify_token_waiting_to_commit(&self) {
@@ -6019,6 +6100,36 @@ impl RuntimeTestRig {
     )
   }
 
+  fn build_with_maintenance_shutdown_install_gates(
+    maintenance: Arc<TestEpochMaintenanceExecutor>,
+  ) -> (
+    Self,
+    PhaseGateControl,
+    PhaseGateControl,
+    PhaseGateControl,
+  ) {
+    let hooks = Arc::new(RuntimeTestHooks::default());
+    initialize_test_hooks(&hooks);
+    let before_install = hooks.block_maintenance_before_install();
+    let shutdown_gap = hooks.block_shutdown_between_publish_and_cancel();
+    let between_install_and_send = hooks.block_between_maintenance_install_and_send();
+    let token = Arc::new(TestTokenExecutor::new(Arc::clone(&hooks)));
+    let live = Arc::new(TestLiveExecutor::new(Arc::clone(&hooks)));
+    (
+      Self::build_with_components_and_options(
+        TestRigSchedule::Disabled,
+        hooks,
+        token,
+        live,
+        Some(maintenance),
+        None,
+      ),
+      before_install,
+      shutdown_gap,
+      between_install_and_send,
+    )
+  }
+
   fn build_with_maintenance_and_mutation(
     schedule: TestRigSchedule,
     maintenance: Arc<TestEpochMaintenanceExecutor>,
@@ -6154,6 +6265,12 @@ impl RuntimeTestRig {
       .runtime
       .test_hooks
       .wait_for(timeout, |data| data.maintenance_exited);
+  }
+
+  fn maintenance_cancelled_between_install_and_send(&self) -> bool {
+    lock(&self.runtime.test_hooks.data)
+      .maintenance_cancelled_between_install_and_send
+      .expect("recorded maintenance install/send cancellation state")
   }
 
   fn wait_for_mutation_queue(&self, expected: usize, timeout: Duration) {

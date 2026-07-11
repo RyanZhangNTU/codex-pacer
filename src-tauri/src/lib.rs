@@ -12,6 +12,8 @@ use std::sync::{
   atomic::{AtomicBool, AtomicU8, Ordering},
   Arc, Mutex,
 };
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
@@ -159,9 +161,36 @@ impl refresh::LiveQuotaPersister for AppLiveQuotaPersister {
   }
 }
 
-#[derive(Clone)]
 struct AppEpochMaintenanceExecutor {
   db_path: PathBuf,
+  connection: Mutex<Option<rusqlite::Connection>>,
+  #[cfg(test)]
+  open_count: AtomicUsize,
+}
+
+impl AppEpochMaintenanceExecutor {
+  fn new(db_path: PathBuf) -> Self {
+    Self {
+      db_path,
+      connection: Mutex::new(None),
+      #[cfg(test)]
+      open_count: AtomicUsize::new(0),
+    }
+  }
+
+  #[cfg(test)]
+  fn open_count_for_test(&self) -> usize {
+    self.open_count.load(Ordering::Acquire)
+  }
+
+  #[cfg(test)]
+  fn connection_is_open_for_test(&self) -> bool {
+    self
+      .connection
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_some()
+  }
 }
 
 impl refresh::EpochMaintenanceExecutor for AppEpochMaintenanceExecutor {
@@ -170,21 +199,41 @@ impl refresh::EpochMaintenanceExecutor for AppEpochMaintenanceExecutor {
     limit: usize,
     cancellation: Arc<AtomicBool>,
   ) -> Result<refresh::EpochMaintenanceBatch, String> {
-    let conn = database::open_epoch_maintenance_connection(&self.db_path)
-      .map_err(|error| error.to_string())?;
+    if cancellation.load(Ordering::Acquire) {
+      return Ok(refresh::EpochMaintenanceBatch::Cancelled);
+    }
+    let mut connection = self
+      .connection
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if connection.is_none() {
+      let opened = database::open_epoch_maintenance_connection(&self.db_path)
+        .map_err(|error| error.to_string())?;
+      #[cfg(test)]
+      self.open_count.fetch_add(1, Ordering::AcqRel);
+      *connection = Some(opened);
+    }
     let progress = database::backfill_epoch_batch_cancellable(
-      &conn,
+      connection
+        .as_ref()
+        .expect("epoch maintenance connection was initialized"),
       limit,
       cancellation.as_ref(),
     )
     .map_err(|error| error.to_string())?;
     Ok(match progress {
-      Some(progress) => refresh::EpochMaintenanceBatch::Progress {
-        processed_rows: progress
-          .usage_rows_updated
-          .saturating_add(progress.quota_rows_updated),
-        complete: progress.complete,
-      },
+      Some(progress) => {
+        let result = refresh::EpochMaintenanceBatch::Progress {
+          processed_rows: progress
+            .usage_rows_updated
+            .saturating_add(progress.quota_rows_updated),
+          complete: progress.complete,
+        };
+        if progress.complete {
+          *connection = None;
+        }
+        result
+      }
       None => refresh::EpochMaintenanceBatch::Cancelled,
     })
   }
@@ -196,7 +245,7 @@ fn configure_epoch_maintenance(
   pending: bool,
 ) -> refresh::RefreshRuntimeDependencies {
   if pending {
-    dependencies.with_epoch_maintenance(Arc::new(AppEpochMaintenanceExecutor { db_path }))
+    dependencies.with_epoch_maintenance(Arc::new(AppEpochMaintenanceExecutor::new(db_path)))
   } else {
     dependencies
   }
@@ -2342,7 +2391,7 @@ mod tests {
       WITH RECURSIVE rows(value) AS (
         SELECT 1
         UNION ALL
-        SELECT value + 1 FROM rows WHERE value < 1501
+        SELECT value + 1 FROM rows WHERE value < 2501
       )
       INSERT INTO usage_events (
         session_id, timestamp, timestamp_ms, model_id,
@@ -2360,9 +2409,7 @@ mod tests {
     assert!(database::epoch_backfill_pending(&conn).expect("read repair marker"));
     drop(conn);
 
-    let first_adapter = AppEpochMaintenanceExecutor {
-      db_path: db_path.clone(),
-    };
+    let first_adapter = AppEpochMaintenanceExecutor::new(db_path.clone());
     let first = refresh::EpochMaintenanceExecutor::run_batch(
       &first_adapter,
       1_000,
@@ -2376,6 +2423,29 @@ mod tests {
         complete: false,
       }
     );
+    assert_eq!(first_adapter.open_count_for_test(), 1);
+    assert!(first_adapter.connection_is_open_for_test());
+
+    let second = refresh::EpochMaintenanceExecutor::run_batch(
+      &first_adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("run second production slice on the same adapter");
+    assert_eq!(
+      second,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 1_000,
+        complete: false,
+      }
+    );
+    assert_eq!(
+      first_adapter.open_count_for_test(),
+      1,
+      "incomplete slices reuse one WAL connection"
+    );
+    assert!(first_adapter.connection_is_open_for_test());
+
     let reopened = open_connection(&db_path).expect("reopen after first slice");
     let cursor: i64 = reopened
       .query_row(
@@ -2384,10 +2454,11 @@ mod tests {
         |row| row.get(0),
       )
       .expect("load persisted cursor");
-    assert_eq!(cursor, 1_000);
+    assert_eq!(cursor, 2_000);
     drop(reopened);
+    drop(first_adapter);
 
-    let resumed_adapter = AppEpochMaintenanceExecutor { db_path };
+    let resumed_adapter = AppEpochMaintenanceExecutor::new(db_path);
     let resumed = refresh::EpochMaintenanceExecutor::run_batch(
       &resumed_adapter,
       1_000,
@@ -2401,6 +2472,92 @@ mod tests {
         complete: true,
       }
     );
+    assert_eq!(resumed_adapter.open_count_for_test(), 1);
+    assert!(
+      !resumed_adapter.connection_is_open_for_test(),
+      "completed repair releases its WAL connection"
+    );
+  }
+
+  #[test]
+  fn pre_cancelled_epoch_maintenance_adapter_does_not_open_database() {
+    let directory = tempdir().expect("create cancelled adapter directory");
+    let adapter = AppEpochMaintenanceExecutor::new(
+      directory.path().join("pre-cancelled.sqlite3"),
+    );
+
+    let result = refresh::EpochMaintenanceExecutor::run_batch(
+      &adapter,
+      1_000,
+      Arc::new(AtomicBool::new(true)),
+    )
+    .expect("observe pre-cancelled adapter call");
+
+    assert_eq!(result, refresh::EpochMaintenanceBatch::Cancelled);
+    assert_eq!(adapter.open_count_for_test(), 0);
+    assert!(!adapter.connection_is_open_for_test());
+  }
+
+  #[test]
+  fn failed_epoch_maintenance_slice_keeps_connection_for_retry() {
+    let directory = tempdir().expect("create retry adapter directory");
+    let db_path = directory.path().join("retry.sqlite3");
+    let conn = open_connection(&db_path).expect("open retry database");
+    init_db(&conn).expect("initialize retry database");
+    conn.execute_batch(
+      "
+      INSERT INTO usage_events (
+        session_id, timestamp, timestamp_ms, model_id,
+        input_tokens, cached_input_tokens, output_tokens,
+        reasoning_output_tokens, total_tokens, value_usd,
+        fast_mode_auto, fast_mode_effective
+      )
+      VALUES (
+        'legacy', '2026-07-10T03:00:00Z', NULL, 'gpt-5',
+        1, 0, 1, 0, 2, 0.01, 0, 0
+      );
+      CREATE TRIGGER fail_epoch_retry
+      BEFORE UPDATE OF timestamp_ms ON usage_events
+      BEGIN
+        SELECT RAISE(ABORT, 'injected epoch retry failure');
+      END;
+      ",
+    )
+    .expect("seed retry failure");
+    drop(conn);
+    let adapter = AppEpochMaintenanceExecutor::new(db_path.clone());
+
+    let error = refresh::EpochMaintenanceExecutor::run_batch(
+      &adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect_err("inject first slice failure");
+    assert!(error.contains("injected epoch retry failure"));
+    assert_eq!(adapter.open_count_for_test(), 1);
+    assert!(adapter.connection_is_open_for_test());
+
+    let repair = open_connection(&db_path).expect("open trigger repair connection");
+    repair
+      .execute_batch("DROP TRIGGER fail_epoch_retry;")
+      .expect("remove injected failure");
+    drop(repair);
+    let retried = refresh::EpochMaintenanceExecutor::run_batch(
+      &adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("retry with retained connection");
+
+    assert_eq!(
+      retried,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 1,
+        complete: true,
+      }
+    );
+    assert_eq!(adapter.open_count_for_test(), 1);
+    assert!(!adapter.connection_is_open_for_test());
   }
 
   #[test]
