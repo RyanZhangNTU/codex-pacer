@@ -140,7 +140,7 @@ unsafe extern "C" {
 }
 
 #[cfg(target_os = "macos")]
-fn release_unused_process_memory() {
+pub(crate) fn release_unused_process_memory() {
   // SAFETY: A null zone asks the macOS allocator to visit every registered zone.
   // The call only releases pages currently unused by those zones.
   unsafe {
@@ -149,7 +149,7 @@ fn release_unused_process_memory() {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn release_unused_process_memory() {}
+pub(crate) fn release_unused_process_memory() {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanKind {

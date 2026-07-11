@@ -861,9 +861,13 @@ fn refresh_daily_value_menu_bar(state: &AppState) {
 }
 
 fn update_daily_value_menu_bar(state: &AppState) -> Result<(), String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
-  render_daily_value_menu_bar(state, &settings)
+  let result = (|| {
+    let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+    let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+    render_daily_value_menu_bar(state, &settings)
+  })();
+  importer::release_unused_process_memory();
+  result
 }
 
 fn render_daily_value_menu_bar(
