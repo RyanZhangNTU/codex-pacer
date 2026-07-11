@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
+  timestamp_ms INTEGER,
   model_id TEXT NOT NULL,
   input_tokens INTEGER NOT NULL,
   cached_input_tokens INTEGER NOT NULL,
@@ -116,6 +117,24 @@ CREATE TABLE IF NOT EXISTS data_repairs (
   completed_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS data_repair_progress (
+  repair_key TEXT NOT NULL,
+  stream_key TEXT NOT NULL,
+  progress_value INTEGER NOT NULL,
+  PRIMARY KEY (repair_key, stream_key)
+);
+
+CREATE TABLE IF NOT EXISTS data_repair_quarantine (
+  repair_key TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  row_id INTEGER NOT NULL,
+  column_name TEXT NOT NULL,
+  raw_value TEXT NOT NULL,
+  error_message TEXT NOT NULL,
+  quarantined_at TEXT NOT NULL,
+  PRIMARY KEY (repair_key, table_name, row_id, column_name)
+);
+
 CREATE TABLE IF NOT EXISTS data_repair_pending_files (
   repair_key TEXT NOT NULL,
   source_path TEXT NOT NULL,
@@ -130,11 +149,14 @@ CREATE TABLE IF NOT EXISTS rate_limit_samples (
   source_session_id TEXT NOT NULL DEFAULT '',
   bucket TEXT NOT NULL,
   sample_timestamp TEXT NOT NULL,
+  sample_timestamp_ms INTEGER,
   limit_id TEXT NOT NULL DEFAULT '',
   limit_name TEXT NOT NULL DEFAULT '',
   plan_type TEXT NOT NULL DEFAULT '',
   window_start TEXT NOT NULL,
+  window_start_ms INTEGER,
   resets_at TEXT NOT NULL,
+  resets_at_ms INTEGER,
   used_percent INTEGER NOT NULL,
   remaining_percent INTEGER NOT NULL,
   created_at TEXT NOT NULL

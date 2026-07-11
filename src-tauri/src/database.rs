@@ -4,10 +4,14 @@ use std::time::Duration;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 
+#[allow(dead_code)]
+mod epoch_backfill;
 mod rate_limit_samples;
 mod subscriptions;
 mod sync_settings;
 
+#[allow(unused_imports)]
+pub use epoch_backfill::{backfill_epoch_batch, parse_epoch_millis, EpochBackfillProgress};
 pub use rate_limit_samples::{insert_live_rate_limit_snapshot, replace_session_rate_limit_samples};
 pub use subscriptions::{
     canonical_subscription_currency, get_subscription_profile, save_subscription_profile,
@@ -49,6 +53,7 @@ pub fn open_connection(db_path: &Path) -> rusqlite::Result<Connection> {
 
 pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(include_str!("../sql/schema.sql"))?;
+    epoch_backfill::ensure_epoch_schema(conn)?;
     sync_settings::ensure_sync_settings_schema(conn)?;
     ensure_singletons(conn)?;
     conn.execute_batch(include_str!("../sql/indexes.sql"))?;
