@@ -281,12 +281,12 @@ Expected result: all fallback tests pass, including the existing test that choos
 Run:
 
 ~~~bash
-cargo fmt --all -- --check
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked refresh::live_cache::tests -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml --locked refresh::runtime::tests -- --nocapture
 ~~~
 
-Expected result: formatting and all focused Rust tests pass. The runtime tests must still show that a failed live request triggers a retry and a fallback token intent.
+Expected result: the focused Rust tests pass. The repository currently contains formatting differences outside this change, so do not reformat the whole crate. The runtime tests must still show that a failed live request triggers a retry and a fallback token intent.
 
 - [ ] **Step 5: Commit the production fix**
 
