@@ -1426,6 +1426,13 @@ fn load_persisted_live_rate_limits_from_connection(
   })
 }
 
+fn load_preferred_persisted_live_rate_limits(
+  conn: &rusqlite::Connection,
+) -> Option<LiveRateLimitSnapshot> {
+  load_persisted_live_rate_limits_from_connection(conn, Some("live"))
+    .or_else(|| load_persisted_live_rate_limits_from_connection(conn, Some("session")))
+}
+
 fn persisted_window_is_newer(
   candidate: &PersistedRateLimitWindow,
   current: &PersistedRateLimitWindow,
@@ -1466,16 +1473,18 @@ fn load_display_live_rate_limit_fallback(
   let memory = live_cache
     .rate_limits()
     .map(|snapshot| snapshot.as_ref().clone());
+  let memory_is_live = live_cache.state().last_live_success_at.is_some();
   let Ok(conn) = open_connection(db_path) else {
     return memory;
   };
-  let persisted = load_persisted_live_rate_limits_from_connection(&conn, None);
-  let session_only = if persisted.is_none() {
-    load_persisted_live_rate_limits_from_connection(&conn, Some("session"))
-  } else {
-    None
-  };
-  newest_live_rate_limit_snapshot([memory, persisted, session_only])
+  let persisted_live = load_persisted_live_rate_limits_from_connection(&conn, Some("live"));
+  if memory_is_live {
+    return newest_live_rate_limit_snapshot([memory, persisted_live]);
+  }
+  if persisted_live.is_some() {
+    return persisted_live;
+  }
+  memory.or_else(|| load_persisted_live_rate_limits_from_connection(&conn, Some("session")))
 }
 
 fn newest_live_rate_limit_snapshot(
@@ -2178,8 +2187,7 @@ pub fn run() {
       prepare_app_database(&db_path)?;
       let conn = open_connection(&db_path).map_err(|error| error.to_string())?;
       let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
-      let display_fallback = load_persisted_live_rate_limits_from_connection(&conn, None)
-        .or_else(|| load_persisted_live_rate_limits_from_connection(&conn, Some("session")));
+      let display_fallback = load_preferred_persisted_live_rate_limits(&conn);
       let live_last_success_at = load_persisted_live_rate_limits_from_connection(&conn, Some("live"))
         .map(|snapshot| snapshot.fetched_at);
       let epoch_backfill_is_pending =
