@@ -7358,6 +7358,32 @@ mod tests {
   }
 
   #[test]
+  #[ignore = "resource profiling helper; requires database and Codex home copies"]
+  fn profile_real_incremental_scan() {
+    let db_path = std::env::var_os("CODEX_PACER_PROFILE_DB")
+      .map(PathBuf::from)
+      .expect("set CODEX_PACER_PROFILE_DB to a database copy");
+    let codex_home = std::env::var_os("CODEX_PACER_PROFILE_CODEX_HOME")
+      .map(PathBuf::from)
+      .expect("set CODEX_PACER_PROFILE_CODEX_HOME");
+    let started = std::time::Instant::now();
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare incremental scan");
+    eprintln!(
+      "profile incremental elapsed_ms={} visited={} read_bytes={} tail={} full={}",
+      started.elapsed().as_millis(),
+      prepared.stats().files_visited,
+      prepared.stats().source_bytes_read,
+      prepared.stats().tail_parsed_files,
+      prepared.stats().fully_parsed_files
+    );
+  }
+
+  #[test]
   fn changed_checkpoint_suffix_falls_back_to_full_session_parse() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");

@@ -334,18 +334,13 @@ fn build_overview(
     live_window_offset,
   )?;
   let window = &resolved_window.window;
-  let filtered_events: Vec<_> = events
-    .iter()
-    .filter(|event| event_in_window(event, window))
-    .cloned()
-    .collect();
 
   let mut conversation_ids = HashSet::new();
   let mut total_value_usd = 0.0;
   let mut total_tokens = 0i64;
   let mut model_shares: HashMap<String, ModelShareAccumulator> = HashMap::new();
 
-  for event in &filtered_events {
+  for event in events {
     total_value_usd += event.value_usd;
     total_tokens += event.total_tokens;
     if let Some(session) = sessions.get(&event.session_id) {
@@ -365,9 +360,9 @@ fn build_overview(
     0.0
   };
 
-  let trend = build_trend(window, &filtered_events);
-  let quota_trend = build_quota_trend(conn, window, &filtered_events, live_rate_limits.as_ref());
-  let composition_breakdown = build_composition_breakdown(&filtered_events, catalog);
+  let trend = build_trend(window, events);
+  let quota_trend = build_quota_trend(conn, window, events, live_rate_limits.as_ref());
+  let composition_breakdown = build_composition_breakdown(events, catalog);
   let mut model_breakdown = model_shares
     .into_iter()
     .map(|(model_id, value)| ModelShare {
@@ -457,9 +452,6 @@ fn build_conversation_list(
   }
 
   for event in events {
-    if !event_in_window(event, &window) {
-      continue;
-    }
     let Some(session) = sessions.get(&event.session_id) else {
       continue;
     };
@@ -1514,35 +1506,31 @@ fn load_live_rate_limit_windows(
   Ok(ordered)
 }
 
-fn event_in_window(event: &EventRow, window: &Window) -> bool {
-  parse_rfc3339_local(&event.timestamp)
-    .map(|timestamp| timestamp >= window.start && timestamp < window.end)
-    .unwrap_or(false)
-}
-
 fn build_trend(window: &Window, events: &[EventRow]) -> Vec<TrendPoint> {
   let bins = build_bins(window);
-  let mut trend = Vec::new();
-  for bin in bins {
-    let mut api_value_usd = 0.0;
-    let mut total_tokens = 0i64;
-    for event in events {
-      let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
-        continue;
-      };
-      if timestamp >= bin.start && timestamp < bin.end {
-        api_value_usd += event.value_usd;
-        total_tokens += event.total_tokens;
-      }
+  let mut totals = vec![(0.0, 0i64); bins.len()];
+  for event in events {
+    let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
+      continue;
+    };
+    if let Some(index) = bins
+      .iter()
+      .position(|bin| timestamp >= bin.start && timestamp < bin.end)
+    {
+      totals[index].0 += event.value_usd;
+      totals[index].1 += event.total_tokens;
     }
-    trend.push(TrendPoint {
+  }
+  bins
+    .into_iter()
+    .zip(totals)
+    .map(|(bin, (api_value_usd, total_tokens))| TrendPoint {
       label: bin.label,
       timestamp: bin.timestamp,
       api_value_usd,
       total_tokens,
-    });
-  }
-  trend
+    })
+    .collect()
 }
 
 fn build_quota_trend(
@@ -1570,22 +1558,24 @@ fn build_quota_trend(
   samples.dedup_by(|right, left| right.timestamp == left.timestamp && right.used_percent == left.used_percent);
 
   let bins = build_elapsed_bins(window, window.end);
+  let mut bin_totals = vec![(0.0, 0i64); bins.len()];
+  for event in events {
+    let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
+      continue;
+    };
+    if let Some(index) = bins
+      .iter()
+      .position(|bin| timestamp >= bin.start && timestamp < bin.end)
+    {
+      bin_totals[index].0 += event.value_usd;
+      bin_totals[index].1 += event.total_tokens;
+    }
+  }
   let mut trend = Vec::new();
   let mut cumulative_api_value_usd = 0.0;
   let mut cumulative_tokens = 0i64;
 
-  for bin in bins {
-    let mut api_value_usd = 0.0;
-    let mut total_tokens = 0i64;
-    for event in events {
-      let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
-        continue;
-      };
-      if timestamp >= bin.start && timestamp < bin.end {
-        api_value_usd += event.value_usd;
-        total_tokens += event.total_tokens;
-      }
-    }
+  for (bin, (api_value_usd, total_tokens)) in bins.into_iter().zip(bin_totals) {
 
     cumulative_api_value_usd += api_value_usd;
     cumulative_tokens += total_tokens;
@@ -2043,6 +2033,32 @@ mod tests {
     assert_eq!(second.items.len(), 50);
     assert_eq!(second.items.first().map(|item| item.root_session_id.as_str()), Some("root-050"));
     assert_eq!(second.next_cursor.as_deref(), Some("root-099"));
+  }
+
+  #[test]
+  #[ignore = "resource profiling helper; requires CODEX_PACER_PROFILE_DB"]
+  fn profile_real_seven_day_dashboard_load() {
+    let db_path = std::env::var_os("CODEX_PACER_PROFILE_DB")
+      .map(std::path::PathBuf::from)
+      .expect("set CODEX_PACER_PROFILE_DB to a database copy");
+    let started = std::time::Instant::now();
+    let data = load_dashboard_data(
+      &db_path,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("load seven-day dashboard");
+    eprintln!(
+      "profile seven_day elapsed_ms={} first_page={} has_more={}",
+      started.elapsed().as_millis(),
+      data.conversation_page.items.len(),
+      data.conversation_page.has_more
+    );
   }
 
   #[test]
