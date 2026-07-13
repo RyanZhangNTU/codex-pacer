@@ -956,15 +956,16 @@ fn current_menu_bar_title_parts(
   settings: &SyncSettings,
   cached_live_rate_limits: Option<&LiveRateLimitSnapshot>,
 ) -> Result<(Option<String>, Option<String>), String> {
-  let bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
   let anchor = Local::now().format("%Y-%m-%d").to_string();
   let live_rate_limits = if settings.show_menu_bar_live_quota_percent
-    || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&bucket))
+    || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&configured_bucket))
   {
     cached_live_rate_limits
   } else {
     None
   };
+  let bucket = effective_menu_bar_api_bucket(&configured_bucket, live_rate_limits);
   let api_value_title = if settings.show_menu_bar_daily_api_value {
     let api_value_usd = get_window_api_value(
       &state.db_path,
@@ -1017,6 +1018,19 @@ fn normalize_menu_bar_bucket(bucket: &str) -> String {
   }
 }
 
+fn effective_menu_bar_api_bucket(
+  configured_bucket: &str,
+  live_rate_limits: Option<&LiveRateLimitSnapshot>,
+) -> String {
+  if configured_bucket == "five_hour"
+    && live_rate_limits.is_some_and(|snapshot| snapshot.primary.is_none() && snapshot.secondary.is_some())
+  {
+    "seven_day".to_string()
+  } else {
+    configured_bucket.to_string()
+  }
+}
+
 fn normalize_menu_bar_live_quota_bucket(bucket: &str) -> String {
   match bucket {
     "five_hour" | "seven_day" => bucket.to_string(),
@@ -1065,7 +1079,8 @@ fn menu_bar_tooltip(
   api_value_title: Option<&str>,
   cached_live_rate_limits: Option<&LiveRateLimitSnapshot>,
 ) -> Result<String, String> {
-  let bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let bucket = effective_menu_bar_api_bucket(&configured_bucket, cached_live_rate_limits);
   let mut fragments = Vec::new();
   if let Some(title) = api_value_title.filter(|value| !value.trim().is_empty()) {
     fragments.push(format!("{}累计 API 价值：{title}", menu_bar_bucket_label(&bucket)));
@@ -4067,6 +4082,52 @@ mod tests {
     assert_eq!(
       menu_bar_title(Some("$12.4"), Some("67%")),
       Some("$12.4 67%".to_string())
+    );
+  }
+
+  #[test]
+  fn menu_bar_api_value_falls_back_to_seven_days_when_five_hour_quota_is_absent() {
+    let snapshot = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: None,
+      secondary: Some(RateLimitWindowSnapshot {
+        used_percent: 21,
+        remaining_percent: 79,
+        window_duration_mins: Some(10_080),
+        resets_at: Some("2026-04-02T00:00:00+08:00".to_string()),
+        window_start: Some("2026-03-26T00:00:00+08:00".to_string()),
+      }),
+      fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+    };
+
+    assert_eq!(
+      effective_menu_bar_api_bucket("five_hour", Some(&snapshot)),
+      "seven_day"
+    );
+  }
+
+  #[test]
+  fn menu_bar_api_value_keeps_five_hours_when_that_quota_exists() {
+    let snapshot = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: Some(RateLimitWindowSnapshot {
+        used_percent: 12,
+        remaining_percent: 88,
+        window_duration_mins: Some(300),
+        resets_at: Some("2026-03-27T05:00:00+08:00".to_string()),
+        window_start: Some("2026-03-27T00:00:00+08:00".to_string()),
+      }),
+      secondary: None,
+      fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+    };
+
+    assert_eq!(
+      effective_menu_bar_api_bucket("five_hour", Some(&snapshot)),
+      "five_hour"
     );
   }
 
