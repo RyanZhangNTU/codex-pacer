@@ -310,3 +310,14 @@ test('popup_wires_latest_request_controller_and_disables_duplicate_manual_refres
     /aria-label=\{t\.popup\.actions\.refresh\}[\s\S]{0,220}disabled=\{refreshing\}/,
   )
 })
+
+test('dashboard_startup_does_not_open_and_parse_the_first_conversation_implicitly', () => {
+  assert.match(
+    appSource,
+    /setSelectedRootSessionId\(\(current\) =>[\s\S]{0,260}\? current[\s\S]{0,80}: null,/,
+  )
+  assert.doesNotMatch(
+    appSource,
+    /setSelectedRootSessionId\([\s\S]{0,320}conversationPage\.items\[0\]/,
+  )
+})

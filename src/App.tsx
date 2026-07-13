@@ -228,7 +228,7 @@ function App() {
         setSelectedRootSessionId((current) =>
           current && snapshot.conversationPage.items.some((item) => item.rootSessionId === current)
             ? current
-            : snapshot.conversationPage.items[0]?.rootSessionId ?? null,
+            : null,
         )
       })
     } catch (error) {
