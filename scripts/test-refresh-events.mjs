@@ -320,6 +320,17 @@ test('dashboard_startup_does_not_open_and_parse_the_first_conversation_implicitl
   )
 })
 
+test('conversation_entry_load_does_not_repeat_for_query_changes', () => {
+  assert.match(
+    appSource,
+    /if \(!hasBootstrapped \|\| view !== 'conversations'\) return\s+void loadShellRef\.current\(false\)\s+}, \[hasBootstrapped, view\]\)/,
+  )
+  assert.doesNotMatch(
+    appSource,
+    /if \(!hasBootstrapped \|\| view !== 'conversations'\) return\s+void loadShell\(false\)/,
+  )
+})
+
 test('dashboard_reload_preserves_a_later-page_selection_for_the_same_query', () => {
   assert.equal(
     refreshEvents.selectionAfterDashboardReload('root-page-2', 'seven-day-query', 'seven-day-query'),

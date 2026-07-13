@@ -527,8 +527,8 @@ function App() {
 
   useEffect(() => {
     if (!hasBootstrapped || view !== 'conversations') return
-    void loadShell(false)
-  }, [hasBootstrapped, loadShell, view])
+    void loadShellRef.current(false)
+  }, [hasBootstrapped, view])
 
   useEffect(() => {
     if (!loadedQueryKey && selectedRootSessionId) return
