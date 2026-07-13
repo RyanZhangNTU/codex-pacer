@@ -1441,10 +1441,19 @@ fn resolve_live_rate_limit_window(
   .map_err(|error| error.to_string())?;
 
   if windows.is_empty() {
-    return Err(format!(
-      "Live rate limits are unavailable for the {} view. Check that Codex is installed and logged in.",
-      bucket
-    ));
+    let duration = match bucket {
+      "five_hour" => chrono::Duration::hours(5),
+      "seven_day" => chrono::Duration::days(7),
+      _ => {
+        return Err(format!(
+          "Live rate limits are unavailable for the {} view. Check that Codex is installed and logged in.",
+          bucket
+        ))
+      }
+    };
+    let end = normalize_local_timestamp(Local::now());
+    let start = end - duration;
+    return Ok((start, end, start.date_naive(), 0, 1));
   }
 
   let applied_offset = requested_offset.clamp(0, windows.len().saturating_sub(1) as i64);
@@ -2102,6 +2111,30 @@ mod tests {
   use super::*;
   use crate::database::{init_db, insert_live_rate_limit_snapshot};
   use tempfile::tempdir;
+
+  #[test]
+  fn seven_day_overview_without_quota_uses_a_rolling_window() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+
+    let overview = get_overview_with_connection(
+      &conn,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("load seven-day overview without quota samples");
+    let start = parse_rfc3339_local(&overview.window_start).expect("parse window start");
+    let end = parse_rfc3339_local(&overview.window_end).expect("parse window end");
+
+    assert_eq!(overview.bucket, "seven_day");
+    assert_eq!((end - start).num_hours(), 7 * 24);
+    assert_eq!(overview.live_window_offset, 0);
+    assert_eq!(overview.live_window_count, 1);
+  }
 
   #[test]
   fn conversation_query_pages_in_sql_without_loading_every_item() {

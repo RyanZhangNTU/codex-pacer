@@ -766,6 +766,13 @@ fn updateSubscriptionProfile(
   state: State<'_, AppState>,
   payload: SubscriptionProfile,
 ) -> Result<SubscriptionProfile, String> {
+  update_subscription_profile_for_state(state.inner(), payload)
+}
+
+fn update_subscription_profile_for_state(
+  state: &AppState,
+  payload: SubscriptionProfile,
+) -> Result<SubscriptionProfile, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let updated = SubscriptionProfile {
     plan_type: payload.plan_type,
@@ -774,7 +781,13 @@ fn updateSubscriptionProfile(
     billing_anchor_day: payload.billing_anchor_day.clamp(1, 28),
     updated_at: payload.updated_at,
   };
-  save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())
+  let saved = save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())?;
+  state.settings_revision.fetch_add(1, Ordering::AcqRel);
+  *state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+  Ok(saved)
 }
 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
@@ -3134,6 +3147,53 @@ mod tests {
       snapshot.quota_7d.map(|window| window.remaining_percent),
       Some(79)
     );
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn subscription_profile_update_invalidates_cached_overview() {
+    let (runtime, _, _) = start_recording_runtime(disabled_refresh_config(None));
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      refresh::LiveQuotaCache::new(),
+    );
+    cached_overview(
+      &state,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("populate overview cache");
+    assert!(state
+      .overview_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_some());
+
+    let saved = update_subscription_profile_for_state(
+      &state,
+      SubscriptionProfile {
+        monthly_price: 250.0,
+        ..SubscriptionProfile::default()
+      },
+    )
+    .expect("update subscription profile");
+
+    assert_eq!(saved.monthly_price, 250.0);
+    assert_eq!(state.settings_revision.load(Ordering::Acquire), 1);
+    assert!(state
+      .overview_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_none());
     runtime.shutdown_and_join().expect("shutdown runtime");
   }
 
