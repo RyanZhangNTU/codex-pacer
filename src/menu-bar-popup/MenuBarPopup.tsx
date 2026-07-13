@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ChartNoAxesCombined, RefreshCw } from 'lucide-react'
 
 import { getMenuBarPopupSnapshot, handleMenuBarPopupAction, resizeMenuBarPopup } from '../app/api'
@@ -105,7 +106,16 @@ export function MenuBarPopup() {
   }, [])
 
   useEffect(() => {
-    void loadSnapshot(false)
+    if (!isTauri()) {
+      void loadSnapshot(false)
+      return
+    }
+    void getCurrentWindow()
+      .isVisible()
+      .then((visible) => {
+        if (visible) void loadSnapshot(false)
+      })
+      .catch(() => {})
   }, [loadSnapshot])
 
   const schedulePopupResize = useCallback(() => {
@@ -164,7 +174,12 @@ export function MenuBarPopup() {
     trackRegistration(
       listen('codex-counter://menu-bar-popup-refresh', () => {
         if (!cancelled) {
-          void loadSnapshot(false)
+          void getCurrentWindow()
+            .isVisible()
+            .then((visible) => {
+              if (!cancelled && visible) void loadSnapshot(false)
+            })
+            .catch(() => {})
         }
       }),
     )

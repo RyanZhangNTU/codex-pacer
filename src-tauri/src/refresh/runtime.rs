@@ -5448,6 +5448,10 @@ impl TokenRefreshExecutor for TestTokenExecutor {
       imported_sessions: generation as usize,
       updated_sessions: generation as usize,
       missing_sessions: 0,
+      scan_kind: "incremental".to_string(),
+      source_bytes_read: 0,
+      tail_parsed_files: 0,
+      fully_parsed_files: 0,
       last_completed_at: "2026-07-11T00:00:00Z".to_string(),
     })
   }

@@ -12,7 +12,7 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
-  atomic::{AtomicBool, AtomicU8, Ordering},
+  atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
   Arc, Mutex,
 };
 #[cfg(test)]
@@ -20,15 +20,18 @@ use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
-use rusqlite::params;
+use rusqlite::{params, Connection};
 use database::{
   canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
   insert_live_rate_limit_snapshot, load_latest_rate_limits, open_connection,
   save_subscription_profile, save_sync_settings,
 };
-use importer::{commit_prepared_scan, prepare_scan, recalculate_all_session_values, ScanKind};
+use importer::{
+  commit_prepared_scan, prepare_scan_with_cached_snapshot_connection,
+  recalculate_all_session_values, ScanKind,
+};
 use models::{
-  ConversationDetail, ConversationFilters, ConversationListItem, DashboardSnapshot,
+  ConversationDetail, ConversationFilters, ConversationPage, DashboardSnapshot,
   LiveRateLimitSnapshot, MenuBarPopupQuotaSnapshot, MenuBarPopupSnapshot,
   MenuBarPopupSuggestedSpeed, OverviewResponse, PricingCatalogEntry, RateLimitWindowSnapshot,
   ScanResult, SubscriptionProfile, SyncSettings,
@@ -38,9 +41,9 @@ use pricing::{
   seed_pricing_catalog, OPENAI_API_PRICING_URL,
 };
 use queries::{
-  get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
+  get_conversation_detail, get_overview_with_connection, get_quota_trend, get_window_api_value, list_conversations,
 };
-use rate_limits::query_live_rate_limits;
+use rate_limits::LiveRateLimitClient;
 use tauri::{
   Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
   WebviewWindowBuilder,
@@ -76,12 +79,34 @@ struct MenuBarPopupAnchor {
 }
 
 #[derive(Clone)]
+struct CachedMenuBarApiValue {
+  key: String,
+  usage_revision: u64,
+  title: String,
+}
+
+#[derive(Clone)]
+struct CachedOverview {
+  key: String,
+  usage_revision: u64,
+  quota_revision: u64,
+  settings_revision: u64,
+  value: OverviewResponse,
+}
+
+#[derive(Clone)]
 struct AppState {
   app_handle: Option<AppHandle>,
   db_path: PathBuf,
   refresh: AppRefreshHandle,
   usage_mutations: refresh::UsageMutationCoordinator,
   menu_bar_render_state: Arc<AtomicU8>,
+  menu_bar_usage_revision: Arc<AtomicU64>,
+  quota_revision: Arc<AtomicU64>,
+  settings_revision: Arc<AtomicU64>,
+  menu_bar_api_value_cache: Arc<Mutex<Option<CachedMenuBarApiValue>>>,
+  overview_cache: Arc<Mutex<Option<CachedOverview>>>,
+  overview_connection: Arc<Mutex<Connection>>,
   daily_value_tray: Option<TrayIcon>,
   live_rate_limits: refresh::LiveQuotaCache,
   menu_bar_popup_visible: Arc<AtomicBool>,
@@ -106,6 +131,7 @@ fn installed_refresh_handle(handle: refresh::RefreshCoordinatorHandle) -> AppRef
 #[derive(Clone)]
 struct AppTokenRefreshExecutor {
   db_path: PathBuf,
+  preparation_connection: Arc<Mutex<Option<Connection>>>,
 }
 
 impl refresh::TokenRefreshExecutor for AppTokenRefreshExecutor {
@@ -119,10 +145,15 @@ impl refresh::TokenRefreshExecutor for AppTokenRefreshExecutor {
       request.request.kind,
       started_at,
     )?;
-    let prepared_scan = prepare_scan(
+    let mut preparation_connection = self
+      .preparation_connection
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prepared_scan = prepare_scan_with_cached_snapshot_connection(
       &self.db_path,
       request.request.codex_home,
       scan_kind,
+      &mut preparation_connection,
     )?;
     Ok(refresh::PreparedTokenRefresh::new(
       request.generation,
@@ -141,11 +172,12 @@ impl refresh::TokenRefreshExecutor for AppTokenRefreshExecutor {
 struct AppLiveQuotaFetcher {
   db_path: PathBuf,
   live_cache: refresh::LiveQuotaCache,
+  client: Arc<LiveRateLimitClient>,
 }
 
 impl refresh::LiveQuotaFetcher for AppLiveQuotaFetcher {
   fn fetch(&self, timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
-    query_live_rate_limits(timeout)
+    self.client.query(timeout)
   }
 
   fn fallback(&self) -> Option<LiveRateLimitSnapshot> {
@@ -263,10 +295,17 @@ struct TauriRefreshEventSink {
 }
 
 impl refresh::RefreshEventSink for TauriRefreshEventSink {
-  fn publish_invalidation(&self, _: refresh::DisplayInvalidation) {
+  fn publish_invalidation(&self, value: refresh::DisplayInvalidation) {
     let Some(state) = self.app_handle.try_state::<AppState>() else {
       return;
     };
+    state
+      .menu_bar_usage_revision
+      .store(value.usage_revision, Ordering::Release);
+    state.quota_revision.store(value.quota_revision, Ordering::Release);
+    state
+      .settings_revision
+      .store(value.settings_revision, Ordering::Release);
     let popup_visible = state.menu_bar_popup_visible.load(Ordering::Acquire);
     refresh_daily_value_menu_bar(state.inner());
     if popup_visible {
@@ -378,6 +417,14 @@ fn refreshPricing(state: State<'_, AppState>) -> Result<Vec<PricingCatalogEntry>
     }
   };
   let catalog = refresh_pricing_catalog_for_state(state.inner(), official_entries.as_deref())?;
+  *state
+    .menu_bar_api_value_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+  *state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
   refresh_daily_value_menu_bar(state.inner());
   Ok(catalog)
 }
@@ -435,8 +482,8 @@ fn getOverview(
   live_window_offset: Option<i64>,
 ) -> Result<OverviewResponse, String> {
   let live_rate_limits = maybe_live_rate_limits_for_bucket(state.inner(), bucket.as_deref(), live_window_offset)?;
-  get_overview(
-    &state.db_path,
+  cached_overview(
+    state.inner(),
     bucket,
     anchor,
     custom_start,
@@ -451,7 +498,7 @@ fn getOverview(
 fn listConversations(
   state: State<'_, AppState>,
   filters: Option<ConversationFilters>,
-) -> Result<Vec<ConversationListItem>, String> {
+) -> Result<ConversationPage, String> {
   let live_rate_limits = maybe_live_rate_limits_for_bucket(
     state.inner(),
     filters.as_ref().and_then(|value| value.bucket.as_deref()),
@@ -477,7 +524,7 @@ async fn getMenuBarPopupSnapshot(
     if force_refresh.unwrap_or(false) {
       refresh_popup_data(&state)?;
     }
-    build_passive_menu_bar_popup_snapshot(&state.db_path, &state.live_rate_limits)
+    build_passive_menu_bar_popup_snapshot(&state)
   })
   .await
   .map_err(|error| format!("Failed to join popup refresh: {error}"))?
@@ -517,30 +564,54 @@ async fn loadDashboard(
   custom_end: Option<String>,
   search: Option<String>,
   live_window_offset: Option<i64>,
+  include_conversations: Option<bool>,
 ) -> Result<DashboardSnapshot, String> {
   let state = state.inner().clone();
   tauri::async_runtime::spawn_blocking(move || {
-    let normalized_bucket = bucket.clone().unwrap_or_else(|| "subscription_month".to_string());
+    let normalized_bucket = bucket.clone().unwrap_or_else(|| "seven_day".to_string());
     let live_rate_limits =
       maybe_live_rate_limits_for_bucket(&state, Some(&normalized_bucket), live_window_offset)?;
-    let snapshot = load_dashboard_data(
-      &state.db_path,
+    let overview = cached_overview(
+      &state,
       Some(normalized_bucket.clone()),
       anchor.clone(),
       custom_start.clone(),
       custom_end.clone(),
-      search,
       live_rate_limits.clone(),
       live_window_offset,
     )?;
     let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
     let sync_settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+    let subscription_profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
+    drop(conn);
+    let conversation_page = if include_conversations.unwrap_or(false) {
+      list_conversations(
+        &state.db_path,
+        Some(ConversationFilters {
+          bucket: Some(normalized_bucket),
+          anchor,
+          custom_start,
+          custom_end,
+          search,
+          live_window_offset,
+          cursor: None,
+          limit: Some(50),
+        }),
+        live_rate_limits.clone(),
+      )?
+    } else {
+      ConversationPage {
+        items: Vec::new(),
+        next_cursor: None,
+        has_more: false,
+      }
+    };
 
     Ok(DashboardSnapshot {
-      overview: snapshot.overview,
-      conversations: snapshot.conversations,
+      overview,
+      conversation_page,
       sync_settings,
-      subscription_profile: snapshot.subscription_profile,
+      subscription_profile,
       live_rate_limits,
     })
   })
@@ -553,8 +624,9 @@ async fn loadDashboard(
 fn getConversationDetail(
   state: State<'_, AppState>,
   root_session_id: String,
+  turn_cursor: Option<usize>,
 ) -> Result<ConversationDetail, String> {
-  get_conversation_detail(&state.db_path, &root_session_id)
+  get_conversation_detail(&state.db_path, &root_session_id, turn_cursor)
 }
 
 #[allow(non_snake_case)]
@@ -694,6 +766,13 @@ fn updateSubscriptionProfile(
   state: State<'_, AppState>,
   payload: SubscriptionProfile,
 ) -> Result<SubscriptionProfile, String> {
+  update_subscription_profile_for_state(state.inner(), payload)
+}
+
+fn update_subscription_profile_for_state(
+  state: &AppState,
+  payload: SubscriptionProfile,
+) -> Result<SubscriptionProfile, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let updated = SubscriptionProfile {
     plan_type: payload.plan_type,
@@ -702,7 +781,13 @@ fn updateSubscriptionProfile(
     billing_anchor_day: payload.billing_anchor_day.clamp(1, 28),
     updated_at: payload.updated_at,
   };
-  save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())
+  let saved = save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())?;
+  state.settings_revision.fetch_add(1, Ordering::AcqRel);
+  *state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+  Ok(saved)
 }
 
 fn prepare_app_database(db_path: &Path) -> Result<(), String> {
@@ -967,16 +1052,38 @@ fn current_menu_bar_title_parts(
   };
   let bucket = effective_menu_bar_api_bucket(&configured_bucket, live_rate_limits);
   let api_value_title = if settings.show_menu_bar_daily_api_value {
-    let api_value_usd = get_window_api_value(
-      &state.db_path,
-      bucket.clone(),
-      if bucket_uses_anchor(&bucket) { Some(anchor) } else { None },
-      None,
-      None,
-      live_rate_limits.cloned(),
-      None,
-    )?;
-    Some(format!("${:.1}", api_value_usd))
+    let cache_key = menu_bar_api_value_cache_key(&bucket, &anchor, live_rate_limits);
+    let usage_revision = state.menu_bar_usage_revision.load(Ordering::Acquire);
+    let cached_title = state
+      .menu_bar_api_value_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .as_ref()
+      .filter(|cached| cached.key == cache_key && cached.usage_revision == usage_revision)
+      .map(|cached| cached.title.clone());
+    if let Some(title) = cached_title {
+      Some(title)
+    } else {
+      let api_value_usd = get_window_api_value(
+        &state.db_path,
+        bucket.clone(),
+        if bucket_uses_anchor(&bucket) { Some(anchor) } else { None },
+        None,
+        None,
+        live_rate_limits.cloned(),
+        None,
+      )?;
+      let title = format!("${:.1}", api_value_usd);
+      *state
+        .menu_bar_api_value_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CachedMenuBarApiValue {
+        key: cache_key,
+        usage_revision,
+        title: title.clone(),
+      });
+      Some(title)
+    }
   } else {
     None
   };
@@ -992,6 +1099,25 @@ fn current_menu_bar_title_parts(
     None
   };
   Ok((api_value_title, live_metric_title))
+}
+
+fn menu_bar_api_value_cache_key(
+  bucket: &str,
+  anchor: &str,
+  live_rate_limits: Option<&LiveRateLimitSnapshot>,
+) -> String {
+  let live_window = match bucket {
+    "five_hour" => live_rate_limits.and_then(|snapshot| snapshot.primary.as_ref()),
+    "seven_day" => live_rate_limits.and_then(|snapshot| snapshot.secondary.as_ref()),
+    _ => None,
+  };
+  format!(
+    "{}|{}|{}|{}",
+    bucket,
+    if bucket_uses_anchor(bucket) { anchor } else { "" },
+    live_window.and_then(|window| window.window_start.as_deref()).unwrap_or(""),
+    live_window.and_then(|window| window.resets_at.as_deref()).unwrap_or("")
+  )
 }
 
 fn menu_bar_title(api_value_title: Option<&str>, live_metric_title: Option<&str>) -> Option<String> {
@@ -1546,21 +1672,75 @@ fn live_snapshot_is_newer(
   }
 }
 
-fn build_passive_menu_bar_popup_snapshot(
-  db_path: &Path,
-  live_cache: &refresh::LiveQuotaCache,
-) -> Result<MenuBarPopupSnapshot, String> {
-  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+fn cached_overview(
+  state: &AppState,
+  bucket: Option<String>,
+  anchor: Option<String>,
+  custom_start: Option<String>,
+  custom_end: Option<String>,
+  live_rate_limits: Option<LiveRateLimitSnapshot>,
+  live_window_offset: Option<i64>,
+) -> Result<OverviewResponse, String> {
+  let key = serde_json::to_string(&(
+    &bucket,
+    &anchor,
+    &custom_start,
+    &custom_end,
+    &live_rate_limits,
+    live_window_offset,
+  ))
+  .map_err(|error| error.to_string())?;
+  let usage_revision = state.menu_bar_usage_revision.load(Ordering::Acquire);
+  let quota_revision = state.quota_revision.load(Ordering::Acquire);
+  let settings_revision = state.settings_revision.load(Ordering::Acquire);
+  let mut cache = state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner);
+  if let Some(cached) = cache.as_ref().filter(|cached| {
+    cached.key == key
+      && cached.usage_revision == usage_revision
+      && cached.quota_revision == quota_revision
+      && cached.settings_revision == settings_revision
+  }) {
+    return Ok(cached.value.clone());
+  }
+
+  let connection = state
+    .overview_connection
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner);
+  let value = get_overview_with_connection(
+    &connection,
+    bucket,
+    anchor,
+    custom_start,
+    custom_end,
+    live_rate_limits,
+    live_window_offset,
+  )?;
+  *cache = Some(CachedOverview {
+    key,
+    usage_revision,
+    quota_revision,
+    settings_revision,
+    value: value.clone(),
+  });
+  Ok(value)
+}
+
+fn build_passive_menu_bar_popup_snapshot(state: &AppState) -> Result<MenuBarPopupSnapshot, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
   drop(conn);
-  let live_rate_limits = live_cache
+  let live_rate_limits = state.live_rate_limits
     .rate_limits()
     .map(|snapshot| normalize_live_rate_limit_snapshot(snapshot.as_ref().clone()));
   let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
   let selected_bucket = effective_menu_bar_api_bucket(&configured_bucket, live_rate_limits.as_ref());
   let anchor = bucket_uses_anchor(&selected_bucket).then(|| Local::now().format("%Y-%m-%d").to_string());
-  let overview = get_overview(
-    db_path,
+  let overview = cached_overview(
+    state,
     Some(selected_bucket.clone()),
     anchor,
     None,
@@ -1579,7 +1759,7 @@ fn build_passive_menu_bar_popup_snapshot(
       .map(|value| value.quota_trend.clone())
       .unwrap_or_default()
   } else {
-    get_quota_trend(db_path, "seven_day".to_string(), live_rate_limits.clone()).unwrap_or_default()
+    get_quota_trend(&state.db_path, "seven_day".to_string(), live_rate_limits.clone()).unwrap_or_default()
   };
 
   Ok(MenuBarPopupSnapshot {
@@ -2144,7 +2324,7 @@ fn effective_token_scan_kind(
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
   let last_full = get_last_full_scan_completed(&conn).map_err(|error| error.to_string())?;
   Ok(if full_maintenance_due(last_full.as_deref(), now) {
-    ScanKind::Full
+    ScanKind::Reconcile
   } else {
     ScanKind::Incremental
   })
@@ -2222,7 +2402,10 @@ pub fn run() {
         .map(|snapshot| snapshot.fetched_at);
       let epoch_backfill_is_pending =
         database::epoch_backfill_pending(&conn).map_err(|error| error.to_string())?;
-      drop(conn);
+      conn
+        .pragma_update(None, "cache_size", -32_768)
+        .map_err(|error| error.to_string())?;
+      let overview_connection = Arc::new(Mutex::new(conn));
 
       let live_rate_limits = refresh::LiveQuotaCache::new();
       if let Some(fallback) = display_fallback {
@@ -2239,10 +2422,12 @@ pub fn run() {
           refresh_config_from_saved_settings(&settings, live_last_success_at.as_deref()),
           Arc::new(AppTokenRefreshExecutor {
             db_path: db_path.clone(),
+            preparation_connection: Arc::new(Mutex::new(None)),
           }),
           Arc::new(AppLiveQuotaFetcher {
             db_path: db_path.clone(),
             live_cache: live_rate_limits.clone(),
+            client: Arc::new(LiveRateLimitClient::new()),
           }),
           Arc::new(AppLiveQuotaPersister {
             db_path: db_path.clone(),
@@ -2277,6 +2462,12 @@ pub fn run() {
         refresh: installed_refresh_handle(refresh),
         usage_mutations,
         menu_bar_render_state: Arc::new(AtomicU8::new(MENU_RENDER_IDLE)),
+        menu_bar_usage_revision: Arc::new(AtomicU64::new(0)),
+        quota_revision: Arc::new(AtomicU64::new(0)),
+        settings_revision: Arc::new(AtomicU64::new(0)),
+        menu_bar_api_value_cache: Arc::new(Mutex::new(None)),
+        overview_cache: Arc::new(Mutex::new(None)),
+        overview_connection,
         daily_value_tray,
         live_rate_limits,
         menu_bar_popup_visible: Arc::new(AtomicBool::new(false)),
@@ -2732,12 +2923,22 @@ mod tests {
     usage_mutations: refresh::UsageMutationCoordinator,
     live_rate_limits: refresh::LiveQuotaCache,
   ) -> AppState {
+    let overview_connection = open_connection(&db_path).expect("open overview connection");
+    overview_connection
+      .pragma_update(None, "cache_size", -32_768)
+      .expect("configure overview cache");
     AppState {
       app_handle: None,
       db_path,
       refresh: Some(refresh),
       usage_mutations,
       menu_bar_render_state: Arc::new(AtomicU8::new(MENU_RENDER_IDLE)),
+      menu_bar_usage_revision: Arc::new(AtomicU64::new(0)),
+      quota_revision: Arc::new(AtomicU64::new(0)),
+      settings_revision: Arc::new(AtomicU64::new(0)),
+      menu_bar_api_value_cache: Arc::new(Mutex::new(None)),
+      overview_cache: Arc::new(Mutex::new(None)),
+      overview_connection: Arc::new(Mutex::new(overview_connection)),
       daily_value_tray: None,
       live_rate_limits,
       menu_bar_popup_visible: Arc::new(AtomicBool::new(false)),
@@ -2874,8 +3075,14 @@ mod tests {
     let db_path = directory.path().join("usage.sqlite");
     prepare_app_database(&db_path).expect("prepare app database");
     let cache = refresh::LiveQuotaCache::new();
+    let state = test_app_state(
+      db_path.clone(),
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      cache,
+    );
 
-    let snapshot = build_passive_menu_bar_popup_snapshot(&db_path, &cache)
+    let snapshot = build_passive_menu_bar_popup_snapshot(&state)
       .expect("build passive popup snapshot");
 
     assert_eq!(snapshot.total_tokens_selected_bucket, 0);
@@ -2895,6 +3102,7 @@ mod tests {
 
   #[test]
   fn popup_snapshot_uses_seven_day_bucket_when_five_hour_quota_is_absent() {
+    let (runtime, _, _) = start_recording_runtime(disabled_refresh_config(None));
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");
     prepare_app_database(&db_path).expect("prepare app database");
@@ -2923,8 +3131,14 @@ mod tests {
       Instant::now(),
       Utc::now(),
     );
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      cache,
+    );
 
-    let snapshot = build_passive_menu_bar_popup_snapshot(&db_path, &cache)
+    let snapshot = build_passive_menu_bar_popup_snapshot(&state)
       .expect("build popup snapshot");
 
     assert_eq!(snapshot.selected_bucket, "seven_day");
@@ -2933,6 +3147,54 @@ mod tests {
       snapshot.quota_7d.map(|window| window.remaining_percent),
       Some(79)
     );
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn subscription_profile_update_invalidates_cached_overview() {
+    let (runtime, _, _) = start_recording_runtime(disabled_refresh_config(None));
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      refresh::LiveQuotaCache::new(),
+    );
+    cached_overview(
+      &state,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("populate overview cache");
+    assert!(state
+      .overview_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_some());
+
+    let saved = update_subscription_profile_for_state(
+      &state,
+      SubscriptionProfile {
+        monthly_price: 250.0,
+        ..SubscriptionProfile::default()
+      },
+    )
+    .expect("update subscription profile");
+
+    assert_eq!(saved.monthly_price, 250.0);
+    assert_eq!(state.settings_revision.load(Ordering::Acquire), 1);
+    assert!(state
+      .overview_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_none());
+    runtime.shutdown_and_join().expect("shutdown runtime");
   }
 
   #[test]
@@ -3018,6 +3280,7 @@ mod tests {
     let token_executor = RecordingAppTokenExecutor {
       inner: AppTokenRefreshExecutor {
         db_path: db_path.clone(),
+        preparation_connection: Arc::new(Mutex::new(None)),
       },
       parsed: parsed_tx,
       committed: committed_tx,
@@ -3214,7 +3477,7 @@ mod tests {
         utc_time("2026-07-11T00:00:00Z"),
       )
       .expect("select scan kind"),
-      ScanKind::Full
+      ScanKind::Reconcile
     );
     assert_eq!(
       effective_token_scan_kind(

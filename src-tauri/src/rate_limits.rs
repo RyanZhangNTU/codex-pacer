@@ -2,7 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -45,10 +45,151 @@ enum AppServerMessage {
   Closed,
 }
 
+#[derive(Clone)]
 struct AppServerCommandSpec {
   program: OsString,
   args: Vec<OsString>,
   hide_window: bool,
+}
+
+struct ReusableAppServerClient {
+  command_spec: AppServerCommandSpec,
+  command_path: PathBuf,
+  session: Option<AppServerSession>,
+  receiver: Option<mpsc::Receiver<AppServerMessage>>,
+}
+
+impl ReusableAppServerClient {
+  fn new(command_spec: AppServerCommandSpec, command_path: PathBuf) -> Self {
+    Self {
+      command_spec,
+      command_path,
+      session: None,
+      receiver: None,
+    }
+  }
+
+  fn query(&mut self, timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
+    let started_at = Instant::now();
+    let reused_existing_session = self.session.is_some();
+    match self.query_once(started_at, timeout) {
+      Ok(snapshot) => Ok(snapshot),
+      Err(first_error) if reused_existing_session => {
+        self.disconnect();
+        if remaining_app_server_timeout(started_at, timeout).is_none() {
+          return Err(first_error);
+        }
+        self.query_once(started_at, timeout)
+      }
+      Err(error) => {
+        self.disconnect();
+        Err(error)
+      }
+    }
+  }
+
+  fn query_once(
+    &mut self,
+    started_at: Instant,
+    timeout: Duration,
+  ) -> Result<LiveRateLimitSnapshot, String> {
+    if self.session.is_none() {
+      self.connect(started_at, timeout)?;
+    }
+
+    let session = self
+      .session
+      .as_mut()
+      .ok_or_else(|| "Codex app-server session is unavailable.".to_string())?;
+    send_app_server_request(
+      &mut session.child,
+      rate_limit_request(),
+      "Failed to request live rate limits after Codex app-server initialization",
+      "Failed to flush Codex app-server rate-limit request",
+    )?;
+
+    loop {
+      let remaining = remaining_app_server_timeout(started_at, timeout)
+        .ok_or_else(|| "Timed out while querying live rate limits from Codex.".to_string())?;
+      let message = self
+        .receiver
+        .as_ref()
+        .ok_or_else(|| "Codex app-server response channel is unavailable.".to_string())?
+        .recv_timeout(remaining)
+        .map_err(|_| "Timed out while querying live rate limits from Codex.".to_string())?;
+      match message {
+        AppServerMessage::Initialized(Ok(())) => continue,
+        AppServerMessage::Initialized(Err(error)) => return Err(error),
+        AppServerMessage::RateLimits(result) => return result,
+        AppServerMessage::Closed => {
+          return Err("Codex app-server closed before returning live rate limits.".to_string())
+        }
+      }
+    }
+  }
+
+  fn connect(&mut self, started_at: Instant, timeout: Duration) -> Result<(), String> {
+    let (mut session, receiver) = start_app_server_session(&self.command_spec, &self.command_path)?;
+    send_app_server_request(
+      &mut session.child,
+      initialize_request(),
+      "Failed to initialize codex app-server",
+      "Failed to flush codex app-server init request",
+    )?;
+
+    let remaining = remaining_app_server_timeout(started_at, timeout)
+      .ok_or_else(|| "Timed out while initializing Codex app-server.".to_string())?;
+    match receiver
+      .recv_timeout(remaining)
+      .map_err(|_| "Timed out while initializing Codex app-server.".to_string())?
+    {
+      AppServerMessage::Initialized(Ok(())) => {}
+      AppServerMessage::Initialized(Err(error)) => return Err(error),
+      AppServerMessage::RateLimits(result) => return result.map(|_| ()),
+      AppServerMessage::Closed => {
+        return Err("Codex app-server closed before initialization completed.".to_string())
+      }
+    }
+
+    send_app_server_request(
+      &mut session.child,
+      initialized_notification(),
+      "Failed to notify Codex app-server that initialization completed",
+      "Failed to flush Codex app-server initialized notification",
+    )?;
+    self.session = Some(session);
+    self.receiver = Some(receiver);
+    Ok(())
+  }
+
+  fn disconnect(&mut self) {
+    self.receiver = None;
+    self.session = None;
+  }
+}
+
+pub struct LiveRateLimitClient {
+  inner: Mutex<ReusableAppServerClient>,
+}
+
+impl LiveRateLimitClient {
+  pub fn new() -> Self {
+    let codex_binary = resolve_codex_binary();
+    Self {
+      inner: Mutex::new(ReusableAppServerClient::new(
+        app_server_command_spec(&codex_binary),
+        codex_binary,
+      )),
+    }
+  }
+
+  pub fn query(&self, timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
+    self
+      .inner
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner())
+      .query(timeout)
+  }
 }
 
 struct AppServerSession {
@@ -71,20 +212,22 @@ impl Drop for AppServerSession {
   }
 }
 
-pub fn query_live_rate_limits(timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
-  let started_at = Instant::now();
-  let codex_binary = resolve_codex_binary();
-  let command_spec = app_server_command_spec(&codex_binary);
-  query_live_rate_limits_with_command(started_at, timeout, command_spec, &codex_binary)
-}
-
+#[cfg(test)]
 fn query_live_rate_limits_with_command(
   started_at: Instant,
   timeout: Duration,
   command_spec: AppServerCommandSpec,
   command_path: &Path,
 ) -> Result<LiveRateLimitSnapshot, String> {
-  let mut command = app_server_command(&command_spec);
+  let mut client = ReusableAppServerClient::new(command_spec, command_path.to_path_buf());
+  client.query_once(started_at, timeout)
+}
+
+fn start_app_server_session(
+  command_spec: &AppServerCommandSpec,
+  command_path: &Path,
+) -> Result<(AppServerSession, mpsc::Receiver<AppServerMessage>), String> {
+  let mut command = app_server_command(command_spec);
   let child = command
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
@@ -128,7 +271,7 @@ fn query_live_rate_limits_with_command(
             "Codex app-server initialize failed: {}",
             json_error_message(error)
           ))));
-          return;
+          continue;
         }
         init_ok = true;
         let _ = sender.send(AppServerMessage::Initialized(Ok(())));
@@ -143,7 +286,7 @@ fn query_live_rate_limits_with_command(
         let _ = sender.send(AppServerMessage::RateLimits(Err(
           "Codex app-server returned rate limits before initialization completed.".to_string(),
         )));
-        return;
+        continue;
       }
 
       if let Some(error) = parsed.get("error") {
@@ -151,14 +294,14 @@ fn query_live_rate_limits_with_command(
           "Codex app-server rate-limit query failed: {}",
           json_error_message(error)
         ))));
-        return;
+        continue;
       }
 
       let Some(result) = parsed.get("result") else {
         let _ = sender.send(AppServerMessage::RateLimits(Err(
           "Codex app-server returned an empty rate-limit response.".to_string(),
         )));
-        return;
+        continue;
       };
 
       let response = serde_json::from_value::<AppServerRateLimitReadResponse>(result.clone())
@@ -166,80 +309,43 @@ fn query_live_rate_limits_with_command(
       let _ = sender.send(AppServerMessage::RateLimits(
         response.map(|value| convert_live_rate_limits(value.rate_limits)),
       ));
-      return;
+      continue;
     }
 
     let _ = sender.send(AppServerMessage::Closed);
   }));
 
-  if let Err(error) = send_app_server_request(
-    &mut session.child,
-    json!({
-      "id": INIT_REQUEST_ID,
-      "method": "initialize",
-      "params": {
-        "clientInfo": {
-          "name": "codex-counter",
-          "version": env!("CARGO_PKG_VERSION"),
-        },
-        "capabilities": {
-          "experimentalApi": true,
-        }
+  Ok((session, receiver))
+}
+
+fn initialize_request() -> Value {
+  json!({
+    "id": INIT_REQUEST_ID,
+    "method": "initialize",
+    "params": {
+      "clientInfo": {
+        "name": "codex-counter",
+        "version": env!("CARGO_PKG_VERSION"),
+      },
+      "capabilities": {
+        "experimentalApi": true,
       }
-    }),
-    "Failed to initialize codex app-server",
-    "Failed to flush codex app-server init request",
-  ) {
-    return Err(error);
-  }
-
-  let init_timeout = match remaining_app_server_timeout(started_at, timeout) {
-    Some(timeout) => timeout,
-    None => return Err("Timed out while initializing Codex app-server.".to_string()),
-  };
-  let init_response = match receiver.recv_timeout(init_timeout) {
-    Ok(message) => message,
-    Err(_) => return Err("Timed out while initializing Codex app-server.".to_string()),
-  };
-
-  match init_response {
-    AppServerMessage::Initialized(Ok(())) => {}
-    AppServerMessage::Initialized(Err(error)) => return Err(error),
-    AppServerMessage::RateLimits(result) => return result,
-    AppServerMessage::Closed => {
-      return Err("Codex app-server closed before initialization completed.".to_string())
     }
-  }
+  })
+}
 
-  for (message, write_context, flush_context) in post_initialize_messages() {
-    if let Err(error) =
-      send_app_server_request(&mut session.child, message, write_context, flush_context)
-    {
-      return Err(error);
-    }
-  }
+fn initialized_notification() -> Value {
+  json!({
+    "method": "initialized",
+    "params": {},
+  })
+}
 
-  let response = loop {
-    let timeout = match remaining_app_server_timeout(started_at, timeout) {
-      Some(timeout) => timeout,
-      None => return Err("Timed out while querying live rate limits from Codex.".to_string()),
-    };
-    let message = match receiver.recv_timeout(timeout) {
-      Ok(message) => message,
-      Err(_) => return Err("Timed out while querying live rate limits from Codex.".to_string()),
-    };
-
-    match message {
-      AppServerMessage::Initialized(Ok(())) => continue,
-      AppServerMessage::Initialized(Err(error)) => break Err(error),
-      AppServerMessage::RateLimits(result) => break result,
-      AppServerMessage::Closed => break Err(
-        "Codex app-server closed before returning live rate limits.".to_string(),
-      ),
-    }
-  };
-
-  response
+fn rate_limit_request() -> Value {
+  json!({
+    "id": READ_REQUEST_ID,
+    "method": "account/rateLimits/read",
+  })
 }
 
 fn remaining_app_server_timeout(started_at: Instant, timeout: Duration) -> Option<Duration> {
@@ -321,27 +427,6 @@ fn app_server_args() -> Vec<OsString> {
     OsString::from("app-server"),
     OsString::from("--listen"),
     OsString::from("stdio://"),
-  ]
-}
-
-fn post_initialize_messages() -> Vec<(Value, &'static str, &'static str)> {
-  vec![
-    (
-      json!({
-        "method": "initialized",
-        "params": {},
-      }),
-      "Failed to notify Codex app-server that initialization completed",
-      "Failed to flush Codex app-server initialized notification",
-    ),
-    (
-      json!({
-        "id": READ_REQUEST_ID,
-        "method": "account/rateLimits/read",
-      }),
-      "Failed to request live rate limits after Codex app-server initialization",
-      "Failed to flush Codex app-server rate-limit request",
-    ),
   ]
 }
 
@@ -621,6 +706,48 @@ mod tests {
   }
 
   #[test]
+  #[cfg(unix)]
+  fn repeated_live_queries_reuse_one_app_server_process() {
+    let temp_dir = tempfile::tempdir().expect("create fixture directory");
+    let launch_path = temp_dir.path().join("launches.txt");
+    let script = concat!(
+      "printf 'launch\\n' >> \"$1\"; ",
+      "while IFS= read -r line; do ",
+      "case \"$line\" in ",
+      "*codex-counter.init*) printf '%s\\n' '{\"id\":\"codex-counter.init\",\"result\":{}}' ;; ",
+      "*account/rateLimits/read*) printf '%s\\n' '{\"id\":\"codex-counter.rate-limits\",\"result\":{\"rateLimits\":{\"limitId\":\"codex\",\"limitName\":null,\"planType\":\"pro\",\"primary\":{\"usedPercent\":3,\"windowDurationMins\":10080,\"resetsAt\":1784498450},\"secondary\":null}}}' ;; ",
+      "esac; done"
+    );
+    let command_spec = super::AppServerCommandSpec {
+      program: "/bin/sh".into(),
+      args: vec![
+        "-c".into(),
+        script.into(),
+        "codex-pacer-reuse-fixture".into(),
+        launch_path.as_os_str().to_owned(),
+      ],
+      hide_window: false,
+    };
+    let mut client = super::ReusableAppServerClient::new(
+      command_spec,
+      PathBuf::from("local reusable fixture"),
+    );
+
+    let first = client.query(Duration::from_secs(1)).expect("first query");
+    let second = client.query(Duration::from_secs(1)).expect("second query");
+
+    assert_eq!(first.secondary.as_ref().map(|window| window.used_percent), Some(3));
+    assert_eq!(second.secondary.as_ref().map(|window| window.used_percent), Some(3));
+    assert_eq!(
+      std::fs::read_to_string(&launch_path)
+        .expect("read launches")
+        .lines()
+        .count(),
+      1
+    );
+  }
+
+  #[test]
   fn convert_window_calculates_remaining_and_start() {
     let converted = convert_window(super::AppServerRateLimitWindow {
       used_percent: 13,
@@ -658,11 +785,11 @@ mod tests {
   }
 
   #[test]
-  fn app_server_post_initialize_messages_follow_protocol_order() {
-    let messages = super::post_initialize_messages()
-      .into_iter()
-      .map(|(message, _, _)| message)
-      .collect::<Vec<_>>();
+  fn app_server_messages_follow_protocol_order() {
+    let messages = vec![
+      super::initialized_notification(),
+      super::rate_limit_request(),
+    ];
 
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].get("method").and_then(serde_json::Value::as_str), Some("initialized"));

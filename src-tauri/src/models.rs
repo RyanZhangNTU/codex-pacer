@@ -165,6 +165,8 @@ pub struct ConversationFilters {
   pub custom_end: Option<String>,
   pub search: Option<String>,
   pub live_window_offset: Option<i64>,
+  pub cursor: Option<String>,
+  pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,10 +335,18 @@ pub struct OverviewResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardSnapshot {
   pub overview: OverviewResponse,
-  pub conversations: Vec<ConversationListItem>,
+  pub conversation_page: ConversationPage,
   pub sync_settings: SyncSettings,
   pub subscription_profile: SubscriptionProfile,
   pub live_rate_limits: Option<LiveRateLimitSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationPage {
+  pub items: Vec<ConversationListItem>,
+  pub next_cursor: Option<String>,
+  pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,6 +433,8 @@ pub struct ConversationDetail {
   pub source_states: Vec<String>,
   pub sessions: Vec<ConversationSessionSummary>,
   pub turns: Vec<ConversationTurnPoint>,
+  pub next_turn_cursor: Option<usize>,
+  pub has_more_turns: bool,
   pub model_breakdown: Vec<ModelShare>,
   pub composition_breakdown: Vec<CompositionShare>,
 }
@@ -435,5 +447,9 @@ pub struct ScanResult {
   pub imported_sessions: usize,
   pub updated_sessions: usize,
   pub missing_sessions: usize,
+  pub scan_kind: String,
+  pub source_bytes_read: u64,
+  pub tail_parsed_files: usize,
+  pub fully_parsed_files: usize,
   pub last_completed_at: String,
 }

@@ -41,6 +41,14 @@ export function shouldLoadDashboardAfterSettingsSave(
   return !codexHomeChanged || !listenerReady
 }
 
+export function selectionAfterDashboardReload(
+  currentSelection: string | null,
+  loadedQueryKey: string | null,
+  resolvedQueryKey: string,
+): string | null {
+  return loadedQueryKey === resolvedQueryKey ? currentSelection : null
+}
+
 export type SurfaceRequestKind = 'passive' | 'manual'
 
 export interface SurfaceRequestClaim {

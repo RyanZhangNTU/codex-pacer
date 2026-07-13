@@ -24,6 +24,7 @@ import {
 import {
   getScanInProgress,
   getConversationDetail,
+  listConversations,
   loadDashboard,
   refreshPricing,
   scanCodexUsage,
@@ -36,6 +37,7 @@ import {
   shouldKeepConversationDetail,
 } from './app/dataFreshness'
 import {
+  selectionAfterDashboardReload,
   shouldLoadDashboardAfterManualRefresh,
   shouldLoadDashboardAfterSettingsSave,
   SurfaceRevisionGate,
@@ -96,7 +98,7 @@ const BUCKETS: OverviewBucket[] = [
 function App() {
   const { language, setLanguage, t } = useI18n()
   const [view, setView] = useState<AppView>('overview')
-  const [bucket, setBucket] = useState<OverviewBucket>('subscription_month')
+  const [bucket, setBucket] = useState<OverviewBucket>('seven_day')
   const [liveWindowOffset, setLiveWindowOffset] = useState(0)
   const [anchor, setAnchor] = useState(todayInputValue())
   const [customStart, setCustomStart] = useState(todayInputValue())
@@ -105,8 +107,12 @@ function App() {
   const [shareDimension, setShareDimension] = useState<ShareDimension>('model')
   const [overview, setOverview] = useState<OverviewResponse | null>(null)
   const [conversations, setConversations] = useState<ConversationListItem[]>([])
+  const [conversationCursor, setConversationCursor] = useState<string | null>(null)
+  const [hasMoreConversations, setHasMoreConversations] = useState(false)
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false)
   const [selectedRootSessionId, setSelectedRootSessionId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
+  const [loadingEarlierTurns, setLoadingEarlierTurns] = useState(false)
   const [syncSettings, setSyncSettings] = useState<SyncSettings | null>(null)
   const [subscriptionProfile, setSubscriptionProfile] = useState<SubscriptionProfile | null>(null)
   const [liveRateLimits, setLiveRateLimits] = useState<LiveRateLimitSnapshot | null>(null)
@@ -121,10 +127,12 @@ function App() {
   const loadShellRef = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
   const lastRequestedQueryKeyRef = useRef<string | null>(null)
   const latestLoadRequestIdRef = useRef(0)
+  const loadedQueryKeyRef = useRef<string | null>(null)
   const detailCacheRef = useRef(new Map<string, ConversationDetail>())
   const latestDetailRequestIdRef = useRef(0)
   const refreshRevisionGateRef = useRef(new SurfaceRevisionGate())
   const refreshCompletionListenerReadyRef = useRef<Promise<boolean>>(Promise.resolve(false))
+  const refreshReloadTimerRef = useRef<number | null>(null)
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
 
   const waitForScanToSettle = useCallback(async (timeoutMs = 15000) => {
@@ -174,53 +182,59 @@ function App() {
         requestLiveWindowOffset,
         requestCustomStart,
         requestCustomEnd,
+        view === 'conversations',
       )
       if (requestId !== latestLoadRequestIdRef.current) {
         return
       }
+      const resolvedQueryKey = buildQueryKey(
+        requestBucket,
+        requestAnchor,
+        requestCustomStart,
+        requestCustomEnd,
+        requestSearch,
+        snapshot.overview.liveWindowOffset,
+      )
+      const previousQueryKey = loadedQueryKeyRef.current
 
       startTransition(() => {
-        const nextDetailCache = new Map<string, ConversationDetail>()
-        for (const conversation of snapshot.conversations) {
-          const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
-          if (
-            cachedDetail &&
-            shouldKeepConversationDetail(
-              cachedDetail,
-              conversation,
-              snapshot.subscriptionProfile.monthlyPrice,
-            )
-          ) {
-            nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+        if (view === 'conversations') {
+          const nextDetailCache = new Map<string, ConversationDetail>()
+          for (const conversation of snapshot.conversationPage.items) {
+            const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
+            if (
+              cachedDetail &&
+              shouldKeepConversationDetail(
+                cachedDetail,
+                conversation,
+                snapshot.subscriptionProfile.monthlyPrice,
+              )
+            ) {
+              nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+            }
           }
-        }
 
-        latestDetailRequestIdRef.current += 1
+          latestDetailRequestIdRef.current += 1
+          detailCacheRef.current = nextDetailCache
+          setDetail((current) =>
+            current && nextDetailCache.get(current.rootSessionId) === current ? current : null,
+          )
+        }
         setOverview(snapshot.overview)
-        setConversations(snapshot.conversations)
+        if (view === 'conversations') {
+          setConversations(snapshot.conversationPage.items)
+          setConversationCursor(snapshot.conversationPage.nextCursor)
+          setHasMoreConversations(snapshot.conversationPage.hasMore)
+        }
         setSyncSettings(snapshot.syncSettings)
         setSubscriptionProfile(snapshot.subscriptionProfile)
         setLiveRateLimits(snapshot.liveRateLimits)
-        detailCacheRef.current = nextDetailCache
-        setDetail((current) =>
-          current && nextDetailCache.get(current.rootSessionId) === current ? current : null,
-        )
         setDashboardRevision((current) => current + 1)
         setLiveWindowOffset(snapshot.overview.liveWindowOffset)
-        setLoadedQueryKey(
-          buildQueryKey(
-            requestBucket,
-            requestAnchor,
-            requestCustomStart,
-            requestCustomEnd,
-            requestSearch,
-            snapshot.overview.liveWindowOffset,
-          ),
-        )
+        loadedQueryKeyRef.current = resolvedQueryKey
+        setLoadedQueryKey(resolvedQueryKey)
         setSelectedRootSessionId((current) =>
-          current && snapshot.conversations.some((item) => item.rootSessionId === current)
-            ? current
-            : snapshot.conversations[0]?.rootSessionId ?? null,
+          selectionAfterDashboardReload(current, previousQueryKey, resolvedQueryKey),
         )
       })
     } catch (error) {
@@ -231,7 +245,44 @@ function App() {
         setStatusMessage(t.status.failedToLoad(t.buckets[requestBucket], String(error)))
       }
     }
-  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t])
+  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t, view])
+
+  const loadMoreConversations = useCallback(async () => {
+    if (!conversationCursor || !hasMoreConversations || loadingMoreConversations) return
+    const requestId = latestLoadRequestIdRef.current
+    setLoadingMoreConversations(true)
+    try {
+      const page = await listConversations({
+        bucket,
+        anchor: bucketUsesAnchor(bucket) ? anchor : null,
+        customStart: bucket === 'custom' ? customStart : null,
+        customEnd: bucket === 'custom' ? customEnd : null,
+        search: deferredSearch || null,
+        liveWindowOffset: bucket === 'five_hour' || bucket === 'seven_day' ? liveWindowOffset : 0,
+        cursor: conversationCursor,
+        limit: 50,
+      })
+      if (requestId !== latestLoadRequestIdRef.current) return
+      setConversations((current) => {
+        const seen = new Set(current.map((item) => item.rootSessionId))
+        return [...current, ...page.items.filter((item) => !seen.has(item.rootSessionId))]
+      })
+      setConversationCursor(page.nextCursor)
+      setHasMoreConversations(page.hasMore)
+    } finally {
+      setLoadingMoreConversations(false)
+    }
+  }, [
+    anchor,
+    bucket,
+    conversationCursor,
+    customEnd,
+    customStart,
+    deferredSearch,
+    hasMoreConversations,
+    liveWindowOffset,
+    loadingMoreConversations,
+  ])
 
   const currentQueryKey = buildQueryKey(
     bucket,
@@ -314,28 +365,32 @@ function App() {
         .catch(() => {})
     }
     const reloadDashboard = () => {
-      void loadShellRef.current(true)
+      if (refreshReloadTimerRef.current !== null) {
+        window.clearTimeout(refreshReloadTimerRef.current)
+      }
+      refreshReloadTimerRef.current = window.setTimeout(() => {
+        refreshReloadTimerRef.current = null
+        void loadShellRef.current(true)
+      }, 200)
+    }
+    const isDashboardActive = async () => {
+      try {
+        const [visible, focused] = await Promise.all([appWindow.isVisible(), appWindow.isFocused()])
+        return visible && focused
+      } catch {
+        return false
+      }
     }
     const handleCompletion = async (event: RefreshCompletedEvent) => {
-      let visible: boolean
-      try {
-        visible = await getCurrentWindow().isVisible()
-      } catch {
-        return
-      }
+      const active = await isDashboardActive()
       if (cancelled) return
-      if (refreshRevisionGateRef.current.accept(event, visible) === 'reload') {
+      if (refreshRevisionGateRef.current.accept(event, active) === 'reload') {
         reloadDashboard()
       }
     }
     const handleVisible = async () => {
-      let visible: boolean
-      try {
-        visible = await getCurrentWindow().isVisible()
-      } catch {
-        return
-      }
-      if (cancelled || !visible) return
+      const active = await isDashboardActive()
+      if (cancelled || !active) return
       if (refreshRevisionGateRef.current.onVisible() === 'reload') {
         reloadDashboard()
       }
@@ -378,6 +433,10 @@ function App() {
     return () => {
       cancelled = true
       refreshCompletionListenerReadyRef.current = Promise.resolve(false)
+      if (refreshReloadTimerRef.current !== null) {
+        window.clearTimeout(refreshReloadTimerRef.current)
+        refreshReloadTimerRef.current = null
+      }
       document.removeEventListener('visibilitychange', handleDocumentVisibility)
       window.removeEventListener('focus', handleWindowFocus)
       for (const dispose of disposers) {
@@ -423,6 +482,30 @@ function App() {
     }
   }, [])
 
+  const loadEarlierTurns = useCallback(async () => {
+    if (!detail?.hasMoreTurns || detail.nextTurnCursor === null || loadingEarlierTurns) return
+    const requestId = latestDetailRequestIdRef.current
+    const rootSessionId = detail.rootSessionId
+    setLoadingEarlierTurns(true)
+    try {
+      const page = await getConversationDetail(rootSessionId, detail.nextTurnCursor)
+      if (requestId !== latestDetailRequestIdRef.current) return
+      setDetail((current) => {
+        if (!current || current.rootSessionId !== rootSessionId) return current
+        const merged = {
+          ...current,
+          turns: [...page.turns, ...current.turns],
+          nextTurnCursor: page.nextTurnCursor,
+          hasMoreTurns: page.hasMoreTurns,
+        }
+        detailCacheRef.current.set(rootSessionId, merged)
+        return merged
+      })
+    } finally {
+      setLoadingEarlierTurns(false)
+    }
+  }, [detail, loadingEarlierTurns])
+
   useEffect(() => {
     let cancelled = false
     void loadShellRef.current(false).then(() => {
@@ -441,6 +524,11 @@ function App() {
     if (lastRequestedQueryKeyRef.current === currentQueryKey) return
     void loadShell(false)
   }, [currentQueryKey, hasBootstrapped, loadShell])
+
+  useEffect(() => {
+    if (!hasBootstrapped || view !== 'conversations') return
+    void loadShellRef.current(false)
+  }, [hasBootstrapped, view])
 
   useEffect(() => {
     if (!loadedQueryKey && selectedRootSessionId) return
@@ -871,8 +959,9 @@ function App() {
                   {activeConversations.length === 0 ? (
                     <div className="empty-state">{t.conversationList.empty}</div>
                   ) : (
-                    activeConversations.map((conversation) => (
-                      <button
+                    <>
+                      {activeConversations.map((conversation) => (
+                        <button
                         key={conversation.rootSessionId}
                         className={`conversation-card ${
                           conversation.rootSessionId === selectedRootSessionId ? 'active' : ''
@@ -904,8 +993,21 @@ function App() {
                           <span>{formatShortDate(conversation.updatedAt, language)}</span>
                           <span>{formatPercent(conversation.subscriptionShare, language)}</span>
                         </div>
-                      </button>
-                    ))
+                        </button>
+                      ))}
+                      {hasMoreConversations ? (
+                        <button
+                          className="ghost-button"
+                          disabled={loadingMoreConversations}
+                          onClick={() => void loadMoreConversations()}
+                          type="button"
+                        >
+                          {loadingMoreConversations
+                            ? t.conversationList.loadingMore
+                            : t.conversationList.loadMore}
+                        </button>
+                      ) : null}
+                    </>
                   )}
                 </div>
               </aside>
@@ -967,14 +1069,26 @@ function App() {
                           <h3>{t.detail.turnUsage}</h3>
                         </div>
                         <p className="chart-note">
-                          {t.detail.latestTurns(Math.min(activeDetail.turns.length, 40))}
+                          {t.detail.latestTurns(activeDetail.turns.length)}
                         </p>
                       </div>
+                      {activeDetail.hasMoreTurns ? (
+                        <button
+                          className="ghost-button"
+                          disabled={loadingEarlierTurns}
+                          onClick={() => void loadEarlierTurns()}
+                          type="button"
+                        >
+                          {loadingEarlierTurns
+                            ? t.detail.loadingEarlierTurns
+                            : t.detail.loadEarlierTurns}
+                        </button>
+                      ) : null}
                       <div className="timeline-grid">
                         {activeDetail.turns.length === 0 ? (
                           <div className="empty-state">{t.detail.emptyTurns}</div>
                         ) : (
-                          activeDetail.turns.slice(-40).reverse().map((turn) => {
+                          [...activeDetail.turns].reverse().map((turn) => {
                             const session = sessionSummariesById.get(turn.sessionId)
                             const modelSummary = formatModelSummary(turn.modelIds, t)
                             const sessionLabel = formatSessionLabel(session, turn.sessionId, t)

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -7,12 +7,12 @@ use chrono::{
   DateTime, Datelike, Days, Local, LocalResult, Months, NaiveDate, NaiveDateTime, TimeZone,
   Timelike,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::database::{get_subscription_profile, open_connection};
 use crate::models::{
-  CompositionShare, ConversationDetail, ConversationFilters, ConversationListItem,
+  CompositionShare, ConversationDetail, ConversationFilters, ConversationListItem, ConversationPage,
   ConversationSessionSummary, ConversationTurnPoint, LiveRateLimitSnapshot, ModelShare,
   OverviewResponse, OverviewStats, PricingCatalogEntry, QuotaTrendPoint, SubscriptionProfile, TokenUsage,
   TrendPoint,
@@ -24,10 +24,8 @@ use crate::pricing::{
 
 const SQL_SESSIONS: &str = include_str!("../sql/queries/sessions.sql");
 const SQL_SESSIONS_FOR_ROOT: &str = include_str!("../sql/queries/sessions_for_root.sql");
-const SQL_USAGE_EVENTS: &str = include_str!("../sql/queries/usage_events.sql");
 const SQL_USAGE_EVENTS_FOR_ROOT: &str = include_str!("../sql/queries/usage_events_for_root.sql");
-const SQL_RATE_LIMIT_WINDOWS: &str = include_str!("../sql/queries/rate_limit_windows.sql");
-const SQL_QUOTA_SAMPLES: &str = include_str!("../sql/queries/quota_samples.sql");
+const MAX_LIVE_RATE_LIMIT_WINDOWS: usize = 64;
 
 #[derive(Debug, Clone)]
 struct SessionRow {
@@ -93,14 +91,16 @@ struct RateLimitWindowSummary {
   end: DateTime<Local>,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub struct DashboardData {
   pub overview: OverviewResponse,
-  pub conversations: Vec<ConversationListItem>,
+  pub conversation_page: ConversationPage,
   pub subscription_profile: SubscriptionProfile,
 }
 
-pub fn get_overview(
-  db_path: &Path,
+pub fn get_overview_with_connection(
+  conn: &Connection,
   bucket: Option<String>,
   anchor: Option<String>,
   custom_start: Option<String>,
@@ -108,10 +108,20 @@ pub fn get_overview(
   live_rate_limits: Option<LiveRateLimitSnapshot>,
   live_window_offset: Option<i64>,
 ) -> Result<OverviewResponse, String> {
-  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
-  let sessions = load_sessions(&conn).map_err(|error| error.to_string())?;
-  let events = load_events(&conn).map_err(|error| error.to_string())?;
   let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
+  let resolved_window = resolve_window(
+    &conn,
+    bucket.clone(),
+    anchor.clone(),
+    custom_start.clone(),
+    custom_end.clone(),
+    &[],
+    profile.billing_anchor_day,
+    live_rate_limits.as_ref(),
+    live_window_offset,
+  )?;
+  let sessions = load_sessions(&conn).map_err(|error| error.to_string())?;
+  let events = load_events_in_window(&conn, &resolved_window.window).map_err(|error| error.to_string())?;
   let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
   build_overview(
     &conn,
@@ -119,12 +129,8 @@ pub fn get_overview(
     &events,
     &profile,
     &catalog,
-    bucket,
-    anchor,
-    custom_start,
-    custom_end,
+    &resolved_window,
     live_rate_limits,
-    live_window_offset,
   )
 }
 
@@ -134,7 +140,6 @@ pub fn get_quota_trend(
   live_rate_limits: Option<LiveRateLimitSnapshot>,
 ) -> Result<Vec<QuotaTrendPoint>, String> {
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
-  let events = load_events(&conn).map_err(|error| error.to_string())?;
   let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
   let resolved_window = resolve_window(
     &conn,
@@ -142,17 +147,13 @@ pub fn get_quota_trend(
     None,
     None,
     None,
-    &events,
+    &[],
     profile.billing_anchor_day,
     live_rate_limits.as_ref(),
     None,
   )?;
   let window = &resolved_window.window;
-  let filtered_events: Vec<_> = events
-    .iter()
-    .filter(|event| event_in_window(event, window))
-    .cloned()
-    .collect();
+  let filtered_events = load_events_in_window(&conn, window).map_err(|error| error.to_string())?;
 
   Ok(build_quota_trend(
     &conn,
@@ -195,14 +196,33 @@ pub fn list_conversations(
   db_path: &Path,
   filters: Option<ConversationFilters>,
   live_rate_limits: Option<LiveRateLimitSnapshot>,
-) -> Result<Vec<ConversationListItem>, String> {
+) -> Result<ConversationPage, String> {
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
-  let sessions = load_sessions(&conn).map_err(|error| error.to_string())?;
-  let events = load_events(&conn).map_err(|error| error.to_string())?;
   let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
-  build_conversation_list(&conn, &sessions, &events, &profile, filters, live_rate_limits.as_ref())
+  let filters = filters.unwrap_or_default();
+  let resolved_window = resolve_window(
+    &conn,
+    filters.bucket.clone(),
+    filters.anchor.clone(),
+    filters.custom_start.clone(),
+    filters.custom_end.clone(),
+    &[],
+    profile.billing_anchor_day,
+    live_rate_limits.as_ref(),
+    filters.live_window_offset,
+  )?;
+  let limit = filters.limit.unwrap_or(50).clamp(1, 100);
+  load_conversation_page_sql(
+    &conn,
+    &profile,
+    &resolved_window.window,
+    filters.search,
+    filters.cursor.as_deref(),
+    limit,
+  )
 }
 
+#[cfg(test)]
 pub fn load_dashboard_data(
   db_path: &Path,
   bucket: Option<String>,
@@ -212,11 +232,23 @@ pub fn load_dashboard_data(
   search: Option<String>,
   live_rate_limits: Option<LiveRateLimitSnapshot>,
   live_window_offset: Option<i64>,
+  include_conversations: bool,
 ) -> Result<DashboardData, String> {
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
-  let sessions = load_sessions(&conn).map_err(|error| error.to_string())?;
-  let events = load_events(&conn).map_err(|error| error.to_string())?;
   let profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
+  let resolved_window = resolve_window(
+    &conn,
+    bucket.clone(),
+    anchor.clone(),
+    custom_start.clone(),
+    custom_end.clone(),
+    &[],
+    profile.billing_anchor_day,
+    live_rate_limits.as_ref(),
+    live_window_offset,
+  )?;
+  let sessions = load_sessions(&conn).map_err(|error| error.to_string())?;
+  let events = load_events_in_window(&conn, &resolved_window.window).map_err(|error| error.to_string())?;
   let catalog = load_catalog_map(&conn).map_err(|error| error.to_string())?;
 
   let overview = build_overview(
@@ -225,34 +257,150 @@ pub fn load_dashboard_data(
     &events,
     &profile,
     &catalog,
-    bucket.clone(),
-    anchor.clone(),
-    custom_start.clone(),
-    custom_end.clone(),
+    &resolved_window,
     live_rate_limits.clone(),
-    live_window_offset,
   )?;
-  let conversations = build_conversation_list(
-    &conn,
-    &sessions,
-    &events,
-    &profile,
-    Some(ConversationFilters {
-      bucket,
-      anchor,
-      custom_start,
-      custom_end,
-      search,
-      live_window_offset,
-    }),
-    live_rate_limits.as_ref(),
-  )?;
+  let conversation_page = if include_conversations {
+    load_conversation_page_sql(&conn, &profile, &resolved_window.window, search, None, 50)?
+  } else {
+    ConversationPage {
+      items: Vec::new(),
+      next_cursor: None,
+      has_more: false,
+    }
+  };
 
   Ok(DashboardData {
     overview,
-    conversations,
+    conversation_page,
     subscription_profile: profile,
   })
+}
+
+fn load_conversation_page_sql(
+  conn: &Connection,
+  profile: &SubscriptionProfile,
+  window: &Window,
+  search: Option<String>,
+  cursor: Option<&str>,
+  limit: usize,
+) -> Result<ConversationPage, String> {
+  let offset = cursor.and_then(|value| value.parse::<usize>().ok()).unwrap_or(0);
+  let search_pattern = search
+    .filter(|value| !value.trim().is_empty())
+    .map(|value| format!("%{}%", value.to_ascii_lowercase()));
+  let include_empty = i64::from(window.bucket == "total");
+  let event_filter = if epoch_backfill_complete(conn) || !has_legacy_usage_events(conn).map_err(|error| error.to_string())? {
+    "e.timestamp_ms >= ?1 AND e.timestamp_ms < ?2"
+  } else {
+    "((e.timestamp_ms >= ?1 AND e.timestamp_ms < ?2) OR (e.timestamp_ms IS NULL AND unixepoch(e.timestamp) * 1000 >= ?1 AND unixepoch(e.timestamp) * 1000 < ?2))"
+  };
+  let sql = format!(
+    "
+    WITH matching_roots AS (
+      SELECT DISTINCT root_session_id
+      FROM sessions
+      WHERE ?3 IS NULL
+         OR lower(COALESCE(title, '')) LIKE ?3
+         OR lower(root_session_id) LIKE ?3
+         OR lower(session_id) LIKE ?3
+    ), session_groups AS (
+      SELECT s.root_session_id,
+             COALESCE(NULLIF(MAX(title), ''), s.root_session_id) AS title,
+             MIN(started_at) AS started_at,
+             MAX(updated_at) AS updated_at,
+             COUNT(*) AS session_count,
+             GROUP_CONCAT(DISTINCT source_state) AS source_states
+      FROM sessions s
+      JOIN matching_roots mr ON mr.root_session_id = s.root_session_id
+      GROUP BY s.root_session_id
+    ), event_groups AS (
+      SELECT s.root_session_id,
+             GROUP_CONCAT(DISTINCT e.model_id) AS model_ids,
+             SUM(e.input_tokens) AS input_tokens,
+             SUM(e.cached_input_tokens) AS cached_input_tokens,
+             SUM(e.output_tokens) AS output_tokens,
+             SUM(e.reasoning_output_tokens) AS reasoning_output_tokens,
+             SUM(e.total_tokens) AS total_tokens,
+             SUM(e.value_usd) AS api_value_usd,
+             MAX(e.fast_mode_effective) AS has_fast_mode
+      FROM usage_events e
+      JOIN sessions s ON s.session_id = e.session_id
+      WHERE {event_filter}
+      GROUP BY s.root_session_id
+    )
+    SELECT sg.root_session_id, sg.title, sg.started_at, sg.updated_at,
+           COALESCE(eg.model_ids, ''), COALESCE(eg.input_tokens, 0),
+           COALESCE(eg.cached_input_tokens, 0), COALESCE(eg.output_tokens, 0),
+           COALESCE(eg.reasoning_output_tokens, 0), COALESCE(eg.total_tokens, 0),
+           sg.session_count, COALESCE(eg.has_fast_mode, 0),
+           COALESCE(eg.api_value_usd, 0.0), COALESCE(sg.source_states, '')
+    FROM session_groups sg
+    LEFT JOIN event_groups eg ON eg.root_session_id = sg.root_session_id
+    WHERE ?4 = 1 OR COALESCE(eg.total_tokens, 0) > 0
+    ORDER BY COALESCE(eg.api_value_usd, 0.0) DESC, sg.updated_at DESC, sg.root_session_id ASC
+    LIMIT ?5 OFFSET ?6
+    "
+  );
+  let fetch_limit = limit.saturating_add(1);
+  let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+  let rows = stmt
+    .query_map(
+      rusqlite::params![
+        window.start.timestamp_millis(),
+        window.end.timestamp_millis(),
+        search_pattern,
+        include_empty,
+        fetch_limit as i64,
+        offset as i64,
+      ],
+      |row| {
+        let session_count = row.get::<_, i64>(10)?.max(0) as usize;
+        let api_value_usd = row.get::<_, f64>(12)?;
+        Ok(ConversationListItem {
+          root_session_id: row.get(0)?,
+          title: row.get(1)?,
+          started_at: row.get(2)?,
+          updated_at: row.get(3)?,
+          model_ids: split_sorted_csv(row.get::<_, String>(4)?),
+          input_tokens: row.get(5)?,
+          cached_input_tokens: row.get(6)?,
+          output_tokens: row.get(7)?,
+          reasoning_output_tokens: row.get(8)?,
+          total_tokens: row.get(9)?,
+          session_count,
+          subagent_count: session_count.saturating_sub(1),
+          has_fast_mode: row.get::<_, i64>(11)? != 0,
+          api_value_usd,
+          subscription_share: if profile.monthly_price > 0.0 {
+            api_value_usd / profile.monthly_price
+          } else {
+            0.0
+          },
+          source_states: split_sorted_csv(row.get::<_, String>(13)?),
+        })
+      },
+    )
+    .map_err(|error| error.to_string())?;
+  let mut items = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|error| error.to_string())?;
+  let has_more = items.len() > limit;
+  items.truncate(limit);
+  Ok(ConversationPage {
+    items,
+    next_cursor: has_more.then(|| offset.saturating_add(limit).to_string()),
+    has_more,
+  })
+}
+
+fn split_sorted_csv(value: String) -> Vec<String> {
+  let mut values = value
+    .split(',')
+    .filter(|item| !item.is_empty())
+    .map(ToString::to_string)
+    .collect::<Vec<_>>();
+  values.sort();
+  values.dedup();
+  values
 }
 
 fn build_overview(
@@ -261,37 +409,17 @@ fn build_overview(
   events: &[EventRow],
   profile: &SubscriptionProfile,
   catalog: &HashMap<String, PricingCatalogEntry>,
-  bucket: Option<String>,
-  anchor: Option<String>,
-  custom_start: Option<String>,
-  custom_end: Option<String>,
+  resolved_window: &ResolvedWindow,
   live_rate_limits: Option<LiveRateLimitSnapshot>,
-  live_window_offset: Option<i64>,
 ) -> Result<OverviewResponse, String> {
-  let resolved_window = resolve_window(
-    conn,
-    bucket,
-    anchor,
-    custom_start,
-    custom_end,
-    events,
-    profile.billing_anchor_day,
-    live_rate_limits.as_ref(),
-    live_window_offset,
-  )?;
   let window = &resolved_window.window;
-  let filtered_events: Vec<_> = events
-    .iter()
-    .filter(|event| event_in_window(event, window))
-    .cloned()
-    .collect();
 
   let mut conversation_ids = HashSet::new();
   let mut total_value_usd = 0.0;
   let mut total_tokens = 0i64;
   let mut model_shares: HashMap<String, ModelShareAccumulator> = HashMap::new();
 
-  for event in &filtered_events {
+  for event in events {
     total_value_usd += event.value_usd;
     total_tokens += event.total_tokens;
     if let Some(session) = sessions.get(&event.session_id) {
@@ -311,9 +439,9 @@ fn build_overview(
     0.0
   };
 
-  let trend = build_trend(window, &filtered_events);
-  let quota_trend = build_quota_trend(conn, window, &filtered_events, live_rate_limits.as_ref());
-  let composition_breakdown = build_composition_breakdown(&filtered_events, catalog);
+  let trend = build_trend(window, events);
+  let quota_trend = build_quota_trend(conn, window, events, live_rate_limits.as_ref());
+  let composition_breakdown = build_composition_breakdown(events, catalog);
   let mut model_breakdown = model_shares
     .into_iter()
     .map(|(model_id, value)| ModelShare {
@@ -349,137 +477,11 @@ fn build_overview(
   })
 }
 
-fn build_conversation_list(
-  conn: &Connection,
-  sessions: &HashMap<String, SessionRow>,
-  events: &[EventRow],
-  profile: &SubscriptionProfile,
-  filters: Option<ConversationFilters>,
-  live_rate_limits: Option<&LiveRateLimitSnapshot>,
-) -> Result<Vec<ConversationListItem>, String> {
-  let filters = filters.unwrap_or_default();
-  let window = resolve_window(
-    conn,
-    filters.bucket.clone(),
-    filters.anchor.clone(),
-    filters.custom_start.clone(),
-    filters.custom_end.clone(),
-    events,
-    profile.billing_anchor_day,
-    live_rate_limits,
-    filters.live_window_offset,
-  )?
-  .window;
-  let search = filters.search.unwrap_or_default().to_ascii_lowercase();
-
-  let mut groups: BTreeMap<String, ConversationAccumulator> = BTreeMap::new();
-
-  for session in sessions.values() {
-    let group = groups
-      .entry(session.root_session_id.clone())
-      .or_insert_with(|| ConversationAccumulator {
-        title: session.title.clone(),
-        started_at: session.started_at.clone(),
-        updated_at: session.updated_at.clone(),
-        model_ids: HashSet::new(),
-        input_tokens: 0,
-        cached_input_tokens: 0,
-        output_tokens: 0,
-        reasoning_output_tokens: 0,
-        total_tokens: 0,
-        session_ids: HashSet::new(),
-        fast_session_ids: HashSet::new(),
-        api_value_usd: 0.0,
-        source_states: HashSet::new(),
-      });
-
-    if group.title.is_empty() {
-      group.title = session.title.clone();
-    }
-    group.started_at = min_option_string(group.started_at.take(), session.started_at.clone());
-    group.updated_at = max_option_string(group.updated_at.take(), session.updated_at.clone());
-    group.session_ids.insert(session.session_id.clone());
-    group.source_states.insert(session.source_state.clone());
-  }
-
-  for event in events {
-    if !event_in_window(event, &window) {
-      continue;
-    }
-    let Some(session) = sessions.get(&event.session_id) else {
-      continue;
-    };
-    let group = groups.entry(session.root_session_id.clone()).or_default();
-    group.model_ids.insert(event.model_id.clone());
-    group.input_tokens += event.input_tokens;
-    group.cached_input_tokens += event.cached_input_tokens;
-    group.output_tokens += event.output_tokens;
-    group.reasoning_output_tokens += event.reasoning_output_tokens;
-    group.total_tokens += event.total_tokens;
-    group.api_value_usd += event.value_usd;
-    if event.fast_mode_effective {
-      group.fast_session_ids.insert(event.session_id.clone());
-    }
-  }
-
-  let mut items = Vec::new();
-  for (root_session_id, group) in groups {
-    let title = if group.title.trim().is_empty() {
-      root_session_id.clone()
-    } else {
-      group.title.clone()
-    };
-
-    if !search.is_empty()
-      && !title.to_ascii_lowercase().contains(&search)
-      && !root_session_id.to_ascii_lowercase().contains(&search)
-      && !group
-        .session_ids
-        .iter()
-        .any(|session_id| session_id.to_ascii_lowercase().contains(&search))
-    {
-      continue;
-    }
-
-    if group.total_tokens == 0 && window.bucket != "total" {
-      continue;
-    }
-
-    items.push(ConversationListItem {
-      root_session_id,
-      title,
-      started_at: group.started_at,
-      updated_at: group.updated_at,
-      model_ids: sorted_strings(group.model_ids),
-      input_tokens: group.input_tokens,
-      cached_input_tokens: group.cached_input_tokens,
-      output_tokens: group.output_tokens,
-      reasoning_output_tokens: group.reasoning_output_tokens,
-      total_tokens: group.total_tokens,
-      session_count: group.session_ids.len(),
-      subagent_count: group.session_ids.len().saturating_sub(1),
-      has_fast_mode: !group.fast_session_ids.is_empty(),
-      api_value_usd: group.api_value_usd,
-      subscription_share: if profile.monthly_price > 0.0 {
-        group.api_value_usd / profile.monthly_price
-      } else {
-        0.0
-      },
-      source_states: sorted_strings(group.source_states),
-    });
-  }
-
-  items.sort_by(|left, right| {
-    right
-      .api_value_usd
-      .total_cmp(&left.api_value_usd)
-      .then_with(|| right.updated_at.cmp(&left.updated_at))
-  });
-
-  Ok(items)
-}
-
-pub fn get_conversation_detail(db_path: &Path, root_session_id: &str) -> Result<ConversationDetail, String> {
+pub fn get_conversation_detail(
+  db_path: &Path,
+  root_session_id: &str,
+  turn_cursor: Option<usize>,
+) -> Result<ConversationDetail, String> {
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
   let sessions = load_sessions_for_root_session(&conn, root_session_id).map_err(|error| error.to_string())?;
   let events = load_events_for_root_session(&conn, root_session_id).map_err(|error| error.to_string())?;
@@ -584,6 +586,12 @@ pub fn get_conversation_detail(db_path: &Path, root_session_id: &str) -> Result<
       .then_with(|| left.session_id.cmp(&right.session_id))
       .then_with(|| left.turn_id.cmp(&right.turn_id))
   });
+  let already_loaded = turn_cursor.unwrap_or(0);
+  let page_end = detail_turns.len().saturating_sub(already_loaded);
+  let page_start = page_end.saturating_sub(40);
+  let turn_page = detail_turns[page_start..page_end].to_vec();
+  let has_more_turns = page_start > 0;
+  let next_turn_cursor = has_more_turns.then_some(already_loaded.saturating_add(turn_page.len()));
 
   let mut session_summaries = Vec::new();
   for session in conversation_sessions {
@@ -647,7 +655,9 @@ pub fn get_conversation_detail(db_path: &Path, root_session_id: &str) -> Result<
     multiple_agent: session_summaries.len() > 1,
     source_states: sorted_strings(source_states),
     sessions: session_summaries,
-    turns: detail_turns,
+    turns: turn_page,
+    next_turn_cursor,
+    has_more_turns,
     model_breakdown,
     composition_breakdown,
   })
@@ -1149,25 +1159,82 @@ fn load_sessions_for_root_session(
   Ok(sessions)
 }
 
-fn load_events(conn: &Connection) -> rusqlite::Result<Vec<EventRow>> {
-  let mut stmt = conn.prepare(SQL_USAGE_EVENTS)?;
-  let rows = stmt.query_map([], |row| {
-    Ok(EventRow {
-      session_id: row.get(0)?,
-      timestamp: row.get(1)?,
-      model_id: row.get(2)?,
-      input_tokens: row.get(3)?,
-      cached_input_tokens: row.get(4)?,
-      output_tokens: row.get(5)?,
-      reasoning_output_tokens: row.get(6)?,
-      total_tokens: row.get(7)?,
-      value_usd: row.get(8)?,
-      fast_mode_auto: row.get::<_, i64>(9)? != 0,
-      fast_mode_effective: row.get::<_, i64>(10)? != 0,
-    })
-  })?;
+fn load_events_in_window(conn: &Connection, window: &Window) -> rusqlite::Result<Vec<EventRow>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+           output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+           fast_mode_auto, fast_mode_effective
+    FROM usage_events
+    WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2
+    ORDER BY timestamp ASC
+    ",
+  )?;
+  let rows = stmt.query_map(
+    rusqlite::params![window.start.timestamp_millis(), window.end.timestamp_millis()],
+    |row| {
+      Ok(EventRow {
+        session_id: row.get(0)?,
+        timestamp: row.get(1)?,
+        model_id: row.get(2)?,
+        input_tokens: row.get(3)?,
+        cached_input_tokens: row.get(4)?,
+        output_tokens: row.get(5)?,
+        reasoning_output_tokens: row.get(6)?,
+        total_tokens: row.get(7)?,
+        value_usd: row.get(8)?,
+        fast_mode_auto: row.get::<_, i64>(9)? != 0,
+        fast_mode_effective: row.get::<_, i64>(10)? != 0,
+      })
+    },
+  )?;
 
-  rows.collect()
+  let mut events = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+  if epoch_backfill_complete(conn) || !has_legacy_usage_events(conn)? {
+    return Ok(events);
+  }
+
+  let mut legacy_stmt = conn.prepare(
+    "
+    SELECT session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+           output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+           fast_mode_auto, fast_mode_effective
+    FROM usage_events
+    WHERE timestamp_ms IS NULL
+      AND unixepoch(timestamp) * 1000 >= ?1
+      AND unixepoch(timestamp) * 1000 < ?2
+    ORDER BY timestamp ASC
+    ",
+  )?;
+  let legacy_rows = legacy_stmt.query_map(
+    rusqlite::params![window.start.timestamp_millis(), window.end.timestamp_millis()],
+    |row| {
+      Ok(EventRow {
+        session_id: row.get(0)?,
+        timestamp: row.get(1)?,
+        model_id: row.get(2)?,
+        input_tokens: row.get(3)?,
+        cached_input_tokens: row.get(4)?,
+        output_tokens: row.get(5)?,
+        reasoning_output_tokens: row.get(6)?,
+        total_tokens: row.get(7)?,
+        value_usd: row.get(8)?,
+        fast_mode_auto: row.get::<_, i64>(9)? != 0,
+        fast_mode_effective: row.get::<_, i64>(10)? != 0,
+      })
+    },
+  )?;
+  events.extend(legacy_rows.collect::<rusqlite::Result<Vec<_>>>()?);
+  events.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
+  Ok(events)
+}
+
+fn has_legacy_usage_events(conn: &Connection) -> rusqlite::Result<bool> {
+  conn.query_row(
+    "SELECT EXISTS (SELECT 1 FROM usage_events WHERE timestamp_ms IS NULL LIMIT 1)",
+    [],
+    |row| Ok(row.get::<_, i64>(0)? != 0),
+  )
 }
 
 fn load_events_for_root_session(conn: &Connection, root_session_id: &str) -> rusqlite::Result<Vec<EventRow>> {
@@ -1200,25 +1267,26 @@ fn sum_all_api_value(conn: &Connection) -> rusqlite::Result<f64> {
 fn sum_window_api_value_sql(conn: &Connection, window: &Window) -> rusqlite::Result<f64> {
   let start_ms = window.start.timestamp_millis();
   let end_ms = window.end.timestamp_millis();
-  conn.query_row(
-    "
-    SELECT
-      COALESCE((
-        SELECT SUM(value_usd)
-        FROM usage_events
-        WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2
-      ), 0.0)
-      + COALESCE((
-        SELECT SUM(value_usd)
-        FROM usage_events
-        WHERE timestamp_ms IS NULL
-          AND unixepoch(timestamp) * 1000 >= ?1
-          AND unixepoch(timestamp) * 1000 < ?2
-      ), 0.0)
-    ",
+  let modern = conn.query_row(
+    "SELECT COALESCE(SUM(value_usd), 0.0) FROM usage_events WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2",
     rusqlite::params![start_ms, end_ms],
     |row| row.get(0),
-  )
+  )?;
+  if epoch_backfill_complete(conn) || !has_legacy_usage_events(conn)? {
+    return Ok(modern);
+  }
+  let legacy = conn.query_row(
+    "
+    SELECT COALESCE(SUM(value_usd), 0.0)
+    FROM usage_events
+    WHERE timestamp_ms IS NULL
+      AND unixepoch(timestamp) * 1000 >= ?1
+      AND unixepoch(timestamp) * 1000 < ?2
+    ",
+    rusqlite::params![start_ms, end_ms],
+    |row| row.get::<_, f64>(0),
+  )?;
+  Ok(modern + legacy)
 }
 
 fn resolve_window(
@@ -1227,7 +1295,7 @@ fn resolve_window(
   anchor: Option<String>,
   custom_start: Option<String>,
   custom_end: Option<String>,
-  events: &[EventRow],
+  _events: &[EventRow],
   billing_anchor_day: i64,
   live_rate_limits: Option<&LiveRateLimitSnapshot>,
   live_window_offset: Option<i64>,
@@ -1295,20 +1363,30 @@ fn resolve_window(
       (start, end, start_date, 0, 0)
     }
     "total" => {
-      if events.is_empty() {
+      let bounds = conn
+        .query_row(
+          "
+          SELECT
+            MIN(COALESCE(timestamp_ms, unixepoch(timestamp) * 1000)),
+            MAX(COALESCE(timestamp_ms, unixepoch(timestamp) * 1000))
+          FROM usage_events
+          ",
+          [],
+          |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?)),
+        )
+        .map_err(|error| error.to_string())?;
+      if bounds.0.is_none() || bounds.1.is_none() {
         let start = local_midnight(anchor_date)?;
         (start, start + chrono::Duration::days(1), anchor_date, 0, 0)
       } else {
-        let first = events
-          .iter()
-          .filter_map(|event| parse_rfc3339_local(&event.timestamp))
-          .min()
-          .ok_or_else(|| "No valid event timestamps found.".to_string())?;
-        let last = events
-          .iter()
-          .filter_map(|event| parse_rfc3339_local(&event.timestamp))
-          .max()
-          .ok_or_else(|| "No valid event timestamps found.".to_string())?;
+        let first = Local
+          .timestamp_millis_opt(bounds.0.unwrap_or_default())
+          .single()
+          .ok_or_else(|| "No valid first usage timestamp found.".to_string())?;
+        let last = Local
+          .timestamp_millis_opt(bounds.1.unwrap_or_default())
+          .single()
+          .ok_or_else(|| "No valid last usage timestamp found.".to_string())?;
         let start_date = first.date_naive();
         let end_date = last.date_naive().checked_add_days(Days::new(1)).unwrap_or(last.date_naive());
         let start = local_midnight(start_date)?;
@@ -1350,13 +1428,36 @@ fn resolve_live_rate_limit_window(
         end: normalize_local_timestamp(active_window.resets_at.as_deref().and_then(parse_rfc3339_local)?),
       })
     });
-  let windows = load_live_rate_limit_windows(conn, bucket, current_window).map_err(|error| error.to_string())?;
+  if requested_offset == 0 {
+    if let Some(window) = current_window {
+      return Ok((window.start, window.end, window.start.date_naive(), 0, 2));
+    }
+  }
+  let requested_window_count = requested_offset
+    .saturating_add(2)
+    .clamp(1, MAX_LIVE_RATE_LIMIT_WINDOWS as i64) as usize;
+  let windows = load_live_rate_limit_windows(
+    conn,
+    bucket,
+    current_window,
+    requested_window_count,
+  )
+  .map_err(|error| error.to_string())?;
 
   if windows.is_empty() {
-    return Err(format!(
-      "Live rate limits are unavailable for the {} view. Check that Codex is installed and logged in.",
-      bucket
-    ));
+    let duration = match bucket {
+      "five_hour" => chrono::Duration::hours(5),
+      "seven_day" => chrono::Duration::days(7),
+      _ => {
+        return Err(format!(
+          "Live rate limits are unavailable for the {} view. Check that Codex is installed and logged in.",
+          bucket
+        ))
+      }
+    };
+    let end = normalize_local_timestamp(Local::now());
+    let start = end - duration;
+    return Ok((start, end, start.date_naive(), 0, 1));
   }
 
   let applied_offset = requested_offset.clamp(0, windows.len().saturating_sub(1) as i64);
@@ -1374,79 +1475,117 @@ fn load_live_rate_limit_windows(
   conn: &Connection,
   bucket: &str,
   current_window: Option<RateLimitWindowSummary>,
+  max_windows: usize,
 ) -> rusqlite::Result<Vec<RateLimitWindowSummary>> {
-  let mut stmt = conn.prepare(SQL_RATE_LIMIT_WINDOWS)?;
-  let rows = stmt.query_map(rusqlite::params![bucket], |row| {
-    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-  })?;
-
-  let mut windows = Vec::new();
-  let mut seen = HashSet::new();
-  for row in rows {
-    let (window_start, resets_at) = row?;
-    let Some(start) = parse_rfc3339_local(&window_start).map(normalize_local_timestamp) else {
-      continue;
-    };
-    let Some(end) = parse_rfc3339_local(&resets_at).map(normalize_local_timestamp) else {
-      continue;
-    };
-    let key = (start.to_rfc3339(), end.to_rfc3339());
-    if !seen.insert(key) {
-      continue;
-    }
-    windows.push(RateLimitWindowSummary { start, end });
-  }
-
-  windows.sort_by(|left, right| right.end.cmp(&left.end).then_with(|| right.start.cmp(&left.start)));
-
   let mut ordered = Vec::new();
-  let mut cursor = current_window.or_else(|| windows.first().cloned());
+  let mut seen = HashSet::new();
+  let mut cursor = match current_window {
+    Some(window) => Some(window),
+    None => load_latest_rate_limit_window(conn, bucket)?,
+  };
   while let Some(window) = cursor {
-    if !ordered
-      .iter()
-      .any(|existing: &RateLimitWindowSummary| existing.start == window.start && existing.end == window.end)
-    {
-      ordered.push(window.clone());
+    let key = (window.start.timestamp_millis(), window.end.timestamp_millis());
+    if !seen.insert(key) {
+      break;
     }
-    cursor = windows
-      .iter()
-      .filter(|candidate| candidate.end <= window.start)
-      .max_by(|left, right| left.end.cmp(&right.end).then_with(|| left.start.cmp(&right.start)))
-      .cloned();
+    let previous_start = window.start;
+    ordered.push(window);
+    if ordered.len() >= max_windows.clamp(1, MAX_LIVE_RATE_LIMIT_WINDOWS) {
+      break;
+    }
+    cursor = load_previous_rate_limit_window(conn, bucket, previous_start)?;
   }
 
   Ok(ordered)
 }
 
-fn event_in_window(event: &EventRow, window: &Window) -> bool {
-  parse_rfc3339_local(&event.timestamp)
-    .map(|timestamp| timestamp >= window.start && timestamp < window.end)
-    .unwrap_or(false)
+fn load_latest_rate_limit_window(
+  conn: &Connection,
+  bucket: &str,
+) -> rusqlite::Result<Option<RateLimitWindowSummary>> {
+  load_rate_limit_window_query(
+    conn,
+    "
+    SELECT window_start_ms, resets_at_ms
+    FROM rate_limit_samples
+    WHERE bucket = ?1
+      AND window_start_ms IS NOT NULL
+      AND resets_at_ms IS NOT NULL
+    ORDER BY window_start_ms DESC, resets_at_ms DESC
+    LIMIT 1
+    ",
+    rusqlite::params![bucket],
+  )
+}
+
+fn load_previous_rate_limit_window(
+  conn: &Connection,
+  bucket: &str,
+  before: DateTime<Local>,
+) -> rusqlite::Result<Option<RateLimitWindowSummary>> {
+  let before_ms = normalize_local_timestamp(before).timestamp_millis();
+  load_rate_limit_window_query(
+    conn,
+    "
+    SELECT window_start_ms, resets_at_ms
+    FROM rate_limit_samples
+    WHERE bucket = ?1
+      AND window_start_ms < ?2
+      AND (resets_at_ms / 60000) * 60000 <= ?2
+    ORDER BY window_start_ms DESC, resets_at_ms DESC
+    LIMIT 1
+    ",
+    rusqlite::params![bucket, before_ms],
+  )
+}
+
+fn load_rate_limit_window_query<P: rusqlite::Params>(
+  conn: &Connection,
+  sql: &str,
+  params: P,
+) -> rusqlite::Result<Option<RateLimitWindowSummary>> {
+  conn
+    .query_row(sql, params, |row| {
+      Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })
+    .optional()
+    .map(|row| {
+      row.and_then(|(start_ms, end_ms)| {
+        let start = Local.timestamp_millis_opt(start_ms).single()?;
+        let end = Local.timestamp_millis_opt(end_ms).single()?;
+        Some(RateLimitWindowSummary {
+          start: normalize_local_timestamp(start),
+          end: normalize_local_timestamp(end),
+        })
+      })
+    })
 }
 
 fn build_trend(window: &Window, events: &[EventRow]) -> Vec<TrendPoint> {
   let bins = build_bins(window);
-  let mut trend = Vec::new();
-  for bin in bins {
-    let mut api_value_usd = 0.0;
-    let mut total_tokens = 0i64;
-    for event in events {
-      let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
-        continue;
-      };
-      if timestamp >= bin.start && timestamp < bin.end {
-        api_value_usd += event.value_usd;
-        total_tokens += event.total_tokens;
-      }
+  let mut totals = vec![(0.0, 0i64); bins.len()];
+  for event in events {
+    let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
+      continue;
+    };
+    if let Some(index) = bins
+      .iter()
+      .position(|bin| timestamp >= bin.start && timestamp < bin.end)
+    {
+      totals[index].0 += event.value_usd;
+      totals[index].1 += event.total_tokens;
     }
-    trend.push(TrendPoint {
+  }
+  bins
+    .into_iter()
+    .zip(totals)
+    .map(|(bin, (api_value_usd, total_tokens))| TrendPoint {
       label: bin.label,
       timestamp: bin.timestamp,
       api_value_usd,
       total_tokens,
-    });
-  }
-  trend
+    })
+    .collect()
 }
 
 fn build_quota_trend(
@@ -1474,22 +1613,24 @@ fn build_quota_trend(
   samples.dedup_by(|right, left| right.timestamp == left.timestamp && right.used_percent == left.used_percent);
 
   let bins = build_elapsed_bins(window, window.end);
+  let mut bin_totals = vec![(0.0, 0i64); bins.len()];
+  for event in events {
+    let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
+      continue;
+    };
+    if let Some(index) = bins
+      .iter()
+      .position(|bin| timestamp >= bin.start && timestamp < bin.end)
+    {
+      bin_totals[index].0 += event.value_usd;
+      bin_totals[index].1 += event.total_tokens;
+    }
+  }
   let mut trend = Vec::new();
   let mut cumulative_api_value_usd = 0.0;
   let mut cumulative_tokens = 0i64;
 
-  for bin in bins {
-    let mut api_value_usd = 0.0;
-    let mut total_tokens = 0i64;
-    for event in events {
-      let Some(timestamp) = parse_rfc3339_local(&event.timestamp) else {
-        continue;
-      };
-      if timestamp >= bin.start && timestamp < bin.end {
-        api_value_usd += event.value_usd;
-        total_tokens += event.total_tokens;
-      }
-    }
+  for (bin, (api_value_usd, total_tokens)) in bins.into_iter().zip(bin_totals) {
 
     cumulative_api_value_usd += api_value_usd;
     cumulative_tokens += total_tokens;
@@ -1647,34 +1788,129 @@ fn live_sample(live_rate_limits: &LiveRateLimitSnapshot, bucket: &str) -> Option
 }
 
 fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
-  let mut stmt = match conn.prepare(SQL_QUOTA_SAMPLES) {
+  let target_start = normalize_local_timestamp(window.start);
+  let target_end = normalize_local_timestamp(window.end);
+  let sample_start_ms = window.start.timestamp_millis();
+  let sample_end_ms = window.end.timestamp_millis();
+  let bin_duration_ms = match window.bucket.as_str() {
+    "five_hour" => chrono::Duration::minutes(15).num_milliseconds(),
+    "seven_day" => chrono::Duration::hours(1).num_milliseconds(),
+    _ => chrono::Duration::hours(1).num_milliseconds(),
+  };
+  let mut stmt = match conn.prepare(
+    "
+    WITH RECURSIVE bins(bin_start_ms, bin_end_ms) AS (
+      SELECT ?4, MIN(?4 + ?6, ?5)
+      WHERE ?4 < ?5
+      UNION ALL
+      SELECT bin_end_ms, MIN(bin_end_ms + ?6, ?5)
+      FROM bins
+      WHERE bin_end_ms < ?5
+    ),
+    latest_ids AS MATERIALIZED (
+      SELECT (
+        SELECT id
+        FROM rate_limit_samples
+        WHERE bucket = ?1
+          AND window_start_ms >= ?2
+          AND window_start_ms < ?2 + 60000
+          AND resets_at_ms >= ?3
+          AND resets_at_ms < ?3 + 60000
+          AND sample_timestamp_ms >= bins.bin_start_ms
+          AND sample_timestamp_ms < bins.bin_end_ms
+        ORDER BY sample_timestamp_ms DESC, id DESC
+        LIMIT 1
+      ) AS id
+      FROM bins
+    )
+    SELECT sample.sample_timestamp_ms, sample.used_percent
+    FROM latest_ids
+    JOIN rate_limit_samples AS sample ON sample.id = latest_ids.id
+    ORDER BY sample.sample_timestamp_ms ASC
+    ",
+  ) {
     Ok(stmt) => stmt,
     Err(_) => return Vec::new(),
   };
 
-  let rows = match stmt.query_map(rusqlite::params![window.bucket], |row| {
-    Ok((
-      row.get::<_, String>(0)?,
-      row.get::<_, i64>(1)?,
-      row.get::<_, String>(2)?,
-      row.get::<_, String>(3)?,
-    ))
-  }) {
+  let rows = match stmt.query_map(
+    rusqlite::params![
+      window.bucket,
+      target_start.timestamp_millis(),
+      target_end.timestamp_millis(),
+      sample_start_ms,
+      sample_end_ms,
+      bin_duration_ms,
+    ],
+    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+  ) {
     Ok(rows) => rows,
     Err(_) => return Vec::new(),
   };
 
-  let target_start = normalize_local_timestamp(window.start);
-  let target_end = normalize_local_timestamp(window.end);
+  let mut samples = rows
+    .filter_map(Result::ok)
+    .filter_map(|(timestamp_ms, used_percent)| {
+      Local.timestamp_millis_opt(timestamp_ms).single().map(|timestamp| QuotaSample {
+        timestamp,
+        used_percent,
+      })
+    })
+    .collect::<Vec<_>>();
+  if epoch_backfill_complete(conn) {
+    return samples;
+  }
 
+  samples.extend(load_legacy_quota_samples(conn, window, target_start, target_end));
+  samples.sort_by_key(|sample| sample.timestamp);
+  samples.dedup_by(|right, left| right.timestamp == left.timestamp && right.used_percent == left.used_percent);
+  samples
+}
+
+fn epoch_backfill_complete(conn: &Connection) -> bool {
+  conn
+    .query_row(
+      "SELECT EXISTS (SELECT 1 FROM data_repairs WHERE repair_key = 'epoch_timestamp_backfill_v1')",
+      [],
+      |row| Ok(row.get::<_, i64>(0)? != 0),
+    )
+    .unwrap_or(true)
+}
+
+fn load_legacy_quota_samples(
+  conn: &Connection,
+  window: &Window,
+  target_start: DateTime<Local>,
+  target_end: DateTime<Local>,
+) -> Vec<QuotaSample> {
+  let mut stmt = match conn.prepare(
+    "
+    SELECT sample_timestamp, used_percent
+    FROM rate_limit_samples
+    WHERE bucket = ?1
+      AND (window_start_ms IS NULL OR resets_at_ms IS NULL)
+      AND (unixepoch(window_start) / 60) * 60000 = ?2
+      AND (unixepoch(resets_at) / 60) * 60000 = ?3
+    ORDER BY sample_timestamp ASC
+    ",
+  ) {
+    Ok(stmt) => stmt,
+    Err(_) => return Vec::new(),
+  };
+  let rows = match stmt.query_map(
+    rusqlite::params![
+      window.bucket,
+      target_start.timestamp_millis(),
+      target_end.timestamp_millis(),
+    ],
+    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+  ) {
+    Ok(rows) => rows,
+    Err(_) => return Vec::new(),
+  };
   rows
     .filter_map(Result::ok)
-    .filter_map(|(timestamp, used_percent, window_start, resets_at)| {
-      let sample_window_start = parse_rfc3339_local(&window_start).map(normalize_local_timestamp)?;
-      let sample_window_end = parse_rfc3339_local(&resets_at).map(normalize_local_timestamp)?;
-      if sample_window_start != target_start || sample_window_end != target_end {
-        return None;
-      }
+    .filter_map(|(timestamp, used_percent)| {
       parse_rfc3339_local(&timestamp).map(|timestamp| QuotaSample {
         timestamp,
         used_percent,
@@ -1814,23 +2050,6 @@ impl CompositionAccumulator {
 }
 
 #[derive(Debug, Default)]
-struct ConversationAccumulator {
-  title: String,
-  started_at: Option<String>,
-  updated_at: Option<String>,
-  model_ids: HashSet<String>,
-  input_tokens: i64,
-  cached_input_tokens: i64,
-  output_tokens: i64,
-  reasoning_output_tokens: i64,
-  total_tokens: i64,
-  session_ids: HashSet<String>,
-  fast_session_ids: HashSet<String>,
-  api_value_usd: f64,
-  source_states: HashSet<String>,
-}
-
-#[derive(Debug, Default)]
 struct ConversationSessionAccumulator {
   parent_session_id: Option<String>,
   agent_nickname: Option<String>,
@@ -1898,6 +2117,434 @@ mod tests {
   use super::*;
   use crate::database::{init_db, insert_live_rate_limit_snapshot};
   use tempfile::tempdir;
+
+  #[test]
+  fn seven_day_overview_without_quota_uses_a_rolling_window() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+
+    let overview = get_overview_with_connection(
+      &conn,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("load seven-day overview without quota samples");
+    let start = parse_rfc3339_local(&overview.window_start).expect("parse window start");
+    let end = parse_rfc3339_local(&overview.window_end).expect("parse window end");
+
+    assert_eq!(overview.bucket, "seven_day");
+    assert_eq!((end - start).num_hours(), 7 * 24);
+    assert_eq!(overview.live_window_offset, 0);
+    assert_eq!(overview.live_window_count, 1);
+  }
+
+  #[test]
+  fn conversation_query_pages_in_sql_without_loading_every_item() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    let event_timestamp = "2026-07-13T08:00:00Z";
+    let event_timestamp_ms = parse_rfc3339_local(event_timestamp).expect("event timestamp").timestamp_millis();
+    for index in 0..120 {
+      let session_id = format!("session-{index:03}");
+      conn
+        .execute(
+          "INSERT INTO sessions (session_id, root_session_id, title, source_state, created_at, imported_at, updated_at) VALUES (?1, ?1, ?2, 'active', ?3, ?3, ?3)",
+          rusqlite::params![session_id, format!("Conversation {index:03}"), "2026-07-13T08:00:00Z"],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES (?1, ?2, ?3, 'gpt-5.4', 1, 0, 1, 0, 2, ?4, 0, 0)",
+          rusqlite::params![session_id, event_timestamp, event_timestamp_ms, index as f64],
+        )
+        .expect("insert usage event");
+    }
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T00:00:00Z").expect("end"),
+    };
+    let profile = SubscriptionProfile::default();
+
+    let first = load_conversation_page_sql(&conn, &profile, &window, None, None, 50).expect("first page");
+    assert_eq!(first.items.len(), 50);
+    assert!(first.has_more);
+    assert_eq!(first.next_cursor.as_deref(), Some("50"));
+    assert_eq!(first.items.first().map(|item| item.root_session_id.as_str()), Some("session-119"));
+
+    let second = load_conversation_page_sql(
+      &conn,
+      &profile,
+      &window,
+      None,
+      first.next_cursor.as_deref(),
+      50,
+    )
+    .expect("second page");
+    assert_eq!(second.items.len(), 50);
+    assert_eq!(second.next_cursor.as_deref(), Some("100"));
+    assert_eq!(second.items.first().map(|item| item.root_session_id.as_str()), Some("session-069"));
+  }
+
+  #[test]
+  fn conversation_search_aggregates_every_session_in_a_matching_root() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "INSERT INTO sessions (session_id, root_session_id, title, source_state, started_at, created_at, imported_at, updated_at) VALUES ('root', 'root', 'Z Root title', 'active', '2026-07-13T07:00:00Z', '2026-07-13T07:00:00Z', '2026-07-13T07:00:00Z', '2026-07-13T08:00:00Z')",
+        [],
+      )
+      .expect("insert root session");
+    conn
+      .execute(
+        "INSERT INTO sessions (session_id, root_session_id, title, source_state, started_at, created_at, imported_at, updated_at) VALUES ('child-needle', 'root', 'Needle child', 'missing', '2026-07-13T08:00:00Z', '2026-07-13T08:00:00Z', '2026-07-13T08:00:00Z', '2026-07-13T09:00:00Z')",
+        [],
+      )
+      .expect("insert matching child session");
+    for (session_id, total_tokens, value_usd) in [("root", 10, 1.0), ("child-needle", 20, 2.0)] {
+      conn
+        .execute(
+          "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES (?1, '2026-07-13T08:30:00Z', ?2, 'gpt-5.4', ?3, 0, 0, 0, ?3, ?4, 0, 0)",
+          rusqlite::params![
+            session_id,
+            parse_rfc3339_local("2026-07-13T08:30:00Z")
+              .expect("event timestamp")
+              .timestamp_millis(),
+            total_tokens,
+            value_usd,
+          ],
+        )
+        .expect("insert usage event");
+    }
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T00:00:00Z").expect("end"),
+    };
+
+    let page = load_conversation_page_sql(
+      &conn,
+      &SubscriptionProfile::default(),
+      &window,
+      Some("needle".to_string()),
+      None,
+      50,
+    )
+    .expect("search conversations");
+
+    assert_eq!(page.items.len(), 1);
+    let item = &page.items[0];
+    assert_eq!(item.root_session_id, "root");
+    assert_eq!(item.title, "Z Root title");
+    assert_eq!(item.started_at.as_deref(), Some("2026-07-13T07:00:00Z"));
+    assert_eq!(item.updated_at.as_deref(), Some("2026-07-13T09:00:00Z"));
+    assert_eq!(item.session_count, 2);
+    assert_eq!(item.subagent_count, 1);
+    assert_eq!(item.total_tokens, 30);
+    assert_eq!(item.api_value_usd, 3.0);
+    assert_eq!(item.source_states, vec!["active", "missing"]);
+  }
+
+  #[test]
+  #[ignore = "resource profiling helper; requires CODEX_PACER_PROFILE_DB"]
+  fn profile_real_seven_day_dashboard_load() {
+    let db_path = std::env::var_os("CODEX_PACER_PROFILE_DB")
+      .map(std::path::PathBuf::from)
+      .expect("set CODEX_PACER_PROFILE_DB to a database copy");
+    let started = std::time::Instant::now();
+    let data = load_dashboard_data(
+      &db_path,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+      None,
+      true,
+    )
+    .expect("load seven-day dashboard");
+    eprintln!(
+      "profile seven_day elapsed_ms={} first_page={} has_more={}",
+      started.elapsed().as_millis(),
+      data.conversation_page.items.len(),
+      data.conversation_page.has_more
+    );
+  }
+
+  #[test]
+  fn window_event_loader_does_not_return_rows_outside_the_requested_range() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    for timestamp in ["2026-07-01T00:00:00Z", "2026-07-10T00:00:00Z"] {
+      let timestamp_ms = parse_rfc3339_local(timestamp).expect("timestamp").timestamp_millis();
+      conn.execute(
+        "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES ('session', ?1, ?2, 'gpt-5.4', 1, 0, 1, 0, 2, 0.0, 0, 0)",
+        rusqlite::params![timestamp, timestamp_ms],
+      )
+      .expect("insert event");
+    }
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-10".to_string(),
+      start: parse_rfc3339_local("2026-07-09T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-11T00:00:00Z").expect("end"),
+    };
+
+    let events = load_events_in_window(&conn, &window).expect("load window events");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].timestamp, "2026-07-10T00:00:00Z");
+  }
+
+  #[test]
+  fn window_event_loader_keeps_legacy_rows_before_epoch_backfill_completes() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn.execute(
+      "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES ('legacy', '2026-07-10T00:00:00Z', NULL, 'gpt-5.4', 1, 0, 1, 0, 2, 1.5, 0, 0)",
+      [],
+    )
+    .expect("insert legacy event");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-10".to_string(),
+      start: parse_rfc3339_local("2026-07-09T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-11T00:00:00Z").expect("end"),
+    };
+
+    let events = load_events_in_window(&conn, &window).expect("load window events");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session_id, "legacy");
+    assert_eq!(sum_window_api_value_sql(&conn, &window).expect("sum window"), 1.5);
+  }
+
+  #[test]
+  fn completed_epoch_backfill_skips_legacy_usage_event_fallback() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn.execute(
+      "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES ('legacy', '2026-07-10T00:00:00Z', NULL, 'gpt-5.4', 1, 0, 1, 0, 2, 1.5, 0, 0)",
+      [],
+    )
+    .expect("insert legacy event");
+    conn.execute(
+      "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-13T08:00:00Z')",
+      [],
+    )
+    .expect("mark epoch backfill complete");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-10".to_string(),
+      start: parse_rfc3339_local("2026-07-09T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-11T00:00:00Z").expect("end"),
+    };
+
+    assert!(load_events_in_window(&conn, &window).expect("load window events").is_empty());
+    assert_eq!(sum_window_api_value_sql(&conn, &window).expect("sum window"), 0.0);
+  }
+
+  #[test]
+  fn legacy_quota_samples_match_the_normalized_window_minute() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T07:00:12Z',
+          '', '', 'pro', '2026-07-13T06:00:36Z', '2026-07-20T06:00:44Z',
+          12, 88, '2026-07-13T07:00:12Z',
+          NULL, NULL, NULL
+        )
+        ",
+        [],
+      )
+      .expect("insert legacy quota sample");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T06:30:00Z',
+          '', '', 'pro', '2026-07-13T06:00:00Z', '2026-07-20T06:00:00Z',
+          8, 92, '2026-07-13T06:30:00Z',
+          ?1, ?2, ?3
+        )
+        ",
+        rusqlite::params![
+          parse_rfc3339_local("2026-07-13T06:30:00Z").expect("sample").timestamp_millis(),
+          parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start").timestamp_millis(),
+          parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end").timestamp_millis(),
+        ],
+      )
+      .expect("insert normalized quota sample");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end"),
+    };
+
+    let samples = load_quota_samples(&conn, &window);
+
+    assert_eq!(samples.iter().map(|sample| sample.used_percent).collect::<Vec<_>>(), vec![8, 12]);
+  }
+
+  #[test]
+  fn quota_samples_keep_only_the_latest_point_in_each_chart_bin() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    let window_start = parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start");
+    let window_end = parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end");
+    for (timestamp, used_percent) in [
+      ("2026-07-13T06:05:00Z", 1),
+      ("2026-07-13T06:55:00Z", 2),
+      ("2026-07-13T07:10:00Z", 3),
+      ("2026-07-13T07:58:00Z", 4),
+    ] {
+      let timestamp_ms = parse_rfc3339_local(timestamp)
+        .expect("sample timestamp")
+        .timestamp_millis();
+      conn
+        .execute(
+          "
+          INSERT INTO rate_limit_samples (
+            source_kind, source_session_id, bucket, sample_timestamp,
+            limit_id, limit_name, plan_type, window_start, resets_at,
+            used_percent, remaining_percent, created_at,
+            sample_timestamp_ms, window_start_ms, resets_at_ms
+          ) VALUES (
+            'session', 'session', 'seven_day', ?1,
+            '', '', 'pro', '2026-07-13T06:00:00Z', '2026-07-20T06:00:00Z',
+            ?2, 100 - ?2, ?1, ?3, ?4, ?5
+          )
+          ",
+          rusqlite::params![
+            timestamp,
+            used_percent,
+            timestamp_ms,
+            window_start.timestamp_millis(),
+            window_end.timestamp_millis(),
+          ],
+        )
+        .expect("insert quota sample");
+    }
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: window_start,
+      end: window_end,
+    };
+
+    let samples = load_quota_samples(&conn, &window);
+
+    assert_eq!(
+      samples
+        .iter()
+        .map(|sample| sample.used_percent)
+        .collect::<Vec<_>>(),
+      vec![2, 4]
+    );
+  }
+
+  #[test]
+  fn backfilled_quota_samples_match_the_normalized_window_minute() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T07:00:12Z',
+          '', '', 'pro', '2026-07-13T06:00:36Z', '2026-07-20T06:00:44Z',
+          12, 88, '2026-07-13T07:00:12Z', ?1, ?2, ?3
+        )
+        ",
+        rusqlite::params![
+          parse_rfc3339_local("2026-07-13T07:00:12Z").expect("sample").timestamp_millis(),
+          parse_rfc3339_local("2026-07-13T06:00:36Z").expect("start").timestamp_millis(),
+          parse_rfc3339_local("2026-07-20T06:00:44Z").expect("end").timestamp_millis(),
+        ],
+      )
+      .expect("insert backfilled quota sample");
+    conn
+      .execute(
+        "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-13T08:00:00Z')",
+        [],
+      )
+      .expect("mark epoch backfill complete");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end"),
+    };
+
+    let samples = load_quota_samples(&conn, &window);
+
+    assert_eq!(samples.iter().map(|sample| sample.used_percent).collect::<Vec<_>>(), vec![12]);
+  }
+
+  #[test]
+  fn completed_epoch_backfill_does_not_scan_legacy_quota_rows() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T07:00:12Z',
+          '', '', 'pro', '2026-07-13T06:00:36Z', '2026-07-20T06:00:44Z',
+          12, 88, '2026-07-13T07:00:12Z',
+          NULL, NULL, NULL
+        )
+        ",
+        [],
+      )
+      .expect("insert legacy quota sample");
+    conn
+      .execute(
+        "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-13T08:00:00Z')",
+        [],
+      )
+      .expect("mark epoch backfill complete");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end"),
+    };
+
+    assert!(load_quota_samples(&conn, &window).is_empty());
+  }
 
   #[test]
   fn groups_modern_snapshots_into_one_turn() {
@@ -2413,15 +3060,44 @@ mod tests {
       secondary: None,
       fetched_at: "2026-03-26T11:20:00+08:00".to_string(),
     };
+    let older = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: Some(crate::models::RateLimitWindowSnapshot {
+        used_percent: 71,
+        remaining_percent: 29,
+        window_duration_mins: Some(300),
+        resets_at: Some("2026-03-26T06:27:36+08:00".to_string()),
+        window_start: Some("2026-03-26T01:27:36+08:00".to_string()),
+      }),
+      secondary: None,
+      fetched_at: "2026-03-26T06:20:00+08:00".to_string(),
+    };
+    insert_live_rate_limit_snapshot(&conn, &older).expect("insert older live window");
     insert_live_rate_limit_snapshot(&conn, &previous).expect("insert previous live window");
     insert_live_rate_limit_snapshot(&conn, &current).expect("insert current live window");
+
+    let current_window = resolve_window(
+      &conn,
+      Some("five_hour".to_string()),
+      None,
+      None,
+      None,
+      &[],
+      1,
+      Some(&current),
+      Some(0),
+    )
+    .expect("resolve current live window");
+    assert_eq!(current_window.live_window_count, 2);
 
     let window =
       resolve_window(&conn, Some("five_hour".to_string()), None, None, None, &[], 1, Some(&current), Some(1))
         .expect("resolve historical live window");
 
     assert_eq!(window.live_window_offset, 1);
-    assert!(window.live_window_count >= 2);
+    assert_eq!(window.live_window_count, 3);
     assert_eq!(window.window.start.to_rfc3339(), "2026-03-26T06:27:00+08:00");
     assert_eq!(window.window.end.to_rfc3339(), "2026-03-26T11:27:00+08:00");
   }

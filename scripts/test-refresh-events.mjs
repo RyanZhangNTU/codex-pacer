@@ -132,7 +132,8 @@ test('frontend_refresh_sources_are_event_driven_without_automatic_polling', () =
 
   assert.match(appSource, /codex-counter:\/\/refresh-completed/)
   assert.match(appSource, /SurfaceRevisionGate/)
-  assert.match(appSource, /getCurrentWindow\(\)\.isVisible\(\)/)
+  assert.match(appSource, /appWindow\.isVisible\(\)/)
+  assert.match(appSource, /appWindow\.isFocused\(\)/)
   assert.match(appSource, /onFocusChanged/)
   assert.match(appSource, /visibilitychange/)
 
@@ -308,5 +309,35 @@ test('popup_wires_latest_request_controller_and_disables_duplicate_manual_refres
   assert.match(
     popupSource,
     /aria-label=\{t\.popup\.actions\.refresh\}[\s\S]{0,220}disabled=\{refreshing\}/,
+  )
+})
+
+test('dashboard_startup_does_not_open_and_parse_the_first_conversation_implicitly', () => {
+  assert.equal(refreshEvents.selectionAfterDashboardReload(null, null, 'seven-day-query'), null)
+  assert.doesNotMatch(
+    appSource,
+    /setSelectedRootSessionId\([\s\S]{0,320}conversationPage\.items\[0\]/,
+  )
+})
+
+test('conversation_entry_load_does_not_repeat_for_query_changes', () => {
+  assert.match(
+    appSource,
+    /if \(!hasBootstrapped \|\| view !== 'conversations'\) return\s+void loadShellRef\.current\(false\)\s+}, \[hasBootstrapped, view\]\)/,
+  )
+  assert.doesNotMatch(
+    appSource,
+    /if \(!hasBootstrapped \|\| view !== 'conversations'\) return\s+void loadShell\(false\)/,
+  )
+})
+
+test('dashboard_reload_preserves_a_later-page_selection_for_the_same_query', () => {
+  assert.equal(
+    refreshEvents.selectionAfterDashboardReload('root-page-2', 'seven-day-query', 'seven-day-query'),
+    'root-page-2',
+  )
+  assert.equal(
+    refreshEvents.selectionAfterDashboardReload('root-page-2', 'seven-day-query', 'month-query'),
+    null,
   )
 })

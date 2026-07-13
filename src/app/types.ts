@@ -61,6 +61,10 @@ export interface ScanResult {
   importedSessions: number
   updatedSessions: number
   missingSessions: number
+  scanKind: 'incremental' | 'reconcile' | 'full'
+  sourceBytesRead: number
+  tailParsedFiles: number
+  fullyParsedFiles: number
   lastCompletedAt: string
 }
 
@@ -200,7 +204,7 @@ export interface OverviewResponse {
 
 export interface DashboardSnapshot {
   overview: OverviewResponse
-  conversations: ConversationListItem[]
+  conversationPage: ConversationPage
   syncSettings: SyncSettings
   subscriptionProfile: SubscriptionProfile
   liveRateLimits: LiveRateLimitSnapshot | null
@@ -213,6 +217,14 @@ export interface ConversationFilters {
   customEnd?: string | null
   search?: string | null
   liveWindowOffset?: number | null
+  cursor?: string | null
+  limit?: number | null
+}
+
+export interface ConversationPage {
+  items: ConversationListItem[]
+  nextCursor: string | null
+  hasMore: boolean
 }
 
 export interface ConversationListItem {
@@ -291,6 +303,8 @@ export interface ConversationDetail {
   sourceStates: string[]
   sessions: ConversationSessionSummary[]
   turns: ConversationTurnPoint[]
+  nextTurnCursor: number | null
+  hasMoreTurns: boolean
   modelBreakdown: ModelShare[]
   compositionBreakdown: CompositionShare[]
 }

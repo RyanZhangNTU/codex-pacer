@@ -154,6 +154,7 @@ pub(crate) fn release_unused_process_memory() {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanKind {
   Full,
+  Reconcile,
   Incremental,
 }
 
@@ -161,6 +162,8 @@ pub(crate) enum ScanKind {
 pub(crate) struct PreparedScanStats {
   pub files_visited: usize,
   pub source_bytes_read: u64,
+  pub tail_parsed_files: usize,
+  pub fully_parsed_files: usize,
   pub full_rebuild: bool,
   pub used_spool: bool,
   pub parent_replay_cache_evictions: usize,
@@ -804,14 +807,65 @@ fn perform_scan_with_kind(
   commit_prepared_scan(prepared)
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_scan(
   db_path: &Path,
   codex_home_override: Option<String>,
   requested_kind: ScanKind,
 ) -> Result<PreparedScan, String> {
+  let database_snapshot = load_preparation_database_snapshot(
+    db_path,
+    codex_home_override.as_deref(),
+    requested_kind,
+  )
+  .map_err(|error| error.to_string())?;
+  prepare_scan_from_snapshot(
+    db_path,
+    codex_home_override,
+    requested_kind,
+    database_snapshot,
+  )
+}
+
+pub(crate) fn prepare_scan_with_cached_snapshot_connection(
+  db_path: &Path,
+  codex_home_override: Option<String>,
+  requested_kind: ScanKind,
+  cached_connection: &mut Option<Connection>,
+) -> Result<PreparedScan, String> {
+  if cached_connection.is_none() {
+    let connection = open_scan_snapshot(db_path).map_err(|error| error.to_string())?;
+    connection
+      .pragma_update(None, "cache_size", -16_384)
+      .map_err(|error| error.to_string())?;
+    *cached_connection = Some(connection);
+  }
+  let database_snapshot = match load_preparation_database_snapshot_from_connection(
+    cached_connection.as_mut().expect("cached connection initialized"),
+    codex_home_override.as_deref(),
+    requested_kind,
+  ) {
+    Ok(snapshot) => snapshot,
+    Err(error) => {
+      *cached_connection = None;
+      return Err(error.to_string());
+    }
+  };
+  prepare_scan_from_snapshot(
+    db_path,
+    codex_home_override,
+    requested_kind,
+    database_snapshot,
+  )
+}
+
+fn prepare_scan_from_snapshot(
+  db_path: &Path,
+  codex_home_override: Option<String>,
+  requested_kind: ScanKind,
+  database_snapshot: PreparationDatabaseSnapshot,
+) -> Result<PreparedScan, String> {
   let scan_started_at = now_utc_string();
-  let database_snapshot =
-    load_preparation_database_snapshot(db_path).map_err(|error| error.to_string())?;
   let PreparationDatabaseSnapshot {
     scan_source_selector,
     scan_commit_revision,
@@ -827,7 +881,7 @@ pub(crate) fn prepare_scan(
     needs_fork_replay_v3_repair_sweep,
     pending_fork_replay_v3_repair_paths,
     mut session_source_paths,
-    existing_relations,
+    mut existing_relations,
     existing_session_sources,
     topology_needs_repair,
   } = database_snapshot;
@@ -862,6 +916,9 @@ pub(crate) fn prepare_scan(
     pending_repair_session_ids(&import_state, &pending_rate_limit_repair_paths);
   pending_repair_session_ids.extend(pending_token_v2_repair_session_ids.iter().cloned());
   pending_repair_session_ids.extend(pending_fork_replay_v3_repair_session_ids.iter().cloned());
+  let mut pending_repair_paths = pending_rate_limit_repair_paths.clone();
+  pending_repair_paths.extend(pending_token_v2_repair_paths.iter().cloned());
+  pending_repair_paths.extend(pending_fork_replay_v3_repair_paths.iter().cloned());
   let needs_token_usage_repair_sweep =
     needs_token_usage_v2_repair_sweep || needs_fork_replay_v3_repair_sweep;
   let effective_kind = effective_scan_scope(
@@ -874,13 +931,21 @@ pub(crate) fn prepare_scan(
 
   let (session_files, active_paths_kept_for_archive_retry) = match effective_kind {
     ScanKind::Full => (collect_session_files(&codex_home), HashSet::new()),
+    ScanKind::Reconcile => (collect_session_files(&codex_home), HashSet::new()),
     ScanKind::Incremental => {
-      collect_incremental_session_files(&codex_home, &import_state, &pending_repair_session_ids)
+      collect_incremental_session_files(
+        &codex_home,
+        &import_state,
+        &pending_repair_session_ids,
+        &pending_repair_paths,
+      )
     }
   };
   let stats = PreparedScanStats {
     files_visited: session_files.len(),
     source_bytes_read: 0,
+    tail_parsed_files: 0,
+    fully_parsed_files: 0,
     full_rebuild: effective_kind == ScanKind::Full,
     used_spool: false,
     parent_replay_cache_evictions: 0,
@@ -926,8 +991,9 @@ pub(crate) fn prepare_scan(
     if let Some(state) = import_state.get(&source_path) {
       let session_id_mismatch = import_state_session_id_mismatch(state, session_file);
       if state.file_size == session_file.file_size
-        && state.file_mtime_ms == session_file.file_mtime_ms
         && !session_id_mismatch
+        && (state.file_mtime_ms == session_file.file_mtime_ms
+          || parser_checkpoint_prefix_matches(state, session_file))
       {
         if let Some(session_id) = &state.session_id {
           imported_session_ids.insert(session_id.clone());
@@ -939,7 +1005,7 @@ pub(crate) fn prepare_scan(
     changed_files.push(session_file.clone());
   }
 
-  let titles = if effective_kind == ScanKind::Full || !changed_files.is_empty() {
+  let titles = if effective_kind != ScanKind::Incremental || !changed_files.is_empty() {
     load_session_index(&codex_home)
   } else {
     HashMap::new()
@@ -953,6 +1019,8 @@ pub(crate) fn prepare_scan(
   let mut storage = PreparedStorageBuilder::new();
   let mut updated_sessions = 0usize;
   let mut source_bytes_read = 0u64;
+  let mut tail_parsed_files = 0usize;
+  let mut fully_parsed_files = 0usize;
 
   for session_file in changed_files {
     let source_path = session_file.path.to_string_lossy().to_string();
@@ -962,7 +1030,7 @@ pub(crate) fn prepare_scan(
       needs_token_usage_v2_repair_sweep || pending_token_v2_repair_paths.contains(&source_path);
     let mut file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
       || pending_fork_replay_v3_repair_paths.contains(&source_path);
-    let tail_candidate = if effective_kind == ScanKind::Incremental
+    let tail_candidate = if effective_kind != ScanKind::Full
       && !file_needs_rate_limit_repair
       && !file_needs_token_v2_repair
       && !file_needs_fork_replay_v3_repair
@@ -984,8 +1052,14 @@ pub(crate) fn prepare_scan(
       Ok(None)
     };
     let parsed_result = match tail_candidate {
-      Ok(Some(result)) => Ok(result),
-      Ok(None) => parse_session_file_counted(&session_file, &titles),
+      Ok(Some(result)) => {
+        tail_parsed_files += 1;
+        Ok(result)
+      }
+      Ok(None) => {
+        fully_parsed_files += 1;
+        parse_session_file_counted(&session_file, &titles)
+      }
       Err(error) => Err(error),
     };
     let (mut parsed, bytes_read) = match parsed_result {
@@ -1010,6 +1084,7 @@ pub(crate) fn prepare_scan(
     };
     source_bytes_read = source_bytes_read.saturating_add(bytes_read);
 
+    ensure_replay_parent_source_path(db_path, &parsed, &mut session_source_paths)?;
     let (replay_parent_unavailable, parent_replay_bytes_read) =
       if matches!(parsed.mode, ParsedSessionMode::Full) {
         assign_inherited_token_snapshot_cutoff(
@@ -1036,6 +1111,11 @@ pub(crate) fn prepare_scan(
       replay_parent_unavailable || !related_pending_fork_replay_v3_paths.is_empty();
     imported_session_ids.insert(parsed.raw_session.session_id.clone());
 
+    ensure_existing_relation_context(
+      db_path,
+      &parsed.raw_session.session_id,
+      &mut existing_relations,
+    )?;
     match classify_topology_maintenance(
       existing_relations.get(&parsed.raw_session.session_id),
       existing_relations
@@ -1066,7 +1146,7 @@ pub(crate) fn prepare_scan(
     updated_sessions += 1;
   }
 
-  let titles = if effective_kind == ScanKind::Full {
+  let titles = if effective_kind != ScanKind::Incremental {
     titles
   } else {
     HashMap::new()
@@ -1088,6 +1168,8 @@ pub(crate) fn prepare_scan(
   let storage = storage.finish()?;
   let stats = PreparedScanStats {
     source_bytes_read,
+    tail_parsed_files,
+    fully_parsed_files,
     used_spool: matches!(&storage, PreparedStorage::Spool { .. }),
     parent_replay_cache_evictions,
     parent_replay_cache_oversized_bypasses,
@@ -1254,13 +1336,14 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
     }
   }
 
-  if effective_kind == ScanKind::Full {
+  if effective_kind != ScanKind::Incremental {
     refresh_session_titles(&tx, &titles).map_err(|error| error.to_string())?;
   }
   apply_missing_source_plan(&tx, missing_plan).map_err(|error| error.to_string())?;
 
   let topology_needs_repair = topology_needs_repair
-    || conversation_links_need_repair(&tx).map_err(|error| error.to_string())?;
+    || (effective_kind != ScanKind::Incremental
+      && conversation_links_need_repair(&tx).map_err(|error| error.to_string())?);
   if topology_dirty || topology_needs_repair {
     recompute_conversation_links(&tx).map_err(|error| error.to_string())?;
   } else if !new_root_session_ids.is_empty() {
@@ -1295,8 +1378,8 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
       &completed_at,
       source_identity.key.selector.as_deref(),
       &resolved_codex_home,
-      effective_kind == ScanKind::Full && !skipped_session_files,
-      effective_kind == ScanKind::Full && skipped_session_files,
+      effective_kind != ScanKind::Incremental && !skipped_session_files,
+      effective_kind != ScanKind::Incremental && skipped_session_files,
     )
     .map_err(|error| error.to_string())?;
   }
@@ -1323,6 +1406,15 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
     imported_sessions,
     updated_sessions,
     missing_sessions,
+    scan_kind: match effective_kind {
+      ScanKind::Full => "full",
+      ScanKind::Reconcile => "reconcile",
+      ScanKind::Incremental => "incremental",
+    }
+    .to_string(),
+    source_bytes_read: stats.source_bytes_read,
+    tail_parsed_files: stats.tail_parsed_files,
+    fully_parsed_files: stats.fully_parsed_files,
     last_completed_at: completed_at,
   })
 }
@@ -1334,10 +1426,25 @@ fn open_scan_snapshot(db_path: &Path) -> rusqlite::Result<Connection> {
   Ok(conn)
 }
 
+#[cfg(test)]
 fn load_preparation_database_snapshot(
   db_path: &Path,
+  codex_home_override: Option<&str>,
+  requested_kind: ScanKind,
 ) -> rusqlite::Result<PreparationDatabaseSnapshot> {
   let mut conn = open_scan_snapshot(db_path)?;
+  load_preparation_database_snapshot_from_connection(
+    &mut conn,
+    codex_home_override,
+    requested_kind,
+  )
+}
+
+fn load_preparation_database_snapshot_from_connection(
+  conn: &mut Connection,
+  codex_home_override: Option<&str>,
+  requested_kind: ScanKind,
+) -> rusqlite::Result<PreparationDatabaseSnapshot> {
   let tx = conn.transaction()?;
   let (
     scan_source_selector,
@@ -1372,7 +1479,6 @@ fn load_preparation_database_snapshot(
       ))
     },
   )?;
-  let import_state = load_import_state(&tx)?;
   let needs_rate_limit_backfill = needs_rate_limit_sample_backfill(&tx)?;
   let pending_rate_limit_repair_paths =
     load_pending_data_repair_paths(&tx, RATE_LIMIT_SAMPLE_BACKFILL_KEY)?;
@@ -1384,29 +1490,72 @@ fn load_preparation_database_snapshot(
     data_repair_is_pending(&tx, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY)?;
   let pending_fork_replay_v3_repair_paths =
     load_pending_data_repair_paths(&tx, TOKEN_USAGE_FORK_REPLAY_REPAIR_KEY)?;
-  let session_source_paths = load_session_source_paths(&tx, &import_state, &[])?;
-  let existing_relations = load_existing_session_relations(&tx)?;
-  let existing_session_sources = {
-    let mut stmt = tx.prepare(
+  let mut pending_repair_paths = pending_rate_limit_repair_paths.clone();
+  pending_repair_paths.extend(pending_token_v2_repair_paths.iter().cloned());
+  pending_repair_paths.extend(pending_fork_replay_v3_repair_paths.iter().cloned());
+  let import_state_is_empty = tx.query_row(
+    "SELECT NOT EXISTS (SELECT 1 FROM import_state LIMIT 1)",
+    [],
+    |row| Ok(row.get::<_, i64>(0)? != 0),
+  )?;
+  let home_dir = dirs::home_dir();
+  let resolved_requested_home = resolve_codex_home(
+    scan_source_selector.as_deref(),
+    codex_home_override.map(ToString::to_string),
+    home_dir.as_deref(),
+  )
+  .and_then(|path| expand_home_prefix(path, home_dir.as_deref()));
+  let use_incremental_snapshot = requested_kind == ScanKind::Incremental
+    && !import_state_is_empty
+    && !needs_rate_limit_backfill
+    && !needs_token_usage_v2_repair_sweep
+    && !needs_fork_replay_v3_repair_sweep
+    && last_full_scan_completed_at.is_some()
+    && resolved_requested_home.as_ref().is_ok_and(|path| {
+      last_scan_codex_home.as_deref() == Some(path.to_string_lossy().as_ref())
+    });
+  let import_state = if use_incremental_snapshot {
+    load_incremental_import_state(&tx, &pending_repair_paths)?
+  } else {
+    load_import_state(&tx)?
+  };
+  let session_source_paths = if use_incremental_snapshot {
+    import_state
+      .values()
+      .filter_map(|state| {
+        state
+          .session_id
+          .as_ref()
+          .map(|session_id| (session_id.clone(), PathBuf::from(&state.source_path)))
+      })
+      .collect()
+  } else {
+    load_session_source_paths(&tx, &import_state, &[])?
+  };
+  let existing_relations = if use_incremental_snapshot {
+    load_incremental_session_relations(&tx, &import_state)?
+  } else {
+    load_existing_session_relations(&tx)?
+  };
+  let existing_session_sources = if use_incremental_snapshot {
+    load_incremental_session_sources(&tx, &import_state)?
+  } else {
+    {
+      let mut stmt = tx.prepare(
       "
       SELECT session_id, source_path, source_state, source_bucket
       FROM sessions
       WHERE source_path IS NOT NULL
       ",
-    )?;
-    let rows = stmt
-      .query_map([], |row| {
-        Ok(ExistingSessionSource {
-          session_id: row.get(0)?,
-          source_path: row.get(1)?,
-          source_state: row.get(2)?,
-          source_bucket: row.get(3)?,
-        })
-      })?
-      .collect::<rusqlite::Result<Vec<_>>>()?;
-    rows
+      )?;
+      let sources = stmt
+        .query_map([], existing_session_source_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+      sources
+    }
   };
-  let topology_needs_repair = conversation_links_need_repair(&tx)?;
+  let topology_needs_repair =
+    !use_incremental_snapshot && conversation_links_need_repair(&tx)?;
   tx.commit()?;
 
   Ok(PreparationDatabaseSnapshot {
@@ -1500,7 +1649,7 @@ fn prepare_missing_source_plan(
   let mut plan = MissingSourcePlan::default();
 
   match scan_kind {
-    ScanKind::Full => {
+    ScanKind::Full | ScanKind::Reconcile => {
       for source in existing_sources {
         if !present_paths.contains(&source.source_path)
           && (reconcile_existing_absent_sources || !Path::new(&source.source_path).exists())
@@ -1631,7 +1780,7 @@ fn effective_scan_scope(
   {
     ScanKind::Full
   } else {
-    ScanKind::Incremental
+    requested_scope
   }
 }
 
@@ -1849,20 +1998,31 @@ fn collect_session_files(codex_home: &Path) -> Vec<SessionFile> {
   files
 }
 
-fn collect_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
+fn collect_recent_active_session_files(codex_home: &Path) -> Vec<SessionFile> {
   let sessions_root = codex_home.join("sessions");
-  if !sessions_root.exists() {
-    return Vec::new();
-  }
-
   let mut files = Vec::new();
-  for entry in WalkDir::new(sessions_root)
-    .into_iter()
-    .filter_map(Result::ok)
-  {
-    if let Some(session_file) = session_file_from_path(entry.path().to_path_buf(), "active") {
-      files.push(session_file);
+  let mut collect_directory = |directory: &Path| {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+      return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+      if let Some(session_file) = session_file_from_path(entry.path(), "active") {
+        files.push(session_file);
+      }
     }
+  };
+
+  // Legacy clients may place session files directly under `sessions`.
+  collect_directory(&sessions_root);
+  let today = Local::now().date_naive();
+  for days_ago in 0..=2 {
+    let date = today - chrono::Duration::days(days_ago);
+    collect_directory(
+      &sessions_root
+        .join(date.format("%Y").to_string())
+        .join(date.format("%m").to_string())
+        .join(date.format("%d").to_string()),
+    );
   }
   files.sort_by(|left, right| left.path.cmp(&right.path));
   files
@@ -1872,25 +2032,68 @@ fn collect_incremental_session_files(
   codex_home: &Path,
   import_state: &HashMap<String, ImportState>,
   pending_repair_session_ids: &HashSet<String>,
+  pending_repair_paths: &HashSet<String>,
 ) -> (Vec<SessionFile>, HashSet<String>) {
-  let mut files = collect_active_session_files(codex_home);
+  let mut files = collect_recent_active_session_files(codex_home);
   let mut collected_paths = files
     .iter()
     .map(|session_file| session_file.path.to_string_lossy().to_string())
     .collect::<HashSet<_>>();
   let mut active_paths_kept_for_archive_retry = HashSet::new();
 
+  for state in import_state.values().filter(|state| state.source_bucket == "active") {
+    if collected_paths.contains(&state.source_path) {
+      continue;
+    }
+    let Some(session_file) = session_file_from_path(PathBuf::from(&state.source_path), "active") else {
+      continue;
+    };
+    collected_paths.insert(state.source_path.clone());
+    files.push(session_file);
+  }
+
+  let active_root = codex_home.join("sessions");
+  let archived_root = codex_home.join("archived_sessions");
+  for source_path in pending_repair_paths {
+    if collected_paths.contains(source_path) {
+      continue;
+    }
+    let path = PathBuf::from(source_path);
+    let bucket = if path.starts_with(&archived_root) {
+      "archived"
+    } else if path.starts_with(&active_root) {
+      "active"
+    } else {
+      continue;
+    };
+    let Some(session_file) = session_file_from_path(path, bucket) else {
+      continue;
+    };
+    collected_paths.insert(source_path.clone());
+    files.push(session_file);
+  }
+
   for state in import_state.values() {
     if state.source_bucket == "archived" {
+      let session_has_pending_repair = state
+        .session_id
+        .as_ref()
+        .is_some_and(|session_id| pending_repair_session_ids.contains(session_id));
+      let needs_tail_retry = state
+        .parser_checkpoint
+        .as_ref()
+        .is_some_and(|checkpoint| checkpoint.completed_offset < state.file_size.max(0) as u64);
+      if !session_has_pending_repair
+        && !pending_repair_paths.contains(&state.source_path)
+        && !needs_tail_retry
+      {
+        continue;
+      }
       let Some(session_file) =
         session_file_from_path(PathBuf::from(&state.source_path), "archived")
       else {
         continue;
       };
-      let session_has_pending_repair = state
-        .session_id
-        .as_ref()
-        .is_some_and(|session_id| pending_repair_session_ids.contains(session_id));
       if state.file_size == session_file.file_size
         && state.file_mtime_ms == session_file.file_mtime_ms
         && !session_has_pending_repair
@@ -1946,6 +2149,15 @@ fn session_file_from_path(path: PathBuf, bucket: &str) -> Option<SessionFile> {
     file_size,
     file_mtime_ms,
   })
+}
+
+fn parser_checkpoint_prefix_matches(state: &ImportState, session_file: &SessionFile) -> bool {
+  let Some(checkpoint) = state.parser_checkpoint.as_ref() else {
+    return false;
+  };
+  checkpoint.completed_offset == session_file.file_size.max(0) as u64
+    && read_prefix_signature(&session_file.path, checkpoint.completed_offset)
+      .is_ok_and(|signature| signature == checkpoint.prefix_signature)
 }
 
 fn parse_session_file_counted(
@@ -2813,6 +3025,76 @@ impl ReplayParentTokenUsage {
   }
 }
 
+fn ensure_replay_parent_source_path(
+  db_path: &Path,
+  parsed: &ParsedSession,
+  session_source_paths: &mut HashMap<String, PathBuf>,
+) -> Result<(), String> {
+  if !matches!(parsed.mode, ParsedSessionMode::Full) {
+    return Ok(());
+  }
+  let Some(parent_session_id) = parsed
+    .explicit_forked_from_id
+    .as_deref()
+    .filter(|session_id| !session_id.trim().is_empty())
+  else {
+    return Ok(());
+  };
+  if session_source_paths.contains_key(parent_session_id) {
+    return Ok(());
+  }
+
+  let conn = open_scan_snapshot(db_path).map_err(|error| error.to_string())?;
+  let source_path = conn
+    .query_row(
+      "SELECT source_path FROM sessions WHERE session_id = ?1 AND source_path IS NOT NULL",
+      params![parent_session_id],
+      |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())?;
+  if let Some(source_path) = source_path {
+    session_source_paths.insert(parent_session_id.to_string(), PathBuf::from(source_path));
+  }
+  Ok(())
+}
+
+fn ensure_existing_relation_context(
+  db_path: &Path,
+  session_id: &str,
+  existing_relations: &mut HashMap<String, ExistingSessionRelation>,
+) -> Result<(), String> {
+  if existing_relations.contains_key(session_id) {
+    return Ok(());
+  }
+  let conn = open_scan_snapshot(db_path).map_err(|error| error.to_string())?;
+  let existing_parent = conn
+    .query_row(
+      "SELECT parent_session_id FROM sessions WHERE session_id = ?1",
+      params![session_id],
+      |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())?;
+  let child_count = conn
+    .query_row(
+      "SELECT COUNT(*) FROM sessions WHERE parent_session_id = ?1",
+      params![session_id],
+      |row| row.get::<_, i64>(0),
+    )
+    .map_err(|error| error.to_string())?
+    .max(0) as usize;
+  existing_relations.insert(
+    session_id.to_string(),
+    ExistingSessionRelation {
+      exists: existing_parent.is_some(),
+      parent_session_id: existing_parent.flatten(),
+      child_count,
+    },
+  );
+  Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReplayKey {
   total_token_usage: TokenUsage,
@@ -3091,15 +3373,16 @@ fn persist_session(
     "
     INSERT INTO import_state (
       source_path, session_id, source_bucket, file_size, file_mtime_ms,
-      parser_checkpoint, last_imported_at
+      parser_checkpoint, parser_completed_offset, last_imported_at
     )
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
     ON CONFLICT(source_path) DO UPDATE SET
       session_id = excluded.session_id,
       source_bucket = excluded.source_bucket,
       file_size = excluded.file_size,
       file_mtime_ms = excluded.file_mtime_ms,
       parser_checkpoint = excluded.parser_checkpoint,
+      parser_completed_offset = excluded.parser_completed_offset,
       last_imported_at = excluded.last_imported_at
     ",
     params![
@@ -3109,6 +3392,7 @@ fn persist_session(
       session_file.file_size,
       session_file.file_mtime_ms,
       parser_checkpoint,
+      parsed.checkpoint.completed_offset as i64,
       now_utc_string(),
     ],
   )?;
@@ -3269,6 +3553,62 @@ fn load_import_state(conn: &Connection) -> rusqlite::Result<HashMap<String, Impo
   Ok(result)
 }
 
+fn load_incremental_import_state(
+  conn: &Connection,
+  pending_repair_paths: &HashSet<String>,
+) -> rusqlite::Result<HashMap<String, ImportState>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms, parser_checkpoint
+    FROM import_state
+    WHERE source_bucket = 'active'
+    UNION ALL
+    SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms, parser_checkpoint
+    FROM import_state INDEXED BY idx_import_state_incomplete_archived_tail
+    WHERE source_bucket = 'archived'
+      AND parser_completed_offset < file_size
+    ",
+  )?;
+  let rows = stmt.query_map([], import_state_from_row)?;
+
+  let mut result = HashMap::new();
+  for row in rows {
+    let state = row?;
+    result.insert(state.source_path.clone(), state);
+  }
+  drop(stmt);
+  for source_path in pending_repair_paths {
+    let state = conn
+      .query_row(
+        "
+        SELECT source_path, session_id, source_bucket, file_size, file_mtime_ms, parser_checkpoint
+        FROM import_state
+        WHERE source_path = ?1
+        ",
+        params![source_path],
+        import_state_from_row,
+      )
+      .optional()?;
+    if let Some(state) = state {
+      result.insert(state.source_path.clone(), state);
+    }
+  }
+  Ok(result)
+}
+
+fn import_state_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ImportState> {
+  Ok(ImportState {
+    source_path: row.get(0)?,
+    session_id: row.get(1)?,
+    source_bucket: row.get(2)?,
+    file_size: row.get(3)?,
+    file_mtime_ms: row.get(4)?,
+    parser_checkpoint: row
+      .get::<_, Option<String>>(5)?
+      .and_then(|checkpoint| serde_json::from_str(&checkpoint).ok()),
+  })
+}
+
 fn needs_rate_limit_sample_backfill(conn: &Connection) -> rusqlite::Result<bool> {
   data_repair_is_pending(conn, RATE_LIMIT_SAMPLE_BACKFILL_KEY)
 }
@@ -3409,6 +3749,112 @@ fn load_existing_session_relations(
   }
 
   Ok(relations)
+}
+
+fn load_incremental_session_relations(
+  conn: &Connection,
+  import_state: &HashMap<String, ImportState>,
+) -> rusqlite::Result<HashMap<String, ExistingSessionRelation>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT session_id, parent_session_id
+    FROM sessions
+    WHERE source_state = 'active'
+    ",
+  )?;
+  let rows = stmt.query_map([], |row| {
+    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+  })?;
+
+  let mut relations = HashMap::new();
+  for row in rows {
+    let (session_id, parent_session_id) = row?;
+    relations.insert(
+      session_id,
+      ExistingSessionRelation {
+        exists: true,
+        parent_session_id,
+        child_count: 0,
+      },
+    );
+  }
+  drop(stmt);
+  for state in import_state
+    .values()
+    .filter(|state| state.source_bucket != "active")
+  {
+    let Some(session_id) = state.session_id.as_deref() else {
+      continue;
+    };
+    let parent_session_id = conn
+      .query_row(
+        "SELECT parent_session_id FROM sessions WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get::<_, Option<String>>(0),
+      )
+      .optional()?;
+    if let Some(parent_session_id) = parent_session_id {
+      relations.insert(
+        session_id.to_string(),
+        ExistingSessionRelation {
+          exists: true,
+          parent_session_id,
+          child_count: 0,
+        },
+      );
+    }
+  }
+  Ok(relations)
+}
+
+fn existing_session_source_from_row(
+  row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ExistingSessionSource> {
+  Ok(ExistingSessionSource {
+    session_id: row.get(0)?,
+    source_path: row.get(1)?,
+    source_state: row.get(2)?,
+    source_bucket: row.get(3)?,
+  })
+}
+
+fn load_incremental_session_sources(
+  conn: &Connection,
+  import_state: &HashMap<String, ImportState>,
+) -> rusqlite::Result<Vec<ExistingSessionSource>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT session_id, source_path, source_state, source_bucket
+    FROM sessions
+    WHERE source_path IS NOT NULL AND source_state = 'active'
+    ",
+  )?;
+  let rows = stmt.query_map([], existing_session_source_from_row)?;
+  let mut sources = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+  drop(stmt);
+  for state in import_state
+    .values()
+    .filter(|state| state.source_bucket != "active")
+  {
+    let Some(session_id) = state.session_id.as_deref() else {
+      continue;
+    };
+    let source = conn
+      .query_row(
+        "
+        SELECT session_id, source_path, source_state, source_bucket
+        FROM sessions
+        WHERE session_id = ?1 AND source_path IS NOT NULL
+        ",
+        params![session_id],
+        existing_session_source_from_row,
+      )
+      .optional()?;
+    if let Some(source) = source {
+      sources.push(source);
+    }
+  }
+  Ok(sources)
 }
 
 fn upsert_root_conversation_links(
@@ -6036,7 +6482,16 @@ mod tests {
     );
 
     let db_path = directory.path().join("usage.sqlite");
-    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "UPDATE sync_settings SET codex_home = ?1 WHERE singleton_id = 1",
+        params![codex_home.to_string_lossy().to_string()],
+      )
+      .expect("configure source home");
+    drop(conn);
+    perform_scan(&db_path, None).expect("first scan");
 
     write_session_file_with_parent(
       &sessions_dir.join("child.jsonl"),
@@ -6047,7 +6502,7 @@ mod tests {
         ("2026-03-24T00:10:02Z", 160, 20, 25, 185),
       ],
     );
-    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("second scan");
+    perform_incremental_scan(&db_path, None).expect("second scan");
 
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(
@@ -6085,14 +6540,23 @@ mod tests {
     );
 
     let db_path = directory.path().join("usage.sqlite");
-    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("first scan");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "UPDATE sync_settings SET codex_home = ?1 WHERE singleton_id = 1",
+        params![codex_home.to_string_lossy().to_string()],
+      )
+      .expect("configure source home");
+    drop(conn);
+    perform_scan(&db_path, None).expect("first scan");
 
     write_session_file(
       &sessions_dir.join("parent.jsonl"),
       parent_session_id,
       &[("2026-03-24T00:00:01Z", 120, 20, 30, 150)],
     );
-    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("second scan");
+    perform_incremental_scan(&db_path, None).expect("second scan");
 
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(
@@ -6201,6 +6665,52 @@ mod tests {
   }
 
   #[test]
+  fn incremental_snapshot_does_not_load_archived_database_rows() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    let archived_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_dir).expect("archived dir");
+
+    write_session_file(
+      &sessions_dir.join("active.jsonl"),
+      "12121212-0000-0000-0000-000000000001",
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    for index in 2..=32 {
+      write_session_file(
+        &archived_dir.join(format!("archived-{index}.jsonl")),
+        &format!("12121212-0000-0000-0000-{index:012}"),
+        &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+      );
+    }
+
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "UPDATE sync_settings SET codex_home = ?1 WHERE singleton_id = 1",
+        params![codex_home.to_string_lossy().to_string()],
+      )
+      .expect("configure source home");
+    drop(conn);
+    perform_scan(&db_path, None).expect("full scan");
+
+    let snapshot = load_preparation_database_snapshot(
+      &db_path,
+      None,
+      ScanKind::Incremental,
+    )
+    .expect("incremental snapshot");
+    assert_eq!(snapshot.import_state.len(), 1);
+    assert_eq!(snapshot.session_source_paths.len(), 1);
+    assert_eq!(snapshot.existing_relations.len(), 1);
+    assert_eq!(snapshot.existing_session_sources.len(), 1);
+  }
+
+  #[test]
   fn incremental_scan_discovers_new_recent_active_session() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
@@ -6246,7 +6756,7 @@ mod tests {
   }
 
   #[test]
-  fn incremental_scan_discovers_new_old_dated_active_session() {
+  fn reconcile_scan_discovers_new_old_dated_active_session() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
@@ -6271,8 +6781,18 @@ mod tests {
       &[("2026-03-24T00:10:01Z", 180, 40, 45, 225)],
     );
 
-    let result = perform_incremental_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
-      .expect("incremental scan");
+    let incremental = perform_incremental_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+    )
+    .expect("incremental scan");
+    assert_eq!(incremental.updated_sessions, 0);
+    let result = perform_scan_with_kind(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Reconcile,
+    )
+    .expect("reconcile scan");
 
     let conn = open_connection(&db_path).expect("open db");
     assert_eq!(result.updated_sessions, 1);
@@ -6325,7 +6845,9 @@ mod tests {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
+    let archived_dir = codex_home.join("archived_sessions");
     std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_dir).expect("archived sessions dir");
 
     let existing_session_id = "77777777-8888-9999-aaaa-bbbbbbbbbbbb";
     write_session_file(
@@ -6333,7 +6855,7 @@ mod tests {
       existing_session_id,
       &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
     );
-    let pending_path = sessions_dir.join("unparseable.jsonl");
+    let pending_path = archived_dir.join("unparseable.jsonl");
     std::fs::write(&pending_path, "not json\n").expect("write bad session");
 
     let db_path = directory.path().join("usage.sqlite");
@@ -7225,6 +7747,168 @@ mod tests {
     assert_eq!(
       session_usage_totals(&conn, session_id),
       (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn unchanged_size_with_new_mtime_uses_checkpoint_instead_of_full_parse() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let session_id = "45454545-aaaa-bbbb-cccc-454545454545";
+    let session_path = sessions_dir.join("touched.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial scan");
+
+    let unchanged = std::fs::read(&session_path).expect("read source");
+    std::thread::sleep(Duration::from_millis(5));
+    std::fs::write(&session_path, unchanged).expect("rewrite identical source");
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare touched source");
+    assert_eq!(prepared.stats().source_bytes_read, 0);
+    assert_eq!(prepared.stats().fully_parsed_files, 0);
+    assert_eq!(prepared.updated_sessions, 0);
+  }
+
+  #[test]
+  fn reconcile_scan_reads_only_completed_tail_after_checkpoint() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "56565656-5656-5656-5656-565656565656";
+    let session_path = sessions_dir.join("reconciled-growing.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let filler = "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"ignored\",\"payload\":{}}\n";
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open initial session for append");
+    for _ in 0..4_096 {
+      file.write_all(filler.as_bytes()).expect("append filler");
+    }
+    drop(file);
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial full scan");
+
+    let appended = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:01:01Z",
+      total: (180, 40, 45, 225),
+      last: (80, 20, 20, 100),
+    });
+    std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open growing session")
+      .write_all(appended.as_bytes())
+      .expect("append completed token line");
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Reconcile,
+    )
+    .expect("prepare reconcile tail");
+    assert_eq!(prepared.stats().tail_parsed_files, 1);
+    assert_eq!(prepared.stats().fully_parsed_files, 0);
+    assert!(
+      prepared.stats().source_bytes_read < appended.len() as u64 * 4,
+      "reconcile should avoid rereading the historical prefix; read {} bytes",
+      prepared.stats().source_bytes_read
+    );
+    commit_prepared_scan(prepared).expect("commit reconcile tail");
+
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, session_id),
+      (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn reconcile_scan_discovers_new_archived_session() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    let archives_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archives_dir).expect("archives dir");
+
+    let initial_id = "67676767-6767-6767-6767-676767676767";
+    write_session_file(
+      &sessions_dir.join("initial.jsonl"),
+      initial_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial full scan");
+
+    let archived_id = "78787878-7878-7878-7878-787878787878";
+    write_session_file(
+      &archives_dir.join("new-archive.jsonl"),
+      archived_id,
+      &[("2026-03-24T01:00:01Z", 200, 40, 50, 250)],
+    );
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Reconcile,
+    )
+    .expect("prepare reconcile scan");
+    assert_eq!(prepared.stats().fully_parsed_files, 1);
+    commit_prepared_scan(prepared).expect("commit reconcile scan");
+
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, archived_id),
+      (200, 40, 50, 250, 1)
+    );
+  }
+
+  #[test]
+  #[ignore = "resource profiling helper; requires database and Codex home copies"]
+  fn profile_real_incremental_scan() {
+    let db_path = std::env::var_os("CODEX_PACER_PROFILE_DB")
+      .map(PathBuf::from)
+      .expect("set CODEX_PACER_PROFILE_DB to a database copy");
+    let codex_home = std::env::var_os("CODEX_PACER_PROFILE_CODEX_HOME")
+      .map(PathBuf::from)
+      .expect("set CODEX_PACER_PROFILE_CODEX_HOME");
+    let started = std::time::Instant::now();
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Incremental,
+    )
+    .expect("prepare incremental scan");
+    eprintln!(
+      "profile incremental elapsed_ms={} visited={} read_bytes={} tail={} full={}",
+      started.elapsed().as_millis(),
+      prepared.stats().files_visited,
+      prepared.stats().source_bytes_read,
+      prepared.stats().tail_parsed_files,
+      prepared.stats().fully_parsed_files
     );
   }
 
