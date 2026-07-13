@@ -2052,6 +2052,27 @@ fn collect_incremental_session_files(
     files.push(session_file);
   }
 
+  let active_root = codex_home.join("sessions");
+  let archived_root = codex_home.join("archived_sessions");
+  for source_path in pending_repair_paths {
+    if collected_paths.contains(source_path) {
+      continue;
+    }
+    let path = PathBuf::from(source_path);
+    let bucket = if path.starts_with(&archived_root) {
+      "archived"
+    } else if path.starts_with(&active_root) {
+      "active"
+    } else {
+      continue;
+    };
+    let Some(session_file) = session_file_from_path(path, bucket) else {
+      continue;
+    };
+    collected_paths.insert(source_path.clone());
+    files.push(session_file);
+  }
+
   for state in import_state.values() {
     if state.source_bucket == "archived" {
       let session_has_pending_repair = state
@@ -6824,7 +6845,9 @@ mod tests {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
     let sessions_dir = codex_home.join("sessions");
+    let archived_dir = codex_home.join("archived_sessions");
     std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archived_dir).expect("archived sessions dir");
 
     let existing_session_id = "77777777-8888-9999-aaaa-bbbbbbbbbbbb";
     write_session_file(
@@ -6832,7 +6855,7 @@ mod tests {
       existing_session_id,
       &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
     );
-    let pending_path = sessions_dir.join("unparseable.jsonl");
+    let pending_path = archived_dir.join("unparseable.jsonl");
     std::fs::write(&pending_path, "not json\n").expect("write bad session");
 
     let db_path = directory.path().join("usage.sqlite");
