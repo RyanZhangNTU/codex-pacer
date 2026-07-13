@@ -6,9 +6,9 @@ The stable public release of **Codex Pacer** is distributed through **GitHub Rel
 
 The stable packaged asset is:
 
-- signed **macOS Apple Silicon DMG**
+- signed and notarized **macOS Apple Silicon DMG**
 
-Windows installer publishing is paused for `v1.1.2`. Windows compatibility remains test-stage and should be checked from source or on a Windows build host before a future Windows installer is published:
+Windows installer publishing is paused for `v1.2.2`. Windows compatibility remains test-stage and should be checked from source or on a Windows build host before a future Windows installer is published:
 
 - unsigned **Windows NSIS setup EXE** for local compatibility testing and early validation only
 
@@ -28,8 +28,8 @@ Keep release messaging aligned with this scope so the project does not over-prom
 The intended public release flow is:
 
 1. Confirm public branding and documentation are ready for release.
-2. Build the signed macOS Apple Silicon DMG.
-3. Run Windows compatibility checks separately when Windows changes are included; do not publish a Windows installer for `v1.1.2`.
+2. Build, notarize, and staple the macOS Apple Silicon DMG.
+3. Run Windows compatibility checks separately when Windows changes are included; do not publish a Windows installer for `v1.2.2`.
 4. Publish the release assets through GitHub Releases.
 5. Attach or include release notes for the tagged version.
 
@@ -39,15 +39,15 @@ Public release preparation is driven by the release scripts below:
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.2
-./scripts/release/publish-github-release.sh 1.1.2
+./scripts/release/build-macos-release.sh 1.2.2
+./scripts/release/publish-github-release.sh 1.2.2
 ```
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.2
+.\scripts\release\build-windows-release.ps1 1.2.2
 ```
 
-Those scripts are the stable local entry points for public release preparation. The macOS build script verifies the version, runs the audit/lint/build/test checks, produces the signed DMG, and writes a checksum beside the artifact. The Windows build script runs on Windows, verifies the version, runs lint/build/Rust tests, produces the NSIS setup EXE, and writes a checksum beside the installer for local compatibility validation. The Windows installer is unsigned and test-stage unless Windows code signing and a stable Windows release policy are separately configured. The publish script verifies the tag and uploads the macOS DMG plus checksum to GitHub Releases; do not upload Windows EXE assets for `v1.1.2`.
+Those scripts are the stable local entry points for public release preparation. The macOS build script verifies the version, runs the audit/lint/build/test checks, produces the signed DMG, submits it for notarization, staples the ticket, and writes a checksum beside the artifact. The Windows build script runs on Windows, verifies the version, runs lint/build/Rust tests, produces the NSIS setup EXE, and writes a checksum beside the installer for local compatibility validation. The Windows installer is unsigned and test-stage unless Windows code signing and a stable Windows release policy are separately configured. The publish script verifies the tag and uploads the macOS DMG plus checksum to GitHub Releases; do not upload Windows EXE assets for `v1.2.2`.
 
 ## Platform isolation rules
 
@@ -76,8 +76,8 @@ Windows-specific tray popup placement, hidden child-process windows, and unsigne
 
 - Create the Git tag for the stable release version.
 - Create the GitHub Release from that tag.
-- Upload the signed Apple Silicon DMG.
-- Do not upload a Windows NSIS setup EXE for `v1.1.2`.
+- Upload the signed, notarized, and stapled Apple Silicon DMG.
+- Do not upload a Windows NSIS setup EXE for `v1.2.2`.
 - Add the matching release notes document for the version being published.
 - Verify the download and install flow after publication.
 
@@ -88,9 +88,9 @@ GitHub Releases is more than a file host in the current workflow. It is the publ
 For public docs and announcements, use this message consistently:
 
 - official distribution channel: GitHub Releases
-- stable release asset: signed macOS Apple Silicon DMG
-- Windows installer: paused for `v1.1.2`
-- current stable line: `v1.1.2`
+- stable release asset: signed and notarized macOS Apple Silicon DMG
+- Windows installer: paused for `v1.2.2`
+- current stable line: `v1.2.2`
 
 ## Related docs
 
@@ -98,4 +98,4 @@ For public docs and announcements, use this message consistently:
 - [Installing on macOS](./installing-on-macos.md)
 - [Installing on Windows](./installing-on-windows.md)
 - [Release runbook](./release-runbook.md)
-- [Release notes for v1.1.2](./release-notes-v1.1.2.md)
+- [Release notes for v1.2.2](./release-notes-v1.2.2.md)

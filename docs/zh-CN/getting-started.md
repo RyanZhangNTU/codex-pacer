@@ -12,12 +12,12 @@
 
 ## 环境要求
 
-- 稳定打包版本面向 Apple Silicon macOS；Windows 兼容性仍处于测试阶段，`v1.1.2` 暂缓发布 Windows 安装包
+- 稳定打包版本面向 Apple Silicon macOS；Windows 兼容性仍处于测试阶段，`v1.2.2` 暂缓发布 Windows 安装包
 - 本地 Codex 数据位于 `~/.codex` 或自定义 `CODEX_HOME`
 
 如果你要从源码开发，还需要：
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - 当前平台所需的 Tauri 构建依赖
 
@@ -25,8 +25,8 @@
 
 官方公开下载方式均通过 GitHub Releases 提供：
 
-- 已签名的 **macOS Apple Silicon DMG**
-- `v1.1.2` 不附加 Windows 安装包；Windows 文档仅用于源码验证
+- 已签名并完成 Apple notarization 的 **macOS Apple Silicon DMG**
+- `v1.2.2` 不附加 Windows 安装包；Windows 文档仅用于源码验证
 
 请先阅读：
 
@@ -106,4 +106,4 @@ npm run tauri build
 - [在 macOS 上安装](./installing-on-macos.md)
 - [在 Windows 上安装](./installing-on-windows.md)
 - [打包与发布](./packaging-and-release.md)
-- [v1.1.2 发布说明](./release-notes-v1.1.2.md)
+- [v1.2.2 发布说明](./release-notes-v1.2.2.md)

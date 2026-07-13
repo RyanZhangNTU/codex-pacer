@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ChartNoAxesCombined, RefreshCw } from 'lucide-react'
 
 import { getMenuBarPopupSnapshot, handleMenuBarPopupAction, resizeMenuBarPopup } from '../app/api'
@@ -13,6 +14,11 @@ import {
   formatTokenCount,
   formatUsd,
 } from '../app/format'
+import {
+  settleRefreshFailure,
+  SurfaceRequestController,
+  type RefreshSurfaceState,
+} from '../app/refreshEvents'
 import type { MenuBarPopupModuleId, MenuBarPopupSnapshot } from '../app/types'
 import { useI18n } from '../app/useI18n'
 import { PopupStatModuleGrid } from '../components/PopupStatModuleGrid'
@@ -46,42 +52,71 @@ export function MenuBarPopup() {
   const panelRef = useRef<HTMLDivElement | null>(null)
   const lastMeasuredHeightRef = useRef<number | null>(null)
   const resizeFrameRef = useRef(0)
-  const [snapshot, setSnapshot] = useState<MenuBarPopupSnapshot | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const requestControllerRef = useRef(new SurfaceRequestController())
+  const [loadState, setLoadState] = useState<RefreshSurfaceState<MenuBarPopupSnapshot>>({
+    data: null,
+    loading: true,
+    refreshing: false,
+    error: null,
+  })
+  const { data: snapshot, loading, refreshing, error } = loadState
 
   const loadSnapshot = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh) {
-      setRefreshing(true)
-    } else {
-      setLoading(true)
-    }
+    const claim = requestControllerRef.current.claim(forceRefresh ? 'manual' : 'passive')
+    if (claim === null) return
+    const manualInFlight = requestControllerRef.current.manualInFlight
+    setLoadState((current) => {
+      return {
+        ...current,
+        loading: forceRefresh ? current.loading : current.data === null,
+        refreshing: manualInFlight,
+      }
+    })
 
+    let failed = false
+    let failure: unknown
+    let nextSnapshot: MenuBarPopupSnapshot | null = null
     try {
-      const nextSnapshot = await getMenuBarPopupSnapshot(forceRefresh)
-      setSnapshot(nextSnapshot)
-      setError(null)
+      nextSnapshot = await getMenuBarPopupSnapshot(forceRefresh)
     } catch (loadError) {
-      setError(String(loadError))
+      failed = true
+      failure = loadError
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      requestControllerRef.current.finish(claim)
+      setLoadState((current) => {
+        let nextState = current
+        if (requestControllerRef.current.isLatest(claim)) {
+          if (failed) {
+            nextState = settleRefreshFailure(current, failure)
+          } else if (nextSnapshot !== null) {
+            nextState = {
+              ...current,
+              data: nextSnapshot,
+              loading: false,
+              error: null,
+            }
+          }
+        }
+        return {
+          ...nextState,
+          refreshing: requestControllerRef.current.manualInFlight,
+        }
+      })
     }
   }, [])
 
   useEffect(() => {
-    void loadSnapshot(false)
-  }, [loadSnapshot])
-
-  useEffect(() => {
-    const intervalSeconds = snapshot?.refreshIntervalSeconds ?? 300
-    const interval = window.setInterval(() => {
+    if (!isTauri()) {
       void loadSnapshot(false)
-    }, Math.max(60000, intervalSeconds * 1000))
-
-    return () => window.clearInterval(interval)
-  }, [loadSnapshot, snapshot?.refreshIntervalSeconds])
+      return
+    }
+    void getCurrentWindow()
+      .isVisible()
+      .then((visible) => {
+        if (visible) void loadSnapshot(false)
+      })
+      .catch(() => {})
+  }, [loadSnapshot])
 
   const schedulePopupResize = useCallback(() => {
     if (!isTauri()) return
@@ -113,8 +148,19 @@ export function MenuBarPopup() {
   useEffect(() => {
     if (!isTauri()) return
 
-    let refreshDispose: (() => void) | undefined
-    let languageDispose: (() => void) | undefined
+    let cancelled = false
+    const disposers = new Set<() => void>()
+    const trackRegistration = (registration: Promise<() => void>) => {
+      void registration
+        .then((dispose) => {
+          if (cancelled) {
+            dispose()
+          } else {
+            disposers.add(dispose)
+          }
+        })
+        .catch(() => {})
+    }
     const resizeObserver = new ResizeObserver(() => {
       schedulePopupResize()
     })
@@ -125,26 +171,36 @@ export function MenuBarPopup() {
     window.addEventListener('resize', schedulePopupResize)
     schedulePopupResize()
 
-    void listen('codex-counter://menu-bar-popup-refresh', () => {
-      void loadSnapshot(false)
-    }).then((unlisten) => {
-      refreshDispose = unlisten
-    })
+    trackRegistration(
+      listen('codex-counter://menu-bar-popup-refresh', () => {
+        if (!cancelled) {
+          void getCurrentWindow()
+            .isVisible()
+            .then((visible) => {
+              if (!cancelled && visible) void loadSnapshot(false)
+            })
+            .catch(() => {})
+        }
+      }),
+    )
 
-    void listen<{ language?: 'zh-CN' | 'en' }>('codex-counter://language-changed', (event) => {
-      if (event.payload?.language) {
-        setLanguage(event.payload.language)
-      }
-    }).then((unlisten) => {
-      languageDispose = unlisten
-    })
+    trackRegistration(
+      listen<{ language?: 'zh-CN' | 'en' }>('codex-counter://language-changed', (event) => {
+        if (!cancelled && event.payload?.language) {
+          setLanguage(event.payload.language)
+        }
+      }),
+    )
 
     return () => {
+      cancelled = true
       window.cancelAnimationFrame(resizeFrameRef.current)
       window.removeEventListener('resize', schedulePopupResize)
       resizeObserver.disconnect()
-      refreshDispose?.()
-      languageDispose?.()
+      for (const dispose of disposers) {
+        dispose()
+      }
+      disposers.clear()
     }
   }, [loadSnapshot, schedulePopupResize, setLanguage])
 
@@ -223,6 +279,7 @@ export function MenuBarPopup() {
               <button
                 aria-label={t.popup.actions.refresh}
                 className="ghost-button popup-icon-button"
+                disabled={refreshing}
                 onClick={() => void loadSnapshot(true)}
                 type="button"
               >

@@ -12,12 +12,12 @@ It is built to help you answer practical questions such as:
 
 ## Requirements
 
-- Apple Silicon macOS for the stable packaged app. Windows compatibility is test-stage and installer publishing is paused for `v1.1.2`.
+- Apple Silicon macOS for the stable packaged app. Windows compatibility is test-stage and installer publishing is paused for `v1.2.2`.
 - Local Codex data under `~/.codex` or a custom `CODEX_HOME`
 
 For development from source, you will also need:
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - Tauri build prerequisites for your platform
 
@@ -25,8 +25,8 @@ For development from source, you will also need:
 
 Official public downloads are published through GitHub Releases:
 
-- signed **macOS Apple Silicon DMG**
-- no Windows installer is attached to `v1.1.2`; use the Windows guide only for source validation
+- signed and notarized **macOS Apple Silicon DMG**
+- no Windows installer is attached to `v1.2.2`; use the Windows guide only for source validation
 
 Start here:
 
@@ -106,4 +106,4 @@ npm run tauri build
 - [Installing on macOS](./installing-on-macos.md)
 - [Installing on Windows](./installing-on-windows.md)
 - [Packaging and release](./packaging-and-release.md)
-- [Release notes for v1.1.2](./release-notes-v1.1.2.md)
+- [Release notes for v1.2.2](./release-notes-v1.2.2.md)

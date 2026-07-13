@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::models::SyncSettings;
 
@@ -60,6 +60,19 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
             "
       ALTER TABLE sync_settings
       ADD COLUMN sync_settings_schema_version INTEGER NOT NULL DEFAULT 1
+      ",
+            [],
+        )?;
+    }
+
+    if !column_names
+        .iter()
+        .any(|name| name == "scan_commit_revision")
+    {
+        conn.execute(
+            "
+      ALTER TABLE sync_settings
+      ADD COLUMN scan_commit_revision INTEGER NOT NULL DEFAULT 0
       ",
             [],
         )?;
@@ -284,6 +297,38 @@ pub(super) fn ensure_sync_settings_schema(conn: &Connection) -> rusqlite::Result
     )?;
     }
 
+    if !column_names
+        .iter()
+        .any(|name| name == "last_full_scan_completed_at")
+    {
+        conn.execute(
+            "ALTER TABLE sync_settings ADD COLUMN last_full_scan_completed_at TEXT",
+            [],
+        )?;
+    }
+
+    if !column_names
+        .iter()
+        .any(|name| name == "last_scan_codex_home")
+    {
+        let transaction = conn.unchecked_transaction()?;
+        transaction.execute(
+            "ALTER TABLE sync_settings ADD COLUMN last_scan_codex_home TEXT",
+            [],
+        )?;
+        transaction.execute(
+            "
+            UPDATE sync_settings
+            SET last_scan_started_at = NULL,
+                last_scan_completed_at = NULL,
+                last_full_scan_completed_at = NULL
+            WHERE singleton_id = 1
+            ",
+            [],
+        )?;
+        transaction.commit()?;
+    }
+
     migrate_sync_settings_defaults_to_minutes(conn)?;
 
     Ok(())
@@ -341,14 +386,17 @@ pub fn get_sync_settings(conn: &Connection) -> rusqlite::Result<SyncSettings> {
            last_scan_started_at, last_scan_completed_at, updated_at
     FROM sync_settings
     WHERE singleton_id = 1
-    ",
+        ",
         [],
         |row| {
+            let auto_scan_interval_minutes = row.get::<_, i64>(2)?.max(1);
             Ok(SyncSettings {
                 codex_home: row.get(0)?,
                 auto_scan_enabled: i64_to_bool(row.get::<_, i64>(1)?),
-                auto_scan_interval_minutes: row.get(2)?,
-                live_quota_refresh_interval_seconds: row.get(3)?,
+                auto_scan_interval_minutes,
+                live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(
+                    auto_scan_interval_minutes,
+                ),
                 hide_dock_icon_when_menu_bar_visible: i64_to_bool(row.get::<_, i64>(4)?),
                 show_menu_bar_logo: i64_to_bool(row.get::<_, i64>(5)?),
                 show_menu_bar_daily_api_value: i64_to_bool(row.get::<_, i64>(6)?),
@@ -378,8 +426,19 @@ pub fn save_sync_settings(
     conn: &Connection,
     settings: &SyncSettings,
 ) -> rusqlite::Result<SyncSettings> {
+    let transaction = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let current_codex_home = transaction
+        .query_row(
+            "SELECT codex_home FROM sync_settings WHERE singleton_id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    let codex_home_changed = current_codex_home.as_deref() != settings.codex_home.as_deref();
     let updated_at = now_utc_string();
-    conn.execute(
+    let auto_scan_interval_minutes = settings.auto_scan_interval_minutes.max(1);
+    transaction.execute(
     "
     INSERT INTO sync_settings (
       singleton_id, codex_home, auto_scan_enabled, auto_scan_interval_minutes,
@@ -396,7 +455,7 @@ pub fn save_sync_settings(
       menu_bar_popup_show_reset_timeline, menu_bar_popup_show_actions,
       last_scan_started_at, last_scan_completed_at, updated_at
     )
-    VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+    VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, NULL, NULL, ?22)
     ON CONFLICT(singleton_id) DO UPDATE SET
       codex_home = excluded.codex_home,
       auto_scan_enabled = excluded.auto_scan_enabled,
@@ -419,15 +478,13 @@ pub fn save_sync_settings(
       menu_bar_popup_modules = excluded.menu_bar_popup_modules,
       menu_bar_popup_show_reset_timeline = excluded.menu_bar_popup_show_reset_timeline,
       menu_bar_popup_show_actions = excluded.menu_bar_popup_show_actions,
-      last_scan_started_at = excluded.last_scan_started_at,
-      last_scan_completed_at = excluded.last_scan_completed_at,
       updated_at = excluded.updated_at
     ",
     params![
       settings.codex_home,
       bool_to_i64(settings.auto_scan_enabled),
-      settings.auto_scan_interval_minutes.max(1),
-      settings.live_quota_refresh_interval_seconds.clamp(60, 3600),
+      auto_scan_interval_minutes,
+      unified_refresh_interval_seconds(auto_scan_interval_minutes),
       bool_to_i64(settings.hide_dock_icon_when_menu_bar_visible),
       bool_to_i64(settings.show_menu_bar_logo),
       bool_to_i64(settings.show_menu_bar_daily_api_value),
@@ -445,31 +502,195 @@ pub fn save_sync_settings(
       serialize_menu_bar_popup_modules(&settings.menu_bar_popup_modules),
       bool_to_i64(settings.menu_bar_popup_show_reset_timeline),
       bool_to_i64(settings.menu_bar_popup_show_actions),
-      settings.last_scan_started_at,
-      settings.last_scan_completed_at,
       updated_at,
     ],
     )?;
-    get_sync_settings(conn)
+    if codex_home_changed {
+        clear_scan_timestamps(&transaction)?;
+    }
+    let saved = get_sync_settings(&transaction)?;
+    transaction.commit()?;
+    Ok(saved)
 }
 
-pub fn set_last_scan_started(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
+fn clear_scan_timestamps(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
         "
     UPDATE sync_settings
-    SET last_scan_started_at = ?1, updated_at = ?1
+    SET last_scan_started_at = NULL,
+        last_scan_completed_at = NULL,
+        last_full_scan_completed_at = NULL,
+        last_scan_codex_home = NULL,
+        scan_commit_revision = scan_commit_revision + 1
     WHERE singleton_id = 1
     ",
-        params![timestamp],
+        [],
     )?;
     Ok(())
 }
 
-pub fn set_last_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanFreshnessStart {
+    pub recorded: bool,
+    pub source_changed: bool,
+    pub full_scan_required: bool,
+}
+
+#[cfg(test)]
+pub fn set_last_scan_started_for_source(
+    conn: &Connection,
+    timestamp: &str,
+    codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
+) -> rusqlite::Result<ScanFreshnessStart> {
+    let transaction = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let result = set_last_scan_started_for_source_in_transaction(
+        &transaction,
+        timestamp,
+        codex_home_selector,
+        resolved_codex_home,
+    )?;
+    transaction.commit()?;
+    Ok(result)
+}
+
+pub(crate) fn set_last_scan_started_for_source_in_transaction(
+    conn: &Connection,
+    timestamp: &str,
+    codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
+) -> rusqlite::Result<ScanFreshnessStart> {
+    let preview =
+        preview_scan_freshness_for_source(conn, codex_home_selector, resolved_codex_home)?;
+    if !preview.recorded {
+        return Ok(preview);
+    }
+
+    let updated = conn.execute(
+        "
+        UPDATE sync_settings
+        SET last_scan_started_at = ?1,
+            last_scan_completed_at = CASE
+              WHEN last_scan_codex_home = ?3 THEN last_scan_completed_at
+              ELSE NULL
+            END,
+            last_full_scan_completed_at = CASE
+              WHEN last_scan_codex_home = ?3 THEN last_full_scan_completed_at
+              ELSE NULL
+            END,
+            last_scan_codex_home = ?3,
+            updated_at = ?1
+        WHERE singleton_id = 1
+          AND (
+            (codex_home IS NULL AND ?2 IS NULL)
+            OR codex_home = ?2
+          )
+        ",
+        params![timestamp, codex_home_selector, resolved_codex_home],
+    )?;
+    Ok(ScanFreshnessStart {
+        recorded: updated == 1,
+        source_changed: updated == 1 && preview.source_changed,
+        full_scan_required: updated == 1 && preview.full_scan_required,
+    })
+}
+
+pub(crate) fn preview_scan_freshness_for_source(
+    conn: &Connection,
+    codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
+) -> rusqlite::Result<ScanFreshnessStart> {
+    let previous_freshness = conn
+        .query_row(
+            "
+            SELECT last_scan_codex_home, last_full_scan_completed_at
+            FROM sync_settings
+            WHERE singleton_id = 1
+              AND (
+                (codex_home IS NULL AND ?1 IS NULL)
+                OR codex_home = ?1
+              )
+            ",
+            params![codex_home_selector],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((previous_source, last_full_scan_completed_at)) = previous_freshness else {
+        return Ok(ScanFreshnessStart::default());
+    };
+    let source_changed = previous_source.as_deref() != Some(resolved_codex_home);
+    let full_scan_required = source_changed || last_full_scan_completed_at.is_none();
+    Ok(ScanFreshnessStart {
+        recorded: true,
+        source_changed,
+        full_scan_required,
+    })
+}
+
+pub fn set_scan_completed_for_source(
+    conn: &Connection,
+    timestamp: &str,
+    codex_home_selector: Option<&str>,
+    resolved_codex_home: &str,
+    full_scan_completed: bool,
+    full_scan_incomplete: bool,
+) -> rusqlite::Result<bool> {
+    debug_assert!(!(full_scan_completed && full_scan_incomplete));
+    let updated = conn.execute(
+        "
+        UPDATE sync_settings
+        SET last_scan_completed_at = ?1,
+            last_full_scan_completed_at = CASE
+              WHEN ?4 != 0 THEN ?1
+              WHEN ?5 != 0 THEN NULL
+              ELSE last_full_scan_completed_at
+            END,
+            updated_at = ?1
+        WHERE singleton_id = 1
+          AND (
+            (codex_home IS NULL AND ?2 IS NULL)
+            OR codex_home = ?2
+          )
+          AND last_scan_codex_home = ?3
+        ",
+        params![
+            timestamp,
+            codex_home_selector,
+            resolved_codex_home,
+            bool_to_i64(full_scan_completed),
+            bool_to_i64(full_scan_incomplete)
+        ],
+    )?;
+    Ok(updated == 1)
+}
+
+fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
+    auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
+}
+
+pub fn get_last_full_scan_completed(conn: &Connection) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "
+    SELECT last_full_scan_completed_at
+    FROM sync_settings
+    WHERE singleton_id = 1
+    ",
+        [],
+        |row| row.get(0),
+    )
+}
+
+#[cfg(test)]
+pub fn set_last_full_scan_completed(conn: &Connection, timestamp: &str) -> rusqlite::Result<()> {
     conn.execute(
         "
     UPDATE sync_settings
-    SET last_scan_completed_at = ?1, updated_at = ?1
+    SET last_full_scan_completed_at = ?1, updated_at = ?1
     WHERE singleton_id = 1
     ",
         params![timestamp],

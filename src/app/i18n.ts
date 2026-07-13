@@ -59,6 +59,8 @@ export type TranslationSet = {
     failedToLoad: (bucketLabel: string, error: string) => string
     pricingRefreshed: string
     settingsSaved: string
+    settingsSaveFailed: (error: string) => string
+    settingsStillLoading: string
     waitingLiveQuota: string
   }
   buckets: Record<OverviewBucket, string>
@@ -94,6 +96,8 @@ export type TranslationSet = {
     title: string
     shown: (count: number) => string
     empty: string
+    loadMore: string
+    loadingMore: string
   }
   detail: {
     eyebrow: string
@@ -103,6 +107,8 @@ export type TranslationSet = {
     turnTimelineEyebrow: string
     turnUsage: string
     latestTurns: (count: number) => string
+    loadEarlierTurns: string
+    loadingEarlierTurns: string
     emptyTurns: string
     emptySelection: string
     untitledTurn: string
@@ -184,8 +190,6 @@ export type TranslationSet = {
         autoScanEnabled: string
         autoScanEnabledNote: string
         autoScanIntervalMinutes: string
-        liveQuotaRefreshIntervalSeconds: string
-        liveQuotaRefreshNote: string
       }
       menuBar: {
         eyebrow: string
@@ -298,6 +302,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       failedToLoad: (bucketLabel, error) => `加载${bucketLabel}失败：${error}`,
       pricingRefreshed: '已按 OpenAI 标准短上下文定价刷新目录。',
       settingsSaved: '设置已保存。',
+      settingsSaveFailed: (error) => `设置未保存：${error}`,
+      settingsStillLoading: '设置仍在加载，请稍后重试。',
       waitingLiveQuota: '等待 live quota',
     },
     buckets: {
@@ -343,6 +349,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       title: '根会话',
       shown: (count) => `显示 ${count} 条`,
       empty: '当前筛选条件下没有匹配对话。',
+      loadMore: '加载更多',
+      loadingMore: '正在加载…',
     },
     detail: {
       eyebrow: '对话详情',
@@ -351,6 +359,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       conversationCostBreakdown: '对话成本结构',
       turnTimelineEyebrow: 'Turn 时间线',
       turnUsage: 'Turn 用量',
+      loadEarlierTurns: '加载更早记录',
+      loadingEarlierTurns: '正在加载…',
       latestTurns: (count) => `最近 ${count} 个 turn`,
       emptyTurns: '该对话暂无 turn 级来源数据。',
       emptySelection: '选择一个对话以查看详细账本。',
@@ -427,14 +437,12 @@ const translations: Record<AppLanguage, TranslationSet> = {
         sync: {
           eyebrow: '同步',
           title: '扫描与数据源',
-          description: '控制 Codex 数据目录、自动扫描频率，以及 live quota 的刷新周期。',
+          description: '控制 Codex 数据目录，以及所有后台自动刷新的统一频率。',
           codexHome: 'Codex home',
           codexHomePlaceholder: '默认使用 CODEX_HOME 或 ~/.codex',
           autoScanEnabled: '启用自动扫描',
           autoScanEnabledNote: '关闭后仅保留手动扫描，不再按周期自动刷新数据。',
-          autoScanIntervalMinutes: '自动扫描间隔（分钟）',
-          liveQuotaRefreshIntervalSeconds: 'Live quota 刷新间隔（分钟）',
-          liveQuotaRefreshNote: '独立控制 `5小时 / 7天` live quota 的主动刷新与历史持久化频率。',
+          autoScanIntervalMinutes: '后台自动刷新间隔（分钟）',
         },
         menuBar: {
           eyebrow: '托盘',
@@ -540,6 +548,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       failedToLoad: (bucketLabel, error) => `Failed to load ${bucketLabel}: ${error}`,
       pricingRefreshed: 'Pricing catalog refreshed from OpenAI Standard short-context pricing.',
       settingsSaved: 'Settings saved.',
+      settingsSaveFailed: (error) => `Settings were not saved: ${error}`,
+      settingsStillLoading: 'Settings are still loading. Try again in a moment.',
       waitingLiveQuota: 'Waiting for live quota',
     },
     buckets: {
@@ -585,6 +595,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       title: 'Root sessions',
       shown: (count) => `${count} shown`,
       empty: 'No conversations matched the current filter.',
+      loadMore: 'Load more',
+      loadingMore: 'Loading…',
     },
     detail: {
       eyebrow: 'Conversation detail',
@@ -594,6 +606,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       turnTimelineEyebrow: 'Turn timeline',
       turnUsage: 'Turn usage',
       latestTurns: (count) => `Latest ${count} turns`,
+      loadEarlierTurns: 'Load earlier turns',
+      loadingEarlierTurns: 'Loading…',
       emptyTurns: 'No turn-level source data is available for this conversation.',
       emptySelection: 'Select a conversation to inspect its detailed ledger.',
       untitledTurn: 'Untitled turn',
@@ -669,14 +683,12 @@ const translations: Record<AppLanguage, TranslationSet> = {
         sync: {
           eyebrow: 'Sync',
           title: 'Scan and data sources',
-          description: 'Control the Codex data directory, automatic scan cadence, and live quota refresh interval.',
+          description: 'Control the Codex data directory and the unified cadence for all background refreshes.',
           codexHome: 'Codex home',
           codexHomePlaceholder: 'Defaults to CODEX_HOME or ~/.codex',
           autoScanEnabled: 'Auto scan enabled',
           autoScanEnabledNote: 'When disabled, only manual scans are kept and periodic refresh stops.',
-          autoScanIntervalMinutes: 'Auto scan interval (minutes)',
-          liveQuotaRefreshIntervalSeconds: 'Live quota refresh interval (minutes)',
-          liveQuotaRefreshNote: 'Separately controls active refresh and history persistence for `5h / 7d` live quota snapshots.',
+          autoScanIntervalMinutes: 'Background refresh interval (minutes)',
         },
         menuBar: {
           eyebrow: 'Tray',

@@ -1,6 +1,15 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   BadgeDollarSign,
   ChartNoAxesCombined,
@@ -15,13 +24,25 @@ import {
 import {
   getScanInProgress,
   getConversationDetail,
-  getLiveRateLimits,
+  listConversations,
   loadDashboard,
   refreshPricing,
   scanCodexUsage,
   updateSubscriptionProfile,
   updateSyncSettings,
 } from './app/api'
+import {
+  loadConversationDetailForGeneration,
+  runScanWithOverlapRetry,
+  shouldKeepConversationDetail,
+} from './app/dataFreshness'
+import {
+  selectionAfterDashboardReload,
+  shouldLoadDashboardAfterManualRefresh,
+  shouldLoadDashboardAfterSettingsSave,
+  SurfaceRevisionGate,
+} from './app/refreshEvents'
+import { saveSettingsWithCodexHomeRollback } from './app/settingsSave'
 import {
   formatCompactDateTime,
   formatDateTime,
@@ -45,6 +66,7 @@ import type {
   ModelShare,
   OverviewBucket,
   OverviewResponse,
+  RefreshCompletedEvent,
   ShareDimension,
   ShareMode,
   ShareSlice,
@@ -76,7 +98,7 @@ const BUCKETS: OverviewBucket[] = [
 function App() {
   const { language, setLanguage, t } = useI18n()
   const [view, setView] = useState<AppView>('overview')
-  const [bucket, setBucket] = useState<OverviewBucket>('subscription_month')
+  const [bucket, setBucket] = useState<OverviewBucket>('seven_day')
   const [liveWindowOffset, setLiveWindowOffset] = useState(0)
   const [anchor, setAnchor] = useState(todayInputValue())
   const [customStart, setCustomStart] = useState(todayInputValue())
@@ -85,8 +107,12 @@ function App() {
   const [shareDimension, setShareDimension] = useState<ShareDimension>('model')
   const [overview, setOverview] = useState<OverviewResponse | null>(null)
   const [conversations, setConversations] = useState<ConversationListItem[]>([])
+  const [conversationCursor, setConversationCursor] = useState<string | null>(null)
+  const [hasMoreConversations, setHasMoreConversations] = useState(false)
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false)
   const [selectedRootSessionId, setSelectedRootSessionId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
+  const [loadingEarlierTurns, setLoadingEarlierTurns] = useState(false)
   const [syncSettings, setSyncSettings] = useState<SyncSettings | null>(null)
   const [subscriptionProfile, setSubscriptionProfile] = useState<SubscriptionProfile | null>(null)
   const [liveRateLimits, setLiveRateLimits] = useState<LiveRateLimitSnapshot | null>(null)
@@ -98,28 +124,33 @@ function App() {
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const syncSettingsRef = useRef<SyncSettings | null>(null)
-  const loadShellRef = useRef<(requestScan?: boolean) => Promise<void>>(async () => {})
+  const loadShellRef = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
   const lastRequestedQueryKeyRef = useRef<string | null>(null)
   const latestLoadRequestIdRef = useRef(0)
+  const loadedQueryKeyRef = useRef<string | null>(null)
   const detailCacheRef = useRef(new Map<string, ConversationDetail>())
   const latestDetailRequestIdRef = useRef(0)
+  const refreshRevisionGateRef = useRef(new SurfaceRevisionGate())
+  const refreshCompletionListenerReadyRef = useRef<Promise<boolean>>(Promise.resolve(false))
+  const refreshReloadTimerRef = useRef<number | null>(null)
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
 
-  const waitForScanToSettle = useCallback(async () => {
+  const waitForScanToSettle = useCallback(async (timeoutMs = 15000) => {
     const startedAt = Date.now()
-    while (Date.now() - startedAt < 15000) {
+    while (Date.now() - startedAt < timeoutMs) {
       if (!(await getScanInProgress())) {
-        return
+        return true
       }
       await new Promise((resolve) => window.setTimeout(resolve, 250))
     }
+    return false
   }, [])
 
   useEffect(() => {
     syncSettingsRef.current = syncSettings
   }, [syncSettings])
 
-  const loadShell = useCallback(async (requestScan = false) => {
+  const loadShell = useCallback(async (quiet = false) => {
     const requestId = latestLoadRequestIdRef.current + 1
     latestLoadRequestIdRef.current = requestId
     const requestBucket = bucket
@@ -136,25 +167,14 @@ function App() {
       requestSearch,
       requestLiveWindowOffset,
     )
-    setIsBusy(true)
-    if ((requestBucket === 'five_hour' || requestBucket === 'seven_day') && requestLiveWindowOffset === 0) {
+    if (
+      !quiet &&
+      (requestBucket === 'five_hour' || requestBucket === 'seven_day') &&
+      requestLiveWindowOffset === 0
+    ) {
       setStatusMessage(t.status.fetchingLiveQuotaWindow)
     }
     try {
-      if (requestScan) {
-        try {
-          const scan = await scanCodexUsage(syncSettingsRef.current?.codexHome ?? null)
-          setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
-        } catch (error) {
-          const message = String(error)
-          if (!message.includes('already running')) {
-            throw error
-          }
-          setStatusMessage(t.status.backgroundScanAlreadyRunning)
-          await waitForScanToSettle()
-        }
-      }
-
       const snapshot = await loadDashboard(
         requestBucket,
         requestAnchor,
@@ -162,58 +182,107 @@ function App() {
         requestLiveWindowOffset,
         requestCustomStart,
         requestCustomEnd,
+        view === 'conversations',
       )
       if (requestId !== latestLoadRequestIdRef.current) {
         return
       }
+      const resolvedQueryKey = buildQueryKey(
+        requestBucket,
+        requestAnchor,
+        requestCustomStart,
+        requestCustomEnd,
+        requestSearch,
+        snapshot.overview.liveWindowOffset,
+      )
+      const previousQueryKey = loadedQueryKeyRef.current
 
       startTransition(() => {
-        const nextDetailCache = new Map<string, ConversationDetail>()
-        for (const conversation of snapshot.conversations) {
-          const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
-          if (cachedDetail && cachedDetail.updatedAt === conversation.updatedAt) {
-            nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+        if (view === 'conversations') {
+          const nextDetailCache = new Map<string, ConversationDetail>()
+          for (const conversation of snapshot.conversationPage.items) {
+            const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
+            if (
+              cachedDetail &&
+              shouldKeepConversationDetail(
+                cachedDetail,
+                conversation,
+                snapshot.subscriptionProfile.monthlyPrice,
+              )
+            ) {
+              nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+            }
           }
-        }
 
+          latestDetailRequestIdRef.current += 1
+          detailCacheRef.current = nextDetailCache
+          setDetail((current) =>
+            current && nextDetailCache.get(current.rootSessionId) === current ? current : null,
+          )
+        }
         setOverview(snapshot.overview)
-        setConversations(snapshot.conversations)
+        if (view === 'conversations') {
+          setConversations(snapshot.conversationPage.items)
+          setConversationCursor(snapshot.conversationPage.nextCursor)
+          setHasMoreConversations(snapshot.conversationPage.hasMore)
+        }
         setSyncSettings(snapshot.syncSettings)
         setSubscriptionProfile(snapshot.subscriptionProfile)
         setLiveRateLimits(snapshot.liveRateLimits)
-        detailCacheRef.current = nextDetailCache
         setDashboardRevision((current) => current + 1)
         setLiveWindowOffset(snapshot.overview.liveWindowOffset)
-        setLoadedQueryKey(
-          buildQueryKey(
-            requestBucket,
-            requestAnchor,
-            requestCustomStart,
-            requestCustomEnd,
-            requestSearch,
-            snapshot.overview.liveWindowOffset,
-          ),
-        )
+        loadedQueryKeyRef.current = resolvedQueryKey
+        setLoadedQueryKey(resolvedQueryKey)
         setSelectedRootSessionId((current) =>
-          current && snapshot.conversations.some((item) => item.rootSessionId === current)
-            ? current
-            : snapshot.conversations[0]?.rootSessionId ?? null,
+          selectionAfterDashboardReload(current, previousQueryKey, resolvedQueryKey),
         )
       })
     } catch (error) {
       if (requestId !== latestLoadRequestIdRef.current) {
         return
       }
-      startTransition(() => {
-        setLoadedQueryKey(null)
-      })
-      setStatusMessage(t.status.failedToLoad(t.buckets[requestBucket], String(error)))
-    } finally {
-      if (requestId === latestLoadRequestIdRef.current) {
-        setIsBusy(false)
+      if (!quiet) {
+        setStatusMessage(t.status.failedToLoad(t.buckets[requestBucket], String(error)))
       }
     }
-  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t, waitForScanToSettle])
+  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t, view])
+
+  const loadMoreConversations = useCallback(async () => {
+    if (!conversationCursor || !hasMoreConversations || loadingMoreConversations) return
+    const requestId = latestLoadRequestIdRef.current
+    setLoadingMoreConversations(true)
+    try {
+      const page = await listConversations({
+        bucket,
+        anchor: bucketUsesAnchor(bucket) ? anchor : null,
+        customStart: bucket === 'custom' ? customStart : null,
+        customEnd: bucket === 'custom' ? customEnd : null,
+        search: deferredSearch || null,
+        liveWindowOffset: bucket === 'five_hour' || bucket === 'seven_day' ? liveWindowOffset : 0,
+        cursor: conversationCursor,
+        limit: 50,
+      })
+      if (requestId !== latestLoadRequestIdRef.current) return
+      setConversations((current) => {
+        const seen = new Set(current.map((item) => item.rootSessionId))
+        return [...current, ...page.items.filter((item) => !seen.has(item.rootSessionId))]
+      })
+      setConversationCursor(page.nextCursor)
+      setHasMoreConversations(page.hasMore)
+    } finally {
+      setLoadingMoreConversations(false)
+    }
+  }, [
+    anchor,
+    bucket,
+    conversationCursor,
+    customEnd,
+    customStart,
+    deferredSearch,
+    hasMoreConversations,
+    liveWindowOffset,
+    loadingMoreConversations,
+  ])
 
   const currentQueryKey = buildQueryKey(
     bucket,
@@ -224,7 +293,7 @@ function App() {
     bucket === 'five_hour' || bucket === 'seven_day' ? liveWindowOffset : 0,
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     loadShellRef.current = loadShell
   }, [loadShell])
 
@@ -251,14 +320,24 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return
 
+    let cancelled = false
     let dispose: (() => void) | undefined
     void listen('codex-counter://open-settings', () => {
-      setSettingsOpen(true)
-    }).then((unlisten) => {
-      dispose = unlisten
+      if (!cancelled) {
+        setSettingsOpen(true)
+      }
     })
+      .then((unlisten) => {
+        if (cancelled) {
+          unlisten()
+        } else {
+          dispose = unlisten
+        }
+      })
+      .catch(() => {})
 
     return () => {
+      cancelled = true
       dispose?.()
     }
   }, [])
@@ -267,6 +346,105 @@ function App() {
     if (!isTauri()) return
     void emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_LANGUAGE_EVENT, { language }).catch(() => {})
   }, [language])
+
+  useLayoutEffect(() => {
+    if (!isTauri()) return
+
+    let cancelled = false
+    const disposers = new Set<() => void>()
+    const appWindow = getCurrentWindow()
+    const trackRegistration = (registration: Promise<() => void>) => {
+      void registration
+        .then((dispose) => {
+          if (cancelled) {
+            dispose()
+          } else {
+            disposers.add(dispose)
+          }
+        })
+        .catch(() => {})
+    }
+    const reloadDashboard = () => {
+      if (refreshReloadTimerRef.current !== null) {
+        window.clearTimeout(refreshReloadTimerRef.current)
+      }
+      refreshReloadTimerRef.current = window.setTimeout(() => {
+        refreshReloadTimerRef.current = null
+        void loadShellRef.current(true)
+      }, 200)
+    }
+    const isDashboardActive = async () => {
+      try {
+        const [visible, focused] = await Promise.all([appWindow.isVisible(), appWindow.isFocused()])
+        return visible && focused
+      } catch {
+        return false
+      }
+    }
+    const handleCompletion = async (event: RefreshCompletedEvent) => {
+      const active = await isDashboardActive()
+      if (cancelled) return
+      if (refreshRevisionGateRef.current.accept(event, active) === 'reload') {
+        reloadDashboard()
+      }
+    }
+    const handleVisible = async () => {
+      const active = await isDashboardActive()
+      if (cancelled || !active) return
+      if (refreshRevisionGateRef.current.onVisible() === 'reload') {
+        reloadDashboard()
+      }
+    }
+    const handleDocumentVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void handleVisible()
+      }
+    }
+    const handleWindowFocus = () => {
+      void handleVisible()
+    }
+
+    const completionRegistration = listen<RefreshCompletedEvent>(
+      'codex-counter://refresh-completed',
+      (event) => {
+        void handleCompletion(event.payload)
+      },
+    )
+    refreshCompletionListenerReadyRef.current = completionRegistration
+      .then((dispose) => {
+        if (cancelled) {
+          dispose()
+          return false
+        }
+        disposers.add(dispose)
+        return true
+      })
+      .catch(() => false)
+    trackRegistration(
+      appWindow.onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          void handleVisible()
+        }
+      }),
+    )
+    document.addEventListener('visibilitychange', handleDocumentVisibility)
+    window.addEventListener('focus', handleWindowFocus)
+
+    return () => {
+      cancelled = true
+      refreshCompletionListenerReadyRef.current = Promise.resolve(false)
+      if (refreshReloadTimerRef.current !== null) {
+        window.clearTimeout(refreshReloadTimerRef.current)
+        refreshReloadTimerRef.current = null
+      }
+      document.removeEventListener('visibilitychange', handleDocumentVisibility)
+      window.removeEventListener('focus', handleWindowFocus)
+      for (const dispose of disposers) {
+        dispose()
+      }
+      disposers.clear()
+    }
+  }, [])
 
   const loadDetail = useCallback(async (rootSessionId: string | null) => {
     const requestId = latestDetailRequestIdRef.current + 1
@@ -284,8 +462,12 @@ function App() {
 
     setDetail(null)
     try {
-      const nextDetail = await getConversationDetail(rootSessionId)
-      if (requestId !== latestDetailRequestIdRef.current) {
+      const nextDetail = await loadConversationDetailForGeneration(
+        () => getConversationDetail(rootSessionId),
+        requestId,
+        () => latestDetailRequestIdRef.current,
+      )
+      if (!nextDetail) {
         return
       }
       detailCacheRef.current.set(rootSessionId, nextDetail)
@@ -300,17 +482,37 @@ function App() {
     }
   }, [])
 
+  const loadEarlierTurns = useCallback(async () => {
+    if (!detail?.hasMoreTurns || detail.nextTurnCursor === null || loadingEarlierTurns) return
+    const requestId = latestDetailRequestIdRef.current
+    const rootSessionId = detail.rootSessionId
+    setLoadingEarlierTurns(true)
+    try {
+      const page = await getConversationDetail(rootSessionId, detail.nextTurnCursor)
+      if (requestId !== latestDetailRequestIdRef.current) return
+      setDetail((current) => {
+        if (!current || current.rootSessionId !== rootSessionId) return current
+        const merged = {
+          ...current,
+          turns: [...page.turns, ...current.turns],
+          nextTurnCursor: page.nextTurnCursor,
+          hasMoreTurns: page.hasMoreTurns,
+        }
+        detailCacheRef.current.set(rootSessionId, merged)
+        return merged
+      })
+    } finally {
+      setLoadingEarlierTurns(false)
+    }
+  }, [detail, loadingEarlierTurns])
+
   useEffect(() => {
     let cancelled = false
-
-    const bootstrap = async () => {
-      await loadShellRef.current(true)
+    void loadShellRef.current(false).then(() => {
       if (!cancelled) {
         setHasBootstrapped(true)
       }
-    }
-
-    void bootstrap()
+    })
 
     return () => {
       cancelled = true
@@ -324,46 +526,34 @@ function App() {
   }, [currentQueryKey, hasBootstrapped, loadShell])
 
   useEffect(() => {
+    if (!hasBootstrapped || view !== 'conversations') return
+    void loadShellRef.current(false)
+  }, [hasBootstrapped, view])
+
+  useEffect(() => {
     if (!loadedQueryKey && selectedRootSessionId) return
     void loadDetail(selectedRootSessionId)
   }, [dashboardRevision, loadDetail, loadedQueryKey, selectedRootSessionId])
 
-  useEffect(() => {
-    if (!hasBootstrapped) return
-    const refreshMs =
-      bucket === 'five_hour' || bucket === 'seven_day'
-        ? (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 300) * 1000
-        : 60000
-    const interval = window.setInterval(() => {
-      void loadShell(false)
-    }, Math.max(5000, refreshMs))
-    return () => window.clearInterval(interval)
-  }, [bucket, hasBootstrapped, loadShell, syncSettings?.liveQuotaRefreshIntervalSeconds])
-
-  useEffect(() => {
-    if (!settingsOpen) return
-    let cancelled = false
-    const refresh = () =>
-      void getLiveRateLimits()
-        .then((snapshot) => {
-          if (!cancelled) {
-            setLiveRateLimits(snapshot)
-          }
-        })
-        .catch(() => {})
-    refresh()
-    const interval = window.setInterval(
-      refresh,
-      Math.max(60000, (syncSettings?.liveQuotaRefreshIntervalSeconds ?? 300) * 1000),
-    )
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [settingsOpen, syncSettings?.liveQuotaRefreshIntervalSeconds])
-
   async function handleRescan() {
-    await loadShell(true)
+    setIsBusy(true)
+    try {
+      const listenerReady = await refreshCompletionListenerReadyRef.current
+      const scan = await runScanWithOverlapRetry(
+        () => scanCodexUsage(syncSettingsRef.current?.codexHome ?? null),
+        (error) => String(error).includes('already running'),
+        waitForScanToSettle,
+        () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
+      )
+      if (shouldLoadDashboardAfterManualRefresh(listenerReady)) {
+        await loadShellRef.current(true)
+      }
+      setStatusMessage(t.status.scannedFiles(scan.scannedFiles, scan.updatedSessions))
+    } catch (error) {
+      setStatusMessage(String(error))
+    } finally {
+      setIsBusy(false)
+    }
   }
 
   async function handleRefreshPricing() {
@@ -383,13 +573,34 @@ function App() {
     syncSettings: SyncSettings
     subscriptionProfile: SubscriptionProfile
   }) {
-    const [nextSyncSettings, nextSubscriptionProfile] = await Promise.all([
-      updateSyncSettings(payload.syncSettings),
-      updateSubscriptionProfile(payload.subscriptionProfile),
-    ])
-    setSyncSettings(nextSyncSettings)
-    setSubscriptionProfile(nextSubscriptionProfile)
-    await loadShell(false)
+    const previousSyncSettings = syncSettingsRef.current
+    const previousSubscriptionProfile = subscriptionProfile
+    if (!previousSyncSettings || !previousSubscriptionProfile) {
+      throw new Error(t.status.settingsStillLoading)
+    }
+
+    const listenerReady = await refreshCompletionListenerReadyRef.current
+    const saved = await saveSettingsWithCodexHomeRollback({
+      previousSyncSettings,
+      nextSyncSettings: payload.syncSettings,
+      previousSubscriptionProfile,
+      nextSubscriptionProfile: payload.subscriptionProfile,
+      updateSyncSettings,
+      updateSubscriptionProfile,
+      scanCodexHome: (codexHome) =>
+        runScanWithOverlapRetry(
+          () => scanCodexUsage(codexHome),
+          (error) => String(error).includes('already running'),
+          waitForScanToSettle,
+          () => setStatusMessage(t.status.backgroundScanAlreadyRunning),
+        ),
+    })
+    syncSettingsRef.current = saved.syncSettings
+    setSyncSettings(saved.syncSettings)
+    setSubscriptionProfile(saved.subscriptionProfile)
+    if (shouldLoadDashboardAfterSettingsSave(saved.codexHomeChanged, listenerReady)) {
+      await loadShellRef.current(true)
+    }
     if (isTauri()) {
       await emitTo(MENU_BAR_POPUP_WINDOW_LABEL, MENU_BAR_POPUP_REFRESH_EVENT, {}).catch(() => {})
     }
@@ -748,8 +959,9 @@ function App() {
                   {activeConversations.length === 0 ? (
                     <div className="empty-state">{t.conversationList.empty}</div>
                   ) : (
-                    activeConversations.map((conversation) => (
-                      <button
+                    <>
+                      {activeConversations.map((conversation) => (
+                        <button
                         key={conversation.rootSessionId}
                         className={`conversation-card ${
                           conversation.rootSessionId === selectedRootSessionId ? 'active' : ''
@@ -781,8 +993,21 @@ function App() {
                           <span>{formatShortDate(conversation.updatedAt, language)}</span>
                           <span>{formatPercent(conversation.subscriptionShare, language)}</span>
                         </div>
-                      </button>
-                    ))
+                        </button>
+                      ))}
+                      {hasMoreConversations ? (
+                        <button
+                          className="ghost-button"
+                          disabled={loadingMoreConversations}
+                          onClick={() => void loadMoreConversations()}
+                          type="button"
+                        >
+                          {loadingMoreConversations
+                            ? t.conversationList.loadingMore
+                            : t.conversationList.loadMore}
+                        </button>
+                      ) : null}
+                    </>
                   )}
                 </div>
               </aside>
@@ -844,14 +1069,26 @@ function App() {
                           <h3>{t.detail.turnUsage}</h3>
                         </div>
                         <p className="chart-note">
-                          {t.detail.latestTurns(Math.min(activeDetail.turns.length, 40))}
+                          {t.detail.latestTurns(activeDetail.turns.length)}
                         </p>
                       </div>
+                      {activeDetail.hasMoreTurns ? (
+                        <button
+                          className="ghost-button"
+                          disabled={loadingEarlierTurns}
+                          onClick={() => void loadEarlierTurns()}
+                          type="button"
+                        >
+                          {loadingEarlierTurns
+                            ? t.detail.loadingEarlierTurns
+                            : t.detail.loadEarlierTurns}
+                        </button>
+                      ) : null}
                       <div className="timeline-grid">
                         {activeDetail.turns.length === 0 ? (
                           <div className="empty-state">{t.detail.emptyTurns}</div>
                         ) : (
-                          activeDetail.turns.slice(-40).reverse().map((turn) => {
+                          [...activeDetail.turns].reverse().map((turn) => {
                             const session = sessionSummariesById.get(turn.sessionId)
                             const modelSummary = formatModelSummary(turn.modelIds, t)
                             const sessionLabel = formatSessionLabel(session, turn.sessionId, t)

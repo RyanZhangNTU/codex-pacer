@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-07-13
+
+### Added
+- the dashboard now opens on the 7-day view, and conversation history is loaded in pages with detail fetched only after selection
+- the menu bar uses the current 7-day window for API-equivalent value when Codex does not provide a 5-hour quota
+
+### Changed
+- routine refreshes use incremental file discovery, durable parser checkpoints, bounded database queries, and cached dashboard results
+- quota charts read only the selected normalized window and keep one sample per chart bin instead of loading the full bucket history
+- frontend refresh and conversation loading avoid duplicate requests when the view, search, or time window changes
+
+### Fixed
+- Codex accounts without a 5-hour quota no longer lose their 7-day quota or fail to open the default dashboard
+- incremental scans no longer revisit the full archived session tree every minute, while pending repair files still receive targeted retries
+- subscription profile changes invalidate cached overview values immediately
+- conversation search keeps complete root-session totals and metadata when only a child session matches
+- historical quota samples with second-level timestamps remain visible after epoch backfill
+
+### Upgrade notes
+- install 1.2.2 over 1.2.0 without uninstalling or deleting the local database
+- existing usage, quota history, subscription settings, menu bar preferences, and custom Codex paths are retained
+- automatic refresh remains incremental; a bounded full reconciliation runs only when the source changes or scheduled maintenance is due
+
+## [1.2.0] - 2026-07-11
+
+### Added
+- GPT-5.6 Sol, Terra, and Luna model recognition with bundled Standard API pricing; the `gpt-5.6` alias uses Sol pricing
+- automatic discovery of the Codex CLI bundled with the ChatGPT desktop app on macOS, while retaining standalone CLI and `CODEX_BIN` support
+- independent background refresh lanes for local token usage and online quota data, with bounded retries and missed-refresh recovery
+
+### Changed
+- active session logs are parsed from durable checkpoints instead of being reread from the beginning on every refresh
+- usage and quota records are appended or reconciled in place instead of deleting and rebuilding unchanged history
+- menu bar totals are calculated with bounded SQLite aggregates, and frontend refresh polling has been replaced with backend events
+- database timestamp migration now runs in small resumable batches so startup remains responsive on larger histories
+- changing a custom Codex home starts a full refresh without reusing scan times from the previous directory
+
+### Fixed
+- GPT-5.6 API-equivalent values now recalculate at startup, including rows that were zero or used a cache-write price as the output price
+- incremental imports now capture final snapshots moved into `archived_sessions`, refresh titles from `session_index.jsonl`, avoid saving partial results from unreadable files, and repair missing conversation links
+- persisted quota fallback now chooses the latest timestamp by its actual instant and never combines windows from different samples
+- forked and nested sessions no longer rebill usage inherited from their parent, including single-snapshot and temporarily missing-parent cases
+- token and quota refreshes no longer overwrite newer results, block one another, or lose a scheduled retry when settings change
+- complete JSONL records without a trailing newline are imported instead of being skipped permanently
+- refresh scratch memory and temporary spool files are released promptly after commits and menu bar updates
+
+### Upgrade notes
+- macOS users can install 1.2.0 over 1.1.1 or 1.1.2 without uninstalling the previous version
+- the existing local database is migrated in place; session history, token usage, quota samples, subscription settings, menu bar preferences, and custom Codex paths are retained
+- the first launch may perform a bounded background timestamp backfill, but token and online quota refresh continue independently while it runs
+
 ## [1.1.2] - 2026-05-19
 
 ### Added

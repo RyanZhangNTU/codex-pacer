@@ -8,14 +8,15 @@
 
 **Codex Pacer** 是一个本地优先的桌面应用，用来把 Codex 使用情况转换成更容易行动的视角：额度节奏、API 等价价值，以及会话级别的使用分析。你可以更快看清自己消耗额度的速度、订阅回报，以及哪些对话或 subagent 正在驱动这些使用量。
 
-> 当前稳定版本：**v1.1.2**
-> 官方下载：通过 GitHub Releases 获取已签名的 **macOS Apple Silicon DMG**。本版本暂缓发布 Windows 安装包。
+> 当前稳定版本：**v1.2.2**
+> 官方下载：通过 GitHub Releases 获取已签名并完成 Apple notarization 的 **macOS Apple Silicon DMG**。本版本暂缓发布 Windows 安装包。
 
 ## 核心能力
 
 - 从 `~/.codex` 或自定义 `CODEX_HOME` 导入本地 Codex 使用数据
 - 建立本地 SQLite 索引，便于快速分析和下钻
 - 基于 token 使用量估算 API 等价价值与订阅回本情况
+- 支持 GPT-5.6 Sol、Terra 和 Luna，并内置 Standard API 定价
 - 在可用时跟踪 `5小时`、`7天` 等滚动额度窗口的使用节奏
 - 按对话、root session、subagent、模型、token 构成拆解使用情况
 - 提供 macOS 菜单栏入口，方便快速查看额度状态
@@ -39,19 +40,21 @@ Codex Pacer 是本地优先的：
 
 ## 开始使用
 
-安装、打包和发布说明已按公开 `v1.1.2` 版本维护。可以从这些文档入口开始：
+安装、打包和发布说明已按公开 `v1.2.2` 版本维护。可以从这些文档入口开始：
 
 - [快速开始](./docs/zh-CN/getting-started.md)
 - [在 macOS 上安装](./docs/zh-CN/installing-on-macos.md)
 - [在 Windows 上安装](./docs/zh-CN/installing-on-windows.md)
 - [打包与发布](./docs/zh-CN/packaging-and-release.md)
-- [v1.1.2 发布说明](./docs/zh-CN/release-notes-v1.1.2.md)
+- [v1.2.2 发布说明](./docs/zh-CN/release-notes-v1.2.2.md)
+
+在 macOS 上，Codex Pacer 可以使用 ChatGPT 桌面应用内置的 Codex CLI 读取实时额度。应用会自动发现 `/Applications/ChatGPT.app/Contents/Resources/codex`。独立安装的 Codex CLI 和 `CODEX_BIN` 覆盖配置仍然可用。
 
 ## 开发
 
 环境要求：
 
-- Node.js 20+
+- Node.js 22.18+
 - Rust toolchain
 - 当前平台所需的 Tauri 构建依赖
 - `~/.codex` 或自定义 `CODEX_HOME` 中的本地 Codex 数据
@@ -74,13 +77,13 @@ npm run dev
 ```bash
 npm install
 npm run build
-cargo test
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run tauri build
 ```
 
 ## 项目状态
 
-`v1.1.2` 是当前稳定发布线。
+`v1.2.2` 是当前稳定发布线。
 
 当前发布重点：
 

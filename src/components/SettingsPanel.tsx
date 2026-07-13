@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 
 import { formatPercent, formatRemainingDuration } from '../app/format'
 import { SUPPORTED_LANGUAGES, type AppLanguage } from '../app/i18n'
+import { closeSettingsPanelIfIdle } from '../app/settingsSave'
 import { useI18n } from '../app/useI18n'
 import type {
   LiveRateLimitSnapshot,
@@ -52,14 +53,6 @@ function SwitchField({ label, checked, disabled = false, onChange }: SwitchField
   )
 }
 
-function refreshSecondsToMinutes(seconds: number) {
-  return Math.max(1, Math.round(seconds / 60))
-}
-
-function refreshMinutesToSeconds(minutes: number) {
-  return Math.min(60, Math.max(1, minutes)) * 60
-}
-
 function isMacOs() {
   return typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac')
 }
@@ -80,8 +73,10 @@ export function SettingsPanel({
     subscriptionProfile,
   )
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const wasOpenRef = useRef(false)
   const showDockSettings = isMacOs()
+  const handleClose = () => closeSettingsPanelIfIdle(saving, onClose)
 
   useEffect(() => {
     const justOpened = isOpen && !wasOpenRef.current
@@ -90,10 +85,12 @@ export function SettingsPanel({
       setDraftSync(syncSettings)
       setDraftSubscription(subscriptionProfile)
       setSaving(false)
+      setSaveError(null)
     } else if (!isOpen && wasOpenRef.current) {
       setDraftSync(syncSettings)
       setDraftSubscription(subscriptionProfile)
       setSaving(false)
+      setSaveError(null)
     }
 
     wasOpenRef.current = isOpen
@@ -173,6 +170,7 @@ export function SettingsPanel({
   async function handleSubmit() {
     if (!draftSync || !draftSubscription) return
     setSaving(true)
+    setSaveError(null)
     try {
       const nextSync = draftSync
       const nextSubscription = draftSubscription
@@ -181,20 +179,22 @@ export function SettingsPanel({
         subscriptionProfile: nextSubscription,
       })
       onClose()
+    } catch (error) {
+      setSaveError(t.status.settingsSaveFailed(String(error)))
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={handleClose}>
       <div className="modal-panel settings-modal-panel" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">{t.settings.appSettings}</p>
             <h3>{t.settings.syncAndSubscriptionProfile}</h3>
           </div>
-          <button className="ghost-button" onClick={onClose} type="button">
+          <button className="ghost-button" disabled={saving} onClick={handleClose} type="button">
             {t.actions.close}
           </button>
         </div>
@@ -272,37 +272,16 @@ export function SettingsPanel({
                     type="number"
                     value={draftSync.autoScanIntervalMinutes}
                     onChange={(event) =>
-                      setDraftSync((current) =>
-                        current
+                      setDraftSync((current) => {
+                        const intervalMinutes = Math.max(1, Number(event.target.value || 5))
+                        return current
                           ? {
                               ...current,
-                              autoScanIntervalMinutes: Math.max(1, Number(event.target.value || 5)),
+                              autoScanIntervalMinutes: intervalMinutes,
+                              liveQuotaRefreshIntervalSeconds: intervalMinutes * 60,
                             }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-
-                <label className="field">
-                  <span>{t.settings.sections.sync.liveQuotaRefreshIntervalSeconds}</span>
-                  <input
-                    min={1}
-                    max={60}
-                    step={1}
-                    type="number"
-                    value={refreshSecondsToMinutes(draftSync.liveQuotaRefreshIntervalSeconds)}
-                    onChange={(event) =>
-                      setDraftSync((current) =>
-                        current
-                          ? {
-                              ...current,
-                              liveQuotaRefreshIntervalSeconds: refreshMinutesToSeconds(
-                                Number(event.target.value || 5),
-                              ),
-                            }
-                          : current,
-                      )
+                          : current
+                      })
                     }
                   />
                 </label>
@@ -786,8 +765,14 @@ export function SettingsPanel({
           </div>
         </div>
 
+        {saveError ? (
+          <p className="settings-save-error" role="alert">
+            {saveError}
+          </p>
+        ) : null}
+
         <div className="modal-actions">
-          <button className="ghost-button" onClick={onClose} type="button">
+          <button className="ghost-button" disabled={saving} onClick={handleClose} type="button">
             {t.actions.cancel}
           </button>
           <button className="accent-button" disabled={saving} onClick={handleSubmit} type="button">

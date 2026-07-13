@@ -33,6 +33,8 @@ pub struct UsageSnapshot {
   pub timestamp: String,
   pub model_id: String,
   pub usage: TokenUsage,
+  #[serde(skip)]
+  pub last_token_usage: Option<TokenUsage>,
   pub plan_type: Option<String>,
   pub limit_id: Option<String>,
   pub limit_name: Option<String>,
@@ -163,6 +165,8 @@ pub struct ConversationFilters {
   pub custom_end: Option<String>,
   pub search: Option<String>,
   pub live_window_offset: Option<i64>,
+  pub cursor: Option<String>,
+  pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +223,17 @@ pub struct LiveRateLimitSnapshot {
   pub primary: Option<RateLimitWindowSnapshot>,
   pub secondary: Option<RateLimitWindowSnapshot>,
   pub fetched_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveQuotaState {
+  pub rate_limits: Option<LiveRateLimitSnapshot>,
+  pub source_fetched_at: Option<String>,
+  pub cached_at: String,
+  pub is_fallback: bool,
+  pub last_live_success_at: Option<String>,
+  pub refreshing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,10 +335,18 @@ pub struct OverviewResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardSnapshot {
   pub overview: OverviewResponse,
-  pub conversations: Vec<ConversationListItem>,
+  pub conversation_page: ConversationPage,
   pub sync_settings: SyncSettings,
   pub subscription_profile: SubscriptionProfile,
   pub live_rate_limits: Option<LiveRateLimitSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationPage {
+  pub items: Vec<ConversationListItem>,
+  pub next_cursor: Option<String>,
+  pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -410,6 +433,8 @@ pub struct ConversationDetail {
   pub source_states: Vec<String>,
   pub sessions: Vec<ConversationSessionSummary>,
   pub turns: Vec<ConversationTurnPoint>,
+  pub next_turn_cursor: Option<usize>,
+  pub has_more_turns: bool,
   pub model_breakdown: Vec<ModelShare>,
   pub composition_breakdown: Vec<CompositionShare>,
 }
@@ -422,5 +447,9 @@ pub struct ScanResult {
   pub imported_sessions: usize,
   pub updated_sessions: usize,
   pub missing_sessions: usize,
+  pub scan_kind: String,
+  pub source_bytes_read: u64,
+  pub tail_parsed_files: usize,
+  pub fully_parsed_files: usize,
   pub last_completed_at: String,
 }

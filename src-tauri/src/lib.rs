@@ -4,31 +4,46 @@ mod models;
 mod pricing;
 mod queries;
 mod rate_limits;
+mod refresh;
+
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
-  atomic::{AtomicBool, Ordering},
+  atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
   Arc, Mutex,
 };
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Duration as ChronoDuration, Local};
-use rusqlite::params;
+use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
+use rusqlite::{params, Connection};
 use database::{
-  canonical_subscription_currency, get_subscription_profile, get_sync_settings, init_db,
-  insert_live_rate_limit_snapshot, open_connection, save_subscription_profile, save_sync_settings,
+  canonical_subscription_currency, get_last_full_scan_completed, get_subscription_profile, get_sync_settings, init_db,
+  insert_live_rate_limit_snapshot, load_latest_rate_limits, open_connection,
+  save_subscription_profile, save_sync_settings,
 };
-use importer::{perform_scan, recalculate_all_session_values};
+use importer::{
+  commit_prepared_scan, prepare_scan_with_cached_snapshot_connection,
+  recalculate_all_session_values, ScanKind,
+};
 use models::{
-  ConversationDetail, ConversationFilters, ConversationListItem, DashboardSnapshot,
+  ConversationDetail, ConversationFilters, ConversationPage, DashboardSnapshot,
   LiveRateLimitSnapshot, MenuBarPopupQuotaSnapshot, MenuBarPopupSnapshot,
   MenuBarPopupSuggestedSpeed, OverviewResponse, PricingCatalogEntry, RateLimitWindowSnapshot,
   ScanResult, SubscriptionProfile, SyncSettings,
 };
-use pricing::{load_catalog, refresh_pricing_catalog_from_openai, seed_pricing_catalog};
-use queries::{get_conversation_detail, get_overview, get_quota_trend, list_conversations, load_dashboard_data};
-use rate_limits::query_live_rate_limits;
+use pricing::{
+  apply_pricing_catalog_refresh, fetch_official_pricing_catalog, load_catalog,
+  seed_pricing_catalog, OPENAI_API_PRICING_URL,
+};
+use queries::{
+  get_conversation_detail, get_overview_with_connection, get_quota_trend, get_window_api_value, list_conversations,
+};
+use rate_limits::LiveRateLimitClient;
 use tauri::{
   Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
   WebviewWindowBuilder,
@@ -51,11 +66,11 @@ const MENU_BAR_POPUP_MAX_HEIGHT: f64 = 760.0;
 const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
-#[derive(Clone)]
-struct CachedRateLimitSnapshot {
-  fetched_at: Instant,
-  snapshot: LiveRateLimitSnapshot,
-}
+const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
+const PRICING_VALUE_RESOLUTION_REPAIR_KEY: &str = "pricing_value_resolution_v2";
+const MENU_RENDER_IDLE: u8 = 0;
+const MENU_RENDER_RUNNING: u8 = 1;
+const MENU_RENDER_PENDING: u8 = 2;
 
 #[derive(Clone)]
 struct MenuBarPopupAnchor {
@@ -64,34 +79,395 @@ struct MenuBarPopupAnchor {
 }
 
 #[derive(Clone)]
+struct CachedMenuBarApiValue {
+  key: String,
+  usage_revision: u64,
+  title: String,
+}
+
+#[derive(Clone)]
+struct CachedOverview {
+  key: String,
+  usage_revision: u64,
+  quota_revision: u64,
+  settings_revision: u64,
+  value: OverviewResponse,
+}
+
+#[derive(Clone)]
 struct AppState {
+  app_handle: Option<AppHandle>,
   db_path: PathBuf,
-  scan_in_progress: Arc<AtomicBool>,
+  refresh: AppRefreshHandle,
+  usage_mutations: refresh::UsageMutationCoordinator,
+  menu_bar_render_state: Arc<AtomicU8>,
+  menu_bar_usage_revision: Arc<AtomicU64>,
+  quota_revision: Arc<AtomicU64>,
+  settings_revision: Arc<AtomicU64>,
+  menu_bar_api_value_cache: Arc<Mutex<Option<CachedMenuBarApiValue>>>,
+  overview_cache: Arc<Mutex<Option<CachedOverview>>>,
+  overview_connection: Arc<Mutex<Connection>>,
   daily_value_tray: Option<TrayIcon>,
-  live_rate_limits: Arc<Mutex<Option<CachedRateLimitSnapshot>>>,
+  live_rate_limits: refresh::LiveQuotaCache,
+  menu_bar_popup_visible: Arc<AtomicBool>,
   menu_bar_popup_anchor: Arc<Mutex<Option<MenuBarPopupAnchor>>>,
+}
+
+#[cfg(not(test))]
+type AppRefreshHandle = refresh::RefreshCoordinatorHandle;
+#[cfg(test)]
+type AppRefreshHandle = Option<refresh::RefreshCoordinatorHandle>;
+
+#[cfg(not(test))]
+fn installed_refresh_handle(handle: refresh::RefreshCoordinatorHandle) -> AppRefreshHandle {
+  handle
+}
+
+#[cfg(test)]
+fn installed_refresh_handle(handle: refresh::RefreshCoordinatorHandle) -> AppRefreshHandle {
+  Some(handle)
+}
+
+#[derive(Clone)]
+struct AppTokenRefreshExecutor {
+  db_path: PathBuf,
+  preparation_connection: Arc<Mutex<Option<Connection>>>,
+}
+
+impl refresh::TokenRefreshExecutor for AppTokenRefreshExecutor {
+  fn parse(
+    &self,
+    request: refresh::TokenExecutionRequest,
+  ) -> Result<refresh::PreparedTokenRefresh, String> {
+    let started_at = Utc::now();
+    let scan_kind = effective_token_scan_kind(
+      &self.db_path,
+      request.request.kind,
+      started_at,
+    )?;
+    let mut preparation_connection = self
+      .preparation_connection
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prepared_scan = prepare_scan_with_cached_snapshot_connection(
+      &self.db_path,
+      request.request.codex_home,
+      scan_kind,
+      &mut preparation_connection,
+    )?;
+    Ok(refresh::PreparedTokenRefresh::new(
+      request.generation,
+      request.source_generation,
+      started_at,
+      prepared_scan,
+    ))
+  }
+
+  fn commit(&self, prepared: refresh::PreparedTokenRefresh) -> Result<ScanResult, String> {
+    commit_prepared_scan(prepared.prepared_scan)
+  }
+}
+
+#[derive(Clone)]
+struct AppLiveQuotaFetcher {
+  db_path: PathBuf,
+  live_cache: refresh::LiveQuotaCache,
+  client: Arc<LiveRateLimitClient>,
+}
+
+impl refresh::LiveQuotaFetcher for AppLiveQuotaFetcher {
+  fn fetch(&self, timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
+    self.client.query(timeout)
+  }
+
+  fn fallback(&self) -> Option<LiveRateLimitSnapshot> {
+    load_display_live_rate_limit_fallback(&self.db_path, &self.live_cache)
+  }
+}
+
+#[derive(Clone)]
+struct AppLiveQuotaPersister {
+  db_path: PathBuf,
+}
+
+impl refresh::LiveQuotaPersister for AppLiveQuotaPersister {
+  fn persist(&self, snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
+    let conn = open_connection(&self.db_path).map_err(|error| error.to_string())?;
+    insert_live_rate_limit_snapshot(&conn, snapshot)
+      .map(|_| ())
+      .map_err(|error| error.to_string())
+  }
+}
+
+struct AppEpochMaintenanceExecutor {
+  db_path: PathBuf,
+  connection: Mutex<Option<rusqlite::Connection>>,
+  #[cfg(test)]
+  open_count: AtomicUsize,
+}
+
+impl AppEpochMaintenanceExecutor {
+  fn new(db_path: PathBuf) -> Self {
+    Self {
+      db_path,
+      connection: Mutex::new(None),
+      #[cfg(test)]
+      open_count: AtomicUsize::new(0),
+    }
+  }
+
+  #[cfg(test)]
+  fn open_count_for_test(&self) -> usize {
+    self.open_count.load(Ordering::Acquire)
+  }
+
+  #[cfg(test)]
+  fn connection_is_open_for_test(&self) -> bool {
+    self
+      .connection
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_some()
+  }
+}
+
+impl refresh::EpochMaintenanceExecutor for AppEpochMaintenanceExecutor {
+  fn run_batch(
+    &self,
+    limit: usize,
+    cancellation: Arc<AtomicBool>,
+  ) -> Result<refresh::EpochMaintenanceBatch, String> {
+    if cancellation.load(Ordering::Acquire) {
+      return Ok(refresh::EpochMaintenanceBatch::Cancelled);
+    }
+    let mut connection = self
+      .connection
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if connection.is_none() {
+      let opened = database::open_epoch_maintenance_connection(&self.db_path)
+        .map_err(|error| error.to_string())?;
+      #[cfg(test)]
+      self.open_count.fetch_add(1, Ordering::AcqRel);
+      *connection = Some(opened);
+    }
+    let progress = database::backfill_epoch_batch_cancellable(
+      connection
+        .as_ref()
+        .expect("epoch maintenance connection was initialized"),
+      limit,
+      cancellation.as_ref(),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(match progress {
+      Some(progress) => {
+        let result = refresh::EpochMaintenanceBatch::Progress {
+          processed_rows: progress
+            .usage_rows_updated
+            .saturating_add(progress.quota_rows_updated),
+          complete: progress.complete,
+        };
+        if progress.complete {
+          *connection = None;
+        }
+        result
+      }
+      None => refresh::EpochMaintenanceBatch::Cancelled,
+    })
+  }
+}
+
+fn configure_epoch_maintenance(
+  dependencies: refresh::RefreshRuntimeDependencies,
+  db_path: PathBuf,
+  pending: bool,
+) -> refresh::RefreshRuntimeDependencies {
+  if pending {
+    dependencies.with_epoch_maintenance(Arc::new(AppEpochMaintenanceExecutor::new(db_path)))
+  } else {
+    dependencies
+  }
+}
+
+#[derive(Clone)]
+struct TauriRefreshEventSink {
+  app_handle: AppHandle,
+}
+
+impl refresh::RefreshEventSink for TauriRefreshEventSink {
+  fn publish_invalidation(&self, value: refresh::DisplayInvalidation) {
+    let Some(state) = self.app_handle.try_state::<AppState>() else {
+      return;
+    };
+    state
+      .menu_bar_usage_revision
+      .store(value.usage_revision, Ordering::Release);
+    state.quota_revision.store(value.quota_revision, Ordering::Release);
+    state
+      .settings_revision
+      .store(value.settings_revision, Ordering::Release);
+    let popup_visible = state.menu_bar_popup_visible.load(Ordering::Acquire);
+    refresh_daily_value_menu_bar(state.inner());
+    if popup_visible {
+      if let Some(window) = self.app_handle.get_webview_window(MENU_BAR_POPUP_WINDOW_LABEL) {
+        let _ = window.emit(MENU_BAR_POPUP_REFRESH_EVENT, ());
+      }
+    }
+  }
+
+  fn publish_completion(&self, value: refresh::RefreshCompletedEvent) {
+    if let Err(error) = self
+      .app_handle
+      .emit("codex-counter://refresh-completed", value)
+    {
+      log::warn!("Failed to emit refresh completion: {error}");
+    }
+  }
+}
+
+#[cfg(not(test))]
+fn refresh_handle(state: &AppState) -> Result<&refresh::RefreshCoordinatorHandle, String> {
+  Ok(&state.refresh)
+}
+
+#[cfg(test)]
+fn refresh_handle(state: &AppState) -> Result<&refresh::RefreshCoordinatorHandle, String> {
+  state
+    .refresh
+    .as_ref()
+    .ok_or_else(|| "Refresh coordinator is unavailable.".to_string())
+}
+
+fn refresh_error_message(error: refresh::RefreshError) -> String {
+  format!("{error:?}")
+}
+
+fn run_manual_scan_with_coordinator(
+  refresh: &refresh::RefreshCoordinatorHandle,
+  codex_home: Option<String>,
+) -> Result<ScanResult, String> {
+  let ticket = refresh
+    .request_manual_token(codex_home)
+    .map_err(refresh_error_message)?;
+  ticket
+    .wait()
+    .map(|result| result.as_ref().clone())
+    .map_err(refresh_error_message)
+}
+
+fn get_passive_live_rate_limits(
+  cache: &refresh::LiveQuotaCache,
+) -> Result<LiveRateLimitSnapshot, String> {
+  cache
+    .rate_limits()
+    .map(|snapshot| snapshot.as_ref().clone())
+    .ok_or_else(|| "Live rate limits are unavailable.".to_string())
 }
 
 #[allow(non_snake_case)]
 #[tauri::command(rename_all = "camelCase")]
-fn scanCodexUsage(state: State<'_, AppState>, codex_home: Option<String>) -> Result<ScanResult, String> {
-  run_scan_if_idle(state.inner().clone(), codex_home)
+async fn scanCodexUsage(
+  state: State<'_, AppState>,
+  codex_home: Option<String>,
+) -> Result<ScanResult, String> {
+  let refresh = refresh_handle(state.inner())?.clone();
+  tauri::async_runtime::spawn_blocking(move || {
+    run_manual_scan_with_coordinator(&refresh, codex_home)
+  })
+  .await
+  .map_err(|error| format!("Failed to join manual refresh: {error}"))?
 }
 
 #[allow(non_snake_case)]
 #[tauri::command]
 fn getScanInProgress(state: State<'_, AppState>) -> bool {
-  state.inner().scan_in_progress.load(Ordering::SeqCst)
+  refresh_handle(state.inner())
+    .map(|refresh| {
+      let status = refresh.status();
+      status.token.running || status.token.pending
+    })
+    .unwrap_or(false)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command]
+fn getRefreshStatus(state: State<'_, AppState>) -> Result<refresh::RefreshStatus, String> {
+  Ok(refresh_handle(state.inner())?.status())
+}
+
+#[allow(non_snake_case)]
+#[tauri::command]
+fn refreshBackgroundData(state: State<'_, AppState>) -> Result<Option<ScanResult>, String> {
+  match refresh_handle(state.inner())?.wake() {
+    Ok(()) | Err(refresh::RefreshError::Busy) => Ok(None),
+    Err(error) => Err(refresh_error_message(error)),
+  }
 }
 
 #[allow(non_snake_case)]
 #[tauri::command]
 fn refreshPricing(state: State<'_, AppState>) -> Result<Vec<PricingCatalogEntry>, String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  refresh_pricing_catalog_from_openai(&conn)?;
-  recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
-  let catalog = load_catalog(&conn).map_err(|error| error.to_string())?;
+  let official_entries = match fetch_official_pricing_catalog() {
+    Ok(entries) => Some(entries),
+    Err(error) => {
+      log::warn!(
+        "Failed to refresh OpenAI API pricing from {OPENAI_API_PRICING_URL}: {error}; using bundled fallback pricing."
+      );
+      None
+    }
+  };
+  let catalog = refresh_pricing_catalog_for_state(state.inner(), official_entries.as_deref())?;
+  *state
+    .menu_bar_api_value_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+  *state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
   refresh_daily_value_menu_bar(state.inner());
+  Ok(catalog)
+}
+
+fn refresh_pricing_catalog_for_state(
+  state: &AppState,
+  official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  refresh_pricing_catalog_with_runner(
+    &state.db_path,
+    official_entries,
+    |priority, mutation| state.usage_mutations.run(priority, mutation).value,
+  )
+}
+
+fn refresh_pricing_catalog_with_runner(
+  db_path: &Path,
+  official_entries: Option<&[PricingCatalogEntry]>,
+  run: impl FnOnce(
+    refresh::MutationPriority,
+    &mut dyn FnMut() -> Result<Vec<PricingCatalogEntry>, String>,
+  ) -> Result<Vec<PricingCatalogEntry>, String>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  let mut mutation = || {
+    let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
+    refresh_pricing_catalog_atomically(&mut conn, official_entries)
+  };
+  run(refresh::MutationPriority::Pricing, &mut mutation)
+}
+
+fn refresh_pricing_catalog_atomically(
+  conn: &mut rusqlite::Connection,
+  official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<Vec<PricingCatalogEntry>, String> {
+  let transaction = conn
+    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    .map_err(|error| error.to_string())?;
+  apply_pricing_catalog_refresh(&transaction, official_entries)?;
+  recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
+  mark_pricing_value_resolution_repair_complete(&transaction)
+    .map_err(|error| error.to_string())?;
+  let catalog = load_catalog(&transaction).map_err(|error| error.to_string())?;
+  transaction.commit().map_err(|error| error.to_string())?;
   Ok(catalog)
 }
 
@@ -106,8 +482,8 @@ fn getOverview(
   live_window_offset: Option<i64>,
 ) -> Result<OverviewResponse, String> {
   let live_rate_limits = maybe_live_rate_limits_for_bucket(state.inner(), bucket.as_deref(), live_window_offset)?;
-  get_overview(
-    &state.db_path,
+  cached_overview(
+    state.inner(),
     bucket,
     anchor,
     custom_start,
@@ -122,7 +498,7 @@ fn getOverview(
 fn listConversations(
   state: State<'_, AppState>,
   filters: Option<ConversationFilters>,
-) -> Result<Vec<ConversationListItem>, String> {
+) -> Result<ConversationPage, String> {
   let live_rate_limits = maybe_live_rate_limits_for_bucket(
     state.inner(),
     filters.as_ref().and_then(|value| value.bucket.as_deref()),
@@ -134,16 +510,24 @@ fn listConversations(
 #[allow(non_snake_case)]
 #[tauri::command]
 fn getLiveRateLimits(state: State<'_, AppState>) -> Result<LiveRateLimitSnapshot, String> {
-  get_live_rate_limits_cached(state.inner())
+  get_passive_live_rate_limits(&state.live_rate_limits)
 }
 
 #[allow(non_snake_case)]
 #[tauri::command(rename_all = "camelCase")]
-fn getMenuBarPopupSnapshot(
+async fn getMenuBarPopupSnapshot(
   state: State<'_, AppState>,
   force_refresh: Option<bool>,
 ) -> Result<MenuBarPopupSnapshot, String> {
-  build_menu_bar_popup_snapshot(state.inner(), force_refresh.unwrap_or(false))
+  let state = state.inner().clone();
+  tauri::async_runtime::spawn_blocking(move || {
+    if force_refresh.unwrap_or(false) {
+      refresh_popup_data(&state)?;
+    }
+    build_passive_menu_bar_popup_snapshot(&state)
+  })
+  .await
+  .map_err(|error| format!("Failed to join popup refresh: {error}"))?
 }
 
 #[allow(non_snake_case)]
@@ -180,30 +564,54 @@ async fn loadDashboard(
   custom_end: Option<String>,
   search: Option<String>,
   live_window_offset: Option<i64>,
+  include_conversations: Option<bool>,
 ) -> Result<DashboardSnapshot, String> {
   let state = state.inner().clone();
   tauri::async_runtime::spawn_blocking(move || {
-    let normalized_bucket = bucket.clone().unwrap_or_else(|| "subscription_month".to_string());
+    let normalized_bucket = bucket.clone().unwrap_or_else(|| "seven_day".to_string());
     let live_rate_limits =
       maybe_live_rate_limits_for_bucket(&state, Some(&normalized_bucket), live_window_offset)?;
-    let snapshot = load_dashboard_data(
-      &state.db_path,
+    let overview = cached_overview(
+      &state,
       Some(normalized_bucket.clone()),
       anchor.clone(),
       custom_start.clone(),
       custom_end.clone(),
-      search,
       live_rate_limits.clone(),
       live_window_offset,
     )?;
     let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
     let sync_settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+    let subscription_profile = get_subscription_profile(&conn).map_err(|error| error.to_string())?;
+    drop(conn);
+    let conversation_page = if include_conversations.unwrap_or(false) {
+      list_conversations(
+        &state.db_path,
+        Some(ConversationFilters {
+          bucket: Some(normalized_bucket),
+          anchor,
+          custom_start,
+          custom_end,
+          search,
+          live_window_offset,
+          cursor: None,
+          limit: Some(50),
+        }),
+        live_rate_limits.clone(),
+      )?
+    } else {
+      ConversationPage {
+        items: Vec::new(),
+        next_cursor: None,
+        has_more: false,
+      }
+    };
 
     Ok(DashboardSnapshot {
-      overview: snapshot.overview,
-      conversations: snapshot.conversations,
+      overview,
+      conversation_page,
       sync_settings,
-      subscription_profile: snapshot.subscription_profile,
+      subscription_profile,
       live_rate_limits,
     })
   })
@@ -216,13 +624,14 @@ async fn loadDashboard(
 fn getConversationDetail(
   state: State<'_, AppState>,
   root_session_id: String,
+  turn_cursor: Option<usize>,
 ) -> Result<ConversationDetail, String> {
-  get_conversation_detail(&state.db_path, &root_session_id)
+  get_conversation_detail(&state.db_path, &root_session_id, turn_cursor)
 }
 
 #[allow(non_snake_case)]
 #[tauri::command(rename_all = "camelCase")]
-fn handleMenuBarPopupAction(
+async fn handleMenuBarPopupAction(
   app: AppHandle,
   state: State<'_, AppState>,
   action: String,
@@ -246,7 +655,10 @@ fn handleMenuBarPopupAction(
       Ok(true)
     }
     "refresh" => {
-      let _ = build_menu_bar_popup_snapshot(state.inner(), true)?;
+      let refresh_state = state.inner().clone();
+      tauri::async_runtime::spawn_blocking(move || refresh_popup_data(&refresh_state))
+        .await
+        .map_err(|error| format!("Failed to join popup refresh: {error}"))??;
       refresh_daily_value_menu_bar(state.inner());
       Ok(true)
     }
@@ -261,20 +673,16 @@ fn getSyncSettings(state: State<'_, AppState>) -> Result<SyncSettings, String> {
   get_sync_settings(&conn).map_err(|error| error.to_string())
 }
 
-#[allow(non_snake_case)]
-#[tauri::command(rename_all = "camelCase")]
-fn updateSyncSettings(
-  app: AppHandle,
-  state: State<'_, AppState>,
+fn save_normalized_sync_settings(
+  conn: &rusqlite::Connection,
   payload: SyncSettings,
-) -> Result<SyncSettings, String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  let current = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+) -> rusqlite::Result<SyncSettings> {
+  let auto_scan_interval_minutes = payload.auto_scan_interval_minutes.max(1);
   let updated = SyncSettings {
     codex_home: payload.codex_home,
     auto_scan_enabled: payload.auto_scan_enabled,
-    auto_scan_interval_minutes: payload.auto_scan_interval_minutes.max(1),
-    live_quota_refresh_interval_seconds: payload.live_quota_refresh_interval_seconds.clamp(60, 3600),
+    auto_scan_interval_minutes,
+    live_quota_refresh_interval_seconds: unified_refresh_interval_seconds(auto_scan_interval_minutes),
     hide_dock_icon_when_menu_bar_visible: payload.hide_dock_icon_when_menu_bar_visible,
     show_menu_bar_logo: payload.show_menu_bar_logo,
     show_menu_bar_daily_api_value: payload.show_menu_bar_daily_api_value,
@@ -292,11 +700,54 @@ fn updateSyncSettings(
     menu_bar_popup_modules: normalize_menu_bar_popup_modules(&payload.menu_bar_popup_modules),
     menu_bar_popup_show_reset_timeline: payload.menu_bar_popup_show_reset_timeline,
     menu_bar_popup_show_actions: payload.menu_bar_popup_show_actions,
-    last_scan_started_at: current.last_scan_started_at,
-    last_scan_completed_at: current.last_scan_completed_at,
-    updated_at: current.updated_at,
+    last_scan_started_at: payload.last_scan_started_at,
+    last_scan_completed_at: payload.last_scan_completed_at,
+    updated_at: payload.updated_at,
   };
-  let saved = save_sync_settings(&conn, &updated).map_err(|error| error.to_string())?;
+  save_sync_settings(conn, &updated)
+}
+
+fn refresh_config_from_saved_settings(
+  settings: &SyncSettings,
+  live_last_success_at: Option<&str>,
+) -> refresh::RefreshConfig {
+  refresh::RefreshConfig {
+    auto_scan_enabled: settings.auto_scan_enabled,
+    interval: Duration::from_secs(
+      unified_refresh_interval_seconds(settings.auto_scan_interval_minutes) as u64,
+    ),
+    codex_home: settings.codex_home.clone(),
+    token_last_success_wall: refresh::parse_persisted_success_wall(
+      settings.last_scan_completed_at.as_deref(),
+    ),
+    live_last_success_wall: refresh::parse_persisted_success_wall(live_last_success_at),
+  }
+}
+
+fn update_coordinator_from_saved_settings(
+  coordinator: &refresh::RefreshCoordinatorHandle,
+  settings: &SyncSettings,
+) -> Result<(), String> {
+  let live_last_success_at = coordinator.status().live.last_success_at;
+  coordinator
+    .update_settings(refresh_config_from_saved_settings(
+      settings,
+      live_last_success_at.as_deref(),
+    ))
+    .map_err(refresh_error_message)
+}
+
+#[allow(non_snake_case)]
+#[tauri::command(rename_all = "camelCase")]
+fn updateSyncSettings(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  payload: SyncSettings,
+) -> Result<SyncSettings, String> {
+  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+  let saved = save_normalized_sync_settings(&conn, payload).map_err(|error| error.to_string())?;
+  drop(conn);
+  update_coordinator_from_saved_settings(refresh_handle(state.inner())?, &saved)?;
   refresh_daily_value_menu_bar(state.inner());
   apply_dock_icon_visibility(&app, &saved, state.daily_value_tray.is_some());
   Ok(saved)
@@ -315,6 +766,13 @@ fn updateSubscriptionProfile(
   state: State<'_, AppState>,
   payload: SubscriptionProfile,
 ) -> Result<SubscriptionProfile, String> {
+  update_subscription_profile_for_state(state.inner(), payload)
+}
+
+fn update_subscription_profile_for_state(
+  state: &AppState,
+  payload: SubscriptionProfile,
+) -> Result<SubscriptionProfile, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let updated = SubscriptionProfile {
     plan_type: payload.plan_type,
@@ -323,44 +781,203 @@ fn updateSubscriptionProfile(
     billing_anchor_day: payload.billing_anchor_day.clamp(1, 28),
     updated_at: payload.updated_at,
   };
-  save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())
+  let saved = save_subscription_profile(&conn, &updated).map_err(|error| error.to_string())?;
+  state.settings_revision.fetch_add(1, Ordering::AcqRel);
+  *state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+  Ok(saved)
 }
 
-fn run_scan_if_idle(state: AppState, codex_home: Option<String>) -> Result<ScanResult, String> {
-  if state
-    .scan_in_progress
-    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-    .is_err()
-  {
-    return Err("A scan is already running.".to_string());
+fn prepare_app_database(db_path: &Path) -> Result<(), String> {
+  let mut conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  init_db(&conn).map_err(|error| error.to_string())?;
+  let transaction = conn
+    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    .map_err(|error| error.to_string())?;
+  let resolver_repair_pending =
+    pricing_value_resolution_repair_pending(&transaction).map_err(|error| error.to_string())?;
+  let pricing_signature_before =
+    load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
+  seed_pricing_catalog(&transaction).map_err(|error| error.to_string())?;
+  let pricing_signature_after =
+    load_pricing_value_signature(&transaction).map_err(|error| error.to_string())?;
+  if resolver_repair_pending || pricing_signature_before != pricing_signature_after {
+    recalculate_all_session_values(&transaction).map_err(|error| error.to_string())?;
+    mark_pricing_value_resolution_repair_complete(&transaction)
+      .map_err(|error| error.to_string())?;
   }
+  transaction.commit().map_err(|error| error.to_string())?;
+  Ok(())
+}
 
-  let result = perform_scan(&state.db_path, codex_home);
-  state.scan_in_progress.store(false, Ordering::SeqCst);
-  refresh_daily_value_menu_bar(&state);
-  result
+fn pricing_value_resolution_repair_pending(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
+  let completed: i64 = conn.query_row(
+    "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+    params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+    |row| row.get(0),
+  )?;
+  Ok(completed == 0)
+}
+
+fn mark_pricing_value_resolution_repair_complete(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+  conn.execute(
+    "
+    INSERT INTO data_repairs (repair_key, completed_at)
+    VALUES (?1, ?2)
+    ON CONFLICT(repair_key) DO UPDATE SET completed_at = excluded.completed_at
+    ",
+    params![PRICING_VALUE_RESOLUTION_REPAIR_KEY, database::now_utc_string()],
+  )?;
+  Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+struct PricingValueSignatureEntry {
+  model_id: String,
+  input_price_per_million: f64,
+  cached_input_price_per_million: f64,
+  output_price_per_million: f64,
+  effective_model_id: String,
+}
+
+fn load_pricing_value_signature(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<PricingValueSignatureEntry>> {
+  let mut stmt = conn.prepare(
+    "
+    SELECT model_id, input_price_per_million, cached_input_price_per_million,
+           output_price_per_million, effective_model_id
+    FROM pricing_catalog
+    ORDER BY model_id
+    ",
+  )?;
+  let rows = stmt.query_map([], |row| {
+    Ok(PricingValueSignatureEntry {
+      model_id: row.get(0)?,
+      input_price_per_million: row.get(1)?,
+      cached_input_price_per_million: row.get(2)?,
+      output_price_per_million: row.get(3)?,
+      effective_model_id: row.get(4)?,
+    })
+  })?;
+
+  rows.collect()
+}
+
+fn claim_menu_bar_render(state: &AtomicU8) -> bool {
+  claim_menu_bar_render_with_hook(state, |_| {})
+}
+
+fn claim_menu_bar_render_with_hook(
+  state: &AtomicU8,
+  mut before_transition: impl FnMut(u8),
+) -> bool {
+  loop {
+    let current = state.load(Ordering::Acquire);
+    before_transition(current);
+    match current {
+      MENU_RENDER_IDLE => {
+        if state
+          .compare_exchange(
+            MENU_RENDER_IDLE,
+            MENU_RENDER_RUNNING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+          )
+          .is_ok()
+        {
+          return true;
+        }
+      }
+      MENU_RENDER_RUNNING => {
+        if state
+          .compare_exchange(
+            MENU_RENDER_RUNNING,
+            MENU_RENDER_PENDING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+          )
+          .is_ok()
+        {
+          return false;
+        }
+      }
+      MENU_RENDER_PENDING => return false,
+      _ => {
+        state.store(MENU_RENDER_PENDING, Ordering::Release);
+        return false;
+      }
+    }
+  }
+}
+
+fn complete_menu_bar_render(state: &AtomicU8) -> bool {
+  state.swap(MENU_RENDER_IDLE, Ordering::AcqRel) == MENU_RENDER_PENDING
 }
 
 fn refresh_daily_value_menu_bar(state: &AppState) {
-  if let Err(error) = update_daily_value_menu_bar(state) {
-    log::warn!("Failed to update menu bar display: {error}");
+  let Some(app_handle) = state.app_handle.as_ref().cloned() else {
+    if let Err(error) = update_daily_value_menu_bar(state) {
+      log::warn!("Failed to update menu bar display: {error}");
+    }
+    return;
+  };
+
+  if !claim_menu_bar_render(&state.menu_bar_render_state) {
+    return;
+  }
+  let state = state.clone();
+  let scheduled_state = state.clone();
+  if let Err(error) = app_handle.run_on_main_thread(move || {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update_daily_value_menu_bar(&state)));
+    let pending = complete_menu_bar_render(&state.menu_bar_render_state);
+    match result {
+      Ok(Ok(())) => {}
+      Ok(Err(error)) => log::warn!("Failed to update menu bar display: {error}"),
+      Err(_) => log::warn!("Menu bar display update panicked."),
+    }
+    if pending {
+      refresh_daily_value_menu_bar(&state);
+    }
+  }) {
+    let pending = complete_menu_bar_render(&scheduled_state.menu_bar_render_state);
+    log::warn!("Failed to schedule menu bar display update: {error}");
+    if pending {
+      refresh_daily_value_menu_bar(&scheduled_state);
+    }
   }
 }
 
 fn update_daily_value_menu_bar(state: &AppState) -> Result<(), String> {
-  let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-  let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+  let result = (|| {
+    let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
+    let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+    render_daily_value_menu_bar(state, &settings)
+  })();
+  importer::release_unused_process_memory();
+  result
+}
+
+fn render_daily_value_menu_bar(
+  state: &AppState,
+  settings: &SyncSettings,
+) -> Result<(), String> {
   let Some(tray) = state.daily_value_tray.as_ref() else {
     return Ok(());
   };
 
-  if !menu_bar_has_visible_content(&settings) {
+  if !menu_bar_has_visible_content(settings) {
     tray.set_visible(false).map_err(|error| error.to_string())?;
     return Ok(());
   }
 
   apply_menu_bar_icon(tray, settings.show_menu_bar_logo)?;
-  let (api_value_title, live_metric_title) = current_menu_bar_title_parts(state, &settings)?;
+  let live_rate_limits = state.live_rate_limits.rate_limits();
+  let (api_value_title, live_metric_title) = current_menu_bar_title_parts(
+    state,
+    settings,
+    live_rate_limits.as_deref(),
+  )?;
   match menu_bar_title(api_value_title.as_deref(), live_metric_title.as_deref()) {
     Some(title) => tray.set_title(Some(&title)).map_err(|error| error.to_string())?,
     None => tray
@@ -368,7 +985,11 @@ fn update_daily_value_menu_bar(state: &AppState) -> Result<(), String> {
       .map_err(|error| error.to_string())?,
   }
   tray
-    .set_tooltip(Some(menu_bar_tooltip(&settings, api_value_title.as_deref(), state)?))
+    .set_tooltip(Some(menu_bar_tooltip(
+      settings,
+      api_value_title.as_deref(),
+      live_rate_limits.as_deref(),
+    )?))
     .map_err(|error| error.to_string())?;
   tray.set_visible(true).map_err(|error| error.to_string())?;
   Ok(())
@@ -418,33 +1039,56 @@ fn apply_menu_bar_icon(tray: &TrayIcon, show_logo: bool) -> Result<(), String> {
 fn current_menu_bar_title_parts(
   state: &AppState,
   settings: &SyncSettings,
+  cached_live_rate_limits: Option<&LiveRateLimitSnapshot>,
 ) -> Result<(Option<String>, Option<String>), String> {
-  let bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
   let anchor = Local::now().format("%Y-%m-%d").to_string();
   let live_rate_limits = if settings.show_menu_bar_live_quota_percent
-    || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&bucket))
+    || (settings.show_menu_bar_daily_api_value && bucket_uses_live_rate_limits(&configured_bucket))
   {
-    maybe_live_rate_limits_for_bucket(state, Some(&bucket), None)?
+    cached_live_rate_limits
   } else {
     None
   };
+  let bucket = effective_menu_bar_api_bucket(&configured_bucket, live_rate_limits);
   let api_value_title = if settings.show_menu_bar_daily_api_value {
-    let overview = get_overview(
-      &state.db_path,
-      Some(bucket.clone()),
-      if bucket_uses_anchor(&bucket) { Some(anchor) } else { None },
-      None,
-      None,
-      live_rate_limits.clone(),
-      None,
-    )?;
-    Some(format!("${:.1}", overview.stats.api_value_usd))
+    let cache_key = menu_bar_api_value_cache_key(&bucket, &anchor, live_rate_limits);
+    let usage_revision = state.menu_bar_usage_revision.load(Ordering::Acquire);
+    let cached_title = state
+      .menu_bar_api_value_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .as_ref()
+      .filter(|cached| cached.key == cache_key && cached.usage_revision == usage_revision)
+      .map(|cached| cached.title.clone());
+    if let Some(title) = cached_title {
+      Some(title)
+    } else {
+      let api_value_usd = get_window_api_value(
+        &state.db_path,
+        bucket.clone(),
+        if bucket_uses_anchor(&bucket) { Some(anchor) } else { None },
+        None,
+        None,
+        live_rate_limits.cloned(),
+        None,
+      )?;
+      let title = format!("${:.1}", api_value_usd);
+      *state
+        .menu_bar_api_value_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CachedMenuBarApiValue {
+        key: cache_key,
+        usage_revision,
+        title: title.clone(),
+      });
+      Some(title)
+    }
   } else {
     None
   };
   let live_metric_title = if settings.show_menu_bar_live_quota_percent {
     menu_bar_live_quota_snapshot(
-      state,
       settings,
       &settings.menu_bar_live_quota_bucket,
       &settings.menu_bar_live_quota_metric,
@@ -455,6 +1099,25 @@ fn current_menu_bar_title_parts(
     None
   };
   Ok((api_value_title, live_metric_title))
+}
+
+fn menu_bar_api_value_cache_key(
+  bucket: &str,
+  anchor: &str,
+  live_rate_limits: Option<&LiveRateLimitSnapshot>,
+) -> String {
+  let live_window = match bucket {
+    "five_hour" => live_rate_limits.and_then(|snapshot| snapshot.primary.as_ref()),
+    "seven_day" => live_rate_limits.and_then(|snapshot| snapshot.secondary.as_ref()),
+    _ => None,
+  };
+  format!(
+    "{}|{}|{}|{}",
+    bucket,
+    if bucket_uses_anchor(bucket) { anchor } else { "" },
+    live_window.and_then(|window| window.window_start.as_deref()).unwrap_or(""),
+    live_window.and_then(|window| window.resets_at.as_deref()).unwrap_or("")
+  )
 }
 
 fn menu_bar_title(api_value_title: Option<&str>, live_metric_title: Option<&str>) -> Option<String> {
@@ -478,6 +1141,19 @@ fn normalize_menu_bar_bucket(bucket: &str) -> String {
       bucket.to_string()
     }
     _ => "day".to_string(),
+  }
+}
+
+fn effective_menu_bar_api_bucket(
+  configured_bucket: &str,
+  live_rate_limits: Option<&LiveRateLimitSnapshot>,
+) -> String {
+  if configured_bucket == "five_hour"
+    && live_rate_limits.is_some_and(|snapshot| snapshot.primary.is_none() && snapshot.secondary.is_some())
+  {
+    "seven_day".to_string()
+  } else {
+    configured_bucket.to_string()
   }
 }
 
@@ -527,23 +1203,25 @@ fn normalize_menu_bar_popup_modules(modules: &[String]) -> Vec<String> {
 fn menu_bar_tooltip(
   settings: &SyncSettings,
   api_value_title: Option<&str>,
-  state: &AppState,
+  cached_live_rate_limits: Option<&LiveRateLimitSnapshot>,
 ) -> Result<String, String> {
-  let bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let bucket = effective_menu_bar_api_bucket(&configured_bucket, cached_live_rate_limits);
   let mut fragments = Vec::new();
   if let Some(title) = api_value_title.filter(|value| !value.trim().is_empty()) {
     fragments.push(format!("{}累计 API 价值：{title}", menu_bar_bucket_label(&bucket)));
   }
   if settings.show_menu_bar_live_quota_percent {
-    let snapshot = get_live_rate_limits_cached(state)?;
-    if let Some(fragment) = menu_bar_live_quota_tooltip(
-      &snapshot,
-      settings,
-      &settings.menu_bar_live_quota_bucket,
-      &settings.menu_bar_live_quota_metric,
-      Local::now(),
-    ) {
-      fragments.push(fragment);
+    if let Some(snapshot) = cached_live_rate_limits {
+      if let Some(fragment) = menu_bar_live_quota_tooltip(
+        snapshot,
+        settings,
+        &settings.menu_bar_live_quota_bucket,
+        &settings.menu_bar_live_quota_metric,
+        Local::now(),
+      ) {
+        fragments.push(fragment);
+      }
     }
   }
   if fragments.is_empty() {
@@ -575,18 +1253,16 @@ fn bucket_uses_anchor(bucket: &str) -> bool {
 }
 
 fn menu_bar_live_quota_snapshot(
-  state: &AppState,
   settings: &SyncSettings,
   bucket: &str,
   metric: &str,
-  existing_snapshot: Option<LiveRateLimitSnapshot>,
+  existing_snapshot: Option<&LiveRateLimitSnapshot>,
   now: DateTime<Local>,
 ) -> Result<Option<String>, String> {
-  let snapshot = match existing_snapshot {
-    Some(snapshot) => snapshot,
-    None => get_live_rate_limits_cached(state)?,
+  let Some(snapshot) = existing_snapshot else {
+    return Ok(None);
   };
-  Ok(menu_bar_live_quota_title(&snapshot, settings, bucket, metric, now))
+  Ok(menu_bar_live_quota_title(snapshot, settings, bucket, metric, now))
 }
 
 fn selected_menu_bar_live_quota_window<'a>(
@@ -742,50 +1418,17 @@ fn maybe_live_rate_limits_for_bucket(
   if live_window_offset.unwrap_or(0) > 0 {
     return Ok(None);
   }
-  Ok(Some(get_live_rate_limits_cached(state)?))
-}
-
-fn get_live_rate_limits_cached(state: &AppState) -> Result<LiveRateLimitSnapshot, String> {
-  get_live_rate_limits(state, false)
-}
-
-fn get_live_rate_limits(state: &AppState, force_refresh: bool) -> Result<LiveRateLimitSnapshot, String> {
-  let ttl = live_rate_limit_cache_ttl(state);
-
-  if !force_refresh {
-    let cache = state
-      .live_rate_limits
-      .lock()
-      .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
-    if let Some(snapshot) = cache.as_ref() {
-      if snapshot.fetched_at.elapsed() <= ttl {
-        return Ok(snapshot.snapshot.clone());
-      }
-    }
-  }
-
-  match query_live_rate_limits() {
-    Ok(snapshot) => {
-      let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
-      insert_live_rate_limit_snapshot(&conn, &snapshot).map_err(|error| error.to_string())?;
-      store_live_rate_limits_cache(state, &snapshot)?;
-      Ok(snapshot)
-    }
-    Err(error) => {
-      log::warn!("Failed to refresh live rate limits from Codex app-server: {error}");
-      if let Some(snapshot) = get_live_rate_limits_history_fallback(state) {
-        if let Err(cache_error) = store_live_rate_limits_cache(state, &snapshot) {
-          log::warn!("Failed to cache fallback live rate limits: {cache_error}");
-        }
-        return Ok(snapshot);
-      }
-      Err(error)
-    }
-  }
+  Ok(state
+    .live_rate_limits
+    .rate_limits()
+    .map(|snapshot| snapshot.as_ref().clone()))
 }
 
 #[derive(Clone)]
 struct PersistedRateLimitWindow {
+  row_id: i64,
+  source_kind: String,
+  source_session_id: String,
   snapshot: RateLimitWindowSnapshot,
   fetched_at: String,
   limit_id: Option<String>,
@@ -801,10 +1444,11 @@ fn load_latest_persisted_rate_limit_window(
   let mut stmt = conn
     .prepare(
       "
-      SELECT sample_timestamp, limit_id, limit_name, plan_type, window_start, resets_at, used_percent, remaining_percent
+      SELECT id, source_kind, source_session_id, sample_timestamp, limit_id, limit_name, plan_type,
+             window_start, resets_at, used_percent, remaining_percent
       FROM rate_limit_samples
       WHERE bucket = ?1 AND (?2 IS NULL OR source_kind = ?2)
-      ORDER BY sample_timestamp DESC
+      ORDER BY julianday(sample_timestamp) DESC, id DESC
       LIMIT 1
       ",
     )
@@ -817,23 +1461,26 @@ fn load_latest_persisted_rate_limit_window(
     return Ok(None);
   };
 
-  let sample_timestamp = row.get::<_, String>(0).map_err(|error| error.to_string())?;
+  let row_id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+  let source_kind = row.get::<_, String>(1).map_err(|error| error.to_string())?;
+  let source_session_id = row.get::<_, String>(2).map_err(|error| error.to_string())?;
+  let sample_timestamp = row.get::<_, String>(3).map_err(|error| error.to_string())?;
   let limit_id = row
-    .get::<_, String>(1)
+    .get::<_, String>(4)
     .ok()
     .and_then(|value| (!value.is_empty()).then_some(value));
   let limit_name = row
-    .get::<_, String>(2)
+    .get::<_, String>(5)
     .ok()
     .and_then(|value| (!value.is_empty()).then_some(value));
   let plan_type = row
-    .get::<_, String>(3)
+    .get::<_, String>(6)
     .ok()
     .and_then(|value| (!value.is_empty()).then_some(value));
-  let window_start = row.get::<_, String>(4).map_err(|error| error.to_string())?;
-  let resets_at = row.get::<_, String>(5).map_err(|error| error.to_string())?;
-  let used_percent = row.get::<_, i64>(6).map_err(|error| error.to_string())?;
-  let remaining_percent = row.get::<_, i64>(7).map_err(|error| error.to_string())?;
+  let window_start = row.get::<_, String>(7).map_err(|error| error.to_string())?;
+  let resets_at = row.get::<_, String>(8).map_err(|error| error.to_string())?;
+  let used_percent = row.get::<_, i64>(9).map_err(|error| error.to_string())?;
+  let remaining_percent = row.get::<_, i64>(10).map_err(|error| error.to_string())?;
 
   let window_duration_mins = match (
     parse_rfc3339_local(&window_start),
@@ -844,6 +1491,9 @@ fn load_latest_persisted_rate_limit_window(
   };
 
   Ok(Some(PersistedRateLimitWindow {
+    row_id,
+    source_kind,
+    source_session_id,
     snapshot: RateLimitWindowSnapshot {
       used_percent,
       remaining_percent,
@@ -858,36 +1508,47 @@ fn load_latest_persisted_rate_limit_window(
   }))
 }
 
-fn load_persisted_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  load_persisted_live_rate_limits_for_source(state, None)
-}
-
-fn load_history_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  load_persisted_live_rate_limits_for_source(state, Some("session"))
-}
-
-fn load_persisted_live_rate_limits_for_source(
-  state: &AppState,
+fn load_persisted_live_rate_limits_from_connection(
+  conn: &rusqlite::Connection,
   source_kind: Option<&str>,
 ) -> Option<LiveRateLimitSnapshot> {
-  let conn = open_connection(&state.db_path).ok()?;
-  let primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
+  if let Ok(Some(snapshot)) = load_latest_rate_limits(conn, source_kind) {
+    return Some(normalize_live_rate_limit_snapshot(snapshot));
+  }
+  let mut primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
     .ok()
     .flatten();
-  let secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
+  let mut secondary = load_latest_persisted_rate_limit_window(&conn, "seven_day", source_kind)
     .ok()
     .flatten();
-  if primary.is_none() && secondary.is_none() {
-    return None;
+  let newest = match (primary.as_ref(), secondary.as_ref()) {
+    (Some(primary), Some(secondary)) => {
+      if persisted_window_is_newer(secondary, primary) { secondary } else { primary }
+    }
+    (Some(primary), None) => primary,
+    (None, Some(secondary)) => secondary,
+    (None, None) => return None,
+  };
+  let keep_primary = primary
+    .as_ref()
+    .is_some_and(|window| same_persisted_sample(window, newest));
+  let keep_secondary = secondary
+    .as_ref()
+    .is_some_and(|window| same_persisted_sample(window, newest));
+
+  if !keep_primary {
+    primary = None;
+  }
+  if !keep_secondary {
+    secondary = None;
   }
 
   let fetched_at = primary
     .as_ref()
     .map(|window| window.fetched_at.clone())
-    .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))
-    .unwrap_or_else(|| Local::now().to_rfc3339());
+    .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))?;
 
-  Some(LiveRateLimitSnapshot {
+  Some(normalize_live_rate_limit_snapshot(LiveRateLimitSnapshot {
     limit_id: primary
       .as_ref()
       .and_then(|window| window.limit_id.clone())
@@ -903,81 +1564,183 @@ fn load_persisted_live_rate_limits_for_source(
     primary: primary.map(|window| window.snapshot),
     secondary: secondary.map(|window| window.snapshot),
     fetched_at,
+  }))
+}
+
+fn normalize_live_rate_limit_snapshot(
+  mut snapshot: LiveRateLimitSnapshot,
+) -> LiveRateLimitSnapshot {
+  if snapshot.secondary.is_none()
+    && snapshot
+      .primary
+      .as_ref()
+      .is_some_and(|window| window.window_duration_mins == Some(7 * 24 * 60))
+  {
+    snapshot.secondary = snapshot.primary.take();
+  }
+  snapshot
+}
+
+fn load_preferred_persisted_live_rate_limits(
+  conn: &rusqlite::Connection,
+) -> Option<LiveRateLimitSnapshot> {
+  load_persisted_live_rate_limits_from_connection(conn, Some("live"))
+    .or_else(|| load_persisted_live_rate_limits_from_connection(conn, Some("session")))
+}
+
+fn persisted_window_is_newer(
+  candidate: &PersistedRateLimitWindow,
+  current: &PersistedRateLimitWindow,
+) -> bool {
+  match (
+    DateTime::parse_from_rfc3339(&candidate.fetched_at).ok(),
+    DateTime::parse_from_rfc3339(&current.fetched_at).ok(),
+  ) {
+    (Some(candidate_time), Some(current_time)) if candidate_time != current_time => {
+      candidate_time > current_time
+    }
+    (Some(_), Some(_)) => candidate.row_id > current.row_id,
+    (Some(_), None) => true,
+    (None, Some(_)) => false,
+    (None, None) if candidate.fetched_at != current.fetched_at => {
+      candidate.fetched_at > current.fetched_at
+    }
+    (None, None) => candidate.row_id > current.row_id,
+  }
+}
+
+fn same_persisted_sample(
+  left: &PersistedRateLimitWindow,
+  right: &PersistedRateLimitWindow,
+) -> bool {
+  left.source_kind == right.source_kind
+    && left.source_session_id == right.source_session_id
+    && left.fetched_at == right.fetched_at
+    && left.limit_id == right.limit_id
+    && left.limit_name == right.limit_name
+    && left.plan_type == right.plan_type
+}
+
+fn load_display_live_rate_limit_fallback(
+  db_path: &Path,
+  live_cache: &refresh::LiveQuotaCache,
+) -> Option<LiveRateLimitSnapshot> {
+  let memory = live_cache
+    .rate_limits()
+    .map(|snapshot| normalize_live_rate_limit_snapshot(snapshot.as_ref().clone()));
+  let memory_is_live = live_cache.state().last_live_success_at.is_some();
+  let Ok(conn) = open_connection(db_path) else {
+    return memory;
+  };
+  let persisted_live = load_persisted_live_rate_limits_from_connection(&conn, Some("live"));
+  if memory_is_live {
+    return newest_live_rate_limit_snapshot([memory, persisted_live]);
+  }
+  if persisted_live.is_some() {
+    return persisted_live;
+  }
+  memory.or_else(|| load_persisted_live_rate_limits_from_connection(&conn, Some("session")))
+}
+
+fn newest_live_rate_limit_snapshot(
+  snapshots: impl IntoIterator<Item = Option<LiveRateLimitSnapshot>>,
+) -> Option<LiveRateLimitSnapshot> {
+  snapshots.into_iter().flatten().fold(None, |newest, candidate| {
+    let Some(current) = newest else {
+      return Some(candidate);
+    };
+    if live_snapshot_is_newer(&candidate, &current) {
+      Some(candidate)
+    } else {
+      Some(current)
+    }
   })
 }
 
-fn get_live_rate_limits_local(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  get_cached_live_rate_limits(state).or_else(|| load_persisted_live_rate_limits(state))
-}
-
-fn get_live_rate_limits_history_fallback(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  refresh_rate_limit_history_if_idle(state);
-  load_history_live_rate_limits(state)
-    .or_else(|| load_persisted_live_rate_limits(state))
-    .or_else(|| get_cached_live_rate_limits(state))
-}
-
-fn refresh_rate_limit_history_if_idle(state: &AppState) {
-  if state
-    .scan_in_progress
-    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-    .is_err()
-  {
-    return;
-  }
-
-  let result = perform_scan(&state.db_path, None);
-  state.scan_in_progress.store(false, Ordering::SeqCst);
-  if let Err(error) = result {
-    log::warn!("Failed to refresh Codex history rate-limit samples: {error}");
+fn live_snapshot_is_newer(
+  candidate: &LiveRateLimitSnapshot,
+  current: &LiveRateLimitSnapshot,
+) -> bool {
+  match (
+    DateTime::parse_from_rfc3339(&candidate.fetched_at).ok(),
+    DateTime::parse_from_rfc3339(&current.fetched_at).ok(),
+  ) {
+    (Some(candidate), Some(current)) => candidate > current,
+    (Some(_), None) => true,
+    (None, Some(_)) => false,
+    (None, None) => candidate.fetched_at > current.fetched_at,
   }
 }
 
-fn get_cached_live_rate_limits(state: &AppState) -> Option<LiveRateLimitSnapshot> {
-  state
-    .live_rate_limits
-    .lock()
-    .ok()
-    .and_then(|cache| cache.as_ref().map(|snapshot| snapshot.snapshot.clone()))
-}
-
-fn store_live_rate_limits_cache(state: &AppState, snapshot: &LiveRateLimitSnapshot) -> Result<(), String> {
-  let mut cache = state
-    .live_rate_limits
-    .lock()
-    .map_err(|_| "Live rate-limit cache is unavailable.".to_string())?;
-  *cache = Some(CachedRateLimitSnapshot {
-    fetched_at: Instant::now(),
-    snapshot: snapshot.clone(),
-  });
-  Ok(())
-}
-
-fn best_effort_live_rate_limits(state: &AppState, force_refresh: bool) -> Option<LiveRateLimitSnapshot> {
-  match get_live_rate_limits(state, force_refresh) {
-    Ok(snapshot) => Some(snapshot),
-    Err(error) => {
-      log::warn!("Failed to refresh live rate limits for popup: {error}");
-      get_live_rate_limits_local(state)
-    }
-  }
-}
-
-fn build_menu_bar_popup_snapshot(
+fn cached_overview(
   state: &AppState,
-  force_refresh: bool,
-) -> Result<MenuBarPopupSnapshot, String> {
+  bucket: Option<String>,
+  anchor: Option<String>,
+  custom_start: Option<String>,
+  custom_end: Option<String>,
+  live_rate_limits: Option<LiveRateLimitSnapshot>,
+  live_window_offset: Option<i64>,
+) -> Result<OverviewResponse, String> {
+  let key = serde_json::to_string(&(
+    &bucket,
+    &anchor,
+    &custom_start,
+    &custom_end,
+    &live_rate_limits,
+    live_window_offset,
+  ))
+  .map_err(|error| error.to_string())?;
+  let usage_revision = state.menu_bar_usage_revision.load(Ordering::Acquire);
+  let quota_revision = state.quota_revision.load(Ordering::Acquire);
+  let settings_revision = state.settings_revision.load(Ordering::Acquire);
+  let mut cache = state
+    .overview_cache
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner);
+  if let Some(cached) = cache.as_ref().filter(|cached| {
+    cached.key == key
+      && cached.usage_revision == usage_revision
+      && cached.quota_revision == quota_revision
+      && cached.settings_revision == settings_revision
+  }) {
+    return Ok(cached.value.clone());
+  }
+
+  let connection = state
+    .overview_connection
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner);
+  let value = get_overview_with_connection(
+    &connection,
+    bucket,
+    anchor,
+    custom_start,
+    custom_end,
+    live_rate_limits,
+    live_window_offset,
+  )?;
+  *cache = Some(CachedOverview {
+    key,
+    usage_revision,
+    quota_revision,
+    settings_revision,
+    value: value.clone(),
+  });
+  Ok(value)
+}
+
+fn build_passive_menu_bar_popup_snapshot(state: &AppState) -> Result<MenuBarPopupSnapshot, String> {
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
-  let live_rate_limits = if force_refresh {
-    best_effort_live_rate_limits(state, true)
-  } else {
-    get_live_rate_limits_local(state)
-  };
-  let selected_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  drop(conn);
+  let live_rate_limits = state.live_rate_limits
+    .rate_limits()
+    .map(|snapshot| normalize_live_rate_limit_snapshot(snapshot.as_ref().clone()));
+  let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let selected_bucket = effective_menu_bar_api_bucket(&configured_bucket, live_rate_limits.as_ref());
   let anchor = bucket_uses_anchor(&selected_bucket).then(|| Local::now().format("%Y-%m-%d").to_string());
-  let overview = get_overview(
-    &state.db_path,
+  let overview = cached_overview(
+    state,
     Some(selected_bucket.clone()),
     anchor,
     None,
@@ -1001,7 +1764,7 @@ fn build_menu_bar_popup_snapshot(
 
   Ok(MenuBarPopupSnapshot {
     fetched_at: Local::now().to_rfc3339(),
-    refresh_interval_seconds: settings.live_quota_refresh_interval_seconds,
+    refresh_interval_seconds: unified_refresh_interval_seconds(settings.auto_scan_interval_minutes),
     selected_bucket,
     quota_5h: live_rate_limits
       .as_ref()
@@ -1029,6 +1792,23 @@ fn build_menu_bar_popup_snapshot(
     show_reset_timeline: settings.menu_bar_popup_show_reset_timeline,
     show_actions: settings.menu_bar_popup_show_actions,
   })
+}
+
+fn refresh_popup_data(state: &AppState) -> Result<(), String> {
+  let coordinator = refresh_handle(state)?;
+  let token_ticket = coordinator.request_manual_token(None);
+  let live_ticket = coordinator.request_manual_live();
+
+  let token_result = token_ticket.and_then(|ticket| ticket.wait());
+  let live_result = live_ticket.and_then(|ticket| ticket.wait());
+  match (token_result, live_result) {
+    (Ok(_), Ok(_)) => Ok(()),
+    (token, live) => Err(format!(
+      "Popup refresh failed (token: {:?}, live: {:?})",
+      token.err(),
+      live.err()
+    )),
+  }
 }
 
 fn menu_bar_popup_quota_snapshot(window: &RateLimitWindowSnapshot) -> MenuBarPopupQuotaSnapshot {
@@ -1092,12 +1872,8 @@ fn usage_velocity_status(percent: f64, fast_threshold: f64, slow_threshold: f64)
   }
 }
 
-fn live_rate_limit_cache_ttl(state: &AppState) -> Duration {
-  open_connection(&state.db_path)
-    .ok()
-    .and_then(|conn| get_sync_settings(&conn).ok())
-    .map(|settings| Duration::from_secs(settings.live_quota_refresh_interval_seconds.clamp(60, 3600) as u64))
-    .unwrap_or(Duration::from_secs(300))
+fn unified_refresh_interval_seconds(auto_scan_interval_minutes: i64) -> i64 {
+  auto_scan_interval_minutes.max(1).saturating_mul(60).max(60)
 }
 
 fn build_menu_bar_popup_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -1123,7 +1899,15 @@ fn build_menu_bar_popup_window(app: &AppHandle) -> Result<WebviewWindow, String>
 
 fn hide_menu_bar_popup(app: &AppHandle) {
   if let Some(window) = app.get_webview_window(MENU_BAR_POPUP_WINDOW_LABEL) {
-    let _ = window.hide();
+    if window.hide().is_ok() {
+      set_menu_bar_popup_visibility(app, false);
+    }
+  }
+}
+
+fn set_menu_bar_popup_visibility(app: &AppHandle, visible: bool) {
+  if let Some(state) = app.try_state::<AppState>() {
+    state.menu_bar_popup_visible.store(visible, Ordering::Release);
   }
 }
 
@@ -1135,8 +1919,10 @@ fn toggle_menu_bar_popup(
   let state = app.state::<AppState>();
   let conn = open_connection(&state.db_path).map_err(|error| error.to_string())?;
   let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+  drop(conn);
   if !settings.menu_bar_popup_enabled {
     clear_menu_bar_popup_anchor(state.inner());
+    hide_menu_bar_popup(app);
     show_main_window(app);
     return Ok(());
   }
@@ -1145,12 +1931,14 @@ fn toggle_menu_bar_popup(
   if window.is_visible().map_err(|error| error.to_string())? {
     clear_menu_bar_popup_anchor(state.inner());
     window.hide().map_err(|error| error.to_string())?;
+    state.menu_bar_popup_visible.store(false, Ordering::Release);
     return Ok(());
   }
 
   store_menu_bar_popup_anchor(state.inner(), rect, click_position);
   position_menu_bar_popup(&window, rect, click_position)?;
   window.show().map_err(|error| error.to_string())?;
+  state.menu_bar_popup_visible.store(true, Ordering::Release);
   window.set_focus().map_err(|error| error.to_string())?;
   window
     .emit(MENU_BAR_POPUP_REFRESH_EVENT, ())
@@ -1442,9 +2230,7 @@ fn tray_rect_size_to_physical(size: tauri::Size, scale_factor: f64) -> tauri::Ph
   }
 }
 
-fn build_daily_value_menu_bar(app: &AppHandle, db_path: &PathBuf) -> Result<TrayIcon, String> {
-  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
-  let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+fn build_daily_value_menu_bar(app: &AppHandle, settings: &SyncSettings) -> Result<TrayIcon, String> {
   let initial_title = String::new();
 
   let show_window = MenuItem::with_id(
@@ -1514,57 +2300,41 @@ fn show_main_window(app: &AppHandle) {
   }
 }
 
-fn spawn_initial_scan(state: AppState) {
-  tauri::async_runtime::spawn(async move {
-    let _ = run_scan_if_idle(state, None);
-  });
+fn full_maintenance_due(last_completed_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> bool {
+  let Some(last_completed_at) = last_completed_at else {
+    return true;
+  };
+  let Some(last_completed_at) = chrono::DateTime::parse_from_rfc3339(last_completed_at).ok() else {
+    return true;
+  };
+  now
+    .signed_duration_since(last_completed_at.with_timezone(&chrono::Utc))
+    .num_seconds()
+    >= FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS
 }
 
-fn spawn_scheduler(state: AppState) {
-  tauri::async_runtime::spawn(async move {
-    loop {
-      tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-      if state.scan_in_progress.load(Ordering::SeqCst) {
-        continue;
-      }
-
-      let Ok(conn) = open_connection(&state.db_path) else {
-        continue;
-      };
-      let Ok(settings) = get_sync_settings(&conn) else {
-        continue;
-      };
-      if menu_bar_has_visible_content(&settings) {
-        refresh_daily_value_menu_bar(&state);
-      }
-      if !settings.auto_scan_enabled {
-        continue;
-      }
-
-      let should_scan = match settings.last_scan_completed_at.as_deref() {
-        Some(last_completed_at) => {
-          chrono::DateTime::parse_from_rfc3339(last_completed_at)
-            .ok()
-            .map(|last| {
-              let elapsed = chrono::Utc::now().signed_duration_since(last.with_timezone(&chrono::Utc));
-              elapsed.num_minutes() >= settings.auto_scan_interval_minutes.max(1)
-            })
-            .unwrap_or(true)
-        }
-        None => true,
-      };
-
-      if should_scan {
-        let _ = run_scan_if_idle(state.clone(), settings.codex_home.clone());
-      }
-    }
-  });
+fn effective_token_scan_kind(
+  db_path: &Path,
+  requested: refresh::TokenScanKind,
+  now: DateTime<Utc>,
+) -> Result<ScanKind, String> {
+  if requested == refresh::TokenScanKind::Full {
+    return Ok(ScanKind::Full);
+  }
+  let conn = open_connection(db_path).map_err(|error| error.to_string())?;
+  let last_full = get_last_full_scan_completed(&conn).map_err(|error| error.to_string())?;
+  Ok(if full_maintenance_due(last_full.as_deref(), now) {
+    ScanKind::Reconcile
+  } else {
+    ScanKind::Incremental
+  })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let runtime_owner = Arc::new(Mutex::new(None::<refresh::RefreshRuntime>));
+  let setup_runtime_owner = Arc::clone(&runtime_owner);
+  let app = tauri::Builder::default()
     .plugin(
       tauri_plugin_log::Builder::default()
         .level(if cfg!(debug_assertions) {
@@ -1579,10 +2349,14 @@ pub fn run() {
         match event {
           tauri::WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            let _ = window.hide();
+            if window.hide().is_ok() {
+              set_menu_bar_popup_visibility(window.app_handle(), false);
+            }
           }
           tauri::WindowEvent::Focused(false) => {
-            let _ = window.hide();
+            if window.hide().is_ok() {
+              set_menu_bar_popup_visibility(window.app_handle(), false);
+            }
           }
           _ => {}
         }
@@ -1611,7 +2385,7 @@ pub fn run() {
         let _ = window.hide();
       }
     })
-    .setup(|app| {
+    .setup(move |app| {
       let app_data_dir = app
         .path()
         .app_data_dir()
@@ -1620,13 +2394,62 @@ pub fn run() {
         .map_err(|error| format!("Failed to create app data dir {}: {error}", app_data_dir.display()))?;
       let db_path = app_data_dir.join("codex-counter.sqlite");
 
+      prepare_app_database(&db_path)?;
       let conn = open_connection(&db_path).map_err(|error| error.to_string())?;
-      init_db(&conn).map_err(|error| error.to_string())?;
-      seed_pricing_catalog(&conn).map_err(|error| error.to_string())?;
-      recalculate_all_session_values(&conn).map_err(|error| error.to_string())?;
+      let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
+      let display_fallback = load_preferred_persisted_live_rate_limits(&conn);
+      let live_last_success_at = load_persisted_live_rate_limits_from_connection(&conn, Some("live"))
+        .map(|snapshot| snapshot.fetched_at);
+      let epoch_backfill_is_pending =
+        database::epoch_backfill_pending(&conn).map_err(|error| error.to_string())?;
+      conn
+        .pragma_update(None, "cache_size", -32_768)
+        .map_err(|error| error.to_string())?;
+      let overview_connection = Arc::new(Mutex::new(conn));
+
+      let live_rate_limits = refresh::LiveQuotaCache::new();
+      if let Some(fallback) = display_fallback {
+        live_rate_limits.publish_fallback(
+          Arc::new(fallback),
+          Instant::now(),
+          Utc::now(),
+        );
+      }
 
       let app_handle = app.app_handle();
-      let daily_value_tray = match build_daily_value_menu_bar(&app_handle, &db_path) {
+      let usage_mutations = refresh::UsageMutationCoordinator::new();
+      let runtime_dependencies = refresh::RefreshRuntimeDependencies::with_system_defaults(
+          refresh_config_from_saved_settings(&settings, live_last_success_at.as_deref()),
+          Arc::new(AppTokenRefreshExecutor {
+            db_path: db_path.clone(),
+            preparation_connection: Arc::new(Mutex::new(None)),
+          }),
+          Arc::new(AppLiveQuotaFetcher {
+            db_path: db_path.clone(),
+            live_cache: live_rate_limits.clone(),
+            client: Arc::new(LiveRateLimitClient::new()),
+          }),
+          Arc::new(AppLiveQuotaPersister {
+            db_path: db_path.clone(),
+          }),
+          live_rate_limits.clone(),
+          Arc::new(TauriRefreshEventSink {
+            app_handle: app_handle.clone(),
+          }),
+          usage_mutations.clone(),
+        );
+      let runtime_dependencies = configure_epoch_maintenance(
+        runtime_dependencies,
+        db_path.clone(),
+        epoch_backfill_is_pending,
+      );
+      let runtime = refresh::RefreshRuntime::start(runtime_dependencies)?;
+      let refresh = runtime.handle();
+      *setup_runtime_owner
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(runtime);
+
+      let daily_value_tray = match build_daily_value_menu_bar(&app_handle, &settings) {
         Ok(tray) => Some(tray),
         Err(error) => {
           log::warn!("Failed to set up menu bar API value: {error}");
@@ -1634,28 +2457,38 @@ pub fn run() {
         }
       };
       let state = AppState {
+        app_handle: Some(app_handle.clone()),
         db_path,
-        scan_in_progress: Arc::new(AtomicBool::new(false)),
+        refresh: installed_refresh_handle(refresh),
+        usage_mutations,
+        menu_bar_render_state: Arc::new(AtomicU8::new(MENU_RENDER_IDLE)),
+        menu_bar_usage_revision: Arc::new(AtomicU64::new(0)),
+        quota_revision: Arc::new(AtomicU64::new(0)),
+        settings_revision: Arc::new(AtomicU64::new(0)),
+        menu_bar_api_value_cache: Arc::new(Mutex::new(None)),
+        overview_cache: Arc::new(Mutex::new(None)),
+        overview_connection,
         daily_value_tray,
-        live_rate_limits: Arc::new(Mutex::new(None)),
+        live_rate_limits,
+        menu_bar_popup_visible: Arc::new(AtomicBool::new(false)),
         menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
       };
       app.manage(state.clone());
-      if let Ok(settings) = get_sync_settings(&conn) {
-        apply_dock_icon_visibility(&app_handle, &settings, state.daily_value_tray.is_some());
-      }
+      apply_dock_icon_visibility(&app_handle, &settings, state.daily_value_tray.is_some());
       if let Err(error) = build_menu_bar_popup_window(&app_handle) {
         log::warn!("Failed to set up menu bar popup window: {error}");
       }
-      refresh_daily_value_menu_bar(&state);
-      spawn_initial_scan(state.clone());
-      spawn_scheduler(state);
+      if let Err(error) = render_daily_value_menu_bar(&state, &settings) {
+        log::warn!("Failed to render initial menu bar display: {error}");
+      }
 
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
       scanCodexUsage,
       getScanInProgress,
+      getRefreshStatus,
+      refreshBackgroundData,
       refreshPricing,
       getOverview,
       listConversations,
@@ -1670,13 +2503,448 @@ pub fn run() {
       getSubscriptionProfile,
       updateSubscriptionProfile,
     ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+
+  app.run(move |app_handle, event| match event {
+    tauri::RunEvent::Resumed => {
+      if let Some(state) = app_handle.try_state::<AppState>() {
+        match refresh_handle(state.inner()) {
+          Ok(refresh) => match refresh.try_wake() {
+            Ok(()) | Err(refresh::RefreshError::Busy) => {}
+            Err(error) => log::warn!("Failed to wake refresh coordinator after resume: {error:?}"),
+          },
+          Err(error) => log::warn!("Failed to wake refresh coordinator after resume: {error}"),
+        }
+      }
+    }
+    tauri::RunEvent::Exit => {
+      let runtime = runtime_owner
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+      if let Some(runtime) = runtime {
+        if let Err(error) = runtime.shutdown_and_join() {
+          log::warn!("Failed to shut down refresh runtime: {error:?}");
+        }
+      }
+    }
+    _ => {}
+  });
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::mpsc::{self, Receiver, Sender};
+  use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
+  use tempfile::tempdir;
+
+  struct RecordingTokenExecutor {
+    requests: Sender<refresh::TokenExecutionRequest>,
+  }
+
+  impl refresh::TokenRefreshExecutor for RecordingTokenExecutor {
+    fn parse(
+      &self,
+      request: refresh::TokenExecutionRequest,
+    ) -> Result<refresh::PreparedTokenRefresh, String> {
+      self
+        .requests
+        .send(request)
+        .map_err(|error| error.to_string())?;
+      Err("recording token executor stops after parse intake".to_string())
+    }
+
+    fn commit(&self, _: refresh::PreparedTokenRefresh) -> Result<ScanResult, String> {
+      Err("recording token executor does not commit".to_string())
+    }
+  }
+
+  struct RecordingAppTokenExecutor {
+    inner: AppTokenRefreshExecutor,
+    parsed: Sender<(u64, u64, refresh::TokenScanKind)>,
+    committed: Sender<u64>,
+  }
+
+  impl refresh::TokenRefreshExecutor for RecordingAppTokenExecutor {
+    fn parse(
+      &self,
+      request: refresh::TokenExecutionRequest,
+    ) -> Result<refresh::PreparedTokenRefresh, String> {
+      self
+        .parsed
+        .send((
+          request.generation,
+          request.source_generation,
+          request.request.kind,
+        ))
+        .map_err(|error| error.to_string())?;
+      self.inner.parse(request)
+    }
+
+    fn commit(
+      &self,
+      prepared: refresh::PreparedTokenRefresh,
+    ) -> Result<ScanResult, String> {
+      self
+        .committed
+        .send(prepared.generation)
+        .map_err(|error| error.to_string())?;
+      self.inner.commit(prepared)
+    }
+  }
+
+  struct CountingLiveFetcher {
+    calls: Arc<AtomicUsize>,
+  }
+
+  impl refresh::LiveQuotaFetcher for CountingLiveFetcher {
+    fn fetch(&self, _: Duration) -> Result<LiveRateLimitSnapshot, String> {
+      self.calls.fetch_add(1, AtomicOrdering::AcqRel);
+      Err("counting live fetcher should not run".to_string())
+    }
+  }
+
+  struct NoopLivePersister;
+
+  impl refresh::LiveQuotaPersister for NoopLivePersister {
+    fn persist(&self, _: &LiveRateLimitSnapshot) -> Result<(), String> {
+      Ok(())
+    }
+  }
+
+  struct NoopRefreshEvents;
+
+  impl refresh::RefreshEventSink for NoopRefreshEvents {
+    fn publish_invalidation(&self, _: refresh::DisplayInvalidation) {}
+
+    fn publish_completion(&self, _: refresh::RefreshCompletedEvent) {}
+  }
+
+  #[test]
+  fn production_epoch_maintenance_adapter_is_bounded_and_resumes_from_cursor() {
+    let directory = tempdir().expect("create adapter test directory");
+    let db_path = directory.path().join("epoch-maintenance.sqlite3");
+    let conn = open_connection(&db_path).expect("open adapter database");
+    init_db(&conn).expect("initialize adapter database");
+    conn.execute_batch(
+      "
+      WITH RECURSIVE rows(value) AS (
+        SELECT 1
+        UNION ALL
+        SELECT value + 1 FROM rows WHERE value < 2501
+      )
+      INSERT INTO usage_events (
+        session_id, timestamp, timestamp_ms, model_id,
+        input_tokens, cached_input_tokens, output_tokens,
+        reasoning_output_tokens, total_tokens, value_usd,
+        fast_mode_auto, fast_mode_effective
+      )
+      SELECT
+        'legacy-' || value, '2026-07-10T03:00:00Z', NULL, 'gpt-5',
+        1, 0, 1, 0, 2, 0.01, 0, 0
+      FROM rows;
+      ",
+    )
+    .expect("seed legacy epoch rows");
+    assert!(database::epoch_backfill_pending(&conn).expect("read repair marker"));
+    drop(conn);
+
+    let first_adapter = AppEpochMaintenanceExecutor::new(db_path.clone());
+    let first = refresh::EpochMaintenanceExecutor::run_batch(
+      &first_adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("run first production slice");
+    assert_eq!(
+      first,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 1_000,
+        complete: false,
+      }
+    );
+    assert_eq!(first_adapter.open_count_for_test(), 1);
+    assert!(first_adapter.connection_is_open_for_test());
+
+    let second = refresh::EpochMaintenanceExecutor::run_batch(
+      &first_adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("run second production slice on the same adapter");
+    assert_eq!(
+      second,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 1_000,
+        complete: false,
+      }
+    );
+    assert_eq!(
+      first_adapter.open_count_for_test(),
+      1,
+      "incomplete slices reuse one WAL connection"
+    );
+    assert!(first_adapter.connection_is_open_for_test());
+
+    let reopened = open_connection(&db_path).expect("reopen after first slice");
+    let cursor: i64 = reopened
+      .query_row(
+        "SELECT progress_value FROM data_repair_progress WHERE repair_key = 'epoch_timestamp_backfill_v1' AND stream_key = 'usage_events'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load persisted cursor");
+    assert_eq!(cursor, 2_000);
+    drop(reopened);
+    drop(first_adapter);
+
+    let resumed_adapter = AppEpochMaintenanceExecutor::new(db_path);
+    let resumed = refresh::EpochMaintenanceExecutor::run_batch(
+      &resumed_adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("resume production slice");
+    assert_eq!(
+      resumed,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 501,
+        complete: true,
+      }
+    );
+    assert_eq!(resumed_adapter.open_count_for_test(), 1);
+    assert!(
+      !resumed_adapter.connection_is_open_for_test(),
+      "completed repair releases its WAL connection"
+    );
+  }
+
+  #[test]
+  fn pre_cancelled_epoch_maintenance_adapter_does_not_open_database() {
+    let directory = tempdir().expect("create cancelled adapter directory");
+    let adapter = AppEpochMaintenanceExecutor::new(
+      directory.path().join("pre-cancelled.sqlite3"),
+    );
+
+    let result = refresh::EpochMaintenanceExecutor::run_batch(
+      &adapter,
+      1_000,
+      Arc::new(AtomicBool::new(true)),
+    )
+    .expect("observe pre-cancelled adapter call");
+
+    assert_eq!(result, refresh::EpochMaintenanceBatch::Cancelled);
+    assert_eq!(adapter.open_count_for_test(), 0);
+    assert!(!adapter.connection_is_open_for_test());
+  }
+
+  #[test]
+  fn failed_epoch_maintenance_slice_keeps_connection_for_retry() {
+    let directory = tempdir().expect("create retry adapter directory");
+    let db_path = directory.path().join("retry.sqlite3");
+    let conn = open_connection(&db_path).expect("open retry database");
+    init_db(&conn).expect("initialize retry database");
+    conn.execute_batch(
+      "
+      INSERT INTO usage_events (
+        session_id, timestamp, timestamp_ms, model_id,
+        input_tokens, cached_input_tokens, output_tokens,
+        reasoning_output_tokens, total_tokens, value_usd,
+        fast_mode_auto, fast_mode_effective
+      )
+      VALUES (
+        'legacy', '2026-07-10T03:00:00Z', NULL, 'gpt-5',
+        1, 0, 1, 0, 2, 0.01, 0, 0
+      );
+      CREATE TRIGGER fail_epoch_retry
+      BEFORE UPDATE OF timestamp_ms ON usage_events
+      BEGIN
+        SELECT RAISE(ABORT, 'injected epoch retry failure');
+      END;
+      ",
+    )
+    .expect("seed retry failure");
+    drop(conn);
+    let adapter = AppEpochMaintenanceExecutor::new(db_path.clone());
+
+    let error = refresh::EpochMaintenanceExecutor::run_batch(
+      &adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect_err("inject first slice failure");
+    assert!(error.contains("injected epoch retry failure"));
+    assert_eq!(adapter.open_count_for_test(), 1);
+    assert!(adapter.connection_is_open_for_test());
+
+    let repair = open_connection(&db_path).expect("open trigger repair connection");
+    repair
+      .execute_batch("DROP TRIGGER fail_epoch_retry;")
+      .expect("remove injected failure");
+    drop(repair);
+    let retried = refresh::EpochMaintenanceExecutor::run_batch(
+      &adapter,
+      1_000,
+      Arc::new(AtomicBool::new(false)),
+    )
+    .expect("retry with retained connection");
+
+    assert_eq!(
+      retried,
+      refresh::EpochMaintenanceBatch::Progress {
+        processed_rows: 1,
+        complete: true,
+      }
+    );
+    assert_eq!(adapter.open_count_for_test(), 1);
+    assert!(!adapter.connection_is_open_for_test());
+  }
+
+  #[test]
+  fn completed_epoch_repair_does_not_inject_a_runtime_worker() {
+    let directory = tempdir().expect("create completed repair directory");
+    let db_path = directory.path().join("completed.sqlite3");
+    let conn = open_connection(&db_path).expect("open completed database");
+    init_db(&conn).expect("initialize completed database");
+    conn.execute(
+      "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-11T00:00:00Z')",
+      [],
+    )
+    .expect("mark epoch repair complete");
+    let pending = database::epoch_backfill_pending(&conn).expect("check completion marker");
+    drop(conn);
+    let (requests, _) = mpsc::channel();
+    let dependencies = refresh::RefreshRuntimeDependencies::with_system_defaults(
+      refresh::RefreshConfig {
+        auto_scan_enabled: false,
+        interval: Duration::from_secs(60),
+        codex_home: None,
+        token_last_success_wall: None,
+        live_last_success_wall: None,
+      },
+      Arc::new(RecordingTokenExecutor { requests }),
+      Arc::new(CountingLiveFetcher {
+        calls: Arc::new(AtomicUsize::new(0)),
+      }),
+      Arc::new(NoopLivePersister),
+      refresh::LiveQuotaCache::new(),
+      Arc::new(NoopRefreshEvents),
+      refresh::UsageMutationCoordinator::new(),
+    );
+
+    let dependencies = configure_epoch_maintenance(dependencies, db_path, pending);
+
+    assert!(!pending);
+    assert!(dependencies.epoch_maintenance_executor.is_none());
+  }
+
+  struct GatedFailingTokenExecutor {
+    entered: Sender<()>,
+    release: Mutex<Receiver<()>>,
+  }
+
+  impl refresh::TokenRefreshExecutor for GatedFailingTokenExecutor {
+    fn parse(
+      &self,
+      _: refresh::TokenExecutionRequest,
+    ) -> Result<refresh::PreparedTokenRefresh, String> {
+      self.entered.send(()).map_err(|error| error.to_string())?;
+      self
+        .release
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .recv()
+        .map_err(|error| error.to_string())?;
+      Err("injected popup token failure".to_string())
+    }
+
+    fn commit(&self, _: refresh::PreparedTokenRefresh) -> Result<ScanResult, String> {
+      Err("injected popup token commit failure".to_string())
+    }
+  }
+
+  struct GatedFailingLiveFetcher {
+    entered: Sender<()>,
+    release: Mutex<Receiver<()>>,
+  }
+
+  impl refresh::LiveQuotaFetcher for GatedFailingLiveFetcher {
+    fn fetch(&self, _: Duration) -> Result<LiveRateLimitSnapshot, String> {
+      self.entered.send(()).map_err(|error| error.to_string())?;
+      self
+        .release
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .recv()
+        .map_err(|error| error.to_string())?;
+      Err("injected popup live failure".to_string())
+    }
+  }
+
+  fn start_recording_runtime(
+    config: refresh::RefreshConfig,
+  ) -> (
+    refresh::RefreshRuntime,
+    Receiver<refresh::TokenExecutionRequest>,
+    Arc<AtomicUsize>,
+  ) {
+    let (requests, received) = mpsc::channel();
+    let live_calls = Arc::new(AtomicUsize::new(0));
+    let dependencies = refresh::RefreshRuntimeDependencies::with_system_defaults(
+      config,
+      Arc::new(RecordingTokenExecutor { requests }),
+      Arc::new(CountingLiveFetcher {
+        calls: Arc::clone(&live_calls),
+      }),
+      Arc::new(NoopLivePersister),
+      refresh::LiveQuotaCache::new(),
+      Arc::new(NoopRefreshEvents),
+      refresh::UsageMutationCoordinator::new(),
+    );
+    let runtime = refresh::RefreshRuntime::start(dependencies).expect("start recording runtime");
+    (runtime, received, live_calls)
+  }
+
+  fn disabled_refresh_config(codex_home: Option<String>) -> refresh::RefreshConfig {
+    refresh::RefreshConfig {
+      auto_scan_enabled: false,
+      interval: Duration::from_secs(3600),
+      codex_home,
+      token_last_success_wall: None,
+      live_last_success_wall: None,
+    }
+  }
+
+  fn test_app_state(
+    db_path: PathBuf,
+    refresh: refresh::RefreshCoordinatorHandle,
+    usage_mutations: refresh::UsageMutationCoordinator,
+    live_rate_limits: refresh::LiveQuotaCache,
+  ) -> AppState {
+    let overview_connection = open_connection(&db_path).expect("open overview connection");
+    overview_connection
+      .pragma_update(None, "cache_size", -32_768)
+      .expect("configure overview cache");
+    AppState {
+      app_handle: None,
+      db_path,
+      refresh: Some(refresh),
+      usage_mutations,
+      menu_bar_render_state: Arc::new(AtomicU8::new(MENU_RENDER_IDLE)),
+      menu_bar_usage_revision: Arc::new(AtomicU64::new(0)),
+      quota_revision: Arc::new(AtomicU64::new(0)),
+      settings_revision: Arc::new(AtomicU64::new(0)),
+      menu_bar_api_value_cache: Arc::new(Mutex::new(None)),
+      overview_cache: Arc::new(Mutex::new(None)),
+      overview_connection: Arc::new(Mutex::new(overview_connection)),
+      daily_value_tray: None,
+      live_rate_limits,
+      menu_bar_popup_visible: Arc::new(AtomicBool::new(false)),
+      menu_bar_popup_anchor: Arc::new(Mutex::new(None)),
+    }
+  }
 
   fn speed_test_settings() -> SyncSettings {
     SyncSettings {
@@ -1695,6 +2963,1389 @@ mod tests {
     DateTime::parse_from_rfc3339(value)
       .expect("parse test timestamp")
       .with_timezone(&Local)
+  }
+
+  fn utc_time(value: &str) -> chrono::DateTime<chrono::Utc> {
+    DateTime::parse_from_rfc3339(value)
+      .expect("parse test timestamp")
+      .with_timezone(&chrono::Utc)
+  }
+
+  #[test]
+  fn settings_change_wakes_coordinator_immediately() {
+    let initial = refresh::RefreshConfig {
+      auto_scan_enabled: false,
+      interval: Duration::from_secs(3600),
+      codex_home: None,
+      token_last_success_wall: None,
+      live_last_success_wall: None,
+    };
+    let (runtime, token_requests, _) = start_recording_runtime(initial);
+    let handle = runtime.handle();
+    let saved = SyncSettings {
+      auto_scan_enabled: true,
+      auto_scan_interval_minutes: 60,
+      ..SyncSettings::default()
+    };
+
+    update_coordinator_from_saved_settings(&handle, &saved).expect("deliver settings update");
+
+    assert!(handle.status().auto_scan_enabled);
+    token_requests
+      .recv_timeout(Duration::from_secs(2))
+      .expect("enabled overdue settings wake token lane");
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn codex_home_change_requests_full_scan() {
+    let initial = refresh::RefreshConfig {
+      auto_scan_enabled: false,
+      interval: Duration::from_secs(3600),
+      codex_home: Some("/tmp/codex-home-before".to_string()),
+      token_last_success_wall: None,
+      live_last_success_wall: None,
+    };
+    let (runtime, token_requests, _) = start_recording_runtime(initial);
+    let handle = runtime.handle();
+    let source_generation_before = handle.status().source_generation;
+    let saved = SyncSettings {
+      codex_home: Some("/tmp/codex-home-after".to_string()),
+      auto_scan_enabled: false,
+      auto_scan_interval_minutes: 60,
+      ..SyncSettings::default()
+    };
+
+    update_coordinator_from_saved_settings(&handle, &saved).expect("deliver source change");
+
+    let request = token_requests
+      .recv_timeout(Duration::from_secs(2))
+      .expect("source change starts protected token refresh");
+    assert_eq!(request.request.kind, refresh::TokenScanKind::Full);
+    assert!(request
+      .request
+      .reasons
+      .contains(refresh::RefreshReason::SettingsChanged));
+    assert_eq!(
+      request.request.codex_home.as_deref(),
+      Some("/tmp/codex-home-after")
+    );
+    assert_eq!(handle.status().source_generation, source_generation_before + 1);
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn passive_live_getter_does_not_start_fetch() {
+    let (runtime, token_requests, live_calls) =
+      start_recording_runtime(disabled_refresh_config(None));
+    let status_before = runtime.handle().status();
+    let cache = refresh::LiveQuotaCache::new();
+    cache.publish_fallback(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: None,
+        secondary: None,
+        fetched_at: "2026-07-11T00:00:00Z".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+
+    let snapshot = get_passive_live_rate_limits(&cache).expect("read cached quota");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-11T00:00:00Z");
+    assert!(cache.needs_live_refresh(Duration::from_secs(3600), Instant::now()));
+    assert!(matches!(token_requests.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert_eq!(live_calls.load(AtomicOrdering::Acquire), 0);
+    let status_after = runtime.handle().status();
+    assert_eq!(status_after.source_generation, status_before.source_generation);
+    assert!(!status_after.token.running && !status_after.token.pending);
+    assert!(!status_after.live.running && !status_after.live.pending);
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn popup_snapshot_read_does_not_start_scan() {
+    let (runtime, token_requests, live_calls) =
+      start_recording_runtime(disabled_refresh_config(None));
+    let status_before = runtime.handle().status();
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let cache = refresh::LiveQuotaCache::new();
+    let state = test_app_state(
+      db_path.clone(),
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      cache,
+    );
+
+    let snapshot = build_passive_menu_bar_popup_snapshot(&state)
+      .expect("build passive popup snapshot");
+
+    assert_eq!(snapshot.total_tokens_selected_bucket, 0);
+    let conn = open_connection(&db_path).expect("open database");
+    let event_count: i64 = conn
+      .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
+      .expect("count usage events");
+    assert_eq!(event_count, 0);
+    assert!(matches!(token_requests.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert_eq!(live_calls.load(AtomicOrdering::Acquire), 0);
+    let status_after = runtime.handle().status();
+    assert_eq!(status_after.source_generation, status_before.source_generation);
+    assert!(!status_after.token.running && !status_after.token.pending);
+    assert!(!status_after.live.running && !status_after.live.pending);
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn popup_snapshot_uses_seven_day_bucket_when_five_hour_quota_is_absent() {
+    let (runtime, _, _) = start_recording_runtime(disabled_refresh_config(None));
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.menu_bar_bucket = "five_hour".to_string();
+    save_sync_settings(&conn, &settings).expect("save menu bar bucket");
+    drop(conn);
+
+    let cache = refresh::LiveQuotaCache::new();
+    cache.publish_fallback(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: None,
+        secondary: Some(RateLimitWindowSnapshot {
+          used_percent: 21,
+          remaining_percent: 79,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-07-20T00:00:00+08:00".to_string()),
+          window_start: Some("2026-07-13T00:00:00+08:00".to_string()),
+        }),
+        fetched_at: "2026-07-13T10:00:00+08:00".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      cache,
+    );
+
+    let snapshot = build_passive_menu_bar_popup_snapshot(&state)
+      .expect("build popup snapshot");
+
+    assert_eq!(snapshot.selected_bucket, "seven_day");
+    assert!(snapshot.quota_5h.is_none());
+    assert_eq!(
+      snapshot.quota_7d.map(|window| window.remaining_percent),
+      Some(79)
+    );
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn subscription_profile_update_invalidates_cached_overview() {
+    let (runtime, _, _) = start_recording_runtime(disabled_refresh_config(None));
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      refresh::LiveQuotaCache::new(),
+    );
+    cached_overview(
+      &state,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("populate overview cache");
+    assert!(state
+      .overview_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_some());
+
+    let saved = update_subscription_profile_for_state(
+      &state,
+      SubscriptionProfile {
+        monthly_price: 250.0,
+        ..SubscriptionProfile::default()
+      },
+    )
+    .expect("update subscription profile");
+
+    assert_eq!(saved.monthly_price, 250.0);
+    assert_eq!(state.settings_revision.load(Ordering::Acquire), 1);
+    assert!(state
+      .overview_cache
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .is_none());
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn forced_popup_requests_token_and_live_before_waiting() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let live_cache = refresh::LiveQuotaCache::new();
+    live_cache.publish_fallback(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("cached".to_string()),
+        limit_name: None,
+        plan_type: None,
+        primary: None,
+        secondary: None,
+        fetched_at: "2026-07-11T00:00:00Z".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+    let mutation = refresh::UsageMutationCoordinator::new();
+    let (token_entered_tx, token_entered_rx) = mpsc::channel();
+    let (token_release_tx, token_release_rx) = mpsc::channel();
+    let (live_entered_tx, live_entered_rx) = mpsc::channel();
+    let (live_release_tx, live_release_rx) = mpsc::channel();
+    let runtime = refresh::RefreshRuntime::start(
+      refresh::RefreshRuntimeDependencies::with_system_defaults(
+        disabled_refresh_config(None),
+        Arc::new(GatedFailingTokenExecutor {
+          entered: token_entered_tx,
+          release: Mutex::new(token_release_rx),
+        }),
+        Arc::new(GatedFailingLiveFetcher {
+          entered: live_entered_tx,
+          release: Mutex::new(live_release_rx),
+        }),
+        Arc::new(NoopLivePersister),
+        live_cache.clone(),
+        Arc::new(NoopRefreshEvents),
+        mutation.clone(),
+      ),
+    )
+    .expect("start popup runtime");
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      mutation,
+      live_cache.clone(),
+    );
+    let refresh_thread = std::thread::spawn(move || refresh_popup_data(&state));
+
+    token_entered_rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("token lane starts");
+    live_entered_rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("live lane starts before token wait completes");
+    token_release_tx.send(()).expect("release token lane");
+    live_release_tx.send(()).expect("release live lane");
+    assert!(refresh_thread
+      .join()
+      .expect("join forced popup refresh")
+      .is_err());
+    assert_eq!(
+      live_cache
+        .rate_limits()
+        .expect("old fallback remains cached")
+        .fetched_at,
+      "2026-07-11T00:00:00Z"
+    );
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn manual_scan_uses_coordinator_generation() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let codex_home = directory.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("create Codex home");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let (parsed_tx, parsed_rx) = mpsc::channel();
+    let (committed_tx, committed_rx) = mpsc::channel();
+    let token_executor = RecordingAppTokenExecutor {
+      inner: AppTokenRefreshExecutor {
+        db_path: db_path.clone(),
+        preparation_connection: Arc::new(Mutex::new(None)),
+      },
+      parsed: parsed_tx,
+      committed: committed_tx,
+    };
+    let live_calls = Arc::new(AtomicUsize::new(0));
+    let dependencies = refresh::RefreshRuntimeDependencies::with_system_defaults(
+      disabled_refresh_config(Some(codex_home.to_string_lossy().to_string())),
+      Arc::new(token_executor),
+      Arc::new(CountingLiveFetcher {
+        calls: Arc::clone(&live_calls),
+      }),
+      Arc::new(NoopLivePersister),
+      refresh::LiveQuotaCache::new(),
+      Arc::new(NoopRefreshEvents),
+      refresh::UsageMutationCoordinator::new(),
+    );
+    let runtime = refresh::RefreshRuntime::start(dependencies).expect("start runtime");
+    let handle = runtime.handle();
+
+    let result = run_manual_scan_with_coordinator(
+      &handle,
+      Some(codex_home.to_string_lossy().to_string()),
+    )
+    .expect("manual scan succeeds through coordinator");
+
+    let (parsed_generation, source_generation, kind) = parsed_rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("manual scan reaches production adapter");
+    let committed_generation = committed_rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("prepared generation reaches commit");
+    assert!(parsed_generation > 0);
+    assert_eq!(parsed_generation, committed_generation);
+    assert_eq!(source_generation, handle.status().source_generation);
+    assert_eq!(kind, refresh::TokenScanKind::Full);
+    assert_eq!(result.codex_home, codex_home.to_string_lossy());
+    assert_eq!(live_calls.load(AtomicOrdering::Acquire), 0);
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn pricing_recalculation_uses_lower_priority_mutation_ticket() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let coordinator = refresh::UsageMutationCoordinator::new();
+    let blocker = coordinator.clone();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let blocker_thread = std::thread::spawn(move || {
+      blocker.run(refresh::MutationPriority::Refresh, || {
+        entered_tx.send(()).expect("report refresh slot");
+        release_rx.recv().expect("release refresh slot");
+      });
+    });
+    entered_rx.recv().expect("refresh mutation enters first");
+
+    let pricing_coordinator = coordinator.clone();
+    let (result_tx, result_rx) = mpsc::channel();
+    let pricing_thread = std::thread::spawn(move || {
+      let result = refresh_pricing_catalog_with_runner(
+        &db_path,
+        None,
+        |priority, mutation| pricing_coordinator.run(priority, mutation).value,
+      );
+      result_tx.send(result).expect("send pricing result");
+    });
+
+    assert!(matches!(
+      result_rx.recv_timeout(Duration::from_millis(50)),
+      Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    release_tx.send(()).expect("release refresh mutation");
+    result_rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("pricing runs after refresh slot")
+      .expect("pricing refresh succeeds");
+    blocker_thread.join().expect("join refresh blocker");
+    pricing_thread.join().expect("join pricing refresh");
+  }
+
+  #[test]
+  fn menu_render_coalescer_retries_failed_running_transition() {
+    let state = AtomicU8::new(MENU_RENDER_RUNNING);
+    let transitioned = std::cell::Cell::new(false);
+
+    let claimed = claim_menu_bar_render_with_hook(&state, |observed| {
+      if observed == MENU_RENDER_RUNNING && !transitioned.replace(true) {
+        state.store(MENU_RENDER_IDLE, Ordering::Release);
+      }
+    });
+
+    assert!(claimed, "failed RUNNING to PENDING CAS must retry from IDLE");
+    assert_eq!(state.load(Ordering::Acquire), MENU_RENDER_RUNNING);
+    assert!(!claim_menu_bar_render(&state));
+    assert_eq!(state.load(Ordering::Acquire), MENU_RENDER_PENDING);
+    assert!(complete_menu_bar_render(&state));
+    assert_eq!(state.load(Ordering::Acquire), MENU_RENDER_IDLE);
+  }
+
+  fn seed_scan_freshness(conn: &rusqlite::Connection, codex_home: &str) -> SyncSettings {
+    let initial = SyncSettings {
+      codex_home: Some(codex_home.to_string()),
+      ..get_sync_settings(conn).expect("load settings")
+    };
+    save_sync_settings(conn, &initial).expect("save initial source");
+    database::set_last_scan_started_for_source(
+      conn,
+      "2026-07-10T08:00:00Z",
+      Some(codex_home),
+      codex_home,
+    )
+    .expect("set scan start");
+    assert!(database::set_scan_completed_for_source(
+      conn,
+      "2026-07-10T08:01:00Z",
+      Some(codex_home),
+      codex_home,
+      true,
+      false,
+    )
+    .expect("set full scan completion"));
+    get_sync_settings(conn).expect("reload scan freshness")
+  }
+
+  #[test]
+  fn changing_codex_home_clears_scan_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = seed_scan_freshness(&conn, "/tmp/codex-home-before");
+
+    let changed = SyncSettings {
+      codex_home: Some("/tmp/codex-home-after".to_string()),
+      ..settings
+    };
+    let saved = save_normalized_sync_settings(&conn, changed).expect("save changed settings");
+
+    assert_eq!(saved.last_scan_started_at, None);
+    assert_eq!(saved.last_scan_completed_at, None);
+    assert_eq!(get_last_full_scan_completed(&conn).expect("load full scan"), None);
+  }
+
+  #[test]
+  fn unchanged_codex_home_preserves_scan_freshness() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let settings = seed_scan_freshness(&conn, "/tmp/codex-home");
+
+    let saved = save_normalized_sync_settings(&conn, settings).expect("save unchanged source");
+
+    assert_eq!(saved.last_scan_started_at.as_deref(), Some("2026-07-10T08:00:00Z"));
+    assert_eq!(saved.last_scan_completed_at.as_deref(), Some("2026-07-10T08:01:00Z"));
+    assert_eq!(
+      get_last_full_scan_completed(&conn).expect("load full scan").as_deref(),
+      Some("2026-07-10T08:01:00Z")
+    );
+  }
+
+  #[test]
+  fn full_maintenance_is_due_without_previous_full_scan() {
+    assert!(full_maintenance_due(None, utc_time("2026-03-27T00:00:00Z")));
+  }
+
+  #[test]
+  fn full_maintenance_waits_until_daily_interval() {
+    assert!(!full_maintenance_due(
+      Some("2026-03-27T00:00:00Z"),
+      utc_time("2026-03-27T23:59:59Z")
+    ));
+    assert!(full_maintenance_due(
+      Some("2026-03-27T00:00:00Z"),
+      utc_time("2026-03-28T00:00:00Z")
+    ));
+  }
+
+  #[test]
+  fn automatic_incremental_request_upgrades_to_full_after_daily_maintenance() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::set_last_full_scan_completed(&conn, "2026-07-10T00:00:00Z")
+      .expect("seed full scan freshness");
+    drop(conn);
+
+    assert_eq!(
+      effective_token_scan_kind(
+        &db_path,
+        refresh::TokenScanKind::Incremental,
+        utc_time("2026-07-11T00:00:00Z"),
+      )
+      .expect("select scan kind"),
+      ScanKind::Reconcile
+    );
+    assert_eq!(
+      effective_token_scan_kind(
+        &db_path,
+        refresh::TokenScanKind::Incremental,
+        utc_time("2026-07-10T23:59:59Z"),
+      )
+      .expect("select recent scan kind"),
+      ScanKind::Incremental
+    );
+  }
+
+  #[test]
+  fn startup_database_prepare_does_not_recalculate_usage_values() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    mark_pricing_value_resolution_repair_complete(&conn).expect("mark resolver repair complete");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('startup-session', 'startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('startup-session', '2026-03-26T04:30:00Z', 'gpt-5.4',
+          100, 0, 10, 0, 110, 123.45, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 123.45);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_gpt_56_aliases_when_resolver_repair_is_pending() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    let created_at = database::now_utc_string();
+    for (session_id, model_id, stale_value) in [
+      ("gpt-56-alias-exact", "gpt-5.6", 6.25),
+      ("gpt-56-alias-dated", "gpt-5.6-2026-07-09", 0.0),
+    ] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, ?2, 0, ?3, ?3)
+          ",
+          params![session_id, model_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', ?2,
+            0, 0, 1000000, 0, 1000000, ?3, 0, 0)
+          ",
+          params![session_id, model_id, stale_value],
+        )
+        .expect("insert usage event");
+    }
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let values = conn
+      .prepare("SELECT session_id, value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare usage values")
+      .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+      .expect("query usage values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect usage values");
+    let repair_completed: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+        |row| row.get(0),
+      )
+      .expect("load repair marker");
+
+    assert_eq!(
+      values,
+      vec![
+        ("gpt-56-alias-dated".to_string(), 30.0),
+        ("gpt-56-alias-exact".to_string(), 30.0),
+      ]
+    );
+    assert_eq!(repair_completed, 1);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_usage_values_when_seed_pricing_changes() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET input_price_per_million = 1.00
+        WHERE model_id = 'gpt-5.4'
+        ",
+        [],
+      )
+      .expect("seed stale pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('startup-session', 'startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.4', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('startup-session', '2026-03-26T04:30:00Z', 'gpt-5.4',
+          1000000, 0, 0, 0, 1000000, 123.45, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 2.50);
+  }
+
+  #[test]
+  fn startup_database_prepare_recalculates_new_gpt_56_values() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET output_price_per_million = 6.25,
+            is_official = 1
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+      )
+      .expect("seed malformed GPT-5.6 Sol pricing");
+    let created_at = database::now_utc_string();
+    conn
+      .execute(
+        "
+        INSERT INTO sessions (
+          session_id, root_session_id, parent_session_id, title, source_state, source_path,
+          source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+          fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+        )
+        VALUES ('gpt-56-startup-session', 'gpt-56-startup-session', NULL, NULL, 'active', NULL, 'active',
+          NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?1, ?1)
+        ",
+        params![created_at],
+      )
+      .expect("insert session");
+    conn
+      .execute(
+        "
+        INSERT INTO usage_events (
+          session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+          fast_mode_auto, fast_mode_effective
+        )
+        VALUES ('gpt-56-startup-session', '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+          0, 0, 1000000, 0, 1000000, 0.0, 0, 0)
+        ",
+        [],
+      )
+      .expect("insert usage event");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen database");
+    let value_usd: f64 = conn
+      .query_row(
+        "SELECT value_usd FROM usage_events WHERE session_id = 'gpt-56-startup-session'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load usage value");
+
+    assert_eq!(value_usd, 30.0);
+  }
+
+  #[test]
+  fn startup_database_prepare_rolls_back_pricing_when_recalculation_fails() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    let conn = open_connection(&db_path).expect("open database");
+    init_db(&conn).expect("init db");
+    seed_pricing_catalog(&conn).expect("seed pricing");
+    conn
+      .execute(
+        "
+        UPDATE pricing_catalog
+        SET output_price_per_million = 6.25,
+            is_official = 1,
+            note = 'malformed-official',
+            updated_at = 'malformed-official'
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+      )
+      .expect("seed malformed GPT-5.6 Sol pricing");
+    let created_at = database::now_utc_string();
+    for (session_id, sentinel_value) in [("recalc-a", 11.0), ("recalc-b", 22.0)] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?2, ?2)
+          ",
+          params![session_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+            0, 0, 1000000, 0, 1000000, ?2, 0, 0)
+          ",
+          params![session_id, sentinel_value],
+        )
+        .expect("insert usage event");
+    }
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_second_session_recalculation
+        BEFORE UPDATE OF value_usd ON usage_events
+        WHEN OLD.session_id = 'recalc-b'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected recalculation failure');
+        END;
+        ",
+      )
+      .expect("create failure trigger");
+    drop(conn);
+
+    let error = prepare_app_database(&db_path).expect_err("recalculation should fail");
+    assert!(error.contains("injected recalculation failure"));
+
+    let conn = open_connection(&db_path).expect("reopen failed database");
+    let (output_price, is_official): (f64, i64) = conn
+      .query_row(
+        "
+        SELECT output_price_per_million, is_official
+        FROM pricing_catalog
+        WHERE model_id = 'gpt-5.6-sol'
+        ",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+      )
+      .expect("load rolled back pricing");
+    let failed_values = conn
+      .prepare("SELECT session_id, value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare failed values")
+      .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+      .expect("query failed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect failed values");
+
+    assert_eq!(output_price, 6.25);
+    assert_eq!(is_official, 1);
+    assert_eq!(
+      failed_values,
+      vec![("recalc-a".to_string(), 11.0), ("recalc-b".to_string(), 22.0)]
+    );
+    assert!(pricing_value_resolution_repair_pending(&conn).expect("load rolled back repair marker"));
+
+    conn
+      .execute_batch("DROP TRIGGER fail_second_session_recalculation;")
+      .expect("drop failure trigger");
+    drop(conn);
+
+    prepare_app_database(&db_path).expect("retry prepare app database");
+
+    let conn = open_connection(&db_path).expect("reopen repaired database");
+    let repaired_output: f64 = conn
+      .query_row(
+        "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load repaired pricing");
+    let repaired_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare repaired values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query repaired values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect repaired values");
+
+    assert_eq!(repaired_output, 30.0);
+    assert_eq!(repaired_values, vec![30.0, 30.0]);
+    assert!(!pricing_value_resolution_repair_pending(&conn).expect("load completed repair marker"));
+  }
+
+  #[test]
+  fn pricing_refresh_rolls_back_catalog_values_and_marker_before_retry() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let mut conn = open_connection(&db_path).expect("open database");
+    let created_at = database::now_utc_string();
+    for (session_id, sentinel_value) in [("refresh-a", 11.0), ("refresh-b", 22.0)] {
+      conn
+        .execute(
+          "
+          INSERT INTO sessions (
+            session_id, root_session_id, parent_session_id, title, source_state, source_path,
+            source_bucket, started_at, updated_at, agent_nickname, agent_role, explicit_fast_mode,
+            fast_mode_default, latest_plan_type, last_model_id, contains_subagents, created_at, imported_at
+          )
+          VALUES (?1, ?1, NULL, NULL, 'active', NULL, 'active',
+            NULL, NULL, NULL, NULL, NULL, 0, NULL, 'gpt-5.6-sol', 0, ?2, ?2)
+          ",
+          params![session_id, created_at],
+        )
+        .expect("insert session");
+      conn
+        .execute(
+          "
+          INSERT INTO usage_events (
+            session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+            output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+            fast_mode_auto, fast_mode_effective
+          )
+          VALUES (?1, '2026-07-09T00:00:00Z', 'gpt-5.6-sol',
+            0, 0, 1000000, 0, 1000000, ?2, 0, 0)
+          ",
+          params![session_id, sentinel_value],
+        )
+        .expect("insert usage event");
+    }
+    conn
+      .execute(
+        "DELETE FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+      )
+      .expect("clear repair marker");
+    conn
+      .execute_batch(
+        "
+        CREATE TRIGGER fail_second_refresh_recalculation
+        BEFORE UPDATE OF value_usd ON usage_events
+        WHEN OLD.session_id = 'refresh-b'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected refresh failure');
+        END;
+        ",
+      )
+      .expect("create failure trigger");
+    let mut official_sol = load_catalog(&conn)
+      .expect("load catalog")
+      .into_iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load GPT-5.6 Sol");
+    official_sol.output_price_per_million = 42.0;
+    official_sol.is_official = true;
+    official_sol.note = Some("atomic refresh test".to_string());
+    official_sol.updated_at = "atomic-refresh-test".to_string();
+    let official_entries = vec![official_sol];
+
+    let error = refresh_pricing_catalog_atomically(&mut conn, Some(&official_entries))
+      .expect_err("refresh should fail");
+    assert!(error.contains("injected refresh failure"));
+
+    let failed_output: f64 = conn
+      .query_row(
+        "SELECT output_price_per_million FROM pricing_catalog WHERE model_id = 'gpt-5.6-sol'",
+        [],
+        |row| row.get(0),
+      )
+      .expect("load rolled back pricing");
+    let failed_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare failed values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query failed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect failed values");
+    assert_eq!(failed_output, 30.0);
+    assert_eq!(failed_values, vec![11.0, 22.0]);
+    assert!(pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
+
+    conn
+      .execute_batch("DROP TRIGGER fail_second_refresh_recalculation;")
+      .expect("drop failure trigger");
+    let catalog = refresh_pricing_catalog_atomically(&mut conn, Some(&official_entries))
+      .expect("retry refresh");
+    let refreshed_sol = catalog
+      .iter()
+      .find(|entry| entry.model_id == "gpt-5.6-sol")
+      .expect("load refreshed GPT-5.6 Sol");
+    let refreshed_values = conn
+      .prepare("SELECT value_usd FROM usage_events ORDER BY session_id")
+      .expect("prepare refreshed values")
+      .query_map([], |row| row.get::<_, f64>(0))
+      .expect("query refreshed values")
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .expect("collect refreshed values");
+
+    assert_eq!(refreshed_sol.output_price_per_million, 42.0);
+    assert_eq!(refreshed_values, vec![42.0, 42.0]);
+    assert!(!pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
+  }
+
+  fn test_live_quota_snapshot(fetched_at: &str, remaining_percent: i64) -> LiveRateLimitSnapshot {
+    LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: Some("Codex".to_string()),
+      plan_type: Some("pro".to_string()),
+      primary: Some(RateLimitWindowSnapshot {
+        used_percent: 100 - remaining_percent,
+        remaining_percent,
+        window_duration_mins: Some(300),
+        resets_at: Some("2026-07-12T05:00:00+08:00".to_string()),
+        window_start: Some("2026-07-12T00:00:00+08:00".to_string()),
+      }),
+      secondary: None,
+      fetched_at: fetched_at.to_string(),
+    }
+  }
+
+  fn test_session_quota_sample(
+    session_id: &str,
+    sample_timestamp: &str,
+    remaining_percent: i64,
+  ) -> crate::models::RateLimitSampleRecord {
+    crate::models::RateLimitSampleRecord {
+      source_kind: "session".to_string(),
+      source_session_id: Some(session_id.to_string()),
+      bucket: "five_hour".to_string(),
+      sample_timestamp: sample_timestamp.to_string(),
+      limit_id: Some("codex".to_string()),
+      limit_name: Some("Codex".to_string()),
+      plan_type: Some("pro".to_string()),
+      window_start: "2026-07-12T00:00:00+08:00".to_string(),
+      resets_at: "2026-07-12T05:00:00+08:00".to_string(),
+      used_percent: 100 - remaining_percent,
+      remaining_percent,
+    }
+  }
+
+  #[test]
+  fn background_live_rate_limit_fallback_prefers_newest_persisted_sample() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-1",
+      &[crate::models::RateLimitSampleRecord {
+        source_kind: "session".to_string(),
+        source_session_id: Some("session-1".to_string()),
+        bucket: "five_hour".to_string(),
+        sample_timestamp: "2026-03-27T00:00:00+08:00".to_string(),
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        window_start: "2026-03-27T00:00:00+08:00".to_string(),
+        resets_at: "2026-03-27T05:00:00+08:00".to_string(),
+        used_percent: 80,
+        remaining_percent: 20,
+      }],
+    )
+    .expect("insert session sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 12,
+          remaining_percent: 88,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-03-27T05:05:00+08:00".to_string()),
+          window_start: Some("2026-03-27T00:05:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:05:00+08:00".to_string(),
+      },
+    )
+    .expect("insert live sample");
+    drop(conn);
+    let live_cache = refresh::LiveQuotaCache::new();
+
+    let snapshot = load_display_live_rate_limit_fallback(&db_path, &live_cache)
+      .expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-03-27T00:05:00+08:00");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(88)
+    );
+
+    live_cache.publish_live(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 23,
+          remaining_percent: 77,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-03-27T05:10:00+08:00".to_string()),
+          window_start: Some("2026-03-27T00:10:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:10:00+08:00".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+    let memory = load_display_live_rate_limit_fallback(&db_path, &live_cache)
+      .expect("prefer newer memory");
+    assert_eq!(memory.fetched_at, "2026-03-27T00:10:00+08:00");
+    assert_eq!(
+      memory.primary.as_ref().map(|window| window.remaining_percent),
+      Some(77)
+    );
+  }
+
+  #[test]
+  fn persisted_primary_only_seven_day_snapshot_is_normalized_for_offline_fallback() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 21,
+          remaining_percent: 79,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-04-02T00:00:00+08:00".to_string()),
+          window_start: Some("2026-03-26T00:00:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+      },
+    )
+    .expect("insert legacy live sample");
+    drop(conn);
+
+    let snapshot = load_display_live_rate_limit_fallback(
+      &db_path,
+      &refresh::LiveQuotaCache::new(),
+    )
+    .expect("load offline fallback");
+
+    assert!(snapshot.primary.is_none());
+    assert_eq!(
+      snapshot.secondary.map(|window| window.remaining_percent),
+      Some(79)
+    );
+  }
+
+  #[test]
+  fn background_live_fallback_keeps_current_live_over_newer_session() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-late",
+      &[test_session_quota_sample(
+        "session-late",
+        "2026-07-12T00:10:00+08:00",
+        20,
+      )],
+    )
+    .expect("insert newer session sample");
+    drop(conn);
+
+    let live_cache = refresh::LiveQuotaCache::new();
+    live_cache.publish_live(
+      Arc::new(test_live_quota_snapshot(
+        "2026-07-12T00:05:00+08:00",
+        88,
+      )),
+      Instant::now(),
+      Utc::now(),
+    );
+
+    let snapshot = load_display_live_rate_limit_fallback(&db_path, &live_cache)
+      .expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-12T00:05:00+08:00");
+    assert_eq!(snapshot.primary.map(|window| window.remaining_percent), Some(88));
+  }
+
+  #[test]
+  fn background_live_fallback_prefers_persisted_live_over_newer_session() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &test_live_quota_snapshot("2026-07-12T00:05:00+08:00", 88),
+    )
+    .expect("insert persisted live sample");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-late",
+      &[test_session_quota_sample(
+        "session-late",
+        "2026-07-12T00:10:00+08:00",
+        20,
+      )],
+    )
+    .expect("insert newer session sample");
+    drop(conn);
+
+    let snapshot = load_display_live_rate_limit_fallback(
+      &db_path,
+      &refresh::LiveQuotaCache::new(),
+    )
+    .expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-12T00:05:00+08:00");
+    assert_eq!(snapshot.primary.map(|window| window.remaining_percent), Some(88));
+  }
+
+  #[test]
+  fn background_live_fallback_uses_session_when_no_live_data_exists() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-only",
+      &[test_session_quota_sample(
+        "session-only",
+        "2026-07-12T00:10:00+08:00",
+        20,
+      )],
+    )
+    .expect("insert session sample");
+    drop(conn);
+
+    let snapshot = load_display_live_rate_limit_fallback(
+      &db_path,
+      &refresh::LiveQuotaCache::new(),
+    )
+    .expect("load history fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-12T00:10:00+08:00");
+    assert_eq!(snapshot.primary.map(|window| window.remaining_percent), Some(20));
+  }
+
+  #[test]
+  fn persisted_live_rate_limits_order_mixed_rfc3339_offsets_by_instant() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 10,
+          remaining_percent: 90,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T14:00:00+08:00".to_string()),
+          window_start: Some("2026-07-10T09:00:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T09:00:00+08:00".to_string(),
+      },
+    )
+    .expect("insert earlier offset sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 20,
+          remaining_percent: 80,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T07:00:00Z".to_string()),
+          window_start: Some("2026-07-10T02:00:00Z".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T02:00:00Z".to_string(),
+      },
+    )
+    .expect("insert later UTC sample");
+
+    let snapshot = load_persisted_live_rate_limits_from_connection(&conn, None)
+      .expect("load persisted sample");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-10T02:00:00Z");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(80)
+    );
+  }
+
+  #[test]
+  fn persisted_live_rate_limits_do_not_combine_windows_from_different_samples() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-same-instant",
+      &[
+        crate::models::RateLimitSampleRecord {
+          source_kind: "session".to_string(),
+          source_session_id: Some("session-same-instant".to_string()),
+          bucket: "five_hour".to_string(),
+          sample_timestamp: "2026-07-10T10:00:00+08:00".to_string(),
+          limit_id: Some("codex".to_string()),
+          limit_name: Some("Codex".to_string()),
+          plan_type: Some("pro".to_string()),
+          window_start: "2026-07-10T10:00:00+08:00".to_string(),
+          resets_at: "2026-07-10T15:00:00+08:00".to_string(),
+          used_percent: 30,
+          remaining_percent: 70,
+        },
+        crate::models::RateLimitSampleRecord {
+          source_kind: "session".to_string(),
+          source_session_id: Some("session-same-instant".to_string()),
+          bucket: "seven_day".to_string(),
+          sample_timestamp: "2026-07-10T10:00:00+08:00".to_string(),
+          limit_id: Some("codex".to_string()),
+          limit_name: Some("Codex".to_string()),
+          plan_type: Some("pro".to_string()),
+          window_start: "2026-07-10T10:00:00+08:00".to_string(),
+          resets_at: "2026-07-17T10:00:00+08:00".to_string(),
+          used_percent: 40,
+          remaining_percent: 60,
+        },
+      ],
+    )
+    .expect("insert complete session sample");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 25,
+          remaining_percent: 75,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-10T07:00:00Z".to_string()),
+          window_start: Some("2026-07-10T02:00:00Z".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-07-10T02:00:00Z".to_string(),
+      },
+    )
+    .expect("insert later primary-only row at the same instant");
+
+    let snapshot = load_persisted_live_rate_limits_from_connection(&conn, None)
+      .expect("load persisted sample");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-10T02:00:00Z");
+    assert_eq!(
+      snapshot.primary.as_ref().map(|window| window.remaining_percent),
+      Some(75)
+    );
+    assert!(snapshot.secondary.is_none());
   }
 
   #[test]
@@ -1790,6 +4441,52 @@ mod tests {
     assert_eq!(
       menu_bar_title(Some("$12.4"), Some("67%")),
       Some("$12.4 67%".to_string())
+    );
+  }
+
+  #[test]
+  fn menu_bar_api_value_falls_back_to_seven_days_when_five_hour_quota_is_absent() {
+    let snapshot = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: None,
+      secondary: Some(RateLimitWindowSnapshot {
+        used_percent: 21,
+        remaining_percent: 79,
+        window_duration_mins: Some(10_080),
+        resets_at: Some("2026-04-02T00:00:00+08:00".to_string()),
+        window_start: Some("2026-03-26T00:00:00+08:00".to_string()),
+      }),
+      fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+    };
+
+    assert_eq!(
+      effective_menu_bar_api_bucket("five_hour", Some(&snapshot)),
+      "seven_day"
+    );
+  }
+
+  #[test]
+  fn menu_bar_api_value_keeps_five_hours_when_that_quota_exists() {
+    let snapshot = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: Some(RateLimitWindowSnapshot {
+        used_percent: 12,
+        remaining_percent: 88,
+        window_duration_mins: Some(300),
+        resets_at: Some("2026-03-27T05:00:00+08:00".to_string()),
+        window_start: Some("2026-03-27T00:00:00+08:00".to_string()),
+      }),
+      secondary: None,
+      fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+    };
+
+    assert_eq!(
+      effective_menu_bar_api_bucket("five_hour", Some(&snapshot)),
+      "five_hour"
     );
   }
 

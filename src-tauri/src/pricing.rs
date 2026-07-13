@@ -36,6 +36,35 @@ struct OfficialPricingRow {
 fn pricing_seed() -> Vec<PricingCatalogEntry> {
     let updated_at = now_utc_string();
     vec![
+        PricingCatalogEntry {
+            model_id: "gpt-5.6".to_string(),
+            display_name: "GPT-5.6".to_string(),
+            input_price_per_million: 5.00,
+            cached_input_price_per_million: 0.50,
+            output_price_per_million: 30.00,
+            effective_model_id: "gpt-5.6-sol".to_string(),
+            is_official: false,
+            note: Some(FALLBACK_PRICING_NOTE.to_string()),
+            source_url: OPENAI_API_PRICING_URL.to_string(),
+            updated_at: updated_at.clone(),
+        },
+        fallback_entry("gpt-5.6-sol", "GPT-5.6 Sol", 5.00, 0.50, 30.00, &updated_at),
+        fallback_entry(
+            "gpt-5.6-terra",
+            "GPT-5.6 Terra",
+            2.50,
+            0.25,
+            15.00,
+            &updated_at,
+        ),
+        fallback_entry(
+            "gpt-5.6-luna",
+            "GPT-5.6 Luna",
+            1.00,
+            0.10,
+            6.00,
+            &updated_at,
+        ),
         fallback_entry("gpt-5.5", "GPT-5.5", 5.00, 0.50, 30.00, &updated_at),
         fallback_entry("gpt-5.4", "GPT-5.4", 2.50, 0.25, 15.00, &updated_at),
         fallback_entry(
@@ -160,29 +189,48 @@ fn official_entry(row: OfficialPricingRow, updated_at: &str) -> PricingCatalogEn
 
 pub fn seed_pricing_catalog(conn: &Connection) -> rusqlite::Result<Vec<PricingCatalogEntry>> {
     let entries = pricing_seed();
+    repair_misparsed_gpt_56_output_prices(conn)?;
     upsert_pricing_entries(conn, &entries, PricingUpsertMode::PreserveOfficial)?;
     load_catalog(conn)
 }
 
-pub fn refresh_pricing_catalog_from_openai(
-    conn: &Connection,
-) -> Result<Vec<PricingCatalogEntry>, String> {
-    match fetch_official_pricing_catalog() {
-        Ok(entries) => {
-            upsert_pricing_entries(conn, &entries, PricingUpsertMode::Overwrite)
-                .map_err(|error| error.to_string())?;
-            seed_pricing_catalog(conn).map_err(|error| error.to_string())
-        }
-        Err(error) => {
-            log::warn!(
-                "Failed to refresh OpenAI API pricing from {OPENAI_API_PRICING_URL}: {error}; using bundled fallback pricing."
-            );
-            seed_pricing_catalog(conn).map_err(|error| error.to_string())
-        }
+fn repair_misparsed_gpt_56_output_prices(conn: &Connection) -> rusqlite::Result<()> {
+    for (model_id, input, cached_input, bad_output) in [
+        ("gpt-5.6-sol", 5.0, 0.5, 6.25),
+        ("gpt-5.6-terra", 2.5, 0.25, 3.125),
+        ("gpt-5.6-luna", 1.0, 0.1, 1.25),
+    ] {
+        conn.execute(
+            "
+            UPDATE pricing_catalog
+            SET is_official = 0
+            WHERE model_id = ?1
+              AND is_official = 1
+              AND ABS(input_price_per_million - ?2) <= 1e-9
+              AND ABS(cached_input_price_per_million - ?3) <= 1e-9
+              AND ABS(output_price_per_million - ?4) <= 1e-9
+            ",
+            params![model_id, input, cached_input, bad_output],
+        )?;
     }
+
+    Ok(())
 }
 
-fn fetch_official_pricing_catalog() -> Result<Vec<PricingCatalogEntry>, String> {
+pub fn apply_pricing_catalog_refresh(
+    conn: &Connection,
+    official_entries: Option<&[PricingCatalogEntry]>,
+) -> Result<(), String> {
+    if let Some(entries) = official_entries {
+        upsert_pricing_entries(conn, entries, PricingUpsertMode::Overwrite)
+            .map_err(|error| error.to_string())?;
+    }
+
+    seed_pricing_catalog(conn).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub fn fetch_official_pricing_catalog() -> Result<Vec<PricingCatalogEntry>, String> {
     let response = ureq::get(OPENAI_API_PRICING_URL)
         .timeout(Duration::from_secs(20))
         .call()
@@ -209,6 +257,9 @@ pub fn parse_official_pricing_catalog(document: &str) -> Result<Vec<PricingCatal
     }
 
     let required_models = [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
         "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
@@ -278,15 +329,24 @@ fn extract_pricing_rows(block: &str) -> Vec<OfficialPricingRow> {
         };
         let name_end = name_start + relative_name_end;
         let raw_name = html_unescape(&block[name_start..name_end]);
+        let next_row = block[name_end..]
+            .find(marker)
+            .map(|offset| name_end + offset)
+            .unwrap_or(block.len());
         if !is_standard_short_context_pricing_row(&raw_name) {
-            cursor = name_end;
+            cursor = next_row;
             continue;
         }
-        let mut value_cursor = name_end + "&quot;]".len();
+        let row_source = &block[name_end..next_row];
+        let mut value_cursor = 0usize;
+        let mut values = Vec::new();
+        while let Some(value) = parse_next_pricing_value(row_source, &mut value_cursor) {
+            values.push(value);
+        }
 
-        let input = parse_next_pricing_value(block, &mut value_cursor).flatten();
-        let cached_input = parse_next_pricing_value(block, &mut value_cursor).flatten();
-        let output = parse_next_pricing_value(block, &mut value_cursor).flatten();
+        let input = values.first().copied().flatten();
+        let cached_input = values.get(1).copied().flatten();
+        let output = values.last().copied().flatten();
 
         if let (Some(input), Some(output)) = (input, output) {
             let model_id = normalize_official_model_id(&raw_name);
@@ -300,7 +360,7 @@ fn extract_pricing_rows(block: &str) -> Vec<OfficialPricingRow> {
             }
         }
 
-        cursor = name_end;
+        cursor = next_row;
     }
 
     rows
@@ -499,8 +559,16 @@ pub fn resolve_pricing(
     model_id: &str,
 ) -> Option<ResolvedPricing> {
     let normalized = normalize_model_id(model_id);
-    let entry = if let Some(entry) = catalog.get(&normalized) {
+    let entry = if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6") {
+        catalog.get("gpt-5.6-sol")?.clone()
+    } else if let Some(entry) = catalog.get(&normalized) {
         entry.clone()
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-sol") {
+        catalog.get("gpt-5.6-sol")?.clone()
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-terra") {
+        catalog.get("gpt-5.6-terra")?.clone()
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-luna") {
+        catalog.get("gpt-5.6-luna")?.clone()
     } else if normalized.starts_with("gpt-5.5-pro") {
         catalog.get("gpt-5.5-pro")?.clone()
     } else if normalized.starts_with("gpt-5.5") {
@@ -540,6 +608,28 @@ pub fn resolve_pricing(
     })
 }
 
+fn matches_canonical_or_dated_model_id(model_id: &str, canonical_model_id: &str) -> bool {
+    if model_id == canonical_model_id {
+        return true;
+    }
+
+    let Some(date_suffix) = model_id
+        .strip_prefix(canonical_model_id)
+        .and_then(|suffix| suffix.strip_prefix('-'))
+    else {
+        return false;
+    };
+    let bytes = date_suffix.as_bytes();
+    let has_iso_date_shape = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..].iter().all(u8::is_ascii_digit);
+
+    has_iso_date_shape && chrono::NaiveDate::parse_from_str(date_suffix, "%Y-%m-%d").is_ok()
+}
+
 pub fn normalize_model_id(model_id: &str) -> String {
     let trimmed = model_id.trim();
     if trimmed.is_empty() {
@@ -553,6 +643,10 @@ pub fn display_name_for_model(model_id: &str) -> String {
     match normalize_model_id(model_id).as_str() {
         "codex-auto-review" => "Codex Auto Review".to_string(),
         "codex-mini-latest" => "Codex Mini Latest".to_string(),
+        "gpt-5.6" => "GPT-5.6".to_string(),
+        "gpt-5.6-sol" => "GPT-5.6 Sol".to_string(),
+        "gpt-5.6-terra" => "GPT-5.6 Terra".to_string(),
+        "gpt-5.6-luna" => "GPT-5.6 Luna".to_string(),
         "gpt-5.5" => "GPT-5.5".to_string(),
         "gpt-5.5-pro" => "GPT-5.5 Pro".to_string(),
         "gpt-5.4" => "GPT-5.4".to_string(),
@@ -581,6 +675,10 @@ pub fn display_name_for_model(model_id: &str) -> String {
 pub fn model_color(model_id: &str) -> &'static str {
     match normalize_model_id(model_id).as_str() {
         "codex-auto-review" => "#60a5fa",
+        "gpt-5.6" => "#f59e0b",
+        "gpt-5.6-sol" => "#ffd166",
+        "gpt-5.6-terra" => "#2ec4b6",
+        "gpt-5.6-luna" => "#8338ec",
         "gpt-5.5" => "#d946ef",
         "gpt-5.5-pro" => "#c026d3",
         "gpt-5.4" => "#ff6b35",
@@ -699,9 +797,268 @@ mod tests {
     }
 
     #[test]
+    fn resolve_pricing_includes_gpt_56_family_and_alias() {
+        let catalog = pricing_seed()
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+
+        for (model, input, cached, output) in [
+            ("gpt-5.6", 5.0, 0.5, 30.0),
+            ("gpt-5.6-2026-07-09", 5.0, 0.5, 30.0),
+            ("gpt-5.6-sol", 5.0, 0.5, 30.0),
+            ("gpt-5.6-sol-2026-07-09", 5.0, 0.5, 30.0),
+            ("gpt-5.6-terra", 2.5, 0.25, 15.0),
+            ("gpt-5.6-terra-2026-07-09", 2.5, 0.25, 15.0),
+            ("gpt-5.6-luna", 1.0, 0.1, 6.0),
+            ("gpt-5.6-luna-2026-07-09", 1.0, 0.1, 6.0),
+        ] {
+            let pricing = resolve_pricing(&catalog, model).expect(model);
+            assert_eq!(pricing.input_price_per_million, input);
+            assert_eq!(pricing.cached_input_price_per_million, cached);
+            assert_eq!(pricing.output_price_per_million, output);
+        }
+
+        assert_eq!(catalog["gpt-5.6"].effective_model_id, "gpt-5.6-sol");
+        assert_eq!(catalog["gpt-5.6"].display_name, "GPT-5.6");
+        assert_eq!(catalog["gpt-5.6-sol"].display_name, "GPT-5.6 Sol");
+        assert_eq!(catalog["gpt-5.6-terra"].display_name, "GPT-5.6 Terra");
+        assert_eq!(catalog["gpt-5.6-luna"].display_name, "GPT-5.6 Luna");
+        for (model_id, display_name, color) in [
+            ("gpt-5.6", "GPT-5.6", "#f59e0b"),
+            ("gpt-5.6-sol", "GPT-5.6 Sol", "#ffd166"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra", "#2ec4b6"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna", "#8338ec"),
+        ] {
+            assert_eq!(display_name_for_model(model_id), display_name);
+            assert_eq!(model_color(model_id), color);
+        }
+    }
+
+    #[test]
+    fn resolve_pricing_routes_gpt_56_aliases_to_current_sol_row() {
+        let mut catalog = pricing_seed()
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let alias = catalog.get_mut("gpt-5.6").expect("GPT-5.6 alias");
+        alias.input_price_per_million = 4.0;
+        alias.cached_input_price_per_million = 0.4;
+        alias.output_price_per_million = 24.0;
+        let sol = catalog.get_mut("gpt-5.6-sol").expect("GPT-5.6 Sol");
+        sol.input_price_per_million = 7.0;
+        sol.cached_input_price_per_million = 0.7;
+        sol.output_price_per_million = 42.0;
+
+        for model_id in ["gpt-5.6", "gpt-5.6-2026-07-09"] {
+            let pricing = resolve_pricing(&catalog, model_id).expect(model_id);
+            assert_eq!(pricing.input_price_per_million, 7.0);
+            assert_eq!(pricing.cached_input_price_per_million, 0.7);
+            assert_eq!(pricing.output_price_per_million, 42.0);
+        }
+    }
+
+    #[test]
+    fn resolve_pricing_does_not_guess_unknown_gpt_56_ids() {
+        let catalog = pricing_seed()
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+
+        for model_id in [
+            "gpt-5.6-solaris",
+            "gpt-5.6-neptune",
+            "gpt-5.60",
+            "gpt-5.6-2026-02-30",
+            "gpt-5.6-2026-7-09",
+            "gpt-5.6-2026-07-09-preview",
+            "gpt-5.6-sol-2026-02-30",
+            "gpt-5.6-sol-2026-7-09",
+            "gpt-5.6-sol-2026-07-09-preview",
+        ] {
+            assert!(
+                resolve_pricing(&catalog, model_id).is_none(),
+                "unexpected guessed pricing for {model_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_gpt_56_cache_write_price_without_treating_it_as_output() {
+        let html = complete_standard_fixture_with_gpt56_rows();
+        let catalog = parse_official_pricing_catalog(&html)
+            .expect("parse pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(catalog["gpt-5.6-sol"].output_price_per_million, 30.0);
+        assert_eq!(catalog["gpt-5.6-terra"].output_price_per_million, 15.0);
+        assert_eq!(catalog["gpt-5.6-luna"].output_price_per_million, 6.0);
+    }
+
+    #[test]
+    fn seed_repairs_misparsed_gpt_56_output_prices() {
+        let conn = Connection::open_in_memory().expect("open database");
+        crate::database::init_db(&conn).expect("init database");
+        conn.execute(
+            "
+            INSERT INTO pricing_catalog (
+                model_id, display_name, input_price_per_million, cached_input_price_per_million,
+                output_price_per_million, effective_model_id, is_official, note, source_url, updated_at
+            )
+            VALUES
+              ('gpt-5.6-sol', 'Official Sol', 5.0, 0.5, 6.25,
+               'gpt-5.6-sol', 1, 'official-sol', 'https://example.com/sol', 'official-sol'),
+              ('gpt-5.6-terra', 'Official Terra', 2.5, 0.25, 3.125,
+               'gpt-5.6-terra', 1, 'official-terra', 'https://example.com/terra', 'official-terra'),
+              ('gpt-5.6-luna', 'Official Luna', 1.0, 0.1, 1.25,
+               'gpt-5.6-luna', 1, 'official-luna', 'https://example.com/luna', 'official-luna')
+            ",
+            [],
+        )
+        .expect("insert malformed GPT-5.6 pricing");
+
+        let catalog = seed_pricing_catalog(&conn)
+            .expect("seed pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+
+        for (model_id, display_name, output, provenance) in [
+            ("gpt-5.6-sol", "GPT-5.6 Sol", 30.0, "official-sol"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra", 15.0, "official-terra"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna", 6.0, "official-luna"),
+        ] {
+            let entry = &catalog[model_id];
+            assert_eq!(entry.output_price_per_million, output);
+            assert_eq!(entry.display_name, display_name);
+            assert!(!entry.is_official);
+            assert_eq!(entry.note.as_deref(), Some(FALLBACK_PRICING_NOTE));
+            assert_eq!(entry.source_url, OPENAI_API_PRICING_URL);
+            assert_ne!(entry.updated_at, provenance);
+        }
+    }
+
+    #[test]
+    fn seed_preserves_future_official_gpt_56_price_at_one_point_two_five_ratio() {
+        let conn = Connection::open_in_memory().expect("open database");
+        crate::database::init_db(&conn).expect("init database");
+        conn.execute(
+            "
+            INSERT INTO pricing_catalog (
+                model_id, display_name, input_price_per_million, cached_input_price_per_million,
+                output_price_per_million, effective_model_id, is_official, note, source_url, updated_at
+            )
+            VALUES ('gpt-5.6-sol', 'Future Official Sol', 8.0, 0.8, 10.0,
+                    'gpt-5.6-sol', 1, 'future-official', 'https://example.com/future',
+                    'future-official-sol')
+            ",
+            [],
+        )
+        .expect("insert future official Sol pricing");
+
+        let catalog = seed_pricing_catalog(&conn)
+            .expect("seed pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let sol = &catalog["gpt-5.6-sol"];
+
+        assert_eq!(sol.input_price_per_million, 8.0);
+        assert_eq!(sol.cached_input_price_per_million, 0.8);
+        assert_eq!(sol.output_price_per_million, 10.0);
+        assert_eq!(sol.display_name, "Future Official Sol");
+        assert!(sol.is_official);
+        assert_eq!(sol.note.as_deref(), Some("future-official"));
+        assert_eq!(sol.source_url, "https://example.com/future");
+        assert_eq!(sol.updated_at, "future-official-sol");
+    }
+
+    #[test]
+    fn official_refresh_restores_repaired_gpt_56_provenance() {
+        let conn = Connection::open_in_memory().expect("open database");
+        crate::database::init_db(&conn).expect("init database");
+        conn.execute(
+            "
+            INSERT INTO pricing_catalog (
+                model_id, display_name, input_price_per_million, cached_input_price_per_million,
+                output_price_per_million, effective_model_id, is_official, note, source_url, updated_at
+            )
+            VALUES ('gpt-5.6-sol', 'Old Official Sol', 5.0, 0.5, 6.25,
+                    'gpt-5.6-sol', 1, 'old-official', 'https://example.com/old', 'old-official')
+            ",
+            [],
+        )
+        .expect("insert malformed official Sol pricing");
+
+        let repaired = seed_pricing_catalog(&conn).expect("repair malformed pricing");
+        assert!(repaired
+            .iter()
+            .find(|entry| entry.model_id == "gpt-5.6-sol")
+            .is_some_and(|entry| !entry.is_official));
+
+        let official_entries =
+            parse_official_pricing_catalog(&complete_standard_fixture_with_gpt56_rows())
+                .expect("parse official pricing");
+        upsert_pricing_entries(&conn, &official_entries, PricingUpsertMode::Overwrite)
+            .expect("write refreshed official pricing");
+        let catalog = seed_pricing_catalog(&conn)
+            .expect("seed refreshed pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let sol = &catalog["gpt-5.6-sol"];
+
+        assert!(sol.is_official);
+        assert_eq!(sol.output_price_per_million, 30.0);
+        assert_eq!(sol.source_url, OPENAI_API_PRICING_URL);
+        assert_eq!(
+            sol.note.as_deref(),
+            Some("OpenAI API Standard short-context pricing.")
+        );
+    }
+
+    #[test]
+    fn seed_preserves_correct_official_gpt_56_prices() {
+        let conn = Connection::open_in_memory().expect("open database");
+        crate::database::init_db(&conn).expect("init database");
+        conn.execute(
+            "
+            INSERT INTO pricing_catalog (
+                model_id, display_name, input_price_per_million, cached_input_price_per_million,
+                output_price_per_million, effective_model_id, is_official, note, source_url, updated_at
+            )
+            VALUES ('gpt-5.6-terra', 'Official Terra', 2.5, 0.25, 15.0,
+                    'gpt-5.6-terra', 1, 'official', 'https://example.com', 'official-terra')
+            ",
+            [],
+        )
+        .expect("insert correct Terra pricing");
+
+        let catalog = seed_pricing_catalog(&conn)
+            .expect("seed pricing")
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(catalog["gpt-5.6-terra"].output_price_per_million, 15.0);
+        assert_eq!(catalog["gpt-5.6-terra"].display_name, "Official Terra");
+        assert_eq!(catalog["gpt-5.6-terra"].updated_at, "official-terra");
+        assert!(catalog["gpt-5.6-terra"].is_official);
+    }
+
+    fn complete_standard_fixture_with_gpt56_rows() -> String {
+        concat!(
+            "<astro-island component-export=\"TextTokenPricingTables\" props=\"{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.6-sol&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]],[1,[[0,&quot;gpt-5.6-terra&quot;],[0,2.5],[0,0.25],[0,3.125],[0,15]]],[1,[[0,&quot;gpt-5.6-luna&quot;],[0,1],[0,0.1],[0,1.25],[0,6]]],[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.4 (&lt;272K context length)&quot;],[0,2.5],[0,0.25],[0,15]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,&quot;gpt-5.4-nano&quot;],[0,0.2],[0,0.02],[0,1.25]]]]]}\"></astro-island>",
+            "<astro-island component-export=\"GroupedPricingTable\" props=\"{&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,1.75],[0,0.175],[0,14]]]]]}]]]}\"></astro-island>"
+        ).to_string()
+    }
+
+    #[test]
     fn parses_official_standard_short_context_pricing_rows() {
         let html = concat!(
-            "<astro-island component-export=\"TextTokenPricingTables\" props=\"{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.5 (&gt;=272K context length)&quot;],[0,10],[0,1],[0,45]]],[1,[[0,&quot;gpt-5.4 (&lt;272K context length)&quot;],[0,2.5],[0,0.25],[0,15]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,&quot;gpt-5.4-nano&quot;],[0,0.2],[0,0.02],[0,1.25]]]]]}\"></astro-island>",
+            "<astro-island component-export=\"TextTokenPricingTables\" props=\"{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.6-sol&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]],[1,[[0,&quot;gpt-5.6-terra&quot;],[0,2.5],[0,0.25],[0,3.125],[0,15]]],[1,[[0,&quot;gpt-5.6-luna&quot;],[0,1],[0,0.1],[0,1.25],[0,6]]],[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.5 (&gt;=272K context length)&quot;],[0,10],[0,1],[0,45]]],[1,[[0,&quot;gpt-5.4 (&lt;272K context length)&quot;],[0,2.5],[0,0.25],[0,15]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,&quot;gpt-5.4-nano&quot;],[0,0.2],[0,0.02],[0,1.25]]]]]}\"></astro-island>",
             "<astro-island component-export=\"GroupedPricingTable\" props=\"{&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,1.75],[0,0.175],[0,14]]]]]}]]]}\"></astro-island>"
         );
 
@@ -726,7 +1083,7 @@ mod tests {
     #[test]
     fn prefers_standard_short_context_when_pricing_blocks_are_reordered() {
         let html = concat!(
-            "<astro-island component-export=\"TextTokenPricingTables\" props=\"{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.5 (&gt;=272K context length)&quot;],[0,10],[0,1],[0,45]]],[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.4 (&lt;272K context length)&quot;],[0,2.5],[0,0.25],[0,15]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,&quot;gpt-5.4-nano&quot;],[0,0.2],[0,0.02],[0,1.25]]]]]}\"></astro-island>",
+            "<astro-island component-export=\"TextTokenPricingTables\" props=\"{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.6-sol&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]],[1,[[0,&quot;gpt-5.6-terra&quot;],[0,2.5],[0,0.25],[0,3.125],[0,15]]],[1,[[0,&quot;gpt-5.6-luna&quot;],[0,1],[0,0.1],[0,1.25],[0,6]]],[1,[[0,&quot;gpt-5.5 (&gt;=272K context length)&quot;],[0,10],[0,1],[0,45]]],[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.4 (&lt;272K context length)&quot;],[0,2.5],[0,0.25],[0,15]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,&quot;gpt-5.4-nano&quot;],[0,0.2],[0,0.02],[0,1.25]]]]]}\"></astro-island>",
             "<div data-content-switcher-pane=\"true\" data-value=\"priority\" hidden><div class=\"hidden\">Priority</div><astro-island component-export=\"GroupedPricingTable\" props=\"{&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,3.5],[0,0.35],[0,28]]]]]}]]]}\"></astro-island></div>",
             "<div data-content-switcher-pane=\"true\" data-value=\"standard\"><div class=\"hidden\">Standard</div><astro-island component-export=\"GroupedPricingTable\" props=\"{&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,1.75],[0,0.175],[0,14]]]]]}]]]}\"></astro-island></div>"
         );
