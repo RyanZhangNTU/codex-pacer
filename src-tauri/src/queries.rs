@@ -297,19 +297,23 @@ fn load_conversation_page_sql(
   };
   let sql = format!(
     "
-    WITH session_groups AS (
-      SELECT root_session_id,
-             COALESCE(NULLIF(MAX(title), ''), root_session_id) AS title,
-             MIN(started_at) AS started_at,
-             MAX(updated_at) AS updated_at,
-             COUNT(*) AS session_count,
-             GROUP_CONCAT(DISTINCT source_state) AS source_states
+    WITH matching_roots AS (
+      SELECT DISTINCT root_session_id
       FROM sessions
       WHERE ?3 IS NULL
          OR lower(COALESCE(title, '')) LIKE ?3
          OR lower(root_session_id) LIKE ?3
          OR lower(session_id) LIKE ?3
-      GROUP BY root_session_id
+    ), session_groups AS (
+      SELECT s.root_session_id,
+             COALESCE(NULLIF(MAX(title), ''), s.root_session_id) AS title,
+             MIN(started_at) AS started_at,
+             MAX(updated_at) AS updated_at,
+             COUNT(*) AS session_count,
+             GROUP_CONCAT(DISTINCT source_state) AS source_states
+      FROM sessions s
+      JOIN matching_roots mr ON mr.root_session_id = s.root_session_id
+      GROUP BY s.root_session_id
     ), event_groups AS (
       SELECT s.root_session_id,
              GROUP_CONCAT(DISTINCT e.model_id) AS model_ids,
@@ -2183,6 +2187,67 @@ mod tests {
     assert_eq!(second.items.len(), 50);
     assert_eq!(second.next_cursor.as_deref(), Some("100"));
     assert_eq!(second.items.first().map(|item| item.root_session_id.as_str()), Some("session-069"));
+  }
+
+  #[test]
+  fn conversation_search_aggregates_every_session_in_a_matching_root() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "INSERT INTO sessions (session_id, root_session_id, title, source_state, started_at, created_at, imported_at, updated_at) VALUES ('root', 'root', 'Z Root title', 'active', '2026-07-13T07:00:00Z', '2026-07-13T07:00:00Z', '2026-07-13T07:00:00Z', '2026-07-13T08:00:00Z')",
+        [],
+      )
+      .expect("insert root session");
+    conn
+      .execute(
+        "INSERT INTO sessions (session_id, root_session_id, title, source_state, started_at, created_at, imported_at, updated_at) VALUES ('child-needle', 'root', 'Needle child', 'missing', '2026-07-13T08:00:00Z', '2026-07-13T08:00:00Z', '2026-07-13T08:00:00Z', '2026-07-13T09:00:00Z')",
+        [],
+      )
+      .expect("insert matching child session");
+    for (session_id, total_tokens, value_usd) in [("root", 10, 1.0), ("child-needle", 20, 2.0)] {
+      conn
+        .execute(
+          "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES (?1, '2026-07-13T08:30:00Z', ?2, 'gpt-5.4', ?3, 0, 0, 0, ?3, ?4, 0, 0)",
+          rusqlite::params![
+            session_id,
+            parse_rfc3339_local("2026-07-13T08:30:00Z")
+              .expect("event timestamp")
+              .timestamp_millis(),
+            total_tokens,
+            value_usd,
+          ],
+        )
+        .expect("insert usage event");
+    }
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T00:00:00Z").expect("end"),
+    };
+
+    let page = load_conversation_page_sql(
+      &conn,
+      &SubscriptionProfile::default(),
+      &window,
+      Some("needle".to_string()),
+      None,
+      50,
+    )
+    .expect("search conversations");
+
+    assert_eq!(page.items.len(), 1);
+    let item = &page.items[0];
+    assert_eq!(item.root_session_id, "root");
+    assert_eq!(item.title, "Z Root title");
+    assert_eq!(item.started_at.as_deref(), Some("2026-07-13T07:00:00Z"));
+    assert_eq!(item.updated_at.as_deref(), Some("2026-07-13T09:00:00Z"));
+    assert_eq!(item.session_count, 2);
+    assert_eq!(item.subagent_count, 1);
+    assert_eq!(item.total_tokens, 30);
+    assert_eq!(item.api_value_usd, 3.0);
+    assert_eq!(item.source_states, vec!["active", "missing"]);
   }
 
   #[test]
