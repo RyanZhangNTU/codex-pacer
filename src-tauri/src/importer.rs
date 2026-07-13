@@ -3172,7 +3172,7 @@ fn extract_rate_limit_samples(timestamp: &str, payload: &Value) -> Vec<RateLimit
     .map(ToString::to_string);
 
   let mut samples = Vec::new();
-  for (bucket, window_key) in [("five_hour", "primary"), ("seven_day", "secondary")] {
+  for (default_bucket, window_key) in [("five_hour", "primary"), ("seven_day", "secondary")] {
     let Some(rate_window) = rate_limits.get(window_key) else {
       continue;
     };
@@ -3185,6 +3185,11 @@ fn extract_rate_limit_samples(timestamp: &str, payload: &Value) -> Vec<RateLimit
       .or_else(|| rate_window.get("window_minutes").and_then(Value::as_i64))
     else {
       continue;
+    };
+    let bucket = if window_duration_mins == 7 * 24 * 60 {
+      "seven_day"
+    } else {
+      default_bucket
     };
     let Some(resets_at_seconds) = rate_window.get("resets_at").and_then(Value::as_i64) else {
       continue;
@@ -5669,6 +5674,26 @@ mod tests {
     assert_eq!(samples.2, "seven_day".to_string());
     assert_eq!(samples.3, 79);
     assert_eq!(samples.4, 88);
+  }
+
+  #[test]
+  fn primary_only_seven_day_rate_limit_is_imported_into_the_seven_day_bucket() {
+    let payload = serde_json::json!({
+      "rate_limits": {
+        "plan_type": "pro",
+        "primary": {
+          "used_percent": 21,
+          "window_duration_mins": 10_080,
+          "resets_at": 1_774_589_128
+        }
+      }
+    });
+
+    let samples = extract_rate_limit_samples("2026-03-26T11:45:00+08:00", &payload);
+
+    assert_eq!(samples.len(), 1);
+    assert_eq!(samples[0].bucket, "seven_day");
+    assert_eq!(samples[0].remaining_percent, 79);
   }
 
   #[test]

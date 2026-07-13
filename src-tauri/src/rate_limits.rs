@@ -362,13 +362,26 @@ fn send_app_server_request(
 }
 
 fn convert_live_rate_limits(snapshot: AppServerRateLimitSnapshot) -> LiveRateLimitSnapshot {
+  let (primary, secondary) = normalize_rate_limit_windows(snapshot.primary, snapshot.secondary);
   LiveRateLimitSnapshot {
     limit_id: snapshot.limit_id,
     limit_name: snapshot.limit_name,
     plan_type: snapshot.plan_type,
-    primary: snapshot.primary.map(convert_window),
-    secondary: snapshot.secondary.map(convert_window),
+    primary: primary.map(convert_window),
+    secondary: secondary.map(convert_window),
     fetched_at: Local::now().to_rfc3339(),
+  }
+}
+
+fn normalize_rate_limit_windows(
+  primary: Option<AppServerRateLimitWindow>,
+  secondary: Option<AppServerRateLimitWindow>,
+) -> (Option<AppServerRateLimitWindow>, Option<AppServerRateLimitWindow>) {
+  match (primary, secondary) {
+    (Some(primary), None) if primary.window_duration_mins == Some(7 * 24 * 60) => {
+      (None, Some(primary))
+    }
+    windows => windows,
   }
 }
 
@@ -620,6 +633,28 @@ mod tests {
     assert_eq!(converted.window_duration_mins, Some(300));
     assert!(converted.resets_at.is_some());
     assert!(converted.window_start.is_some());
+  }
+
+  #[test]
+  fn convert_live_rate_limits_keeps_a_primary_only_seven_day_window_in_the_seven_day_slot() {
+    let converted = super::convert_live_rate_limits(super::AppServerRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: None,
+      plan_type: Some("pro".to_string()),
+      primary: Some(super::AppServerRateLimitWindow {
+        used_percent: 21,
+        window_duration_mins: Some(10_080),
+        resets_at: Some(1_774_589_128),
+      }),
+      secondary: None,
+    });
+
+    assert!(converted.primary.is_none());
+    assert_eq!(
+      converted.secondary.as_ref().and_then(|window| window.window_duration_mins),
+      Some(10_080)
+    );
+    assert_eq!(converted.secondary.map(|window| window.remaining_percent), Some(79));
   }
 
   #[test]
