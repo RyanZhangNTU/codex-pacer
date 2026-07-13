@@ -7,7 +7,7 @@ use chrono::{
   DateTime, Datelike, Days, Local, LocalResult, Months, NaiveDate, NaiveDateTime, TimeZone,
   Timelike,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::database::{get_subscription_profile, open_connection};
@@ -25,7 +25,7 @@ use crate::pricing::{
 const SQL_SESSIONS: &str = include_str!("../sql/queries/sessions.sql");
 const SQL_SESSIONS_FOR_ROOT: &str = include_str!("../sql/queries/sessions_for_root.sql");
 const SQL_USAGE_EVENTS_FOR_ROOT: &str = include_str!("../sql/queries/usage_events_for_root.sql");
-const SQL_RATE_LIMIT_WINDOWS: &str = include_str!("../sql/queries/rate_limit_windows.sql");
+const MAX_LIVE_RATE_LIMIT_WINDOWS: usize = 64;
 
 #[derive(Debug, Clone)]
 struct SessionRow {
@@ -128,12 +128,8 @@ pub fn get_overview(
     &events,
     &profile,
     &catalog,
-    bucket,
-    anchor,
-    custom_start,
-    custom_end,
+    &resolved_window,
     live_rate_limits,
-    live_window_offset,
   )
 }
 
@@ -218,7 +214,13 @@ pub fn list_conversations(
   let events = load_events_in_window(&conn, &resolved_window.window).map_err(|error| error.to_string())?;
   let cursor = filters.cursor.clone();
   let limit = filters.limit.unwrap_or(50).clamp(1, 100);
-  let items = build_conversation_list(&conn, &sessions, &events, &profile, Some(filters), live_rate_limits.as_ref())?;
+  let items = build_conversation_list(
+    &sessions,
+    &events,
+    &profile,
+    &resolved_window.window,
+    filters.search,
+  )?;
   Ok(paginate_conversations(items, cursor.as_deref(), limit))
 }
 
@@ -255,29 +257,15 @@ pub fn load_dashboard_data(
     &events,
     &profile,
     &catalog,
-    bucket.clone(),
-    anchor.clone(),
-    custom_start.clone(),
-    custom_end.clone(),
+    &resolved_window,
     live_rate_limits.clone(),
-    live_window_offset,
   )?;
   let conversations = build_conversation_list(
-    &conn,
     &sessions,
     &events,
     &profile,
-    Some(ConversationFilters {
-      bucket,
-      anchor,
-      custom_start,
-      custom_end,
-      search,
-      live_window_offset,
-      cursor: None,
-      limit: Some(50),
-    }),
-    live_rate_limits.as_ref(),
+    &resolved_window.window,
+    search,
   )?;
 
   Ok(DashboardData {
@@ -315,24 +303,9 @@ fn build_overview(
   events: &[EventRow],
   profile: &SubscriptionProfile,
   catalog: &HashMap<String, PricingCatalogEntry>,
-  bucket: Option<String>,
-  anchor: Option<String>,
-  custom_start: Option<String>,
-  custom_end: Option<String>,
+  resolved_window: &ResolvedWindow,
   live_rate_limits: Option<LiveRateLimitSnapshot>,
-  live_window_offset: Option<i64>,
 ) -> Result<OverviewResponse, String> {
-  let resolved_window = resolve_window(
-    conn,
-    bucket,
-    anchor,
-    custom_start,
-    custom_end,
-    events,
-    profile.billing_anchor_day,
-    live_rate_limits.as_ref(),
-    live_window_offset,
-  )?;
   let window = &resolved_window.window;
 
   let mut conversation_ids = HashSet::new();
@@ -399,27 +372,13 @@ fn build_overview(
 }
 
 fn build_conversation_list(
-  conn: &Connection,
   sessions: &HashMap<String, SessionRow>,
   events: &[EventRow],
   profile: &SubscriptionProfile,
-  filters: Option<ConversationFilters>,
-  live_rate_limits: Option<&LiveRateLimitSnapshot>,
+  window: &Window,
+  search: Option<String>,
 ) -> Result<Vec<ConversationListItem>, String> {
-  let filters = filters.unwrap_or_default();
-  let window = resolve_window(
-    conn,
-    filters.bucket.clone(),
-    filters.anchor.clone(),
-    filters.custom_start.clone(),
-    filters.custom_end.clone(),
-    events,
-    profile.billing_anchor_day,
-    live_rate_limits,
-    filters.live_window_offset,
-  )?
-  .window;
-  let search = filters.search.unwrap_or_default().to_ascii_lowercase();
+  let search = search.unwrap_or_default().to_ascii_lowercase();
 
   let mut groups: BTreeMap<String, ConversationAccumulator> = BTreeMap::new();
 
@@ -1215,14 +1174,6 @@ fn load_events_in_window(conn: &Connection, window: &Window) -> rusqlite::Result
            fast_mode_auto, fast_mode_effective
     FROM usage_events
     WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2
-    UNION ALL
-    SELECT session_id, timestamp, model_id, input_tokens, cached_input_tokens,
-           output_tokens, reasoning_output_tokens, total_tokens, value_usd,
-           fast_mode_auto, fast_mode_effective
-    FROM usage_events
-    WHERE timestamp_ms IS NULL
-      AND unixepoch(timestamp) * 1000 >= ?1
-      AND unixepoch(timestamp) * 1000 < ?2
     ORDER BY timestamp ASC
     ",
   )?;
@@ -1245,7 +1196,52 @@ fn load_events_in_window(conn: &Connection, window: &Window) -> rusqlite::Result
     },
   )?;
 
-  rows.collect()
+  let mut events = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+  if epoch_backfill_complete(conn) || !has_legacy_usage_events(conn)? {
+    return Ok(events);
+  }
+
+  let mut legacy_stmt = conn.prepare(
+    "
+    SELECT session_id, timestamp, model_id, input_tokens, cached_input_tokens,
+           output_tokens, reasoning_output_tokens, total_tokens, value_usd,
+           fast_mode_auto, fast_mode_effective
+    FROM usage_events
+    WHERE timestamp_ms IS NULL
+      AND unixepoch(timestamp) * 1000 >= ?1
+      AND unixepoch(timestamp) * 1000 < ?2
+    ORDER BY timestamp ASC
+    ",
+  )?;
+  let legacy_rows = legacy_stmt.query_map(
+    rusqlite::params![window.start.timestamp_millis(), window.end.timestamp_millis()],
+    |row| {
+      Ok(EventRow {
+        session_id: row.get(0)?,
+        timestamp: row.get(1)?,
+        model_id: row.get(2)?,
+        input_tokens: row.get(3)?,
+        cached_input_tokens: row.get(4)?,
+        output_tokens: row.get(5)?,
+        reasoning_output_tokens: row.get(6)?,
+        total_tokens: row.get(7)?,
+        value_usd: row.get(8)?,
+        fast_mode_auto: row.get::<_, i64>(9)? != 0,
+        fast_mode_effective: row.get::<_, i64>(10)? != 0,
+      })
+    },
+  )?;
+  events.extend(legacy_rows.collect::<rusqlite::Result<Vec<_>>>()?);
+  events.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
+  Ok(events)
+}
+
+fn has_legacy_usage_events(conn: &Connection) -> rusqlite::Result<bool> {
+  conn.query_row(
+    "SELECT EXISTS (SELECT 1 FROM usage_events WHERE timestamp_ms IS NULL LIMIT 1)",
+    [],
+    |row| Ok(row.get::<_, i64>(0)? != 0),
+  )
 }
 
 fn load_events_for_root_session(conn: &Connection, root_session_id: &str) -> rusqlite::Result<Vec<EventRow>> {
@@ -1278,25 +1274,26 @@ fn sum_all_api_value(conn: &Connection) -> rusqlite::Result<f64> {
 fn sum_window_api_value_sql(conn: &Connection, window: &Window) -> rusqlite::Result<f64> {
   let start_ms = window.start.timestamp_millis();
   let end_ms = window.end.timestamp_millis();
-  conn.query_row(
-    "
-    SELECT
-      COALESCE((
-        SELECT SUM(value_usd)
-        FROM usage_events
-        WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2
-      ), 0.0)
-      + COALESCE((
-        SELECT SUM(value_usd)
-        FROM usage_events
-        WHERE timestamp_ms IS NULL
-          AND unixepoch(timestamp) * 1000 >= ?1
-          AND unixepoch(timestamp) * 1000 < ?2
-      ), 0.0)
-    ",
+  let modern = conn.query_row(
+    "SELECT COALESCE(SUM(value_usd), 0.0) FROM usage_events WHERE timestamp_ms >= ?1 AND timestamp_ms < ?2",
     rusqlite::params![start_ms, end_ms],
     |row| row.get(0),
-  )
+  )?;
+  if epoch_backfill_complete(conn) || !has_legacy_usage_events(conn)? {
+    return Ok(modern);
+  }
+  let legacy = conn.query_row(
+    "
+    SELECT COALESCE(SUM(value_usd), 0.0)
+    FROM usage_events
+    WHERE timestamp_ms IS NULL
+      AND unixepoch(timestamp) * 1000 >= ?1
+      AND unixepoch(timestamp) * 1000 < ?2
+    ",
+    rusqlite::params![start_ms, end_ms],
+    |row| row.get::<_, f64>(0),
+  )?;
+  Ok(modern + legacy)
 }
 
 fn resolve_window(
@@ -1463,47 +1460,88 @@ fn load_live_rate_limit_windows(
   bucket: &str,
   current_window: Option<RateLimitWindowSummary>,
 ) -> rusqlite::Result<Vec<RateLimitWindowSummary>> {
-  let mut stmt = conn.prepare(SQL_RATE_LIMIT_WINDOWS)?;
-  let rows = stmt.query_map(rusqlite::params![bucket], |row| {
-    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-  })?;
-
-  let mut windows = Vec::new();
-  let mut seen = HashSet::new();
-  for row in rows {
-    let (window_start, resets_at) = row?;
-    let Some(start) = parse_rfc3339_local(&window_start).map(normalize_local_timestamp) else {
-      continue;
-    };
-    let Some(end) = parse_rfc3339_local(&resets_at).map(normalize_local_timestamp) else {
-      continue;
-    };
-    let key = (start.to_rfc3339(), end.to_rfc3339());
-    if !seen.insert(key) {
-      continue;
-    }
-    windows.push(RateLimitWindowSummary { start, end });
-  }
-
-  windows.sort_by(|left, right| right.end.cmp(&left.end).then_with(|| right.start.cmp(&left.start)));
-
   let mut ordered = Vec::new();
-  let mut cursor = current_window.or_else(|| windows.first().cloned());
+  let mut seen = HashSet::new();
+  let mut cursor = match current_window {
+    Some(window) => Some(window),
+    None => load_latest_rate_limit_window(conn, bucket)?,
+  };
   while let Some(window) = cursor {
-    if !ordered
-      .iter()
-      .any(|existing: &RateLimitWindowSummary| existing.start == window.start && existing.end == window.end)
-    {
-      ordered.push(window.clone());
+    let key = (window.start.timestamp_millis(), window.end.timestamp_millis());
+    if !seen.insert(key) {
+      break;
     }
-    cursor = windows
-      .iter()
-      .filter(|candidate| candidate.end <= window.start)
-      .max_by(|left, right| left.end.cmp(&right.end).then_with(|| left.start.cmp(&right.start)))
-      .cloned();
+    let previous_start = window.start;
+    ordered.push(window);
+    if ordered.len() >= MAX_LIVE_RATE_LIMIT_WINDOWS {
+      break;
+    }
+    cursor = load_previous_rate_limit_window(conn, bucket, previous_start)?;
   }
 
   Ok(ordered)
+}
+
+fn load_latest_rate_limit_window(
+  conn: &Connection,
+  bucket: &str,
+) -> rusqlite::Result<Option<RateLimitWindowSummary>> {
+  load_rate_limit_window_query(
+    conn,
+    "
+    SELECT window_start_ms, resets_at_ms
+    FROM rate_limit_samples
+    WHERE bucket = ?1
+      AND window_start_ms IS NOT NULL
+      AND resets_at_ms IS NOT NULL
+    ORDER BY window_start_ms DESC, resets_at_ms DESC
+    LIMIT 1
+    ",
+    rusqlite::params![bucket],
+  )
+}
+
+fn load_previous_rate_limit_window(
+  conn: &Connection,
+  bucket: &str,
+  before: DateTime<Local>,
+) -> rusqlite::Result<Option<RateLimitWindowSummary>> {
+  let before_ms = normalize_local_timestamp(before).timestamp_millis();
+  load_rate_limit_window_query(
+    conn,
+    "
+    SELECT window_start_ms, resets_at_ms
+    FROM rate_limit_samples
+    WHERE bucket = ?1
+      AND window_start_ms < ?2
+      AND (resets_at_ms / 60000) * 60000 <= ?2
+    ORDER BY window_start_ms DESC, resets_at_ms DESC
+    LIMIT 1
+    ",
+    rusqlite::params![bucket, before_ms],
+  )
+}
+
+fn load_rate_limit_window_query<P: rusqlite::Params>(
+  conn: &Connection,
+  sql: &str,
+  params: P,
+) -> rusqlite::Result<Option<RateLimitWindowSummary>> {
+  conn
+    .query_row(sql, params, |row| {
+      Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })
+    .optional()
+    .map(|row| {
+      row.and_then(|(start_ms, end_ms)| {
+        let start = Local.timestamp_millis_opt(start_ms).single()?;
+        let end = Local.timestamp_millis_opt(end_ms).single()?;
+        Some(RateLimitWindowSummary {
+          start: normalize_local_timestamp(start),
+          end: normalize_local_timestamp(end),
+        })
+      })
+    })
 }
 
 fn build_trend(window: &Window, events: &[EventRow]) -> Vec<TrendPoint> {
@@ -1735,14 +1773,96 @@ fn live_sample(live_rate_limits: &LiveRateLimitSnapshot, bucket: &str) -> Option
 fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
   let target_start = normalize_local_timestamp(window.start);
   let target_end = normalize_local_timestamp(window.end);
+  let sample_start_ms = window.start.timestamp_millis();
+  let sample_end_ms = window.end.timestamp_millis();
+  let bin_duration_ms = match window.bucket.as_str() {
+    "five_hour" => chrono::Duration::minutes(15).num_milliseconds(),
+    "seven_day" => chrono::Duration::hours(1).num_milliseconds(),
+    _ => chrono::Duration::hours(1).num_milliseconds(),
+  };
   let mut stmt = match conn.prepare(
     "
-    SELECT sample_timestamp, used_percent
-    FROM rate_limit_samples
-    WHERE bucket = ?1
-      AND window_start_ms = ?2
-      AND resets_at_ms = ?3
-    UNION ALL
+    WITH RECURSIVE bins(bin_start_ms, bin_end_ms) AS (
+      SELECT ?4, MIN(?4 + ?6, ?5)
+      WHERE ?4 < ?5
+      UNION ALL
+      SELECT bin_end_ms, MIN(bin_end_ms + ?6, ?5)
+      FROM bins
+      WHERE bin_end_ms < ?5
+    ),
+    latest_ids AS MATERIALIZED (
+      SELECT (
+        SELECT id
+        FROM rate_limit_samples
+        WHERE bucket = ?1
+          AND window_start_ms = ?2
+          AND resets_at_ms = ?3
+          AND sample_timestamp_ms >= bins.bin_start_ms
+          AND sample_timestamp_ms < bins.bin_end_ms
+        ORDER BY sample_timestamp_ms DESC, id DESC
+        LIMIT 1
+      ) AS id
+      FROM bins
+    )
+    SELECT sample.sample_timestamp_ms, sample.used_percent
+    FROM latest_ids
+    JOIN rate_limit_samples AS sample ON sample.id = latest_ids.id
+    ORDER BY sample.sample_timestamp_ms ASC
+    ",
+  ) {
+    Ok(stmt) => stmt,
+    Err(_) => return Vec::new(),
+  };
+
+  let rows = match stmt.query_map(
+    rusqlite::params![
+      window.bucket,
+      target_start.timestamp_millis(),
+      target_end.timestamp_millis(),
+      sample_start_ms,
+      sample_end_ms,
+      bin_duration_ms,
+    ],
+    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+  ) {
+    Ok(rows) => rows,
+    Err(_) => return Vec::new(),
+  };
+
+  let samples = rows
+    .filter_map(Result::ok)
+    .filter_map(|(timestamp_ms, used_percent)| {
+      Local.timestamp_millis_opt(timestamp_ms).single().map(|timestamp| QuotaSample {
+        timestamp,
+        used_percent,
+      })
+    })
+    .collect::<Vec<_>>();
+  if !samples.is_empty() || epoch_backfill_complete(conn) {
+    return samples;
+  }
+
+  load_legacy_quota_samples(conn, window, target_start, target_end)
+}
+
+fn epoch_backfill_complete(conn: &Connection) -> bool {
+  conn
+    .query_row(
+      "SELECT EXISTS (SELECT 1 FROM data_repairs WHERE repair_key = 'epoch_timestamp_backfill_v1')",
+      [],
+      |row| Ok(row.get::<_, i64>(0)? != 0),
+    )
+    .unwrap_or(true)
+}
+
+fn load_legacy_quota_samples(
+  conn: &Connection,
+  window: &Window,
+  target_start: DateTime<Local>,
+  target_end: DateTime<Local>,
+) -> Vec<QuotaSample> {
+  let mut stmt = match conn.prepare(
+    "
     SELECT sample_timestamp, used_percent
     FROM rate_limit_samples
     WHERE bucket = ?1
@@ -1755,7 +1875,6 @@ fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
     Ok(stmt) => stmt,
     Err(_) => return Vec::new(),
   };
-
   let rows = match stmt.query_map(
     rusqlite::params![
       window.bucket,
@@ -1767,7 +1886,6 @@ fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
     Ok(rows) => rows,
     Err(_) => return Vec::new(),
   };
-
   rows
     .filter_map(Result::ok)
     .filter_map(|(timestamp, used_percent)| {
@@ -2085,6 +2203,54 @@ mod tests {
   }
 
   #[test]
+  fn window_event_loader_keeps_legacy_rows_before_epoch_backfill_completes() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn.execute(
+      "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES ('legacy', '2026-07-10T00:00:00Z', NULL, 'gpt-5.4', 1, 0, 1, 0, 2, 1.5, 0, 0)",
+      [],
+    )
+    .expect("insert legacy event");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-10".to_string(),
+      start: parse_rfc3339_local("2026-07-09T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-11T00:00:00Z").expect("end"),
+    };
+
+    let events = load_events_in_window(&conn, &window).expect("load window events");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session_id, "legacy");
+    assert_eq!(sum_window_api_value_sql(&conn, &window).expect("sum window"), 1.5);
+  }
+
+  #[test]
+  fn completed_epoch_backfill_skips_legacy_usage_event_fallback() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn.execute(
+      "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES ('legacy', '2026-07-10T00:00:00Z', NULL, 'gpt-5.4', 1, 0, 1, 0, 2, 1.5, 0, 0)",
+      [],
+    )
+    .expect("insert legacy event");
+    conn.execute(
+      "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-13T08:00:00Z')",
+      [],
+    )
+    .expect("mark epoch backfill complete");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-10".to_string(),
+      start: parse_rfc3339_local("2026-07-09T00:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-11T00:00:00Z").expect("end"),
+    };
+
+    assert!(load_events_in_window(&conn, &window).expect("load window events").is_empty());
+    assert_eq!(sum_window_api_value_sql(&conn, &window).expect("sum window"), 0.0);
+  }
+
+  #[test]
   fn legacy_quota_samples_match_the_normalized_window_minute() {
     let conn = Connection::open_in_memory().expect("open database");
     init_db(&conn).expect("initialize database");
@@ -2117,6 +2283,101 @@ mod tests {
 
     assert_eq!(samples.len(), 1);
     assert_eq!(samples[0].used_percent, 12);
+  }
+
+  #[test]
+  fn quota_samples_keep_only_the_latest_point_in_each_chart_bin() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    let window_start = parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start");
+    let window_end = parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end");
+    for (timestamp, used_percent) in [
+      ("2026-07-13T06:05:00Z", 1),
+      ("2026-07-13T06:55:00Z", 2),
+      ("2026-07-13T07:10:00Z", 3),
+      ("2026-07-13T07:58:00Z", 4),
+    ] {
+      let timestamp_ms = parse_rfc3339_local(timestamp)
+        .expect("sample timestamp")
+        .timestamp_millis();
+      conn
+        .execute(
+          "
+          INSERT INTO rate_limit_samples (
+            source_kind, source_session_id, bucket, sample_timestamp,
+            limit_id, limit_name, plan_type, window_start, resets_at,
+            used_percent, remaining_percent, created_at,
+            sample_timestamp_ms, window_start_ms, resets_at_ms
+          ) VALUES (
+            'session', 'session', 'seven_day', ?1,
+            '', '', 'pro', '2026-07-13T06:00:00Z', '2026-07-20T06:00:00Z',
+            ?2, 100 - ?2, ?1, ?3, ?4, ?5
+          )
+          ",
+          rusqlite::params![
+            timestamp,
+            used_percent,
+            timestamp_ms,
+            window_start.timestamp_millis(),
+            window_end.timestamp_millis(),
+          ],
+        )
+        .expect("insert quota sample");
+    }
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: window_start,
+      end: window_end,
+    };
+
+    let samples = load_quota_samples(&conn, &window);
+
+    assert_eq!(
+      samples
+        .iter()
+        .map(|sample| sample.used_percent)
+        .collect::<Vec<_>>(),
+      vec![2, 4]
+    );
+  }
+
+  #[test]
+  fn completed_epoch_backfill_does_not_scan_legacy_quota_rows() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T07:00:12Z',
+          '', '', 'pro', '2026-07-13T06:00:36Z', '2026-07-20T06:00:44Z',
+          12, 88, '2026-07-13T07:00:12Z',
+          NULL, NULL, NULL
+        )
+        ",
+        [],
+      )
+      .expect("insert legacy quota sample");
+    conn
+      .execute(
+        "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-13T08:00:00Z')",
+        [],
+      )
+      .expect("mark epoch backfill complete");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end"),
+    };
+
+    assert!(load_quota_samples(&conn, &window).is_empty());
   }
 
   #[test]
