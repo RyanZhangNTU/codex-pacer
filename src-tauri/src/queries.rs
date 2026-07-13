@@ -1747,8 +1747,8 @@ fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
     FROM rate_limit_samples
     WHERE bucket = ?1
       AND (window_start_ms IS NULL OR resets_at_ms IS NULL)
-      AND window_start = ?4
-      AND resets_at = ?5
+      AND (unixepoch(window_start) / 60) * 60000 = ?2
+      AND (unixepoch(resets_at) / 60) * 60000 = ?3
     ORDER BY sample_timestamp ASC
     ",
   ) {
@@ -1761,8 +1761,6 @@ fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
       window.bucket,
       target_start.timestamp_millis(),
       target_end.timestamp_millis(),
-      target_start.to_rfc3339(),
-      target_end.to_rfc3339(),
     ],
     |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
   ) {
@@ -2084,6 +2082,41 @@ mod tests {
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].timestamp, "2026-07-10T00:00:00Z");
+  }
+
+  #[test]
+  fn legacy_quota_samples_match_the_normalized_window_minute() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T07:00:12Z',
+          '', '', 'pro', '2026-07-13T06:00:36Z', '2026-07-20T06:00:44Z',
+          12, 88, '2026-07-13T07:00:12Z',
+          NULL, NULL, NULL
+        )
+        ",
+        [],
+      )
+      .expect("insert legacy quota sample");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end"),
+    };
+
+    let samples = load_quota_samples(&conn, &window);
+
+    assert_eq!(samples.len(), 1);
+    assert_eq!(samples[0].used_percent, 12);
   }
 
   #[test]

@@ -40,7 +40,7 @@ use pricing::{
 use queries::{
   get_conversation_detail, get_overview, get_quota_trend, get_window_api_value, list_conversations, load_dashboard_data,
 };
-use rate_limits::query_live_rate_limits;
+use rate_limits::LiveRateLimitClient;
 use tauri::{
   Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Rect, WebviewUrl, WebviewWindow,
   WebviewWindowBuilder,
@@ -141,11 +141,12 @@ impl refresh::TokenRefreshExecutor for AppTokenRefreshExecutor {
 struct AppLiveQuotaFetcher {
   db_path: PathBuf,
   live_cache: refresh::LiveQuotaCache,
+  client: Arc<LiveRateLimitClient>,
 }
 
 impl refresh::LiveQuotaFetcher for AppLiveQuotaFetcher {
   fn fetch(&self, timeout: Duration) -> Result<LiveRateLimitSnapshot, String> {
-    query_live_rate_limits(timeout)
+    self.client.query(timeout)
   }
 
   fn fallback(&self) -> Option<LiveRateLimitSnapshot> {
@@ -2244,6 +2245,7 @@ pub fn run() {
           Arc::new(AppLiveQuotaFetcher {
             db_path: db_path.clone(),
             live_cache: live_rate_limits.clone(),
+            client: Arc::new(LiveRateLimitClient::new()),
           }),
           Arc::new(AppLiveQuotaPersister {
             db_path: db_path.clone(),

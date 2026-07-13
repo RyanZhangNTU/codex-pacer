@@ -37,6 +37,7 @@ import {
   shouldKeepConversationDetail,
 } from './app/dataFreshness'
 import {
+  selectionAfterDashboardReload,
   shouldLoadDashboardAfterManualRefresh,
   shouldLoadDashboardAfterSettingsSave,
   SurfaceRevisionGate,
@@ -126,6 +127,7 @@ function App() {
   const loadShellRef = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
   const lastRequestedQueryKeyRef = useRef<string | null>(null)
   const latestLoadRequestIdRef = useRef(0)
+  const loadedQueryKeyRef = useRef<string | null>(null)
   const detailCacheRef = useRef(new Map<string, ConversationDetail>())
   const latestDetailRequestIdRef = useRef(0)
   const refreshRevisionGateRef = useRef(new SurfaceRevisionGate())
@@ -184,6 +186,15 @@ function App() {
       if (requestId !== latestLoadRequestIdRef.current) {
         return
       }
+      const resolvedQueryKey = buildQueryKey(
+        requestBucket,
+        requestAnchor,
+        requestCustomStart,
+        requestCustomEnd,
+        requestSearch,
+        snapshot.overview.liveWindowOffset,
+      )
+      const previousQueryKey = loadedQueryKeyRef.current
 
       startTransition(() => {
         const nextDetailCache = new Map<string, ConversationDetail>()
@@ -215,20 +226,10 @@ function App() {
         )
         setDashboardRevision((current) => current + 1)
         setLiveWindowOffset(snapshot.overview.liveWindowOffset)
-        setLoadedQueryKey(
-          buildQueryKey(
-            requestBucket,
-            requestAnchor,
-            requestCustomStart,
-            requestCustomEnd,
-            requestSearch,
-            snapshot.overview.liveWindowOffset,
-          ),
-        )
+        loadedQueryKeyRef.current = resolvedQueryKey
+        setLoadedQueryKey(resolvedQueryKey)
         setSelectedRootSessionId((current) =>
-          current && snapshot.conversationPage.items.some((item) => item.rootSessionId === current)
-            ? current
-            : null,
+          selectionAfterDashboardReload(current, previousQueryKey, resolvedQueryKey),
         )
       })
     } catch (error) {
