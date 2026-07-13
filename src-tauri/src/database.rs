@@ -873,6 +873,183 @@ mod tests {
         assert_eq!(settings.live_quota_refresh_interval_seconds, 600);
     }
 
+    fn assert_release_upgrade_preserves_user_data(legacy_schema: &str) {
+        let conn = Connection::open_in_memory().expect("open legacy release database");
+        conn.execute_batch(legacy_schema)
+            .expect("install historical release schema");
+        conn.execute_batch(
+            "
+            INSERT INTO sessions (
+              session_id, root_session_id, title, source_state,
+              created_at, imported_at
+            ) VALUES (
+              'legacy-session', 'legacy-session', 'Legacy conversation', 'active',
+              '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z'
+            );
+            INSERT INTO conversation_links (
+              session_id, root_session_id, parent_session_id, depth
+            ) VALUES ('legacy-session', 'legacy-session', NULL, 0);
+            INSERT INTO usage_events (
+              session_id, timestamp, model_id,
+              input_tokens, cached_input_tokens, output_tokens,
+              reasoning_output_tokens, total_tokens, value_usd,
+              fast_mode_auto, fast_mode_effective
+            ) VALUES (
+              'legacy-session', '2026-04-01T00:02:00Z', 'gpt-5.4',
+              100, 20, 25, 0, 125, 0.42, 0, 0
+            );
+            INSERT INTO pricing_catalog (
+              model_id, display_name,
+              input_price_per_million, cached_input_price_per_million,
+              output_price_per_million, effective_model_id,
+              is_official, note, source_url, updated_at
+            ) VALUES (
+              'legacy-model', 'Legacy model', 1.0, 0.1, 2.0,
+              'legacy-model', 1, 'release fixture',
+              'https://example.invalid/pricing', '2026-04-01T00:00:00Z'
+            );
+            INSERT INTO subscription_profile (
+              singleton_id, plan_type, currency,
+              monthly_price, billing_anchor_day, updated_at
+            ) VALUES (1, 'pro', 'USD', 42.0, 9, '2026-04-01T00:00:00Z');
+            INSERT INTO session_overrides (
+              session_id, fast_mode_override, updated_at
+            ) VALUES ('legacy-session', 1, '2026-04-01T00:00:00Z');
+            INSERT INTO sync_settings (
+              singleton_id, codex_home, auto_scan_enabled,
+              auto_scan_interval_minutes, last_scan_started_at,
+              last_scan_completed_at, updated_at
+            ) VALUES (
+              1, '/legacy/codex-home', 1, 17,
+              '2026-04-01T00:03:00Z', '2026-04-01T00:04:00Z',
+              '2026-04-01T00:05:00Z'
+            );
+            INSERT INTO import_state (
+              source_path, session_id, source_bucket,
+              file_size, file_mtime_ms, last_imported_at
+            ) VALUES (
+              '/legacy/session.jsonl', 'legacy-session', 'active',
+              512, 1775000000000, '2026-04-01T00:05:00Z'
+            );
+            INSERT INTO rate_limit_samples (
+              source_kind, source_session_id, bucket,
+              sample_timestamp, limit_id, limit_name, plan_type,
+              window_start, resets_at, used_percent,
+              remaining_percent, created_at
+            ) VALUES (
+              'session', 'legacy-session', 'five_hour',
+              '2026-04-01T00:06:00Z', 'legacy-limit', 'Legacy limit', 'pro',
+              '2026-04-01T00:00:00Z', '2026-04-01T05:00:00Z',
+              25, 75, '2026-04-01T00:06:00Z'
+            );
+            ",
+        )
+        .expect("seed historical user data");
+
+        init_db(&conn).expect("upgrade historical release database");
+        let progress = backfill_epoch_batch(&conn, 1_000)
+            .expect("backfill historical epoch values");
+        assert!(progress.complete);
+        init_db(&conn).expect("repeat upgrade idempotently");
+
+        let session: (String, String) = conn
+            .query_row(
+                "SELECT title, source_state FROM sessions WHERE session_id = 'legacy-session'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("load preserved session");
+        assert_eq!(session, ("Legacy conversation".to_string(), "active".to_string()));
+
+        let usage: (i64, i64, Option<i64>) = conn
+            .query_row(
+                "
+                SELECT COUNT(*), total_tokens, timestamp_ms
+                FROM usage_events
+                WHERE session_id = 'legacy-session'
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load preserved usage");
+        assert_eq!(usage.0, 1);
+        assert_eq!(usage.1, 125);
+        assert!(usage.2.is_some());
+
+        let quota: (i64, i64, i64, Option<i64>) = conn
+            .query_row(
+                "
+                SELECT COUNT(*), used_percent, remaining_percent, sample_timestamp_ms
+                FROM rate_limit_samples
+                WHERE source_session_id = 'legacy-session'
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("load preserved quota");
+        assert_eq!((quota.0, quota.1, quota.2), (1, 25, 75));
+        assert!(quota.3.is_some());
+
+        let profile = get_subscription_profile(&conn).expect("load preserved subscription");
+        assert_eq!(profile.plan_type, "pro");
+        assert_eq!(profile.monthly_price, 42.0);
+        assert_eq!(profile.billing_anchor_day, 9);
+
+        let settings = get_sync_settings(&conn).expect("load preserved settings");
+        assert_eq!(settings.codex_home.as_deref(), Some("/legacy/codex-home"));
+        assert_eq!(settings.auto_scan_interval_minutes, 17);
+
+        let import_state: (i64, Option<String>) = conn
+            .query_row(
+                "
+                SELECT file_size, parser_checkpoint
+                FROM import_state
+                WHERE source_path = '/legacy/session.jsonl'
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("load preserved import state");
+        assert_eq!(import_state, (512, None));
+
+        let repair_tables: i64 = conn
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name IN (
+                    'data_repair_progress',
+                    'data_repair_quarantine',
+                    'latest_rate_limits'
+                  )
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("load upgraded tables");
+        assert_eq!(repair_tables, 3);
+
+        let integrity: String = conn
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))
+            .expect("check upgraded database integrity");
+        assert_eq!(integrity, "ok");
+    }
+
+    #[test]
+    fn upgrades_v1_1_1_database_without_losing_user_data() {
+        assert_release_upgrade_preserves_user_data(include_str!(
+            "../tests/fixtures/v1.1.1-schema.sql"
+        ));
+    }
+
+    #[test]
+    fn upgrades_v1_1_2_database_without_losing_user_data() {
+        assert_release_upgrade_preserves_user_data(include_str!(
+            "../tests/fixtures/v1.1.2-schema.sql"
+        ));
+    }
+
     #[test]
     fn subscription_profile_is_normalized_to_usd() {
         let conn = Connection::open_in_memory().expect("open in-memory database");

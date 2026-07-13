@@ -4,22 +4,22 @@
 
 本文面向维护者，说明如何生成 **Codex Pacer** 的公开发布资产：
 
-- 已签名的 Apple Silicon DMG
-- Windows 兼容性检查，且 `v1.1.2` 暂缓发布 Windows 安装包
+- 已签名、完成 notarization 并已 staple 的 Apple Silicon DMG
+- Windows 兼容性检查，且 `v1.2.0` 暂缓发布 Windows 安装包
 - 通过 GitHub Releases 分发
 
 本地发布入口：
 
 ```bash
 ./scripts/release/audit-public-branding.sh
-./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/build-macos-release.sh 1.2.0
 ```
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.2
+.\scripts\release\build-windows-release.ps1 1.2.0
 ```
 
-macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.2` 上传 DMG 与 checksum。`v1.1.2` 不附加 Windows setup EXE；后续明确包含 Windows 的 release 再把 Windows setup EXE 与对应 checksum 附加到同一个 GitHub Release。
+macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.2.0` 上传 DMG 与 checksum。`v1.2.0` 不附加 Windows setup EXE；后续明确包含 Windows 的 release 再把 Windows setup EXE 与对应 checksum 附加到同一个 GitHub Release。
 
 ## macOS 发布要求
 
@@ -44,7 +44,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 ## macOS 构建
 
 ```bash
-./scripts/release/build-macos-release.sh 1.1.2
+./scripts/release/build-macos-release.sh 1.2.0
 ```
 
 脚本会校验版本，运行品牌审计、lint、前端构建和 Rust 测试，构建 app/dmg，执行 codesign，并写入 `<artifact>.dmg.sha256`。如果配置了 notarization 凭据，脚本还会执行 notarytool、stapling、Gatekeeper 与 stapler 校验；如果未配置，则跳过这些 notarization 专属步骤。
@@ -52,7 +52,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 ## Windows 构建
 
 ```powershell
-.\scripts\release\build-windows-release.ps1 1.1.2
+.\scripts\release\build-windows-release.ps1 1.2.0
 ```
 
 脚本会校验版本，运行 `npm ci`、lint、前端构建和 Rust 测试，执行 `npm run tauri build -- --ci --bundles nsis -- --locked`，定位生成的 NSIS setup `.exe`，并写入 `<installer>.exe.sha256`。
@@ -98,7 +98,7 @@ macOS 发布流程继续使用 `./scripts/release/publish-github-release.sh 1.1.
 10. 刷新 live quota 数据，确认不会弹出黑色命令行窗口。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.1.2_x64-setup.exe"
+Get-FileHash -Algorithm SHA256 -LiteralPath "C:\path\to\Codex Pacer_1.2.0_x64-setup.exe"
 ```
 
 ## 相关文档

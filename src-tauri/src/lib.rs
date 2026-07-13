@@ -1426,6 +1426,13 @@ fn load_persisted_live_rate_limits_from_connection(
   })
 }
 
+fn load_preferred_persisted_live_rate_limits(
+  conn: &rusqlite::Connection,
+) -> Option<LiveRateLimitSnapshot> {
+  load_persisted_live_rate_limits_from_connection(conn, Some("live"))
+    .or_else(|| load_persisted_live_rate_limits_from_connection(conn, Some("session")))
+}
+
 fn persisted_window_is_newer(
   candidate: &PersistedRateLimitWindow,
   current: &PersistedRateLimitWindow,
@@ -1466,16 +1473,18 @@ fn load_display_live_rate_limit_fallback(
   let memory = live_cache
     .rate_limits()
     .map(|snapshot| snapshot.as_ref().clone());
+  let memory_is_live = live_cache.state().last_live_success_at.is_some();
   let Ok(conn) = open_connection(db_path) else {
     return memory;
   };
-  let persisted = load_persisted_live_rate_limits_from_connection(&conn, None);
-  let session_only = if persisted.is_none() {
-    load_persisted_live_rate_limits_from_connection(&conn, Some("session"))
-  } else {
-    None
-  };
-  newest_live_rate_limit_snapshot([memory, persisted, session_only])
+  let persisted_live = load_persisted_live_rate_limits_from_connection(&conn, Some("live"));
+  if memory_is_live {
+    return newest_live_rate_limit_snapshot([memory, persisted_live]);
+  }
+  if persisted_live.is_some() {
+    return persisted_live;
+  }
+  memory.or_else(|| load_persisted_live_rate_limits_from_connection(&conn, Some("session")))
 }
 
 fn newest_live_rate_limit_snapshot(
@@ -2178,8 +2187,7 @@ pub fn run() {
       prepare_app_database(&db_path)?;
       let conn = open_connection(&db_path).map_err(|error| error.to_string())?;
       let settings = get_sync_settings(&conn).map_err(|error| error.to_string())?;
-      let display_fallback = load_persisted_live_rate_limits_from_connection(&conn, None)
-        .or_else(|| load_persisted_live_rate_limits_from_connection(&conn, Some("session")));
+      let display_fallback = load_preferred_persisted_live_rate_limits(&conn);
       let live_last_success_at = load_persisted_live_rate_limits_from_connection(&conn, Some("live"))
         .map(|snapshot| snapshot.fetched_at);
       let epoch_backfill_is_pending =
@@ -3630,6 +3638,43 @@ mod tests {
     assert!(!pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
   }
 
+  fn test_live_quota_snapshot(fetched_at: &str, remaining_percent: i64) -> LiveRateLimitSnapshot {
+    LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: Some("Codex".to_string()),
+      plan_type: Some("pro".to_string()),
+      primary: Some(RateLimitWindowSnapshot {
+        used_percent: 100 - remaining_percent,
+        remaining_percent,
+        window_duration_mins: Some(300),
+        resets_at: Some("2026-07-12T05:00:00+08:00".to_string()),
+        window_start: Some("2026-07-12T00:00:00+08:00".to_string()),
+      }),
+      secondary: None,
+      fetched_at: fetched_at.to_string(),
+    }
+  }
+
+  fn test_session_quota_sample(
+    session_id: &str,
+    sample_timestamp: &str,
+    remaining_percent: i64,
+  ) -> crate::models::RateLimitSampleRecord {
+    crate::models::RateLimitSampleRecord {
+      source_kind: "session".to_string(),
+      source_session_id: Some(session_id.to_string()),
+      bucket: "five_hour".to_string(),
+      sample_timestamp: sample_timestamp.to_string(),
+      limit_id: Some("codex".to_string()),
+      limit_name: Some("Codex".to_string()),
+      plan_type: Some("pro".to_string()),
+      window_start: "2026-07-12T00:00:00+08:00".to_string(),
+      resets_at: "2026-07-12T05:00:00+08:00".to_string(),
+      used_percent: 100 - remaining_percent,
+      remaining_percent,
+    }
+  }
+
   #[test]
   fn background_live_rate_limit_fallback_prefers_newest_persisted_sample() {
     let directory = tempdir().expect("tempdir");
@@ -3709,6 +3754,102 @@ mod tests {
       memory.primary.as_ref().map(|window| window.remaining_percent),
       Some(77)
     );
+  }
+
+  #[test]
+  fn background_live_fallback_keeps_current_live_over_newer_session() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-late",
+      &[test_session_quota_sample(
+        "session-late",
+        "2026-07-12T00:10:00+08:00",
+        20,
+      )],
+    )
+    .expect("insert newer session sample");
+    drop(conn);
+
+    let live_cache = refresh::LiveQuotaCache::new();
+    live_cache.publish_live(
+      Arc::new(test_live_quota_snapshot(
+        "2026-07-12T00:05:00+08:00",
+        88,
+      )),
+      Instant::now(),
+      Utc::now(),
+    );
+
+    let snapshot = load_display_live_rate_limit_fallback(&db_path, &live_cache)
+      .expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-12T00:05:00+08:00");
+    assert_eq!(snapshot.primary.map(|window| window.remaining_percent), Some(88));
+  }
+
+  #[test]
+  fn background_live_fallback_prefers_persisted_live_over_newer_session() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &test_live_quota_snapshot("2026-07-12T00:05:00+08:00", 88),
+    )
+    .expect("insert persisted live sample");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-late",
+      &[test_session_quota_sample(
+        "session-late",
+        "2026-07-12T00:10:00+08:00",
+        20,
+      )],
+    )
+    .expect("insert newer session sample");
+    drop(conn);
+
+    let snapshot = load_display_live_rate_limit_fallback(
+      &db_path,
+      &refresh::LiveQuotaCache::new(),
+    )
+    .expect("load fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-12T00:05:00+08:00");
+    assert_eq!(snapshot.primary.map(|window| window.remaining_percent), Some(88));
+  }
+
+  #[test]
+  fn background_live_fallback_uses_session_when_no_live_data_exists() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    database::replace_session_rate_limit_samples(
+      &conn,
+      "session-only",
+      &[test_session_quota_sample(
+        "session-only",
+        "2026-07-12T00:10:00+08:00",
+        20,
+      )],
+    )
+    .expect("insert session sample");
+    drop(conn);
+
+    let snapshot = load_display_live_rate_limit_fallback(
+      &db_path,
+      &refresh::LiveQuotaCache::new(),
+    )
+    .expect("load history fallback");
+
+    assert_eq!(snapshot.fetched_at, "2026-07-12T00:10:00+08:00");
+    assert_eq!(snapshot.primary.map(|window| window.remaining_percent), Some(20));
   }
 
   #[test]
