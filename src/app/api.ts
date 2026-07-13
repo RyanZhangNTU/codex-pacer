@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
 
 import type {
   ConversationFilters,
-  ConversationListItem,
+  ConversationPage,
   LiveRateLimitSnapshot,
   MenuBarPopupSnapshot,
   OverviewBucket,
@@ -206,6 +206,10 @@ export async function scanCodexUsage(codexHome?: string | null): Promise<import(
     importedSessions: 0,
     updatedSessions: 0,
     missingSessions: 0,
+    scanKind: 'incremental',
+    sourceBytesRead: 0,
+    tailParsedFiles: 0,
+    fullyParsedFiles: 0,
     lastCompletedAt: nowIso(),
   }))
 }
@@ -257,7 +261,7 @@ export async function loadDashboard(
     },
     () => ({
       overview: createMockOverview(bucket, anchor, customStart, customEnd),
-      conversations: [] as ConversationListItem[],
+      conversationPage: { items: [], nextCursor: null, hasMore: false } satisfies ConversationPage,
       syncSettings: createMockSyncSettings(),
       subscriptionProfile: createMockSubscriptionProfile(),
       liveRateLimits: createMockLiveRateLimits(),
@@ -265,8 +269,12 @@ export async function loadDashboard(
   )
 }
 
-export async function listConversations(filters: ConversationFilters) {
-  return invokeOrMock('listConversations', { filters }, () => [] satisfies ConversationListItem[])
+export async function listConversations(filters: ConversationFilters): Promise<ConversationPage> {
+  return invokeOrMock(
+    'listConversations',
+    { filters },
+    () => ({ items: [], nextCursor: null, hasMore: false }) satisfies ConversationPage,
+  )
 }
 
 export async function getLiveRateLimits(): Promise<LiveRateLimitSnapshot> {
@@ -275,8 +283,9 @@ export async function getLiveRateLimits(): Promise<LiveRateLimitSnapshot> {
 
 export async function getConversationDetail(
   rootSessionId: string,
+  turnCursor?: number | null,
 ): Promise<import('./types').ConversationDetail> {
-  return invokeOrMock('getConversationDetail', { rootSessionId }, () => {
+  return invokeOrMock('getConversationDetail', { rootSessionId, turnCursor: turnCursor ?? null }, () => {
     throw new Error(`Conversation ${rootSessionId} is unavailable in browser preview mode.`)
   })
 }

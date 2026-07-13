@@ -24,6 +24,7 @@ import {
 import {
   getScanInProgress,
   getConversationDetail,
+  listConversations,
   loadDashboard,
   refreshPricing,
   scanCodexUsage,
@@ -105,8 +106,12 @@ function App() {
   const [shareDimension, setShareDimension] = useState<ShareDimension>('model')
   const [overview, setOverview] = useState<OverviewResponse | null>(null)
   const [conversations, setConversations] = useState<ConversationListItem[]>([])
+  const [conversationCursor, setConversationCursor] = useState<string | null>(null)
+  const [hasMoreConversations, setHasMoreConversations] = useState(false)
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false)
   const [selectedRootSessionId, setSelectedRootSessionId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
+  const [loadingEarlierTurns, setLoadingEarlierTurns] = useState(false)
   const [syncSettings, setSyncSettings] = useState<SyncSettings | null>(null)
   const [subscriptionProfile, setSubscriptionProfile] = useState<SubscriptionProfile | null>(null)
   const [liveRateLimits, setLiveRateLimits] = useState<LiveRateLimitSnapshot | null>(null)
@@ -125,6 +130,7 @@ function App() {
   const latestDetailRequestIdRef = useRef(0)
   const refreshRevisionGateRef = useRef(new SurfaceRevisionGate())
   const refreshCompletionListenerReadyRef = useRef<Promise<boolean>>(Promise.resolve(false))
+  const refreshReloadTimerRef = useRef<number | null>(null)
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
 
   const waitForScanToSettle = useCallback(async (timeoutMs = 15000) => {
@@ -181,7 +187,7 @@ function App() {
 
       startTransition(() => {
         const nextDetailCache = new Map<string, ConversationDetail>()
-        for (const conversation of snapshot.conversations) {
+        for (const conversation of snapshot.conversationPage.items) {
           const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
           if (
             cachedDetail &&
@@ -197,7 +203,9 @@ function App() {
 
         latestDetailRequestIdRef.current += 1
         setOverview(snapshot.overview)
-        setConversations(snapshot.conversations)
+        setConversations(snapshot.conversationPage.items)
+        setConversationCursor(snapshot.conversationPage.nextCursor)
+        setHasMoreConversations(snapshot.conversationPage.hasMore)
         setSyncSettings(snapshot.syncSettings)
         setSubscriptionProfile(snapshot.subscriptionProfile)
         setLiveRateLimits(snapshot.liveRateLimits)
@@ -218,9 +226,9 @@ function App() {
           ),
         )
         setSelectedRootSessionId((current) =>
-          current && snapshot.conversations.some((item) => item.rootSessionId === current)
+          current && snapshot.conversationPage.items.some((item) => item.rootSessionId === current)
             ? current
-            : snapshot.conversations[0]?.rootSessionId ?? null,
+            : snapshot.conversationPage.items[0]?.rootSessionId ?? null,
         )
       })
     } catch (error) {
@@ -232,6 +240,43 @@ function App() {
       }
     }
   }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t])
+
+  const loadMoreConversations = useCallback(async () => {
+    if (!conversationCursor || !hasMoreConversations || loadingMoreConversations) return
+    const requestId = latestLoadRequestIdRef.current
+    setLoadingMoreConversations(true)
+    try {
+      const page = await listConversations({
+        bucket,
+        anchor: bucketUsesAnchor(bucket) ? anchor : null,
+        customStart: bucket === 'custom' ? customStart : null,
+        customEnd: bucket === 'custom' ? customEnd : null,
+        search: deferredSearch || null,
+        liveWindowOffset: bucket === 'five_hour' || bucket === 'seven_day' ? liveWindowOffset : 0,
+        cursor: conversationCursor,
+        limit: 50,
+      })
+      if (requestId !== latestLoadRequestIdRef.current) return
+      setConversations((current) => {
+        const seen = new Set(current.map((item) => item.rootSessionId))
+        return [...current, ...page.items.filter((item) => !seen.has(item.rootSessionId))]
+      })
+      setConversationCursor(page.nextCursor)
+      setHasMoreConversations(page.hasMore)
+    } finally {
+      setLoadingMoreConversations(false)
+    }
+  }, [
+    anchor,
+    bucket,
+    conversationCursor,
+    customEnd,
+    customStart,
+    deferredSearch,
+    hasMoreConversations,
+    liveWindowOffset,
+    loadingMoreConversations,
+  ])
 
   const currentQueryKey = buildQueryKey(
     bucket,
@@ -314,7 +359,13 @@ function App() {
         .catch(() => {})
     }
     const reloadDashboard = () => {
-      void loadShellRef.current(true)
+      if (refreshReloadTimerRef.current !== null) {
+        window.clearTimeout(refreshReloadTimerRef.current)
+      }
+      refreshReloadTimerRef.current = window.setTimeout(() => {
+        refreshReloadTimerRef.current = null
+        void loadShellRef.current(true)
+      }, 200)
     }
     const handleCompletion = async (event: RefreshCompletedEvent) => {
       let visible: boolean
@@ -378,6 +429,10 @@ function App() {
     return () => {
       cancelled = true
       refreshCompletionListenerReadyRef.current = Promise.resolve(false)
+      if (refreshReloadTimerRef.current !== null) {
+        window.clearTimeout(refreshReloadTimerRef.current)
+        refreshReloadTimerRef.current = null
+      }
       document.removeEventListener('visibilitychange', handleDocumentVisibility)
       window.removeEventListener('focus', handleWindowFocus)
       for (const dispose of disposers) {
@@ -422,6 +477,30 @@ function App() {
       setStatusMessage(String(error))
     }
   }, [])
+
+  const loadEarlierTurns = useCallback(async () => {
+    if (!detail?.hasMoreTurns || detail.nextTurnCursor === null || loadingEarlierTurns) return
+    const requestId = latestDetailRequestIdRef.current
+    const rootSessionId = detail.rootSessionId
+    setLoadingEarlierTurns(true)
+    try {
+      const page = await getConversationDetail(rootSessionId, detail.nextTurnCursor)
+      if (requestId !== latestDetailRequestIdRef.current) return
+      setDetail((current) => {
+        if (!current || current.rootSessionId !== rootSessionId) return current
+        const merged = {
+          ...current,
+          turns: [...page.turns, ...current.turns],
+          nextTurnCursor: page.nextTurnCursor,
+          hasMoreTurns: page.hasMoreTurns,
+        }
+        detailCacheRef.current.set(rootSessionId, merged)
+        return merged
+      })
+    } finally {
+      setLoadingEarlierTurns(false)
+    }
+  }, [detail, loadingEarlierTurns])
 
   useEffect(() => {
     let cancelled = false
@@ -871,8 +950,9 @@ function App() {
                   {activeConversations.length === 0 ? (
                     <div className="empty-state">{t.conversationList.empty}</div>
                   ) : (
-                    activeConversations.map((conversation) => (
-                      <button
+                    <>
+                      {activeConversations.map((conversation) => (
+                        <button
                         key={conversation.rootSessionId}
                         className={`conversation-card ${
                           conversation.rootSessionId === selectedRootSessionId ? 'active' : ''
@@ -904,8 +984,21 @@ function App() {
                           <span>{formatShortDate(conversation.updatedAt, language)}</span>
                           <span>{formatPercent(conversation.subscriptionShare, language)}</span>
                         </div>
-                      </button>
-                    ))
+                        </button>
+                      ))}
+                      {hasMoreConversations ? (
+                        <button
+                          className="ghost-button"
+                          disabled={loadingMoreConversations}
+                          onClick={() => void loadMoreConversations()}
+                          type="button"
+                        >
+                          {loadingMoreConversations
+                            ? t.conversationList.loadingMore
+                            : t.conversationList.loadMore}
+                        </button>
+                      ) : null}
+                    </>
                   )}
                 </div>
               </aside>
@@ -967,14 +1060,26 @@ function App() {
                           <h3>{t.detail.turnUsage}</h3>
                         </div>
                         <p className="chart-note">
-                          {t.detail.latestTurns(Math.min(activeDetail.turns.length, 40))}
+                          {t.detail.latestTurns(activeDetail.turns.length)}
                         </p>
                       </div>
+                      {activeDetail.hasMoreTurns ? (
+                        <button
+                          className="ghost-button"
+                          disabled={loadingEarlierTurns}
+                          onClick={() => void loadEarlierTurns()}
+                          type="button"
+                        >
+                          {loadingEarlierTurns
+                            ? t.detail.loadingEarlierTurns
+                            : t.detail.loadEarlierTurns}
+                        </button>
+                      ) : null}
                       <div className="timeline-grid">
                         {activeDetail.turns.length === 0 ? (
                           <div className="empty-state">{t.detail.emptyTurns}</div>
                         ) : (
-                          activeDetail.turns.slice(-40).reverse().map((turn) => {
+                          [...activeDetail.turns].reverse().map((turn) => {
                             const session = sessionSummariesById.get(turn.sessionId)
                             const modelSummary = formatModelSummary(turn.modelIds, t)
                             const sessionLabel = formatSessionLabel(session, turn.sessionId, t)

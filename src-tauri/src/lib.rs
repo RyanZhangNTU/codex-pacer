@@ -28,7 +28,7 @@ use database::{
 };
 use importer::{commit_prepared_scan, prepare_scan, recalculate_all_session_values, ScanKind};
 use models::{
-  ConversationDetail, ConversationFilters, ConversationListItem, DashboardSnapshot,
+  ConversationDetail, ConversationFilters, ConversationPage, DashboardSnapshot,
   LiveRateLimitSnapshot, MenuBarPopupQuotaSnapshot, MenuBarPopupSnapshot,
   MenuBarPopupSuggestedSpeed, OverviewResponse, PricingCatalogEntry, RateLimitWindowSnapshot,
   ScanResult, SubscriptionProfile, SyncSettings,
@@ -451,7 +451,7 @@ fn getOverview(
 fn listConversations(
   state: State<'_, AppState>,
   filters: Option<ConversationFilters>,
-) -> Result<Vec<ConversationListItem>, String> {
+) -> Result<ConversationPage, String> {
   let live_rate_limits = maybe_live_rate_limits_for_bucket(
     state.inner(),
     filters.as_ref().and_then(|value| value.bucket.as_deref()),
@@ -520,7 +520,7 @@ async fn loadDashboard(
 ) -> Result<DashboardSnapshot, String> {
   let state = state.inner().clone();
   tauri::async_runtime::spawn_blocking(move || {
-    let normalized_bucket = bucket.clone().unwrap_or_else(|| "subscription_month".to_string());
+    let normalized_bucket = bucket.clone().unwrap_or_else(|| "seven_day".to_string());
     let live_rate_limits =
       maybe_live_rate_limits_for_bucket(&state, Some(&normalized_bucket), live_window_offset)?;
     let snapshot = load_dashboard_data(
@@ -538,7 +538,7 @@ async fn loadDashboard(
 
     Ok(DashboardSnapshot {
       overview: snapshot.overview,
-      conversations: snapshot.conversations,
+      conversation_page: snapshot.conversation_page,
       sync_settings,
       subscription_profile: snapshot.subscription_profile,
       live_rate_limits,
@@ -553,8 +553,9 @@ async fn loadDashboard(
 fn getConversationDetail(
   state: State<'_, AppState>,
   root_session_id: String,
+  turn_cursor: Option<usize>,
 ) -> Result<ConversationDetail, String> {
-  get_conversation_detail(&state.db_path, &root_session_id)
+  get_conversation_detail(&state.db_path, &root_session_id, turn_cursor)
 }
 
 #[allow(non_snake_case)]

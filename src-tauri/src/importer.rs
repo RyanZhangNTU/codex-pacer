@@ -162,6 +162,8 @@ pub(crate) enum ScanKind {
 pub(crate) struct PreparedScanStats {
   pub files_visited: usize,
   pub source_bytes_read: u64,
+  pub tail_parsed_files: usize,
+  pub fully_parsed_files: usize,
   pub full_rebuild: bool,
   pub used_spool: bool,
   pub parent_replay_cache_evictions: usize,
@@ -883,6 +885,8 @@ pub(crate) fn prepare_scan(
   let stats = PreparedScanStats {
     files_visited: session_files.len(),
     source_bytes_read: 0,
+    tail_parsed_files: 0,
+    fully_parsed_files: 0,
     full_rebuild: effective_kind == ScanKind::Full,
     used_spool: false,
     parent_replay_cache_evictions: 0,
@@ -955,6 +959,8 @@ pub(crate) fn prepare_scan(
   let mut storage = PreparedStorageBuilder::new();
   let mut updated_sessions = 0usize;
   let mut source_bytes_read = 0u64;
+  let mut tail_parsed_files = 0usize;
+  let mut fully_parsed_files = 0usize;
 
   for session_file in changed_files {
     let source_path = session_file.path.to_string_lossy().to_string();
@@ -986,8 +992,14 @@ pub(crate) fn prepare_scan(
       Ok(None)
     };
     let parsed_result = match tail_candidate {
-      Ok(Some(result)) => Ok(result),
-      Ok(None) => parse_session_file_counted(&session_file, &titles),
+      Ok(Some(result)) => {
+        tail_parsed_files += 1;
+        Ok(result)
+      }
+      Ok(None) => {
+        fully_parsed_files += 1;
+        parse_session_file_counted(&session_file, &titles)
+      }
       Err(error) => Err(error),
     };
     let (mut parsed, bytes_read) = match parsed_result {
@@ -1090,6 +1102,8 @@ pub(crate) fn prepare_scan(
   let storage = storage.finish()?;
   let stats = PreparedScanStats {
     source_bytes_read,
+    tail_parsed_files,
+    fully_parsed_files,
     used_spool: matches!(&storage, PreparedStorage::Spool { .. }),
     parent_replay_cache_evictions,
     parent_replay_cache_oversized_bypasses,
@@ -1325,6 +1339,15 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
     imported_sessions,
     updated_sessions,
     missing_sessions,
+    scan_kind: match effective_kind {
+      ScanKind::Full => "full",
+      ScanKind::Reconcile => "reconcile",
+      ScanKind::Incremental => "incremental",
+    }
+    .to_string(),
+    source_bytes_read: stats.source_bytes_read,
+    tail_parsed_files: stats.tail_parsed_files,
+    fully_parsed_files: stats.fully_parsed_files,
     last_completed_at: completed_at,
   })
 }
@@ -7227,6 +7250,110 @@ mod tests {
     assert_eq!(
       session_usage_totals(&conn, session_id),
       (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn reconcile_scan_reads_only_completed_tail_after_checkpoint() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+    let session_id = "56565656-5656-5656-5656-565656565656";
+    let session_path = sessions_dir.join("reconciled-growing.jsonl");
+    write_session_file(
+      &session_path,
+      session_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let filler = "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"ignored\",\"payload\":{}}\n";
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open initial session for append");
+    for _ in 0..4_096 {
+      file.write_all(filler.as_bytes()).expect("append filler");
+    }
+    drop(file);
+
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial full scan");
+
+    let appended = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:01:01Z",
+      total: (180, 40, 45, 225),
+      last: (80, 20, 20, 100),
+    });
+    std::fs::OpenOptions::new()
+      .append(true)
+      .open(&session_path)
+      .expect("open growing session")
+      .write_all(appended.as_bytes())
+      .expect("append completed token line");
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Reconcile,
+    )
+    .expect("prepare reconcile tail");
+    assert_eq!(prepared.stats().tail_parsed_files, 1);
+    assert_eq!(prepared.stats().fully_parsed_files, 0);
+    assert!(
+      prepared.stats().source_bytes_read < appended.len() as u64 * 4,
+      "reconcile should avoid rereading the historical prefix; read {} bytes",
+      prepared.stats().source_bytes_read
+    );
+    commit_prepared_scan(prepared).expect("commit reconcile tail");
+
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, session_id),
+      (180, 40, 45, 225, 2)
+    );
+  }
+
+  #[test]
+  fn reconcile_scan_discovers_new_archived_session() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    let archives_dir = codex_home.join("archived_sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::create_dir_all(&archives_dir).expect("archives dir");
+
+    let initial_id = "67676767-6767-6767-6767-676767676767";
+    write_session_file(
+      &sessions_dir.join("initial.jsonl"),
+      initial_id,
+      &[("2026-03-24T00:00:01Z", 100, 20, 25, 125)],
+    );
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string()))
+      .expect("initial full scan");
+
+    let archived_id = "78787878-7878-7878-7878-787878787878";
+    write_session_file(
+      &archives_dir.join("new-archive.jsonl"),
+      archived_id,
+      &[("2026-03-24T01:00:01Z", 200, 40, 50, 250)],
+    );
+
+    let prepared = prepare_scan(
+      &db_path,
+      Some(codex_home.to_string_lossy().to_string()),
+      ScanKind::Reconcile,
+    )
+    .expect("prepare reconcile scan");
+    assert_eq!(prepared.stats().fully_parsed_files, 1);
+    commit_prepared_scan(prepared).expect("commit reconcile scan");
+
+    let conn = open_connection(&db_path).expect("open database");
+    assert_eq!(
+      session_usage_totals(&conn, archived_id),
+      (200, 40, 50, 250, 1)
     );
   }
 

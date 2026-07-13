@@ -96,6 +96,8 @@ export type TranslationSet = {
     title: string
     shown: (count: number) => string
     empty: string
+    loadMore: string
+    loadingMore: string
   }
   detail: {
     eyebrow: string
@@ -105,6 +107,8 @@ export type TranslationSet = {
     turnTimelineEyebrow: string
     turnUsage: string
     latestTurns: (count: number) => string
+    loadEarlierTurns: string
+    loadingEarlierTurns: string
     emptyTurns: string
     emptySelection: string
     untitledTurn: string
@@ -345,6 +349,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       title: '根会话',
       shown: (count) => `显示 ${count} 条`,
       empty: '当前筛选条件下没有匹配对话。',
+      loadMore: '加载更多',
+      loadingMore: '正在加载…',
     },
     detail: {
       eyebrow: '对话详情',
@@ -353,6 +359,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       conversationCostBreakdown: '对话成本结构',
       turnTimelineEyebrow: 'Turn 时间线',
       turnUsage: 'Turn 用量',
+      loadEarlierTurns: '加载更早记录',
+      loadingEarlierTurns: '正在加载…',
       latestTurns: (count) => `最近 ${count} 个 turn`,
       emptyTurns: '该对话暂无 turn 级来源数据。',
       emptySelection: '选择一个对话以查看详细账本。',
@@ -587,6 +595,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       title: 'Root sessions',
       shown: (count) => `${count} shown`,
       empty: 'No conversations matched the current filter.',
+      loadMore: 'Load more',
+      loadingMore: 'Loading…',
     },
     detail: {
       eyebrow: 'Conversation detail',
@@ -596,6 +606,8 @@ const translations: Record<AppLanguage, TranslationSet> = {
       turnTimelineEyebrow: 'Turn timeline',
       turnUsage: 'Turn usage',
       latestTurns: (count) => `Latest ${count} turns`,
+      loadEarlierTurns: 'Load earlier turns',
+      loadingEarlierTurns: 'Loading…',
       emptyTurns: 'No turn-level source data is available for this conversation.',
       emptySelection: 'Select a conversation to inspect its detailed ledger.',
       untitledTurn: 'Untitled turn',
