@@ -1812,8 +1812,10 @@ fn load_quota_samples(conn: &Connection, window: &Window) -> Vec<QuotaSample> {
         SELECT id
         FROM rate_limit_samples
         WHERE bucket = ?1
-          AND window_start_ms = ?2
-          AND resets_at_ms = ?3
+          AND window_start_ms >= ?2
+          AND window_start_ms < ?2 + 60000
+          AND resets_at_ms >= ?3
+          AND resets_at_ms < ?3 + 60000
           AND sample_timestamp_ms >= bins.bin_start_ms
           AND sample_timestamp_ms < bins.bin_end_ms
         ORDER BY sample_timestamp_ms DESC, id DESC
@@ -2461,6 +2463,49 @@ mod tests {
         .collect::<Vec<_>>(),
       vec![2, 4]
     );
+  }
+
+  #[test]
+  fn backfilled_quota_samples_match_the_normalized_window_minute() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    conn
+      .execute(
+        "
+        INSERT INTO rate_limit_samples (
+          source_kind, source_session_id, bucket, sample_timestamp,
+          limit_id, limit_name, plan_type, window_start, resets_at,
+          used_percent, remaining_percent, created_at,
+          sample_timestamp_ms, window_start_ms, resets_at_ms
+        ) VALUES (
+          'live', '', 'seven_day', '2026-07-13T07:00:12Z',
+          '', '', 'pro', '2026-07-13T06:00:36Z', '2026-07-20T06:00:44Z',
+          12, 88, '2026-07-13T07:00:12Z', ?1, ?2, ?3
+        )
+        ",
+        rusqlite::params![
+          parse_rfc3339_local("2026-07-13T07:00:12Z").expect("sample").timestamp_millis(),
+          parse_rfc3339_local("2026-07-13T06:00:36Z").expect("start").timestamp_millis(),
+          parse_rfc3339_local("2026-07-20T06:00:44Z").expect("end").timestamp_millis(),
+        ],
+      )
+      .expect("insert backfilled quota sample");
+    conn
+      .execute(
+        "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('epoch_timestamp_backfill_v1', '2026-07-13T08:00:00Z')",
+        [],
+      )
+      .expect("mark epoch backfill complete");
+    let window = Window {
+      bucket: "seven_day".to_string(),
+      anchor: "2026-07-13".to_string(),
+      start: parse_rfc3339_local("2026-07-13T06:00:00Z").expect("start"),
+      end: parse_rfc3339_local("2026-07-20T06:00:00Z").expect("end"),
+    };
+
+    let samples = load_quota_samples(&conn, &window);
+
+    assert_eq!(samples.iter().map(|sample| sample.used_percent).collect::<Vec<_>>(), vec![12]);
   }
 
   #[test]
