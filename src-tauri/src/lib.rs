@@ -1555,8 +1555,9 @@ fn build_passive_menu_bar_popup_snapshot(
   drop(conn);
   let live_rate_limits = live_cache
     .rate_limits()
-    .map(|snapshot| snapshot.as_ref().clone());
-  let selected_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+    .map(|snapshot| normalize_live_rate_limit_snapshot(snapshot.as_ref().clone()));
+  let configured_bucket = normalize_menu_bar_bucket(&settings.menu_bar_bucket);
+  let selected_bucket = effective_menu_bar_api_bucket(&configured_bucket, live_rate_limits.as_ref());
   let anchor = bucket_uses_anchor(&selected_bucket).then(|| Local::now().format("%Y-%m-%d").to_string());
   let overview = get_overview(
     db_path,
@@ -2890,6 +2891,48 @@ mod tests {
     assert!(!status_after.token.running && !status_after.token.pending);
     assert!(!status_after.live.running && !status_after.live.pending);
     runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn popup_snapshot_uses_seven_day_bucket_when_five_hour_quota_is_absent() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.menu_bar_bucket = "five_hour".to_string();
+    save_sync_settings(&conn, &settings).expect("save menu bar bucket");
+    drop(conn);
+
+    let cache = refresh::LiveQuotaCache::new();
+    cache.publish_fallback(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: None,
+        secondary: Some(RateLimitWindowSnapshot {
+          used_percent: 21,
+          remaining_percent: 79,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-07-20T00:00:00+08:00".to_string()),
+          window_start: Some("2026-07-13T00:00:00+08:00".to_string()),
+        }),
+        fetched_at: "2026-07-13T10:00:00+08:00".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+
+    let snapshot = build_passive_menu_bar_popup_snapshot(&db_path, &cache)
+      .expect("build popup snapshot");
+
+    assert_eq!(snapshot.selected_bucket, "seven_day");
+    assert!(snapshot.quota_5h.is_none());
+    assert_eq!(
+      snapshot.quota_7d.map(|window| window.remaining_percent),
+      Some(79)
+    );
   }
 
   #[test]
