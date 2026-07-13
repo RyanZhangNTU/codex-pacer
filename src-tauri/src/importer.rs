@@ -154,6 +154,7 @@ pub(crate) fn release_unused_process_memory() {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanKind {
   Full,
+  Reconcile,
   Incremental,
 }
 
@@ -874,6 +875,7 @@ pub(crate) fn prepare_scan(
 
   let (session_files, active_paths_kept_for_archive_retry) = match effective_kind {
     ScanKind::Full => (collect_session_files(&codex_home), HashSet::new()),
+    ScanKind::Reconcile => (collect_session_files(&codex_home), HashSet::new()),
     ScanKind::Incremental => {
       collect_incremental_session_files(&codex_home, &import_state, &pending_repair_session_ids)
     }
@@ -939,7 +941,7 @@ pub(crate) fn prepare_scan(
     changed_files.push(session_file.clone());
   }
 
-  let titles = if effective_kind == ScanKind::Full || !changed_files.is_empty() {
+  let titles = if effective_kind != ScanKind::Incremental || !changed_files.is_empty() {
     load_session_index(&codex_home)
   } else {
     HashMap::new()
@@ -962,7 +964,7 @@ pub(crate) fn prepare_scan(
       needs_token_usage_v2_repair_sweep || pending_token_v2_repair_paths.contains(&source_path);
     let mut file_needs_fork_replay_v3_repair = needs_fork_replay_v3_repair_sweep
       || pending_fork_replay_v3_repair_paths.contains(&source_path);
-    let tail_candidate = if effective_kind == ScanKind::Incremental
+    let tail_candidate = if effective_kind != ScanKind::Full
       && !file_needs_rate_limit_repair
       && !file_needs_token_v2_repair
       && !file_needs_fork_replay_v3_repair
@@ -1066,7 +1068,7 @@ pub(crate) fn prepare_scan(
     updated_sessions += 1;
   }
 
-  let titles = if effective_kind == ScanKind::Full {
+  let titles = if effective_kind != ScanKind::Incremental {
     titles
   } else {
     HashMap::new()
@@ -1254,7 +1256,7 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
     }
   }
 
-  if effective_kind == ScanKind::Full {
+  if effective_kind != ScanKind::Incremental {
     refresh_session_titles(&tx, &titles).map_err(|error| error.to_string())?;
   }
   apply_missing_source_plan(&tx, missing_plan).map_err(|error| error.to_string())?;
@@ -1295,8 +1297,8 @@ pub(crate) fn commit_prepared_scan(prepared: PreparedScan) -> Result<ScanResult,
       &completed_at,
       source_identity.key.selector.as_deref(),
       &resolved_codex_home,
-      effective_kind == ScanKind::Full && !skipped_session_files,
-      effective_kind == ScanKind::Full && skipped_session_files,
+      effective_kind != ScanKind::Incremental && !skipped_session_files,
+      effective_kind != ScanKind::Incremental && skipped_session_files,
     )
     .map_err(|error| error.to_string())?;
   }
@@ -1500,7 +1502,7 @@ fn prepare_missing_source_plan(
   let mut plan = MissingSourcePlan::default();
 
   match scan_kind {
-    ScanKind::Full => {
+    ScanKind::Full | ScanKind::Reconcile => {
       for source in existing_sources {
         if !present_paths.contains(&source.source_path)
           && (reconcile_existing_absent_sources || !Path::new(&source.source_path).exists())
@@ -1631,7 +1633,7 @@ fn effective_scan_scope(
   {
     ScanKind::Full
   } else {
-    ScanKind::Incremental
+    requested_scope
   }
 }
 

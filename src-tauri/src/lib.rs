@@ -2144,7 +2144,7 @@ fn effective_token_scan_kind(
   let conn = open_connection(db_path).map_err(|error| error.to_string())?;
   let last_full = get_last_full_scan_completed(&conn).map_err(|error| error.to_string())?;
   Ok(if full_maintenance_due(last_full.as_deref(), now) {
-    ScanKind::Full
+    ScanKind::Reconcile
   } else {
     ScanKind::Incremental
   })
@@ -3052,7 +3052,7 @@ mod tests {
     assert!(parsed_generation > 0);
     assert_eq!(parsed_generation, committed_generation);
     assert_eq!(source_generation, handle.status().source_generation);
-    assert_eq!(kind, refresh::TokenScanKind::Full);
+    assert_eq!(kind, refresh::TokenScanKind::Incremental);
     assert_eq!(result.codex_home, codex_home.to_string_lossy());
     assert_eq!(live_calls.load(AtomicOrdering::Acquire), 0);
     runtime.shutdown_and_join().expect("shutdown runtime");
@@ -3214,7 +3214,7 @@ mod tests {
         utc_time("2026-07-11T00:00:00Z"),
       )
       .expect("select scan kind"),
-      ScanKind::Full
+      ScanKind::Reconcile
     );
     assert_eq!(
       effective_token_scan_kind(

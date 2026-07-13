@@ -96,7 +96,7 @@ const BUCKETS: OverviewBucket[] = [
 function App() {
   const { language, setLanguage, t } = useI18n()
   const [view, setView] = useState<AppView>('overview')
-  const [bucket, setBucket] = useState<OverviewBucket>('subscription_month')
+  const [bucket, setBucket] = useState<OverviewBucket>('seven_day')
   const [liveWindowOffset, setLiveWindowOffset] = useState(0)
   const [anchor, setAnchor] = useState(todayInputValue())
   const [customStart, setCustomStart] = useState(todayInputValue())
