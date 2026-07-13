@@ -1387,7 +1387,7 @@ fn load_persisted_live_rate_limits_from_connection(
   source_kind: Option<&str>,
 ) -> Option<LiveRateLimitSnapshot> {
   if let Ok(Some(snapshot)) = load_latest_rate_limits(conn, source_kind) {
-    return Some(snapshot);
+    return Some(normalize_live_rate_limit_snapshot(snapshot));
   }
   let mut primary = load_latest_persisted_rate_limit_window(&conn, "five_hour", source_kind)
     .ok()
@@ -1422,7 +1422,7 @@ fn load_persisted_live_rate_limits_from_connection(
     .map(|window| window.fetched_at.clone())
     .or_else(|| secondary.as_ref().map(|window| window.fetched_at.clone()))?;
 
-  Some(LiveRateLimitSnapshot {
+  Some(normalize_live_rate_limit_snapshot(LiveRateLimitSnapshot {
     limit_id: primary
       .as_ref()
       .and_then(|window| window.limit_id.clone())
@@ -1438,7 +1438,21 @@ fn load_persisted_live_rate_limits_from_connection(
     primary: primary.map(|window| window.snapshot),
     secondary: secondary.map(|window| window.snapshot),
     fetched_at,
-  })
+  }))
+}
+
+fn normalize_live_rate_limit_snapshot(
+  mut snapshot: LiveRateLimitSnapshot,
+) -> LiveRateLimitSnapshot {
+  if snapshot.secondary.is_none()
+    && snapshot
+      .primary
+      .as_ref()
+      .is_some_and(|window| window.window_duration_mins == Some(7 * 24 * 60))
+  {
+    snapshot.secondary = snapshot.primary.take();
+  }
+  snapshot
 }
 
 fn load_preferred_persisted_live_rate_limits(
@@ -1487,7 +1501,7 @@ fn load_display_live_rate_limit_fallback(
 ) -> Option<LiveRateLimitSnapshot> {
   let memory = live_cache
     .rate_limits()
-    .map(|snapshot| snapshot.as_ref().clone());
+    .map(|snapshot| normalize_live_rate_limit_snapshot(snapshot.as_ref().clone()));
   let memory_is_live = live_cache.state().last_live_success_at.is_some();
   let Ok(conn) = open_connection(db_path) else {
     return memory;
@@ -3768,6 +3782,45 @@ mod tests {
     assert_eq!(
       memory.primary.as_ref().map(|window| window.remaining_percent),
       Some(77)
+    );
+  }
+
+  #[test]
+  fn persisted_primary_only_seven_day_snapshot_is_normalized_for_offline_fallback() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    insert_live_rate_limit_snapshot(
+      &conn,
+      &LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 21,
+          remaining_percent: 79,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-04-02T00:00:00+08:00".to_string()),
+          window_start: Some("2026-03-26T00:00:00+08:00".to_string()),
+        }),
+        secondary: None,
+        fetched_at: "2026-03-27T00:00:00+08:00".to_string(),
+      },
+    )
+    .expect("insert legacy live sample");
+    drop(conn);
+
+    let snapshot = load_display_live_rate_limit_fallback(
+      &db_path,
+      &refresh::LiveQuotaCache::new(),
+    )
+    .expect("load offline fallback");
+
+    assert!(snapshot.primary.is_none());
+    assert_eq!(
+      snapshot.secondary.map(|window| window.remaining_percent),
+      Some(79)
     );
   }
 
