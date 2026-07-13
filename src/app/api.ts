@@ -248,6 +248,7 @@ export async function loadDashboard(
   liveWindowOffset?: number | null,
   customStart?: string | null,
   customEnd?: string | null,
+  includeConversations = false,
 ): Promise<import('./types').DashboardSnapshot> {
   return invokeOrMock(
     'loadDashboard',
@@ -258,6 +259,7 @@ export async function loadDashboard(
       customEnd: bucket === 'custom' ? customEnd ?? null : null,
       search: search ?? null,
       liveWindowOffset: liveWindowOffset ?? null,
+      includeConversations,
     },
     () => ({
       overview: createMockOverview(bucket, anchor, customStart, customEnd),

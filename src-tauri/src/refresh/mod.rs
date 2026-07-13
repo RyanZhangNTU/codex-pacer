@@ -181,24 +181,6 @@ impl TokenRequest {
     }
   }
 
-  pub(crate) fn manual_incremental_with_waiter(
-    codex_home: Option<String>,
-    waiter: TokenWaiterId,
-  ) -> Self {
-    let mut request = Self {
-      reasons: RefreshReason::Manual.into(),
-      kind: TokenScanKind::Incremental,
-      codex_home,
-      waiter_ids: TokenWaiterIds::default(),
-      planned_due_at: None,
-      source_generation: None,
-    };
-    request
-      .try_add_waiter(waiter)
-      .expect("an empty token request accepts one waiter");
-    request
-  }
-
   pub(crate) fn manual_full_with_waiter(codex_home: Option<String>, waiter: TokenWaiterId) -> Self {
     let mut request = Self::manual_full(codex_home);
     request

@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS import_state (
   file_size INTEGER NOT NULL,
   file_mtime_ms INTEGER NOT NULL,
   parser_checkpoint TEXT,
+  parser_completed_offset INTEGER,
   last_imported_at TEXT NOT NULL
 );
 

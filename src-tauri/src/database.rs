@@ -93,6 +93,25 @@ fn ensure_import_state_schema(conn: &Connection) -> rusqlite::Result<()> {
     if !columns.iter().any(|column| column == "parser_checkpoint") {
         conn.execute("ALTER TABLE import_state ADD COLUMN parser_checkpoint TEXT", [])?;
     }
+    if !columns
+        .iter()
+        .any(|column| column == "parser_completed_offset")
+    {
+        conn.execute(
+            "ALTER TABLE import_state ADD COLUMN parser_completed_offset INTEGER",
+            [],
+        )?;
+        conn.execute(
+            "
+            UPDATE import_state
+            SET parser_completed_offset = CAST(
+              json_extract(parser_checkpoint, '$.completed_offset') AS INTEGER
+            )
+            WHERE parser_checkpoint IS NOT NULL
+            ",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -194,6 +213,9 @@ mod tests {
             .collect::<rusqlite::Result<Vec<_>>>()
             .expect("collect columns");
         assert!(columns.iter().any(|column| column == "parser_checkpoint"));
+        assert!(columns
+            .iter()
+            .any(|column| column == "parser_completed_offset"));
     }
 
     #[test]

@@ -182,6 +182,7 @@ function App() {
         requestLiveWindowOffset,
         requestCustomStart,
         requestCustomEnd,
+        view === 'conversations',
       )
       if (requestId !== latestLoadRequestIdRef.current) {
         return
@@ -197,33 +198,37 @@ function App() {
       const previousQueryKey = loadedQueryKeyRef.current
 
       startTransition(() => {
-        const nextDetailCache = new Map<string, ConversationDetail>()
-        for (const conversation of snapshot.conversationPage.items) {
-          const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
-          if (
-            cachedDetail &&
-            shouldKeepConversationDetail(
-              cachedDetail,
-              conversation,
-              snapshot.subscriptionProfile.monthlyPrice,
-            )
-          ) {
-            nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+        if (view === 'conversations') {
+          const nextDetailCache = new Map<string, ConversationDetail>()
+          for (const conversation of snapshot.conversationPage.items) {
+            const cachedDetail = detailCacheRef.current.get(conversation.rootSessionId)
+            if (
+              cachedDetail &&
+              shouldKeepConversationDetail(
+                cachedDetail,
+                conversation,
+                snapshot.subscriptionProfile.monthlyPrice,
+              )
+            ) {
+              nextDetailCache.set(conversation.rootSessionId, cachedDetail)
+            }
           }
-        }
 
-        latestDetailRequestIdRef.current += 1
+          latestDetailRequestIdRef.current += 1
+          detailCacheRef.current = nextDetailCache
+          setDetail((current) =>
+            current && nextDetailCache.get(current.rootSessionId) === current ? current : null,
+          )
+        }
         setOverview(snapshot.overview)
-        setConversations(snapshot.conversationPage.items)
-        setConversationCursor(snapshot.conversationPage.nextCursor)
-        setHasMoreConversations(snapshot.conversationPage.hasMore)
+        if (view === 'conversations') {
+          setConversations(snapshot.conversationPage.items)
+          setConversationCursor(snapshot.conversationPage.nextCursor)
+          setHasMoreConversations(snapshot.conversationPage.hasMore)
+        }
         setSyncSettings(snapshot.syncSettings)
         setSubscriptionProfile(snapshot.subscriptionProfile)
         setLiveRateLimits(snapshot.liveRateLimits)
-        detailCacheRef.current = nextDetailCache
-        setDetail((current) =>
-          current && nextDetailCache.get(current.rootSessionId) === current ? current : null,
-        )
         setDashboardRevision((current) => current + 1)
         setLiveWindowOffset(snapshot.overview.liveWindowOffset)
         loadedQueryKeyRef.current = resolvedQueryKey
@@ -240,7 +245,7 @@ function App() {
         setStatusMessage(t.status.failedToLoad(t.buckets[requestBucket], String(error)))
       }
     }
-  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t])
+  }, [anchor, bucket, customEnd, customStart, deferredSearch, liveWindowOffset, t, view])
 
   const loadMoreConversations = useCallback(async () => {
     if (!conversationCursor || !hasMoreConversations || loadingMoreConversations) return
@@ -368,26 +373,24 @@ function App() {
         void loadShellRef.current(true)
       }, 200)
     }
-    const handleCompletion = async (event: RefreshCompletedEvent) => {
-      let visible: boolean
+    const isDashboardActive = async () => {
       try {
-        visible = await getCurrentWindow().isVisible()
+        const [visible, focused] = await Promise.all([appWindow.isVisible(), appWindow.isFocused()])
+        return visible && focused
       } catch {
-        return
+        return false
       }
+    }
+    const handleCompletion = async (event: RefreshCompletedEvent) => {
+      const active = await isDashboardActive()
       if (cancelled) return
-      if (refreshRevisionGateRef.current.accept(event, visible) === 'reload') {
+      if (refreshRevisionGateRef.current.accept(event, active) === 'reload') {
         reloadDashboard()
       }
     }
     const handleVisible = async () => {
-      let visible: boolean
-      try {
-        visible = await getCurrentWindow().isVisible()
-      } catch {
-        return
-      }
-      if (cancelled || !visible) return
+      const active = await isDashboardActive()
+      if (cancelled || !active) return
       if (refreshRevisionGateRef.current.onVisible() === 'reload') {
         reloadDashboard()
       }
@@ -521,6 +524,11 @@ function App() {
     if (lastRequestedQueryKeyRef.current === currentQueryKey) return
     void loadShell(false)
   }, [currentQueryKey, hasBootstrapped, loadShell])
+
+  useEffect(() => {
+    if (!hasBootstrapped || view !== 'conversations') return
+    void loadShell(false)
+  }, [hasBootstrapped, loadShell, view])
 
   useEffect(() => {
     if (!loadedQueryKey && selectedRootSessionId) return

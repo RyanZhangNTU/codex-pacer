@@ -2203,7 +2203,7 @@ impl RefreshCoordinatorHandle {
       }
       waiters.token.insert(waiter, reply_tx);
     }
-    let request = TokenRequest::manual_incremental_with_waiter(codex_home, waiter);
+    let request = TokenRequest::manual_full_with_waiter(codex_home, waiter);
     if let Err(error) = try_send_public(&intake.sender, RuntimeMessage::RequestToken(request)) {
       lock(&self.inner.waiters).token.remove(&waiter);
       return Err(error);

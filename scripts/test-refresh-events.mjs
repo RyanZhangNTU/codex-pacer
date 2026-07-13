@@ -132,7 +132,8 @@ test('frontend_refresh_sources_are_event_driven_without_automatic_polling', () =
 
   assert.match(appSource, /codex-counter:\/\/refresh-completed/)
   assert.match(appSource, /SurfaceRevisionGate/)
-  assert.match(appSource, /getCurrentWindow\(\)\.isVisible\(\)/)
+  assert.match(appSource, /appWindow\.isVisible\(\)/)
+  assert.match(appSource, /appWindow\.isFocused\(\)/)
   assert.match(appSource, /onFocusChanged/)
   assert.match(appSource, /visibilitychange/)
 
