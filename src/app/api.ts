@@ -166,6 +166,7 @@ function createMockMenuBarPopupSnapshot(): MenuBarPopupSnapshot {
       windowStart: quota7dWindowStart,
     },
     quotaTrend7d: createMockQuotaTrend7d(quota7dWindowStart, fetchedAt),
+    apiValue7d: 14.3,
     suggestedSpeed7d: {
       percent: 82,
       displayValue: '82%',

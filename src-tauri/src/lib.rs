@@ -1761,6 +1761,20 @@ fn build_passive_menu_bar_popup_snapshot(state: &AppState) -> Result<MenuBarPopu
   } else {
     get_quota_trend(&state.db_path, "seven_day".to_string(), live_rate_limits.clone()).unwrap_or_default()
   };
+  let api_value_7d = if selected_bucket == "seven_day" {
+    overview.as_ref().map(|value| value.stats.api_value_usd).unwrap_or(0.0)
+  } else {
+    get_window_api_value(
+      &state.db_path,
+      "seven_day".to_string(),
+      None,
+      None,
+      None,
+      live_rate_limits.clone(),
+      None,
+    )
+    .unwrap_or(0.0)
+  };
 
   Ok(MenuBarPopupSnapshot {
     fetched_at: Local::now().to_rfc3339(),
@@ -1773,6 +1787,7 @@ fn build_passive_menu_bar_popup_snapshot(state: &AppState) -> Result<MenuBarPopu
       .as_ref()
       .and_then(|snapshot| snapshot.secondary.as_ref().map(menu_bar_popup_quota_snapshot)),
     quota_trend_7d,
+    api_value_7d,
     suggested_speed_7d: live_rate_limits
       .as_ref()
       .and_then(|snapshot| snapshot.secondary.as_ref())
@@ -3147,6 +3162,77 @@ mod tests {
       snapshot.quota_7d.map(|window| window.remaining_percent),
       Some(79)
     );
+    runtime.shutdown_and_join().expect("shutdown runtime");
+  }
+
+  #[test]
+  fn popup_seven_day_api_value_restarts_after_an_early_quota_reset() {
+    let (runtime, _, _) = start_recording_runtime(disabled_refresh_config(None));
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("prepare app database");
+    let conn = open_connection(&db_path).expect("open database");
+    let mut settings = get_sync_settings(&conn).expect("load settings");
+    settings.menu_bar_bucket = "five_hour".to_string();
+    save_sync_settings(&conn, &settings).expect("save menu bar bucket");
+    for (session_id, timestamp, value_usd) in [
+      ("before-reset", "2026-07-15T03:00:00+08:00", 10.0),
+      ("after-reset", "2026-07-15T05:00:00+08:00", 2.0),
+    ] {
+      conn
+        .execute(
+          "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES (?1, ?2, ?3, 'gpt-5.4', 1, 0, 1, 0, 2, ?4, 0, 0)",
+          params![
+            session_id,
+            timestamp,
+            parse_rfc3339_local(timestamp)
+              .expect("parse event timestamp")
+              .timestamp_millis(),
+            value_usd,
+          ],
+        )
+        .expect("insert usage event");
+    }
+    drop(conn);
+
+    let cache = refresh::LiveQuotaCache::new();
+    cache.publish_fallback(
+      Arc::new(LiveRateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: Some("Codex".to_string()),
+        plan_type: Some("pro".to_string()),
+        primary: Some(RateLimitWindowSnapshot {
+          used_percent: 30,
+          remaining_percent: 70,
+          window_duration_mins: Some(300),
+          resets_at: Some("2026-07-15T06:00:00+08:00".to_string()),
+          window_start: Some("2026-07-15T01:00:00+08:00".to_string()),
+        }),
+        secondary: Some(RateLimitWindowSnapshot {
+          used_percent: 1,
+          remaining_percent: 99,
+          window_duration_mins: Some(10_080),
+          resets_at: Some("2026-07-22T04:36:00+08:00".to_string()),
+          window_start: Some("2026-07-15T04:36:00+08:00".to_string()),
+        }),
+        fetched_at: "2026-07-15T05:30:00+08:00".to_string(),
+      }),
+      Instant::now(),
+      Utc::now(),
+    );
+    let state = test_app_state(
+      db_path,
+      runtime.handle(),
+      refresh::UsageMutationCoordinator::new(),
+      cache,
+    );
+
+    let snapshot = build_passive_menu_bar_popup_snapshot(&state)
+      .expect("build popup snapshot after early reset");
+
+    assert_eq!(snapshot.selected_bucket, "five_hour");
+    assert_eq!(snapshot.api_value_selected_bucket, 12.0);
+    assert_eq!(snapshot.api_value_7d, 2.0);
     runtime.shutdown_and_join().expect("shutdown runtime");
   }
 

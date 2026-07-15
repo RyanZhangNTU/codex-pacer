@@ -2143,6 +2143,65 @@ mod tests {
   }
 
   #[test]
+  fn seven_day_overview_restarts_after_an_early_live_quota_reset() {
+    let conn = Connection::open_in_memory().expect("open database");
+    init_db(&conn).expect("initialize database");
+    for (session_id, timestamp, value_usd) in [
+      ("before-reset", "2026-07-15T03:00:00+08:00", 10.0),
+      ("after-reset", "2026-07-15T05:00:00+08:00", 2.0),
+    ] {
+      conn
+        .execute(
+          "INSERT INTO usage_events (session_id, timestamp, timestamp_ms, model_id, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective) VALUES (?1, ?2, ?3, 'gpt-5.4', 1, 0, 1, 0, 2, ?4, 0, 0)",
+          rusqlite::params![
+            session_id,
+            timestamp,
+            parse_rfc3339_local(timestamp)
+              .expect("parse event timestamp")
+              .timestamp_millis(),
+            value_usd,
+          ],
+        )
+        .expect("insert usage event");
+    }
+    let live_rate_limits = LiveRateLimitSnapshot {
+      limit_id: Some("codex".to_string()),
+      limit_name: Some("Codex".to_string()),
+      plan_type: Some("pro".to_string()),
+      primary: None,
+      secondary: Some(crate::models::RateLimitWindowSnapshot {
+        used_percent: 1,
+        remaining_percent: 99,
+        window_duration_mins: Some(10_080),
+        resets_at: Some("2026-07-22T04:36:00+08:00".to_string()),
+        window_start: Some("2026-07-15T04:36:00+08:00".to_string()),
+      }),
+      fetched_at: "2026-07-15T05:30:00+08:00".to_string(),
+    };
+
+    let overview = get_overview_with_connection(
+      &conn,
+      Some("seven_day".to_string()),
+      None,
+      None,
+      None,
+      Some(live_rate_limits),
+      None,
+    )
+    .expect("load overview after early reset");
+
+    assert_eq!(overview.window_start, "2026-07-15T04:36:00+08:00");
+    assert_eq!(overview.stats.api_value_usd, 2.0);
+    assert_eq!(
+      overview
+        .quota_trend
+        .last()
+        .map(|point| point.cumulative_api_value_usd),
+      Some(2.0)
+    );
+  }
+
+  #[test]
   fn conversation_query_pages_in_sql_without_loading_every_item() {
     let conn = Connection::open_in_memory().expect("open database");
     init_db(&conn).expect("initialize database");

@@ -2931,14 +2931,15 @@ fn read_parent_replay_snapshots_counted(
         let timestamp = envelope.timestamp.ok_or(reader.get_ref().bytes_read)?;
         let details = serde_json::from_str::<ReplayParentTokenDetails>(&line)
           .map_err(|_| reader.get_ref().bytes_read)?;
+        let Some(info) = details.payload.info else {
+          continue;
+        };
 
         snapshots.push(UsageSnapshot {
           timestamp: timestamp.to_string(),
           model_id: String::new(),
-          usage: details.payload.info.total_token_usage.into_token_usage(),
-          last_token_usage: details
-            .payload
-            .info
+          usage: info.total_token_usage.into_token_usage(),
+          last_token_usage: info
             .last_token_usage
             .map(ReplayParentTokenUsage::into_token_usage),
           plan_type: None,
@@ -2987,7 +2988,8 @@ struct ReplayParentTokenDetails {
 
 #[derive(Deserialize)]
 struct ReplayParentTokenPayload {
-  info: ReplayParentTokenInfo,
+  #[serde(default)]
+  info: Option<ReplayParentTokenInfo>,
 }
 
 #[derive(Deserialize)]
@@ -5336,6 +5338,38 @@ mod tests {
   }
 
   #[test]
+  fn parent_replay_reader_ignores_rate_limit_only_token_count() {
+    let directory = tempdir().expect("tempdir");
+    let parent_session_id = "31313131-3131-4131-8131-313131313131";
+    let parent_path = directory.path().join(format!(
+      "rollout-2026-03-24T00-00-00-{parent_session_id}.jsonl"
+    ));
+    let mut body = token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:01Z",
+      total: (100, 0, 0, 100),
+      last: (100, 0, 0, 100),
+    });
+    body.push_str(concat!(
+      "{\"timestamp\":\"2026-03-24T00:00:02Z\",\"type\":\"event_msg\",",
+      "\"payload\":{\"type\":\"token_count\",\"info\":null,",
+      "\"rate_limits\":{\"limit_id\":\"codex\",\"primary\":{",
+      "\"used_percent\":46.0,\"window_minutes\":10080}}}}\n"
+    ));
+    body.push_str(&token_count_line(TokenFixture {
+      timestamp: "2026-03-24T00:00:03Z",
+      total: (180, 0, 0, 180),
+      last: (80, 0, 0, 80),
+    }));
+    std::fs::write(&parent_path, body).expect("write replay parent with rate-limit-only record");
+
+    let snapshots = read_parent_replay_snapshots(&parent_path, parent_session_id)
+      .expect("ignore rate-limit-only token count");
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].usage.total_tokens, 100);
+    assert_eq!(snapshots[1].usage.total_tokens, 180);
+  }
+
+  #[test]
   fn parent_replay_reader_rejects_non_numeric_token_usage() {
     let directory = tempdir().expect("tempdir");
     let parent_session_id = "40404040-4040-4040-8040-404040404040";
@@ -7147,6 +7181,12 @@ mod tests {
       ),
       parent_session_id,
     );
+    parent_body.push_str(concat!(
+      "{\"timestamp\":\"2026-03-24T00:00:00Z\",\"type\":\"event_msg\",",
+      "\"payload\":{\"type\":\"token_count\",\"info\":null,",
+      "\"rate_limits\":{\"limit_id\":\"codex\",\"primary\":{",
+      "\"used_percent\":46.0,\"window_minutes\":10080}}}}\n"
+    ));
     for fixture in parent_fixtures.iter().copied() {
       parent_body.push_str(&token_count_line(fixture));
     }

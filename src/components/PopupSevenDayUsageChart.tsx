@@ -4,6 +4,7 @@ import { useI18n } from '../app/useI18n'
 
 interface PopupSevenDayUsageChartProps {
   ariaLabel: string
+  apiValueUsd: number
   data: QuotaTrendPoint[]
   fetchedAt: string | null
   quota: MenuBarPopupQuotaSnapshot | null
@@ -27,7 +28,7 @@ const PADDING_TOP = 12
 const PADDING_BOTTOM = 14
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
-export function PopupSevenDayUsageChart({ ariaLabel, data, fetchedAt, quota, speed }: PopupSevenDayUsageChartProps) {
+export function PopupSevenDayUsageChart({ ariaLabel, apiValueUsd, data, fetchedAt, quota, speed }: PopupSevenDayUsageChartProps) {
   const { language } = useI18n()
   const dataTimes = data
     .map((point) => toTimestamp(point.timestamp))
@@ -47,7 +48,6 @@ export function PopupSevenDayUsageChart({ ariaLabel, data, fetchedAt, quota, spe
   const referenceStart = toPlotPoint({ time: windowStart, value: 100 }, windowStart, safeWindowEnd)
   const referenceEnd = toPlotPoint({ time: safeWindowEnd, value: 0 }, windowStart, safeWindowEnd)
   const currentPoint = plotPoints.find((point) => point.time === currentTime) ?? plotPoints[plotPoints.length - 1] ?? null
-  const apiValueUsd = getSevenDayApiValue(data, windowStart, currentTime)
   const dayLines = Array.from({ length: 8 }, (_, index) => {
     const x = PADDING_X + ((CHART_WIDTH - PADDING_X * 2) * index) / 7
     return <line className="popup-seven-day-grid-line popup-seven-day-grid-line--vertical" key={index} x1={x} x2={x} y1={PADDING_TOP} y2={chartBottom()} />
@@ -146,20 +146,6 @@ function buildValuePoints(
   }
 
   return points
-}
-
-function getSevenDayApiValue(data: QuotaTrendPoint[], windowStart: number, currentTime: number) {
-  const values = data
-    .map((point) => ({
-      time: toTimestamp(point.timestamp),
-      value: point.cumulativeApiValueUsd,
-    }))
-    .filter((point): point is { time: number; value: number } => {
-      return point.time !== null && point.time >= windowStart && point.time <= currentTime && Number.isFinite(point.value)
-    })
-    .sort((left, right) => left.time - right.time)
-
-  return values[values.length - 1]?.value ?? 0
 }
 
 function buildSmoothPath(points: PlotPoint[]) {
