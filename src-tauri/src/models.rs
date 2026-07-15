@@ -266,6 +266,7 @@ pub struct MenuBarPopupSnapshot {
   pub quota_5h: Option<MenuBarPopupQuotaSnapshot>,
   pub quota_7d: Option<MenuBarPopupQuotaSnapshot>,
   pub quota_trend_7d: Vec<QuotaTrendPoint>,
+  pub api_value_7d: f64,
   pub suggested_speed_7d: Option<MenuBarPopupSuggestedSpeed>,
   pub speed_fast_threshold_percent: i64,
   pub speed_slow_threshold_percent: i64,

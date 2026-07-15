@@ -325,6 +325,7 @@ export function MenuBarPopup() {
 
             <PopupSevenDayUsageChart
               ariaLabel={t.popup.sevenDayUsageChart}
+              apiValueUsd={snapshot.apiValue7d}
               data={snapshot.quotaTrend7d}
               fetchedAt={snapshot.liveQuotaFetchedAt ?? snapshot.fetchedAt}
               quota={snapshot.quota7d}
