@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- updated the Windows frontend toolchain to Vite 8.2.2 and `@vitejs/plugin-react` 6.1.1
+
+### Fixed
+- Windows builds no longer compile the macOS-only Objective-C dependencies
+- Windows test and application binaries now embed the Common Controls v6 manifest, fixing the `STATUS_ENTRYPOINT_NOT_FOUND` test startup failure
+- the local Windows NSIS installer now builds, installs, launches, and reads existing Codex history successfully on an x64 Windows validation host
+
 ## [1.2.2] - 2026-07-13
 
 ### Added
