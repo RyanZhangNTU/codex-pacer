@@ -1966,24 +1966,31 @@ fn position_menu_bar_popup(
   rect: Rect,
   click_position: PhysicalPosition<f64>,
 ) -> Result<(), String> {
-  if let (height, Some(position)) = menu_bar_popup_geometry(window, rect, click_position, MENU_BAR_POPUP_INITIAL_HEIGHT)? {
-    window
-      .set_position(Position::Physical(position))
-      .map_err(|error| error.to_string())?;
-    // Match the height used for positioning before showing a previously resized popup.
-    return window
-      .set_size(tauri::Size::Logical(tauri::LogicalSize::new(MENU_BAR_POPUP_WIDTH, height)))
-      .map_err(|error| error.to_string());
-  }
-
-  let anchor = tray_rect_anchor_physical(rect, click_position, 1.0);
-  let anchor_x = anchor.x.round() as i32;
-  let anchor_y = anchor.y.round() as i32;
-  let x = (anchor_x - MENU_BAR_POPUP_WIDTH as i32 / 2).max(0);
-  let y = (anchor_y + MENU_BAR_POPUP_OFFSET_Y).max(0);
+  let (height, position) =
+    menu_bar_popup_geometry(window, rect, click_position, MENU_BAR_POPUP_INITIAL_HEIGHT)?;
+  let geometry = popup_opening_geometry(height, position, rect, click_position);
   window
-    .set_position(Position::Physical(PhysicalPosition::new(x, y)))
+    .set_position(Position::Physical(geometry.position))
+    .map_err(|error| error.to_string())?;
+  // Reset the previous size even when monitor lookup falls back to the tray anchor.
+  window
+    .set_size(tauri::Size::Logical(tauri::LogicalSize::new(MENU_BAR_POPUP_WIDTH, geometry.height)))
     .map_err(|error| error.to_string())
+}
+
+fn popup_opening_geometry(
+  height: f64,
+  position: Option<PhysicalPosition<i32>>,
+  rect: Rect,
+  click_position: PhysicalPosition<f64>,
+) -> MenuBarPopupGeometry {
+  let position = position.unwrap_or_else(|| {
+    let anchor = tray_rect_anchor_physical(rect, click_position, 1.0);
+    let x = (anchor.x.round() as i32 - MENU_BAR_POPUP_WIDTH as i32 / 2).max(0);
+    let y = (anchor.y.round() as i32 + MENU_BAR_POPUP_OFFSET_Y).max(0);
+    PhysicalPosition::new(x, y)
+  });
+  MenuBarPopupGeometry { position, height }
 }
 
 fn menu_bar_popup_geometry(
@@ -4673,6 +4680,22 @@ mod tests {
     assert!(should_hide_dock_icon(&enabled_with_menu_bar));
     assert!(!should_hide_dock_icon(&enabled_without_menu_bar));
     assert!(!should_hide_dock_icon(&disabled_with_menu_bar));
+  }
+
+  #[test]
+  fn tray_popup_opening_geometry_retains_height_without_a_monitor() {
+    let rect = Rect {
+      position: Position::Physical((1000.0, 20.0).into()),
+      size: tauri::Size::Physical((24u32, 24u32).into()),
+    };
+    let height = MENU_BAR_POPUP_INITIAL_HEIGHT.clamp(MENU_BAR_POPUP_MIN_HEIGHT, MENU_BAR_POPUP_MAX_HEIGHT);
+    let geometry = popup_opening_geometry(height, None, rect, PhysicalPosition::new(1012.0, 32.0));
+    assert_eq!(geometry.height, height);
+    assert_eq!(geometry.position.y, 44 + MENU_BAR_POPUP_OFFSET_Y);
+    let known_position = PhysicalPosition::new(-900, 200);
+    let geometry = popup_opening_geometry(height, Some(known_position), rect, PhysicalPosition::new(1012.0, 32.0));
+    assert_eq!(geometry.height, height);
+    assert_eq!(geometry.position, known_position);
   }
 
   #[test]

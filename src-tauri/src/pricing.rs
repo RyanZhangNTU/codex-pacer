@@ -653,7 +653,9 @@ pub fn display_name_for_model(model_id: &str) -> String {
     match normalize_model_id(model_id).as_str() {
         "codex-auto-review" => "Codex Auto Review".to_string(),
         "codex-mini-latest" => "Codex Mini Latest".to_string(),
-        "gpt-6-astra" => "GPT-6 Astra".to_string(),
+        model if matches_canonical_or_dated_model_id(model, "gpt-6-astra") => {
+            "GPT-6 Astra".to_string()
+        }
         "gpt-5.6" => "GPT-5.6".to_string(),
         "gpt-5.6-sol" => "GPT-5.6 Sol".to_string(),
         "gpt-5.6-terra" => "GPT-5.6 Terra".to_string(),
@@ -686,7 +688,7 @@ pub fn display_name_for_model(model_id: &str) -> String {
 pub fn model_color(model_id: &str) -> &'static str {
     match normalize_model_id(model_id).as_str() {
         "codex-auto-review" => "#60a5fa",
-        "gpt-6-astra" => "#06b6d4",
+        model if matches_canonical_or_dated_model_id(model, "gpt-6-astra") => "#06b6d4",
         "gpt-5.6" => "#f59e0b",
         "gpt-5.6-sol" => "#ffd166",
         "gpt-5.6-terra" => "#2ec4b6",
@@ -800,6 +802,8 @@ mod tests {
             .map(|entry| (entry.model_id.clone(), entry))
             .collect::<HashMap<_, _>>();
         for model in ["gpt-6-astra", " GPT-6-ASTRA ", "gpt-6-astra-2026-09-05"] {
+            assert_eq!(display_name_for_model(model), "GPT-6 Astra");
+            assert_eq!(model_color(model), "#06b6d4");
             let pricing = resolve_pricing(&catalog, model).expect("Astra pricing");
             assert_eq!(pricing.input_price_per_million, 10.0);
             assert_eq!(pricing.cached_input_price_per_million, 1.0);
@@ -820,6 +824,8 @@ mod tests {
             "gpt-6-astra-2026-09-05-preview",
         ] {
             assert!(resolve_pricing(&catalog, model).is_none(), "{model}");
+            assert_eq!(display_name_for_model(model), model.to_ascii_uppercase());
+            assert_eq!(model_color(model), "#7c7f86");
         }
         assert_eq!(display_name_for_model("gpt-6-astra"), "GPT-6 Astra");
         assert_eq!(model_color("gpt-6-astra"), "#06b6d4");
