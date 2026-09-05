@@ -1966,9 +1966,13 @@ fn position_menu_bar_popup(
   rect: Rect,
   click_position: PhysicalPosition<f64>,
 ) -> Result<(), String> {
-  if let (_, Some(position)) = menu_bar_popup_geometry(window, rect, click_position, MENU_BAR_POPUP_INITIAL_HEIGHT)? {
-    return window
+  if let (height, Some(position)) = menu_bar_popup_geometry(window, rect, click_position, MENU_BAR_POPUP_INITIAL_HEIGHT)? {
+    window
       .set_position(Position::Physical(position))
+      .map_err(|error| error.to_string())?;
+    // Match the height used for positioning before showing a previously resized popup.
+    return window
+      .set_size(tauri::Size::Logical(tauri::LogicalSize::new(MENU_BAR_POPUP_WIDTH, height)))
       .map_err(|error| error.to_string());
   }
 
@@ -2049,7 +2053,7 @@ fn tray_event_monitor(
 
   for monitor in monitors {
     let scale_factor = normalized_scale_factor(monitor.scale_factor());
-    // macOS tray events report scaled global positions; monitor_from_point expects CoreGraphics coordinates.
+    // Lookup coordinates follow the platform contract, not the popup's current DPI.
     let lookup_point = tray_event_monitor_lookup_point(rect, click_position, scale_factor);
     let Some(candidate) = window
       .monitor_from_point(lookup_point.x, lookup_point.y)
@@ -2100,8 +2104,17 @@ fn tray_event_monitor_lookup_point(
   click_position: PhysicalPosition<f64>,
   scale_factor: f64,
 ) -> PhysicalPosition<f64> {
+  #[cfg(target_os = "windows")]
+  {
+    // Windows tray clicks and monitor lookup both use physical screen coordinates.
+    let _ = (rect, scale_factor);
+    return click_position;
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
   let anchor = tray_rect_anchor_physical(rect, click_position, scale_factor);
   PhysicalPosition::new(anchor.x / scale_factor, anchor.y / scale_factor)
+  }
 }
 
 fn tray_monitor_scale_score(rect: Rect, scale_factor: f64) -> f64 {
@@ -4683,6 +4696,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(not(target_os = "windows"))]
   fn tray_popup_monitor_lookup_undoes_status_item_scale() {
     let rect = Rect {
       position: Position::Physical((4000.0, 10.0).into()),
@@ -4807,6 +4821,20 @@ mod tests {
     assert_eq!(expanded.height, 700.0);
     assert_eq!(expanded.position.y, 332);
     assert!(expanded.position.y < compact.position.y);
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn tray_popup_monitor_lookup_preserves_windows_physical_click_on_scaled_monitors() {
+    let rect = Rect {
+      position: Position::Physical((3970.0, 1380.0).into()),
+      size: tauri::Size::Physical((48u32, 60u32).into()),
+    };
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+      for click in [PhysicalPosition::new(3994.0, 1410.0), PhysicalPosition::new(-1200.0, 1410.0)] {
+        assert_eq!(tray_event_monitor_lookup_point(rect, click, scale), click);
+      }
+    }
   }
 
   #[cfg(target_os = "windows")]

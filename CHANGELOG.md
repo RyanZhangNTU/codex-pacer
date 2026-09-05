@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Windows tray popups use physical click coordinates to select the monitor at any display scale
+- reopening a resized tray popup resets its size to match its initial position before displaying it
+
 ## [1.2.3] - 2026-09-05
 
 ### Added
