@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-09-05
+
+### Added
+- GPT-6 Astra model labels, chart color, and bundled Standard short-context pricing: $10 input, $1 cached input, and $50 output per million tokens, verified against [OpenAI's model documentation](https://developers.openai.com/api/docs/models/gpt-6-astra)
+- existing GPT-6 Astra usage is revalued on upgrade when its pricing is first added; token counts and session history are retained
+
+### Pricing scope
+- values use the same Standard short-context estimate as other models, not an API invoice; long-context, cache-write, and service-tier surcharges are not included
+
 ### Changed
 - updated the Windows frontend toolchain to Vite 8.2.2 and `@vitejs/plugin-react` 6.1.1
 

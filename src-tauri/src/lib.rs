@@ -3826,6 +3826,36 @@ mod tests {
   }
 
   #[test]
+  fn startup_adds_astra_pricing_and_revalues_existing_usage() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("initialize database");
+    let conn = open_connection(&db_path).expect("open database");
+    conn.execute("DELETE FROM pricing_catalog WHERE model_id = 'gpt-6-astra'", [])
+      .expect("simulate pre-Astra catalog");
+    conn.execute_batch("
+      INSERT INTO sessions (session_id, root_session_id, source_state, source_bucket,
+        last_model_id, created_at, imported_at)
+      VALUES ('astra', 'astra', 'active', 'active', 'gpt-6-astra', '2026-09-05', '2026-09-05');
+      INSERT INTO usage_events (session_id, timestamp, model_id, input_tokens,
+        cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
+        value_usd, fast_mode_auto, fast_mode_effective)
+      VALUES ('astra', '2026-09-05T00:00:00Z', 'gpt-6-astra',
+        100000, 40000, 10000, 0, 110000, 0, 0, 0);
+    ").expect("insert historical Astra usage");
+    drop(conn);
+    prepare_app_database(&db_path).expect("upgrade");
+    prepare_app_database(&db_path).expect("repeat startup");
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (value, tokens): (f64, i64) = conn.query_row(
+      "SELECT value_usd, total_tokens FROM usage_events WHERE session_id = 'astra'",
+      [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).expect("historical usage");
+    assert!((value - 1.14).abs() < 1e-9);
+    assert_eq!(tokens, 110000);
+  }
+
+  #[test]
   fn startup_database_prepare_rolls_back_pricing_when_recalculation_fails() {
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");

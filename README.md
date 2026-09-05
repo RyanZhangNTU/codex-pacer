@@ -9,6 +9,7 @@ English | [简体中文](./README.zh-CN.md)
 **Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
 
 > Current stable release: **v1.2.2**
+> Development version: **v1.2.3**, with GPT-6 Astra pricing and Windows compatibility fixes. Not yet published.
 > Official download: signed and notarized **macOS Apple Silicon DMG** via GitHub Releases. Windows installer publishing is paused for this release.
 
 ## Highlights
