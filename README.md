@@ -8,7 +8,8 @@ English | [简体中文](./README.zh-CN.md)
 
 **Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
 
-> Current stable release: **v1.2.0**
+> Current stable release: **v1.2.2**
+> Development version: **v1.2.3**, with GPT-6 Astra pricing and Windows compatibility fixes. Not yet published.
 > Official download: signed and notarized **macOS Apple Silicon DMG** via GitHub Releases. Windows installer publishing is paused for this release.
 
 ## Highlights
@@ -40,13 +41,13 @@ Codex Pacer is local-first:
 
 ## Getting started
 
-The documentation set for installation, packaging, and release notes is maintained for the public `v1.2.0` release. Start with:
+The documentation set for installation, packaging, and release notes is maintained for the public `v1.2.2` release. Start with:
 
 - [Getting started](./docs/en/getting-started.md)
 - [Installing on macOS](./docs/en/installing-on-macos.md)
 - [Installing on Windows](./docs/en/installing-on-windows.md)
 - [Packaging and release](./docs/en/packaging-and-release.md)
-- [Release notes for v1.2.0](./docs/en/release-notes-v1.2.0.md)
+- [Release notes for v1.2.2](./docs/en/release-notes-v1.2.2.md)
 
 On macOS, Codex Pacer can use the Codex CLI bundled with the ChatGPT desktop app for live quota reads. It discovers `/Applications/ChatGPT.app/Contents/Resources/codex` automatically. A standalone Codex CLI and the `CODEX_BIN` override remain supported.
 
@@ -83,7 +84,7 @@ npm run tauri build
 
 ## Project status
 
-`v1.2.0` is the current stable release line.
+`v1.2.2` is the current stable release line.
 
 Current release packaging focus:
 

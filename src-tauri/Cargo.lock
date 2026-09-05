@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "codex-pacer"
-version = "1.2.0"
+version = "1.2.3"
 dependencies = [
  "chrono",
  "dirs",

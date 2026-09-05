@@ -36,6 +36,14 @@ struct OfficialPricingRow {
 fn pricing_seed() -> Vec<PricingCatalogEntry> {
     let updated_at = now_utc_string();
     vec![
+        fallback_entry(
+            "gpt-6-astra",
+            "GPT-6 Astra",
+            10.00,
+            1.00,
+            50.00,
+            &updated_at,
+        ),
         PricingCatalogEntry {
             model_id: "gpt-5.6".to_string(),
             display_name: "GPT-5.6".to_string(),
@@ -563,6 +571,8 @@ pub fn resolve_pricing(
         catalog.get("gpt-5.6-sol")?.clone()
     } else if let Some(entry) = catalog.get(&normalized) {
         entry.clone()
+    } else if matches_canonical_or_dated_model_id(&normalized, "gpt-6-astra") {
+        catalog.get("gpt-6-astra")?.clone()
     } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-sol") {
         catalog.get("gpt-5.6-sol")?.clone()
     } else if matches_canonical_or_dated_model_id(&normalized, "gpt-5.6-terra") {
@@ -643,6 +653,9 @@ pub fn display_name_for_model(model_id: &str) -> String {
     match normalize_model_id(model_id).as_str() {
         "codex-auto-review" => "Codex Auto Review".to_string(),
         "codex-mini-latest" => "Codex Mini Latest".to_string(),
+        model if matches_canonical_or_dated_model_id(model, "gpt-6-astra") => {
+            "GPT-6 Astra".to_string()
+        }
         "gpt-5.6" => "GPT-5.6".to_string(),
         "gpt-5.6-sol" => "GPT-5.6 Sol".to_string(),
         "gpt-5.6-terra" => "GPT-5.6 Terra".to_string(),
@@ -675,6 +688,7 @@ pub fn display_name_for_model(model_id: &str) -> String {
 pub fn model_color(model_id: &str) -> &'static str {
     match normalize_model_id(model_id).as_str() {
         "codex-auto-review" => "#60a5fa",
+        model if matches_canonical_or_dated_model_id(model, "gpt-6-astra") => "#06b6d4",
         "gpt-5.6" => "#f59e0b",
         "gpt-5.6-sol" => "#ffd166",
         "gpt-5.6-terra" => "#2ec4b6",
@@ -779,6 +793,54 @@ mod tests {
         assert_eq!(nano.input_price_per_million, 0.20);
         assert!(flagship.input_price_per_million > mini.input_price_per_million);
         assert!(mini.input_price_per_million > nano.input_price_per_million);
+    }
+
+    #[test]
+    fn gpt_6_astra_pricing_and_presentation() {
+        let catalog = pricing_seed()
+            .into_iter()
+            .map(|entry| (entry.model_id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        for model in ["gpt-6-astra", " GPT-6-ASTRA ", "gpt-6-astra-2026-09-05"] {
+            assert_eq!(display_name_for_model(model), "GPT-6 Astra");
+            assert_eq!(model_color(model), "#06b6d4");
+            let pricing = resolve_pricing(&catalog, model).expect("Astra pricing");
+            assert_eq!(pricing.input_price_per_million, 10.0);
+            assert_eq!(pricing.cached_input_price_per_million, 1.0);
+            assert_eq!(pricing.output_price_per_million, 50.0);
+            let usage = TokenUsage {
+                input_tokens: 100_000,
+                cached_input_tokens: 40_000,
+                output_tokens: 10_000,
+                reasoning_output_tokens: 0,
+                total_tokens: 110_000,
+            };
+            assert!((calculate_value_usd(&usage, Some(&pricing)) - 1.14).abs() < 1e-9);
+        }
+        for model in [
+            "gpt-6",
+            "gpt-6-astra-preview",
+            "gpt-6-astra-2026-02-30",
+            "gpt-6-astra-2026-09-05-preview",
+        ] {
+            assert!(resolve_pricing(&catalog, model).is_none(), "{model}");
+            assert_eq!(display_name_for_model(model), model.to_ascii_uppercase());
+            assert_eq!(model_color(model), "#7c7f86");
+        }
+        assert_eq!(display_name_for_model("gpt-6-astra"), "GPT-6 Astra");
+        assert_eq!(model_color("gpt-6-astra"), "#06b6d4");
+    }
+
+    #[test]
+    fn gpt_6_astra_official_row_uses_output_not_cache_write_price() {
+        let rows =
+            extract_pricing_rows("[[0,&quot;gpt-6-astra&quot;],[0,10],[0,1],[0,12.5],[0,50]]");
+        assert_eq!(rows.len(), 1);
+        let entry = official_entry(rows[0].clone(), "2026-09-05");
+        assert_eq!(entry.model_id, "gpt-6-astra");
+        assert_eq!(entry.display_name, "GPT-6 Astra");
+        assert_eq!(entry.output_price_per_million, 50.0);
+        assert!(entry.is_official);
     }
 
     #[test]

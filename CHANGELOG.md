@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Windows tray popups use physical click coordinates to select the monitor at any display scale
+- reopening a resized tray popup resets its size to match its initial position before displaying it
+
+## [1.2.3] - 2026-09-05
+
+### Added
+- GPT-6 Astra model labels, chart color, and bundled Standard short-context pricing: $10 input, $1 cached input, and $50 output per million tokens, verified against [OpenAI's model documentation](https://developers.openai.com/api/docs/models/gpt-6-astra)
+- existing GPT-6 Astra usage is revalued on upgrade when its pricing is first added; token counts and session history are retained
+
+### Pricing scope
+- values use the same Standard short-context estimate as other models, not an API invoice; long-context, cache-write, and service-tier surcharges are not included
+
+### Changed
+- updated the Windows frontend toolchain to Vite 8.2.2 and `@vitejs/plugin-react` 6.1.1
+
+### Fixed
+- Windows builds no longer compile the macOS-only Objective-C dependencies
+- Windows test and application binaries now embed the Common Controls v6 manifest, fixing the `STATUS_ENTRYPOINT_NOT_FOUND` test startup failure
+- the local Windows NSIS installer now builds, installs, launches, and reads existing Codex history successfully on an x64 Windows validation host
+
+## [1.2.2] - 2026-07-13
+
+### Added
+- the dashboard now opens on the 7-day view, and conversation history is loaded in pages with detail fetched only after selection
+- the menu bar uses the current 7-day window for API-equivalent value when Codex does not provide a 5-hour quota
+
+### Changed
+- routine refreshes use incremental file discovery, durable parser checkpoints, bounded database queries, and cached dashboard results
+- quota charts read only the selected normalized window and keep one sample per chart bin instead of loading the full bucket history
+- frontend refresh and conversation loading avoid duplicate requests when the view, search, or time window changes
+
+### Fixed
+- Codex accounts without a 5-hour quota no longer lose their 7-day quota or fail to open the default dashboard
+- incremental scans no longer revisit the full archived session tree every minute, while pending repair files still receive targeted retries
+- subscription profile changes invalidate cached overview values immediately
+- conversation search keeps complete root-session totals and metadata when only a child session matches
+- historical quota samples with second-level timestamps remain visible after epoch backfill
+
+### Upgrade notes
+- install 1.2.2 over 1.2.0 without uninstalling or deleting the local database
+- existing usage, quota history, subscription settings, menu bar preferences, and custom Codex paths are retained
+- automatic refresh remains incremental; a bounded full reconciliation runs only when the source changes or scheduled maintenance is due
+
 ## [1.2.0] - 2026-07-11
 
 ### Added

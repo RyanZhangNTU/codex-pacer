@@ -177,7 +177,11 @@ export function MenuBarPopup() {
           void getCurrentWindow()
             .isVisible()
             .then((visible) => {
-              if (!cancelled && visible) void loadSnapshot(false)
+              if (!cancelled && visible) {
+                lastMeasuredHeightRef.current = null
+                schedulePopupResize()
+                void loadSnapshot(false)
+              }
             })
             .catch(() => {})
         }

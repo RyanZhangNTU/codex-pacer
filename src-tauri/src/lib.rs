@@ -1966,20 +1966,31 @@ fn position_menu_bar_popup(
   rect: Rect,
   click_position: PhysicalPosition<f64>,
 ) -> Result<(), String> {
-  if let (_, Some(position)) = menu_bar_popup_geometry(window, rect, click_position, MENU_BAR_POPUP_INITIAL_HEIGHT)? {
-    return window
-      .set_position(Position::Physical(position))
-      .map_err(|error| error.to_string());
-  }
-
-  let anchor = tray_rect_anchor_physical(rect, click_position, 1.0);
-  let anchor_x = anchor.x.round() as i32;
-  let anchor_y = anchor.y.round() as i32;
-  let x = (anchor_x - MENU_BAR_POPUP_WIDTH as i32 / 2).max(0);
-  let y = (anchor_y + MENU_BAR_POPUP_OFFSET_Y).max(0);
+  let (height, position) =
+    menu_bar_popup_geometry(window, rect, click_position, MENU_BAR_POPUP_INITIAL_HEIGHT)?;
+  let geometry = popup_opening_geometry(height, position, rect, click_position);
   window
-    .set_position(Position::Physical(PhysicalPosition::new(x, y)))
+    .set_position(Position::Physical(geometry.position))
+    .map_err(|error| error.to_string())?;
+  // Reset the previous size even when monitor lookup falls back to the tray anchor.
+  window
+    .set_size(tauri::Size::Logical(tauri::LogicalSize::new(MENU_BAR_POPUP_WIDTH, geometry.height)))
     .map_err(|error| error.to_string())
+}
+
+fn popup_opening_geometry(
+  height: f64,
+  position: Option<PhysicalPosition<i32>>,
+  rect: Rect,
+  click_position: PhysicalPosition<f64>,
+) -> MenuBarPopupGeometry {
+  let position = position.unwrap_or_else(|| {
+    let anchor = tray_rect_anchor_physical(rect, click_position, 1.0);
+    let x = (anchor.x.round() as i32 - MENU_BAR_POPUP_WIDTH as i32 / 2).max(0);
+    let y = (anchor.y.round() as i32 + MENU_BAR_POPUP_OFFSET_Y).max(0);
+    PhysicalPosition::new(x, y)
+  });
+  MenuBarPopupGeometry { position, height }
 }
 
 fn menu_bar_popup_geometry(
@@ -2049,7 +2060,7 @@ fn tray_event_monitor(
 
   for monitor in monitors {
     let scale_factor = normalized_scale_factor(monitor.scale_factor());
-    // macOS tray events report scaled global positions; monitor_from_point expects CoreGraphics coordinates.
+    // Lookup coordinates follow the platform contract, not the popup's current DPI.
     let lookup_point = tray_event_monitor_lookup_point(rect, click_position, scale_factor);
     let Some(candidate) = window
       .monitor_from_point(lookup_point.x, lookup_point.y)
@@ -2100,8 +2111,17 @@ fn tray_event_monitor_lookup_point(
   click_position: PhysicalPosition<f64>,
   scale_factor: f64,
 ) -> PhysicalPosition<f64> {
+  #[cfg(target_os = "windows")]
+  {
+    // Windows tray clicks and monitor lookup both use physical screen coordinates.
+    let _ = (rect, scale_factor);
+    return click_position;
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
   let anchor = tray_rect_anchor_physical(rect, click_position, scale_factor);
   PhysicalPosition::new(anchor.x / scale_factor, anchor.y / scale_factor)
+  }
 }
 
 fn tray_monitor_scale_score(rect: Rect, scale_factor: f64) -> f64 {
@@ -3826,6 +3846,36 @@ mod tests {
   }
 
   #[test]
+  fn startup_adds_astra_pricing_and_revalues_existing_usage() {
+    let directory = tempdir().expect("tempdir");
+    let db_path = directory.path().join("usage.sqlite");
+    prepare_app_database(&db_path).expect("initialize database");
+    let conn = open_connection(&db_path).expect("open database");
+    conn.execute("DELETE FROM pricing_catalog WHERE model_id = 'gpt-6-astra'", [])
+      .expect("simulate pre-Astra catalog");
+    conn.execute_batch("
+      INSERT INTO sessions (session_id, root_session_id, source_state, source_bucket,
+        last_model_id, created_at, imported_at)
+      VALUES ('astra', 'astra', 'active', 'active', 'gpt-6-astra', '2026-09-05', '2026-09-05');
+      INSERT INTO usage_events (session_id, timestamp, model_id, input_tokens,
+        cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
+        value_usd, fast_mode_auto, fast_mode_effective)
+      VALUES ('astra', '2026-09-05T00:00:00Z', 'gpt-6-astra',
+        100000, 40000, 10000, 0, 110000, 0, 0, 0);
+    ").expect("insert historical Astra usage");
+    drop(conn);
+    prepare_app_database(&db_path).expect("upgrade");
+    prepare_app_database(&db_path).expect("repeat startup");
+    let conn = open_connection(&db_path).expect("reopen database");
+    let (value, tokens): (f64, i64) = conn.query_row(
+      "SELECT value_usd, total_tokens FROM usage_events WHERE session_id = 'astra'",
+      [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).expect("historical usage");
+    assert!((value - 1.14).abs() < 1e-9);
+    assert_eq!(tokens, 110000);
+  }
+
+  #[test]
   fn startup_database_prepare_rolls_back_pricing_when_recalculation_fails() {
     let directory = tempdir().expect("tempdir");
     let db_path = directory.path().join("usage.sqlite");
@@ -4633,6 +4683,22 @@ mod tests {
   }
 
   #[test]
+  fn tray_popup_opening_geometry_retains_height_without_a_monitor() {
+    let rect = Rect {
+      position: Position::Physical((1000.0, 20.0).into()),
+      size: tauri::Size::Physical((24u32, 24u32).into()),
+    };
+    let height = MENU_BAR_POPUP_INITIAL_HEIGHT.clamp(MENU_BAR_POPUP_MIN_HEIGHT, MENU_BAR_POPUP_MAX_HEIGHT);
+    let geometry = popup_opening_geometry(height, None, rect, PhysicalPosition::new(1012.0, 32.0));
+    assert_eq!(geometry.height, height);
+    assert_eq!(geometry.position.y, 44 + MENU_BAR_POPUP_OFFSET_Y);
+    let known_position = PhysicalPosition::new(-900, 200);
+    let geometry = popup_opening_geometry(height, Some(known_position), rect, PhysicalPosition::new(1012.0, 32.0));
+    assert_eq!(geometry.height, height);
+    assert_eq!(geometry.position, known_position);
+  }
+
+  #[test]
   fn tray_popup_position_keeps_physical_tray_coordinates_unscaled() {
     let position = tray_rect_position_to_physical(Position::Physical((1440.0, 12.0).into()), 2.0);
     let size = tray_rect_size_to_physical(tauri::Size::Physical((24u32, 24u32).into()), 2.0);
@@ -4653,6 +4719,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(not(target_os = "windows"))]
   fn tray_popup_monitor_lookup_undoes_status_item_scale() {
     let rect = Rect {
       position: Position::Physical((4000.0, 10.0).into()),
@@ -4777,6 +4844,20 @@ mod tests {
     assert_eq!(expanded.height, 700.0);
     assert_eq!(expanded.position.y, 332);
     assert!(expanded.position.y < compact.position.y);
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn tray_popup_monitor_lookup_preserves_windows_physical_click_on_scaled_monitors() {
+    let rect = Rect {
+      position: Position::Physical((3970.0, 1380.0).into()),
+      size: tauri::Size::Physical((48u32, 60u32).into()),
+    };
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+      for click in [PhysicalPosition::new(3994.0, 1410.0), PhysicalPosition::new(-1200.0, 1410.0)] {
+        assert_eq!(tray_event_monitor_lookup_point(rect, click, scale), click);
+      }
+    }
   }
 
   #[cfg(target_os = "windows")]
