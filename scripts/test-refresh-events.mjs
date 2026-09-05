@@ -14,6 +14,31 @@ const popupSource = readFileSync(join(repoRoot, 'src/menu-bar-popup/MenuBarPopup
 const apiSource = readFileSync(join(repoRoot, 'src/app/api.ts'), 'utf8')
 const dataFreshnessSource = readFileSync(join(repoRoot, 'src/app/dataFreshness.ts'), 'utf8')
 
+test('popup_reopen_invalidates_height_cache_and_resizes_before_snapshot_load', () => {
+  const start = popupSource.indexOf("listen('codex-counter://menu-bar-popup-refresh'")
+  const end = popupSource.indexOf('codex-counter://language-changed', start)
+  assert.ok(start >= 0 && end > start)
+  const callback = popupSource.slice(start, end).match(/\.then\(\(visible\) => \{([\s\S]*?)\n\s*\}\)/)
+  assert.ok(callback, 'popup visibility callback must exist')
+  const onVisible = new Function('visible', 'cancelled', 'lastMeasuredHeightRef', 'schedulePopupResize', 'loadSnapshot', callback[1])
+  for (const [visible, cancelled] of [[true, false], [false, false], [true, true]]) {
+    const heightRef = { current: 575 }
+    const calls = []
+    const resize = () => {
+      assert.equal(heightRef.current, null, 'same-height content must be measured again')
+      calls.push('resize')
+    }
+    const load = (force) => {
+      assert.equal(force, false)
+      calls.push('load')
+    }
+    onVisible(visible, cancelled, heightRef, resize, load)
+    onVisible(visible, cancelled, heightRef, resize, load)
+    assert.deepEqual(calls, visible && !cancelled ? ['resize', 'load', 'resize', 'load'] : [])
+    assert.equal(heightRef.current, visible && !cancelled ? null : 575)
+  }
+})
+
 function completion(refreshRevision, succeeded = true) {
   return {
     refreshRevision,
@@ -144,7 +169,7 @@ test('frontend_refresh_sources_are_event_driven_without_automatic_polling', () =
   )
   assert.match(
     popupSource,
-    /listen\('codex-counter:\/\/menu-bar-popup-refresh'[\s\S]{0,220}loadSnapshot\(false\)/,
+    /listen\('codex-counter:\/\/menu-bar-popup-refresh'[\s\S]{0,450}loadSnapshot\(false\)/,
   )
   assert.doesNotMatch(popupSource, /codex-counter:\/\/refresh-completed/)
 })
