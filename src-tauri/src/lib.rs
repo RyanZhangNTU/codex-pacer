@@ -2265,6 +2265,59 @@ fn tray_rect_size_to_physical(size: tauri::Size, scale_factor: f64) -> tauri::Ph
   }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum MenuBarClickAction {
+  TogglePopup,
+  ShowContextMenu,
+}
+
+fn menu_bar_click_action(
+  button: MouseButton,
+  button_state: MouseButtonState,
+  manual_context_menu: bool,
+) -> Option<MenuBarClickAction> {
+  if button_state != MouseButtonState::Up {
+    return None;
+  }
+
+  match button {
+    MouseButton::Left => Some(MenuBarClickAction::TogglePopup),
+    MouseButton::Right if manual_context_menu => Some(MenuBarClickAction::ShowContextMenu),
+    _ => None,
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn show_menu_bar_context_menu(tray: &TrayIcon, menu: &Menu<tauri::Wry>) {
+  let app = tray.app_handle();
+  hide_menu_bar_popup(app);
+  let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+    return;
+  };
+  let menu = menu.clone();
+  let tray = tray.clone();
+
+  // NSMenu runs a nested event loop. Leave the tray callback before presenting it
+  // so another tray event cannot re-enter Tauri's locked event listeners.
+  tauri::async_runtime::spawn_blocking(move || {
+    // With no position, AppKit uses the cursor's screen coordinates even when
+    // the main window is hidden or on another display.
+    if let Err(error) = window.popup_menu(&menu) {
+      log::warn!("Failed to show menu bar context menu: {error}");
+    }
+
+    if let Err(error) = tray.with_inner_tray_icon(|inner| {
+      if let (Some(item), Some(mtm)) = (inner.ns_status_item(), objc2::MainThreadMarker::new()) {
+        if let Some(button) = item.button(mtm) {
+          button.highlight(false);
+        }
+      }
+    }) {
+      log::warn!("Failed to clear menu bar highlight: {error}");
+    }
+  });
+}
+
 fn build_daily_value_menu_bar(app: &AppHandle, settings: &SyncSettings) -> Result<TrayIcon, String> {
   let initial_title = String::new();
 
@@ -2282,7 +2335,6 @@ fn build_daily_value_menu_bar(app: &AppHandle, settings: &SyncSettings) -> Resul
   let menu = Menu::with_items(app, &[&show_window, &separator, &quit]).map_err(|error| error.to_string())?;
 
   let mut builder = TrayIconBuilder::with_id(DAILY_VALUE_TRAY_ID)
-    .menu(&menu)
     .title(&initial_title)
     .tooltip(menu_bar_bucket_label(&settings.menu_bar_bucket))
     .show_menu_on_left_click(false)
@@ -2292,23 +2344,36 @@ fn build_daily_value_menu_bar(app: &AppHandle, settings: &SyncSettings) -> Resul
       } else if event.id() == DAILY_VALUE_QUIT_MENU_ID {
         app.exit(0);
       }
-    })
-    .on_tray_icon_event(|tray, event| {
-      if let TrayIconEvent::Click {
-        position,
-        button,
-        button_state,
-        rect,
-        ..
-      } = event
-      {
-        if button == MouseButton::Left && button_state == MouseButtonState::Up {
+    });
+
+  // On macOS 27, a menu attached to NSStatusItem consumes left clicks before
+  // tray-icon receives them. Present the right-click menu separately on macOS.
+  #[cfg(not(target_os = "macos"))]
+  {
+    builder = builder.menu(&menu);
+  }
+
+  builder = builder.on_tray_icon_event(move |tray, event| {
+    if let TrayIconEvent::Click {
+      position,
+      button,
+      button_state,
+      rect,
+      ..
+    } = event
+    {
+      match menu_bar_click_action(button, button_state, cfg!(target_os = "macos")) {
+        Some(MenuBarClickAction::TogglePopup) => {
           if let Err(error) = toggle_menu_bar_popup(tray.app_handle(), rect, position) {
             log::warn!("Failed to toggle menu bar popup: {error}");
           }
         }
+        #[cfg(target_os = "macos")]
+        Some(MenuBarClickAction::ShowContextMenu) => show_menu_bar_context_menu(tray, &menu),
+        _ => {}
       }
-    });
+    }
+  });
 
   if settings.show_menu_bar_logo {
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -4680,6 +4745,39 @@ mod tests {
     assert!(should_hide_dock_icon(&enabled_with_menu_bar));
     assert!(!should_hide_dock_icon(&enabled_without_menu_bar));
     assert!(!should_hide_dock_icon(&disabled_with_menu_bar));
+  }
+
+  #[test]
+  fn tray_left_click_toggles_popup_once_per_press_and_release() {
+    for manual_context_menu in [false, true] {
+      let actions: Vec<_> = [MouseButtonState::Down, MouseButtonState::Up]
+        .into_iter()
+        .filter_map(|state| menu_bar_click_action(MouseButton::Left, state, manual_context_menu))
+        .collect();
+      assert_eq!(actions, vec![MenuBarClickAction::TogglePopup]);
+    }
+  }
+
+  #[test]
+  fn tray_right_click_opens_only_the_manually_managed_menu() {
+    assert_eq!(menu_bar_click_action(MouseButton::Right, MouseButtonState::Down, true), None);
+    assert_eq!(
+      menu_bar_click_action(MouseButton::Right, MouseButtonState::Up, true),
+      Some(MenuBarClickAction::ShowContextMenu),
+    );
+    // Windows and Linux let the tray implementation present their native menus.
+    for state in [MouseButtonState::Down, MouseButtonState::Up] {
+      assert_eq!(menu_bar_click_action(MouseButton::Right, state, false), None);
+    }
+  }
+
+  #[test]
+  fn tray_middle_click_does_not_open_popup_or_menu() {
+    for manual_context_menu in [false, true] {
+      for state in [MouseButtonState::Down, MouseButtonState::Up] {
+        assert_eq!(menu_bar_click_action(MouseButton::Middle, state, manual_context_menu), None);
+      }
+    }
   }
 
   #[test]
