@@ -69,9 +69,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             "completionReminder": false, "systemNotifications": false, "compactMetric": "remaining", "quotaWindowID": "auto"])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         panel = PanelController(model: model)
-        if CommandLine.arguments.contains("--quota") { model.page = .quota }
         model.onSettings = { [weak self] in self?.showSettings() }
-        model.onOpenCodex = { [weak self] in self?.openCodex() }
+        model.onOpenActivity = { [weak self] activity in self?.openActivity(activity) }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
         UNUserNotificationCenter.current().delegate = self
         let mainMenu = NSMenu()
@@ -127,13 +126,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         let url = URL(fileURLWithPath: "/Applications/Codex.app")
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         model.close()
-        let defaultHome = URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL
-        if model.home == defaultHome, let threadURL = model.focusedActivity?.threadURL,
-           NSWorkspace.shared.urlForApplication(toOpen: threadURL)?.standardizedFileURL.path == url.standardizedFileURL.path {
-            NSWorkspace.shared.open(threadURL)
-            return
-        }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+    }
+    private func openActivity(_ activity: SessionActivity) {
+        guard model.canOpen(activity), let threadURL = activity.threadURL else { return }
+        let appURL = URL(fileURLWithPath: "/Applications/Codex.app")
+        guard FileManager.default.fileExists(atPath: appURL.path) else { return }
+        model.close()
+        NSWorkspace.shared.open([threadURL], withApplicationAt: appURL,
+            configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {

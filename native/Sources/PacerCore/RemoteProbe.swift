@@ -7,6 +7,7 @@ enum RemoteProbe {
     home = pathlib.Path(base64.b64decode(sys.argv[1]).decode()).expanduser()
     cursors = {}
     headers = {}
+    titles = {}
     def sanitize(o):
         outer, p = o.get('type'), o.get('payload', {})
         if not isinstance(p, dict): return None
@@ -54,6 +55,7 @@ enum RemoteProbe {
         return None
     def candidates():
         paths = set(cursors)
+        titles.clear()
         for dbfile in sorted((p for p in home.glob('state_*.sqlite') if p.stem[6:].isdigit()), key=lambda p:int(p.stem[6:]), reverse=True):
             try:
                 db = sqlite3.connect('file:'+str(dbfile)+'?mode=ro', uri=True, timeout=.05)
@@ -64,9 +66,10 @@ enum RemoteProbe {
                 if 'thread_source' in cols: filters.append("COALESCE(thread_source,'') NOT IN ('guardian_review','auto_review','autoreview')")
                 if 'model' in cols: filters.append("COALESCE(model,'') NOT LIKE 'codex-auto-review%'")
                 if 'rollout_path' in cols:
-                    for row in db.execute('SELECT rollout_path FROM threads WHERE '+' AND '.join(filters)+' ORDER BY '+order+' DESC LIMIT 128'):
+                    title_col = "COALESCE(NULLIF(TRIM(name),''),title)" if 'name' in cols and 'title' in cols else ('name' if 'name' in cols else ('title' if 'title' in cols else 'NULL'))
+                    for row in db.execute('SELECT rollout_path,'+title_col+' FROM threads WHERE '+' AND '.join(filters)+' ORDER BY '+order+' DESC LIMIT 128'):
                         p=pathlib.Path(row[0])
-                        if str(p).startswith(str(home/'sessions')+'/'): paths.add(p)
+                        if str(p).startswith(str(home/'sessions')+'/'): paths.add(p); titles[p]=row[1][:240] if isinstance(row[1],str) else None
                 db.close(); break
             except (sqlite3.Error,OSError,ValueError): continue
         today = datetime.datetime.now()
@@ -112,7 +115,7 @@ enum RemoteProbe {
                         if v: records.append(v)
                     if len(fragment)>1024*1024: fragment=b''
                     cursors[p]=(stat.st_ino,offset,fragment,meta)
-                    rows.append({'id':p.name,'reset':reset,'records':records})
+                    rows.append({'id':p.name,'title':titles.get(p),'reset':reset,'records':records})
             except OSError: continue
         for p in list(cursors):
             if p not in selected: del cursors[p]

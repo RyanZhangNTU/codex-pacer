@@ -2,11 +2,11 @@ import AppKit
 import SwiftUI
 import PacerCore
 
-enum IslandPage: String, CaseIterable { case tasks, quota }
-
 @MainActor
 final class IslandModel: ObservableObject {
-    @Published var quota: QuotaSnapshot?
+    @Published var quota: QuotaSnapshot? {
+        didSet { if oldValue?.windows.count != quota?.windows.count { onLayoutChange?() } }
+    }
     @Published var activities: [SessionActivity] = []
     @Published var unavailableSSH: [String] = []
     private var localActivities: [SessionActivity] = []
@@ -14,10 +14,6 @@ final class IslandModel: ObservableObject {
     @Published var history = QuotaCycleHistory()
     @Published var historyWarning: String?
     @Published var notice: IslandNotice?
-    @Published var page: IslandPage = .tasks {
-        didSet { if oldValue != page { onLayoutChange?() } }
-    }
-    @Published var selectedActivityID: String?
     @Published var errorMessage: String?
     @Published var refreshing = false
     @Published var expanded = false
@@ -29,10 +25,14 @@ final class IslandModel: ObservableObject {
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
-    var onOpenCodex: (() -> Void)?
+    var onOpenActivity: ((SessionActivity) -> Void)?
     var onFocusRequested: (() -> Void)?
-    var canOpenConversation: Bool {
-        focusedActivity?.threadURL != nil && focusedActivity?.sourceHost == nil && home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path
+    func canOpen(_ activity: SessionActivity) -> Bool {
+        !demo && activity.threadURL != nil && (activity.sourceHostID != nil ||
+            home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
+    }
+    var panelContentHeight: CGFloat {
+        min(640, max(472, 330 + CGFloat(max(1, min(3, visibleActivities.count))) * 64 + CGFloat(quota?.windows.count ?? 1) * 78))
     }
     private var client: CodexClient?
     private let reader = LocalActivityReader()
@@ -74,17 +74,16 @@ final class IslandModel: ObservableObject {
         activities.filter {
             guard !$0.isInternalReview else { return false }
             if [.completed, .interrupted].contains($0.phase) {
-                return now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120 || $0.id == selectedActivityID
+                return now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120
             }
             return [.running, .waitingForInput, .unknown].contains($0.observedPhase(at: now)) ||
-            now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120 || $0.id == selectedActivityID
+            now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120
         }.sorted {
             let lhs = priority($0.observedPhase(at: now)), rhs = priority($1.observedPhase(at: now))
-            return lhs == rhs ? ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) : lhs < rhs
+            if lhs != rhs { return lhs < rhs }
+            let left = $0.phaseChangedAt ?? .distantPast, right = $1.phaseChangedAt ?? .distantPast
+            return left == right ? $0.id < $1.id : left > right
         }
-    }
-    var focusedActivity: SessionActivity? {
-        visibleActivities.first { $0.id == selectedActivityID } ?? visibleActivities.first
     }
     var selectedWindow: QuotaWindow? {
         let selected = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
@@ -136,8 +135,7 @@ final class IslandModel: ObservableObject {
         return elapsed < 10 ? "刚刚更新" : elapsed < 60 ? "\(elapsed) 秒前更新" : "\(elapsed / 60) 分钟前更新"
     }
     func projectName(_ activity: SessionActivity) -> String {
-        let name = hideProjects ? "任务" : activity.project
-        return activity.sourceHost.map { name + " · " + $0 } ?? name
+        hideProjects ? "Codex 任务" : (activity.title ?? activity.project)
     }
 
     init(demo: Bool = false, initiallyExpanded: Bool = false) {
@@ -193,12 +191,9 @@ final class IslandModel: ObservableObject {
     }
     func togglePin() { pinned.toggle(); setExpanded(true); if pinned { onFocusRequested?() } }
     func close() { pinned = false; setExpanded(false) }
-    func select(_ activity: SessionActivity) {
-        selectedActivityID = activity.id
-        page = .tasks
-        pinned = true
-        setExpanded(true)
-        onFocusRequested?()
+    func open(_ activity: SessionActivity) {
+        guard canOpen(activity) else { return }
+        onOpenActivity?(activity)
     }
 
     func refreshQuota() {
@@ -301,10 +296,12 @@ final class IslandModel: ObservableObject {
         }
     }
     private func combineActivities() {
+        let oldHeight = panelContentHeight
         activities = (localActivities + remoteActivities).filter {
             !$0.isInternalReview && ([.running, .waitingForInput].contains($0.phase) ||
                 now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
         }
+        if oldHeight != panelContentHeight { onLayoutChange?() }
         present(attention.activityNotices(activities, at: now))
         onStatusChange?()
     }
@@ -326,7 +323,6 @@ final class IslandModel: ObservableObject {
         historyWarning = nil
         attention = AttentionPolicy()
         activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []
-        selectedActivityID = nil
         notice = nil
         noticeWork?.cancel()
         errorMessage = nil

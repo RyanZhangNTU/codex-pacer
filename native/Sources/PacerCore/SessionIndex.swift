@@ -3,7 +3,12 @@ import SQLite3
 
 /// Read-only lookup also finds sessions resumed from older date directories.
 public enum SessionIndex {
-    public static func files(home: URL, limit: Int = 256) -> [URL] {
+    public struct Entry: Sendable {
+        public let url: URL
+        public let title: String?
+    }
+    public static func files(home: URL, limit: Int = 256) -> [URL] { entries(home: home, limit: limit).map(\.url) }
+    public static func entries(home: URL, limit: Int = 256) -> [Entry] {
         let manager = FileManager.default
         let databases = ((try? manager.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.lastPathComponent.range(of: #"^state_[0-9]+\.sqlite$"#, options: .regularExpression) != nil }
@@ -26,16 +31,22 @@ public enum SessionIndex {
             if columns.contains("archived") { predicates.append("archived=0") }
             if columns.contains("thread_source") { predicates.append("COALESCE(thread_source,'') NOT IN ('guardian_review','auto_review','autoreview')") }
             if columns.contains("model") { predicates.append("COALESCE(model,'') NOT LIKE 'codex-auto-review%'") }
-            let query = "SELECT rollout_path FROM threads WHERE \(predicates.joined(separator: " AND ")) ORDER BY \(order) DESC LIMIT \(min(1024, max(1, limit)))"
+            let title: String
+            if columns.contains("name"), columns.contains("title") { title = "COALESCE(NULLIF(TRIM(name),''),title)" }
+            else { title = columns.contains("name") ? "name" : columns.contains("title") ? "title" : "NULL" }
+            let query = "SELECT rollout_path, \(title) FROM threads WHERE \(predicates.joined(separator: " AND ")) ORDER BY \(order) DESC LIMIT \(min(1024, max(1, limit)))"
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else { continue }
             defer { sqlite3_finalize(statement) }
             let root = home.appendingPathComponent("sessions").standardizedFileURL.path + "/"
-            var result: [URL] = []
+            var result: [Entry] = []
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let raw = sqlite3_column_text(statement, 0) else { continue }
                 let url = URL(fileURLWithPath: String(cString: raw)).standardizedFileURL
-                if url.path.hasPrefix(root), url.pathExtension == "jsonl", manager.fileExists(atPath: url.path) { result.append(url) }
+                if url.path.hasPrefix(root), url.pathExtension == "jsonl", manager.fileExists(atPath: url.path) {
+                    let name = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+                    result.append(Entry(url: url, title: name))
+                }
             }
             return result
         }

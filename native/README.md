@@ -18,7 +18,6 @@ Quit a running preview before using launch flags:
 
 ~~~sh
 open "output/island-preview/Codex Pacer Island.app" --args --demo
-open "output/island-preview/Codex Pacer Island.app" --args --demo --quota
 open "output/island-preview/Codex Pacer Island.app" --args --expanded
 "output/island-preview/Codex Pacer Island.app/Contents/MacOS/CodexPacerIsland" --diagnose
 ~~~
@@ -27,7 +26,9 @@ Demo mode labels its sample data and does not query Codex. The diagnostic prints
 
 ## Task interaction
 
-Hover to expand; move away to collapse after a short delay. Click the top strip or pin button to keep it open. Select a task to open its conversation. The headline state and output rate summarize all running user tasks and do not follow the selection. Input waits appear ahead of running tasks. The task action opens the selected conversation when it belongs to the default local Codex home; other sources open Codex without assuming that its desktop profile matches.
+Hover to expand; move away to collapse after a short delay. Click the top strip or pin button to keep it open. One panel shows the global state and output rate, task cards, quota, account details and the current curve. There is no task/quota tab switch.
+
+Task cards show the Codex conversation title, current stage and source host. Click a card to open that conversation directly. SSH links include the configured host ID; local links use the default desktop Codex home. Unsupported local profiles have a disabled card rather than opening a different conversation. Waiting tasks appear first, and order within each state follows the turn start/change time so counter updates do not move a task under the pointer.
 
 Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders. Data and calculation notes are collapsed in settings; the island shows only task details, quota and the current curve.
 
@@ -45,7 +46,7 @@ The value includes waiting and tool time between reports. It is not a direct mea
 
 ## SSH sources
 
-The monitor opens its own SSH connections to Codex's enabled, discovered aliases. It validates host aliases, requires known host keys, disables agent forwarding and port forwards, and does not install anything or alter the shared Codex process. A Python reader emits sanitized lifecycle events, tool names/call IDs and output counters every two seconds. Prompt text, reasoning content, tool arguments/output and authentication data are excluded from the transport.
+The monitor opens its own SSH connections to Codex's enabled, discovered aliases. It validates host aliases, requires known host keys, disables agent forwarding and port forwards, and does not install anything or alter the shared Codex process. A Python reader emits sanitized session titles, lifecycle events, tool names/call IDs and output counters every two seconds. Prompt text, reasoning content, tool arguments/output and authentication data are excluded from the transport.
 
 Remote tasks use the same lifecycle parser and auto-review filter as local tasks. The list labels the source host; counts and throughput aggregate both sources. Connection failures expose a short SSH status with source details on hover, and retries are bounded. Source changes, sleep and quit close only the monitor's own connections. The SSH option can be disabled in settings.
 

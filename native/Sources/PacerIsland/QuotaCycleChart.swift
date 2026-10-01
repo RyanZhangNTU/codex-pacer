@@ -53,7 +53,7 @@ struct QuotaCycleChart: View {
                 AxisValueLabel { if let number = value.as(Int.self) { Text("\(number)%") } }
             } }
             .chartXSelection(value: $selectedDate)
-            .frame(height: 96)
+            .frame(height: 88)
             .accessibilityLabel("当前窗口剩余额度折线。\(points.count) 个显示采样点；虚线为均匀配速参考。")
             HStack(spacing: 12) {
                 Label("额度", systemImage: "circle.fill").foregroundStyle(accent)

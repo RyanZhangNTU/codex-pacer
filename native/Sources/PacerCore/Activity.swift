@@ -28,9 +28,22 @@ public enum ActivityStage: String, Sendable {
 public struct SessionActivity: Equatable, Sendable, Identifiable {
     public let id: String
     public let sourceHost: String?
+    public let sourceHostID: String?
+    public private(set) var title: String?
     public var project: String
     public private(set) var threadID: String?
-    public var threadURL: URL? { threadID.flatMap { URL(string: "codex://threads/" + $0) } }
+    public var threadURL: URL? {
+        guard let threadID else { return nil }
+        var url = URLComponents()
+        url.scheme = "codex"; url.host = "threads"; url.path = "/" + threadID
+        if let sourceHostID {
+            let prefix = "remote-ssh-discovered:"
+            guard sourceHostID.hasPrefix(prefix),
+                  String(sourceHostID.dropFirst(prefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { return nil }
+            url.queryItems = [URLQueryItem(name: "hostId", value: sourceHostID)]
+        }
+        return url.url
+    }
     public private(set) var phase: ActivityPhase = .unknown
     public private(set) var turnID: String?
     public private(set) var lastObserved: Date?
@@ -42,11 +55,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var toolCalls: Set<String> = []
     private var outputRate = OutputRate()
 
-    public init(id: String, project: String = "本地任务", sourceHost: String? = nil) {
+    public init(id: String, project: String = "本地任务", sourceHost: String? = nil, sourceHostID: String? = nil) {
         self.id = id
         self.sourceHost = sourceHost
+        self.sourceHostID = sourceHostID
         self.project = project
         threadID = UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36)))?.uuidString.lowercased()
+    }
+
+    mutating func updateTitle(_ value: String?) {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        title = trimmed?.isEmpty == false ? String(trimmed!.prefix(240)) : nil
     }
 
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
@@ -71,6 +90,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let payload = value["payload"] as? [String: Any] else { return }
         if value["type"] as? String == "session_meta" {
+            if let title = payload["title"] as? String { updateTitle(title) }
             let source = payload["source"] as? [String: Any]
             let subagent = source?["subagent"] as? [String: Any]
             let role = (subagent?["other"] as? String)?.lowercased()
@@ -244,8 +264,9 @@ public actor LocalActivityReader {
                 files.append((file, date))
             }
         }
-        let indexed = SessionIndex.files(home: home)
-        for file in indexed {
+        let indexed = SessionIndex.entries(home: home)
+        for entry in indexed {
+            let file = entry.url
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             if !files.contains(where: { $0.0 == file }) { files.append((file, date)) }
             watchURLs.append(file.deletingLastPathComponent())
@@ -314,6 +335,7 @@ public actor LocalActivityReader {
                     current.fragment.removeSubrange(...end)
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll() }
+                if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title) }
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview {

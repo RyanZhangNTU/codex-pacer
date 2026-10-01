@@ -35,26 +35,20 @@ struct IslandView: View {
 
             if model.expanded {
                 VStack(alignment: .leading, spacing: 0) {
-                    if model.page == .tasks {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(model.statusTitle).font(.system(size: 19, weight: .semibold)).lineLimit(1)
-                            Spacer(minLength: 8)
-                            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                Text(model.rate == nil ? model.rateText : "≈" + model.rateText).font(.system(size: 20, weight: .medium)).monospacedDigit()
-                                Text("token/s").font(.system(size: 11)).foregroundStyle(secondary)
-                            }
-                            .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
-                            .help(model.rateIsFresh ? "运行中任务的合计输出速度" : "最近已知估算，等待完整的新 token 采样")
-                        }.padding(.top, 12).padding(.bottom, 16)
-                    }
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(model.statusTitle).font(.system(size: 16, weight: .semibold)).lineLimit(1)
+                        Spacer(minLength: 12)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(model.rate == nil ? model.rateText : "≈" + model.rateText)
+                                .font(.system(size: 22, weight: .medium)).monospacedDigit()
+                            Text("token/s").font(.system(size: 10)).foregroundStyle(secondary)
+                        }
+                        .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
+                        .help(model.rateIsFresh ? "运行中任务的合计输出速度" : "最近已知估算，等待完整的新 token 采样")
+                    }.padding(.top, 13).padding(.bottom, 14)
                     if model.isDemo {
                         Text("演示").font(.system(size: 11)).foregroundStyle(secondary).padding(.bottom, 8)
                     }
-
-                    Picker("查看内容", selection: $model.page) {
-                        Text("任务").tag(IslandPage.tasks)
-                        Text("额度").tag(IslandPage.quota)
-                    }.pickerStyle(.segmented).labelsHidden().padding(.top, model.page == .quota ? 12 : 0).padding(.bottom, 14)
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
@@ -62,11 +56,9 @@ struct IslandView: View {
                                 Label(notice.title + "：" + notice.detail, systemImage: "bell")
                                     .font(.system(size: 11)).foregroundStyle(model.accent)
                             }
-                            if model.page == .tasks {
-                                taskContent
-                            } else {
-                                quotaContent
-                            }
+                            taskContent
+                            Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
+                            quotaContent
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }.scrollIndicators(.hidden).frame(maxHeight: .infinity)
@@ -91,49 +83,19 @@ struct IslandView: View {
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
-            Text("暂无任务").font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
+            Text("暂无运行任务").font(.system(size: 12)).foregroundStyle(secondary).padding(.vertical, 8)
         } else {
-            ForEach(model.visibleActivities) { activity in
-                Button { model.select(activity) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: activityIcon(activity.observedPhase(at: model.now)))
-                            .font(.system(size: 14))
-                            .foregroundStyle(activity.observedPhase(at: model.now) == .waitingForInput ? model.accent : secondary)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(model.projectName(activity)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(activity.detail(at: model.now)).font(.system(size: 11)).foregroundStyle(secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 4)
-                        if model.focusedActivity?.id == activity.id {
-                            Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(secondary)
-                        }
-                    }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(model.focusedActivity?.id == activity.id ? 0.06 : 0)))
-                    .contentShape(Rectangle())
+            VStack(spacing: 8) {
+                ForEach(model.visibleActivities) { activity in
+                    TaskRowView(activity: activity, name: model.projectName(activity), now: model.now,
+                        enabled: model.canOpen(activity), accent: model.accent) { model.open(activity) }
                 }
-                .buttonStyle(.plain)
-                .help([activity.modelName, observedAge(activity)].compactMap { $0 }.joined(separator: " · "))
-                .accessibilityLabel("\(model.projectName(activity))，\(activity.observedPhase(at: model.now).label)。选择任务")
             }
-
-        }
-        Rectangle().fill(.white.opacity(0.09)).frame(height: 1)
-        if let window = model.selectedWindow {
-            HStack {
-                Text(window.label).font(.system(size: 11)).foregroundStyle(secondary)
-                Spacer()
-                Text(window.remainingPercent.map { "剩余 \(Int($0.rounded()))%" } ?? "暂不可用")
-                Text(model.pace.map { "配速 \(Int($0.rounded()))%" } ?? "配速 —")
-            }.font(.system(size: 11)).monospacedDigit()
         }
         if !model.unavailableSSH.isEmpty {
             Label("SSH 未连接", systemImage: "network").font(.system(size: 11)).foregroundStyle(secondary)
                 .help(model.unavailableSSH.joined(separator: "、"))
         }
-        Button { model.onOpenCodex?() } label: {
-            Label(model.canOpenConversation ? "打开所选会话" : "打开 Codex", systemImage: "arrow.up.forward.app")
-        }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(model.accent)
     }
 
     @ViewBuilder private var quotaContent: some View {
@@ -142,7 +104,6 @@ struct IslandView: View {
                 .font(.system(size: 12)).foregroundStyle(secondary).help(message)
         }
         if let quota = model.quota, !quota.buckets.isEmpty || quota.resetCredits != nil {
-            AccountUsageView(snapshot: quota, now: model.now)
             ForEach(quota.buckets) { bucket in
                 if quota.buckets.count > 1 {
                     Text(bucket.name ?? bucket.id).font(.system(size: 11, weight: .medium)).foregroundStyle(secondary)
@@ -152,6 +113,7 @@ struct IslandView: View {
                         allowPace: !model.stale && model.errorMessage == nil, accent: model.accent, secondary: secondary)
                 }
             }
+            AccountUsageView(snapshot: quota, now: model.now)
             if let cycle = model.currentCycle {
                 QuotaCycleChart(cycle: cycle, accent: model.accent)
             } else if model.weeklyWindow != nil {
@@ -181,20 +143,6 @@ struct IslandView: View {
                 .help("收起").accessibilityLabel("收起")
         }
         .font(.system(size: 12)).buttonStyle(.plain).foregroundStyle(secondary)
-        .padding(.top, 14).padding(.bottom, 17)
-    }
-    private func observedAge(_ activity: SessionActivity) -> String {
-        guard let date = activity.lastObserved else { return "未确认" }
-        let seconds = max(0, Int(model.now.timeIntervalSince(date)))
-        return seconds < 60 ? "\(seconds) 秒前有活动" : "\(seconds / 60) 分钟前有活动"
-    }
-    private func activityIcon(_ phase: ActivityPhase) -> String {
-        switch phase {
-        case .running: return "terminal"
-        case .waitingForInput: return "text.bubble"
-        case .completed: return "minus.circle"
-        case .interrupted: return "stop.circle"
-        case .unknown: return "questionmark.circle"
-        }
+        .padding(.top, 12).padding(.bottom, 14)
     }
 }

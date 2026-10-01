@@ -114,9 +114,10 @@ public actor RemoteActivityMonitor {
                 let activityID = id + ":" + fileID
                 currentIDs.insert(activityID)
                 let firstObservation = connection.activities[activityID] == nil
-                var activity = connection.activities[activityID] ?? SessionActivity(id: activityID, sourceHost: connection.target.name)
-                if session["reset"] as? Bool == true { activity = SessionActivity(id: activityID, sourceHost: connection.target.name) }
+                var activity = connection.activities[activityID] ?? SessionActivity(id: activityID, sourceHost: connection.target.name, sourceHostID: connection.target.id)
+                if session["reset"] as? Bool == true { activity = SessionActivity(id: activityID, sourceHost: connection.target.name, sourceHostID: connection.target.id) }
                 for record in records { if let bytes = try? JSONSerialization.data(withJSONObject: record) { activity.consume(bytes) } }
+                activity.updateTitle(session["title"] as? String)
                 if firstObservation, [.running, .waitingForInput].contains(activity.phase),
                    Date().timeIntervalSince(activity.lastObserved ?? .distantPast) > 900 { activity.markUnconfirmed() }
                 if !activity.isInternalReview { connection.activities[activityID] = activity }

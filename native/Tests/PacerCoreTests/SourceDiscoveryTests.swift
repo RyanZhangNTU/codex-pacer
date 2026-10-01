@@ -12,9 +12,9 @@ final class SourceDiscoveryTests: XCTestCase {
         var db: OpaquePointer?
         XCTAssertEqual(sqlite3_open(home.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
         defer { sqlite3_close(db) }
-        XCTAssertEqual(sqlite3_exec(db, "CREATE TABLE threads (rollout_path TEXT, archived INTEGER, recency_at_ms INTEGER, thread_source TEXT, model TEXT)", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "CREATE TABLE threads (rollout_path TEXT, archived INTEGER, recency_at_ms INTEGER, thread_source TEXT, model TEXT, title TEXT)", nil, nil, nil), SQLITE_OK)
         let path = rollout.path.replacingOccurrences(of: "'", with: "''")
-        XCTAssertEqual(sqlite3_exec(db, "INSERT INTO threads VALUES ('\(path)',0,123,'user','gpt-test')", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "INSERT INTO threads VALUES ('\(path)',0,123,'user','gpt-test','Resumed analysis')", nil, nil, nil), SQLITE_OK)
     }
     private func record(_ type: String, payload: [String: Any], at date: Date) throws -> Data {
         let f = ISO8601DateFormatter()
@@ -30,7 +30,24 @@ final class SourceDiscoveryTests: XCTestCase {
         try database(home: home, rollout: file)
         let result = await LocalActivityReader().read(home: home, now: now)
         XCTAssertEqual(result.activities.first?.phase, .running)
+        XCTAssertEqual(result.activities.first?.title, "Resumed analysis")
         XCTAssertTrue(result.watchURLs.contains { $0.standardizedFileURL.path == day.standardizedFileURL.path })
+    }
+    func testAssignedConversationNameTakesPrecedenceOverOriginalPromptTitle() async throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let day = home.appendingPathComponent("sessions/2025/01/01")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("named.jsonl")
+        let now = Date()
+        try record("event_msg", payload: ["type":"task_started","turn_id":"named"], at: now).write(to: file)
+        try database(home: home, rollout: file)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(home.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "ALTER TABLE threads ADD COLUMN name TEXT", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE threads SET name='Assigned conversation'", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        let result = await LocalActivityReader().read(home: home, now: now)
+        XCTAssertEqual(result.activities.first?.title, "Assigned conversation")
     }
     func testIndexCannotReadPathsOutsideSelectedCodexHome() throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
@@ -65,6 +82,10 @@ final class SourceDiscoveryTests: XCTestCase {
         var data = Data()
         for (type,payload) in rows { data += try record(type,payload:payload,at:now) }
         try data.write(to:file); try database(home:home,rollout:file)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(home.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE threads SET title='" + String(repeating: "x", count: 1000) + "'", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath:"/usr/bin/python3")
         process.arguments = ["-u","-c",RemoteProbe.script,Data(home.path.utf8).base64EncodedString(),"once"]
@@ -78,6 +99,7 @@ final class SourceDiscoveryTests: XCTestCase {
         let frame=try XCTUnwrap(JSONSerialization.jsonObject(with:bytes) as? [String:Any])
         let sessions=try XCTUnwrap(frame["sessions"] as? [[String:Any]])
         XCTAssertEqual(sessions.count,1)
+        XCTAssertEqual((sessions.first?["title"] as? String)?.count, 240)
         var activity=SessionActivity(id:"remote:resumed.jsonl",sourceHost:"one")
         for item in try XCTUnwrap(sessions.first?["records"] as? [[String:Any]]) { activity.consume(try JSONSerialization.data(withJSONObject:item)) }
         XCTAssertEqual(activity.phase,.running)
