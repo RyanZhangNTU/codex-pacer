@@ -120,11 +120,22 @@ final class ClientTests: XCTestCase {
         }
         await client.disconnect()
     }
-    private func fixture(timeout: TimeInterval, answerQuota: Bool) throws -> (CodexClient, URL) {
+    func testUsageFromDifferentAccountIsRejected() async throws {
+        let (client, directory) = try fixture(timeout: 2, answerQuota: true, differentAccount: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do { _ = try await client.readQuota(); XCTFail("expected account mismatch rejection") }
+        catch CodexClientError.invalidResponse { }
+        catch { XCTFail("unexpected error: \(error)") }
+        let scope = await client.currentAccountScope()
+        XCTAssertNil(scope)
+        await client.disconnect()
+    }
+    private func fixture(timeout: TimeInterval, answerQuota: Bool, differentAccount: Bool = false) throws -> (CodexClient, URL) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let script = directory.appendingPathComponent("server.sh")
-        let quota = answerQuota ? "printf '{\"id\":%s,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":25,\"windowDurationMins\":300}}}}\\n' \"$id\"" : ":"
+        let identity = differentAccount ? "\"accountId\":\"different\"," : ""
+        let quota = answerQuota ? "printf '{\"id\":%s,\"result\":{\(identity)\"rateLimits\":{\"primary\":{\"usedPercent\":25,\"windowDurationMins\":300}}}}\\n' \"$id\"" : ":"
         let body = #"""
         while IFS= read -r line; do
           id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')

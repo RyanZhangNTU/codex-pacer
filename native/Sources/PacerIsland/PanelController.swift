@@ -71,7 +71,8 @@ final class PanelController {
         model.notchWidth = notchWidth
         model.topHeight = hasNotch ? max(32, screen.safeAreaInsets.top) : 38
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
-            topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch)
+            topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch,
+            contentHeight: model.page == .quota ? 392 : 342)
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { context in

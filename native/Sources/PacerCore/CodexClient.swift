@@ -87,14 +87,21 @@ public actor CodexClient {
                 ready = true
             }
             let account = try await request("account/read", params: ["refreshToken": false])
+            var verifiedID: String?
             if let value = try JSONSerialization.jsonObject(with: account) as? [String: Any],
                let routing = value["workspaceRouting"] as? [String: Any],
                let accountID = routing["chatgptAccountId"] as? String, !accountID.isEmpty {
+                verifiedID = accountID
                 let plan = (value["account"] as? [String: Any])?["planType"] as? String ?? ""
                 let key = accountID + "|" + (routing["backendOrigin"] as? String ?? "") + "|" + plan
                 verifiedAccountScope = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
             }
-            let data = try await request("account/rateLimits/read")
+            let data = try await request("account/rateLimits/read", params: ["excludeResetCreditDetails": false])
+            if let usage = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let responseID = usage["accountId"] as? String, let verifiedID, responseID != verifiedID {
+                verifiedAccountScope = nil
+                throw CodexClientError.invalidResponse
+            }
             var snapshot = try QuotaSnapshot.decode(data)
             snapshot.accountScope = verifiedAccountScope
             return snapshot

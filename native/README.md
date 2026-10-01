@@ -59,6 +59,14 @@ The private cache under Application Support/CodexPacerIsland/CurrentCycle contai
 
 Refreshes use 30-second intervals while expanded and two-minute intervals in the background, with bounded error backoff. Failed reads show cached data with its age; they never add curve points. Sleep pauses work, wake requests new data, and source changes reject obsolete responses.
 
+## Account usage details
+
+The quota strip pairs remaining allowance with elapsed window time and a reset countdown. These use the same reset deadline and reported duration, including early resets; expiry fills the time track without inventing a new window.
+
+The account row displays the backend's available reset count, the earliest future expiry among available reset credits, and the returned credit balance. Reset detail reads are explicitly enabled. A capped detail list does not replace the backend count; its earliest known expiry is labeled accordingly. Unavailable values show a dash, and unlimited credit is distinct from a missing balance. Expiring known resets decrease the displayed count until the next refresh. Balance values retain decimal precision in storage and are formatted for display without conversion to token or API prices.
+
+Reset credits and purchased usage credits are separate. See [banked resets](https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work) and [usage credits](https://help.openai.com/en/articles/12642688-using-credits-for-flexible-usage-in-chatgpt-personal-plans). The app displays these fields through the read-only account/rateLimits/read call and provides no redemption or purchase action. A returned account identifier must match the verified account before the response is accepted.
+
 ## Reminders and validation
 
 Low-quota and input-wait reminders appear briefly in the island. Turn-end reminders are optional. Startup task events are not replayed, and repeated quota refreshes do not repeat a low-quota alert. System notifications stay off until the user enables them and grants macOS permission. Project names can be hidden in the interface and new notices.

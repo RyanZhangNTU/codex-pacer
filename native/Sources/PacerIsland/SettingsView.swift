@@ -69,6 +69,8 @@ struct SettingsView: View {
                         Text("任务状态来自本机日志。三分钟没有新事件时，状态转为未确认。")
                         Text("token/s 合计运行中任务的输出增量，排除 autoreview。缺少样本或超过 15 秒未更新时显示不可用。")
                         Text("配速 = 剩余额度比例 ÷ 剩余时间比例 × 100。100% 为均匀配速，低于 85% 需放慢，高于 115% 较充裕。")
+                        Text("额度进度条显示剩余额度；灰条显示已过时间。倒计时按服务返回的重置日期计算。")
+                        Text("重置次数和券到期时间来自账户明细。credit 读取服务余额，不按 API 价格换算。")
                         Text("曲线只保存当前七天窗口。额度重置或切换账户后重新记录，虚线为配速参考。")
                         Text("系统通知需授权。关闭时，提醒显示在状态岛。")
                         if let message = model.errorMessage { Text(message).foregroundStyle(.orange) }

@@ -17,6 +17,14 @@ public struct QuotaWindow: Codable, Equatable, Sendable, Identifiable {
         guard let minutes = durationMinutes, minutes > 0, let reset = resetsAt, reset > now else { return nil }
         return min(100, max(0, reset.timeIntervalSince(now) / (Double(minutes) * 60) * 100))
     }
+    public func elapsedTimePercent(at now: Date) -> Double? {
+        guard let minutes = durationMinutes, minutes > 0, let reset = resetsAt else { return nil }
+        let remaining = reset.timeIntervalSince(now) / (Double(minutes) * 60) * 100
+        return min(100, max(0, 100 - remaining))
+    }
+    public func remainingSeconds(at now: Date) -> TimeInterval? {
+        resetsAt.map { max(0, $0.timeIntervalSince(now)) }
+    }
     /// Same remaining-quota / remaining-time formula as the original app.
     public func pacePercent(at now: Date) -> Double? {
         guard let remaining = remainingPercent, let time = remainingTimePercent(at: now), time > 0 else { return nil }
@@ -36,12 +44,18 @@ public struct QuotaBucket: Codable, Equatable, Sendable, Identifiable {
     public let name: String?
     public let plan: String?
     public let windows: [QuotaWindow]
+    public let credits: CreditBalance?
 }
 
 public struct QuotaSnapshot: Codable, Equatable, Sendable {
     public let buckets: [QuotaBucket]
     public let capturedAt: Date
     public var accountScope: String?
+    public let resetCredits: QuotaResetSummary?
+    public var credits: CreditBalance? {
+        if let codex = buckets.first(where: { $0.id == "codex" }) { return codex.credits }
+        return buckets.first?.credits
+    }
 
     public var windows: [QuotaWindow] { buckets.flatMap(\.windows) }
     public var limitingWindow: QuotaWindow? {
@@ -73,15 +87,24 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
                     durationMinutes: wire.windowDurationMins,
                     resetsAt: wire.resetsAt.map { Date(timeIntervalSince1970: $0) })
             }
-            return QuotaBucket(id: id, name: bucket.limitName, plan: bucket.planType, windows: windows)
+            return QuotaBucket(id: id, name: bucket.limitName, plan: bucket.planType, windows: windows, credits: bucket.credits?.value)
         }
-        return QuotaSnapshot(buckets: buckets, capturedAt: capturedAt, accountScope: nil)
+        let reset = response.rateLimitResetCredits?.value.flatMap { summary -> QuotaResetSummary? in
+            guard summary.availableCount >= 0 else { return nil }
+            return QuotaResetSummary(availableCount: summary.availableCount, credits: summary.credits?.map {
+                QuotaResetCredit(id: $0.id, status: $0.status,
+                    expiresAt: $0.expiresAt.map { Date(timeIntervalSince1970: $0) },
+                    grantedAt: Date(timeIntervalSince1970: $0.grantedAt))
+            })
+        }
+        return QuotaSnapshot(buckets: buckets, capturedAt: capturedAt, accountScope: nil, resetCredits: reset)
     }
 }
 
 private struct WireResponse: Decodable {
     let rateLimits: WireBucket?
     let rateLimitsByLimitId: [String: WireBucket]?
+    let rateLimitResetCredits: OptionalValue<WireResetSummary>?
 }
 private struct WireBucket: Decodable {
     let limitId: String?
@@ -89,9 +112,26 @@ private struct WireBucket: Decodable {
     let planType: String?
     let primary: WireWindow?
     let secondary: WireWindow?
+    let credits: OptionalValue<CreditBalance>?
 }
 private struct WireWindow: Decodable {
     let usedPercent: Double?
     let windowDurationMins: Int?
     let resetsAt: Double?
+}
+
+/// Unavailable optional billing metadata must not break the quota display.
+private struct OptionalValue<Value: Decodable>: Decodable {
+    let value: Value?
+    init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
+}
+private struct WireResetSummary: Decodable {
+    let availableCount: Int
+    let credits: [WireResetCredit]?
+}
+private struct WireResetCredit: Decodable {
+    let id: String
+    let status: String
+    let grantedAt: Double
+    let expiresAt: Double?
 }

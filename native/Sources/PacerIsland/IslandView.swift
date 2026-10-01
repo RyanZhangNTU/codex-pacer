@@ -135,7 +135,8 @@ struct IslandView: View {
             Label("额度暂不可用", systemImage: "exclamationmark.circle")
                 .font(.system(size: 12)).foregroundStyle(secondary).help(message)
         }
-        if let quota = model.quota, !quota.windows.isEmpty {
+        if let quota = model.quota, !quota.buckets.isEmpty || quota.resetCredits != nil {
+            AccountUsageView(snapshot: quota, now: model.now)
             ForEach(quota.buckets) { bucket in
                 if quota.buckets.count > 1 {
                     Text(bucket.name ?? bucket.id).font(.system(size: 11, weight: .medium)).foregroundStyle(secondary)
@@ -189,53 +190,5 @@ struct IslandView: View {
         case .interrupted: return "stop.circle"
         case .unknown: return "questionmark.circle"
         }
-    }
-}
-
-private struct QuotaWindowView: View {
-    let window: QuotaWindow
-    let now: Date
-    let allowPace: Bool
-    let accent: Color
-    let secondary: Color
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(window.label).font(.system(size: 12))
-                Spacer()
-                if let remaining = window.remainingPercent {
-                    Text("\(Int(remaining.rounded()))").font(.system(size: 24, weight: .medium)).monospacedDigit()
-                    Text("% 剩余").font(.system(size: 10)).foregroundStyle(secondary)
-                } else { Text("暂不可用").font(.system(size: 12)).foregroundStyle(secondary) }
-            }
-            GeometryReader { geometry in
-                Capsule().fill(.white.opacity(0.08)).overlay(alignment: .leading) {
-                    if let remaining = window.remainingPercent {
-                        Capsule().fill(accent).frame(width: geometry.size.width * remaining / 100)
-                    }
-                }
-            }.frame(height: 4)
-            HStack {
-                Text(resetText)
-                Spacer()
-                if allowPace, let pace = window.pacePercent(at: now) {
-                    Text("配速 \(Int(pace.rounded()))%").foregroundStyle(pace < 85 ? Color.orange : pace > 115 ? accent : secondary)
-                        .help("剩余额度比例 ÷ 剩余时间比例 × 100。100% 表示与均匀配速一致；85% 以下需放慢，115% 以上较充裕。")
-                } else { Text("配速 —") }
-            }.font(.system(size: 10)).foregroundStyle(secondary)
-        }.accessibilityElement(children: .combine)
-    }
-    private var resetText: String {
-        guard let reset = window.resetsAt else { return "重置时间暂不可用" }
-        let seconds = Int(reset.timeIntervalSince(now))
-        if seconds <= 0 { return "等待重置" }
-        if seconds < 86400 {
-            let hours = seconds / 3600, minutes = max(1, seconds % 3600 / 60)
-            return hours > 0 ? "\(hours) 小时 \(minutes) 分钟后重置" : "\(minutes) 分钟后重置"
-        }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "EEE HH:mm"
-        return "\(formatter.string(from: reset)) 重置"
     }
 }

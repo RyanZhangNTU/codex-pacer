@@ -11,7 +11,9 @@ final class IslandModel: ObservableObject {
     @Published var history = QuotaCycleHistory()
     @Published var historyWarning: String?
     @Published var notice: IslandNotice?
-    @Published var page: IslandPage = .tasks
+    @Published var page: IslandPage = .tasks {
+        didSet { if oldValue != page { onLayoutChange?() } }
+    }
     @Published var selectedActivityID: String?
     @Published var errorMessage: String?
     @Published var refreshing = false
@@ -358,7 +360,7 @@ final class IslandModel: ObservableObject {
             let capture = reset.addingTimeInterval(-7 * 86400 + Double(index) * 5 * 86400 / 12)
             let remaining = 99.0 - Double(index) * 58 / 12
             var snapshot = try! QuotaSnapshot.decode(Data("""
-            {"rateLimits":{"limitId":"codex","planType":"pro","primary":{"usedPercent":32,"windowDurationMins":300,"resetsAt":\(Date().addingTimeInterval(8280).timeIntervalSince1970)},"secondary":{"usedPercent":\(100 - remaining),"windowDurationMins":10080,"resetsAt":\(reset.timeIntervalSince1970)}}}
+            {"rateLimitResetCredits":{"availableCount":1,"credits":[{"id":"demo-reset","status":"available","grantedAt":\(Date().addingTimeInterval(-86400).timeIntervalSince1970),"expiresAt":\(Date().addingTimeInterval(172800).timeIntervalSince1970)}]},"rateLimits":{"limitId":"codex","planType":"pro","credits":{"hasCredits":true,"unlimited":false,"balance":"12500"},"primary":{"usedPercent":32,"windowDurationMins":300,"resetsAt":\(Date().addingTimeInterval(8280).timeIntervalSince1970)},"secondary":{"usedPercent":\(100 - remaining),"windowDurationMins":10080,"resetsAt":\(reset.timeIntervalSince1970)}}}
             """.utf8), capturedAt: capture)
             snapshot.accountScope = "demo"
             history.record(snapshot)
