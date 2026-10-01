@@ -4,7 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-10-01
+
+### Added
+- GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna model labels, chart colors, and bundled Standard short-context API prices, including dated model IDs
+- one-time revaluation of existing usage on upgrade, including dated models already present in an online-refreshed catalog
+
+### Changed
+- GPT-5.6 bundled prices now match the current [OpenAI Standard API price table](https://developers.openai.com/api/docs/pricing): Sol $4/$0.40/$20, Terra $2/$0.20/$12, and Luna $0.20/$0.02/$1.20 for input/cached input/output per million tokens
+- API-equivalent value continues to use Standard short-context pricing; cache writes, long-context prices, and speed-tier charges are outside this estimate
+
 ### Fixed
+- pricing rows with both short- and long-context columns use the short-context output price
+- known catalog rows that used a long-context output price are repaired before usage is recalculated
+- macOS 27 menu bar clicks open the usage popup and context menu correctly
 - Windows tray popups use physical click coordinates to select the monitor at any display scale
 - reopening a resized tray popup resets its size to match its initial position before displaying it
 

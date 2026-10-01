@@ -9,7 +9,7 @@ English | [简体中文](./README.zh-CN.md)
 **Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
 
 > Current stable release: **v1.2.2**
-> Development version: **v1.2.3**, with GPT-6 Astra pricing and Windows compatibility fixes. Not yet published.
+> Development version: **v1.2.4**, with GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna support and updated model prices. Not yet published.
 > Official download: signed and notarized **macOS Apple Silicon DMG** via GitHub Releases. Windows installer publishing is paused for this release.
 
 ## Highlights
@@ -17,7 +17,8 @@ English | [简体中文](./README.zh-CN.md)
 - Imports local Codex usage data from `~/.codex` or a custom `CODEX_HOME`
 - Builds a local SQLite index for fast analysis and drill-down views
 - Estimates API-equivalent value and subscription payoff from token usage
-- Recognizes GPT-5.6 Sol, Terra, and Luna with bundled Standard API pricing
+- Recognizes GPT-6 Astra, GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna, and the GPT-5.6 family with bundled Standard API pricing
+- [Development notes for v1.2.4](./docs/en/release-notes-v1.2.4.md) describe pricing and upgrade behavior
 - Tracks rolling quota windows, including `5-hour` and `7-day` pacing when available
 - Breaks usage down by conversation, root session, subagent, model, and token composition
 - Provides a macOS menu bar experience for quick quota checks

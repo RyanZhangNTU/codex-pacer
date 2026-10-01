@@ -5903,6 +5903,36 @@ mod tests {
   }
 
   #[test]
+  fn scan_prices_new_gpt_6_models_at_standard_value() {
+    let directory = tempdir().expect("tempdir");
+    let codex_home = directory.path().join("codex-home");
+    let sessions_dir = codex_home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let models = [("gpt-6.1-sol", 0.224), ("gpt-6-sol-2026-09-22", 0.228), ("gpt-6-luna", 0.0114)];
+    for (model, _) in models {
+      let lines = [
+        serde_json::json!({"timestamp":"2026-10-01T00:00:00Z","type":"session_meta","payload":{"id":model}}),
+        serde_json::json!({"timestamp":"2026-10-01T00:00:01Z","type":"turn_context","payload":{"model":model,"service_tier":"fast"}}),
+        serde_json::json!({"timestamp":"2026-10-01T00:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100000,"cached_input_tokens":40000,"output_tokens":10000,"reasoning_output_tokens":0,"total_tokens":110000}}}}),
+      ];
+      let body = lines.iter().map(|line| format!("{line}\n")).collect::<String>();
+      std::fs::write(sessions_dir.join(format!("{model}.jsonl")), body).expect("write session");
+    }
+    let db_path = directory.path().join("usage.sqlite");
+    perform_scan(&db_path, Some(codex_home.to_string_lossy().to_string())).expect("scan");
+    let conn = open_connection(&db_path).expect("open db");
+    for (model, expected) in models {
+      let (value, tokens, fast): (f64, i64, i64) = conn.query_row(
+        "SELECT value_usd, total_tokens, fast_mode_effective FROM usage_events WHERE session_id = ?1",
+        params![model], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+      ).expect("imported usage");
+      assert!((value - expected).abs() < 1e-9, "{model}");
+      assert_eq!(tokens, 110000);
+      assert_eq!(fast, 0);
+    }
+  }
+
+  #[test]
   fn scan_prices_gpt_56_sol_at_standard_api_equivalent_value() {
     let directory = tempdir().expect("tempdir");
     let codex_home = directory.path().join("codex-home");
@@ -5956,7 +5986,7 @@ mod tests {
     assert_eq!(output_tokens, 40);
     assert_eq!(total_tokens, 140);
     let standard =
-      (75.0 / 1_000_000.0) * 5.0 + (25.0 / 1_000_000.0) * 0.5 + (40.0 / 1_000_000.0) * 30.0;
+      (75.0 / 1_000_000.0) * 4.0 + (25.0 / 1_000_000.0) * 0.4 + (40.0 / 1_000_000.0) * 20.0;
     assert!((value_usd - standard).abs() < 1e-9);
   }
 

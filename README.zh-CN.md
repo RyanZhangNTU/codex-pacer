@@ -9,7 +9,7 @@
 **Codex Pacer** 是一个本地优先的桌面应用，用来把 Codex 使用情况转换成更容易行动的视角：额度节奏、API 等价价值，以及会话级别的使用分析。你可以更快看清自己消耗额度的速度、订阅回报，以及哪些对话或 subagent 正在驱动这些使用量。
 
 > 当前稳定版本：**v1.2.2**
-> 当前开发版本：**v1.2.3**，新增 GPT-6 Astra 计价与 Windows 兼容性修复，尚未发布。
+> 当前开发版本：**v1.2.4**，新增 GPT-6.1 Sol、GPT-6 Sol 和 GPT-6 Luna 支持，并更新模型价格，尚未发布。
 > 官方下载：通过 GitHub Releases 获取已签名并完成 Apple notarization 的 **macOS Apple Silicon DMG**。本版本暂缓发布 Windows 安装包。
 
 ## 核心能力
@@ -17,7 +17,8 @@
 - 从 `~/.codex` 或自定义 `CODEX_HOME` 导入本地 Codex 使用数据
 - 建立本地 SQLite 索引，便于快速分析和下钻
 - 基于 token 使用量估算 API 等价价值与订阅回本情况
-- 支持 GPT-5.6 Sol、Terra 和 Luna，并内置 Standard API 定价
+- 支持 GPT-6 Astra、GPT-6.1 Sol、GPT-6 Sol、GPT-6 Luna 和 GPT-5.6 系列，并内置 Standard API 定价
+- [v1.2.4 开发版本说明](./docs/zh-CN/release-notes-v1.2.4.md)介绍了计价和升级行为
 - 在可用时跟踪 `5小时`、`7天` 等滚动额度窗口的使用节奏
 - 按对话、root session、subagent、模型、token 构成拆解使用情况
 - 提供 macOS 菜单栏入口，方便快速查看额度状态

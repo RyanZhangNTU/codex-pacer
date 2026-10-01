@@ -67,7 +67,7 @@ const MENU_BAR_POPUP_OFFSET_Y: i32 = 8;
 const TRAY_ICON_MIN_LOGICAL_HEIGHT: f64 = 16.0;
 const TRAY_ICON_MAX_LOGICAL_HEIGHT: f64 = 40.0;
 const FULL_SCAN_MAINTENANCE_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
-const PRICING_VALUE_RESOLUTION_REPAIR_KEY: &str = "pricing_value_resolution_v2";
+const PRICING_VALUE_RESOLUTION_REPAIR_KEY: &str = "pricing_value_resolution_v3";
 const MENU_RENDER_IDLE: u8 = 0;
 const MENU_RENDER_RUNNING: u8 = 1;
 const MENU_RENDER_PENDING: u8 = 2;
@@ -3778,8 +3778,8 @@ mod tests {
     assert_eq!(
       values,
       vec![
-        ("gpt-56-alias-dated".to_string(), 30.0),
-        ("gpt-56-alias-exact".to_string(), 30.0),
+        ("gpt-56-alias-dated".to_string(), 20.0),
+        ("gpt-56-alias-exact".to_string(), 20.0),
       ]
     );
     assert_eq!(repair_completed, 1);
@@ -3858,7 +3858,9 @@ mod tests {
       .execute(
         "
         UPDATE pricing_catalog
-        SET output_price_per_million = 6.25,
+        SET input_price_per_million = 5.0,
+            cached_input_price_per_million = 0.5,
+            output_price_per_million = 6.25,
             is_official = 1
         WHERE model_id = 'gpt-5.6-sol'
         ",
@@ -3907,7 +3909,63 @@ mod tests {
       )
       .expect("load usage value");
 
-    assert_eq!(value_usd, 30.0);
+    assert_eq!(value_usd, 20.0);
+  }
+
+  #[test]
+  fn startup_revalues_gpt_6_history_even_when_official_prices_already_exist() {
+    for preserve_official in [false, true] {
+      let directory = tempdir().expect("tempdir");
+      let db_path = directory.path().join("usage.sqlite");
+      prepare_app_database(&db_path).expect("initialize database");
+      let conn = open_connection(&db_path).expect("open database");
+      conn.execute(
+        "DELETE FROM data_repairs WHERE repair_key = ?1",
+        params![PRICING_VALUE_RESOLUTION_REPAIR_KEY],
+      ).expect("simulate previous resolver version");
+      conn.execute(
+        "INSERT INTO data_repairs (repair_key, completed_at) VALUES ('pricing_value_resolution_v2', '2026-09-15')",
+        [],
+      ).expect("record previous resolver repair");
+      if preserve_official {
+        conn.execute("UPDATE pricing_catalog SET is_official = 1 WHERE model_id IN ('gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna')", [])
+          .expect("simulate online catalog refresh before upgrade");
+      } else {
+        conn.execute("DELETE FROM pricing_catalog WHERE model_id IN ('gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna')", [])
+          .expect("simulate old bundled catalog");
+      }
+      for model in ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"] {
+        conn.execute(
+          "INSERT INTO sessions (session_id, root_session_id, source_state, source_bucket, last_model_id, created_at, imported_at)
+           VALUES (?1, ?1, 'active', 'active', ?2, '2026-10-01', '2026-10-01')",
+          params![model, format!("{model}-2026-10-01")],
+        ).expect("insert historical session");
+        conn.execute(
+          "INSERT INTO usage_events (session_id, timestamp, model_id, input_tokens, cached_input_tokens, output_tokens,
+             reasoning_output_tokens, total_tokens, value_usd, fast_mode_auto, fast_mode_effective)
+           VALUES (?1, '2026-10-01T00:00:00Z', ?2, 100000, 40000, 10000, 0, 110000, 0, 0, 0)",
+          params![model, format!("{model}-2026-10-01")],
+        ).expect("insert historical usage");
+      }
+      drop(conn);
+      prepare_app_database(&db_path).expect("upgrade");
+      let conn = open_connection(&db_path).expect("reopen database");
+      for (model, expected) in [("gpt-6.1-sol", 0.224), ("gpt-6-sol", 0.228), ("gpt-6-luna", 0.0114)] {
+        let (value, tokens): (f64, i64) = conn.query_row(
+          "SELECT value_usd, total_tokens FROM usage_events WHERE session_id = ?1",
+          params![model], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).expect("historical value");
+        assert!((value - expected).abs() < 1e-9, "{model}");
+        assert_eq!(tokens, 110000);
+        let official: i64 = conn.query_row("SELECT is_official FROM pricing_catalog WHERE model_id = ?1", params![model], |row| row.get(0))
+          .expect("pricing provenance");
+        assert_eq!(official, i64::from(preserve_official));
+      }
+      conn.execute_batch("CREATE TRIGGER forbid_repeat_revaluation BEFORE UPDATE ON usage_events BEGIN SELECT RAISE(ABORT, 'unexpected repeat revaluation'); END;")
+        .expect("guard repeated startup");
+      drop(conn);
+      prepare_app_database(&db_path).expect("repeat startup skips revaluation");
+    }
   }
 
   #[test]
@@ -3951,7 +4009,9 @@ mod tests {
       .execute(
         "
         UPDATE pricing_catalog
-        SET output_price_per_million = 6.25,
+        SET input_price_per_million = 5.0,
+            cached_input_price_per_million = 0.5,
+            output_price_per_million = 6.25,
             is_official = 1,
             note = 'malformed-official',
             updated_at = 'malformed-official'
@@ -4059,8 +4119,8 @@ mod tests {
       .collect::<rusqlite::Result<Vec<_>>>()
       .expect("collect repaired values");
 
-    assert_eq!(repaired_output, 30.0);
-    assert_eq!(repaired_values, vec![30.0, 30.0]);
+    assert_eq!(repaired_output, 20.0);
+    assert_eq!(repaired_values, vec![20.0, 20.0]);
     assert!(!pricing_value_resolution_repair_pending(&conn).expect("load completed repair marker"));
   }
 
@@ -4148,7 +4208,7 @@ mod tests {
       .expect("query failed values")
       .collect::<rusqlite::Result<Vec<_>>>()
       .expect("collect failed values");
-    assert_eq!(failed_output, 30.0);
+    assert_eq!(failed_output, 20.0);
     assert_eq!(failed_values, vec![11.0, 22.0]);
     assert!(pricing_value_resolution_repair_pending(&conn).expect("load repair marker"));
 
