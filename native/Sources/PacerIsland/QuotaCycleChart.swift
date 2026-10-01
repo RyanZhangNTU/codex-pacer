@@ -14,10 +14,12 @@ struct QuotaCycleChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text(cycle.bucketName.map { $0 + " · 7 天曲线" } ?? "当前 7 天额度曲线").font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(cycle.bucketName.map { $0 + " · 本周期" } ?? "本周期").font(.system(size: 13, weight: .medium)).lineLimit(1)
                 Spacer()
-                Text((selected ?? points.last).map { "\(formatted($0.timestamp)) · \(Int($0.remaining.rounded()))%" } ?? "等待采样")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                if let selected {
+                    Text("\(formatted(selected.timestamp)) · \(Int(selected.remaining.rounded()))%")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
             Chart {
                 ForEach(points) { point in
@@ -54,12 +56,15 @@ struct QuotaCycleChart: View {
             .frame(height: 108)
             .accessibilityLabel("当前窗口剩余额度折线。\(points.count) 个显示采样点；虚线为均匀配速参考。")
             HStack(spacing: 12) {
-                Label("实际采样", systemImage: "circle.fill").foregroundStyle(accent)
-                Text("虚线：均匀配速").foregroundStyle(.secondary)
+                Label("额度", systemImage: "circle.fill").foregroundStyle(accent)
+                HStack(spacing: 4) {
+                    Path { path in path.move(to: CGPoint(x: 0, y: 3)); path.addLine(to: CGPoint(x: 16, y: 3)) }
+                        .stroke(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .frame(width: 16, height: 6)
+                    Text("配速参考").foregroundStyle(.secondary)
+                }
                 Spacer()
-            }.font(.system(size: 9))
-            Text("\(formatted(cycle.startedAt)) 至 \(formatted(cycle.resetsAt))，重置后重新记录。")
-                .font(.system(size: 9)).foregroundStyle(.secondary)
+            }.font(.system(size: 11))
         }
     }
     private func formatted(_ date: Date) -> String {

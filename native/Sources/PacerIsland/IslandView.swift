@@ -34,29 +34,25 @@ struct IslandView: View {
 
             if model.expanded {
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text("Codex Pacer").font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                        Text(model.isDemo ? "演示数据" : (model.quota?.buckets.first?.plan?.capitalized ?? "本地账户"))
-                            .font(.system(size: 11)).foregroundStyle(secondary)
-                    }.padding(.top, 11)
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(model.statusTitle).font(.system(size: 19, weight: .semibold)).lineLimit(1)
-                        Spacer(minLength: 8)
-                        VStack(alignment: .trailing, spacing: 3) {
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(model.rateText).font(.system(size: 20, weight: .medium)).monospacedDigit()
-                                Text("token/s ≈").font(.system(size: 10)).foregroundStyle(secondary)
+                    if model.page == .tasks {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(model.statusTitle).font(.system(size: 19, weight: .semibold)).lineLimit(1)
+                            Spacer(minLength: 8)
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text(model.rate == nil ? model.rateText : "≈" + model.rateText).font(.system(size: 20, weight: .medium)).monospacedDigit()
+                                Text("token/s").font(.system(size: 11)).foregroundStyle(secondary)
                             }
-                            Text("所选任务 · 近期输出").font(.system(size: 9)).foregroundStyle(secondary)
-                        }
-                        .help("基于本地输出 token 的增量估算，包含等待和工具耗时。样本不足或过期时显示不可用。")
-                    }.padding(.top, 15).padding(.bottom, 15)
+                            .help("所选任务的近期输出速度估算")
+                        }.padding(.top, 12).padding(.bottom, 16)
+                    }
+                    if model.isDemo {
+                        Text("演示").font(.system(size: 11)).foregroundStyle(secondary).padding(.bottom, 8)
+                    }
 
                     Picker("查看内容", selection: $model.page) {
                         Text("任务").tag(IslandPage.tasks)
                         Text("额度").tag(IslandPage.quota)
-                    }.pickerStyle(.segmented).padding(.bottom, 14)
+                    }.pickerStyle(.segmented).labelsHidden().padding(.top, model.page == .quota ? 12 : 0).padding(.bottom, 14)
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
@@ -93,11 +89,7 @@ struct IslandView: View {
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("尚未观测到近期任务").font(.system(size: 13))
-                Text("开始一个本地 Codex 任务后，这里会显示状态。未接入的远程任务不会自动汇总。")
-                    .font(.system(size: 11)).foregroundStyle(secondary)
-            }.padding(.vertical, 12)
+            Text("暂无任务").font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
         } else {
             ForEach(model.visibleActivities) { activity in
                 Button { model.select(activity) } label: {
@@ -122,15 +114,10 @@ struct IslandView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help([activity.modelName, observedAge(activity)].compactMap { $0 }.joined(separator: " · "))
                 .accessibilityLabel("\(model.projectName(activity))，\(activity.observedPhase(at: model.now).label)。选择任务")
             }
-            if let focused = model.focusedActivity {
-                HStack(spacing: 8) {
-                    if let name = focused.modelName { Text(name).lineLimit(1) }
-                    Spacer()
-                    Text(observedAge(focused))
-                }.font(.system(size: 10)).foregroundStyle(secondary)
-            }
+
         }
         Rectangle().fill(.white.opacity(0.09)).frame(height: 1)
         if let window = model.selectedWindow {
@@ -144,14 +131,12 @@ struct IslandView: View {
         Button { model.onOpenCodex?() } label: {
             Label(model.canOpenConversation ? "打开所选会话" : "打开 Codex", systemImage: "arrow.up.forward.app")
         }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(model.accent)
-        Text("状态基于本机日志；三分钟没有新事件时显示未确认。")
-            .font(.system(size: 10)).foregroundStyle(secondary)
     }
 
     @ViewBuilder private var quotaContent: some View {
         if let message = model.errorMessage {
-            Label(message, systemImage: "exclamationmark.circle")
-                .font(.system(size: 11)).foregroundStyle(secondary).fixedSize(horizontal: false, vertical: true)
+            Label("额度暂不可用", systemImage: "exclamationmark.circle")
+                .font(.system(size: 12)).foregroundStyle(secondary).help(message)
         }
         if let quota = model.quota, !quota.windows.isEmpty {
             ForEach(quota.buckets) { bucket in
@@ -166,25 +151,26 @@ struct IslandView: View {
             if let cycle = model.currentCycle {
                 QuotaCycleChart(cycle: cycle, accent: model.accent)
             } else if model.weeklyWindow != nil {
-                Text("当前 7 天窗口尚无有效采样。").font(.system(size: 11)).foregroundStyle(secondary)
+                Text("等待采样").font(.system(size: 12)).foregroundStyle(secondary)
             }
             if let warning = model.historyWarning {
-                Text(warning).font(.system(size: 10)).foregroundStyle(secondary)
+                Label("曲线记录异常", systemImage: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(secondary).help(warning)
             }
         } else if model.errorMessage == nil {
             Text(model.refreshing ? "正在读取账户额度" : "尚未连接 Codex").font(.system(size: 13))
-            Text("使用当前 Codex 登录账户，无需填写 API key。").font(.system(size: 11)).foregroundStyle(secondary)
         }
     }
 
     private var footer: some View {
         HStack(spacing: 14) {
-            Text(model.freshnessText).font(.system(size: 10)).foregroundStyle(secondary)
+            if model.stale || model.errorMessage != nil {
+                Label("未更新", systemImage: "clock").font(.system(size: 11)).help(model.freshnessText)
+            }
             Spacer(minLength: 4)
             Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin") }
                 .help(model.pinned ? "取消固定" : "固定展开").accessibilityLabel(model.pinned ? "取消固定" : "固定展开")
             Button { model.refreshQuota(); model.refreshActivity() } label: { Image(systemName: "arrow.clockwise") }
-                .disabled(model.refreshing).help("刷新").accessibilityLabel("刷新")
+                .disabled(model.refreshing).help("刷新 · " + model.freshnessText).accessibilityLabel("刷新")
             Button { model.onSettings?() } label: { Image(systemName: "gearshape") }
                 .help("设置").accessibilityLabel("设置")
             Button { model.close() } label: { Image(systemName: "chevron.up") }
@@ -245,7 +231,7 @@ private struct QuotaWindowView: View {
     private var resetText: String {
         guard let reset = window.resetsAt else { return "重置时间暂不可用" }
         let seconds = Int(reset.timeIntervalSince(now))
-        if seconds <= 0 { return "已到重置时间，等待更新" }
+        if seconds <= 0 { return "等待重置" }
         if seconds < 86400 {
             let hours = seconds / 3600, minutes = max(1, seconds % 3600 / 60)
             return hours > 0 ? "\(hours) 小时 \(minutes) 分钟后重置" : "\(minutes) 分钟后重置"

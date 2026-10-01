@@ -29,7 +29,7 @@ Demo mode labels its sample data and does not query Codex. The diagnostic prints
 
 Hover to expand; move away to collapse after a short delay. Click the top strip or pin button to keep it open. Select a task to focus its state, recent stage and estimated output rate. Input waits appear ahead of running tasks. The task action opens the selected conversation when it belongs to the default local Codex home; other sources open Codex without assuming that its desktop profile matches.
 
-Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders.
+Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders. Data and calculation notes are collapsed in settings; the island shows only task details, quota and the current curve.
 
 Task state comes from local JSONL events. Only task_started, task_complete and turn_aborted determine the turn lifecycle. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
 
