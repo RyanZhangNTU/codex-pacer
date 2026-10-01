@@ -1,0 +1,128 @@
+import AppKit
+import SwiftUI
+import PacerCore
+
+@main
+enum PacerMain {
+    @MainActor static func main() {
+        if CommandLine.arguments.contains("--diagnose") {
+            Task.detached { await diagnose(); exit(0) }
+            dispatchMain()
+        }
+        // AppKit owns the main run loop. An async MainActor.run closure around
+        // app.run() would hold the actor job and block all refresh tasks.
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        withExtendedLifetime(delegate) { app.run() }
+    }
+
+    private static func diagnose() async {
+        guard let executable = CodexClient.findExecutable() else {
+            print("Codex CLI unavailable"); exit(1)
+        }
+        let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
+        let client = CodexClient(executable: executable, home: home)
+        do {
+            let snapshot = try await client.readQuota()
+            // Only protocol availability is printed; no identity, credentials or task text.
+            print("Quota connected: \(snapshot.buckets.count) buckets, \(snapshot.windows.count) windows")
+            print("Window durations: \(snapshot.windows.compactMap(\.durationMinutes)) minutes")
+            await client.disconnect()
+        } catch {
+            print((error as? CodexClientError)?.errorDescription ?? "Quota unavailable")
+            await client.disconnect()
+            exit(1)
+        }
+    }
+}
+
+@MainActor
+private final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var model: IslandModel!
+    private var panel: PanelController!
+    private var statusItem: NSStatusItem!
+    private var settingsWindow: NSWindow?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        model = IslandModel(demo: CommandLine.arguments.contains("--demo"))
+        panel = PanelController(model: model)
+        model.onSettings = { [weak self] in self?.showSettings() }
+        model.onStatusChange = { [weak self] in self?.updateStatusItem() }
+        let mainMenu = NSMenu()
+        let applicationItem = NSMenuItem()
+        let applicationMenu = NSMenu()
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        applicationMenu.addItem(settingsItem)
+        applicationMenu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "退出 Codex Pacer", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        applicationMenu.addItem(quitItem)
+        applicationItem.submenu = applicationMenu
+        mainMenu.addItem(applicationItem)
+        NSApp.mainMenu = mainMenu
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "circle.hexagongrid", accessibilityDescription: "Codex Pacer")
+            button.imagePosition = .imageLeading
+            button.target = self
+            button.action = #selector(statusClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        // The status item has no bound menu, so its left-click action remains independent.
+        updateStatusItem()
+        model.start()
+    }
+
+    private func updateStatusItem() {
+        statusItem?.button?.title = " " + model.quotaSummary
+        statusItem?.button?.toolTip = "Codex Pacer · \(model.compactStatus) · \(model.freshnessText)"
+    }
+
+    @objc private func statusClicked() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            DispatchQueue.main.async { [weak self] in self?.showMenu() }
+        } else if model.expanded { model.close() }
+        else { panel.show() }
+    }
+    private func showMenu() {
+        let menu = NSMenu()
+        for (title, selector) in [("显示状态岛", #selector(showIsland)), ("刷新额度", #selector(refresh)), ("设置…", #selector(showSettings)), ("退出 Codex Pacer", #selector(quit))] {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button) }
+    }
+    @objc private func showIsland() { panel.show() }
+    @objc private func refresh() { model.refreshQuota() }
+    @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func showSettings() {
+        model.close()
+        if settingsWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 488, height: 540),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Codex Pacer 设置"
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model) { [weak self] in
+            self?.settingsWindow?.orderOut(nil)
+        })
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        panel.stop()
+        Task {
+            await model.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}

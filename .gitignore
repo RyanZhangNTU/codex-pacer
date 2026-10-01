@@ -52,3 +52,5 @@ var/
 .omx
 .playwright-cli
 .omx/
+native/.build/
+native/.swiftpm/
