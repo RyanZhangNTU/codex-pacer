@@ -43,6 +43,7 @@ final class IslandModel: ObservableObject {
     private let historyStore: QuotaHistoryStore
     private let notifications = NotificationDelivery()
     private var attention = AttentionPolicy()
+    private var completionInbox = CompletionInbox()
     private var clock: Timer?
     private var refreshTask: Task<Void, Never>?
     private var localTask: Task<Void, Never>?
@@ -74,7 +75,7 @@ final class IslandModel: ObservableObject {
         activities.filter {
             guard !$0.isInternalReview else { return false }
             if [.completed, .interrupted].contains($0.phase) {
-                return now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120
+                return true
             }
             return [.running, .waitingForInput, .unknown].contains($0.observedPhase(at: now)) ||
             now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120
@@ -84,6 +85,22 @@ final class IslandModel: ObservableObject {
             let left = $0.phaseChangedAt ?? .distantPast, right = $1.phaseChangedAt ?? .distantPast
             return left == right ? $0.id < $1.id : left > right
         }
+    }
+    var completedRetention: TimeInterval {
+        let minutes = UserDefaults.standard.object(forKey: "completedRetentionMinutes") as? Int ?? 30
+        return Double([0, 5, 15, 30, 60, 240].contains(minutes) ? minutes : 30) * 60
+    }
+    var pendingCompletions: [SessionActivity] {
+        UserDefaults.standard.bool(forKey: "completionReminder") ? completionInbox.unreadActivities : []
+    }
+    func isUnreadCompletion(_ activity: SessionActivity) -> Bool { completionInbox.isUnread(activity) }
+    var completionSummary: String {
+        let pending = pendingCompletions
+        return pending.count == 1 ? (pending[0].phase == .interrupted ? "本轮中断" : "本轮结束") : "\(pending.count) 轮结束"
+    }
+    func openCompletionOrPin() {
+        if let activity = pendingCompletions.first, canOpen(activity) { open(activity) }
+        else { togglePin() }
     }
     var selectedWindow: QuotaWindow? {
         let selected = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
@@ -193,6 +210,10 @@ final class IslandModel: ObservableObject {
     func close() { pinned = false; setExpanded(false) }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity) else { return }
+        completionInbox.dismiss(activity)
+        activities.removeAll { $0.id == activity.id && [.completed, .interrupted].contains($0.phase) }
+        if notice?.id.hasPrefix(activity.id + ":") == true { noticeWork?.cancel(); notice = nil }
+        onLayoutChange?(); onStatusChange?()
         onOpenActivity?(activity)
     }
 
@@ -297,10 +318,12 @@ final class IslandModel: ObservableObject {
     }
     private func combineActivities() {
         let oldHeight = panelContentHeight
-        activities = (localActivities + remoteActivities).filter {
-            !$0.isInternalReview && ([.running, .waitingForInput].contains($0.phase) ||
-                now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
-        }
+        let observed = localActivities + remoteActivities
+        completionInbox.observe(observed, at: now, retention: completedRetention)
+        activities = observed.filter {
+            !$0.isInternalReview && ![.completed, .interrupted].contains($0.phase) &&
+                ([.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
+        } + completionInbox.activities
         if oldHeight != panelContentHeight { onLayoutChange?() }
         present(attention.activityNotices(activities, at: now))
         onStatusChange?()
@@ -308,6 +331,7 @@ final class IslandModel: ObservableObject {
 
     func applySettings(sourceChanged: Bool) {
         settingsRevision += 1
+        pruneCompletions()
         if hideProjects, let current = notice, current.kind != .lowQuota {
             notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: "Codex 任务")
         }
@@ -322,6 +346,7 @@ final class IslandModel: ObservableObject {
         history = QuotaCycleHistory()
         historyWarning = nil
         attention = AttentionPolicy()
+        completionInbox = CompletionInbox()
         activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []
         notice = nil
         noticeWork?.cancel()
@@ -357,8 +382,16 @@ final class IslandModel: ObservableObject {
         localTask = nil
         refreshing = false
     }
+    private func pruneCompletions() {
+        let oldHeight = panelContentHeight
+        completionInbox.prune(at: now, retention: completedRetention)
+        let retained = Set(completionInbox.activities.map(\.id))
+        activities.removeAll { [.completed, .interrupted].contains($0.phase) && !retained.contains($0.id) }
+        if oldHeight != panelContentHeight { onLayoutChange?() }
+    }
     private func tick() {
         now = Date()
+        pruneCompletions()
         history.prune(at: now)
         guard !sleeping, !stopped, !demo else { return }
         let normalInterval: Double = expanded ? 30 : 120
@@ -389,9 +422,13 @@ final class IslandModel: ObservableObject {
         guard let newest = enabled.last else { return }
         let visible = hideProjects && newest.kind != .lowQuota ?
             IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: "Codex 任务") : newest
-        notice = visible
         notifications.deliver(visible)
         noticeWork?.cancel()
+        if [.completed, .interrupted].contains(visible.kind) {
+            notice = nil
+            return
+        }
+        notice = visible
         let work = DispatchWorkItem { [weak self] in self?.notice = nil }
         noticeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
@@ -421,6 +458,18 @@ final class IslandModel: ObservableObject {
             """.utf8))
         }
         activities = [activity]
+        if CommandLine.arguments.contains("--demo-completion") {
+            var ended = SessionActivity(id: "demo-ended", project: "额度同步")
+            ended.consume(Data("""
+            {"timestamp":"\(start)","type":"event_msg","payload":{"type":"task_started","turn_id":"ended"}}
+            """.utf8))
+            completionInbox.observe([activity, ended], at: Date(), retention: completedRetention)
+            ended.consume(Data("""
+            {"timestamp":"\(formatter.string(from: Date()))","type":"event_msg","payload":{"type":"task_complete","turn_id":"ended"}}
+            """.utf8))
+            completionInbox.observe([activity, ended], at: Date(), retention: completedRetention)
+            activities += completionInbox.activities
+        }
     }
 }
 

@@ -18,6 +18,7 @@ Quit a running preview before using launch flags:
 
 ~~~sh
 open "output/island-preview/Codex Pacer Island.app" --args --demo
+open "output/island-preview/Codex Pacer Island.app" --args --demo --demo-completion
 open "output/island-preview/Codex Pacer Island.app" --args --expanded
 "output/island-preview/Codex Pacer Island.app/Contents/MacOS/CodexPacerIsland" --diagnose
 ~~~
@@ -34,9 +35,13 @@ Left-click the menu bar item to show or collapse the island; right-click for act
 
 Task state comes from local JSONL events. task_started and turn_context anchor the current turn. task_complete and turn_aborted apply only to that matching turn; an unpaired completion cannot end an unobserved turn. Fresh reasoning and tool calls restore active status when a start was missed. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
 
-Metadata reads are bounded to 1 MiB. Startup tails use 512 KiB per file and catch-up tails use 128 KiB; a bounded backward scan of up to 8 MiB recovers the latest turn anchor when it lies outside that tail. The read-only Codex session index supplements recent date directories, so resumed sessions are not restricted to their creation day. Up to 16 user files are monitored; already observed active turns retain discovery slots. Internal guardian/auto-review sources are filtered before that limit, with the codex-auto-review model as a fallback. Source metadata survives skipped data and rotation. File watches and a discovery pass handle new files and rotation. An observed active turn remains active through long tool calls until a matching end. At startup, old unfinished logs without recent evidence are unconfirmed. A matched completion displays idle. It does not declare the user's overall task finished. Silence does not declare a task completed. Conversation content is not retained.
+Metadata reads are bounded to 1 MiB. Startup tails use 512 KiB per file and catch-up tails use 128 KiB; a bounded backward scan of up to 8 MiB recovers the latest turn anchor when it lies outside that tail. The read-only Codex session index supplements recent date directories, so resumed sessions are not restricted to their creation day. Up to 16 user files are monitored; already observed active turns retain discovery slots. Internal guardian/auto-review sources are filtered before that limit, with the codex-auto-review model as a fallback. Source metadata survives skipped data and rotation. File watches and a discovery pass handle new files and rotation. An observed active turn remains active through long tool calls until a matching end. At startup, old unfinished logs without recent evidence are unconfirmed. A matched completion card displays "本轮结束". It does not declare the user's overall task finished. Silence does not declare a task completed. Conversation content is not retained.
 
 SSH tasks are collected from the enabled SSH aliases saved by Codex. Existing non-interactive OpenSSH authentication and Python 3 are required. Global desktop approval state and remote-control Windows hosts are not covered. A separate app-server process cannot observe every other client. The preview does not start, restart or modify a shared Codex daemon to manufacture runtime status.
+
+Ended and interrupted turns stay in the list until clicked, their state changes, or their retention time expires. Retention defaults to 30 minutes; settings offer 5 or 15 minutes, one or four hours, and until clicked. The in-memory inbox keeps an observed ended turn even if its source reader drops that file from its discovery slots. Clicking dismisses only that ended turn; a new turn can appear and notify again.
+
+The collapsed island shows a checkmark (pause icon for interruption) and the count of unviewed ended turns. Click this status to open the newest conversation directly. Hovering or expanding does not dismiss it. The reminder remains until click, state change or expiry, respects reduced motion, and does not replay old completion alerts at startup. The completion reminder setting controls the collapsed prompt and optional system notifications. Task retention is independent of that setting.
 
 ## token/s
 

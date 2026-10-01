@@ -6,15 +6,18 @@ struct TaskRowView: View {
     let name: String
     let now: Date
     let enabled: Bool
+    let unread: Bool
     let accent: Color
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var phase: ActivityPhase { activity.observedPhase(at: now) }
+    private var detail: String { phase == .completed ? "本轮结束" : activity.detail(at: now) }
     private var color: Color {
         switch phase {
         case .waitingForInput, .interrupted: return Color(red: 0.91, green: 0.75, blue: 0.48)
         case .running: return accent
+        case .completed: return Color(red: 0.56, green: 0.84, blue: 0.79)
         default: return .secondary
         }
     }
@@ -23,6 +26,7 @@ struct TaskRowView: View {
         case .running: return activity.stage == .tool ? "terminal.fill" : "curlybraces"
         case .waitingForInput: return "bubble.left.and.text.bubble.right.fill"
         case .interrupted: return "pause.fill"
+        case .completed: return "checkmark"
         default: return "circle.lefthalf.filled"
         }
     }
@@ -35,9 +39,12 @@ struct TaskRowView: View {
                     .background(RoundedRectangle(cornerRadius: 10).fill(color.opacity(0.12)))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.16), lineWidth: 0.5))
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                        if unread { Circle().fill(color).frame(width: 5, height: 5).accessibilityLabel("未查看") }
+                    }
                     HStack(spacing: 8) {
-                        Text(activity.detail(at: now)).foregroundStyle(color).lineLimit(1)
+                        Text(detail).foregroundStyle(color).lineLimit(1)
                         Spacer(minLength: 4)
                         Label(activity.sourceHost ?? "本机", systemImage: activity.sourceHost == nil ? "desktopcomputer" : "network")
                             .foregroundStyle(.secondary).lineLimit(1)
@@ -48,13 +55,13 @@ struct TaskRowView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 13).fill(.white.opacity(hovered && enabled ? 0.07 : 0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(hovered && enabled ? 0.14 : 0.055), lineWidth: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(hovered && enabled ? 0.14 : unread ? 0.12 : 0.055), lineWidth: 0.5))
             .contentShape(RoundedRectangle(cornerRadius: 13))
         }
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
         .help(enabled ? ["打开会话", activity.modelName].compactMap { $0 }.joined(separator: " · ") : "此来源没有可用的会话链接")
-        .accessibilityLabel("\(name)，\(activity.detail(at: now))，\(activity.sourceHost ?? "本机")。打开会话")
+        .accessibilityLabel("\(name)，\(detail)，\(activity.sourceHost ?? "本机")。打开会话")
     }
 }

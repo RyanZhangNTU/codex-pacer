@@ -5,33 +5,50 @@ struct IslandView: View {
     @ObservedObject var model: IslandModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
+    private let completionColor = Color(red: 0.56, green: 0.84, blue: 0.79)
     private var attached: Bool { model.notchWidth > 0 }
 
     var body: some View {
         VStack(spacing: 0) {
-            Button { model.togglePin() } label: {
-                HStack(spacing: 6) {
-                    Circle().fill(model.accent).frame(width: 6, height: 6)
-                    Text(model.compactStatus).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    if model.showsRate {
-                        Text(model.rate.map { String(format: "≈%.0f", $0) } ?? "采样中").font(.system(size: 10)).monospacedDigit()
-                            .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
-                        Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
-                    }
-                    if attached { Spacer(minLength: model.notchWidth + 8) }
-                    else { Spacer(minLength: 10) }
-                    Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
-                    Text(model.compactWindow).font(.system(size: 10)).foregroundStyle(secondary)
-                    if model.stale || model.errorMessage != nil {
-                        Image(systemName: "clock").font(.system(size: 10)).foregroundStyle(secondary)
-                    }
+            HStack(spacing: 6) {
+                Button { model.openCompletionOrPin() } label: {
+                    HStack(spacing: attached ? 4 : 6) {
+                        if !model.pendingCompletions.isEmpty {
+                            Image(systemName: model.pendingCompletions.first?.phase == .interrupted ? "pause.circle.fill" : "checkmark.circle.fill")
+                                .font(.system(size: 12)).foregroundStyle(completionColor)
+                                .symbolEffect(.bounce, value: reduceMotion ? nil : model.pendingCompletions.first?.phaseChangedAt)
+                        } else {
+                            Circle().fill(model.accent).frame(width: 6, height: 6)
+                        }
+                        Text(model.pendingCompletions.isEmpty ? model.compactStatus : model.completionSummary)
+                            .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                        if model.showsRate {
+                            Text(model.rate.map { String(format: "%.0f", $0) } ?? "采样中")
+                                .font(.system(size: 10)).monospacedDigit()
+                                .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
+                            Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
+                        }
+                    }.frame(height: model.topHeight).contentShape(Rectangle())
                 }
-                .padding(.horizontal, 15)
-                .frame(height: model.topHeight)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(model.compactStatus)，\(model.compactWindow)\(model.quotaSummary)。点击固定展开")
+                .buttonStyle(.plain)
+                .frame(maxWidth: attached ? .infinity : nil, alignment: .leading)
+                .help(model.pendingCompletions.first.map { "打开会话 · " + model.projectName($0) } ?? "固定展开")
+                .accessibilityLabel(model.pendingCompletions.isEmpty ? "\(model.compactStatus)。点击固定展开" : "\(model.completionSummary)。点击打开会话")
+                if attached { Color.clear.frame(width: model.notchWidth + 8, height: model.topHeight) }
+                else { Spacer(minLength: 10) }
+                Button { model.togglePin() } label: {
+                    HStack(spacing: 6) {
+                        Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
+                        Text(model.compactWindow).font(.system(size: 10)).foregroundStyle(secondary)
+                        if model.stale || model.errorMessage != nil {
+                            Image(systemName: "clock").font(.system(size: 10)).foregroundStyle(secondary)
+                        }
+                    }.frame(height: model.topHeight).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: attached ? .infinity : nil, alignment: .trailing)
+                .accessibilityLabel("\(model.compactWindow)\(model.quotaSummary)。点击固定展开")
+            }.padding(.horizontal, 15)
 
             if model.expanded {
                 VStack(alignment: .leading, spacing: 0) {
@@ -39,7 +56,7 @@ struct IslandView: View {
                         Text(model.statusTitle).font(.system(size: 16, weight: .semibold)).lineLimit(1)
                         Spacer(minLength: 12)
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(model.rate == nil ? model.rateText : "≈" + model.rateText)
+                            Text(model.rateText)
                                 .font(.system(size: 22, weight: .medium)).monospacedDigit()
                             Text("token/s").font(.system(size: 10)).foregroundStyle(secondary)
                         }
@@ -88,7 +105,7 @@ struct IslandView: View {
             VStack(spacing: 8) {
                 ForEach(model.visibleActivities) { activity in
                     TaskRowView(activity: activity, name: model.projectName(activity), now: model.now,
-                        enabled: model.canOpen(activity), accent: model.accent) { model.open(activity) }
+                        enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.accent) { model.open(activity) }
                 }
             }
         }

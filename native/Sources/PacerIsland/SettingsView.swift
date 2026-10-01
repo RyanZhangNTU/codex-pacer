@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var lowReminder = UserDefaults.standard.bool(forKey: "lowQuotaReminder")
     @State private var inputReminder = UserDefaults.standard.bool(forKey: "inputReminder")
     @State private var completionReminder = UserDefaults.standard.bool(forKey: "completionReminder")
+    @State private var completedRetention = UserDefaults.standard.object(forKey: "completedRetentionMinutes") as? Int ?? 30
     @State private var systemNotifications = UserDefaults.standard.bool(forKey: "systemNotifications")
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
@@ -50,6 +51,14 @@ struct SettingsView: View {
                     Toggle("低额度提醒", isOn: $lowReminder)
                     Toggle("等待回复提醒", isOn: $inputReminder)
                     Toggle("本轮结束或中断提醒", isOn: $completionReminder)
+                    Picker("结束任务保留", selection: $completedRetention) {
+                        Text("5 分钟").tag(5)
+                        Text("15 分钟").tag(15)
+                        Text("30 分钟").tag(30)
+                        Text("1 小时").tag(60)
+                        Text("4 小时").tag(240)
+                        Text("直到点击").tag(0)
+                    }
                     Toggle("同时使用系统通知", isOn: $systemNotifications)
                 }
                 Section("隐私") {
@@ -74,6 +83,7 @@ struct SettingsView: View {
                         Text("额度进度条显示剩余额度；灰条显示已过时间。倒计时按服务返回的重置日期计算。")
                         Text("重置次数和券到期时间来自账户明细。credit 读取服务余额，不按 API 价格换算。")
                         Text("曲线只保存当前七天窗口。额度重置或切换账户后重新记录，虚线为配速参考。")
+                        Text("结束任务保留到点击、状态变化或设定时间。折叠提示显示未查看的结束轮次，点击直接打开会话。")
                         Text("系统通知需授权。关闭时，提醒显示在状态岛。")
                         if let message = model.errorMessage { Text(message).foregroundStyle(.orange) }
                         if let warning = model.historyWarning { Text(warning).foregroundStyle(.orange) }
@@ -139,6 +149,7 @@ struct SettingsView: View {
             defaults.set(lowReminder, forKey: "lowQuotaReminder")
             defaults.set(inputReminder, forKey: "inputReminder")
             defaults.set(completionReminder, forKey: "completionReminder")
+            defaults.set(completedRetention, forKey: "completedRetentionMinutes")
             defaults.set(allowed, forKey: "systemNotifications")
             defaults.set(hideProjects, forKey: "hideProjects")
             model.applySettings(sourceChanged: sourceChanged)

@@ -66,7 +66,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
-            "completionReminder": false, "systemNotifications": false, "compactMetric": "remaining", "quotaWindowID": "auto"])
+            "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false, "compactMetric": "remaining", "quotaWindowID": "auto"])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         panel = PanelController(model: model)
         model.onSettings = { [weak self] in self?.showSettings() }
