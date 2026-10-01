@@ -2,29 +2,46 @@ import AppKit
 import SwiftUI
 import PacerCore
 
+enum IslandPage: String, CaseIterable { case tasks, quota }
+
 @MainActor
 final class IslandModel: ObservableObject {
     @Published var quota: QuotaSnapshot?
     @Published var activities: [SessionActivity] = []
+    @Published var history = QuotaCycleHistory()
+    @Published var historyWarning: String?
+    @Published var notice: IslandNotice?
+    @Published var page: IslandPage = .tasks
+    @Published var selectedActivityID: String?
     @Published var errorMessage: String?
     @Published var refreshing = false
     @Published var expanded = false
     @Published var pinned = false
     @Published var now = Date()
     @Published var settingsRevision = 0
+    @Published var notchWidth: CGFloat = 0
+    @Published var topHeight: CGFloat = 38
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
-    var notchWidth: CGFloat = 0
-    var topHeight: CGFloat = 38
+    var onOpenCodex: (() -> Void)?
+    var onFocusRequested: (() -> Void)?
+    var canOpenConversation: Bool {
+        focusedActivity?.threadURL != nil && home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path
+    }
     private var client: CodexClient?
     private let reader = LocalActivityReader()
     private let watcher = ActivityWatcher()
+    private let historyStore: QuotaHistoryStore
+    private let notifications = NotificationDelivery()
+    private var attention = AttentionPolicy()
     private var clock: Timer?
     private var refreshTask: Task<Void, Never>?
     private var localTask: Task<Void, Never>?
     private var closeWork: DispatchWorkItem?
+    private var noticeWork: DispatchWorkItem?
     private var sleeping = false
+    private var stopped = false
     private var lastQuotaAttempt = Date.distantPast
     private var lastDiscovery = Date.distantPast
     private var failureCount = 0
@@ -36,58 +53,96 @@ final class IslandModel: ObservableObject {
     var home: URL {
         let configured = UserDefaults.standard.string(forKey: "codexHome") ?? ""
         let path = configured.isEmpty ? (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex") : configured
-        return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
     var prefersFloating: Bool { UserDefaults.standard.bool(forKey: "floatingIsland") }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
+    var hideProjects: Bool { UserDefaults.standard.bool(forKey: "hideProjects") }
     var displayID: Int { UserDefaults.standard.integer(forKey: "displayID") }
     var running: [SessionActivity] { activities.filter { $0.observedPhase(at: now) == .running } }
-    var stale: Bool { quota?.isStale(at: now) ?? false }
-    var remaining: Double? { quota?.limitingWindow?.remainingPercent }
+    var waiting: [SessionActivity] { activities.filter { $0.observedPhase(at: now) == .waitingForInput } }
+    var visibleActivities: [SessionActivity] {
+        activities.filter {
+            if [.completed, .interrupted].contains($0.phase) {
+                return now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120 || $0.id == selectedActivityID
+            }
+            return [.running, .waitingForInput, .unknown].contains($0.observedPhase(at: now)) ||
+            now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120 || $0.id == selectedActivityID
+        }.sorted {
+            let lhs = priority($0.observedPhase(at: now)), rhs = priority($1.observedPhase(at: now))
+            return lhs == rhs ? ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) : lhs < rhs
+        }
+    }
+    var focusedActivity: SessionActivity? {
+        visibleActivities.first { $0.id == selectedActivityID } ?? visibleActivities.first
+    }
+    var selectedWindow: QuotaWindow? {
+        let selected = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
+        if let window = quota?.windows.first(where: { $0.id == selected }) { return window }
+        return weeklyWindow ?? quota?.limitingWindow
+    }
+    var weeklyWindow: QuotaWindow? {
+        let selected = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
+        if let bucket = quota?.buckets.first(where: { $0.windows.contains(where: { $0.id == selected }) }),
+           let weekly = bucket.windows.first(where: { $0.durationMinutes == 10080 }) { return weekly }
+        return quota?.buckets.first(where: { $0.id == "codex" })?.windows.first(where: { $0.durationMinutes == 10080 }) ??
+        quota?.windows.first(where: { $0.durationMinutes == 10080 })
+    }
+    var currentCycle: QuotaCycle? { history.currentCycle(for: weeklyWindow, at: now) }
+    var stale: Bool { (quota?.isStale(at: now) ?? false) || (selectedWindow?.resetsAt.map { $0 <= now } ?? false) }
+    var remaining: Double? { selectedWindow?.remainingPercent }
+    var pace: Double? { stale || errorMessage != nil ? nil : selectedWindow?.pacePercent(at: now) }
     var quotaSummary: String {
-        guard let remaining else { return "—" }
-        return "\(Int(remaining.rounded()))%"
+        if UserDefaults.standard.string(forKey: "compactMetric") == "pace" {
+            return pace.map { "\(Int($0.rounded()))%" } ?? "—"
+        }
+        return remaining.map { "\(Int($0.rounded()))%" } ?? "—"
     }
     var compactWindow: String {
-        quota?.limitingWindow?.label.replacingOccurrences(of: "额度", with: "") ?? ""
+        UserDefaults.standard.string(forKey: "compactMetric") == "pace" ? "配速" :
+        (selectedWindow?.label.replacingOccurrences(of: "额度", with: "") ?? "")
     }
     var statusTitle: String {
+        if !waiting.isEmpty { return "有任务等待回复" }
         if !running.isEmpty { return "正在处理任务" }
-        if activities.first?.observedPhase(at: now) == .completed { return "任务已结束" }
-        if activities.first?.observedPhase(at: now) == .interrupted { return "任务已中断" }
-        return "状态未确认"
+        return focusedActivity?.observedPhase(at: now).label ?? "未观测到近期任务"
     }
-    var compactStatus: String { running.isEmpty ? statusTitle : "\(running.count) 个运行中" }
+    var compactStatus: String {
+        if let notice { return notice.title }
+        if !waiting.isEmpty { return "等待回复" }
+        if !running.isEmpty { return running.count == 1 ? "运行中" : "\(running.count) 个任务" }
+        return focusedActivity?.observedPhase(at: now).label ?? "暂无活动"
+    }
+    var rate: Double? { focusedActivity?.tokensPerSecond(at: now) }
+    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? "—" }
     var accent: Color {
+        if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
         if errorMessage != nil || stale { return Color(red: 0.65, green: 0.68, blue: 0.73) }
         if (remaining ?? 100) <= 15 { return Color(red: 0.91, green: 0.75, blue: 0.48) }
         return Color(red: 0.56, green: 0.84, blue: 0.79)
     }
     var freshnessText: String {
         guard let quota else { return refreshing ? "正在读取额度" : "尚未读取额度" }
+        if selectedWindow?.resetsAt.map({ $0 <= now }) == true { return "窗口已到期，等待更新" }
         let elapsed = max(0, Int(now.timeIntervalSince(quota.capturedAt)))
         if stale || errorMessage != nil { return "\(max(1, elapsed / 60)) 分钟前的额度" }
         return elapsed < 10 ? "刚刚更新" : elapsed < 60 ? "\(elapsed) 秒前更新" : "\(elapsed / 60) 分钟前更新"
     }
+    func projectName(_ activity: SessionActivity) -> String { hideProjects ? "本地任务" : activity.project }
 
-    init(demo: Bool = false) {
+    init(demo: Bool = false, initiallyExpanded: Bool = false) {
         self.demo = demo
-        if demo {
-            quota = try? QuotaSnapshot.decode(Data("""
-            {"rateLimits":{"limitId":"codex","planType":"pro","primary":{"usedPercent":32,"windowDurationMins":300,"resetsAt":\(Date().addingTimeInterval(8280).timeIntervalSince1970)},"secondary":{"usedPercent":59,"windowDurationMins":10080,"resetsAt":\(Date().addingTimeInterval(172800).timeIntervalSince1970)}}}
-            """.utf8))
-            var activity = SessionActivity(id: "demo", project: "Codex Pacer")
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-            activity.consume(Data("{\"timestamp\":\"\(timestamp)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"demo\"}}".utf8))
-            activities = [activity]
-            expanded = true
-            pinned = true
-        }
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
+        historyStore = QuotaHistoryStore(directory: directory)
+        expanded = demo || initiallyExpanded
+        pinned = expanded
+        if demo { makeDemo() }
     }
 
     func start() {
         if !demo { refreshQuota(); refreshActivity() }
-        clock = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        clock = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         let center = NSWorkspace.shared.notificationCenter
@@ -95,10 +150,8 @@ final class IslandModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.sleeping = true
-                self.sourceGeneration += 1
-                self.refreshing = false
+                self.invalidateWork()
                 self.watcher.stop()
-                self.refreshTask?.cancel()
                 if let client = self.client { await client.disconnect() }
             }
         })
@@ -106,17 +159,17 @@ final class IslandModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.sleeping = false
+                self.now = Date()
                 self.refreshQuota(); self.refreshActivity()
             }
         })
     }
-
     func setExpanded(_ value: Bool) {
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
         onLayoutChange?()
-        if value && now.timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
+        if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
     }
     func hover(_ entered: Bool) {
         closeWork?.cancel()
@@ -127,11 +180,18 @@ final class IslandModel: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
         }
     }
-    func togglePin() { pinned.toggle(); setExpanded(true) }
+    func togglePin() { pinned.toggle(); setExpanded(true); if pinned { onFocusRequested?() } }
     func close() { pinned = false; setExpanded(false) }
+    func select(_ activity: SessionActivity) {
+        selectedActivityID = activity.id
+        page = .tasks
+        pinned = true
+        setExpanded(true)
+        onFocusRequested?()
+    }
 
     func refreshQuota() {
-        guard !refreshing, !sleeping, !demo else { return }
+        guard !refreshing, !sleeping, !stopped, !demo else { return }
         refreshing = true
         lastQuotaAttempt = Date()
         let generation = sourceGeneration
@@ -147,11 +207,41 @@ final class IslandModel: ObservableObject {
                 }
                 let snapshot = try await self.client!.readQuota()
                 guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                if self.history.accountScope != snapshot.accountScope {
+                    if let scope = snapshot.accountScope {
+                        let restored = await self.historyStore.restore(home: sourceHome, accountScope: scope)
+                        guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                        self.history = restored?.1 ?? QuotaCycleHistory()
+                    } else { self.history = QuotaCycleHistory() }
+                }
                 self.quota = snapshot
+                self.history.record(snapshot)
                 self.errorMessage = snapshot.windows.isEmpty ? "当前登录方式未返回订阅额度。请检查 Codex 账户。" : nil
                 self.failureCount = 0
+                self.now = Date()
+                if snapshot.accountScope == nil {
+                    self.historyWarning = "账户标识暂不可用，曲线尚未开始记录。"
+                } else {
+                    let saved = await self.historyStore.save(home: sourceHome, snapshot: snapshot, history: self.history)
+                    guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                    self.historyWarning = saved ? nil : "曲线暂未保存，退出后可能丢失。"
+                }
+                self.present(self.attention.quotaNotices(snapshot, at: self.now))
             } catch {
                 guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                let scope = await self.client?.currentAccountScope()
+                guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                if scope == nil {
+                    self.quota = nil
+                    self.history = QuotaCycleHistory()
+                } else if let scope, self.quota?.accountScope != scope {
+                    self.quota = nil
+                    self.history = QuotaCycleHistory()
+                    let restored = await self.historyStore.restore(home: sourceHome, accountScope: scope)
+                    guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                    self.quota = restored?.0
+                    self.history = restored?.1 ?? QuotaCycleHistory()
+                }
                 self.errorMessage = (error as? CodexClientError)?.errorDescription ?? "额度读取失败，请稍后刷新。"
                 self.failureCount = min(self.failureCount + 1, 4)
             }
@@ -160,16 +250,18 @@ final class IslandModel: ObservableObject {
     }
 
     func refreshActivity() {
-        guard localTask == nil, !sleeping, !demo else { return }
+        guard localTask == nil, !sleeping, !stopped, !demo else { return }
         lastDiscovery = Date()
         let generation = sourceGeneration
         let sourceHome = home
         localTask = Task { [weak self, reader] in
             let result = await reader.read(home: sourceHome)
             guard let self else { return }
-            defer { self.localTask = nil }
+            defer { if generation == self.sourceGeneration { self.localTask = nil } }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-            self.activities = result.activities.filter { Date().timeIntervalSince($0.lastObserved ?? .distantPast) < 900 }
+            self.now = Date()
+            self.activities = result.activities.filter { self.now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900 }
+            self.present(self.attention.activityNotices(self.activities, at: self.now))
             self.watcher.observe(result.watchURLs) { [weak self] in self?.refreshActivity() }
             self.onStatusChange?()
         }
@@ -177,18 +269,26 @@ final class IslandModel: ObservableObject {
 
     func applySettings(sourceChanged: Bool) {
         settingsRevision += 1
+        if hideProjects, let current = notice, current.kind != .lowQuota {
+            notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: "本地 Codex 任务")
+        }
         onLayoutChange?()
+        onStatusChange?()
         guard sourceChanged else { return }
-        sourceGeneration += 1
-        refreshTask?.cancel()
-        localTask?.cancel()
+        invalidateWork()
         watcher.stop()
         let previous = client
         client = nil
         quota = nil
+        history = QuotaCycleHistory()
+        historyWarning = nil
+        attention = AttentionPolicy()
         activities = []
+        selectedActivityID = nil
+        notice = nil
+        noticeWork?.cancel()
         errorMessage = nil
-        refreshing = false
+        failureCount = 0
         Task { [weak self, reader] in
             await previous?.disconnect()
             await reader.reset()
@@ -198,23 +298,86 @@ final class IslandModel: ObservableObject {
     }
 
     func shutdown() async {
+        stopped = true
         clock?.invalidate()
         closeWork?.cancel()
+        noticeWork?.cancel()
         watcher.stop()
-        refreshTask?.cancel()
-        localTask?.cancel()
+        invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
-        await client?.disconnect()
+        await client?.shutdown()
     }
 
+    private func invalidateWork() {
+        sourceGeneration += 1
+        refreshTask?.cancel()
+        localTask?.cancel()
+        localTask = nil
+        refreshing = false
+    }
     private func tick() {
         now = Date()
-        guard !sleeping, !demo else { return }
+        history.prune(at: now)
+        guard !sleeping, !stopped, !demo else { return }
         let normalInterval: Double = expanded ? 30 : 120
         let interval = failureCount == 0 ? normalInterval : min(600, normalInterval * pow(2, Double(failureCount)))
         if now.timeIntervalSince(lastQuotaAttempt) >= interval { refreshQuota() }
         if now.timeIntervalSince(lastDiscovery) >= 30 { refreshActivity() }
         onStatusChange?()
+    }
+    private func priority(_ phase: ActivityPhase) -> Int {
+        switch phase {
+        case .waitingForInput: return 0
+        case .running: return 1
+        case .interrupted: return 2
+        case .completed: return 3
+        case .unknown: return 4
+        }
+    }
+    private func present(_ notices: [IslandNotice]) {
+        guard !demo else { return }
+        let enabled = notices.filter { notice in
+            switch notice.kind {
+            case .lowQuota: return UserDefaults.standard.bool(forKey: "lowQuotaReminder")
+            case .waitingForInput: return UserDefaults.standard.bool(forKey: "inputReminder")
+            case .completed, .interrupted: return UserDefaults.standard.bool(forKey: "completionReminder")
+            }
+        }
+        guard let newest = enabled.last else { return }
+        let visible = hideProjects && newest.kind != .lowQuota ?
+            IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: "本地 Codex 任务") : newest
+        notice = visible
+        notifications.deliver(visible)
+        noticeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.notice = nil }
+        noticeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
+    }
+    private func makeDemo() {
+        let reset = Date().addingTimeInterval(2 * 86400)
+        for index in 0...12 {
+            let capture = reset.addingTimeInterval(-7 * 86400 + Double(index) * 5 * 86400 / 12)
+            let remaining = 99.0 - Double(index) * 58 / 12
+            var snapshot = try! QuotaSnapshot.decode(Data("""
+            {"rateLimits":{"limitId":"codex","planType":"pro","primary":{"usedPercent":32,"windowDurationMins":300,"resetsAt":\(Date().addingTimeInterval(8280).timeIntervalSince1970)},"secondary":{"usedPercent":\(100 - remaining),"windowDurationMins":10080,"resetsAt":\(reset.timeIntervalSince1970)}}}
+            """.utf8), capturedAt: capture)
+            snapshot.accountScope = "demo"
+            history.record(snapshot)
+            quota = snapshot
+        }
+        var activity = SessionActivity(id: "demo", project: "Codex Pacer")
+        let formatter = ISO8601DateFormatter()
+        let start = formatter.string(from: Date().addingTimeInterval(-20))
+        activity.consume(Data("""
+        {"timestamp":"\(start)","type":"event_msg","payload":{"type":"task_started","turn_id":"demo"}}
+        """.utf8))
+        for (seconds, tokens) in [(-15.0, 100), (-5.0, 300)] {
+            let date = formatter.string(from: Date().addingTimeInterval(seconds))
+            activity.consume(Data("""
+            {"timestamp":"\(date)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"output_tokens":\(tokens)}}}}
+            """.utf8))
+        }
+        activities = [activity]
     }
 }
 

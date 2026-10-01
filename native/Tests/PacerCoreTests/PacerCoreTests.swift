@@ -131,6 +131,7 @@ final class ClientTests: XCTestCase {
           [ -n "$id" ] || continue
           case "$line" in
             *initialize*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+            *account/read*) printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"pro"},"workspaceRouting":{"chatgptAccountId":"fixture","backendOrigin":"test"}}}\n' "$id" ;;
             *account/rateLimits/read*) \#(quota) ;;
           esac
         done

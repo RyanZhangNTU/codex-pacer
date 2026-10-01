@@ -1,61 +1,70 @@
 # Codex Pacer Island preview
 
-The macOS version of Codex Pacer is being rebuilt around current task activity and account quota. This preview uses SwiftUI and AppKit. It has no historical analytics, pricing engine, SQLite database, or API value calculation.
+The native macOS app focuses on task interaction, account quota and pacing. SwiftUI and AppKit provide the island window; Swift Charts displays the current quota cycle. There are no model-price calculations or historical usage analytics.
 
 ## Build and run
 
-Requires macOS 14 or later and Xcode with a Swift 5.10 or newer toolchain.
+Requires macOS 14 or later and Xcode with Swift 5.10 or newer.
 
-```sh
+~~~sh
 npm run island:test
 npm run island:build
 open "output/island-preview/Codex Pacer Island.app"
-```
+~~~
 
-The scripts copy the Swift package to a temporary local directory before building. This avoids iCloud build metadata and keeps compiler caches outside the source tree. The resulting app is ad hoc signed for local testing. It is not a notarized distribution.
+The scripts build and sign in a local temporary directory, then validate the copied app. The preview is ad hoc signed for local testing and is not notarized. Its bundle ID, com.codexpacer.island.preview, is separate from the Tauri app.
 
-The preview uses bundle ID `com.codexpacer.island.preview`, separate from the existing Tauri app. Settings stay in the preview's preferences. The old app's database is not migrated.
+Quit a running preview before using launch flags:
 
-For a UI demonstration without reading Codex data:
-
-```sh
+~~~sh
 open "output/island-preview/Codex Pacer Island.app" --args --demo
-```
-
-For a live quota connection check without displaying account identity or task text:
-
-```sh
+open "output/island-preview/Codex Pacer Island.app" --args --demo --quota
+open "output/island-preview/Codex Pacer Island.app" --args --expanded
 "output/island-preview/Codex Pacer Island.app/Contents/MacOS/CodexPacerIsland" --diagnose
-```
+~~~
 
-## Interaction
+Demo mode labels its sample data and does not query Codex. The diagnostic prints connection availability and window durations, without account identity, credentials or task text.
 
-- Hover to expand. Move away to collapse after a short delay.
-- Click the compact strip or the pin button to keep it open.
-- Click outside, press Escape while the app has keyboard focus, or use the collapse button to close it.
-- Left-click the menu bar item to show or collapse the island. Right-click for refresh, settings, and quit.
-- Settings select a display, floating capsule mode, fullscreen visibility, Codex executable, and Codex home.
+## Task interaction
 
-The app uses the physical notch's safe area when available. Other displays use a capsule below the menu bar. Hovering uses a nonactivating panel; settings are a normal keyboard-focused window.
+Hover to expand; move away to collapse after a short delay. Click the top strip or pin button to keep it open. Select a task to focus its state, recent stage and estimated output rate. Input waits appear ahead of running tasks. The task action opens the selected conversation when it belongs to the default local Codex home; other sources open Codex without assuming that its desktop profile matches.
 
-## Data boundaries
+Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders.
 
-Quota comes from a dedicated `codex app-server` process using only initialization and `account/rateLimits/read`. The app never starts or resumes a Codex turn. Codex owns authentication; the preview does not read or copy tokens. App-server remains an evolving protocol, so unavailable and malformed responses are handled explicitly.
+Task state comes from local JSONL events. Only task_started, task_complete and turn_aborted determine the turn lifecycle. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
 
-Multi-bucket responses take precedence over the legacy single-bucket response. Window labels use the reported duration. Null usage stays unavailable. Expired reset timestamps do not imply restored quota. Failed reads keep the last snapshot with its age; changing the source clears it.
+Startup reads are bounded to 512 KiB per file, later catch-up reads to 128 KiB, across at most 16 files in today's and yesterday's directories. File watches and a discovery pass handle new files and rotation. A task with no observed event for three minutes becomes unconfirmed; its last known wait remains visible as a last known state. A completion means the turn ended, not that its work succeeded. Conversation content is not retained.
 
-Quota refreshes every 30 seconds while expanded and every two minutes in the background, with bounded backoff on errors. Sleep pauses updates; wake requests fresh data. These intervals are initial defaults, not measured performance claims.
+Remote tasks and global desktop approval state are not reliably covered by this adapter. A separate app-server process cannot observe every other client. The preview does not start, restart or modify a shared Codex daemon to manufacture runtime status.
 
-Activity reads at most 16 recent JSONL files from today's and yesterday's local session directories. Initial and catch-up reads are capped at 128 KiB per file. Files and directories are watched, with a periodic bounded discovery pass for rollover and missed events. Conversation text is not stored.
+## token/s
 
-Only explicit `task_started`, `task_complete`, and `turn_aborted` events determine lifecycle state. Unmatched completions cannot end a newer turn. A task with no observed event for three minutes becomes unconfirmed. A completion means the task ended; it does not prove the work succeeded. Waiting for approval, remote tasks, and global desktop status are not inferred in this preview. Account quota can include usage from other devices.
+The estimate uses increases in total_token_usage.output_tokens over report intervals. Input tokens are excluded. Samples over recent intervals are combined, count rollback clears the estimate, idle gaps are excluded at turn boundaries, and the display expires after 15 seconds without a report. At least two usable counter readings are needed unless a previous session counter anchors a new turn.
 
-## Architecture
+The value includes waiting and tool time between reports. It is not a direct measurement of model-side decode throughput. Unknown rates display as unavailable; rates are per selected task.
 
-- `PacerCore`: quota normalization, lifecycle reduction, bounded log reads, and reusable RPC transport.
-- `PacerIsland`: observable state, adaptive refresh, file watches, native panel geometry, SwiftUI views, and settings.
-- `PacerCoreTests`: missing and multi-bucket quota, stale data, lifecycle ordering, partial/rotated logs, concurrent refresh, and transport timeout coverage.
+## Quota, pacing and current-cycle curve
 
-Interface inspiration: [boring.notch](https://github.com/TheBoredTeam/boring.notch), [DynamicNotchKit](https://github.com/MrKai77/DynamicNotchKit), and [CodexBar](https://github.com/steipete/CodexBar). This package has no third-party Swift dependencies and incorporates no source from those projects.
+Quota uses a dedicated read-only codex app-server connection. Initialization, account/read and account/rateLimits/read do not start or resume turns. The workspace identifier returned by Codex is hashed for isolation. The preview does not read or copy authentication tokens. Authentication file metadata changes reconnect the client.
 
-Before release, verify physical-notch and external-display placement, fullscreen/Spaces, pointer and keyboard behavior, sleep/wake, account-source switching, VoiceOver, and CPU/memory including the app-server child. Native UI checks and automated core tests provide different evidence.
+Multi-bucket responses take precedence over the legacy view. Window labels follow the reported duration, and missing usage stays unavailable. Account quota may include usage from other devices.
+
+Pacing preserves the original formula: remaining quota percentage divided by remaining time percentage, multiplied by 100. The original 85% and 115% thresholds indicate faster consumption and more spare capacity. The value is capped at 1000%; an expired or stale window has no live pace estimate.
+
+Only the current seven-day curve is recorded per bucket. A changed reset deadline starts a fresh cycle, including an early manual reset. Small deadline corrections preserve a curve; a quota recovery with a forward reset deadline still starts a new one. Out-of-order snapshots cannot restore an older cycle. Expired cycles and points older than seven days are pruned.
+
+Every valid refresh contributes an actual reading. Storage is bounded to 20,161 readings per curve. The chart displays a subset of actual points with their original endpoints; it does not invent a full-quota starting point. Its dashed line is an explicitly labeled uniform-pacing reference.
+
+The private cache under Application Support/CodexPacerIsland/CurrentCycle contains only the current quota snapshot and cycle points. Files are isolated by Codex home, have owner-only access, and load only after a matching workspace has been verified. Switching account or workspace discards the previous account's active curve. No seven-day history is imported from the old database.
+
+Refreshes use 30-second intervals while expanded and two-minute intervals in the background, with bounded error backoff. Failed reads show cached data with its age; they never add curve points. Sleep pauses work, wake requests new data, and source changes reject obsolete responses.
+
+## Reminders and validation
+
+Low-quota and input-wait reminders appear briefly in the island. Task-end reminders are optional. Startup task events are not replayed, and repeated quota refreshes do not repeat a low-quota alert. System notifications stay off until the user enables them and grants macOS permission. Project names can be hidden in the interface and new notices.
+
+The core tests cover pacing, reset and account boundaries, current-cycle persistence, token-rate estimation, synchronous input waits, late tool responses, reminder deduplication, geometry, and RPC timeout/reconnection.
+
+Before release, check physical-notch and external-display behavior, fullscreen/Spaces, keyboard and pointer focus, sleep/wake, settings, source/account switching, notification permissions, VoiceOver, and CPU/memory including the child app-server. Automated tests and screenshots provide different evidence.
+
+Interface references: boring.notch, DynamicNotchKit and CodexBar. The package has no third-party Swift dependencies and copies no source from those projects.

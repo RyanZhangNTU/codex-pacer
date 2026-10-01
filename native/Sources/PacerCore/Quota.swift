@@ -13,6 +13,15 @@ public struct QuotaWindow: Codable, Equatable, Sendable, Identifiable {
         if minutes % 60 == 0 { return "\(minutes / 60) 小时额度" }
         return "\(minutes) 分钟额度"
     }
+    public func remainingTimePercent(at now: Date) -> Double? {
+        guard let minutes = durationMinutes, minutes > 0, let reset = resetsAt, reset > now else { return nil }
+        return min(100, max(0, reset.timeIntervalSince(now) / (Double(minutes) * 60) * 100))
+    }
+    /// Same remaining-quota / remaining-time formula as the original app.
+    public func pacePercent(at now: Date) -> Double? {
+        guard let remaining = remainingPercent, let time = remainingTimePercent(at: now), time > 0 else { return nil }
+        return min(1000, remaining / time * 100)
+    }
 
     public init(id: String, usedPercent: Double?, durationMinutes: Int?, resetsAt: Date?) {
         self.id = id
@@ -32,6 +41,7 @@ public struct QuotaBucket: Codable, Equatable, Sendable, Identifiable {
 public struct QuotaSnapshot: Codable, Equatable, Sendable {
     public let buckets: [QuotaBucket]
     public let capturedAt: Date
+    public var accountScope: String?
 
     public var windows: [QuotaWindow] { buckets.flatMap(\.windows) }
     public var limitingWindow: QuotaWindow? {
@@ -65,7 +75,7 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
             }
             return QuotaBucket(id: id, name: bucket.limitName, plan: bucket.planType, windows: windows)
         }
-        return QuotaSnapshot(buckets: buckets, capturedAt: capturedAt)
+        return QuotaSnapshot(buckets: buckets, capturedAt: capturedAt, accountScope: nil)
     }
 }
 

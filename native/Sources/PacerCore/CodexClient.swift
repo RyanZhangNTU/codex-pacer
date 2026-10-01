@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import Darwin
 
 public enum CodexClientError: Error, LocalizedError {
     case missingExecutable, disconnected, timeout, invalidResponse, server(String)
@@ -18,11 +20,16 @@ public actor CodexClient {
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
+    private var pipeReader: PipeChunkReader?
+    private var readTask: Task<Void, Never>?
+    private var streamContinuation: AsyncStream<Data>.Continuation?
     private var buffer = Data()
     private var nextID = 1
     private var generation = 0
     private var ready = false
     private var quotaTask: Task<QuotaSnapshot, Error>?
+    private var verifiedAccountScope: String?
+    private var authFingerprint: String?
     private struct Pending {
         let continuation: CheckedContinuation<Data, Error>
         let timeout: Task<Void, Never>
@@ -61,27 +68,57 @@ public actor CodexClient {
         defer { quotaTask = nil }
         return try await task.value
     }
+    public func currentAccountScope() -> String? { verifiedAccountScope }
+    public func shutdown() async {
+        disconnect()
+        // Allow the bounded child-termination fallback to run before application exit.
+        try? await Task.sleep(nanoseconds: 650_000_000)
+    }
 
     private func fetchQuota() async throws -> QuotaSnapshot {
         do {
+            verifiedAccountScope = nil
+            let fingerprint = Self.authenticationFingerprint(home: home)
+            if fingerprint != authFingerprint { disconnect(); authFingerprint = fingerprint }
             if !ready {
                 try start()
-                _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": "2.0.0-preview.1"]])
+                _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": "2.0.0-preview.2"], "capabilities": ["experimentalApi": true]])
                 try write(["method": "initialized", "params": [:]])
                 ready = true
             }
+            let account = try await request("account/read", params: ["refreshToken": false])
+            if let value = try JSONSerialization.jsonObject(with: account) as? [String: Any],
+               let routing = value["workspaceRouting"] as? [String: Any],
+               let accountID = routing["chatgptAccountId"] as? String, !accountID.isEmpty {
+                let plan = (value["account"] as? [String: Any])?["planType"] as? String ?? ""
+                let key = accountID + "|" + (routing["backendOrigin"] as? String ?? "") + "|" + plan
+                verifiedAccountScope = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+            }
             let data = try await request("account/rateLimits/read")
-            return try QuotaSnapshot.decode(data)
+            var snapshot = try QuotaSnapshot.decode(data)
+            snapshot.accountScope = verifiedAccountScope
+            return snapshot
         } catch {
             disconnect()
             throw error
         }
     }
+    private static func authenticationFingerprint(home: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: home.appendingPathComponent("auth.json").path) else { return nil }
+        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(attrs[.systemFileNumber] ?? "")|\(modified)|\(attrs[.size] ?? "")"
+    }
 
     public func disconnect() {
         generation += 1
         ready = false
+        pipeReader?.stop()
+        pipeReader = nil
         output?.readabilityHandler = nil
+        streamContinuation?.finish()
+        streamContinuation = nil
+        readTask?.cancel()
+        readTask = nil
         try? input?.close()
         try? output?.close()
         input = nil
@@ -121,13 +158,31 @@ public actor CodexClient {
         child.standardError = FileHandle.nullDevice
         generation += 1
         let currentGeneration = generation
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            Task { await self?.receive(data, generation: currentGeneration) }
+        let reader = PipeChunkReader(descriptor: stdout.fileHandleForReading.fileDescriptor)
+        pipeReader = reader
+        let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
+        streamContinuation = channel.continuation
+        readTask = Task { [weak self] in
+            for await data in channel.stream {
+                guard !Task.isCancelled else { return }
+                await self?.receive(data, generation: currentGeneration)
+            }
+            await self?.closed(generation: currentGeneration)
         }
-        child.terminationHandler = { [weak self] _ in
-            Task { await self?.closed(generation: currentGeneration) }
+        stdout.fileHandleForReading.readabilityHandler = { [weak self] _ in
+            // One POSIX read returns the available pipe bytes. Foundation's
+            // read(upToCount:) can wait for the requested size on a live pipe.
+            guard let data = reader.read() else { return }
+            if !data.isEmpty {
+                if case .dropped = channel.continuation.yield(data) {
+                    channel.continuation.finish()
+                    Task { await self?.closed(generation: currentGeneration) }
+                }
+            } else {
+                channel.continuation.finish()
+            }
         }
+        // EOF drains the ordered stream before closing pending requests.
         do { try child.run() }
         catch {
             stdout.fileHandleForReading.readabilityHandler = nil
@@ -198,4 +253,26 @@ public actor CodexClient {
     private func closed(generation: Int) {
         if generation == self.generation { disconnect() }
     }
+}
+
+/// Synchronizes cancellation with callbacks, so an old callback cannot consume
+/// bytes from a newly opened pipe that reused the same descriptor number.
+private final class PipeChunkReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private let descriptor: Int32
+    private var active = true
+    init(descriptor: Int32) {
+        self.descriptor = descriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0 { _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) }
+    }
+    func read() -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        guard active else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 65536)
+        let count = Darwin.read(descriptor, &bytes, 65536)
+        if count > 0 { return Data(bytes.prefix(count)) }
+        return count == 0 ? Data() : nil
+    }
+    func stop() { lock.lock(); active = false; lock.unlock() }
 }

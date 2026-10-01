@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PacerCore
 
 private final class IslandPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -24,8 +25,13 @@ final class PanelController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
-        panel.contentView = NSHostingView(rootView: IslandView(model: model))
+        let hosting = NSHostingView(rootView: IslandView(model: model))
+        hosting.sizingOptions = []
+        hosting.safeAreaRegions = []
+        hosting.autoresizingMask = [.width, .height]
+        panel.contentView = hosting
         model.onLayoutChange = { [weak self] in self?.layout() }
+        model.onFocusRequested = { [weak self] in self?.panel.makeKey() }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.layout(animated: false) }
         })
@@ -41,19 +47,22 @@ final class PanelController {
         }) { monitors.append(monitor) }
         layout(animated: false)
         panel.orderFrontRegardless()
+        if model.pinned { panel.makeKey() }
     }
 
     func show() {
         model.pinned = true
         model.setExpanded(true)
         panel.orderFrontRegardless()
+        panel.makeKey()
     }
 
     private func layout(animated: Bool = true) {
+        if !model.expanded { panel.resignKey() }
         let selected = NSScreen.screens.first {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue == model.displayID
         }
-        guard let screen = selected ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = selected ?? NSScreen.screens.first else { return }
         let hasNotch = screen.safeAreaInsets.top > 0 && !model.prefersFloating
         let notchWidth: CGFloat
         if hasNotch, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
@@ -61,10 +70,8 @@ final class PanelController {
         } else { notchWidth = 0 }
         model.notchWidth = notchWidth
         model.topHeight = hasNotch ? max(32, screen.safeAreaInsets.top) : 38
-        let width = min(screen.frame.width - 24, model.expanded ? max(420, notchWidth + 212) : max(hasNotch ? notchWidth + 212 : 254, 254))
-        let height: CGFloat = model.expanded ? model.topHeight + 360 : model.topHeight
-        let top = hasNotch ? screen.frame.maxY : screen.visibleFrame.maxY - 10
-        let frame = NSRect(x: screen.frame.midX - width / 2, y: top - height, width: width, height: height)
+        let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
+            topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch)
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { context in

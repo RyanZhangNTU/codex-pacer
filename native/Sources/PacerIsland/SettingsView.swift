@@ -9,12 +9,20 @@ struct SettingsView: View {
     @State private var floating = UserDefaults.standard.bool(forKey: "floatingIsland")
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
+    @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
+    @State private var windowID = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
+    @State private var lowReminder = UserDefaults.standard.bool(forKey: "lowQuotaReminder")
+    @State private var inputReminder = UserDefaults.standard.bool(forKey: "inputReminder")
+    @State private var completionReminder = UserDefaults.standard.bool(forKey: "completionReminder")
+    @State private var systemNotifications = UserDefaults.standard.bool(forKey: "systemNotifications")
+    @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var validation: String?
+    @State private var saving = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Codex Pacer").font(.system(size: 23, weight: .semibold))
-            Text("实时状态与额度").foregroundStyle(.secondary)
+            Text("任务状态、额度与配速").foregroundStyle(.secondary)
             Form {
                 Section("显示") {
                     Toggle("使用悬浮胶囊", isOn: $floating)
@@ -25,34 +33,79 @@ struct SettingsView: View {
                             Text(screen.localizedName).tag((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0)
                         }
                     }
+                    Picker("收起时的百分比", selection: $metric) {
+                        Text("剩余额度").tag("remaining")
+                        Text("配速百分比").tag("pace")
+                    }
+                    Picker("额度窗口", selection: $windowID) {
+                        Text("自动，优先 7 天窗口").tag("auto")
+                        ForEach(model.quota?.buckets ?? []) { bucket in
+                            ForEach(bucket.windows) { window in
+                                Text(window.label + ((model.quota?.buckets.count ?? 0) > 1 ? " · " + (bucket.name ?? bucket.id) : "")).tag(window.id)
+                            }
+                        }
+                    }
                 }
-                Section("Codex 数据来源") {
-                    TextField("CLI 路径", text: $executable, prompt: Text("留空自动查找"))
-                    TextField("Codex 目录", text: $home, prompt: Text("留空使用 CODEX_HOME 或 ~/.codex"))
-                    Text("读取当前本地 Codex 账户的额度。任务活动仅覆盖本机近期日志，状态过期时显示未确认。")
+                Section("提醒") {
+                    Toggle("低额度提醒", isOn: $lowReminder)
+                    Toggle("等待回复提醒", isOn: $inputReminder)
+                    Toggle("任务结束或中断提醒", isOn: $completionReminder)
+                    Toggle("同时使用系统通知", isOn: $systemNotifications)
+                    Text("系统通知需要你的授权。未启用时，提醒只出现在状态岛。")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                Section {
-                    Text("预览版 2.0.0-preview.1 · macOS 原生界面")
-                    Text("新版不计算 API 价值，也不保存历史统计。")
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
-            }.formStyle(.grouped)
-            if let validation { Text(validation).foregroundStyle(.red).font(.system(size: 12)) }
+                Section("隐私") {
+                    Toggle("隐藏项目名称", isOn: $hideProjects)
+                    Text("只保存当前额度窗口的曲线，最多 7 天。重置额度或切换账户后重新记录。")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Section("Codex 数据来源") {
+                    HStack {
+                        TextField("CLI 路径", text: $executable, prompt: Text("自动查找"))
+                        Button("选择…") { choose(directory: false) }
+                    }
+                    HStack {
+                        TextField("Codex 目录", text: $home, prompt: Text("CODEX_HOME 或 ~/.codex"))
+                        Button("选择…") { choose(directory: true) }
+                    }
+                    Text("任务状态来自本机日志。token/s 是输出增量的估算，样本不足或过期时显示不可用。")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }.formStyle(.grouped).disabled(saving)
+            if let validation { Text(validation).foregroundStyle(.orange).font(.system(size: 12)) }
             HStack {
+                Text("2.0.0-preview.2").font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
-                Button("取消", action: onClose).keyboardShortcut(.cancelAction)
-                Button("保存", action: save).keyboardShortcut(.defaultAction)
+                Button("取消", action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
+                Button(saving ? "正在保存" : "保存", action: save).keyboardShortcut(.defaultAction).disabled(saving)
             }
         }
         .padding(24)
-        .frame(width: 440)
+        .frame(width: 480, height: 670)
+        .onAppear {
+            if windowID != "auto", !((model.quota?.windows ?? []).contains { $0.id == windowID }) { windowID = "auto" }
+        }
     }
 
+    private func choose(directory: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = !directory
+        panel.canChooseDirectories = directory
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.message = directory ? "选择 Codex 数据目录" : "选择 Codex 可执行文件"
+        if panel.runModal() == .OK, let path = panel.url?.path {
+            if directory { home = path } else { executable = path }
+        }
+    }
     private func save() {
         let cli = executable.trimmingCharacters(in: .whitespacesAndNewlines)
         let directory = home.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cli.isEmpty, !FileManager.default.isExecutableFile(atPath: (cli as NSString).expandingTildeInPath) {
-            validation = "CLI 路径必须指向可执行的 Codex 文件。"; return
+        if !cli.isEmpty {
+            let path = (cli as NSString).expandingTildeInPath
+            guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else {
+                validation = "CLI 路径必须指向可执行的 Codex 文件。"; return
+            }
         }
         if !directory.isEmpty {
             let expanded = (directory as NSString).expandingTildeInPath
@@ -61,14 +114,30 @@ struct SettingsView: View {
                 validation = "请选择现有的 Codex 目录，使用绝对路径或 ~/ 路径。"; return
             }
         }
-        let defaults = UserDefaults.standard
-        let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "")
-        defaults.set(cli, forKey: "codexExecutable")
-        defaults.set(directory, forKey: "codexHome")
-        defaults.set(floating, forKey: "floatingIsland")
-        defaults.set(fullscreen, forKey: "showInFullscreen")
-        defaults.set(displayID, forKey: "displayID")
-        model.applySettings(sourceChanged: sourceChanged)
-        onClose()
+        saving = true
+        Task { @MainActor in
+            let allowed = systemNotifications ? await NotificationDelivery.requestPermission() : false
+            let requestedSystem = systemNotifications
+            let defaults = UserDefaults.standard
+            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "")
+            defaults.set(cli, forKey: "codexExecutable")
+            defaults.set(directory, forKey: "codexHome")
+            defaults.set(floating, forKey: "floatingIsland")
+            defaults.set(fullscreen, forKey: "showInFullscreen")
+            defaults.set(displayID, forKey: "displayID")
+            defaults.set(metric, forKey: "compactMetric")
+            defaults.set(windowID, forKey: "quotaWindowID")
+            defaults.set(lowReminder, forKey: "lowQuotaReminder")
+            defaults.set(inputReminder, forKey: "inputReminder")
+            defaults.set(completionReminder, forKey: "completionReminder")
+            defaults.set(allowed, forKey: "systemNotifications")
+            defaults.set(hideProjects, forKey: "hideProjects")
+            model.applySettings(sourceChanged: sourceChanged)
+            saving = false
+            systemNotifications = allowed
+            if requestedSystem && !allowed {
+                validation = "其他设置已保存。系统通知未授权，状态岛提醒仍可使用。"
+            } else { onClose() }
+        }
     }
 }

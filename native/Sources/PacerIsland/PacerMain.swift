@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import PacerCore
+import UserNotifications
 
 @main
 enum PacerMain {
@@ -29,6 +30,7 @@ enum PacerMain {
             // Only protocol availability is printed; no identity, credentials or task text.
             print("Quota connected: \(snapshot.buckets.count) buckets, \(snapshot.windows.count) windows")
             print("Window durations: \(snapshot.windows.compactMap(\.durationMinutes)) minutes")
+            print("Workspace identity verified: \(snapshot.accountScope != nil)")
             await client.disconnect()
         } catch {
             print((error as? CodexClientError)?.errorDescription ?? "Quota unavailable")
@@ -39,17 +41,22 @@ enum PacerMain {
 }
 
 @MainActor
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var model: IslandModel!
     private var panel: PanelController!
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        model = IslandModel(demo: CommandLine.arguments.contains("--demo"))
+        UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
+            "completionReminder": false, "systemNotifications": false, "compactMetric": "remaining", "quotaWindowID": "auto"])
+        model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         panel = PanelController(model: model)
+        if CommandLine.arguments.contains("--quota") { model.page = .quota }
         model.onSettings = { [weak self] in self?.showSettings() }
+        model.onOpenCodex = { [weak self] in self?.openCodex() }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
+        UNUserNotificationCenter.current().delegate = self
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu()
@@ -89,7 +96,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private func showMenu() {
         let menu = NSMenu()
-        for (title, selector) in [("显示状态岛", #selector(showIsland)), ("刷新额度", #selector(refresh)), ("设置…", #selector(showSettings)), ("退出 Codex Pacer", #selector(quit))] {
+        for (title, selector) in [("显示状态岛", #selector(showIsland)), ("打开 Codex", #selector(openCodex)), ("刷新额度", #selector(refresh)), ("设置…", #selector(showSettings)), ("退出 Codex Pacer", #selector(quit))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
             item.target = self
             menu.addItem(item)
@@ -99,11 +106,32 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showIsland() { panel.show() }
     @objc private func refresh() { model.refreshQuota() }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func openCodex() {
+        let url = URL(fileURLWithPath: "/Applications/Codex.app")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        model.close()
+        let defaultHome = URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL
+        if model.home == defaultHome, let threadURL = model.focusedActivity?.threadURL,
+           NSWorkspace.shared.urlForApplication(toOpen: threadURL)?.standardizedFileURL.path == url.standardizedFileURL.path {
+            NSWorkspace.shared.open(threadURL)
+            return
+        }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+    }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner])
+    }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        Task { @MainActor [weak self] in self?.panel.show() }
+        completionHandler()
+    }
 
     @objc private func showSettings() {
         model.close()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 488, height: 540),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 670),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "Codex Pacer 设置"
             window.isReleasedWhenClosed = false
