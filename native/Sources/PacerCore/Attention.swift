@@ -39,10 +39,10 @@ public struct AttentionPolicy: Sendable {
     }
 
     public mutating func activityNotices(_ activities: [SessionActivity], at now: Date) -> [IslandNotice] {
-        let current = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        let current = Dictionary(activities.filter { !$0.isInternalReview }.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
         defer { activityBaseline = current }
         guard let previous = activityBaseline else { return [] } // no startup replay
-        return activities.compactMap { activity in
+        return activities.filter { !$0.isInternalReview }.compactMap { activity in
             let old = previous[activity.id]
             guard old?.phase != activity.phase, let changed = activity.phaseChangedAt, now.timeIntervalSince(changed) >= 0,
                   now.timeIntervalSince(changed) < 60,
@@ -56,7 +56,7 @@ public struct AttentionPolicy: Sendable {
             default: return nil
             }
             return IslandNotice(id: "\(activity.id):\(activity.turnID ?? ""):\(kind.rawValue):\(changed.timeIntervalSince1970)",
-                kind: kind, title: activity.phase.label, detail: activity.project)
+                kind: kind, title: kind == .completed ? "本轮结束" : activity.phase.label, detail: activity.project)
         }
     }
 }

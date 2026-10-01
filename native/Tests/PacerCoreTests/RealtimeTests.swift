@@ -214,3 +214,133 @@ final class InteractionTests: XCTestCase {
         XCTAssertLessThanOrEqual(clamped.width, small.width - 24)
     }
 }
+
+final class RuntimeStateTests: XCTestCase {
+    private func running(_ id: String, rate: Int, model: String = "gpt-test") -> SessionActivity {
+        var activity = SessionActivity(id: id)
+        activity.consume(log("task_started", at: epoch, payload: ["turn_id": id]))
+        activity.consume(log("context", at: epoch, payload: ["model": model, "turn_id": id], type: "turn_context"))
+        activity.consume(log("token_count", at: epoch.addingTimeInterval(1), payload: ["info": ["total_token_usage": ["output_tokens": 100]]]))
+        activity.consume(log("token_count", at: epoch.addingTimeInterval(3), payload: ["info": ["total_token_usage": ["output_tokens": 100 + rate * 2]]]))
+        return activity
+    }
+    func testGlobalRateAddsRunningTasksAndExcludesReviewWaitAndEndedTurns() {
+        let first = running("first", rate: 10)
+        let second = running("second", rate: 20)
+        let review = running("review", rate: 500, model: "codex-auto-review")
+        var waiting = running("waiting", rate: 100)
+        waiting.consume(log("function_call", at: epoch.addingTimeInterval(4), payload: ["name": "request_user_input", "call_id": "ask"], type: "response_item"))
+        var ended = running("ended", rate: 200)
+        ended.consume(log("task_complete", at: epoch.addingTimeInterval(4), payload: ["turn_id": "ended"]))
+        let overview = ActivityOverview(activities: [ended, first, review, waiting, second], at: epoch.addingTimeInterval(5))
+        XCTAssertEqual(overview.running.count, 2)
+        XCTAssertEqual(overview.activities.count, 4)
+        XCTAssertEqual(overview.tokensPerSecond, 30)
+        XCTAssertEqual(overview.phase, .running)
+        XCTAssertEqual(overview.title, "2 个任务运行中")
+        XCTAssertNil(ActivityOverview(activities: [first, second], at: epoch.addingTimeInterval(20)).tokensPerSecond)
+    }
+    func testEndedConversationCannotOverrideUnknownOrRunningUserTask() {
+        var ended = running("ended", rate: 200)
+        ended.consume(log("task_complete", at: epoch.addingTimeInterval(4), payload: ["turn_id": "ended"]))
+        let unknown = SessionActivity(id: "unknown")
+        XCTAssertEqual(ActivityOverview(activities: [ended, unknown], at: epoch.addingTimeInterval(5)).phase, .unknown)
+        XCTAssertEqual(ActivityOverview(activities: [ended, running("active", rate: 10)], at: epoch.addingTimeInterval(5)).phase, .running)
+        XCTAssertEqual(ActivityOverview(activities: [ended], at: epoch.addingTimeInterval(5)).title, "空闲")
+    }
+    func testVerifiedIdleDoesNotDecayIntoAnUnknownActiveTask() {
+        var activity = running("ended", rate: 10)
+        activity.consume(log("task_complete", at: epoch.addingTimeInterval(4), payload: ["turn_id": "ended"]))
+        XCTAssertEqual(activity.observedPhase(at: epoch.addingTimeInterval(600)), .completed)
+        XCTAssertEqual(ActivityOverview(activities: [activity], at: epoch.addingTimeInterval(600)).title, "空闲")
+    }
+    func testOrphanCompletionCannotDeclareAnUnobservedTaskEnded() {
+        var activity = SessionActivity(id: "unknown")
+        activity.consume(log("task_complete", at: epoch, payload: ["turn_id": "unobserved"]))
+        XCTAssertEqual(activity.phase, .unknown)
+        XCTAssertNil(activity.phaseChangedAt)
+    }
+    func testTurnContextRecoversMissingStartAndRejectsOldCompletion() {
+        var activity = running("old", rate: 10)
+        activity.consume(log("task_complete", at: epoch.addingTimeInterval(4), payload: ["turn_id": "old"]))
+        activity.consume(log("context", at: epoch.addingTimeInterval(5), payload: ["turn_id": "new", "model": "gpt-test"], type: "turn_context"))
+        activity.consume(log("task_complete", at: epoch.addingTimeInterval(6), payload: ["turn_id": "old"]))
+        XCTAssertEqual(activity.phase, .running)
+        XCTAssertEqual(activity.turnID, "new")
+        XCTAssertEqual(activity.lastObserved, epoch.addingTimeInterval(5))
+        activity.consume(log("task_complete", at: epoch.addingTimeInterval(7), payload: ["turn_id": "new"]))
+        XCTAssertEqual(activity.phase, .completed)
+        activity.consume(log("context", at: epoch.addingTimeInterval(8), payload: ["turn_id": "new", "model": "gpt-test"], type: "turn_context"))
+        XCTAssertEqual(activity.phase, .completed)
+    }
+    func testFreshWorkAfterAnEndedTurnRestoresActivityWithoutAcceptingOldEnd() {
+        var activity = running("old", rate: 10)
+        activity.consume(log("task_complete", at: epoch.addingTimeInterval(4), payload: ["turn_id": "old"]))
+        activity.consume(log("function_call", at: epoch.addingTimeInterval(5), payload: ["name": "exec", "call_id": "current"], type: "response_item"))
+        XCTAssertEqual(activity.phase, .running)
+        activity.consume(log("task_complete", at: epoch.addingTimeInterval(6), payload: ["turn_id": "old"]))
+        XCTAssertEqual(activity.phase, .running)
+        XCTAssertNil(activity.turnID)
+    }
+    func testReviewProvenanceSurvivesGapsAndDoesNotUseProjectName() {
+        var review = SessionActivity(id: "review")
+        review.consume(log("meta", at: epoch, payload: ["source": ["subagent": ["other": "guardian"]], "thread_source": "guardian_review"], type: "session_meta"))
+        review.markDiscontinuity()
+        review.consume(log("task_started", at: epoch, payload: ["turn_id": "review"]))
+        XCTAssertTrue(review.isInternalReview)
+        let real = SessionActivity(id: "real", project: "autoreview")
+        XCTAssertFalse(real.isInternalReview)
+        var policy = AttentionPolicy()
+        _ = policy.activityNotices([], at: epoch)
+        review.consume(log("function_call", at: epoch.addingTimeInterval(1), payload: ["name": "request_user_input", "call_id": "ask"], type: "response_item"))
+        XCTAssertTrue(policy.activityNotices([review], at: epoch.addingTimeInterval(1)).isEmpty)
+    }
+    func testReaderRecoversLongRunningTurnOutsideStartupTailAndPreservesMetadata() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/\(formatter.string(from: Date()))")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("real.jsonl")
+        let uuid = "01a0f65c-8c61-76f2-8363-6f53e5c2a1b8"
+        let meta = log("meta", at: epoch, payload: ["cwd": "/projects/real", "id": uuid, "thread_source": "user"], type: "session_meta")
+        let start = log("task_started", at: epoch, payload: ["turn_id": "current"])
+        let filler = log("function_call_output", at: epoch.addingTimeInterval(1), payload: ["call_id": "large", "output": String(repeating: "x", count: 800000)], type: "response_item")
+        let tail = log("token_count", at: epoch.addingTimeInterval(2), payload: [:])
+        try ([meta, start, filler, tail].reduce(Data()) { $0 + $1 + Data([10]) }).write(to: file)
+        let reader = LocalActivityReader()
+        let initial = await reader.read(home: home)
+        XCTAssertEqual(initial.activities.first?.phase, .running)
+        XCTAssertEqual(initial.activities.first?.turnID, "current")
+        XCTAssertEqual(initial.activities.first?.threadID, uuid)
+        XCTAssertEqual(initial.activities.first?.project, "real")
+        let handle = try FileHandle(forWritingTo: file); try handle.seekToEnd()
+        let newStart = log("task_started", at: epoch.addingTimeInterval(3), payload: ["turn_id": "next"])
+        let large = log("function_call_output", at: epoch.addingTimeInterval(4), payload: ["call_id": "huge", "output": String(repeating: "y", count: 200000)], type: "response_item")
+        let oldEnd = log("task_complete", at: epoch.addingTimeInterval(5), payload: ["turn_id": "current"])
+        try handle.write(contentsOf: [newStart, large, oldEnd].reduce(Data()) { $0 + $1 + Data([10]) }); try handle.close()
+        let caughtUp = await reader.read(home: home)
+        XCTAssertEqual(caughtUp.activities.first?.phase, .running)
+        XCTAssertEqual(caughtUp.activities.first?.turnID, "next")
+        XCTAssertEqual(caughtUp.activities.first?.threadID, uuid)
+    }
+    func testReviewsCannotCrowdUserTasksOutOfDiscoverySlots() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/\(formatter.string(from: Date()))")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let user = day.appendingPathComponent("user.jsonl")
+        try (log("task_started", at: epoch, payload: ["turn_id": "user"]) + Data([10])).write(to: user)
+        try FileManager.default.setAttributes([.modificationDate: epoch], ofItemAtPath: user.path)
+        for index in 0..<20 {
+            let file = day.appendingPathComponent("review-\(index).jsonl")
+            let meta = log("meta", at: epoch, payload: ["thread_source": "guardian_review", "source": ["subagent": ["other": "guardian"]]], type: "session_meta")
+            try (meta + Data([10]) + log("task_started", at: epoch, payload: ["turn_id": "review"]) + Data([10])).write(to: file)
+        }
+        let result = await LocalActivityReader().read(home: home)
+        XCTAssertEqual(result.activities.count, 1)
+        XCTAssertEqual(result.activities.first?.id, "user.jsonl")
+        XCTAssertEqual(result.activities.first?.phase, .running)
+    }
+}

@@ -59,10 +59,12 @@ final class IslandModel: ObservableObject {
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { UserDefaults.standard.bool(forKey: "hideProjects") }
     var displayID: Int { UserDefaults.standard.integer(forKey: "displayID") }
-    var running: [SessionActivity] { activities.filter { $0.observedPhase(at: now) == .running } }
-    var waiting: [SessionActivity] { activities.filter { $0.observedPhase(at: now) == .waitingForInput } }
+    var overview: ActivityOverview { ActivityOverview(activities: activities, at: now) }
+    var running: [SessionActivity] { overview.running }
+    var waiting: [SessionActivity] { overview.waiting }
     var visibleActivities: [SessionActivity] {
         activities.filter {
+            guard !$0.isInternalReview else { return false }
             if [.completed, .interrupted].contains($0.phase) {
                 return now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120 || $0.id == selectedActivityID
             }
@@ -102,18 +104,12 @@ final class IslandModel: ObservableObject {
         UserDefaults.standard.string(forKey: "compactMetric") == "pace" ? "配速" :
         (selectedWindow?.label.replacingOccurrences(of: "额度", with: "") ?? "")
     }
-    var statusTitle: String {
-        if !waiting.isEmpty { return "有任务等待回复" }
-        if !running.isEmpty { return "正在处理任务" }
-        return focusedActivity?.observedPhase(at: now).label ?? "未观测到近期任务"
-    }
+    var statusTitle: String { overview.title }
     var compactStatus: String {
-        if let notice { return notice.title }
-        if !waiting.isEmpty { return "等待回复" }
-        if !running.isEmpty { return running.count == 1 ? "运行中" : "\(running.count) 个任务" }
-        return focusedActivity?.observedPhase(at: now).label ?? "暂无活动"
+        if let notice, ![.completed, .interrupted].contains(notice.kind) { return notice.title }
+        return overview.compactTitle
     }
-    var rate: Double? { focusedActivity?.tokensPerSecond(at: now) }
+    var rate: Double? { overview.tokensPerSecond }
     var rateText: String { rate.map { String(format: "%.1f", $0) } ?? "—" }
     var accent: Color {
         if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
@@ -260,7 +256,10 @@ final class IslandModel: ObservableObject {
             defer { if generation == self.sourceGeneration { self.localTask = nil } }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
             self.now = Date()
-            self.activities = result.activities.filter { self.now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900 }
+            self.activities = result.activities.filter {
+                !$0.isInternalReview && ([.running, .waitingForInput].contains($0.phase) ||
+                    self.now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
+            }
             self.present(self.attention.activityNotices(self.activities, at: self.now))
             self.watcher.observe(result.watchURLs) { [weak self] in self?.refreshActivity() }
             self.onStatusChange?()

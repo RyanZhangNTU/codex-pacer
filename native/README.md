@@ -27,13 +27,13 @@ Demo mode labels its sample data and does not query Codex. The diagnostic prints
 
 ## Task interaction
 
-Hover to expand; move away to collapse after a short delay. Click the top strip or pin button to keep it open. Select a task to focus its state, recent stage and estimated output rate. Input waits appear ahead of running tasks. The task action opens the selected conversation when it belongs to the default local Codex home; other sources open Codex without assuming that its desktop profile matches.
+Hover to expand; move away to collapse after a short delay. Click the top strip or pin button to keep it open. Select a task to open its conversation. The headline state and output rate summarize all running user tasks and do not follow the selection. Input waits appear ahead of running tasks. The task action opens the selected conversation when it belongs to the default local Codex home; other sources open Codex without assuming that its desktop profile matches.
 
 Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders. Data and calculation notes are collapsed in settings; the island shows only task details, quota and the current curve.
 
-Task state comes from local JSONL events. Only task_started, task_complete and turn_aborted determine the turn lifecycle. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
+Task state comes from local JSONL events. task_started and turn_context anchor the current turn. task_complete and turn_aborted apply only to that matching turn; an unpaired completion cannot end an unobserved turn. Fresh reasoning and tool calls restore active status when a start was missed. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
 
-Startup reads are bounded to 512 KiB per file, later catch-up reads to 128 KiB, across at most 16 files in today's and yesterday's directories. File watches and a discovery pass handle new files and rotation. A task with no observed event for three minutes becomes unconfirmed; its last known wait remains visible as a last known state. A completion means the turn ended, not that its work succeeded. Conversation content is not retained.
+Metadata reads are bounded to 1 MiB. Startup tails use 512 KiB per file and catch-up tails use 128 KiB; a bounded backward scan of up to 8 MiB recovers the latest turn anchor when it lies outside that tail. Up to 16 user files in today's and yesterday's directories are monitored. Internal guardian/auto-review sources are filtered before that limit, with the codex-auto-review model as a fallback. Source metadata survives skipped data and rotation. File watches and a discovery pass handle new files and rotation. A task with no observed event for three minutes becomes unconfirmed; its last known wait remains visible as a last known state. A matched completion displays idle. It does not declare the user's overall task finished. Silent active turns remain unconfirmed rather than becoming completed. Conversation content is not retained.
 
 Remote tasks and global desktop approval state are not reliably covered by this adapter. A separate app-server process cannot observe every other client. The preview does not start, restart or modify a shared Codex daemon to manufacture runtime status.
 
@@ -41,7 +41,7 @@ Remote tasks and global desktop approval state are not reliably covered by this 
 
 The estimate uses increases in total_token_usage.output_tokens over report intervals. Input tokens are excluded. Samples over recent intervals are combined, count rollback clears the estimate, idle gaps are excluded at turn boundaries, and the display expires after 15 seconds without a report. At least two usable counter readings are needed unless a previous session counter anchors a new turn.
 
-The value includes waiting and tool time between reports. It is not a direct measurement of model-side decode throughput. Unknown rates display as unavailable; rates are per selected task.
+The value includes waiting and tool time between reports. It is not a direct measurement of model-side decode throughput. The island sums fresh rates across all running user tasks. Waiting, ended, stale and internal review turns contribute no samples. When no fresh rate exists, the aggregate is unavailable. Selecting a conversation cannot change it.
 
 ## Quota, pacing and current-cycle curve
 
@@ -61,7 +61,7 @@ Refreshes use 30-second intervals while expanded and two-minute intervals in the
 
 ## Reminders and validation
 
-Low-quota and input-wait reminders appear briefly in the island. Task-end reminders are optional. Startup task events are not replayed, and repeated quota refreshes do not repeat a low-quota alert. System notifications stay off until the user enables them and grants macOS permission. Project names can be hidden in the interface and new notices.
+Low-quota and input-wait reminders appear briefly in the island. Turn-end reminders are optional. Startup task events are not replayed, and repeated quota refreshes do not repeat a low-quota alert. System notifications stay off until the user enables them and grants macOS permission. Project names can be hidden in the interface and new notices.
 
 The core tests cover pacing, reset and account boundaries, current-cycle persistence, token-rate estimation, synchronous input waits, late tool responses, reminder deduplication, geometry, and RPC timeout/reconnection.
 

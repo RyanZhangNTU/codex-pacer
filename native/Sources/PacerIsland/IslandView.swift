@@ -42,7 +42,7 @@ struct IslandView: View {
                                 Text(model.rate == nil ? model.rateText : "≈" + model.rateText).font(.system(size: 20, weight: .medium)).monospacedDigit()
                                 Text("token/s").font(.system(size: 11)).foregroundStyle(secondary)
                             }
-                            .help("所选任务的近期输出速度估算")
+                            .help("运行中任务的合计输出速度")
                         }.padding(.top, 12).padding(.bottom, 16)
                     }
                     if model.isDemo {
@@ -102,9 +102,6 @@ struct IslandView: View {
                             Text(activity.detail(at: model.now)).font(.system(size: 11)).foregroundStyle(secondary).lineLimit(1)
                         }
                         Spacer(minLength: 4)
-                        if let rate = activity.tokensPerSecond(at: model.now) {
-                            Text(String(format: "≈%.1f t/s", rate)).font(.system(size: 11)).monospacedDigit()
-                        }
                         if model.focusedActivity?.id == activity.id {
                             Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(secondary)
                         }

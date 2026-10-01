@@ -48,7 +48,7 @@ struct SettingsView: View {
                 Section("提醒") {
                     Toggle("低额度提醒", isOn: $lowReminder)
                     Toggle("等待回复提醒", isOn: $inputReminder)
-                    Toggle("任务结束或中断提醒", isOn: $completionReminder)
+                    Toggle("本轮结束或中断提醒", isOn: $completionReminder)
                     Toggle("同时使用系统通知", isOn: $systemNotifications)
                 }
                 Section("隐私") {
@@ -67,7 +67,7 @@ struct SettingsView: View {
                 Section {
                     DisclosureGroup("数据与计算说明") {
                         Text("任务状态来自本机日志。三分钟没有新事件时，状态转为未确认。")
-                        Text("token/s 按输出增量估算，包含等待和工具耗时；缺少样本或超过 15 秒未更新时显示不可用。")
+                        Text("token/s 合计运行中任务的输出增量，排除 autoreview。缺少样本或超过 15 秒未更新时显示不可用。")
                         Text("配速 = 剩余额度比例 ÷ 剩余时间比例 × 100。100% 为均匀配速，低于 85% 需放慢，高于 115% 较充裕。")
                         Text("曲线只保存当前七天窗口。额度重置或切换账户后重新记录，虚线为配速参考。")
                         Text("系统通知需授权。关闭时，提醒显示在状态岛。")

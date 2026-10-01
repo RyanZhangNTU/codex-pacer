@@ -91,7 +91,7 @@ final class ActivityTests: XCTestCase {
         line = event("task_complete", turn: "other", second: 2)
         try (line + Data([10])).write(to: file, options: .atomic)
         let replaced = await reader.read(home: directory)
-        XCTAssertEqual(replaced.activities.first?.phase, .completed)
+        XCTAssertEqual(replaced.activities.first?.phase, .unknown)
     }
     private func event(_ kind: String, turn: String, second: Int) -> Data {
         Data("{\"timestamp\":\"2026-10-01T00:00:0\(second)Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"\(kind)\",\"turn_id\":\"\(turn)\"}}".utf8)

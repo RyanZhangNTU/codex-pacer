@@ -6,7 +6,7 @@ public enum ActivityPhase: String, Codable, Sendable {
         switch self {
         case .running: return "正在处理任务"
         case .waitingForInput: return "等待你的回复"
-        case .completed: return "任务已结束"
+        case .completed: return "空闲"
         case .interrupted: return "任务已中断"
         case .unknown: return "状态未确认"
         }
@@ -18,9 +18,9 @@ public enum ActivityStage: String, Sendable {
     public var label: String {
         switch self {
         case .starting: return "正在处理"
-        case .thinking: return "正在处理下一步"
+        case .thinking: return "思考中"
         case .tool: return "正在执行工具"
-        case .responding: return "已输出回复，任务仍在继续"
+        case .responding: return "输出回复"
         }
     }
 }
@@ -36,6 +36,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var phaseChangedAt: Date?
     public private(set) var stage: ActivityStage = .starting
     public private(set) var modelName: String?
+    public private(set) var isInternalReview = false
     private var waitingCallID: String?
     private var toolCalls: Set<String> = []
     private var outputRate = OutputRate()
@@ -47,6 +48,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
+        if [.completed, .interrupted].contains(phase) { return phase }
         guard let lastObserved, now.timeIntervalSince(lastObserved) < 180 else { return .unknown }
         return phase
     }
@@ -63,37 +65,47 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let payload = value["payload"] as? [String: Any] else { return }
         if value["type"] as? String == "session_meta" {
+            let source = payload["source"] as? [String: Any]
+            let subagent = source?["subagent"] as? [String: Any]
+            let role = (subagent?["other"] as? String)?.lowercased()
+            let threadSource = (payload["thread_source"] as? String)?.lowercased()
+            isInternalReview = isInternalReview || ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
+                ["guardian_review", "auto_review", "autoreview"].contains(threadSource ?? "")
             if let cwd = payload["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             if let id = payload["id"] as? String, let uuid = UUID(uuidString: id) { threadID = uuid.uuidString.lowercased() }
             return
         }
         if value["type"] as? String == "turn_context" {
-            modelName = payload["model"] as? String
+            guard let timestamp = value["timestamp"] as? String, let date = Self.parseDate(timestamp),
+                  date >= (lastObserved ?? .distantPast) else { return }
+            modelName = payload["model"] as? String ?? modelName
+            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+            // A current turn context is an explicit anchor when the start lies
+            // outside the initial tail, or when the app attached mid-turn.
+            if let contextTurn = payload["turn_id"] as? String, contextTurn != turnID {
+                beginTurn(contextTurn, at: date)
+            }
             return
         }
         guard ["event_msg", "response_item"].contains(value["type"] as? String ?? ""),
               let timestamp = value["timestamp"] as? String,
               let date = Self.parseDate(timestamp),
               date >= (lastObserved ?? .distantPast) else { return }
-        lastObserved = date
         let kind = payload["type"] as? String
+        let eventTurn = payload["turn_id"] as? String
+        if ["task_complete", "turn_aborted"].contains(kind ?? ""), value["type"] as? String == "event_msg" {
+            // Without an observed start/context there is no current turn to end.
+            guard let turnID, eventTurn == turnID else { return }
+        }
+        lastObserved = date
         if value["type"] as? String == "response_item" {
             consumeResponse(payload, kind: kind, at: date)
             return
         }
-        let eventTurn = payload["turn_id"] as? String
         switch kind {
         case "task_started":
-            turnID = eventTurn
-            phase = .running
-            stage = .starting
-            waitingCallID = nil
-            toolCalls.removeAll()
-            outputRate.startTurn(at: date)
-            phaseChangedAt = date
+            beginTurn(eventTurn, at: date)
         case "task_complete", "turn_aborted":
-            // A late completion from a previous turn must not end the current turn.
-            guard turnID == nil || eventTurn == turnID else { return }
             phase = kind == "turn_aborted" ? .interrupted : .completed
             waitingCallID = nil
             toolCalls.removeAll()
@@ -109,10 +121,40 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
     }
 
+    private mutating func beginTurn(_ id: String?, at date: Date) {
+        turnID = id
+        phase = .running
+        stage = .starting
+        lastObserved = date
+        waitingCallID = nil
+        toolCalls.removeAll()
+        outputRate.startTurn(at: date)
+        phaseChangedAt = date
+    }
+
+    /// Retain provenance while rejecting lifecycle/rate assumptions across a gap.
+    mutating func markDiscontinuity() {
+        phase = .unknown
+        turnID = nil
+        lastObserved = nil
+        phaseChangedAt = nil
+        waitingCallID = nil
+        toolCalls.removeAll()
+        outputRate = OutputRate()
+    }
+
+    private mutating func observeWork(at date: Date) {
+        if [.completed, .interrupted, .unknown].contains(phase) {
+            // Fresh reasoning/calls prove activity, but do not identify a turn.
+            beginTurn(nil, at: date)
+        }
+    }
+
     private mutating func consumeResponse(_ payload: [String: Any], kind: String?, at date: Date) {
         switch kind {
         case "function_call", "custom_tool_call":
             guard let callID = payload["call_id"] as? String else { return }
+            observeWork(at: date)
             if toolCalls.count < 64 { toolCalls.insert(callID) }
             let name = payload["name"] as? String ?? ""
             // The async input tool returns immediately and does not pause the task.
@@ -132,8 +174,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             }
             if phase == .running { stage = toolCalls.isEmpty ? .thinking : .tool }
         case "reasoning":
+            observeWork(at: date)
             if phase == .running && toolCalls.isEmpty { stage = .thinking }
         case "message":
+            if payload["role"] as? String == "assistant", payload["phase"] as? String == "commentary" {
+                observeWork(at: date)
+            }
             if phase == .running, payload["role"] as? String == "assistant" { stage = .responding }
         default: break
         }
@@ -156,12 +202,13 @@ public actor LocalActivityReader {
         var identity: UInt64
     }
     private var cursors: [URL: Cursor] = [:]
+    private var metadata: [URL: (identity: UInt64, activity: SessionActivity)] = [:]
     private let maxFiles = 16
     private let maxBytes = 128 * 1024
     private let startupBytes = 512 * 1024
 
     public init() {}
-    public func reset() { cursors.removeAll() }
+    public func reset() { cursors.removeAll(); metadata.removeAll() }
 
     public func read(home: URL, now: Date = Date()) -> (activities: [SessionActivity], watchURLs: [URL]) {
         let calendar = Calendar.current
@@ -186,7 +233,29 @@ public actor LocalActivityReader {
                 files.append((file, date))
             }
         }
-        let selected = Array(files.sorted { $0.1 > $1.1 }.prefix(maxFiles).map(\.0))
+        // Reviews must not consume the user-task discovery slots.
+        var selected: [URL] = []
+        let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
+        metadata = metadata.filter { candidates.contains($0.key) }
+        for file in candidates {
+            guard selected.count < maxFiles else { break }
+            let identity = ((try? manager.attributesOfItem(atPath: file.path))?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+            if metadata[file]?.identity != identity {
+                var activity = SessionActivity(id: file.lastPathComponent)
+                if let handle = try? FileHandle(forReadingFrom: file) {
+                    defer { try? handle.close() }
+                    // Session metadata can include a long instruction block.
+                    var header = Data()
+                    while header.count < 1024 * 1024 {
+                        guard let chunk = try? handle.read(upToCount: 32768), !chunk.isEmpty else { break }
+                        header.append(chunk)
+                        if let end = header.firstIndex(of: 10) { activity.consume(header.prefix(upTo: end)); break }
+                    }
+                }
+                metadata[file] = (identity, activity)
+            }
+            if metadata[file]?.activity.isInternalReview != true { selected.append(file) }
+        }
         cursors = cursors.filter { selected.contains($0.key) }
         for file in selected {
             guard let attributes = try? manager.attributesOfItem(atPath: file.path),
@@ -196,10 +265,8 @@ public actor LocalActivityReader {
             let identity = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
             var cursor = cursors[file]
             if cursor == nil || cursor!.offset > size || cursor!.identity != identity {
-                var activity = SessionActivity(id: file.lastPathComponent)
-                if let header = try? handle.read(upToCount: 65536), let end = header.firstIndex(of: 10) {
-                    activity.consume(header.prefix(upTo: end))
-                }
+                var activity = metadata[file]?.activity ?? SessionActivity(id: file.lastPathComponent)
+                if let anchor = latestTurnAnchor(handle: handle, size: size) { activity.consume(anchor) }
                 cursor = Cursor(offset: 0, fragment: Data(), activity: activity, identity: identity)
             }
             guard var current = cursor else { continue }
@@ -208,7 +275,10 @@ public actor LocalActivityReader {
             if size - current.offset > UInt64(budget) {
                 current.offset = size - UInt64(budget)
                 current.fragment.removeAll()
-                current.activity = SessionActivity(id: current.activity.id, project: current.activity.project)
+                if cursors[file] != nil {
+                    current.activity.markDiscontinuity()
+                    if let anchor = latestTurnAnchor(handle: handle, size: size) { current.activity.consume(anchor) }
+                }
                 dropPartial = true
             }
             do {
@@ -224,10 +294,43 @@ public actor LocalActivityReader {
                     current.fragment.removeSubrange(...end)
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll() }
-                cursors[file] = current
+                if current.activity.isInternalReview {
+                    metadata[file] = (identity, current.activity)
+                    cursors.removeValue(forKey: file)
+                } else { cursors[file] = current }
             } catch { continue }
         }
-        return (cursors.values.map(\.activity).sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
+        return (cursors.values.map(\.activity).filter { !$0.isInternalReview }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
                 Array(Set(watchURLs + selected)))
     }
+    /// Recover the latest explicit turn anchor without loading conversation history.
+    /// Scan at most 8 MiB backwards, retaining at most one bounded line.
+    private func latestTurnAnchor(handle: FileHandle, size: UInt64) -> Data? {
+        var offset = size
+        let floor = size > 8 * 1024 * 1024 ? size - 8 * 1024 * 1024 : 0
+        var fragment = Data()
+        while offset > floor {
+            let start = max(floor, offset > 128 * 1024 ? offset - 128 * 1024 : 0)
+            do {
+                try handle.seek(toOffset: start)
+                var data = try handle.read(upToCount: Int(offset - start)) ?? Data()
+                data.append(fragment)
+                let lines = data.split(separator: 10, omittingEmptySubsequences: false)
+                for line in lines.dropFirst().reversed() {
+                    guard line.count <= 1024 * 1024,
+                          line.range(of: Data("turn_context".utf8)) != nil || line.range(of: Data("task_started".utf8)) != nil,
+                          let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                          let payload = value["payload"] as? [String: Any], payload["turn_id"] as? String != nil,
+                          value["type"] as? String == "turn_context" ||
+                          (value["type"] as? String == "event_msg" && payload["type"] as? String == "task_started") else { continue }
+                    return Data(line)
+                }
+                fragment = lines.first.map(Data.init) ?? Data()
+                if fragment.count > 1024 * 1024 { fragment.removeAll() }
+                offset = start
+            } catch { return nil }
+        }
+        return nil
+    }
+
 }

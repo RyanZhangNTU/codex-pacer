@@ -31,6 +31,11 @@ enum PacerMain {
             print("Quota connected: \(snapshot.buckets.count) buckets, \(snapshot.windows.count) windows")
             print("Window durations: \(snapshot.windows.compactMap(\.durationMinutes)) minutes")
             print("Workspace identity verified: \(snapshot.accountScope != nil)")
+            let local = await LocalActivityReader().read(home: home)
+            let overview = ActivityOverview(activities: local.activities, at: Date())
+            print("User task states: \(overview.running.count) running, \(overview.waiting.count) waiting")
+            print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")
+            print("Fresh aggregate output rate available: \(overview.tokensPerSecond != nil)")
             await client.disconnect()
         } catch {
             print((error as? CodexClientError)?.errorDescription ?? "Quota unavailable")
