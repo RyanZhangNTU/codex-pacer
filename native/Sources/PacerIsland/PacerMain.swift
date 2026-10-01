@@ -39,6 +39,15 @@ enum PacerMain {
             print("User task states: \(overview.running.count) running, \(overview.waiting.count) waiting")
             print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")
             print("Fresh aggregate output rate available: \(overview.tokensPerSecond != nil)")
+            let remote = RemoteActivityMonitor()
+            await remote.start(home: home) { _, _ in }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            let remoteActivities = await remote.currentActivities()
+            let combined = ActivityOverview(activities: local.activities + remoteActivities, at: Date())
+            print("SSH running tasks: \(remoteActivities.filter { $0.observedPhase(at: Date()) == .running }.count)")
+            print("Combined running user tasks: \(combined.running.count)")
+            print("Unavailable SSH sources: \(await remote.unavailableSources().count)")
+            await remote.shutdown()
             await client.disconnect()
         } catch {
             print((error as? CodexClientError)?.errorDescription ?? "Quota unavailable")

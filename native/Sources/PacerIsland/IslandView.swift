@@ -13,8 +13,9 @@ struct IslandView: View {
                 HStack(spacing: 6) {
                     Circle().fill(model.accent).frame(width: 6, height: 6)
                     Text(model.compactStatus).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    if let rate = model.rate, model.notice == nil {
-                        Text(String(format: "≈%.0f", rate)).font(.system(size: 10)).monospacedDigit()
+                    if model.showsRate {
+                        Text(model.rate.map { String(format: "≈%.0f", $0) } ?? "采样中").font(.system(size: 10)).monospacedDigit()
+                            .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
                         Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
                     }
                     if attached { Spacer(minLength: model.notchWidth + 8) }
@@ -42,7 +43,8 @@ struct IslandView: View {
                                 Text(model.rate == nil ? model.rateText : "≈" + model.rateText).font(.system(size: 20, weight: .medium)).monospacedDigit()
                                 Text("token/s").font(.system(size: 11)).foregroundStyle(secondary)
                             }
-                            .help("运行中任务的合计输出速度")
+                            .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
+                            .help(model.rateIsFresh ? "运行中任务的合计输出速度" : "最近已知估算，等待完整的新 token 采样")
                         }.padding(.top, 12).padding(.bottom, 16)
                     }
                     if model.isDemo {
@@ -124,6 +126,10 @@ struct IslandView: View {
                 Text(window.remainingPercent.map { "剩余 \(Int($0.rounded()))%" } ?? "暂不可用")
                 Text(model.pace.map { "配速 \(Int($0.rounded()))%" } ?? "配速 —")
             }.font(.system(size: 11)).monospacedDigit()
+        }
+        if !model.unavailableSSH.isEmpty {
+            Label("SSH 未连接", systemImage: "network").font(.system(size: 11)).foregroundStyle(secondary)
+                .help(model.unavailableSSH.joined(separator: "、"))
         }
         Button { model.onOpenCodex?() } label: {
             Label(model.canOpenConversation ? "打开所选会话" : "打开 Codex", systemImage: "arrow.up.forward.app")

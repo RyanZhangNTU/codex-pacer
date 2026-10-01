@@ -264,7 +264,7 @@ public actor CodexClient {
 
 /// Synchronizes cancellation with callbacks, so an old callback cannot consume
 /// bytes from a newly opened pipe that reused the same descriptor number.
-private final class PipeChunkReader: @unchecked Sendable {
+final class PipeChunkReader: @unchecked Sendable {
     private let lock = NSLock()
     private let descriptor: Int32
     private var active = true

@@ -8,6 +8,9 @@ enum IslandPage: String, CaseIterable { case tasks, quota }
 final class IslandModel: ObservableObject {
     @Published var quota: QuotaSnapshot?
     @Published var activities: [SessionActivity] = []
+    @Published var unavailableSSH: [String] = []
+    private var localActivities: [SessionActivity] = []
+    private var remoteActivities: [SessionActivity] = []
     @Published var history = QuotaCycleHistory()
     @Published var historyWarning: String?
     @Published var notice: IslandNotice?
@@ -29,10 +32,13 @@ final class IslandModel: ObservableObject {
     var onOpenCodex: (() -> Void)?
     var onFocusRequested: (() -> Void)?
     var canOpenConversation: Bool {
-        focusedActivity?.threadURL != nil && home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path
+        focusedActivity?.threadURL != nil && focusedActivity?.sourceHost == nil && home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path
     }
     private var client: CodexClient?
     private let reader = LocalActivityReader()
+    private let remoteMonitor = RemoteActivityMonitor()
+    private var remoteTask: Task<Void, Never>?
+    private var lastRemoteDiscovery = Date.distantPast
     private let watcher = ActivityWatcher()
     private let historyStore: QuotaHistoryStore
     private let notifications = NotificationDelivery()
@@ -111,8 +117,11 @@ final class IslandModel: ObservableObject {
         if let notice, ![.completed, .interrupted].contains(notice.kind) { return notice.title }
         return overview.compactTitle
     }
-    var rate: Double? { overview.tokensPerSecond }
-    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? "—" }
+    var rate: Double? { overview.displayedRate }
+    var rateIsFresh: Bool { overview.rateIsFresh }
+    var showsRate: Bool { !running.isEmpty }
+    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? "采样中" : "—") }
+    var monitorsSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH") }
     var accent: Color {
         if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
         if errorMessage != nil || stale { return Color(red: 0.65, green: 0.68, blue: 0.73) }
@@ -126,7 +135,10 @@ final class IslandModel: ObservableObject {
         if stale || errorMessage != nil { return "\(max(1, elapsed / 60)) 分钟前的额度" }
         return elapsed < 10 ? "刚刚更新" : elapsed < 60 ? "\(elapsed) 秒前更新" : "\(elapsed / 60) 分钟前更新"
     }
-    func projectName(_ activity: SessionActivity) -> String { hideProjects ? "本地任务" : activity.project }
+    func projectName(_ activity: SessionActivity) -> String {
+        let name = hideProjects ? "任务" : activity.project
+        return activity.sourceHost.map { name + " · " + $0 } ?? name
+    }
 
     init(demo: Bool = false, initiallyExpanded: Bool = false) {
         self.demo = demo
@@ -139,7 +151,7 @@ final class IslandModel: ObservableObject {
     }
 
     func start() {
-        if !demo { refreshQuota(); refreshActivity() }
+        if !demo { refreshQuota(); refreshActivity(); refreshRemote() }
         clock = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -150,6 +162,7 @@ final class IslandModel: ObservableObject {
                 self.sleeping = true
                 self.invalidateWork()
                 self.watcher.stop()
+                await self.remoteMonitor.shutdown()
                 if let client = self.client { await client.disconnect() }
             }
         })
@@ -158,7 +171,7 @@ final class IslandModel: ObservableObject {
                 guard let self else { return }
                 self.sleeping = false
                 self.now = Date()
-                self.refreshQuota(); self.refreshActivity()
+                self.refreshQuota(); self.refreshActivity(); self.refreshRemote()
             }
         })
     }
@@ -258,20 +271,48 @@ final class IslandModel: ObservableObject {
             defer { if generation == self.sourceGeneration { self.localTask = nil } }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
             self.now = Date()
-            self.activities = result.activities.filter {
-                !$0.isInternalReview && ([.running, .waitingForInput].contains($0.phase) ||
-                    self.now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
-            }
-            self.present(self.attention.activityNotices(self.activities, at: self.now))
+            self.localActivities = result.activities
+            self.combineActivities()
             self.watcher.observe(result.watchURLs) { [weak self] in self?.refreshActivity() }
             self.onStatusChange?()
         }
     }
 
+    func refreshRemote() {
+        guard remoteTask == nil, !sleeping, !stopped, !demo else { return }
+        lastRemoteDiscovery = Date()
+        let generation = sourceGeneration
+        let sourceHome = home
+        remoteTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
+            if !self.monitorsSSH {
+                await self.remoteMonitor.shutdown()
+                self.remoteActivities = []; self.unavailableSSH = []; self.combineActivities()
+                return
+            }
+            await self.remoteMonitor.start(home: sourceHome) { [weak self] activities, unavailable in
+                Task { @MainActor in
+                    guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
+                    self.now = Date(); self.remoteActivities = activities; self.unavailableSSH = unavailable
+                    self.combineActivities()
+                }
+            }
+        }
+    }
+    private func combineActivities() {
+        activities = (localActivities + remoteActivities).filter {
+            !$0.isInternalReview && ([.running, .waitingForInput].contains($0.phase) ||
+                now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
+        }
+        present(attention.activityNotices(activities, at: now))
+        onStatusChange?()
+    }
+
     func applySettings(sourceChanged: Bool) {
         settingsRevision += 1
         if hideProjects, let current = notice, current.kind != .lowQuota {
-            notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: "本地 Codex 任务")
+            notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: "Codex 任务")
         }
         onLayoutChange?()
         onStatusChange?()
@@ -284,7 +325,7 @@ final class IslandModel: ObservableObject {
         history = QuotaCycleHistory()
         historyWarning = nil
         attention = AttentionPolicy()
-        activities = []
+        activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []
         selectedActivityID = nil
         notice = nil
         noticeWork?.cancel()
@@ -292,9 +333,11 @@ final class IslandModel: ObservableObject {
         failureCount = 0
         Task { [weak self, reader] in
             await previous?.disconnect()
+            await self?.remoteMonitor.shutdown()
             await reader.reset()
             self?.refreshQuota()
             self?.refreshActivity()
+            self?.refreshRemote()
         }
     }
 
@@ -306,6 +349,7 @@ final class IslandModel: ObservableObject {
         watcher.stop()
         invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        await remoteMonitor.shutdown()
         await client?.shutdown()
     }
 
@@ -313,6 +357,7 @@ final class IslandModel: ObservableObject {
         sourceGeneration += 1
         refreshTask?.cancel()
         localTask?.cancel()
+        remoteTask?.cancel(); remoteTask = nil
         localTask = nil
         refreshing = false
     }
@@ -323,7 +368,8 @@ final class IslandModel: ObservableObject {
         let normalInterval: Double = expanded ? 30 : 120
         let interval = failureCount == 0 ? normalInterval : min(600, normalInterval * pow(2, Double(failureCount)))
         if now.timeIntervalSince(lastQuotaAttempt) >= interval { refreshQuota() }
-        if now.timeIntervalSince(lastDiscovery) >= 30 { refreshActivity() }
+        if now.timeIntervalSince(lastDiscovery) >= 10 { refreshActivity() }
+        if now.timeIntervalSince(lastRemoteDiscovery) >= 5 { refreshRemote() }
         onStatusChange?()
     }
     private func priority(_ phase: ActivityPhase) -> Int {
@@ -346,7 +392,7 @@ final class IslandModel: ObservableObject {
         }
         guard let newest = enabled.last else { return }
         let visible = hideProjects && newest.kind != .lowQuota ?
-            IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: "本地 Codex 任务") : newest
+            IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: "Codex 任务") : newest
         notice = visible
         notifications.deliver(visible)
         noticeWork?.cancel()

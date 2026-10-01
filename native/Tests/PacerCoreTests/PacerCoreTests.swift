@@ -58,10 +58,10 @@ final class ActivityTests: XCTestCase {
         activity.consume(event("token_count", turn: "new", second: 1))
         XCTAssertEqual(activity.phase, .unknown)
     }
-    func testSilentRunningTaskBecomesUnconfirmed() {
+    func testLongSilentToolDoesNotEndObservedTurn() {
         var activity = SessionActivity(id: "test")
         activity.consume(event("task_started", turn: "new", second: 1))
-        XCTAssertEqual(activity.observedPhase(at: activity.lastObserved!.addingTimeInterval(181)), .unknown)
+        XCTAssertEqual(activity.observedPhase(at: activity.lastObserved!.addingTimeInterval(181)), .running)
         XCTAssertEqual(activity.phase, .running)
     }
     func testOutOfOrderStartIsIgnored() {

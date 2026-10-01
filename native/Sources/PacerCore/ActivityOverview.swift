@@ -7,6 +7,8 @@ public struct ActivityOverview: Sendable {
     public let waiting: [SessionActivity]
     public let phase: ActivityPhase
     public let tokensPerSecond: Double?
+    public let displayedRate: Double?
+    public let rateIsFresh: Bool
 
     public init(activities: [SessionActivity], at now: Date) {
         self.activities = activities.filter { !$0.isInternalReview }
@@ -19,6 +21,9 @@ public struct ActivityOverview: Sendable {
         let rates = running.compactMap { $0.tokensPerSecond(at: now) }
         // Never carry an old rate from a waiting, ended, stale or internal turn.
         tokensPerSecond = rates.isEmpty ? nil : rates.reduce(0, +)
+        let estimates = running.compactMap { $0.outputEstimate(at: now) }
+        displayedRate = estimates.isEmpty ? nil : estimates.reduce(0) { $0 + $1.value }
+        rateIsFresh = !estimates.isEmpty && estimates.count == running.count && estimates.allSatisfy(\.isFresh)
     }
 
     public var title: String {

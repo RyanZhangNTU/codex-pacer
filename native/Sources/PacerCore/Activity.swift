@@ -27,6 +27,7 @@ public enum ActivityStage: String, Sendable {
 
 public struct SessionActivity: Equatable, Sendable, Identifiable {
     public let id: String
+    public let sourceHost: String?
     public var project: String
     public private(set) var threadID: String?
     public var threadURL: URL? { threadID.flatMap { URL(string: "codex://threads/" + $0) } }
@@ -41,19 +42,24 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var toolCalls: Set<String> = []
     private var outputRate = OutputRate()
 
-    public init(id: String, project: String = "本地任务") {
+    public init(id: String, project: String = "本地任务", sourceHost: String? = nil) {
         self.id = id
+        self.sourceHost = sourceHost
         self.project = project
         threadID = UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36)))?.uuidString.lowercased()
     }
 
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
         if [.completed, .interrupted].contains(phase) { return phase }
-        guard let lastObserved, now.timeIntervalSince(lastObserved) < 180 else { return .unknown }
+        guard lastObserved != nil else { return .unknown }
+        // A long tool call or sparse counter reports do not end an observed turn.
         return phase
     }
     public func tokensPerSecond(at now: Date) -> Double? {
         observedPhase(at: now) == .running ? outputRate.tokensPerSecond(at: now) : nil
+    }
+    public func outputEstimate(at now: Date) -> OutputEstimate? {
+        phase == .running ? outputRate.estimate(at: now) : nil
     }
     public func detail(at now: Date) -> String {
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return "最后状态：等待你的回复" }
@@ -143,10 +149,15 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         outputRate = OutputRate()
     }
 
+    mutating func markUnconfirmed() {
+        phase = .unknown
+        outputRate.finishTurn()
+    }
+
     private mutating func observeWork(at date: Date) {
         if [.completed, .interrupted, .unknown].contains(phase) {
             // Fresh reasoning/calls prove activity, but do not identify a turn.
-            beginTurn(nil, at: date)
+            beginTurn(phase == .unknown ? turnID : nil, at: date)
         }
     }
 
@@ -192,7 +203,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 }
 
-/// Reads only today's and yesterday's most recently modified session files.
+/// Reads recent files and resumed sessions from the read-only Codex index.
 /// Startup and catch-up reads are bounded; conversation text is never retained.
 public actor LocalActivityReader {
     private struct Cursor {
@@ -233,8 +244,17 @@ public actor LocalActivityReader {
                 files.append((file, date))
             }
         }
+        let indexed = SessionIndex.files(home: home)
+        for file in indexed {
+            let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            if !files.contains(where: { $0.0 == file }) { files.append((file, date)) }
+            watchURLs.append(file.deletingLastPathComponent())
+        }
+        for (file, cursor) in cursors where [.running, .waitingForInput].contains(cursor.activity.phase) && !files.contains(where: { $0.0 == file }) {
+            files.append((file, cursor.activity.lastObserved ?? .distantPast))
+        }
         // Reviews must not consume the user-task discovery slots.
-        var selected: [URL] = []
+        var selected = cursors.filter { [.running, .waitingForInput].contains($0.value.activity.phase) }.map(\.key)
         let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
         for file in candidates {
@@ -254,7 +274,7 @@ public actor LocalActivityReader {
                 }
                 metadata[file] = (identity, activity)
             }
-            if metadata[file]?.activity.isInternalReview != true { selected.append(file) }
+            if metadata[file]?.activity.isInternalReview != true, !selected.contains(file) { selected.append(file) }
         }
         cursors = cursors.filter { selected.contains($0.key) }
         for file in selected {
@@ -294,6 +314,8 @@ public actor LocalActivityReader {
                     current.fragment.removeSubrange(...end)
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll() }
+                if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
+                   now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview {
                     metadata[file] = (identity, current.activity)
                     cursors.removeValue(forKey: file)

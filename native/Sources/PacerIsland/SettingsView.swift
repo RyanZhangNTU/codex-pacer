@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var completionReminder = UserDefaults.standard.bool(forKey: "completionReminder")
     @State private var systemNotifications = UserDefaults.standard.bool(forKey: "systemNotifications")
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
+    @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var validation: String?
     @State private var saving = false
 
@@ -55,6 +56,7 @@ struct SettingsView: View {
                     Toggle("隐藏项目名称", isOn: $hideProjects)
                 }
                 Section("Codex 数据来源") {
+                    Toggle("统计 Codex SSH 任务", isOn: $monitorSSH)
                     HStack {
                         TextField("CLI 路径", text: $executable, prompt: Text("自动查找"))
                         Button("选择…") { choose(directory: false) }
@@ -66,8 +68,8 @@ struct SettingsView: View {
                 }
                 Section {
                     DisclosureGroup("数据与计算说明") {
-                        Text("任务状态来自本机日志。三分钟没有新事件时，状态转为未确认。")
-                        Text("token/s 合计运行中任务的输出增量，排除 autoreview。缺少样本或超过 15 秒未更新时显示不可用。")
+                        Text("任务状态来自本机与已配置的 SSH 日志。长时间执行工具不会自动结束任务。")
+                        Text("token/s 合计运行中任务的输出增量，排除 autoreview。采样停顿时保留灰色估算值；没有初始样本时显示采样中。")
                         Text("配速 = 剩余额度比例 ÷ 剩余时间比例 × 100。100% 为均匀配速，低于 85% 需放慢，高于 115% 较充裕。")
                         Text("额度进度条显示剩余额度；灰条显示已过时间。倒计时按服务返回的重置日期计算。")
                         Text("重置次数和券到期时间来自账户明细。credit 读取服务余额，不按 API 价格换算。")
@@ -125,7 +127,8 @@ struct SettingsView: View {
             let allowed = systemNotifications ? await NotificationDelivery.requestPermission() : false
             let requestedSystem = systemNotifications
             let defaults = UserDefaults.standard
-            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "")
+            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "") || monitorSSH != model.monitorsSSH
+            defaults.set(monitorSSH, forKey: "monitorSSH")
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
             defaults.set(floating, forKey: "floatingIsland")

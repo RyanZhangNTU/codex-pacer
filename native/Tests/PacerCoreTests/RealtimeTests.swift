@@ -299,7 +299,7 @@ final class RuntimeStateTests: XCTestCase {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
-        let day = home.appendingPathComponent("sessions/\(formatter.string(from: Date()))")
+        let day = home.appendingPathComponent("sessions/\(formatter.string(from: epoch))")
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
         let file = day.appendingPathComponent("real.jsonl")
         let uuid = "01a0f65c-8c61-76f2-8363-6f53e5c2a1b8"
@@ -309,7 +309,7 @@ final class RuntimeStateTests: XCTestCase {
         let tail = log("token_count", at: epoch.addingTimeInterval(2), payload: [:])
         try ([meta, start, filler, tail].reduce(Data()) { $0 + $1 + Data([10]) }).write(to: file)
         let reader = LocalActivityReader()
-        let initial = await reader.read(home: home)
+        let initial = await reader.read(home: home, now: epoch.addingTimeInterval(6))
         XCTAssertEqual(initial.activities.first?.phase, .running)
         XCTAssertEqual(initial.activities.first?.turnID, "current")
         XCTAssertEqual(initial.activities.first?.threadID, uuid)
@@ -319,7 +319,7 @@ final class RuntimeStateTests: XCTestCase {
         let large = log("function_call_output", at: epoch.addingTimeInterval(4), payload: ["call_id": "huge", "output": String(repeating: "y", count: 200000)], type: "response_item")
         let oldEnd = log("task_complete", at: epoch.addingTimeInterval(5), payload: ["turn_id": "current"])
         try handle.write(contentsOf: [newStart, large, oldEnd].reduce(Data()) { $0 + $1 + Data([10]) }); try handle.close()
-        let caughtUp = await reader.read(home: home)
+        let caughtUp = await reader.read(home: home, now: epoch.addingTimeInterval(6))
         XCTAssertEqual(caughtUp.activities.first?.phase, .running)
         XCTAssertEqual(caughtUp.activities.first?.turnID, "next")
         XCTAssertEqual(caughtUp.activities.first?.threadID, uuid)
@@ -328,7 +328,7 @@ final class RuntimeStateTests: XCTestCase {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
-        let day = home.appendingPathComponent("sessions/\(formatter.string(from: Date()))")
+        let day = home.appendingPathComponent("sessions/\(formatter.string(from: epoch))")
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
         let user = day.appendingPathComponent("user.jsonl")
         try (log("task_started", at: epoch, payload: ["turn_id": "user"]) + Data([10])).write(to: user)
@@ -338,7 +338,7 @@ final class RuntimeStateTests: XCTestCase {
             let meta = log("meta", at: epoch, payload: ["thread_source": "guardian_review", "source": ["subagent": ["other": "guardian"]]], type: "session_meta")
             try (meta + Data([10]) + log("task_started", at: epoch, payload: ["turn_id": "review"]) + Data([10])).write(to: file)
         }
-        let result = await LocalActivityReader().read(home: home)
+        let result = await LocalActivityReader().read(home: home, now: epoch.addingTimeInterval(6))
         XCTAssertEqual(result.activities.count, 1)
         XCTAssertEqual(result.activities.first?.id, "user.jsonl")
         XCTAssertEqual(result.activities.first?.phase, .running)
