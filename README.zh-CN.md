@@ -1,5 +1,7 @@
 # Codex Pacer
 
+新版 macOS 状态岛正在开发，专注实时状态与额度。[预览版构建与测试说明](docs/zh-CN/island-preview.md)。
+
 [English](./README.md) | 简体中文
 
 <p align="center">

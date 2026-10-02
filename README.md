@@ -1,5 +1,7 @@
 # Codex Pacer
 
+A native macOS island focused on current activity and quota is in development. See the [preview build and testing guide](native/README.md).
+
 English | [简体中文](./README.zh-CN.md)
 
 <p align="center">

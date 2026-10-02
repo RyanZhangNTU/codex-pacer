@@ -7,6 +7,8 @@
     "node": ">=22.18.0"
   },
   "scripts": {
+    "island:build": "bash scripts/native/build-island.sh",
+    "island:test": "bash scripts/native/test-island.sh",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
