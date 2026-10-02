@@ -16,6 +16,7 @@ public struct RuntimeStreamStatus: Equatable, Sendable {
 struct RuntimeEventState: Sendable {
     private var fallback: [String: SessionActivity] = [:]
     private var live: [String: SessionActivity] = [:]
+    private var invalidated: Set<String> = []
     private(set) var status = RuntimeStreamStatus()
     let sourceID: String?
     let sourceName: String?
@@ -23,13 +24,21 @@ struct RuntimeEventState: Sendable {
     init(sourceID: String?, sourceName: String?) { self.sourceID = sourceID; self.sourceName = sourceName }
     var activities: [SessionActivity] {
         ActivitySourceMerger.merge(logged: Array(fallback.values),
-            streamed: live.values.filter { $0.hasLiveEvidence && (status.connected || [.completed, .interrupted].contains($0.phase)) })
+            streamed: live.values.filter {
+                (status.connected && ($0.hasLiveEvidence || invalidated.contains($0.id))) ||
+                ($0.hasLiveEvidence && [.completed, .interrupted].contains($0.phase))
+            })
     }
     mutating func replaceLocalFallback(_ values: [SessionActivity]) {
         fallback = Dictionary(values.map { ($0.canonicalized().id, $0.canonicalized()) }, uniquingKeysWith: { _, newer in newer })
     }
     mutating func consume(_ frame: [String: Any]) {
-        if frame["kind"] as? String == "runtimeBatch", let events = frame["events"] as? [[String: Any]], events.count <= 512 {
+        if frame["kind"] as? String == "streamInvalidated", let thread = frame["threadId"] as? String {
+            let id = (sourceID ?? "local") + ":" + thread.lowercased()
+            if var value = live[id], ![.completed, .interrupted].contains(value.phase) {
+                value.markUnconfirmed(); live[id] = value; invalidated.insert(id)
+            }
+        } else if frame["kind"] as? String == "runtimeBatch", let events = frame["events"] as? [[String: Any]], events.count <= 512 {
             for event in events { consume(["kind": "runtime", "event": event]) }
         } else if frame["kind"] as? String == "status" {
             status.connected = frame["connected"] as? Bool == true
@@ -39,13 +48,17 @@ struct RuntimeEventState: Sendable {
             status.watchingLogs = frame["watchingLogs"] as? Bool == true
             status.helperCpuSeconds = frame["helperCpuSeconds"] as? Double ?? 0
             status.helperLoopIterations = frame["helperLoopIterations"] as? Int ?? 0
-            if !status.connected { live = live.filter { [.completed, .interrupted].contains($0.value.phase) } }
+            if !status.connected {
+                live = live.filter { [.completed, .interrupted].contains($0.value.phase) }
+                invalidated.removeAll()
+            }
         } else if frame["kind"] as? String == "runtime", let event = frame["event"] as? [String: Any],
                   let thread = event["threadId"] as? String, UUID(uuidString: thread) != nil {
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
             var value = live[id] ?? fallback[id] ?? SessionActivity(id: id, sourceHost: sourceName, sourceHostID: sourceID, phaseAwareRate: true)
             value.consumeLive(event)
             live[id] = value
+            if value.hasLiveEvidence { invalidated.remove(id) }
         } else if let rows = frame["sessions"] as? [[String: Any]] {
             var current: [String: SessionActivity] = [:]
             for row in rows {

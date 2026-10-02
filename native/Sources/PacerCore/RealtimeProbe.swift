@@ -1,7 +1,7 @@
 import Foundation
 
 enum RealtimeProbe {
-    static let script = RemoteProbe.library + "\n" + #"""
+    static let library = RemoteProbe.library + "\n" + #"""
     import socket, struct, select, hashlib, secrets, stat, uuid
     MAX=4*1024*1024
     def valid_id(v):
@@ -100,7 +100,7 @@ enum RealtimeProbe {
         return e
     class Session:
         def __init__(self,ws):
-            self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known={}; self.excluded=set(); self.attached=set(); self.attaching=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
+            self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known={}; self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
             self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.0.0-experiment'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
@@ -113,6 +113,7 @@ enum RealtimeProbe {
             self.request('thread/read',{'threadId':tid,'includeTurns':False},'read',tid)
         def queue_event(self,e):
             if e is None:return
+            if e.get('turnId'):self.evidenced.add(e['threadId'])
             if self.queue and ('Delta' in e['method'] or e['method'].endswith('/delta')) and self.queue[-1].get('method')==e['method'] and self.queue[-1].get('itemId')==e.get('itemId') and self.queue[-1].get('threadId')==e['threadId']:
                 self.queue[-1]=e
             else: self.queue.append(e)
@@ -160,66 +161,23 @@ enum RealtimeProbe {
             if tid in self.excluded:return
             if method=='thread/status/changed':
                 if e.get('status')=='active' and tid not in self.attached:self.read_thread(tid)
-                if e.get('status')=='notLoaded':self.attached.discard(tid);self.attaching.discard(tid)
+                if e.get('status')=='notLoaded':self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
             if tid in self.known:self.queue_event(e)
             else:
                 self.read_thread(tid)
                 if tid not in self.buffered and len(self.buffered)>=64:return
                 q=self.buffered.setdefault(tid,[])
                 if len(q)<64:q.append(e)
-    class LogWatch:
-        def __init__(self):
-            self.fd=None; self.paths={}
-            if not sys.platform.startswith('linux'):return
-            try:
-                import ctypes
-                self.lib=ctypes.CDLL('libc.so.6',use_errno=True)
-                self.fd=self.lib.inotify_init1(os.O_NONBLOCK|os.O_CLOEXEC)
-                if self.fd<0:self.fd=None
-            except (OSError,AttributeError):self.fd=None
-        def refresh(self):
-            if self.fd is None:return
-            wanted=({home/'sessions'} if (home/'sessions').is_dir() else {home})|{p.parent for p in cursors}
-            today=datetime.datetime.now()
-            for d in (today,today-datetime.timedelta(days=1)):
-                for fmt in ('%Y','%Y/%m','%Y/%m/%d'):wanted.add(home/'sessions'/d.strftime(fmt))
-            known=set(self.paths.values())
-            for p in wanted-known:
-                if len(self.paths)>=256:break
-                if p.is_dir():
-                    wd=self.lib.inotify_add_watch(self.fd,os.fsencode(p),0x002|0x008|0x080|0x100|0x200|0x400|0x800)
-                    if wd>=0:self.paths[wd]=p
-            for wd,p in list(self.paths.items()):
-                if p not in wanted:
-                    self.lib.inotify_rm_watch(self.fd,wd);self.paths.pop(wd,None)
-        def changed(self,attached):
-            if self.fd is None:return False
-            try:data=os.read(self.fd,65536)
-            except BlockingIOError:return False
-            changed=False; offset=0
-            while offset+16<=len(data):
-                wd,mask,cookie,n=struct.unpack_from('iIII',data,offset);offset+=16
-                name=os.fsdecode(data[offset:offset+n].split(b'\0',1)[0]);offset+=n
-                parent=self.paths.get(wd)
-                if mask&0x4000:changed=True
-                if mask&0x8000:self.paths.pop(wd,None);changed=True
-                if parent==home and name!='sessions':
-                    # Opening a WAL database can create/close/remove sidecars,
-                    # even with mode=ro. Never use DB events to trigger DB reads.
-                    continue
-                thread=name[:-6][-36:] if name.endswith('.jsonl') else None
-                if thread in attached:continue
-                changed=True
-            return changed
     import resource
     def emit(obj): print(json.dumps(obj,separators=(',',':')),flush=True)
-    def stats(session,scans,watch):
+    def stats(session,scans):
         usage=resource.getrusage(resource.RUSAGE_SELF)
-        return {'kind':'status','connected':bool(session and session.ready),'attached':len(session.attached) if session else 0,'notifications':session.notices if session else 0,'fallbackScans':scans,'watchingLogs':watch.fd is not None,'helperCpuSeconds':round(usage.ru_utime+usage.ru_stime,6),'helperLoopIterations':loop_iterations}
+        return {'kind':'status','connected':bool(session and session.ready),'attached':len(session.attached) if session else 0,'notifications':session.notices if session else 0,'fallbackScans':scans,'watchingLogs':False,'helperCpuSeconds':round(usage.ru_utime+usage.ru_stime,6),'helperLoopIterations':loop_iterations}
+    """#
+    static let script = library + "\n" + #"""
     ws=None; session=None; reconnect_at=0; next_scan=0; next_status=0; next_ping=0; flush_at=0; scans=0; last_scan=-1e9; latest_snapshot=None; status_stamp=None; once_deadline=time.monotonic()+6; quiet_since=None; loop_iterations=0
     once=len(sys.argv)>2 and sys.argv[2]=='once'
     local_only=len(sys.argv)>2 and sys.argv[2]=='socket-only'
-    watch=LogWatch()
     while True:
         loop_iterations+=1
         try:
@@ -234,20 +192,22 @@ enum RealtimeProbe {
             if session and session.ready and now-session.last_list>=60:
                 session.request('thread/loaded/list',{},'list');session.last_list=now
             if now>=next_scan and not local_only:
-                latest_snapshot=snapshot();scans+=1;emit(latest_snapshot);last_scan=time.monotonic()
-                watch.refresh();next_scan=now+(30 if session and session.ready or watch.fd is not None else 2)
+                latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ());scans+=1;emit(latest_snapshot);last_scan=time.monotonic()
+                next_scan=now+(120 if session and session.ready else 60)
             if session and session.queue and now>=flush_at:
                 emit({'kind':'runtimeBatch','events':session.queue});session.queue=[];flush_at=now+.25
             stamp=(bool(session and session.ready),len(session.attached) if session else 0)
+            if stamp!=status_stamp and last_scan>-1e8:
+                next_scan=last_scan+(120 if session and session.ready else 60)
             if now>=next_status or stamp!=status_stamp:
-                emit(stats(session,scans,watch))
+                emit(stats(session,scans))
                 next_status=now+15; status_stamp=stamp
             if session and session.ready and not session.pending:
                 if quiet_since is None:quiet_since=now
             else:quiet_since=None
             if once and (ws is None or now>=once_deadline or quiet_since is not None and now-quiet_since>=.3 and not ws.buf):
                 if session and session.queue: emit({'kind':'runtimeBatch','events':session.queue});session.queue=[]
-                emit(stats(session,scans,watch))
+                emit(stats(session,scans))
                 break
             if session and session.ready and now>=next_ping:
                 ws.send_frame(9,b'pacer');next_ping=now+15
@@ -255,18 +215,14 @@ enum RealtimeProbe {
             if session and session.pending:delay=min(delay,max(.01,min(5-(now-v[2]) for v in session.pending.values())))
             if once:delay=min(delay,.1,max(.01,once_deadline-now))
             if ws:
-                ready=select.select(([ws.s] if ws else [])+([watch.fd] if watch.fd is not None else []),[],[],0 if ws.buf else delay)[0]
+                ready=select.select([ws.s],[],[],0 if ws.buf else delay)[0]
                 if ws.buf or ws.s in ready:session.receive(ws.receive())
-                if watch.fd is not None and watch.fd in ready and watch.changed(session.attached):next_scan=min(next_scan,last_scan+1)
-            elif watch.fd is not None:
-                if select.select([watch.fd],[],[],delay)[0] and watch.changed(set()):next_scan=min(next_scan,last_scan+1)
             else:time.sleep(delay)
         except (OSError,ValueError,EOFError,TimeoutError,TypeError,AttributeError,KeyError,struct.error):
             if ws:ws.close()
-            ws=None;session=None;reconnect_at=time.monotonic()+30;next_status=0;next_scan=0
+            ws=None;session=None;reconnect_at=time.monotonic()+30;next_status=0
             if once:emit({'kind':'status','connected':False,'attached':0,'notifications':0,'fallbackScans':scans});break
         except (BrokenPipeError,KeyboardInterrupt):break
     if ws:ws.close()
-    if watch.fd is not None:os.close(watch.fd)
     """#
 }

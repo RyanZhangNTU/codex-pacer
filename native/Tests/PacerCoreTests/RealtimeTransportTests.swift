@@ -52,34 +52,55 @@ final class RealtimeTransportTests: XCTestCase {
         let output = try runProbe(server: false)
         XCTAssertTrue(output.contains("\"sessions\":[]"))
         XCTAssertFalse(output.contains("\"connected\":true"))
+        XCTAssertTrue(output.contains("\"watchingLogs\":false"))
     }
 
-    func testSqliteSidecarEventsCannotRecursivelyTriggerScans() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-watch-" + String(UUID().uuidString.prefix(8)))
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    private func scanTimes(connected: Bool) throws -> [Double] {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-schedule-" + String(UUID().uuidString.prefix(8)))
         defer { try? FileManager.default.removeItem(at: home) }
-        let definitions = String(RealtimeProbe.script.prefix(upTo: try XCTUnwrap(RealtimeProbe.script.range(of: "ws=None; session=None" )).lowerBound))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         let simulation = #"""
-        read_fd,write_fd=os.pipe();os.set_blocking(read_fd,False)
-        watch=LogWatch();watch.fd=read_fd;watch.paths={1:home,2:home/'sessions'}
-        def notification(wd,name):
-            data=name.encode()+b'\0';os.write(write_fd,struct.pack('iIII',wd,8,0,len(data))+data)
-        notification(1,'state_5.sqlite-shm');shm=watch.changed(set())
-        notification(1,'state_5.sqlite-wal');wal=watch.changed(set())
-        notification(2,'new.jsonl');uncovered=watch.changed(set())
-        notification(2,'rollout-019a0000-0000-7000-8000-000000000001.jsonl');covered=watch.changed({'019a0000-0000-7000-8000-000000000001'})
-        os.close(read_fd);os.close(write_fd)
-        print(json.dumps({'shm':shm,'wal':wal,'covered':covered,'uncovered':uncovered,'review':is_review({'source':{'subAgent':'review'}})}))
-        """#
+        clock=[0.0];test_scans=[]
+        time.monotonic=lambda:clock[0]
+        def advance(delay):
+            clock[0]+=delay
+            if clock[0]>=130:raise KeyboardInterrupt()
+        time.sleep=advance
+        def ready(r,w,x,delay):advance(delay);return ([],[],[])
+        select.select=ready
+        class TestWS:
+            def __init__(self,path):
+                if not CONNECTED:raise OSError('unavailable')
+                self.buf=b'';self.s=object();self.last_receive=1000000
+            def send_frame(self,*args):pass
+            def close(self):pass
+        class TestSession:
+            def __init__(self,ws):
+                self.ready=True;self.pending={};self.attached=set();self.evidenced={'covered'};self.queue=[];self.notices=0;self.last_list=0
+            def request(self,*args):pass
+        def test_snapshot(excluding=()):
+            test_scans.append(clock[0]);assert excluding==({'covered'} if CONNECTED else ())
+            return {'sessions':[]}
+        WebSocket=TestWS;Session=TestSession;snapshot=test_snapshot
+        """#.replacingOccurrences(of: "CONNECTED", with: connected ? "True" : "False")
+        let main = String(RealtimeProbe.script.dropFirst(RealtimeProbe.library.count))
         let child = Process(), stdout = Pipe()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        child.arguments = ["-c", definitions + "\n" + simulation, Data(home.path.utf8).base64EncodedString()]
+        child.arguments = ["-c", RealtimeProbe.library + "\n" + simulation + main + "\nprint(json.dumps({'testScans':test_scans}))", Data(home.path.utf8).base64EncodedString()]
         child.standardOutput = stdout; child.standardError = FileHandle.nullDevice
         try child.run()
         let bytes = stdout.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
         XCTAssertEqual(child.terminationStatus, 0)
-        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Bool])
-        XCTAssertEqual(result, ["shm": false, "wal": false, "covered": false, "uncovered": true, "review": true])
+        let frames = try String(decoding: bytes, as: UTF8.self).split(separator: "\n").map {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
+        }
+        return try XCTUnwrap(frames.last?["testScans"] as? [Double])
+    }
+    func testHealthySubscriptionDoesOnlyStartupAndTwoMinuteUncoveredDiscovery() throws {
+        XCTAssertEqual(try scanTimes(connected: true), [0, 120])
+    }
+    func testUnavailableSubscriptionUsesMinuteFallbackRatherThanTwoSecondPolling() throws {
+        XCTAssertEqual(try scanTimes(connected: false), [0, 60, 120])
     }
 
     /// A test-owned server sends real masked/unmasked and fragmented WS frames.

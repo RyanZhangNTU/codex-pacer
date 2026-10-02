@@ -85,10 +85,12 @@ enum RemoteProbe {
         for p in list(headers):
             if p not in selected: del headers[p]
         return selected
-    def snapshot():
+    def snapshot(excluding=()):
         rows=[]; selected=[]
         for p in candidates():
             if len(selected)>=32: break
+            if p.stem[-36:].lower() in excluding:
+                selected.append(p);continue
             try:
                 stat=p.stat()
                 with p.open('rb') as f:

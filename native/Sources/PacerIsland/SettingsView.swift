@@ -18,7 +18,6 @@ struct SettingsView: View {
     @State private var systemNotifications = UserDefaults.standard.bool(forKey: "systemNotifications")
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
-    @State private var experimentalRealtime = UserDefaults.standard.bool(forKey: "experimentalRealtime")
     @State private var validation: String?
     @State private var saving = false
 
@@ -76,18 +75,15 @@ struct SettingsView: View {
                         Button("选择…") { choose(directory: true) }
                     }
                 }
-                Section("实验") {
-                    Toggle("实时事件订阅", isOn: $experimentalRealtime)
-                    if experimentalRealtime {
-                        let connected = model.streamStatuses.values.filter(\.connected).count
-                        let attached = model.streamStatuses.values.reduce(0) { $0 + $1.attachedThreads }
-                        Text("实时连接 \(connected) 个，订阅 \(attached) 个任务").font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
+                Section("实时订阅") {
+                    let connected = model.streamStatuses.values.filter(\.connected).count
+                    let attached = model.streamStatuses.values.reduce(0) { $0 + $1.attachedThreads }
+                    Text("连接 \(connected) 个来源，订阅 \(attached) 个运行会话").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Section {
                     DisclosureGroup("数据与计算说明") {
-                        Text("任务状态来自本机与已配置的 SSH 日志。长时间执行工具不会自动结束任务。")
-                        Text("实验订阅连接已有服务，不启动服务或创建任务。可确认的工具等待不计入生成速度，阻塞时显示 0；缺少事件时由文件监听补充。")
+                        Text("本机与 SSH 任务通过实时订阅更新。日志仅用于启动补全和低频兜底。")
+                        Text("工具等待不计入生成速度；收到模型生成事件后继续计算。长时间执行工具不会自动结束任务。")
                         Text("token/s 合计运行中任务的输出增量，排除 autoreview。采样停顿时保留灰色估算值；首次采样前，折叠时隐藏速度，展开时显示采样中。")
                         Text("配速 = 剩余额度比例 ÷ 剩余时间比例 × 100。100% 为均匀配速，低于 85% 需放慢，高于 115% 较充裕。")
                         Text("额度进度条显示剩余额度；灰条显示已过时间。倒计时按服务返回的重置日期计算。")
@@ -147,9 +143,8 @@ struct SettingsView: View {
             let allowed = systemNotifications ? await NotificationDelivery.requestPermission() : false
             let requestedSystem = systemNotifications
             let defaults = UserDefaults.standard
-            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "") || monitorSSH != model.monitorsSSH || experimentalRealtime != model.experimentalRealtime
+            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "") || monitorSSH != model.monitorsSSH
             defaults.set(monitorSSH, forKey: "monitorSSH")
-            defaults.set(experimentalRealtime, forKey: "experimentalRealtime")
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
             defaults.set(floating, forKey: "floatingIsland")

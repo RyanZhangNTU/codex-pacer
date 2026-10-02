@@ -8,6 +8,8 @@ public enum ActivitySourceMerger {
         for item in streamed {
             let value = item.canonicalized()
             guard !value.isInternalReview else { continue }
+            if value.phase == .unknown, let previous = result[value.id], previous.turnID == value.turnID,
+               [.completed, .interrupted].contains(previous.phase) { continue }
             if let previous = result[value.id], value.hasLiveEvidence {
                 if previous.turnID != value.turnID && (!value.liveTurnStarted ||
                     (previous.phaseChangedAt ?? .distantPast) > (value.phaseChangedAt ?? .distantPast)) { continue }

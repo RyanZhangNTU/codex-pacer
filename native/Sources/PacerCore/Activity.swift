@@ -270,10 +270,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput"), turnID != nil {
                 phase = .waitingForInput; phaseChangedAt = date
                 generationRate.setWaiting(true, at: date)
+            } else if status == "active", phase == .waitingForInput {
+                phase = .running; phaseChangedAt = date
+                if liveItems.isEmpty { generationRate.setWaiting(false, at: date) }
             }
             return
         }
-        guard ["turn/started", "turn/completed", "item/started", "item/completed", "thread/tokenUsage/updated",
+        guard ["turn/started", "turn/attached", "turn/completed", "item/started", "item/completed", "thread/tokenUsage/updated",
                "item/agentMessage/delta", "item/plan/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"].contains(method),
               let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
         if method == "turn/completed" {
@@ -283,9 +286,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolCalls.removeAll()
             return
         }
-        if method != "turn/started", turnID == eventTurn, [.completed, .interrupted].contains(phase) { return }
-        if method == "turn/started" {
-            beginTurn(eventTurn, at: date)
+        if !["turn/started", "turn/attached"].contains(method), turnID == eventTurn, [.completed, .interrupted].contains(phase) { return }
+        if ["turn/started", "turn/attached"].contains(method) {
+            let start = (event["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? date
+            beginTurn(eventTurn, at: start <= date ? start : date)
+            if method == "turn/attached" { generationRate.start(at: date, complete: false) }
             liveTurnStarted = true
         } else if turnID != eventTurn || !hasLiveEvidence {
             // Attaching halfway through a request must not divide all of that
@@ -300,7 +305,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if method == "item/started", let id = event["itemId"] as? String {
             if toolItem {
                 if liveItems.count < 128 { liveItems.insert(id) }
-                generationRate.setWaiting(true, at: date); stage = .tool
+                generationRate.setWaiting(true, at: date); phase = .running; stage = .tool
             } else if modelItem {
                 generationRate.setWaiting(false, at: date); phase = .running
                 stage = kind == "reasoning" ? .thinking : .responding
@@ -342,7 +347,8 @@ public actor LocalActivityReader {
     public init() {}
     public func reset() { cursors.removeAll(); metadata.removeAll() }
 
-    public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false) -> (activities: [SessionActivity], watchURLs: [URL]) {
+    public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
+                     excludingThreads: Set<String> = []) -> (activities: [SessionActivity], watchURLs: [URL]) {
         let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd"
@@ -381,6 +387,8 @@ public actor LocalActivityReader {
         metadata = metadata.filter { candidates.contains($0.key) }
         for file in candidates {
             guard selected.count < maxFiles else { break }
+            let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
+            if excludingThreads.contains(id) { continue }
             let identity = ((try? manager.attributesOfItem(atPath: file.path))?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
             if metadata[file]?.identity != identity {
                 var activity = SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
@@ -400,6 +408,8 @@ public actor LocalActivityReader {
         }
         cursors = cursors.filter { selected.contains($0.key) }
         for file in selected {
+            let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
+            if excludingThreads.contains(id) { continue }
             guard let attributes = try? manager.attributesOfItem(atPath: file.path),
                   let size = (attributes[.size] as? NSNumber)?.uint64Value,
                   let handle = try? FileHandle(forReadingFrom: file) else { continue }

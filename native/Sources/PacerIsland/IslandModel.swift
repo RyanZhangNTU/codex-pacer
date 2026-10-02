@@ -37,11 +37,9 @@ final class IslandModel: ObservableObject {
     }
     private var client: CodexClient?
     private let reader = LocalActivityReader()
-    private let remoteMonitor = RemoteActivityMonitor()
     private let realtimeMonitor = RealtimeActivityMonitor()
     private var remoteTask: Task<Void, Never>?
     private var lastRemoteDiscovery = Date.distantPast
-    private let watcher = ActivityWatcher()
     private let historyStore: QuotaHistoryStore
     private let notifications = NotificationDelivery()
     private var attention = AttentionPolicy()
@@ -139,7 +137,6 @@ final class IslandModel: ObservableObject {
     var rateIsFresh: Bool { overview.rateIsFresh }
     var showsRate: Bool { !running.isEmpty }
     var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? "采样中" : "—") }
-    var experimentalRealtime: Bool { UserDefaults.standard.bool(forKey: "experimentalRealtime") }
     var monitorsSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH") }
     var accent: Color {
         if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
@@ -177,8 +174,6 @@ final class IslandModel: ObservableObject {
                 guard let self else { return }
                 self.sleeping = true
                 self.invalidateWork()
-                self.watcher.stop()
-                await self.remoteMonitor.shutdown()
                 await self.realtimeMonitor.shutdown()
                 if let client = self.client { await client.disconnect() }
             }
@@ -284,16 +279,17 @@ final class IslandModel: ObservableObject {
         lastDiscovery = Date()
         let generation = sourceGeneration
         let sourceHome = home
-        let phaseAware = experimentalRealtime
+        let covered = streamStatuses["local"]?.connected == true ? Set(remoteActivities.filter {
+            $0.sourceHostID == nil && $0.hasLiveEvidence && [.running, .waitingForInput].contains($0.phase)
+        }.compactMap(\.threadID)) : []
         localTask = Task { [weak self, reader] in
-            let result = await reader.read(home: sourceHome, phaseAwareRate: phaseAware)
+            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered)
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.localTask = nil } }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
             self.now = Date()
             self.localActivities = result.activities
             self.combineActivities()
-            self.watcher.observe(result.watchURLs) { [weak self] in self?.refreshActivity() }
             self.onStatusChange?()
         }
     }
@@ -306,33 +302,18 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
-            if self.experimentalRealtime {
-                await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable in
-                    Task { @MainActor in
-                        guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                        self.now = Date(); self.remoteActivities = activities; self.streamStatuses = statuses
-                        self.unavailableSSH = unavailable; self.combineActivities()
-                    }
-                }
-                return
-            }
-            if !self.monitorsSSH {
-                await self.remoteMonitor.shutdown()
-                self.remoteActivities = []; self.unavailableSSH = []; self.combineActivities()
-                return
-            }
-            await self.remoteMonitor.start(home: sourceHome) { [weak self] activities, unavailable in
+            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable in
                 Task { @MainActor in
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    self.now = Date(); self.remoteActivities = activities; self.unavailableSSH = unavailable
-                    self.combineActivities()
+                    self.now = Date(); self.remoteActivities = activities; self.streamStatuses = statuses
+                    self.unavailableSSH = unavailable; self.combineActivities()
                 }
             }
         }
     }
     private func combineActivities() {
         let oldHeight = panelContentHeight
-        let observed = experimentalRealtime ? ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities) : localActivities + remoteActivities
+        let observed = ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities)
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed.filter {
             !$0.isInternalReview && ![.completed, .interrupted].contains($0.phase) &&
@@ -354,7 +335,6 @@ final class IslandModel: ObservableObject {
         onStatusChange?()
         guard sourceChanged else { return }
         invalidateWork()
-        watcher.stop()
         let previous = client
         client = nil
         quota = nil
@@ -369,7 +349,6 @@ final class IslandModel: ObservableObject {
         failureCount = 0
         Task { [weak self, reader] in
             await previous?.disconnect()
-            await self?.remoteMonitor.shutdown()
             await self?.realtimeMonitor.shutdown()
             await reader.reset()
             self?.refreshQuota()
@@ -383,10 +362,8 @@ final class IslandModel: ObservableObject {
         clock?.invalidate()
         closeWork?.cancel()
         noticeWork?.cancel()
-        watcher.stop()
         invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
-        await remoteMonitor.shutdown()
         await realtimeMonitor.shutdown()
         await client?.shutdown()
     }
@@ -408,7 +385,7 @@ final class IslandModel: ObservableObject {
     }
     private func scheduleClock() {
         clock?.invalidate()
-        let interval: TimeInterval = experimentalRealtime && !expanded ? 30 : 2
+        let interval: TimeInterval = !expanded ? 30 : 2
         clock = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -422,8 +399,8 @@ final class IslandModel: ObservableObject {
         let normalInterval: Double = expanded ? 30 : 120
         let interval = failureCount == 0 ? normalInterval : min(600, normalInterval * pow(2, Double(failureCount)))
         if now.timeIntervalSince(lastQuotaAttempt) >= interval { refreshQuota() }
-        if now.timeIntervalSince(lastDiscovery) >= 10 { refreshActivity() }
-        if now.timeIntervalSince(lastRemoteDiscovery) >= (experimentalRealtime ? 30 : 5) { refreshRemote() }
+        if now.timeIntervalSince(lastDiscovery) >= (streamStatuses["local"]?.connected == true ? 120 : 60) { refreshActivity() }
+        if now.timeIntervalSince(lastRemoteDiscovery) >= 30 { refreshRemote() }
         onStatusChange?()
     }
     private func priority(_ phase: ActivityPhase) -> Int {
@@ -495,38 +472,5 @@ final class IslandModel: ObservableObject {
             completionInbox.observe([activity, ended], at: Date(), retention: completedRetention)
             activities += completionInbox.activities
         }
-    }
-}
-
-@MainActor
-private final class ActivityWatcher {
-    private var sources: [URL: DispatchSourceFileSystemObject] = [:]
-    private var debounce: DispatchWorkItem?
-    func observe(_ urls: [URL], onChange: @escaping () -> Void) {
-        let desired = Set(urls)
-        for url in Array(sources.keys) where !desired.contains(url) { sources.removeValue(forKey: url)?.cancel() }
-        for url in desired where sources[url] == nil {
-            let descriptor = open(url.path, O_EVTONLY)
-            guard descriptor >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
-            source.setEventHandler { [weak self] in
-                guard let self else { return }
-                if let flags = self.sources[url]?.data, !flags.intersection([.rename, .delete]).isEmpty {
-                    self.sources.removeValue(forKey: url)?.cancel()
-                }
-                self.debounce?.cancel()
-                let work = DispatchWorkItem(block: onChange)
-                self.debounce = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
-            }
-            source.setCancelHandler { Darwin.close(descriptor) }
-            sources[url] = source
-            source.resume()
-        }
-    }
-    func stop() {
-        debounce?.cancel()
-        sources.values.forEach { $0.cancel() }
-        sources.removeAll()
     }
 }

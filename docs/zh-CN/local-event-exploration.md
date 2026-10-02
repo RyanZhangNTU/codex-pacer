@@ -2,7 +2,7 @@
 
 本机已经收到当前 Codex Desktop 会话的实时更新。可用入口是 `~/.codex/ipc/ipc.sock`，使用桌面端内部的状态同步协议。它不是 SSH 实验所用的 app-server Unix WebSocket 接口。
 
-此次只增加诊断探针，原生应用的采集方式没有改变。工作从已同步的 `codex/realtime-events`（`07ff381`）开始，保存在 `codex/local-event-probe`，未创建 PR。
+这份记录对应最初的诊断阶段。当时只增加探针，原生应用的采集方式没有改变；后续已在 `codex/subscription-updates` 接入原生采集器，见[当前订阅说明](realtime-experiment.md)。工作从已同步的 `codex/realtime-events`（`07ff381`）开始，保存在 `codex/local-event-probe`，未创建 PR。
 
 ## 实测结果
 

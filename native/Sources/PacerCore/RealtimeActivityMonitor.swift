@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-/// Opt-in experiment. Each source gets one persistent helper connection; no
+/// Each source gets one persistent helper connection; no
 /// daemon is started and only our own helper/SSH children are terminated.
 public actor RealtimeActivityMonitor {
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String]) -> Void
@@ -10,6 +10,7 @@ public actor RealtimeActivityMonitor {
         let name: String?
         let alias: String?
         let home: String
+        var desktopIPC = false
     }
     private struct Connection {
         let source: Source
@@ -32,12 +33,13 @@ public actor RealtimeActivityMonitor {
 
     public func start(home: URL, includeSSH: Bool = true, update: @escaping Update) {
         callback = update
-        let local = Source(id: "local", name: nil, alias: nil, home: home.path)
+        let local = Source(id: "local", name: nil, alias: nil, home: home.path,
+            desktopIPC: !Self.controlEndpointAvailable(home: home))
         var sources: [Source] = []
         localUnavailable = !Self.localEndpointAvailable(home: home)
         if !localUnavailable { sources.append(local) }
         if includeSSH {
-            guard let targets = RemoteActivityTarget.readConfiguration(home: home) else { publish(); return }
+            let targets = RemoteActivityTarget.readConfiguration(home: home) ?? []
             sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home) }
         }
         let wanted = Set(sources.map(\.id))
@@ -65,6 +67,21 @@ public actor RealtimeActivityMonitor {
         try? await Task.sleep(nanoseconds: 650_000_000)
     }
     public static func localEndpointAvailable(home: URL) -> Bool {
+        controlEndpointAvailable(home: home) || desktopEndpointAvailable(home: home)
+    }
+    private static func desktopEndpointAvailable(home: URL) -> Bool {
+        let directory = home.appendingPathComponent("ipc")
+        let path = directory.appendingPathComponent("ipc.sock")
+        for (url, type) in [(directory, FileAttributeType.typeDirectory), (path, .typeSocket)] {
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  attrs[.type] as? FileAttributeType == type,
+                  (attrs[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+                  let permissions = attrs[.posixPermissions] as? NSNumber,
+                  permissions.intValue & 0o077 == 0 else { return false }
+        }
+        return true
+    }
+    private static func controlEndpointAvailable(home: URL) -> Bool {
         let path = home.appendingPathComponent("app-server-control/app-server-control.sock")
         guard let link = try? FileManager.default.attributesOfItem(atPath: path.path),
               let owner = link[.ownerAccountID] as? NSNumber, owner.uint32Value == getuid() else { return false }
@@ -86,7 +103,8 @@ public actor RealtimeActivityMonitor {
                 "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = ["-u", "-c", RealtimeProbe.script, encodedHome, "socket-only"]
+            process.arguments = ["-u", "-c", source.desktopIPC ? DesktopEventProbe.script : RealtimeProbe.script,
+                encodedHome, "socket-only"]
         }
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
