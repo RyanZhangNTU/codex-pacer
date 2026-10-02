@@ -148,4 +148,18 @@ final class SourceDiscoveryTests: XCTestCase {
         let result=await LocalActivityReader().read(home:home,now:now)
         XCTAssertEqual(result.activities.first?.phase,.unknown)
     }
+    func testExperimentalTailKeepsCompleteRecentSamplesAfterPartialStartup() async throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(), day = home.appendingPathComponent("sessions/2025/01/01")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rate.jsonl")
+        var bytes = try record("event_msg", payload: ["type":"task_started","turn_id":"rate"], at:now.addingTimeInterval(-20))
+        bytes += try record("response_item", payload: ["type":"message","role":"user","content":String(repeating:"padding",count:110000)], at:now.addingTimeInterval(-19))
+        for (seconds, count) in [(-10.0, 100), (-5.0, 200)] {
+            bytes += try record("event_msg", payload:["type":"token_count","info":["total_token_usage":["output_tokens":count]]], at:now.addingTimeInterval(seconds))
+        }
+        try bytes.write(to: file); try database(home: home, rollout: file)
+        let result = await LocalActivityReader().read(home: home, now: now, phaseAwareRate: true)
+        XCTAssertEqual(result.activities.first?.outputEstimate(at: now)?.value, 20)
+    }
 }

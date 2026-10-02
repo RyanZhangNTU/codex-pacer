@@ -55,6 +55,22 @@ The monitor opens its own SSH connections to Codex's enabled, discovered aliases
 
 Remote tasks use the same lifecycle parser and auto-review filter as local tasks. The list labels the source host; counts and throughput aggregate both sources. Connection failures expose a short SSH status with source details on hover, and retries are bounded. Source changes, sleep and quit close only the monitor's own connections. The SSH option can be disabled in settings.
 
+## Realtime experiment
+
+Settings > 实验 > 实时事件订阅 enables the experiment. It is off by default. The experiment connects only to an existing user-owned app-server control socket. Local sources without that endpoint retain the native file watcher. SSH sources use one persistent connection per configured host, with Linux file notifications and a 30-second discovery fallback. Sources without either stream or file notifications retain the two-second fallback.
+
+A successful connection is not proof that every task is subscribed. The monitor checks loaded thread metadata, excludes internal reviews, and rejoins only threads already reported active. It sends no model input and passes no configuration overrides. Streamed and logged copies are keyed by source and thread UUID; a partial/stale stream cannot hide a newer logged turn. Connection loss uses logs and preserves verified ended turns.
+
+The experiment computes usage deltas over report intervals after subtracting the union of confirmed blocking-tool waits. Blocking tools display zero; evidence of model generation while a background tool runs resumes measurement. Output usage includes reasoning and tool-call generation, and is not reconstructed from text length or delta counts. Joining mid-request first seeds the counter. Network, request preparation and reporting delays can remain in the denominator, so this is a generation-period estimate rather than exact model-side decode throughput.
+
+Only lifecycle identifiers, stage signals, timestamps, assigned names and output counts leave the remote helper. Text deltas, reasoning content, prompts, tool arguments/results, authentication data and input usage are dropped. Events are batched over 250 ms. Idle helpers wait on sockets/files; filesystem-triggered scans are limited to one per second. SQLite database/sidecar changes never trigger database reads, and the Codex home directory is not watched once the sessions tree exists. The folded UI clock uses 30 seconds; explicit events still update task state immediately.
+
+~~~sh
+"output/island-preview/Codex Pacer Island.app/Contents/MacOS/CodexPacerIsland" --diagnose-events --observe-seconds 20
+~~~
+
+The diagnostic reports connections, subscriptions, notification/scanning counts, file-watcher availability, helper CPU time and event-loop iterations. It prints no task text. Tests use a private mock Unix WebSocket server; live generation and battery-power measurements require a separate trial with an actual running task. See [the experiment notes](../docs/zh-CN/realtime-experiment.md).
+
 ## Quota, pacing and current-cycle curve
 
 Quota uses a dedicated read-only codex app-server connection. Initialization, account/read and account/rateLimits/read do not start or resume turns. The workspace identifier returned by Codex is hashed for isolation. The preview does not read or copy authentication tokens. Authentication file metadata changes reconnect the client.

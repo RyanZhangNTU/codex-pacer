@@ -26,7 +26,7 @@ public enum ActivityStage: String, Sendable {
 }
 
 public struct SessionActivity: Equatable, Sendable, Identifiable {
-    public let id: String
+    public private(set) var id: String
     public let sourceHost: String?
     public let sourceHostID: String?
     public private(set) var title: String?
@@ -54,9 +54,21 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var waitingCallID: String?
     private var toolCalls: Set<String> = []
     private var outputRate = OutputRate()
+    private var generationRate = GenerationRate()
+    private var phaseAwareRate: Bool
+    private var liveItems: Set<String> = []
+    public private(set) var hasLiveEvidence = false
+    public private(set) var liveTurnStarted = false
+    public func canonicalized() -> SessionActivity {
+        guard let threadID else { return self }
+        var value = self
+        value.id = (sourceHostID ?? "local") + ":" + threadID
+        return value
+    }
 
-    public init(id: String, project: String = "本地任务", sourceHost: String? = nil, sourceHostID: String? = nil) {
+    public init(id: String, project: String = "本地任务", sourceHost: String? = nil, sourceHostID: String? = nil, phaseAwareRate: Bool = false) {
         self.id = id
+        self.phaseAwareRate = phaseAwareRate
         self.sourceHost = sourceHost
         self.sourceHostID = sourceHostID
         self.project = project
@@ -75,10 +87,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return phase
     }
     public func tokensPerSecond(at now: Date) -> Double? {
-        observedPhase(at: now) == .running ? outputRate.tokensPerSecond(at: now) : nil
+        guard observedPhase(at: now) == .running else { return nil }
+        if phaseAwareRate { return generationRate.estimate(at: now).flatMap { $0.isFresh ? $0.value : nil } }
+        return outputRate.tokensPerSecond(at: now)
     }
     public func outputEstimate(at now: Date) -> OutputEstimate? {
-        phase == .running ? outputRate.estimate(at: now) : nil
+        guard phase == .running else { return nil }
+        return phaseAwareRate ? generationRate.estimate(at: now) : outputRate.estimate(at: now)
     }
     public func detail(at now: Date) -> String {
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return "最后状态：等待你的回复" }
@@ -135,19 +150,21 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             phase = kind == "turn_aborted" ? .interrupted : .completed
             waitingCallID = nil
             toolCalls.removeAll()
-            outputRate.finishTurn()
+            outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll()
             phaseChangedAt = date
         case "token_count":
             if let info = payload["info"] as? [String: Any],
                let total = info["total_token_usage"] as? [String: Any],
                let output = total["output_tokens"] as? Int {
                 outputRate.observe(totalOutput: output, at: date)
+                generationRate.observe(total: output, last: (info["last_token_usage"] as? [String: Any])?["output_tokens"] as? Int, at: date)
             }
         default: break
         }
     }
 
     private mutating func beginTurn(_ id: String?, at date: Date) {
+        hasLiveEvidence = false; liveTurnStarted = false
         turnID = id
         phase = .running
         stage = .starting
@@ -155,6 +172,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         waitingCallID = nil
         toolCalls.removeAll()
         outputRate.startTurn(at: date)
+        generationRate.start(at: date, complete: true); liveItems.removeAll()
         phaseChangedAt = date
     }
 
@@ -166,12 +184,19 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         phaseChangedAt = nil
         waitingCallID = nil
         toolCalls.removeAll()
-        outputRate = OutputRate()
+        outputRate = OutputRate(); generationRate = GenerationRate(); liveItems.removeAll(); hasLiveEvidence = false
     }
 
     mutating func markUnconfirmed() {
         phase = .unknown
-        outputRate.finishTurn()
+        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); hasLiveEvidence = false; liveTurnStarted = false
+    }
+
+    mutating func markPartialRate() {
+        guard phaseAwareRate else { return }
+        let date = lastObserved ?? Date()
+        generationRate.start(at: date, complete: false)
+        generationRate.setWaiting(!toolCalls.isEmpty, at: date)
     }
 
     private mutating func observeWork(at date: Date) {
@@ -187,6 +212,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             guard let callID = payload["call_id"] as? String else { return }
             observeWork(at: date)
             if toolCalls.count < 64 { toolCalls.insert(callID) }
+            generationRate.setWaiting(true, at: date)
             let name = payload["name"] as? String ?? ""
             // The async input tool returns immediately and does not pause the task.
             if name == "request_user_input" || name.hasSuffix(".request_user_input") {
@@ -198,6 +224,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             guard let callID = payload["call_id"] as? String else { return }
             guard toolCalls.contains(callID) || waitingCallID == callID else { return }
             toolCalls.remove(callID)
+            if toolCalls.isEmpty { generationRate.setWaiting(false, at: date) }
             if waitingCallID == callID {
                 waitingCallID = nil
                 phase = .running
@@ -206,13 +233,87 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if phase == .running { stage = toolCalls.isEmpty ? .thinking : .tool }
         case "reasoning":
             observeWork(at: date)
-            if phase == .running && toolCalls.isEmpty { stage = .thinking }
+            if phase == .running && (toolCalls.isEmpty || phaseAwareRate) { stage = .thinking }
+            if phaseAwareRate { generationRate.setWaiting(false, at: date) }
         case "message":
             if payload["role"] as? String == "assistant", payload["phase"] as? String == "commentary" {
                 observeWork(at: date)
             }
-            if phase == .running, payload["role"] as? String == "assistant" { stage = .responding }
+            if phase == .running, payload["role"] as? String == "assistant" {
+                stage = .responding
+                if phaseAwareRate { generationRate.setWaiting(false, at: date) }
+            }
         default: break
+        }
+    }
+
+    /// Accept only the small, sanitized event envelope emitted by our probe.
+    mutating func consumeLive(_ event: [String: Any]) {
+        guard let method = event["method"] as? String,
+              let remoteID = event["threadId"] as? String, remoteID == threadID,
+              let seconds = event["at"] as? Double, seconds.isFinite else { return }
+        let date = Date(timeIntervalSince1970: seconds)
+        if method == "metadata" {
+            if let name = event["name"] as? String { updateTitle(name) }
+            modelName = event["model"] as? String ?? modelName
+            if let cwd = event["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
+            let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
+            isInternalReview = isInternalReview || ["guardianreview", "autoreview", "subagentreview"].contains(source) ||
+                modelName?.lowercased().hasPrefix("codex-auto-review") == true
+            return
+        }
+        if method == "thread/status/changed" {
+            let status = event["status"] as? String
+            if ["notLoaded", "systemError"].contains(status ?? "") { markUnconfirmed() }
+            // Idle status alone cannot prove that a particular turn completed.
+            if status == "active", let flags = event["flags"] as? [String],
+               flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput"), turnID != nil {
+                phase = .waitingForInput; phaseChangedAt = date
+                generationRate.setWaiting(true, at: date)
+            }
+            return
+        }
+        guard ["turn/started", "turn/completed", "item/started", "item/completed", "thread/tokenUsage/updated",
+               "item/agentMessage/delta", "item/plan/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"].contains(method),
+              let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
+        if method == "turn/completed" {
+            guard turnID == eventTurn, [.running, .waitingForInput].contains(phase) else { return }
+            phase = event["status"] as? String == "completed" ? .completed : .interrupted
+            phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true
+            generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolCalls.removeAll()
+            return
+        }
+        if method != "turn/started", turnID == eventTurn, [.completed, .interrupted].contains(phase) { return }
+        if method == "turn/started" {
+            beginTurn(eventTurn, at: date)
+            liveTurnStarted = true
+        } else if turnID != eventTurn || !hasLiveEvidence {
+            // Attaching halfway through a request must not divide all of that
+            // request's tokens by the short period since we attached.
+            beginTurn(eventTurn, at: date)
+            generationRate.start(at: date, complete: false)
+        } else if [.completed, .interrupted].contains(phase) { return }
+        hasLiveEvidence = true; phaseAwareRate = true; lastObserved = max(date, lastObserved ?? date)
+        let kind = event["itemType"] as? String ?? ""
+        let modelItem = ["reasoning", "agentMessage", "plan"].contains(kind)
+        let toolItem = ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabToolCall", "webSearch", "imageView"].contains(kind)
+        if method == "item/started", let id = event["itemId"] as? String {
+            if toolItem {
+                if liveItems.count < 128 { liveItems.insert(id) }
+                generationRate.setWaiting(true, at: date); stage = .tool
+            } else if modelItem {
+                generationRate.setWaiting(false, at: date); phase = .running
+                stage = kind == "reasoning" ? .thinking : .responding
+            }
+        } else if method == "item/completed", let id = event["itemId"] as? String, liveItems.remove(id) != nil {
+            if liveItems.isEmpty {
+                generationRate.setWaiting(false, at: date); phase = .running; stage = .thinking
+            }
+        } else if method.hasSuffix("/delta") || method.contains("TextDelta") || method.contains("textDelta") {
+            generationRate.setWaiting(false, at: date); phase = .running
+            stage = method.contains("reasoning") ? .thinking : .responding
+        } else if method == "thread/tokenUsage/updated", let total = event["outputTokens"] as? Int {
+            generationRate.observe(total: total, last: event["lastOutputTokens"] as? Int, at: date)
         }
     }
 
@@ -241,7 +342,7 @@ public actor LocalActivityReader {
     public init() {}
     public func reset() { cursors.removeAll(); metadata.removeAll() }
 
-    public func read(home: URL, now: Date = Date()) -> (activities: [SessionActivity], watchURLs: [URL]) {
+    public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false) -> (activities: [SessionActivity], watchURLs: [URL]) {
         let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd"
@@ -282,7 +383,7 @@ public actor LocalActivityReader {
             guard selected.count < maxFiles else { break }
             let identity = ((try? manager.attributesOfItem(atPath: file.path))?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
             if metadata[file]?.identity != identity {
-                var activity = SessionActivity(id: file.lastPathComponent)
+                var activity = SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
                 if let handle = try? FileHandle(forReadingFrom: file) {
                     defer { try? handle.close() }
                     // Session metadata can include a long instruction block.
@@ -306,7 +407,7 @@ public actor LocalActivityReader {
             let identity = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
             var cursor = cursors[file]
             if cursor == nil || cursor!.offset > size || cursor!.identity != identity {
-                var activity = metadata[file]?.activity ?? SessionActivity(id: file.lastPathComponent)
+                var activity = metadata[file]?.activity ?? SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
                 if let anchor = latestTurnAnchor(handle: handle, size: size) { activity.consume(anchor) }
                 cursor = Cursor(offset: 0, fragment: Data(), activity: activity, identity: identity)
             }
@@ -321,6 +422,7 @@ public actor LocalActivityReader {
                     if let anchor = latestTurnAnchor(handle: handle, size: size) { current.activity.consume(anchor) }
                 }
                 dropPartial = true
+                current.activity.markPartialRate()
             }
             do {
                 try handle.seek(toOffset: current.offset)

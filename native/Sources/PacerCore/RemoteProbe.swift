@@ -2,7 +2,7 @@ import Foundation
 
 enum RemoteProbe {
     // Only sanitized lifecycle and counters leave the remote host.
-    static let script = #"""
+    static let library = #"""
     import base64, datetime, json, pathlib, sqlite3, sys, time
     home = pathlib.Path(base64.b64decode(sys.argv[1]).decode()).expanduser()
     cursors = {}
@@ -29,7 +29,10 @@ enum RemoteProbe {
             if kind == 'token_count':
                 total = (p.get('info') or {}).get('total_token_usage') or {}
                 output = total.get('output_tokens')
-                if isinstance(output,int) and output >= 0: q['info'] = {'total_token_usage':{'output_tokens':output}}
+                if isinstance(output,int) and output >= 0:
+                    q['info'] = {'total_token_usage':{'output_tokens':output}}
+                    last=(p.get('info') or {}).get('last_token_usage') or {}
+                    if isinstance(last.get('output_tokens'),int): q['info']['last_token_usage']={'output_tokens':last['output_tokens']}
         elif outer == 'response_item' and kind in ('function_call','custom_tool_call','function_call_output','custom_tool_call_output','reasoning','message'):
             if kind == 'message' and p.get('role') != 'assistant': return None
             q['type'] = kind
@@ -105,6 +108,7 @@ enum RemoteProbe {
                         seed=anchor(f,stat.st_size)
                         if seed: records.append(seed)
                         offset=max(0,stat.st_size-budget); fragment=b''; reset=True
+                    prelude_count=len(records)
                     f.seek(offset); data=f.read(budget); fragment+=data; offset+=len(data)
                     if gap:
                         _,sep,fragment=fragment.partition(b'\n')
@@ -115,11 +119,13 @@ enum RemoteProbe {
                         if v: records.append(v)
                     if len(fragment)>1024*1024: fragment=b''
                     cursors[p]=(stat.st_ino,offset,fragment,meta)
-                    rows.append({'id':p.name,'title':titles.get(p),'reset':reset,'records':records})
+                    rows.append({'id':p.name,'title':titles.get(p),'reset':reset,'partial':gap,'preludeCount':prelude_count,'records':records})
             except OSError: continue
         for p in list(cursors):
             if p not in selected: del cursors[p]
         return {'sessions':rows}
+    """#
+    static let script = library + "\n" + #"""
     while True:
         try:
             frame=snapshot(); print(json.dumps(frame,separators=(',',':')),flush=True)

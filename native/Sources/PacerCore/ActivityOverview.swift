@@ -22,7 +22,10 @@ public struct ActivityOverview: Sendable {
         // Never carry an old rate from a waiting, ended, stale or internal turn.
         tokensPerSecond = rates.isEmpty ? nil : rates.reduce(0, +)
         let estimates = running.compactMap { $0.outputEstimate(at: now) }
-        displayedRate = estimates.isEmpty ? nil : estimates.reduce(0) { $0 + $1.value }
+        // Known blocked tasks contribute zero, but an unmeasured generating
+        // task must not turn that partial total into an apparent global zero.
+        let incompleteZero = estimates.count < running.count && estimates.allSatisfy { $0.value == 0 }
+        displayedRate = estimates.isEmpty || incompleteZero ? nil : estimates.reduce(0) { $0 + $1.value }
         rateIsFresh = !estimates.isEmpty && estimates.count == running.count && estimates.allSatisfy(\.isFresh)
     }
 

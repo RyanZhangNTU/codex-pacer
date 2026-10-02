@@ -8,6 +8,7 @@ final class IslandModel: ObservableObject {
         didSet { if oldValue?.windows.count != quota?.windows.count { onLayoutChange?() } }
     }
     @Published var activities: [SessionActivity] = []
+    @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var unavailableSSH: [String] = []
     private var localActivities: [SessionActivity] = []
     private var remoteActivities: [SessionActivity] = []
@@ -37,6 +38,7 @@ final class IslandModel: ObservableObject {
     private var client: CodexClient?
     private let reader = LocalActivityReader()
     private let remoteMonitor = RemoteActivityMonitor()
+    private let realtimeMonitor = RealtimeActivityMonitor()
     private var remoteTask: Task<Void, Never>?
     private var lastRemoteDiscovery = Date.distantPast
     private let watcher = ActivityWatcher()
@@ -137,6 +139,7 @@ final class IslandModel: ObservableObject {
     var rateIsFresh: Bool { overview.rateIsFresh }
     var showsRate: Bool { !running.isEmpty }
     var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? "采样中" : "—") }
+    var experimentalRealtime: Bool { UserDefaults.standard.bool(forKey: "experimentalRealtime") }
     var monitorsSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH") }
     var accent: Color {
         if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
@@ -167,9 +170,7 @@ final class IslandModel: ObservableObject {
 
     func start() {
         if !demo { refreshQuota(); refreshActivity(); refreshRemote() }
-        clock = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
+        scheduleClock()
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
@@ -178,6 +179,7 @@ final class IslandModel: ObservableObject {
                 self.invalidateWork()
                 self.watcher.stop()
                 await self.remoteMonitor.shutdown()
+                await self.realtimeMonitor.shutdown()
                 if let client = self.client { await client.disconnect() }
             }
         })
@@ -194,6 +196,7 @@ final class IslandModel: ObservableObject {
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
+        if clock != nil { scheduleClock() }
         onLayoutChange?()
         if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
     }
@@ -281,8 +284,9 @@ final class IslandModel: ObservableObject {
         lastDiscovery = Date()
         let generation = sourceGeneration
         let sourceHome = home
+        let phaseAware = experimentalRealtime
         localTask = Task { [weak self, reader] in
-            let result = await reader.read(home: sourceHome)
+            let result = await reader.read(home: sourceHome, phaseAwareRate: phaseAware)
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.localTask = nil } }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
@@ -302,6 +306,16 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
+            if self.experimentalRealtime {
+                await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable in
+                    Task { @MainActor in
+                        guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
+                        self.now = Date(); self.remoteActivities = activities; self.streamStatuses = statuses
+                        self.unavailableSSH = unavailable; self.combineActivities()
+                    }
+                }
+                return
+            }
             if !self.monitorsSSH {
                 await self.remoteMonitor.shutdown()
                 self.remoteActivities = []; self.unavailableSSH = []; self.combineActivities()
@@ -318,7 +332,7 @@ final class IslandModel: ObservableObject {
     }
     private func combineActivities() {
         let oldHeight = panelContentHeight
-        let observed = localActivities + remoteActivities
+        let observed = experimentalRealtime ? ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities) : localActivities + remoteActivities
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed.filter {
             !$0.isInternalReview && ![.completed, .interrupted].contains($0.phase) &&
@@ -331,6 +345,7 @@ final class IslandModel: ObservableObject {
 
     func applySettings(sourceChanged: Bool) {
         settingsRevision += 1
+        if clock != nil { scheduleClock() }
         pruneCompletions()
         if hideProjects, let current = notice, current.kind != .lowQuota {
             notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: "Codex 任务")
@@ -347,7 +362,7 @@ final class IslandModel: ObservableObject {
         historyWarning = nil
         attention = AttentionPolicy()
         completionInbox = CompletionInbox()
-        activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []
+        activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         notice = nil
         noticeWork?.cancel()
         errorMessage = nil
@@ -355,6 +370,7 @@ final class IslandModel: ObservableObject {
         Task { [weak self, reader] in
             await previous?.disconnect()
             await self?.remoteMonitor.shutdown()
+            await self?.realtimeMonitor.shutdown()
             await reader.reset()
             self?.refreshQuota()
             self?.refreshActivity()
@@ -371,6 +387,7 @@ final class IslandModel: ObservableObject {
         invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         await remoteMonitor.shutdown()
+        await realtimeMonitor.shutdown()
         await client?.shutdown()
     }
 
@@ -389,6 +406,14 @@ final class IslandModel: ObservableObject {
         activities.removeAll { [.completed, .interrupted].contains($0.phase) && !retained.contains($0.id) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
     }
+    private func scheduleClock() {
+        clock?.invalidate()
+        let interval: TimeInterval = experimentalRealtime && !expanded ? 30 : 2
+        clock = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        clock?.tolerance = interval * 0.2
+    }
     private func tick() {
         now = Date()
         pruneCompletions()
@@ -398,7 +423,7 @@ final class IslandModel: ObservableObject {
         let interval = failureCount == 0 ? normalInterval : min(600, normalInterval * pow(2, Double(failureCount)))
         if now.timeIntervalSince(lastQuotaAttempt) >= interval { refreshQuota() }
         if now.timeIntervalSince(lastDiscovery) >= 10 { refreshActivity() }
-        if now.timeIntervalSince(lastRemoteDiscovery) >= 5 { refreshRemote() }
+        if now.timeIntervalSince(lastRemoteDiscovery) >= (experimentalRealtime ? 30 : 5) { refreshRemote() }
         onStatusChange?()
     }
     private func priority(_ phase: ActivityPhase) -> Int {

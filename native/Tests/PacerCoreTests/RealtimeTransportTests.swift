@@ -1,0 +1,152 @@
+import XCTest
+@testable import PacerCore
+
+final class RealtimeTransportTests: XCTestCase {
+    private let active = "019a0000-0000-7000-8000-000000000001"
+    private func runProbe(badAccept: Bool = false, server: Bool = true) throws -> String {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-ws-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let prefix = server ? Self.fixture.replacingOccurrences(of: "BAD_ACCEPT", with: badAccept ? "True" : "False") : ""
+        let child = Process(), stdout = Pipe()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), "once"]
+        child.standardOutput = stdout; child.standardError = FileHandle.nullDevice
+        try child.run()
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        child.waitUntilExit()
+        XCTAssertEqual(child.terminationStatus, 0)
+        return String(decoding: data, as: UTF8.self)
+    }
+    func testRealUnixWebSocketFramesSubscribeOnlyActiveUserThreadAndDropContent() throws {
+        let output = try runProbe()
+        XCTAssertFalse(output.contains("PRIVATE"))
+        let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let requests = try XCTUnwrap(frames.first(where: { $0["testRequests"] != nil })?["testRequests"] as? [[String: Any]])
+        let allowed: Set<String> = ["initialize", "thread/loaded/list", "thread/read", "thread/resume"]
+        XCTAssertTrue(requests.allSatisfy { allowed.contains($0["method"] as? String ?? "") })
+        let resumes = requests.filter { $0["method"] as? String == "thread/resume" }
+        XCTAssertEqual(resumes.count, 1)
+        let reviewReads = requests.filter { $0["method"] as? String == "thread/read" &&
+            ($0["params"] as? [String: Any])?["threadId"] as? String == "019a0000-0000-7000-8000-000000000003" }
+        XCTAssertEqual(reviewReads.count, 1)
+        let params = try XCTUnwrap(resumes.first?["params"] as? [String: Any])
+        XCTAssertEqual(params["threadId"] as? String, active)
+        XCTAssertEqual(params["excludeTurns"] as? Bool, true)
+        XCTAssertEqual(Set(params.keys), ["threadId", "excludeTurns"])
+        XCTAssertEqual(frames.last(where: { $0["kind"] as? String == "status" })?["connected"] as? Bool, true)
+        var state = RuntimeEventState(sourceID: nil, sourceName: nil)
+        for frame in frames { state.consume(frame) }
+        XCTAssertEqual(state.activities.count, 1)
+        XCTAssertEqual(state.activities.first?.phase, .completed)
+        XCTAssertEqual(state.activities.first?.turnID, "test-turn")
+        XCTAssertEqual(state.status.attachedThreads, 1)
+    }
+    func testInvalidWebSocketAcceptCannotCreateLiveConnection() throws {
+        let output = try runProbe(badAccept: true)
+        let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        XCTAssertFalse(frames.contains { $0["connected"] as? Bool == true })
+        XCTAssertFalse(output.contains("thread/resume"))
+    }
+    func testMissingEndpointFallsBackWithoutStartingAnyServer() throws {
+        let output = try runProbe(server: false)
+        XCTAssertTrue(output.contains("\"sessions\":[]"))
+        XCTAssertFalse(output.contains("\"connected\":true"))
+    }
+
+    func testSqliteSidecarEventsCannotRecursivelyTriggerScans() throws {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-watch-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let definitions = String(RealtimeProbe.script.prefix(upTo: try XCTUnwrap(RealtimeProbe.script.range(of: "ws=None; session=None" )).lowerBound))
+        let simulation = #"""
+        read_fd,write_fd=os.pipe();os.set_blocking(read_fd,False)
+        watch=LogWatch();watch.fd=read_fd;watch.paths={1:home,2:home/'sessions'}
+        def notification(wd,name):
+            data=name.encode()+b'\0';os.write(write_fd,struct.pack('iIII',wd,8,0,len(data))+data)
+        notification(1,'state_5.sqlite-shm');shm=watch.changed(set())
+        notification(1,'state_5.sqlite-wal');wal=watch.changed(set())
+        notification(2,'new.jsonl');uncovered=watch.changed(set())
+        notification(2,'rollout-019a0000-0000-7000-8000-000000000001.jsonl');covered=watch.changed({'019a0000-0000-7000-8000-000000000001'})
+        os.close(read_fd);os.close(write_fd)
+        print(json.dumps({'shm':shm,'wal':wal,'covered':covered,'uncovered':uncovered,'review':is_review({'source':{'subAgent':'review'}})}))
+        """#
+        let child = Process(), stdout = Pipe()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-c", definitions + "\n" + simulation, Data(home.path.utf8).base64EncodedString()]
+        child.standardOutput = stdout; child.standardError = FileHandle.nullDevice
+        try child.run()
+        let bytes = stdout.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+        XCTAssertEqual(child.terminationStatus, 0)
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Bool])
+        XCTAssertEqual(result, ["shm": false, "wal": false, "covered": false, "uncovered": true, "review": true])
+    }
+
+    /// A test-owned server sends real masked/unmasked and fragmented WS frames.
+    /// It never connects to Codex, runs a model, or touches a user's thread.
+    private static let fixture = #"""
+    import pathlib,base64,sys,socket,struct,json,hashlib,threading,time,os,atexit
+    fixture_home=pathlib.Path(base64.b64decode(sys.argv[1]).decode())
+    fixture_dir=fixture_home/'app-server-control';fixture_dir.mkdir(mode=0o700)
+    fixture_socket=fixture_dir/'app-server-control.sock'
+    fixture_server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);fixture_server.bind(str(fixture_socket));os.chmod(fixture_socket,0o600);fixture_server.listen(1)
+    fixture_requests=[]
+    fixture_active='019a0000-0000-7000-8000-000000000001'
+    fixture_idle='019a0000-0000-7000-8000-000000000002'
+    fixture_review='019a0000-0000-7000-8000-000000000003'
+    def fixture_worker():
+        client,_=fixture_server.accept();client.settimeout(4);buffer=b''
+        def readn(n):
+            nonlocal buffer
+            while len(buffer)<n:
+                d=client.recv(65536)
+                if not d:raise EOFError()
+                buffer+=d
+            out,buffer=buffer[:n],buffer[n:];return out
+        def frame(op,data,final=True):
+            n=len(data);head=bytes([(128 if final else 0)|op,n]) if n<126 else bytes([(128 if final else 0)|op,126])+struct.pack('!H',n)
+            client.sendall(head+data)
+        def send(v,fragment=False):
+            d=json.dumps(v).encode()
+            if fragment:frame(1,d[:30],False);frame(0,d[30:])
+            else:frame(1,d)
+        try:
+            while b'\r\n\r\n' not in buffer:buffer+=client.recv(4096)
+            header,buffer=buffer.split(b'\r\n\r\n',1)
+            key=next(line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:'))
+            accept=b'invalid' if BAD_ACCEPT else base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+            client.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+            while True:
+                h=readn(2);op=h[0]&15;n=h[1]&127
+                if n==126:n=struct.unpack('!H',readn(2))[0]
+                elif n==127:n=struct.unpack('!Q',readn(8))[0]
+                mask=readn(4) if h[1]&128 else None;d=readn(n)
+                if mask:d=bytes(c^mask[i%4] for i,c in enumerate(d))
+                if op==9:frame(10,d);continue
+                if op!=1:continue
+                v=json.loads(d)
+                if 'id' not in v:continue
+                fixture_requests.append(v);method=v['method'];params=v.get('params') or {}
+                if method=='initialize':result={'userAgent':'fixture'}
+                elif method=='thread/loaded/list':result={'data':[fixture_active,fixture_idle,fixture_review]}
+                elif method in ('thread/read','thread/resume'):
+                    tid=params['threadId'];result={'thread':{'id':tid,'status':{'type':'idle' if tid==fixture_idle else 'active'},'threadSource':'guardian_review' if tid==fixture_review else 'user','model':'gpt-test','name':'Running sample','cwd':'/fixture','preview':'PRIVATE prompt','turns':[]}}
+                else:raise ValueError('unexpected request')
+                send({'id':v['id'],'result':result})
+                if method=='thread/resume':
+                    common={'threadId':fixture_active,'turnId':'test-turn'}
+                    send({'method':'item/agentMessage/delta','params':{'threadId':fixture_review,'turnId':'review','itemId':'review-item','delta':'PRIVATE auto review'}})
+                    send({'method':'turn/started','params':{'threadId':fixture_active,'turn':{'id':'test-turn','status':'inProgress','items':[{'text':'PRIVATE input'}]}}})
+                    send({'method':'item/started','params':dict(common,item={'type':'commandExecution','id':'tool','command':'PRIVATE command'},startedAtMs=time.time()*1000)})
+                    send({'method':'item/agentMessage/delta','params':dict(common,itemId='reply',delta='PRIVATE reply')},True)
+                    send({'method':'item/completed','params':dict(common,item={'type':'commandExecution','id':'tool','aggregatedOutput':'PRIVATE tool output'},completedAtMs=time.time()*1000)})
+                    send({'method':'thread/tokenUsage/updated','params':dict(common,tokenUsage={'total':{'outputTokens':100,'inputTokens':12345},'last':{'outputTokens':100}})})
+                    send({'method':'turn/completed','params':{'threadId':fixture_active,'turn':{'id':'test-turn','status':'completed','items':[{'text':'PRIVATE final'}]}}})
+        except (EOFError,ConnectionResetError,BrokenPipeError):pass
+        finally:client.close();fixture_server.close()
+    fixture_thread=threading.Thread(target=fixture_worker,daemon=True);fixture_thread.start()
+    def fixture_finish():
+        fixture_thread.join(timeout=1);print(json.dumps({'testRequests':fixture_requests}),flush=True)
+    atexit.register(fixture_finish)
+    """#
+}

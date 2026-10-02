@@ -6,6 +6,10 @@ import UserNotifications
 @main
 enum PacerMain {
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--diagnose-events") {
+            Task.detached { await diagnoseEvents(); exit(0) }
+            dispatchMain()
+        }
         if CommandLine.arguments.contains("--diagnose") {
             Task.detached { await diagnose(); exit(0) }
             dispatchMain()
@@ -17,6 +21,25 @@ enum PacerMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
+    }
+
+    private static func diagnoseEvents() async {
+        let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
+        let monitor = RealtimeActivityMonitor()
+        let args = CommandLine.arguments
+        let index = args.firstIndex(of: "--observe-seconds")
+        let seconds = index.flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }.map { min(60, max(5, $0)) } ?? 20
+        print("Local event endpoint available: \(RealtimeActivityMonitor.localEndpointAvailable(home: home))")
+        await monitor.start(home: home) { _, _, _ in }
+        try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+        let statuses = await monitor.statuses()
+        for (source, status) in statuses.sorted(by: { $0.key < $1.key }) {
+            print("Source \(source): connected=\(status.connected), attached=\(status.attachedThreads), notifications=\(status.notifications), fallbackScans=\(status.fallbackScans), fileWatch=\(status.watchingLogs), helperCPU=\(status.helperCpuSeconds)s, loopIterations=\(status.helperLoopIterations)")
+        }
+        let activities = await monitor.activities()
+        print("Stream-evidenced tasks: \(activities.filter(\.hasLiveEvidence).count)")
+        print("Candidate session records: \(activities.count); internal reviews: \(activities.filter(\.isInternalReview).count)")
+        await monitor.shutdown()
     }
 
     private static func diagnose() async {
