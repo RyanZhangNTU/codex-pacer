@@ -60,7 +60,10 @@ private struct IslandHeader: View {
                         Text(String(format: "%.0f", rate))
                             .font(.system(size: 10)).monospacedDigit()
                             .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
+                            .help(String(format: model.rateIsFresh ? "合计输出速度：%.1f token/s" : "最近估算：%.1f token/s", rate))
                         Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
+                    } else if model.expanded && model.showsRate && model.pendingCompletions.isEmpty {
+                        Text("采样中").font(.system(size: 10)).foregroundStyle(secondary)
                     }
                 }.frame(height: model.topHeight).contentShape(Rectangle())
             }
@@ -92,31 +95,21 @@ private struct IslandExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(model.statusTitle).font(.system(size: 16, weight: .semibold)).lineLimit(1)
-                Spacer(minLength: 12)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(model.rateText)
-                        .font(.system(size: 22, weight: .medium)).monospacedDigit()
-                    Text("token/s").font(.system(size: 10)).foregroundStyle(secondary)
-                }
-                .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
-                .help(model.rateIsFresh ? "运行中任务的合计输出速度" : "最近已知估算，等待完整的新 token 采样")
-            }.padding(.top, 13).padding(.bottom, 14)
             if model.isDemo {
-                Text("演示").font(.system(size: 11)).foregroundStyle(secondary).padding(.bottom, 8)
+                Text("演示").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 10)
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 0) {
                     if let notice = model.notice {
                         Label(notice.title + "：" + notice.detail, systemImage: "bell")
-                            .font(.system(size: 11)).foregroundStyle(model.accent)
+                            .font(.system(size: 12)).foregroundStyle(model.accent).padding(.bottom, 8)
                     }
                     taskContent
-                    Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
+                    Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.vertical, 16)
                     quotaContent
                 }
+                .padding(.top, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }.scrollIndicators(.hidden).frame(maxHeight: .infinity)
             footer
@@ -125,9 +118,9 @@ private struct IslandExpandedContent: View {
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
-            Text("暂无运行任务").font(.system(size: 12)).foregroundStyle(secondary).padding(.vertical, 8)
+            Text("暂无运行任务").font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
         } else {
-            VStack(spacing: 8) {
+            VStack(spacing: 2) {
                 ForEach(model.visibleActivities) { activity in
                     TaskRowView(activity: activity, name: model.projectName(activity), now: model.now,
                         enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.accent) { model.open(activity) }
@@ -135,7 +128,7 @@ private struct IslandExpandedContent: View {
             }
         }
         if !model.unavailableSSH.isEmpty {
-            Label("SSH 未连接", systemImage: "network").font(.system(size: 11)).foregroundStyle(secondary)
+            Label("SSH 未连接", systemImage: "network").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
                 .help(model.unavailableSSH.joined(separator: "、"))
         }
     }
@@ -143,26 +136,31 @@ private struct IslandExpandedContent: View {
     @ViewBuilder private var quotaContent: some View {
         if let message = model.errorMessage {
             Label("额度暂不可用", systemImage: "exclamationmark.circle")
-                .font(.system(size: 12)).foregroundStyle(secondary).help(message)
+                .font(.system(size: 12)).foregroundStyle(secondary).help(message).padding(.bottom, 12)
         }
         if let quota = model.quota, !quota.buckets.isEmpty || quota.resetCredits != nil {
-            ForEach(quota.buckets) { bucket in
-                if quota.buckets.count > 1 {
-                    Text(bucket.name ?? bucket.id).font(.system(size: 11, weight: .medium)).foregroundStyle(secondary)
-                }
-                ForEach(bucket.windows) { window in
-                    QuotaWindowView(window: window, now: model.now,
-                        allowPace: !model.stale && model.errorMessage == nil, accent: model.accent, secondary: secondary)
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(quota.buckets) { bucket in
+                    VStack(alignment: .leading, spacing: 18) {
+                        if quota.buckets.count > 1 {
+                            Text(bucket.name ?? bucket.id).font(.system(size: 13, weight: .medium)).foregroundStyle(secondary)
+                        }
+                        ForEach(bucket.windows) { window in
+                            QuotaWindowView(window: window, now: model.now,
+                                allowPace: !model.stale && model.errorMessage == nil, accent: model.accent, secondary: secondary)
+                        }
+                    }
                 }
             }
-            AccountUsageView(snapshot: quota, now: model.now)
             if let cycle = model.currentCycle {
-                QuotaCycleChart(cycle: cycle, accent: model.accent)
+                QuotaCycleChart(cycle: cycle, resetCredits: quota.resetCredits, now: model.now,
+                    accent: model.accent).padding(.top, 22)
             } else if model.weeklyWindow != nil {
-                Text("等待采样").font(.system(size: 12)).foregroundStyle(secondary)
+                Text("等待采样").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
             }
+            AccountUsageView(snapshot: quota, now: model.now).padding(.top, 20)
             if let warning = model.historyWarning {
-                Label("曲线记录异常", systemImage: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(secondary).help(warning)
+                Label("曲线记录异常", systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(secondary).help(warning).padding(.top, 10)
             }
         } else if model.errorMessage == nil {
             Text(model.refreshing ? "正在读取账户额度" : "尚未连接 Codex").font(.system(size: 13))
@@ -170,21 +168,21 @@ private struct IslandExpandedContent: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             if model.stale || model.errorMessage != nil {
-                Label("未更新", systemImage: "clock").font(.system(size: 11)).help(model.freshnessText)
+                Label("未更新", systemImage: "clock").font(.system(size: 12)).help(model.freshnessText)
             }
             Spacer(minLength: 4)
-            Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin") }
+            Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").frame(width: 24, height: 26) }
                 .help(model.pinned ? "取消固定" : "固定展开").accessibilityLabel(model.pinned ? "取消固定" : "固定展开")
-            Button { model.refreshQuota(); model.refreshActivity() } label: { Image(systemName: "arrow.clockwise") }
+            Button { model.refreshQuota(); model.refreshActivity() } label: { Image(systemName: "arrow.clockwise").frame(width: 24, height: 26) }
                 .disabled(model.refreshing).help("刷新 · " + model.freshnessText).accessibilityLabel("刷新")
-            Button { model.onSettings?() } label: { Image(systemName: "gearshape") }
+            Button { model.onSettings?() } label: { Image(systemName: "gearshape").frame(width: 24, height: 26) }
                 .help("设置").accessibilityLabel("设置")
-            Button { model.close() } label: { Image(systemName: "chevron.up") }
+            Button { model.close() } label: { Image(systemName: "chevron.up").frame(width: 24, height: 26) }
                 .help("收起").accessibilityLabel("收起")
         }
-        .font(.system(size: 12)).buttonStyle(.plain).foregroundStyle(secondary)
-        .padding(.top, 12).padding(.bottom, 14)
+        .font(.system(size: 13)).buttonStyle(.plain).foregroundStyle(secondary)
+        .padding(.top, 8).padding(.bottom, 12)
     }
 }
