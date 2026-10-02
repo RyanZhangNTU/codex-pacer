@@ -65,6 +65,7 @@ final class IslandModel: ObservableObject {
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
     var prefersFloating: Bool { UserDefaults.standard.bool(forKey: "floatingIsland") }
+    var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { UserDefaults.standard.bool(forKey: "hideProjects") }
     var displayID: Int { UserDefaults.standard.integer(forKey: "displayID") }

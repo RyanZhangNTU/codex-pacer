@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var floating = UserDefaults.standard.bool(forKey: "floatingIsland")
+    @State private var appearance = IslandAppearance.stored
+    @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
@@ -26,6 +28,12 @@ struct SettingsView: View {
             Text("Codex Pacer").font(.system(size: 23, weight: .semibold))
             Form {
                 Section("显示") {
+                    Picker("外观", selection: $appearance) {
+                        Text("经典").tag(IslandAppearance.classic)
+                        Text("液态玻璃").tag(IslandAppearance.liquidGlass)
+                    }
+                    .disabled(!IslandAppearance.supportsLiquidGlass)
+                    .help(IslandAppearance.supportsLiquidGlass ? "保存后立即应用" : "液态玻璃需要 macOS 26 或更新版本")
                     Toggle("使用悬浮胶囊", isOn: $floating)
                     Toggle("在全屏空间显示", isOn: $fullscreen)
                     Picker("显示器", selection: $displayID) {
@@ -45,6 +53,43 @@ struct SettingsView: View {
                                 Text(window.label + ((model.quota?.buckets.count ?? 0) > 1 ? " · " + (bucket.name ?? bucket.id) : "")).tag(window.id)
                             }
                         }
+                    }
+                }
+                if appearance == .liquidGlass, IslandAppearance.supportsLiquidGlass {
+                    Section("液态玻璃") {
+                        HStack(spacing: 8) {
+                            Circle().fill(Color(red: 0.56, green: 0.84, blue: 0.79)).frame(width: 6, height: 6)
+                            Text("Codex Pacer").font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            Image(systemName: "gearshape").font(.system(size: 12))
+                        }
+                        .foregroundStyle(.white).padding(.horizontal, 18).frame(height: 58)
+                        .modifier(IslandSurface(appearance: .liquidGlass, attached: false, expanded: true, settings: glass))
+                        .preferredColorScheme(.dark)
+                        .accessibilityLabel("液态玻璃外观预览")
+                        Picker("玻璃风格", selection: $glass.style) {
+                            ForEach(IslandGlassSettings.Style.allCases, id: \.rawValue) { Text($0.label).tag($0) }
+                        }
+                        LabeledContent("通透度") {
+                            HStack(spacing: 10) {
+                                Slider(value: $glass.transparency, in: 0...1, step: 0.05)
+                                    .accessibilityLabel("通透度")
+                                Text("\(Int((glass.transparency * 100).rounded()))%")
+                                    .monospacedDigit().frame(width: 40, alignment: .trailing)
+                            }
+                        }
+                        Picker("色调", selection: $glass.tint) {
+                            ForEach(IslandGlassSettings.Tint.allCases, id: \.rawValue) { Text($0.label).tag($0) }
+                        }
+                        LabeledContent("圆角") {
+                            HStack(spacing: 10) {
+                                Slider(value: $glass.cornerRadius, in: 12...36, step: 1)
+                                    .accessibilityLabel("圆角")
+                                Text("\(Int(glass.cornerRadius))").monospacedDigit().frame(width: 40, alignment: .trailing)
+                            }
+                        }
+                        Button("恢复默认") { glass = IslandGlassSettings() }
+                            .buttonStyle(.borderless)
                     }
                 }
                 Section("提醒") {
@@ -148,6 +193,8 @@ struct SettingsView: View {
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
             defaults.set(floating, forKey: "floatingIsland")
+            defaults.set(appearance.rawValue, forKey: "islandAppearance")
+            glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")
             defaults.set(displayID, forKey: "displayID")
             defaults.set(metric, forKey: "compactMetric")

@@ -4,7 +4,7 @@ The native macOS app focuses on task interaction, account quota and pacing. Swif
 
 ## Build and run
 
-Requires macOS 14 or later and Xcode with Swift 5.10 or newer.
+Requires Xcode 26 or newer to build. The app runs on macOS 14 or later; native Liquid Glass is available on macOS 26 or later.
 
 ~~~sh
 npm run island:test
@@ -13,6 +13,8 @@ open "output/island-preview/Codex Pacer Island.app"
 ~~~
 
 The scripts build and sign in a local temporary directory, then validate the copied app. The preview is ad hoc signed for local testing and is not notarized. Its bundle ID, com.codexpacer.island.preview, is separate from the Tauri app.
+
+Installed and preview copies share a process lock. Opening another copy brings up the existing island and exits before starting task monitors. The operating system releases the lock when the owner exits or crashes.
 
 Quit a running preview before using launch flags:
 
@@ -32,6 +34,14 @@ Hover to expand; move away to collapse after a short delay. Click the top strip 
 Task cards show the Codex conversation title, current stage and source host. Click a card to open that conversation directly. SSH links include the configured host ID; local links use the default desktop Codex home. Unsupported local profiles have a disabled card rather than opening a different conversation. Waiting tasks appear first, and order within each state follows the turn start/change time so counter updates do not move a task under the pointer.
 
 Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders. Data and calculation notes are collapsed in settings; the island shows only task details, quota and the current curve.
+
+Settings → Display → Appearance selects Classic or Liquid Glass. macOS 26 and later default to the native regular glass material, applied once to the island shell; task cards and charts retain their existing layout. The selection is saved and applies without restarting or reconnecting task sources. Earlier systems use Classic. Reduce Transparency uses the solid shell while preserving the saved preference. The strip beside a physical notch stays black when collapsed. Opening fades this black backing out before the shell starts expanding; closing keeps it clear until the visible window is fully folded, then fades it back in. Interrupted fades continue from their displayed opacity. Floating and Classic modes keep the immediate shell spring; Reduce Motion applies the endpoint directly.
+
+When Liquid Glass is selected, its settings offer Regular/Clear material, transparency, Neutral/Cool/Warm tint and corner radius, with a live local preview and Restore Defaults. Changes apply to the island only when saved; Cancel discards the draft. Transparency adjusts the dark content backing within a readable range; it is a relative control, not the native material's alpha. The system controls blur and refraction. Classic keeps its existing shape and colors. Defaults are Regular, 50% transparency, Neutral tint and a 27-point corner radius.
+
+Expansion and collapse use one critically damped spring for width, height and corner shape, keeping the top edge and horizontal center anchored. Both dimensions move together; content stays at its final layout size and gently fades/slides into the available space. Reversals retain position and velocity, including during content-height updates. Repeated layout requests for the same destination do not restart the spring. Presentation updates are separate from the task model, and the display link follows the selected screen's refresh rate only while moving. The glass background stays independent of the content subtree, and the window shadow updates with the shell throughout the transition. Hidden content is removed once fully transparent, before the spring settles, and cannot receive clicks or accessibility focus. Reduce Motion applies the final layout immediately.
+
+Window frames and both animation endpoints are rounded before submission to AppKit, with symmetric horizontal edges and a fixed top. The spring retains its continuous position and velocity for reversals. Aligning the endpoints also covers odd notch and display widths, where an ideal target can otherwise lie exactly on a rounding boundary. This prevents fractional sizes from being rounded outward to an oversized island until the last tick; the finishing tick makes no further visible window resize.
 
 Task state updates through subscriptions: the existing app-server Unix WebSocket endpoint, or Desktop IPC v11 on local macOS when that endpoint is absent. JSONL is used for startup and low-frequency fallback. task_started and turn_context anchor the current turn. task_complete and turn_aborted apply only to that matching turn; an unpaired completion cannot end an unobserved turn. Fresh reasoning and tool calls restore active status when a start was missed. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
 

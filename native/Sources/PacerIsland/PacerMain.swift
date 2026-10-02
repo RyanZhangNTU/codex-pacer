@@ -3,6 +3,8 @@ import SwiftUI
 import PacerCore
 import UserNotifications
 
+private let showExistingIsland = Notification.Name("com.codexpacer.island.showExistingInstance")
+
 @main
 enum PacerMain {
     @MainActor static func main() {
@@ -18,9 +20,25 @@ enum PacerMain {
         // app.run() would hold the actor job and block all refresh tasks.
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        let lockURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CodexPacerIsland/instance.lock")
+        let instance: IslandInstanceLock
+        do { instance = try IslandInstanceLock(at: lockURL) }
+        catch {
+            let alert = NSAlert()
+            alert.messageText = "无法启动 Codex Pacer"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+            return
+        }
+        guard instance.acquired else {
+            DistributedNotificationCenter.default().postNotificationName(showExistingIsland,
+                object: nil, userInfo: nil, deliverImmediately: true)
+            return
+        }
         let delegate = AppDelegate()
         app.delegate = delegate
-        withExtendedLifetime(delegate) { app.run() }
+        withExtendedLifetime((delegate, instance)) { app.run() }
     }
 
     private static func diagnoseEvents() async {
@@ -86,12 +104,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     private var panel: PanelController!
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
+    private var reopenObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
             "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false, "compactMetric": "remaining", "quotaWindowID": "auto"])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         panel = PanelController(model: model)
+        reopenObserver = DistributedNotificationCenter.default().addObserver(forName: showExistingIsland,
+            object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.panel.show() }
+            }
         model.onSettings = { [weak self] in self?.showSettings() }
         model.onOpenActivity = { [weak self] activity in self?.openActivity(activity) }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
@@ -187,6 +210,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let reopenObserver { DistributedNotificationCenter.default().removeObserver(reopenObserver) }
         panel.stop()
         Task {
             await model.shutdown()
