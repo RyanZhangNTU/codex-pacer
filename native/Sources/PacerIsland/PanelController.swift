@@ -20,6 +20,7 @@ final class PanelController {
         panel.title = "Codex Pacer Island"
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.hasShadow = true
         panel.level = .statusBar
         panel.hidesOnDeactivate = false

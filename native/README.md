@@ -4,7 +4,7 @@ The native macOS app focuses on task interaction, account quota and pacing. Swif
 
 ## Build and run
 
-Requires macOS 14 or later and Xcode with Swift 5.10 or newer.
+Requires Xcode 26 or newer to build. The app runs on macOS 14 or later; native Liquid Glass is available on macOS 26 or later.
 
 ~~~sh
 npm run island:test
@@ -32,6 +32,8 @@ Hover to expand; move away to collapse after a short delay. Click the top strip 
 Task cards show the Codex conversation title, current stage and source host. Click a card to open that conversation directly. SSH links include the configured host ID; local links use the default desktop Codex home. Unsupported local profiles have a disabled card rather than opening a different conversation. Waiting tasks appear first, and order within each state follows the turn start/change time so counter updates do not move a task under the pointer.
 
 Left-click the menu bar item to show or collapse the island; right-click for actions. Escape closes a keyboard-focused island. Hovering does not request keyboard focus; pinning or explicitly opening the panel does. Settings select the display, floating mode, fullscreen visibility, quota metric, source and reminders. Data and calculation notes are collapsed in settings; the island shows only task details, quota and the current curve.
+
+Settings → Display → Appearance selects Classic or Liquid Glass. macOS 26 and later default to the native regular glass material, applied once to the island shell; task cards and charts retain their existing layout. The selection is saved and applies without restarting or reconnecting task sources. Earlier systems use Classic. Reduce Transparency uses the solid shell while preserving the saved preference. The strip beside a physical notch stays black for camera integration.
 
 Task state updates through subscriptions: the existing app-server Unix WebSocket endpoint, or Desktop IPC v11 on local macOS when that endpoint is absent. JSONL is used for startup and low-frequency fallback. task_started and turn_context anchor the current turn. task_complete and turn_aborted apply only to that matching turn; an unpaired completion cannot end an unobserved turn. Fresh reasoning and tool calls restore active status when a start was missed. Tool call/output pairs provide recent execution stages. The synchronous request_user_input call waits for its matching result; request_user_input_async does not mark a task as waiting. Neither tool arguments requesting escalation nor an old heartbeat prove that approval is pending.
 

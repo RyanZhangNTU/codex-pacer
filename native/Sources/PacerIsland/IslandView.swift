@@ -49,6 +49,7 @@ struct IslandView: View {
                 .frame(maxWidth: attached ? .infinity : nil, alignment: .trailing)
                 .accessibilityLabel("\(model.compactWindow)\(model.quotaSummary)。点击固定展开")
             }.padding(.horizontal, 15)
+                .background(attached && model.appearance == .liquidGlass ? Color.black : Color.clear)
 
             if model.expanded {
                 VStack(alignment: .leading, spacing: 0) {
@@ -87,11 +88,7 @@ struct IslandView: View {
         }
         .foregroundStyle(Color(red: 0.95, green: 0.96, blue: 0.97))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color(red: 0.045, green: 0.047, blue: 0.056))
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: attached ? 0 : 25,
-            bottomLeadingRadius: model.expanded ? 27 : 19,
-            bottomTrailingRadius: model.expanded ? 27 : 19,
-            topTrailingRadius: attached ? 0 : 25))
+        .modifier(IslandSurface(appearance: model.appearance, attached: attached, expanded: model.expanded))
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
         .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: model.expanded)
