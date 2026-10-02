@@ -1,53 +1,84 @@
 import Foundation
 import CoreGraphics
 
-/// One timeline for the window, shell and content. Retarget from the last
-/// displayed sample so reversing a hover never jumps to an endpoint.
+/// A critically damped spring shared by both shell dimensions and the reveal.
+/// Retargeting carries the displayed position AND velocity into the next spring.
 public struct IslandMotion {
+    public struct Velocity {
+        public var width: Double = 0
+        public var height: Double = 0
+        public var center: Double = 0
+        public var top: Double = 0
+        public var expansion: Double = 0
+
+        public static let zero = Self()
+    }
+
     public struct Sample {
         public let frame: CGRect
         public let expansion: Double
-        public let content: Double
+        public let velocity: Velocity
         public let finished: Bool
+
+        /// Reveal follows the available space, so reversing also reverses the
+        /// fade continuously. There is no separate fade-out / resize phase.
+        public var content: Double {
+            let fraction = min(1, max(0, (expansion - 0.12) / 0.76))
+            return fraction * fraction * (3 - 2 * fraction)
+        }
+
+        public static func resting(at frame: CGRect, expanded: Bool) -> Self {
+            Self(frame: frame, expansion: expanded ? 1 : 0, velocity: .zero, finished: true)
+        }
     }
 
-    public let duration: TimeInterval
-    private let from: CGRect
-    private let to: CGRect
+    public let target: Sample
+    private let initial: Sample
     private let start: TimeInterval
-    private let expansion: Double
-    private let content: Double
-    private let opening: Bool
+    private let frequency: Double
 
-    public init(from: CGRect, to: CGRect, expansion: Double, content: Double,
-                opening: Bool, start: TimeInterval, distance: Double = 1) {
-        self.from = from; self.to = to; self.start = start
-        self.expansion = expansion; self.content = content; self.opening = opening
-        duration = max(0.12, (opening ? 0.36 : 0.26) * sqrt(min(1, max(0, distance))))
+    public init(from sample: Sample, to frame: CGRect, opening: Bool, start: TimeInterval) {
+        initial = sample
+        target = .resting(at: frame, expanded: opening)
+        self.start = start
+        // Opening has a soft landing; closing is a little more responsive.
+        // Both dimensions start together and keep the same response throughout.
+        frequency = opening ? 20 : 26
     }
 
     public func sample(at time: TimeInterval) -> Sample {
         let elapsed = max(0, time - start)
-        let fraction = min(1, elapsed / duration)
-        if fraction == 1 {
-            return Sample(frame: to, expansion: opening ? 1 : 0, content: opening ? 1 : 0, finished: true)
+        if elapsed == 0 {
+            return Sample(frame: initial.frame, expansion: initial.expansion,
+                          velocity: initial.velocity, finished: false)
         }
-        let width = ease(segment(fraction, from: opening ? 0 : 0.25, to: opening ? 0.55 : 1))
-        let height = ease(segment(fraction, from: opening ? 0.04 : 0.18, to: 1))
-        let reveal = ease(segment(fraction, from: opening ? 0.24 : 0, to: opening ? 0.85 : 0.28))
-        let w = blend(from.width, to.width, width), h = blend(from.height, to.height, height)
-        let center = blend(from.midX, to.midX, height), top = blend(from.maxY, to.maxY, height)
-        return Sample(frame: CGRect(x: center - w / 2, y: top - h, width: w, height: h),
-            expansion: blend(expansion, opening ? 1 : 0, height),
-            content: blend(content, opening ? 1 : 0, reveal), finished: fraction == 1)
+        // Also bounds the display-link lifetime after sleep or a stalled frame.
+        guard elapsed < 1.2 else { return target }
+        let width = spring(initial.frame.width, target.frame.width, initial.velocity.width, elapsed)
+        let height = spring(initial.frame.height, target.frame.height, initial.velocity.height, elapsed)
+        let center = spring(initial.frame.midX, target.frame.midX, initial.velocity.center, elapsed)
+        let top = spring(initial.frame.maxY, target.frame.maxY, initial.velocity.top, elapsed)
+        let expansion = spring(initial.expansion, target.expansion, initial.velocity.expansion, elapsed)
+        if width.settled && height.settled && center.settled && top.settled &&
+            abs(expansion.value - target.expansion) < 0.0002 && abs(expansion.velocity) < 0.005 {
+            return target
+        }
+        return Sample(frame: CGRect(x: center.value - width.value / 2, y: top.value - height.value,
+                                    width: width.value, height: height.value),
+                      expansion: expansion.value,
+                      velocity: Velocity(width: width.velocity, height: height.velocity,
+                                         center: center.velocity, top: top.velocity, expansion: expansion.velocity),
+                      finished: false)
     }
 
-    private func segment(_ value: Double, from: Double, to: Double) -> Double {
-        min(1, max(0, (value - from) / (to - from)))
+    private func spring(_ value: Double, _ destination: Double, _ velocity: Double,
+                        _ elapsed: TimeInterval) -> (value: Double, velocity: Double, settled: Bool) {
+        // Closed-form solution: independent of refresh rate and dropped frames.
+        let displacement = value - destination
+        let coefficient = velocity + frequency * displacement
+        let decay = exp(-frequency * elapsed)
+        let offset = (displacement + coefficient * elapsed) * decay
+        let speed = (velocity - frequency * coefficient * elapsed) * decay
+        return (destination + offset, speed, abs(offset) < 0.05 && abs(speed) < 0.5)
     }
-    // Critically damped response: starts at rest and never overshoots the shell.
-    private func ease(_ value: Double) -> Double {
-        (1 - (1 + 7 * value) * exp(-7 * value)) / (1 - 8 * exp(-7))
-    }
-    private func blend(_ from: Double, _ to: Double, _ fraction: Double) -> Double { from + (to - from) * fraction }
 }

@@ -74,26 +74,30 @@ struct IslandSurface: ViewModifier {
 
     private var shape: UnevenRoundedRectangle {
         let radius = appearance == .liquidGlass ? settings.cornerRadius : 27
-        let top = attached ? 0 : (appearance == .classic ? 25 : radius)
         let fraction = progress ?? (expanded ? 1 : 0)
         let bottom = min(radius, 19) + (radius - min(radius, 19)) * fraction
+        let top = attached ? 0 : bottom
         return UnevenRoundedRectangle(topLeadingRadius: top,
             bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top)
     }
 
-    @ViewBuilder func body(content: Content) -> some View {
-        if appearance == .liquidGlass, !reduceTransparency {
-            if #available(macOS 26.0, *) {
-                content.background(.black.opacity(0.9 - settings.transparency * 0.4), in: shape)
-                    .glassEffect((settings.style == .regular ? Glass.regular : Glass.clear)
-                        .tint(settings.tint.color.opacity(0.12)), in: shape)
-                    .clipShape(shape)
-            } else { solid(content) }
-        } else { solid(content) }
+    func body(content: Content) -> some View {
+        content.background { material }.clipShape(shape)
     }
 
-    private func solid(_ content: Content) -> some View {
-        content.background(Color(red: 0.045, green: 0.047, blue: 0.056), in: shape)
-            .clipShape(shape)
+    // Keep native glass on a stable background view. Putting it around the
+    // conditional content lets teardown of that content rebuild the material.
+    @ViewBuilder private var material: some View {
+        if appearance == .liquidGlass, !reduceTransparency {
+            if #available(macOS 26.0, *) {
+                shape.fill(.black.opacity(0.9 - settings.transparency * 0.4))
+                    .glassEffect((settings.style == .regular ? Glass.regular : Glass.clear)
+                        .tint(settings.tint.color.opacity(0.12)), in: shape)
+            } else { solid }
+        } else { solid }
+    }
+
+    private var solid: some View {
+        shape.fill(Color(red: 0.045, green: 0.047, blue: 0.056))
     }
 }

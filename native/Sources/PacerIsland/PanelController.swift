@@ -12,13 +12,19 @@ private final class IslandPanel: NSPanel {
 final class PanelController: NSObject {
     private let model: IslandModel
     private let panel: IslandPanel
+    private let presentation: IslandPresentation
+    private let hosting: NSHostingView<IslandView>
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
     private var displayLink: CADisplayLink?
-    private var motion: IslandMotion?
+    private var motion: IslandTransition?
+    private var motionRevision = 0
 
     init(model: IslandModel) {
         self.model = model
+        let presentation = IslandPresentation()
+        self.presentation = presentation
+        hosting = NSHostingView(rootView: IslandView(model: model, presentation: presentation))
         panel = IslandPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
         panel.title = "Codex Pacer Island"
@@ -30,7 +36,6 @@ final class PanelController: NSObject {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
-        let hosting = NSHostingView(rootView: IslandView(model: model))
         hosting.sizingOptions = []
         hosting.safeAreaRegions = []
         hosting.autoresizingMask = [.width, .height]
@@ -73,59 +78,80 @@ final class PanelController: NSObject {
         if hasNotch, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notchWidth = max(0, right.minX - left.maxX)
         } else { notchWidth = 0 }
-        model.notchWidth = notchWidth
-        model.topHeight = hasNotch ? max(32, screen.safeAreaInsets.top) : 38
+        if model.notchWidth != notchWidth { model.notchWidth = notchWidth }
+        let topHeight = hasNotch ? max(32, screen.safeAreaInsets.top) : 38
+        if model.topHeight != topHeight { model.topHeight = topHeight }
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
             topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch,
             contentHeight: model.panelContentHeight)
         let expandedFrame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
             topHeight: model.topHeight, expanded: true, attached: hasNotch, contentHeight: model.panelContentHeight)
-        model.expandedCanvas = expandedFrame.size
+        if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
-        if panel.frame == frame, model.displayedExpansion == (model.expanded ? 1 : 0),
-           model.contentVisibility == (model.expanded ? 1 : 0) {
-            stopMotion(); return
-        }
-        let sameAnchor = abs(panel.frame.maxY - frame.maxY) < 1 && abs(panel.frame.midX - frame.midX) < 1
+        let current = presentation.sample
+        let hasBlackHeader = notchWidth > 0 && model.appearance == .liquidGlass
+        let target = IslandTransition.Sample.resting(at: frame, expanded: model.expanded, hasBlackHeader: hasBlackHeader)
+        let sameAnchor = abs(current.frame.maxY - frame.maxY) < 1 && abs(current.frame.midX - frame.midX) < 1
         if animated && sameAnchor && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let distance = abs(panel.frame.height - frame.height) / max(1, expandedFrame.height - model.topHeight)
-            motion = IslandMotion(from: panel.frame, to: frame, expansion: model.displayedExpansion,
-                content: model.contentVisibility, opening: model.expanded, start: CACurrentMediaTime(), distance: distance)
+            // Quota/settings updates must not restart an unchanged destination.
+            if let motion, motion.target.frame == frame, motion.target.expansion == target.expansion,
+               motion.hasBlackHeader == hasBlackHeader { return }
+            if current.finished, current.frame == frame, current.expansion == target.expansion,
+               current.blackOpacity == target.blackOpacity {
+                stopMotion(); return
+            }
+            motion = IslandTransition(from: current, to: frame, opening: model.expanded,
+                                      hasBlackHeader: hasBlackHeader, start: CACurrentMediaTime())
+            motionRevision += 1
             if displayLink == nil {
                 let link = screen.displayLink(target: self, selector: #selector(step(_:)))
-                link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+                let refreshRate = Float(max(30, screen.maximumFramesPerSecond))
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: min(60, refreshRate),
+                                                                maximum: refreshRate, preferred: refreshRate)
                 displayLink = link
                 link.add(to: .main, forMode: .common)
             }
         } else {
             stopMotion()
-            apply(frame: frame, expansion: model.expanded ? 1 : 0, content: model.expanded ? 1 : 0)
+            apply(target)
         }
     }
 
     @objc private func step(_ link: CADisplayLink) {
-        guard let motion else { stopMotion(); return }
+        guard var motion else { stopMotion(); return }
+        let revision = motionRevision
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let end = motion.sample(at: .greatestFiniteMagnitude)
-            apply(frame: end.frame, expansion: end.expansion, content: end.content)
-            stopMotion(); return
+            apply(motion.target)
+            if revision == motionRevision { stopMotion() }
+            return
         }
         let sample = motion.sample(at: link.targetTimestamp)
-        apply(frame: sample.frame, expansion: sample.expansion, content: sample.content)
-        if sample.finished { stopMotion(); panel.invalidateShadow() }
+        self.motion = motion
+        apply(sample)
+        if sample.finished, revision == motionRevision { stopMotion() }
     }
 
-    private func apply(frame: CGRect, expansion: Double, content: Double) {
+    private func apply(_ sample: IslandTransition.Sample) {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         withTransaction(transaction) {
-            model.displayedExpansion = expansion
-            model.contentVisibility = content
-            panel.setFrame(frame, display: true)
+            presentation.sample = sample
+            let frame = IslandGeometry.windowFrame(sample.frame)
+            if panel.frame != frame { panel.setFrame(frame, display: false) }
+            // Resolve SwiftUI geometry in the same frame without forcing a
+            // second synchronous window redraw or implicit glass animation.
+            hosting.layoutSubtreeIfNeeded()
+            // A transparent window caches its silhouette. Update it with the
+            // shell, not just at rest, which makes the floating shadow pop.
+            panel.invalidateShadow()
         }
+        CATransaction.commit()
     }
 
     private func stopMotion() {
+        motionRevision += 1
         displayLink?.invalidate(); displayLink = nil; motion = nil
     }
 
