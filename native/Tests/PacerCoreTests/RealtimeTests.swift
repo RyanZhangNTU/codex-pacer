@@ -145,7 +145,7 @@ final class OutputRateTests: XCTestCase {
 
 final class InteractionTests: XCTestCase {
     func testConversationLinkOnlyAcceptsUUIDWithoutPromptInjection() {
-        let id = "01a0f65c-8c61-76f2-8363-6f53e5c2a1b8"
+        let id = "11111111-1111-4111-8111-111111111111"
         var activity = SessionActivity(id: "rollout-2026-10-01-\(id).jsonl")
         XCTAssertEqual(activity.threadURL?.absoluteString, "codex://threads/" + id)
         activity.consume(log("session_meta", at: epoch, payload: ["id": "bad?prompt=send", "cwd": "/test"], type: "session_meta"))
@@ -302,7 +302,7 @@ final class RuntimeStateTests: XCTestCase {
         let day = home.appendingPathComponent("sessions/\(formatter.string(from: epoch))")
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
         let file = day.appendingPathComponent("real.jsonl")
-        let uuid = "01a0f65c-8c61-76f2-8363-6f53e5c2a1b8"
+        let uuid = "11111111-1111-4111-8111-111111111111"
         let meta = log("meta", at: epoch, payload: ["cwd": "/projects/real", "id": uuid, "thread_source": "user"], type: "session_meta")
         let start = log("task_started", at: epoch, payload: ["turn_id": "current"])
         let filler = log("function_call_output", at: epoch.addingTimeInterval(1), payload: ["call_id": "large", "output": String(repeating: "x", count: 800000)], type: "response_item")

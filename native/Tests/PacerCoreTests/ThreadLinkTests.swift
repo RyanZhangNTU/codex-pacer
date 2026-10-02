@@ -2,10 +2,10 @@ import XCTest
 @testable import PacerCore
 
 final class ThreadLinkTests: XCTestCase {
-    private let uuid = "01a0f65c-8c61-76f2-8363-6f53e5c2a1b8"
+    private let uuid = "11111111-1111-4111-8111-111111111111"
     func testSshConversationLinkTargetsItsConfiguredHost() throws {
-        let host = "remote-ssh-discovered:RTX-4090-1"
-        let activity = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "4090", sourceHostID: host)
+        let host = "remote-ssh-discovered:example-host"
+        let activity = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "example-host", sourceHostID: host)
         let url = try XCTUnwrap(activity.threadURL)
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.scheme, "codex")
