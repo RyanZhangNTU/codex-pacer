@@ -49,7 +49,7 @@ struct IslandView: View {
                 .frame(maxWidth: attached ? .infinity : nil, alignment: .trailing)
                 .accessibilityLabel("\(model.compactWindow)\(model.quotaSummary)。点击固定展开")
             }.padding(.horizontal, 15)
-                .background(attached && model.appearance == .liquidGlass ? Color.black : Color.clear)
+                .background(attached && !model.expanded && model.appearance == .liquidGlass ? Color.black : Color.clear)
 
             if model.expanded {
                 VStack(alignment: .leading, spacing: 0) {
