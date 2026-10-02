@@ -287,11 +287,11 @@ enum DesktopEventProbe {
             if ipc:
                 if ipc.buf or select.select([ipc.s],[],[],delay)[0]:session.receive(ipc.receive())
             else:time.sleep(delay)
+        except (BrokenPipeError,KeyboardInterrupt):break
         except (OSError,ValueError,EOFError,TimeoutError,TypeError,AttributeError,KeyError,IndexError,struct.error,RecursionError):
             if ipc:ipc.close()
             ipc=None;session=None;reconnect_at=time.monotonic()+30;next_status=0
             if once:emit({'kind':'status','connected':False,'attached':0,'watchingLogs':False,'fallbackScans':0});break
-        except KeyboardInterrupt:break
     if ipc:
         if session and session.ready:
             for tid in list(session.followed):

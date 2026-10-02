@@ -16,6 +16,7 @@ public actor RealtimeActivityMonitor {
         let source: Source
         let process: Process
         let output: FileHandle
+        let input: FileHandle?
         let reader: PipeChunkReader
         let continuation: AsyncStream<Data>.Continuation
         var task: Task<Void, Never>?
@@ -94,11 +95,12 @@ public actor RealtimeActivityMonitor {
     }
     private func connect(_ source: Source) {
         let process = Process(), output = Pipe()
+        let input = source.alias == nil ? nil : Pipe()
         let program = Data(RealtimeProbe.script.utf8).base64EncodedString()
         let encodedHome = Data(source.home.utf8).base64EncodedString()
         if let alias = source.alias {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome)"
+            let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime"
             process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
                 "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
         } else {
@@ -106,7 +108,10 @@ public actor RealtimeActivityMonitor {
             process.arguments = ["-u", "-c", source.desktopIPC ? DesktopEventProbe.script : RealtimeProbe.script,
                 encodedHome, "socket-only"]
         }
-        process.standardInput = FileHandle.nullDevice
+        // Keep SSH stdin open while the owner lives. EOF lets the remote helper
+        // stop immediately, even if no event would otherwise touch stdout.
+        if let input { process.standardInput = input }
+        else { process.standardInput = FileHandle.nullDevice }
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
@@ -118,10 +123,12 @@ public actor RealtimeActivityMonitor {
         }
         do { try process.run() }
         catch {
+            try? input?.fileHandleForWriting.close()
             reader.stop(); output.fileHandleForReading.readabilityHandler = nil; channel.continuation.finish()
             failed[source.id] = source; retryAfter[source.id] = Date().addingTimeInterval(30); return
         }
         var connection = Connection(source: source, process: process, output: output.fileHandleForReading,
+            input: input?.fileHandleForWriting,
             reader: reader, continuation: channel.continuation,
             state: RuntimeEventState(sourceID: source.alias == nil ? nil : source.id, sourceName: source.name))
         connection.task = Task { [weak self] in
@@ -162,6 +169,7 @@ public actor RealtimeActivityMonitor {
     private func stop(_ id: String) {
         guard let connection = connections.removeValue(forKey: id) else { return }
         connection.reader.stop(); connection.output.readabilityHandler = nil
+        try? connection.input?.close()
         connection.continuation.finish(); connection.task?.cancel(); try? connection.output.close()
         if connection.process.isRunning {
             connection.process.terminate()

@@ -67,6 +67,8 @@ The Desktop adapter checks sender identity, protocol version and consecutive sta
 
 Desktop IPC is private and version dependent. A long-history initial snapshot can be large; its frame bound is 16 MiB. Connections stay open to avoid repeated snapshots. A future incompatible Desktop release falls back to logs. Shared Codex processes are never started, restarted or killed. Sleep and quit close only Pacer's own helpers.
 
+SSH stdin stays open for the lifetime of its owner. Owner EOF ends the remote helper; a broken output pipe also ends either helper immediately. Output failure never enters the connection retry loop. The 2026-10-02 performance check found and removed three orphaned helpers from an earlier diagnostic, then verified graceful shutdown and simulated owner crash on real SSH hosts.
+
 ~~~sh
 "output/island-preview/Codex Pacer Island.app/Contents/MacOS/CodexPacerIsland" --diagnose-events --observe-seconds 20
 ~~~

@@ -169,7 +169,10 @@ enum RealtimeProbe {
                 q=self.buffered.setdefault(tid,[])
                 if len(q)<64:q.append(e)
     import resource
-    def emit(obj): print(json.dumps(obj,separators=(',',':')),flush=True)
+    def emit(obj):
+        data=(json.dumps(obj,separators=(',',':'))+'\n').encode()
+        while data:
+            written=os.write(1,data);data=data[written:]
     def stats(session,scans):
         usage=resource.getrusage(resource.RUSAGE_SELF)
         return {'kind':'status','connected':bool(session and session.ready),'attached':len(session.attached) if session else 0,'notifications':session.notices if session else 0,'fallbackScans':scans,'watchingLogs':False,'helperCpuSeconds':round(usage.ru_utime+usage.ru_stime,6),'helperLoopIterations':loop_iterations}
@@ -178,10 +181,12 @@ enum RealtimeProbe {
     ws=None; session=None; reconnect_at=0; next_scan=0; next_status=0; next_ping=0; flush_at=0; scans=0; last_scan=-1e9; latest_snapshot=None; status_stamp=None; once_deadline=time.monotonic()+6; quiet_since=None; loop_iterations=0
     once=len(sys.argv)>2 and sys.argv[2]=='once'
     local_only=len(sys.argv)>2 and sys.argv[2]=='socket-only'
+    ssh_lifetime=len(sys.argv)>2 and sys.argv[2]=='ssh-lifetime'
     while True:
         loop_iterations+=1
         try:
             now=time.monotonic()
+            if ssh_lifetime and select.select([0],[],[],0)[0] and not os.read(0,4096):break
             if ws is None and now>=reconnect_at:
                 try:
                     ws=WebSocket(home/'app-server-control'/'app-server-control.sock');session=Session(ws);next_status=now
@@ -215,14 +220,17 @@ enum RealtimeProbe {
             if session and session.pending:delay=min(delay,max(.01,min(5-(now-v[2]) for v in session.pending.values())))
             if once:delay=min(delay,.1,max(.01,once_deadline-now))
             if ws:
-                ready=select.select([ws.s],[],[],0 if ws.buf else delay)[0]
+                ready=select.select([ws.s]+([0] if ssh_lifetime else []),[],[],0 if ws.buf else delay)[0]
+                if ssh_lifetime and 0 in ready and not os.read(0,4096):break
                 if ws.buf or ws.s in ready:session.receive(ws.receive())
+            elif ssh_lifetime:
+                if select.select([0],[],[],delay)[0] and not os.read(0,4096):break
             else:time.sleep(delay)
+        except (BrokenPipeError,KeyboardInterrupt):break
         except (OSError,ValueError,EOFError,TimeoutError,TypeError,AttributeError,KeyError,struct.error):
             if ws:ws.close()
             ws=None;session=None;reconnect_at=time.monotonic()+30;next_status=0
             if once:emit({'kind':'status','connected':False,'attached':0,'notifications':0,'fallbackScans':scans});break
-        except (BrokenPipeError,KeyboardInterrupt):break
     if ws:ws.close()
     """#
 }
