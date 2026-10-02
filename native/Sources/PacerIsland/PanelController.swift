@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import PacerCore
+import QuartzCore
 
 private final class IslandPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -8,15 +9,18 @@ private final class IslandPanel: NSPanel {
 }
 
 @MainActor
-final class PanelController {
+final class PanelController: NSObject {
     private let model: IslandModel
     private let panel: IslandPanel
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
+    private var displayLink: CADisplayLink?
+    private var motion: IslandMotion?
 
     init(model: IslandModel) {
         self.model = model
         panel = IslandPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        super.init()
         panel.title = "Codex Pacer Island"
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -74,16 +78,59 @@ final class PanelController {
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
             topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch,
             contentHeight: model.panelContentHeight)
+        let expandedFrame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
+            topHeight: model.topHeight, expanded: true, attached: hasNotch, contentHeight: model.panelContentHeight)
+        model.expandedCanvas = expandedFrame.size
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
-        if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.26
-                panel.animator().setFrame(frame, display: true)
+        if panel.frame == frame, model.displayedExpansion == (model.expanded ? 1 : 0),
+           model.contentVisibility == (model.expanded ? 1 : 0) {
+            stopMotion(); return
+        }
+        let sameAnchor = abs(panel.frame.maxY - frame.maxY) < 1 && abs(panel.frame.midX - frame.midX) < 1
+        if animated && sameAnchor && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let distance = abs(panel.frame.height - frame.height) / max(1, expandedFrame.height - model.topHeight)
+            motion = IslandMotion(from: panel.frame, to: frame, expansion: model.displayedExpansion,
+                content: model.contentVisibility, opening: model.expanded, start: CACurrentMediaTime(), distance: distance)
+            if displayLink == nil {
+                let link = screen.displayLink(target: self, selector: #selector(step(_:)))
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+                displayLink = link
+                link.add(to: .main, forMode: .common)
             }
-        } else { panel.setFrame(frame, display: true) }
+        } else {
+            stopMotion()
+            apply(frame: frame, expansion: model.expanded ? 1 : 0, content: model.expanded ? 1 : 0)
+        }
+    }
+
+    @objc private func step(_ link: CADisplayLink) {
+        guard let motion else { stopMotion(); return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let end = motion.sample(at: .greatestFiniteMagnitude)
+            apply(frame: end.frame, expansion: end.expansion, content: end.content)
+            stopMotion(); return
+        }
+        let sample = motion.sample(at: link.targetTimestamp)
+        apply(frame: sample.frame, expansion: sample.expansion, content: sample.content)
+        if sample.finished { stopMotion(); panel.invalidateShadow() }
+    }
+
+    private func apply(frame: CGRect, expansion: Double, content: Double) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model.displayedExpansion = expansion
+            model.contentVisibility = content
+            panel.setFrame(frame, display: true)
+        }
+    }
+
+    private func stopMotion() {
+        displayLink?.invalidate(); displayLink = nil; motion = nil
     }
 
     func stop() {
+        stopMotion()
         monitors.forEach { NSEvent.removeMonitor($0) }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         panel.orderOut(nil)

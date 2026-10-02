@@ -69,12 +69,14 @@ struct IslandSurface: ViewModifier {
     let attached: Bool
     let expanded: Bool
     var settings: IslandGlassSettings = .stored
+    var progress: Double?
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var shape: UnevenRoundedRectangle {
         let radius = appearance == .liquidGlass ? settings.cornerRadius : 27
         let top = attached ? 0 : (appearance == .classic ? 25 : radius)
-        let bottom = expanded ? radius : min(radius, 19)
+        let fraction = progress ?? (expanded ? 1 : 0)
+        let bottom = min(radius, 19) + (radius - min(radius, 19)) * fraction
         return UnevenRoundedRectangle(topLeadingRadius: top,
             bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top)
     }

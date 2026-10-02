@@ -18,6 +18,9 @@ final class IslandModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var refreshing = false
     @Published var expanded = false
+    @Published var displayedExpansion = 0.0
+    @Published var contentVisibility = 0.0
+    @Published var expandedCanvas = CGSize(width: 440, height: 510)
     @Published var pinned = false
     @Published var now = Date()
     @Published var settingsRevision = 0

@@ -49,9 +49,11 @@ struct IslandView: View {
                 .frame(maxWidth: attached ? .infinity : nil, alignment: .trailing)
                 .accessibilityLabel("\(model.compactWindow)\(model.quotaSummary)。点击固定展开")
             }.padding(.horizontal, 15)
-                .background(attached && !model.expanded && model.appearance == .liquidGlass ? Color.black : Color.clear)
-
-            if model.expanded {
+                .background(attached && model.appearance == .liquidGlass ? Color.black.opacity(1 - model.displayedExpansion) : Color.clear)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .overlay(alignment: .top) {
+            if model.expanded || model.displayedExpansion > 0 {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(model.statusTitle).font(.system(size: 16, weight: .semibold)).lineLimit(1)
@@ -82,16 +84,21 @@ struct IslandView: View {
                     }.scrollIndicators(.hidden).frame(maxHeight: .infinity)
                     footer
                 }
+                .frame(width: max(0, model.expandedCanvas.width - 46),
+                    height: max(0, model.expandedCanvas.height - model.topHeight), alignment: .top)
                 .padding(.horizontal, 23)
-                .transition(.opacity)
+                .opacity(model.contentVisibility)
+                .offset(y: model.topHeight + (1 - model.contentVisibility) * 8)
+                .allowsHitTesting(model.expanded && model.contentVisibility > 0.95)
+                .accessibilityHidden(!model.expanded || model.contentVisibility < 0.95)
             }
         }
         .foregroundStyle(Color(red: 0.95, green: 0.96, blue: 0.97))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .modifier(IslandSurface(appearance: model.appearance, attached: attached, expanded: model.expanded))
+        .modifier(IslandSurface(appearance: model.appearance, attached: attached, expanded: model.expanded,
+            progress: model.displayedExpansion))
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: model.expanded)
         .preferredColorScheme(.dark)
     }
 
