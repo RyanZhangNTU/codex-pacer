@@ -22,8 +22,8 @@ struct IslandView: View {
                         }
                         Text(model.pendingCompletions.isEmpty ? model.compactStatus : model.completionSummary)
                             .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                        if model.showsRate {
-                            Text(model.rate.map { String(format: "%.0f", $0) } ?? "采样中")
+                        if model.showsRate, let rate = model.rate {
+                            Text(String(format: "%.0f", rate))
                                 .font(.system(size: 10)).monospacedDigit()
                                 .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
                             Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
