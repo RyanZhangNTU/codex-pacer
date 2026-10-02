@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
+    @State private var showInMenuBar = UserDefaults.standard.bool(forKey: "showInMenuBar")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
     @State private var windowID = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
@@ -35,6 +36,8 @@ struct SettingsView: View {
                     .disabled(!IslandAppearance.supportsLiquidGlass)
                     .help(IslandAppearance.supportsLiquidGlass ? "保存后立即应用" : "液态玻璃需要 macOS 26 或更新版本")
                     Toggle("使用悬浮胶囊", isOn: $floating)
+                    Toggle("在菜单栏显示", isOn: $showInMenuBar)
+                        .help("关闭后仍可从灵动岛的齿轮按钮打开设置。")
                     Toggle("在全屏空间显示", isOn: $fullscreen)
                     Picker("显示器", selection: $displayID) {
                         Text("主显示器").tag(0)
@@ -196,6 +199,7 @@ struct SettingsView: View {
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")
+            defaults.set(showInMenuBar, forKey: "showInMenuBar")
             defaults.set(displayID, forKey: "displayID")
             defaults.set(metric, forKey: "compactMetric")
             defaults.set(windowID, forKey: "quotaWindowID")

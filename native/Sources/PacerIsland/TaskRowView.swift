@@ -33,30 +33,28 @@ struct TaskRowView: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(color)
-                    .frame(width: 34, height: 34)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(color.opacity(0.12)))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.16), lineWidth: 0.5))
-                VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).font(.system(size: 16, weight: .medium)).foregroundStyle(color)
+                    .frame(width: 24, height: 30)
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                        Text(name).font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
                         if unread { Circle().fill(color).frame(width: 5, height: 5).accessibilityLabel("未查看") }
                     }
                     HStack(spacing: 8) {
                         Text(detail).foregroundStyle(color).lineLimit(1)
                         Spacer(minLength: 4)
-                        Label(activity.sourceHost ?? "本机", systemImage: activity.sourceHost == nil ? "desktopcomputer" : "network")
-                            .foregroundStyle(.secondary).lineLimit(1)
-                    }.font(.system(size: 10))
+                        if let host = activity.sourceHost {
+                            Text(host).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }.font(.system(size: 12))
                 }
                 Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(hovered && enabled ? 0.8 : 0.3))
+                    .foregroundStyle(.white.opacity(hovered && enabled ? 0.8 : 0))
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 13).fill(.white.opacity(hovered && enabled ? 0.07 : 0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(hovered && enabled ? 0.14 : unread ? 0.12 : 0.055), lineWidth: 0.5))
-            .contentShape(RoundedRectangle(cornerRadius: 13))
+            .padding(.horizontal, 8).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(hovered && enabled ? 0.055 : 0)))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }

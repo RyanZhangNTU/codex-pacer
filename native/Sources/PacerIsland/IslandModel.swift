@@ -33,7 +33,7 @@ final class IslandModel: ObservableObject {
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
     }
     var panelContentHeight: CGFloat {
-        min(640, max(472, 330 + CGFloat(max(1, min(3, visibleActivities.count))) * 64 + CGFloat(quota?.windows.count ?? 1) * 78))
+        min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 56 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
     }
     private var client: CodexClient?
     private let reader = LocalActivityReader()
@@ -67,6 +67,7 @@ final class IslandModel: ObservableObject {
     var prefersFloating: Bool { UserDefaults.standard.bool(forKey: "floatingIsland") }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
+    var showInMenuBar: Bool { UserDefaults.standard.bool(forKey: "showInMenuBar") }
     var hideProjects: Bool { UserDefaults.standard.bool(forKey: "hideProjects") }
     var displayID: Int { UserDefaults.standard.integer(forKey: "displayID") }
     var overview: ActivityOverview { ActivityOverview(activities: activities, at: now) }

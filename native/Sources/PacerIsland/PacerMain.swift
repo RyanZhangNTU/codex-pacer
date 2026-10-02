@@ -102,13 +102,14 @@ enum PacerMain {
 private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var model: IslandModel!
     private var panel: PanelController!
-    private var statusItem: NSStatusItem!
+    private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var reopenObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
-            "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false, "compactMetric": "remaining", "quotaWindowID": "auto"])
+            "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false,
+            "compactMetric": "remaining", "quotaWindowID": "auto", "showInMenuBar": false])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         panel = PanelController(model: model)
         reopenObserver = DistributedNotificationCenter.default().addObserver(forName: showExistingIsland,
@@ -132,20 +133,30 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
         NSApp.mainMenu = mainMenu
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "circle.hexagongrid", accessibilityDescription: "Codex Pacer")
-            button.imagePosition = .imageLeading
-            button.target = self
-            button.action = #selector(statusClicked)
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
-        // The status item has no bound menu, so its left-click action remains independent.
         updateStatusItem()
         model.start()
     }
 
     private func updateStatusItem() {
+        guard model.showInMenuBar else {
+            if let statusItem {
+                NSStatusBar.system.removeStatusItem(statusItem)
+                self.statusItem = nil
+            }
+            return
+        }
+        if statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let button = item.button {
+                button.image = NSImage(systemSymbolName: "circle.hexagongrid", accessibilityDescription: "Codex Pacer")
+                button.imagePosition = .imageLeading
+                button.target = self
+                button.action = #selector(statusClicked)
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            }
+            // Keep left-click independent from the right-click context menu.
+            statusItem = item
+        }
         statusItem?.button?.title = " " + model.quotaSummary
         statusItem?.button?.toolTip = "Codex Pacer · \(model.compactStatus) · \(model.freshnessText)"
     }
@@ -163,7 +174,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             item.target = self
             menu.addItem(item)
         }
-        if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button) }
+        if let button = statusItem?.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button) }
     }
     @objc private func showIsland() { panel.show() }
     @objc private func refresh() { model.refreshQuota() }
