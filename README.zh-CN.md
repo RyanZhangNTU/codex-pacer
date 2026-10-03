@@ -25,7 +25,7 @@
 
 若启动应用时再次被拦截，按第 2 步放行 Codex Pacer，再双击启动。
 
-![在隐私与安全页面最下方找到安全性](docs/assets/macos-open-guide.png)
+![在隐私与安全页面最下方的安全性中点击仍要打开](docs/assets/macos-open-anyway.png)
 
 [首次打开帮助（Apple 官方）](https://support.apple.com/zh-cn/102445) · [使用指南](docs/usage.zh-CN.md)
 

@@ -25,7 +25,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 
 If macOS also blocks the app, repeat step 2 for Codex Pacer, then launch it again.
 
-![Privacy & Security in the sidebar and Security at the bottom](docs/assets/macos-open-guide.png)
+![Privacy & Security, the Security section, and the Open Anyway button](docs/assets/macos-open-anyway.png)
 
 [First-launch help from Apple](https://support.apple.com/102445) · [Chinese user guide](docs/usage.zh-CN.md)
 
