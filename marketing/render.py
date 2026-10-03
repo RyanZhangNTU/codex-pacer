@@ -100,41 +100,19 @@ MAC = mac_scene()
 
 
 def portrait():
-    im = background(1600, 2400).copy()
-    brand(im, (120, 105), 82)
-    pill(im, (1200, 120, 1480, 180), '2.0 正式版', 28)
-    text(im, (120, 285), '任务、额度，', 104, bold=True)
-    text(im, (120, 415), '抬眼即见。', 104, MINT, True)
-    text(im, (120, 565), '贴合 Mac 刘海的原生状态岛', 37, MUTED)
-    paste(im, MAC.laptop('island-expanded'), (15, 635), 1570)
-    # Screen detail is tied to the real notch location, not a floating phone UI.
-    d=ImageDraw.Draw(im)
-    d.line((804, 807, 1250, 927, 1250, 1045), fill='#547878', width=2)
-    text(im, (120, 1690), '状态随事件更新', 37, MINT, True)
-    text(im, (120, 1760), '点击任务，回到会话', 30, MUTED)
-    text(im, (120, 1818), '七天趋势与重置卡到期日期', 30, MUTED)
-    paste(im, MAC.detail('island-expiry'), (740, 1070), 740)
-    text(im, (748, 2018), '刘海区域放大 · 演示数据', 24, MUTED)
-    d.line((120, 2090, 1480, 2090), fill='#29413F', width=1)
-    text(im, (120, 2140), '实时状态  ·  一键跳转  ·  额度配速', 32, WHITE, True)
-    text(im, (120, 2200), '原生 macOS · 菜单栏显示可选 · 本轮结束提醒', 27, MUTED)
-    text(im, (120, 2280), URL, 27, MUTED)
-    pill(im, (1180, 2260, 1480, 2345), '免费下载  →', 32, True)
-    return im.convert('RGB')
+    try:
+        from .business_campaign import render
+    except ImportError:
+        from business_campaign import render
+    return render(asset, font)
 
 
 def landscape():
-    im=background(1920,1080).copy()
-    brand(im,(120,92),76)
-    pill(im,(570,106,805,163),'2.0 正式版',24)
-    text(im,(120,285),'任务、额度，',87,bold=True)
-    text(im,(120,402),'抬眼即见。',98,MINT,True)
-    text(im,(120,565),'贴合 Mac 刘海的原生状态岛',35,MUTED)
-    text(im,(120,665),'事件实时更新 · 点击回到会话',30,MUTED)
-    paste(im,MAC.laptop('island-expanded'),(775,240),1100)
-    pill(im,(120,820,415,900),'免费下载  →',31,True)
-    text(im,(120,970),URL,27,MUTED)
-    return im.convert('RGB')
+    try:
+        from .business_campaign import render_landscape
+    except ImportError:
+        from business_campaign import render_landscape
+    return render_landscape(asset, font)
 
 
 def ease(x):
@@ -346,11 +324,16 @@ def main():
               'composition':'deterministic native screenshots and exact typography',
               'provenance':{'ui':'Real native demo app; synthetic event fixtures run through the production runtime projection; visibly labeled 演示',
                             'jump':'Explicit demo destination, never exposes or pretends to record a private Codex conversation',
-                            'logo':'Existing MIT repository brand', 'hardware':'One built-in Imagegen MacBook frame; measured screen geometry; UI/text are deterministic native screenshots',
+                            'logo':'Existing MIT repository brand', 'hardware':'Built-in Imagegen MacBook frames; measured screen geometry; UI/text are deterministic native screenshots',
                             'reference':'https://cdsassets.apple.com/live/6GJYWVAV/start/locale/ar-sa/ma2039_macbook-pro-14inch-2021-qsg.pdf',
                             'audio':'Original synthesized sine-pad soundtrack',
                             'font':'Local macOS PingFang SC; font file not distributed',
-                            'sourceHashes':{p.name:digest(p) for p in SOURCE.glob('*.png')}},
+                            'poster':{'layout':'marketing/business_campaign.py',
+                                      'hardware':'marketing/source/macbook-studio.png',
+                                      'prompt':'marketing/source/macbook-studio-prompt.txt',
+                                      'desktop':'Native liquid-glass desktop capture on staged macOS wallpaper; geometry in marketing/source/desktop-liquid-glass.json',
+                                      'ui':'Device retains 440 pt panel on 1728 pt desktop, 25.46% width; separate uniformly enlarged content detail with a fine connector; clear native glass at 100% transparency'},
+                            'sourceHashes':{p.name:digest(p) for p in SOURCE.iterdir() if p.suffix in ('.png','.jpg')}},
               'exports':[{'file':p.name,'bytes':p.stat().st_size,'sha256':digest(p)} for p in sorted(exports)]}
     (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     print(out)
