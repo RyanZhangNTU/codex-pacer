@@ -1,6 +1,6 @@
 # Release workflow
 
-Changes land in `develop`; release promotion targets `main`. Both branches must contain the final source before a release is built. A release includes a matching Git tag, a universal DMG, SHA-256 checksum and published GitHub Release. Previous tags/releases remain intact.
+Changes land in `develop`; release promotion targets `main`. Both branches must contain the final source before a release is built. A release includes a matching Git tag and a published GitHub Release with exactly one uploaded asset: the universal DMG. Source receipts and SHA-256 checksums stay local for maintainer verification. Previous tags/releases remain intact.
 
 ## Prepare and verify
 
@@ -8,7 +8,7 @@ Changes land in `develop`; release promotion targets `main`. Both branches must 
 2. Merge the preparation PR into `develop`, promote it to `main`, then fast-forward `develop` to the final `main` commit. Stop if either remote branch gained unrelated changes; integrate those without force-pushing.
 3. Build from that clean final commit using exactly one distribution mode below. Both modes build arm64 + x86_64 in `/private/tmp`, verify the app signature and DMG structure, mount the DMG read-only, compare the inner executable, check the Applications link, and write a source receipt and `SHA256SUMS.txt`.
 4. Launch the actual packaged application on the available Mac. Report any platform/architecture that was compiled but not tested on hardware.
-5. Tag the verified commit `vVERSION`, push the tag, and publish using the matching mode. The publisher checks the local/remote tag, source commit, version, distribution mode and checksum. Verify uploaded asset names and download the published package to compare its checksum.
+5. Tag the verified commit `vVERSION`, push the tag, and publish using the matching mode. The publisher checks the local/remote tag, source commit, version, distribution mode and checksum. Verify that the Release has only the DMG as an uploaded asset, then download it and compare against the local checksum.
 
 ## 2.0.0 unsigned distribution
 
@@ -35,4 +35,4 @@ This mode signs with hardened runtime, notarizes/staples the app and DMG, and ve
 
 ## Promotional assets
 
-Regenerate the approved portrait and matching landscape with `python3 marketing/render.py --stills-only`. Inspect both, commit the README image and source assets, and attach `Codex-Pacer-2.0-zh-CN-poster.png` and `Codex-Pacer-2.0-zh-CN-banner.png` to the Release. Generated outputs remain ignored by Git.
+Regenerate the approved portrait and matching landscape with `python3 marketing/render.py --stills-only`. Inspect both, commit the README image and source assets, and deliver the full-size images separately. Keep the Release attachments limited to the DMG; do not upload images, checksums or build receipts there. Generated outputs remain ignored by Git.

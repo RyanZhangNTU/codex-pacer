@@ -17,16 +17,12 @@
 
 ## 安装未签名版
 
-**2.0.0 未使用 Developer ID 签名，也未经 Apple 公证。** 应用只保留运行所需的本地 ad hoc 签名，不能据此验证开发者身份。
+2.0.0 为未签名版，首次打开可能被 macOS 拦截。
 
-1. 从 [v2.0.0 Release](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.0) 下载 `Codex-Pacer-2.0.0-universal-unsigned.dmg`，打开后将应用拖入“应用程序”。更新前先退出旧版。
-2. 双击 Codex Pacer 一次。如果出现无法验证开发者或无法检查恶意软件的提示，关闭提示框。
-3. 前往 **苹果菜单 → 系统设置 → 隐私与安全 → 安全性**，找到 Codex Pacer 的拦截提示，点击 **“打开”或“仍要打开”**（不同 macOS 版本用词可能不同）。
-4. 在确认框中选择 **“仍要打开”或“打开”**，按提示验证登录身份。以后可正常双击启动。
+1. [下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg)，打开后将 **Codex Pacer** 拖入 **应用程序**。更新前先退出旧版。
+2. 双击启动。如被拦截，前往 **系统设置 → 隐私与安全 → 安全性**，找到 Codex Pacer，点击 **“打开”或“仍要打开”**，按提示确认即可。
 
-请先确认文件来自本仓库，可用 Release 中的 `SHA256SUMS.txt` 核对下载文件。若未看到按钮，重新尝试打开应用后再返回设置；Apple 说明该选项在尝试打开后约一小时内可用。步骤依据 [Apple 官方使用手册](https://support.apple.com/zh-cn/guide/mac-help/mh40616/mac)及[安全打开 App 说明](https://support.apple.com/zh-cn/102445)。
-
-详见[使用指南](docs/usage.zh-CN.md)与[2.0 发布说明](docs/release-notes-2.0.zh-CN.md)。本次 Release 同时附带横版、竖版中文宣传图。
+[首次打开帮助（Apple 官方）](https://support.apple.com/zh-cn/guide/mac-help/mh40616/mac) · [使用指南](docs/usage.zh-CN.md)
 
 ## 开发
 

@@ -17,16 +17,12 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 
 ## Install the unsigned release
 
-**2.0.0 has no Developer ID signature and is not Apple-notarized.** The application retains a local ad hoc signature for execution compatibility; this does not identify a trusted developer.
+2.0.0 is an unsigned build, so macOS may block its first launch.
 
-1. Download `Codex-Pacer-2.0.0-universal-unsigned.dmg` from [v2.0.0](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.0), open it, and drag the app into Applications. Quit the old version before replacing it.
-2. Try launching the app once. Dismiss the unidentified-developer or unverified-app alert.
-3. Go to **Apple menu → System Settings → Privacy & Security → Security**. Find the Codex Pacer notice and choose **Open Anyway** (some versions first show **Open**).
-4. Confirm **Open Anyway / Open** and authenticate when requested. Later launches work normally.
+1. [Download the DMG](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg), open it, and drag **Codex Pacer** into **Applications**. Quit the old version before updating.
+2. Launch the app. If macOS blocks it, go to **System Settings → Privacy & Security → Security**, find Codex Pacer, and choose **Open / Open Anyway**. Confirm when prompted.
 
-Use files from this repository and check `SHA256SUMS.txt` from the Release. If the exception button is missing, try launching the app again; Apple makes it available for about one hour after the attempt. See [Apple's instructions](https://support.apple.com/guide/mac-help/mh40616/mac) and [app security guidance](https://support.apple.com/102445).
-
-See the [Chinese user guide](docs/usage.zh-CN.md) and [release notes](docs/release-notes-2.0.zh-CN.md). Chinese landscape and portrait promotional images are also attached to the Release.
+[First-launch help from Apple](https://support.apple.com/guide/mac-help/mh40616/mac) · [Chinese user guide](docs/usage.zh-CN.md)
 
 ## Development
 

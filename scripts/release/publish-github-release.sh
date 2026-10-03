@@ -43,5 +43,5 @@ else
     fi
     hdiutil verify "$task_dmg"
 fi
-gh release create "$task_tag" "$task_dmg" "$task_output/SHA256SUMS.txt" --verify-tag --latest \
+gh release create "$task_tag" "$task_dmg" --verify-tag --latest \
     --title "$task_title" --notes-file docs/release-notes-2.0.zh-CN.md
