@@ -1,7 +1,7 @@
 import Foundation
 
 enum RealtimeProbe {
-    static let library = RemoteProbe.library + "\n" + #"""
+    static let library = SessionLogProbe.library + "\n" + #"""
     import socket, struct, select, hashlib, secrets, stat, uuid
     MAX=4*1024*1024
     def valid_id(v):

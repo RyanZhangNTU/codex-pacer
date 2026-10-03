@@ -82,7 +82,7 @@ public actor CodexClient {
             if fingerprint != authFingerprint { disconnect(); authFingerprint = fingerprint }
             if !ready {
                 try start()
-                _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": "2.0.0-preview.2"], "capabilities": ["experimentalApi": true]])
+                _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"], "capabilities": ["experimentalApi": true]])
                 try write(["method": "initialized", "params": [:]])
                 ready = true
             }

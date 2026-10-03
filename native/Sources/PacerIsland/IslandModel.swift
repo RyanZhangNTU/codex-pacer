@@ -30,7 +30,7 @@ final class IslandModel: ObservableObject {
     var onOpenActivity: ((SessionActivity) -> Void)?
     var onFocusRequested: (() -> Void)?
     func canOpen(_ activity: SessionActivity) -> Bool {
-        !demo && activity.threadURL != nil && (activity.sourceHostID != nil ||
+        (demo || activity.threadURL != nil) && (demo || activity.sourceHostID != nil ||
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
     }
     var panelContentHeight: CGFloat {
@@ -439,41 +439,19 @@ final class IslandModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
     }
     private func makeDemo() {
-        let reset = Date().addingTimeInterval(2 * 86400)
-        for index in 0...12 {
-            let capture = reset.addingTimeInterval(-7 * 86400 + Double(index) * 5 * 86400 / 12)
-            let remaining = 99.0 - Double(index) * 58 / 12
-            var snapshot = try! QuotaSnapshot.decode(Data("""
-            {"rateLimitResetCredits":{"availableCount":1,"credits":[{"id":"demo-reset","status":"available","grantedAt":\(Date().addingTimeInterval(-86400).timeIntervalSince1970),"expiresAt":\(Date().addingTimeInterval(172800).timeIntervalSince1970)}]},"rateLimits":{"limitId":"codex","planType":"pro","credits":{"hasCredits":true,"unlimited":false,"balance":"12500"},"primary":{"usedPercent":32,"windowDurationMins":300,"resetsAt":\(Date().addingTimeInterval(8280).timeIntervalSince1970)},"secondary":{"usedPercent":\(100 - remaining),"windowDurationMins":10080,"resetsAt":\(reset.timeIntervalSince1970)}}}
-            """.utf8), capturedAt: capture)
-            snapshot.accountScope = "demo"
-            history.record(snapshot)
-            quota = snapshot
-        }
-        var activity = SessionActivity(id: "demo", project: "Codex Pacer")
-        let formatter = ISO8601DateFormatter()
-        let start = formatter.string(from: Date().addingTimeInterval(-20))
-        activity.consume(Data("""
-        {"timestamp":"\(start)","type":"event_msg","payload":{"type":"task_started","turn_id":"demo"}}
-        """.utf8))
-        for (seconds, tokens) in [(-15.0, 100), (-5.0, 300)] {
-            let date = formatter.string(from: Date().addingTimeInterval(seconds))
-            activity.consume(Data("""
-            {"timestamp":"\(date)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"output_tokens":\(tokens)}}}}
-            """.utf8))
-        }
-        activities = [activity]
-        if CommandLine.arguments.contains("--demo-completion") {
-            var ended = SessionActivity(id: "demo-ended", project: "额度同步")
-            ended.consume(Data("""
-            {"timestamp":"\(start)","type":"event_msg","payload":{"type":"task_started","turn_id":"ended"}}
-            """.utf8))
-            completionInbox.observe([activity, ended], at: Date(), retention: completedRetention)
-            ended.consume(Data("""
-            {"timestamp":"\(formatter.string(from: Date()))","type":"event_msg","payload":{"type":"task_complete","turn_id":"ended"}}
-            """.utf8))
-            completionInbox.observe([activity, ended], at: Date(), retention: completedRetention)
-            activities += completionInbox.activities
-        }
+        for snapshot in DemoScenario.quota(at: now) { history.record(snapshot); quota = snapshot }
+        setDemoStage(.thinking)
+        if CommandLine.arguments.contains("--demo-completion") { setDemoStage(.completed) }
+    }
+    func setDemoStage(_ stage: DemoTaskStage) {
+        guard demo else { return }
+        now = Date()
+        let observed = DemoScenario.tasks(stage: stage, at: now)
+        completionInbox.observe(observed, at: now, retention: completedRetention)
+        activities = observed
+        var status = RuntimeStreamStatus()
+        status.connected = true; status.attachedThreads = 1; status.notifications = 7 + stage.rawValue
+        streamStatuses = ["local": status, "remote-ssh-discovered:demo": status]
+        onLayoutChange?(); onStatusChange?()
     }
 }

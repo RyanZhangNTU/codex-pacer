@@ -104,9 +104,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     private var panel: PanelController!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var demoConversationWindow: NSWindow?
     private var reopenObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PreferencesMigration.migrate(to: .standard, from:
+            UserDefaults.standard.persistentDomain(forName: "com.codexpacer.island.preview") ?? [:])
         UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
             "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": "auto", "showInMenuBar": false])
@@ -127,6 +130,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         applicationMenu.addItem(settingsItem)
+        if model.isDemo {
+            for stage in DemoTaskStage.allCases {
+                let item = NSMenuItem(title: "演示：" + stage.label, action: #selector(demoStageChanged(_:)), keyEquivalent: String(stage.rawValue + 1))
+                item.tag = stage.rawValue; item.target = self; applicationMenu.addItem(item)
+            }
+        }
         applicationMenu.addItem(.separator())
         let quitItem = NSMenuItem(title: "退出 Codex Pacer", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -186,7 +195,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         model.close()
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
     }
+    @objc private func demoStageChanged(_ sender: NSMenuItem) {
+        if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
+    }
     private func openActivity(_ activity: SessionActivity) {
+        if model.isDemo {
+            let window = demoConversationWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 320),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "会话跳转 · 演示"; window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: DemoConversationView(activity: activity) { [weak self] in
+                self?.demoConversationWindow?.orderOut(nil); self?.panel.show()
+            })
+            window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+            demoConversationWindow = window; model.close(); return
+        }
         guard model.canOpen(activity), let threadURL = activity.threadURL else { return }
         let appURL = URL(fileURLWithPath: "/Applications/Codex.app")
         guard FileManager.default.fileExists(atPath: appURL.path) else { return }

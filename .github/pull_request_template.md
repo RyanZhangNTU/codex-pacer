@@ -1,25 +1,12 @@
-## Summary
+## Change
 
-Describe the change and why it was made.
-
-## Target branch
-
-- [ ] `develop`
-- [ ] `main (release-only)`
-
-If this public repository has just been initialized and `develop` is not available yet, coordinate with the maintainer before opening the first pull request.
+Describe the problem and resulting behavior.
 
 ## Verification
 
-- [ ] `npm test`
-- [ ] `npm run lint`
-- [ ] `npm run build`
-- [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked`
+- [ ] `make test`
+- [ ] `make build`
+- [ ] Live app checked for UI/interaction changes (record OS and architecture)
+- [ ] Docs updated where behavior/setup changed
 
-## Checklist
-
-- [ ] Branch created from `develop`
-- [ ] If `develop` does not exist yet, maintainer coordination happened before this first pull request
-- [ ] Scope is focused
-- [ ] Docs updated if needed and in scope
-- [ ] No unrelated changes
+Target `develop` for implementation and `main` for release promotion.

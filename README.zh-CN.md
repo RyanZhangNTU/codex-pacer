@@ -1,104 +1,32 @@
-# Codex Pacer
+# Codex Pacer 2.0
 
-新版 macOS 状态岛正在开发，专注实时状态与额度。[预览版构建与测试说明](docs/zh-CN/island-preview.md)。
+[English](README.md) · [下载正式版](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
 
-[English](./README.md) | 简体中文
+原生 macOS 状态岛，集中显示 Codex 任务、输出速度和账户额度。悬停展开，离开收起；需要时固定在桌面。
 
-<p align="center">
-  <img src="./docs/assets/popup.png" alt="Codex Pacer 菜单栏弹窗，展示 5 小时和 7 天额度节奏" width="860">
-</p>
+![Codex Pacer 2.0](docs/assets/pacer-2.0.png)
 
-**Codex Pacer** 是一个本地优先的桌面应用，用来把 Codex 使用情况转换成更容易行动的视角：额度节奏、API 等价价值，以及会话级别的使用分析。你可以更快看清自己消耗额度的速度、订阅回报，以及哪些对话或 subagent 正在驱动这些使用量。
+- 查看本机与已启用 SSH 来源的运行、等待和本轮结束状态，点击任务打开对应会话。
+- 显示运行任务的合计输出速度估算；工具等待与模型生成分开处理。
+- 查看短期与七天额度、重置倒计时、配速和当前周期曲线。周期内即将到期的 banked reset 在曲线上标注。
+- 本轮结束提示可在折叠状态显示；完成卡片保留到点击、状态变化或设定时间。
+- 支持外观、显示器、提醒和隐私设置；菜单栏显示可选。状态岛与设置中均可退出。
 
-> 当前稳定版本：**v1.2.2**
-> 当前开发版本：**v1.2.4**，新增 GPT-6.1 Sol、GPT-6 Sol 和 GPT-6 Luna 支持，并更新模型价格，尚未发布。
-> 官方下载：通过 GitHub Releases 获取已签名并完成 Apple notarization 的 **macOS Apple Silicon DMG**。本版本暂缓发布 Windows 安装包。
+**系统要求：** macOS 14 或更新，Apple Silicon 或 Intel。Liquid Glass 需要 macOS 26 或更新。已登录的 Codex 与 Python 3 用于读取账户和任务状态；SSH 来源需要现有的免交互 OpenSSH 连接。
 
-## 核心能力
-
-- 从 `~/.codex` 或自定义 `CODEX_HOME` 导入本地 Codex 使用数据
-- 建立本地 SQLite 索引，便于快速分析和下钻
-- 基于 token 使用量估算 API 等价价值与订阅回本情况
-- 支持 GPT-6 Astra、GPT-6.1 Sol、GPT-6 Sol、GPT-6 Luna 和 GPT-5.6 系列，并内置 Standard API 定价
-- [v1.2.4 开发版本说明](./docs/zh-CN/release-notes-v1.2.4.md)介绍了计价和升级行为
-- 在可用时跟踪 `5小时`、`7天` 等滚动额度窗口的使用节奏
-- 按对话、root session、subagent、模型、token 构成拆解使用情况
-- 提供 macOS 菜单栏入口，方便快速查看额度状态
-
-## 为什么要用它
-
-Codex Pacer 关注的是更实际的问题：
-
-- 我现在的使用速度是否合理，能不能在 reset 前把窗口用好？
-- 这份订阅目前已经换回了多少 API 等价价值？
-- 哪些会话、模型或 subagent 消耗最多？
-- 剩余额度和剩余时间是否匹配？
-
-## 隐私
-
-Codex Pacer 是本地优先的：
-
-- 读取的是本地 Codex 会话与 rate-limit 数据
-- 分析结果保存在本地 SQLite 数据库中
-- 不依赖云端账号或同步服务即可工作
-
-## 开始使用
-
-安装、打包和发布说明已按公开 `v1.2.2` 版本维护。可以从这些文档入口开始：
-
-- [快速开始](./docs/zh-CN/getting-started.md)
-- [在 macOS 上安装](./docs/zh-CN/installing-on-macos.md)
-- [在 Windows 上安装](./docs/zh-CN/installing-on-windows.md)
-- [打包与发布](./docs/zh-CN/packaging-and-release.md)
-- [v1.2.2 发布说明](./docs/zh-CN/release-notes-v1.2.2.md)
-
-在 macOS 上，Codex Pacer 可以使用 ChatGPT 桌面应用内置的 Codex CLI 读取实时额度。应用会自动发现 `/Applications/ChatGPT.app/Contents/Resources/codex`。独立安装的 Codex CLI 和 `CODEX_BIN` 覆盖配置仍然可用。
+下载 DMG，将 Codex Pacer 拖入“应用程序”。2.0 安装包使用 Developer ID 签名并经 Apple 公证。详见[使用指南](docs/usage.zh-CN.md)与[2.0 发布说明](docs/release-notes-2.0.zh-CN.md)。
 
 ## 开发
 
-环境要求：
+需要 Xcode 26 或更新。应用没有 npm 或 Rust 依赖。
 
-- Node.js 22.18+
-- Rust toolchain
-- 当前平台所需的 Tauri 构建依赖
-- `~/.codex` 或自定义 `CODEX_HOME` 中的本地 Codex 数据
-
-常用命令：
-
-```bash
-npm install
-npm run tauri dev
+```sh
+make test
+make build
 ```
 
-浏览器预览：
+构建在本机临时目录中完成，终端会打印 `.app` 路径。开发构建使用本地临时签名；正式包另行签名、公证。参见[开发与数据说明](docs/development.md)和[发布流程](docs/releasing.md)。
 
-```bash
-npm run dev
-```
+2.0 主分支仅维护 Swift 原生 macOS 实现。React/Tauri 与 Windows 1.x 可从 [Git 历史及旧版 Release](https://github.com/RyanZhangNTU/codex-pacer/releases)找回。
 
-生产构建：
-
-```bash
-npm install
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-npm run tauri build
-```
-
-## 项目状态
-
-`v1.2.2` 是当前稳定发布线。
-
-当前发布重点：
-
-- 官方发布：已签名的 macOS Apple Silicon DMG
-- 本版本暂缓：Windows NSIS setup EXE
-- 源码构建：其他兼容 Tauri 的桌面环境
-
-## 开源协作
-
-- [更新日志](./CHANGELOG.md)
-- [参与贡献](./CONTRIBUTING.md)
-- [安全策略](./SECURITY.md)
-- [行为准则](./CODE_OF_CONDUCT.md)
-- [许可证](./LICENSE)
+[贡献](CONTRIBUTING.md) · [安全问题](SECURITY.md) · [MIT License](LICENSE)

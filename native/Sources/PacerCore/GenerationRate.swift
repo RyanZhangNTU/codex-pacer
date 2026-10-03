@@ -1,6 +1,6 @@
 import Foundation
 
-/// Experimental usage rate after subtracting confirmed blocking-tool intervals.
+/// Output usage rate after subtracting confirmed blocking-tool intervals.
 /// A reporting interval can contain several overlapping tool calls; the caller
 /// transitions only when the union of those waits opens/closes.
 struct GenerationRate: Equatable, Sendable {
