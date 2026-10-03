@@ -2,39 +2,30 @@ import SwiftUI
 import Charts
 import PacerCore
 
-struct QuotaCycleChart: View {
-    let cycle: QuotaCycle
-    let resetCredits: QuotaResetSummary?
-    let now: Date
+struct QuotaCycleChart: View, Equatable {
+    let data: QuotaChartData
     let accent: Color
     @State private var selectedDate: Date?
     @State private var selectedExpiryID: Date?
     private let expiryColor = Color(red: 0.91, green: 0.75, blue: 0.48)
-    private var points: [QuotaPoint] { cycle.displayPoints() }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.data == rhs.data && lhs.accent == rhs.accent
+    }
+    private var points: [QuotaPoint] { data.points }
     private var selected: QuotaPoint? {
         guard let selectedDate, let first = points.first, let last = points.last,
               (first.timestamp...last.timestamp).contains(selectedDate) else { return nil }
         return points.min { abs($0.timestamp.timeIntervalSince(selectedDate)) < abs($1.timestamp.timeIntervalSince(selectedDate)) }
     }
-    private var expiries: [ResetExpiry] {
-        var seen = Set<String>()
-        let dates = (resetCredits?.credits ?? []).compactMap { credit -> Date? in
-            guard credit.status == "available", let date = credit.expiresAt,
-                  date > now, date >= cycle.startedAt, date <= cycle.resetsAt,
-                  seen.insert(credit.id).inserted else { return nil }
-            return date
-        }
-        return Dictionary(grouping: dates, by: { $0 }).map { ResetExpiry(date: $0.key, count: $0.value.count) }
-            .sorted { $0.date < $1.date }
-    }
+    private var expiries: [QuotaChartData.ResetExpiry] { data.expiries }
 
     var body: some View {
         VStack(spacing: 8) {
             chart.frame(height: 118)
             HStack {
-                Text(cycle.startedAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits))
+                Text(data.startedAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits))
                 Spacer()
-                Text(cycle.resetsAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits))
+                Text(data.resetsAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits))
             }
             .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             .padding(.leading, 4).padding(.trailing, 34)
@@ -55,8 +46,8 @@ struct QuotaCycleChart: View {
                         startPoint: .top, endPoint: .bottom))
                     .accessibilityHidden(true)
             }
-            ForEach([cycle.startedAt, cycle.resetsAt], id: \.self) { date in
-                LineMark(x: .value("时间", date), y: .value("剩余 %", date == cycle.startedAt ? 100 : 0),
+            ForEach([data.startedAt, data.resetsAt], id: \.self) { date in
+                LineMark(x: .value("时间", date), y: .value("剩余 %", date == data.startedAt ? 100 : 0),
                     series: .value("曲线", "均匀配速"))
                     .foregroundStyle(Color.white.opacity(0.23))
                     .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, dash: [3, 5]))
@@ -82,7 +73,7 @@ struct QuotaCycleChart: View {
         }
         .chartLegend(.hidden)
         .chartYScale(domain: 0...100, range: .plotDimension(padding: 5))
-        .chartXScale(domain: cycle.startedAt...cycle.resetsAt, range: .plotDimension(padding: 4))
+        .chartXScale(domain: data.startedAt...data.resetsAt, range: .plotDimension(padding: 4))
         .chartXAxis(.hidden)
         .chartYAxis {
             AxisMarks(position: .trailing, values: [0, 50, 100]) { value in
@@ -175,14 +166,14 @@ struct QuotaCycleChart: View {
     }
 
     private func expiryMarkers(proxy: ChartProxy, plot: CGRect) -> [ExpiryMarker] {
-        var groups: [[ResetExpiry]] = []
+        var groups: [[QuotaChartData.ResetExpiry]] = []
         for expiry in expiries {
             if let last = groups.last, let first = last.first,
                let firstX = proxy.position(forX: first.date), let x = proxy.position(forX: expiry.date), x - firstX < 40 {
                 groups[groups.count - 1].append(expiry)
             } else { groups.append([expiry]) }
         }
-        func marker(_ group: [ResetExpiry]) -> ExpiryMarker? {
+        func marker(_ group: [QuotaChartData.ResetExpiry]) -> ExpiryMarker? {
             guard let first = group.first, let x = proxy.position(forX: first.date) else { return nil }
             let count = group.reduce(0) { $0 + $1.count }
             let width: CGFloat = count > 1 ? 43 : 28
@@ -205,7 +196,7 @@ struct QuotaCycleChart: View {
 
     private func expiryTooltip(_ marker: ExpiryMarker) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(resetCredits?.hasCompleteDetails == false ? "已知 " : "")\(marker.count) 次重置即将到期")
+            Text("\(data.hasPartialExpiryDetails ? "已知 " : "")\(marker.count) 次重置即将到期")
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(expiryColor)
             ForEach(marker.expiries.prefix(3)) { expiry in
                 HStack(spacing: 10) {
@@ -231,14 +222,8 @@ struct QuotaCycleChart: View {
     }
 }
 
-private struct ResetExpiry: Identifiable {
-    let date: Date
-    let count: Int
-    var id: Date { date }
-}
-
 private struct ExpiryMarker: Identifiable {
-    let expiries: [ResetExpiry]
+    let expiries: [QuotaChartData.ResetExpiry]
     let dateX: CGFloat
     let x: CGFloat
     let width: CGFloat

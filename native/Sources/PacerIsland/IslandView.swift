@@ -153,8 +153,8 @@ private struct IslandExpandedContent: View {
                 }
             }
             if let cycle = model.currentCycle {
-                QuotaCycleChart(cycle: cycle, resetCredits: quota.resetCredits, now: model.now,
-                    accent: model.accent).padding(.top, 22)
+                QuotaCycleChart(data: QuotaChartData(cycle: cycle, resetCredits: quota.resetCredits, now: model.now),
+                    accent: model.accent).equatable().padding(.top, 22)
             } else if model.weeklyWindow != nil {
                 Text("等待采样").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
             }

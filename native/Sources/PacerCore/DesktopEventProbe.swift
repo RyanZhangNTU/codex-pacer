@@ -80,11 +80,14 @@ enum DesktopEventProbe {
         if len(suffix)==2:return True,item_projection(v)
         if len(suffix)==3 and suffix[2] in ('id','type','status'):return True,text(v,256)
         return False,None
-    def apply_patch(tree,patch):
+    def prepare_patch(patch):
+        if not isinstance(patch,dict):raise ValueError('patch shape')
         path=patch.get('path');op=patch.get('op')
         if not isinstance(path,list) or len(path)>12 or op not in ('add','replace','remove'):raise ValueError('patch shape')
         keep,value=project_patch(path,patch.get('value'))
-        if not keep:return
+        return (path,op,value) if keep else None
+    def apply_patch(tree,patch):
+        path,op,value=patch
         node=tree
         for i,key in enumerate(path[:-1]):
             if isinstance(node,list):
@@ -128,10 +131,18 @@ enum DesktopEventProbe {
                 if change.get('type')!='patches' or owner!=self.owner or change.get('baseRevision')!=self.revision or revision!=self.revision+1:raise ValueError('revision gap')
                 patches=change.get('patches') or []
                 if not isinstance(patches,list) or len(patches)>4096:raise ValueError('patch bound')
-                # Apply atomically: malformed patches never manufacture a terminal turn.
-                tree=copy.deepcopy(self.tree)
-                for patch in patches:apply_patch(tree,patch)
-                self.tree=tree;self.revision=revision
+                # Validate the entire batch before touching state. Text deltas
+                # still produce activity events below, but do not copy history.
+                projected=[]
+                for patch in patches:
+                    prepared=prepare_patch(patch)
+                    if prepared is not None:projected.append(prepared)
+                if projected:
+                    # Apply atomically: malformed patches never manufacture a terminal turn.
+                    tree=copy.deepcopy(self.tree)
+                    for patch in projected:apply_patch(tree,patch)
+                    self.tree=tree
+                self.revision=revision
             now=time.time();events=[]
             def add(method,**values):events.append(dict(method=method,threadId=self.tid,at=now,**values))
             meta={'method':'metadata','threadId':self.tid,'at':now}

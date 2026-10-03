@@ -6,6 +6,7 @@
 - `native/Sources/PacerIsland`: SwiftUI/AppKit presentation, settings, notifications and native glass.
 - `native/Tests/PacerCoreTests`: regression coverage for lifecycle, privacy, transport, rate calculation, account isolation, retention, geometry, singleton locking and preferences migration.
 - `scripts/native`: isolated local build/test entry points.
+- `scripts/performance`: controlled event and native UI replays; see [measurements and reproduction](performance.md).
 - `scripts/release`: native signing, notarization and publication.
 - `marketing`: editable Chinese campaign source and reproducible exports.
 

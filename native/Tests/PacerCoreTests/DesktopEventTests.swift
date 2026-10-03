@@ -18,6 +18,46 @@ final class DesktopEventTests: XCTestCase {
         XCTAssertEqual(child.terminationStatus, 0, error)
         return String(decoding: bytes, as: UTF8.self)
     }
+    func testTextOnlyPatchesAdvanceRevisionAndActivityWithoutCopyingHistory() throws {
+        let simulation = #"""
+        p=Projection('019a0000-0000-7000-8000-000000000001')
+        state={'threadRuntimeStatus':{'type':'active'},'turns':[{'turnId':'turn','status':'inProgress','items':[{'id':'answer','type':'agentMessage'}]}]}
+        p.consume({'type':'snapshot','revision':0,'conversationState':state},'owner')
+        before=json.dumps(p.tree);original_copy=copy.deepcopy
+        def forbidden_copy(value):raise AssertionError('text-only update copied the history')
+        copy.deepcopy=forbidden_copy
+        try:
+            events=p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['turns',0,'items',0,'content'],'value':'PRIVATE BODY'}]},'owner')
+        finally:copy.deepcopy=original_copy
+        assert p.revision==1 and json.dumps(p.tree)==before
+        assert any(e['method']=='item/agentMessage/delta' and e['itemId']=='answer' for e in events)
+        assert any(e['method']=='thread/status/changed' and e['status']=='active' for e in events)
+        assert 'PRIVATE BODY' not in json.dumps(events)
+        print('body patch preserved activity')
+        """#
+        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + simulation).contains("preserved activity"))
+    }
+    func testPatchBatchRollbackIncludesMalformedIgnoredPatchAndInvalidProjectedPath() throws {
+        let simulation = #"""
+        p=Projection('019a0000-0000-7000-8000-000000000001')
+        state={'latestTokenUsageInfo':{'total':{'outputTokens':100}},'turns':[{'turnId':'turn','status':'inProgress','items':[{'id':'tool','type':'commandExecution','status':'inProgress'}]}]}
+        p.consume({'type':'snapshot','revision':0,'conversationState':state},'owner')
+        before=json.dumps(p.tree);turn=copy.deepcopy(p.turn);usage=p.usage
+        invalid=[{'op':'invalid','path':['ignored'],'value':'PRIVATE'}, {'op':'replace','path':['ignored']*13}, {'op':'replace','path':['turns',0,'items',50,'status'],'value':'completed'}, None]
+        for bad in invalid:
+            try:
+                p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['turns',0,'status'],'value':'completed'},bad]},'owner')
+                assert False,'invalid patch accepted'
+            except ValueError:pass
+            assert p.revision==0 and json.dumps(p.tree)==before and p.turn==turn and p.usage==usage
+        events=p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['latestTokenUsageInfo','total','outputTokens'],'value':125},{'op':'replace','path':['turns',0,'items',0,'status'],'value':'completed'}]},'owner')
+        assert any(e['method']=='thread/tokenUsage/updated' and e['outputTokens']==125 for e in events)
+        assert any(e['method']=='item/completed' and e['itemId']=='tool' for e in events)
+        assert p.revision==1
+        print('atomic rollback preserved')
+        """#
+        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + simulation).contains("rollback preserved"))
+    }
     func testProjectionDiscardsBodyAndRejectsRevisionGapBeforeTerminalState() throws {
         let simulation = #"""
         tid='019a0000-0000-7000-8000-000000000001';p=Projection(tid)
