@@ -29,7 +29,9 @@ fi
 task_dmg="$task_build/$task_name"
 mkdir -p "$task_build/stage" "$task_output"
 PACER_UNIVERSAL=1 bash scripts/native/build-island.sh "$task_app" "$task_identity"
-lipo -verify_arch arm64 x86_64 "$task_app/Contents/MacOS/CodexPacerIsland"
+for task_arch in arm64 x86_64; do
+    lipo -verify_arch "$task_arch" "$task_app/Contents/MacOS/CodexPacerIsland"
+done
 if [[ "$task_mode" == signed ]]; then
     # Carry the notarization ticket with the app after it leaves the DMG.
     ditto -c -k --keepParent --norsrc --noextattr "$task_app" "$task_build/app.zip"
