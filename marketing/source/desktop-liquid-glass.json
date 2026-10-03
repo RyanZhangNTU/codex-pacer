@@ -1,0 +1,31 @@
+{
+  "screenPoints": [
+    1728,
+    1117
+  ],
+  "screenPixels": [
+    3456,
+    2234
+  ],
+  "panelPoints": {
+    "x": 644,
+    "y": 0,
+    "width": 440,
+    "height": 551
+  },
+  "panelPixels": {
+    "x": 1288,
+    "y": 0,
+    "width": 880,
+    "height": 1102
+  },
+  "panelWidthFraction": 0.25462962962962965,
+  "appearance": "liquidGlass",
+  "glassStyle": "clear",
+  "transparency": 1.0,
+  "capture": "Native desktop composite, not a detached window screenshot",
+  "color": "Display profile converted to sRGB before composition",
+  "privacy": "Only the native demo panel and its shadow are retained; surrounding desktop is the matching staged wallpaper",
+  "pointer": "Clock glyph retained from the same native demo state with pointer elsewhere",
+  "date": "2026-10-03"
+}
