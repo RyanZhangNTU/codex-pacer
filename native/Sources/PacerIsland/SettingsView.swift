@@ -146,6 +146,7 @@ struct SettingsView: View {
             }.formStyle(.grouped).disabled(saving)
             if let validation { Text(validation).foregroundStyle(.orange).font(.system(size: 12)) }
             HStack {
+                Button("退出 Codex Pacer") { model.onQuit?() }
                 Text("2.0.0-preview.2").font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 Button("取消", action: onClose).keyboardShortcut(.cancelAction).disabled(saving)

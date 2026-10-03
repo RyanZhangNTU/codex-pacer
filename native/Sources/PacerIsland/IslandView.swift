@@ -179,6 +179,8 @@ private struct IslandExpandedContent: View {
                 .disabled(model.refreshing).help("刷新 · " + model.freshnessText).accessibilityLabel("刷新")
             Button { model.onSettings?() } label: { Image(systemName: "gearshape").frame(width: 24, height: 26) }
                 .help("设置").accessibilityLabel("设置")
+            Button { model.onQuit?() } label: { Image(systemName: "power").frame(width: 24, height: 26) }
+                .help("退出 Codex Pacer").accessibilityLabel("退出 Codex Pacer")
             Button { model.close() } label: { Image(systemName: "chevron.up").frame(width: 24, height: 26) }
                 .help("收起").accessibilityLabel("收起")
         }
