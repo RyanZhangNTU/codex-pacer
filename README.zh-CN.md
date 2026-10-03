@@ -1,6 +1,6 @@
 # Codex Pacer 2.0
 
-[English](README.md) · [下载 2.0.0 未签名版](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.0)
+[English](README.md) · [下载 2.0.1 未签名版](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.1)
 
 原生 macOS 灵动岛，集中显示 Codex 任务、输出速度和账户额度。悬停展开，离开收起；需要时固定在桌面。
 
@@ -17,9 +17,9 @@
 
 ## 安装未签名版
 
-2.0.0 为未签名版，首次打开 DMG 时可能被 macOS 拦截。更新前先退出旧版。
+2.0.1 为未签名版，首次打开 DMG 时可能被 macOS 拦截。更新前先退出旧版。
 
-1. [下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg)并双击，出现系统拦截提示后关闭提示。
+1. [下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.1/Codex-Pacer-2.0.1-universal-unsigned.dmg)并双击，出现系统拦截提示后关闭提示。
 2. 前往 **系统设置 → 隐私与安全**，**滚动到页面最下方的“安全性”**，找到刚被拦截的安装包，点击 **“打开”或“仍要打开”**，按提示确认。
 3. **再次双击 DMG**，将 **Codex Pacer** 拖入右侧的 **Applications（应用程序）**，再从应用程序启动。
 

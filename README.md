@@ -1,6 +1,6 @@
 # Codex Pacer 2.0
 
-[简体中文](README.zh-CN.md) · [Download 2.0.0 unsigned](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.0)
+[简体中文](README.zh-CN.md) · [Download 2.0.1 unsigned](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.1)
 
 A native macOS island for Codex tasks, output rate and account quota. Hover to expand, move away to collapse, or pin it open.
 
@@ -17,9 +17,9 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 
 ## Install the unsigned release
 
-2.0.0 is unsigned, so macOS may block the DMG before it opens. Quit the old version before updating.
+2.0.1 is unsigned, so macOS may block the DMG before it opens. Quit the old version before updating.
 
-1. [Download the DMG](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg) and **double-click it first**. Dismiss the macOS blocking alert.
+1. [Download the DMG](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.1/Codex-Pacer-2.0.1-universal-unsigned.dmg) and **double-click it first**. Dismiss the macOS blocking alert.
 2. Go to **System Settings → Privacy & Security**, **scroll to Security at the bottom**, find the blocked installer, and choose **Open / Open Anyway**. Confirm when prompted.
 3. **Double-click the DMG again**, drag **Codex Pacer** into **Applications**, then launch it from Applications.
 
