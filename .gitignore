@@ -1,33 +1,18 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
+# Generated builds, exports and local data
 output/
-*.local
-var/
-
-# Local environment files
-.env
-.env.*
-!.env.example
-!.env.*.example
-
-# Local databases and app data
+native/.build/
+native/.swiftpm/
+*.log
 *.db
 *.sqlite
 *.sqlite3
 *.db-shm
 *.db-wal
+__pycache__/
 
-# Signing identities and release credentials
+# Local credentials
+.env
+.env.*
 *.pem
 *.key
 *.p8
@@ -38,17 +23,8 @@ var/
 *.der
 *.mobileprovision
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Editor and OS state
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
+.vscode/
+.idea/
 *.sw?
-
-.omx
-.playwright-cli
-.omx/

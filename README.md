@@ -1,100 +1,32 @@
-# Codex Pacer
+# Codex Pacer 2.0
 
-English | [简体中文](./README.zh-CN.md)
+[简体中文](README.zh-CN.md) · [Download](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
 
-<p align="center">
-  <img src="./docs/assets/popup.png" alt="Codex Pacer menu bar popup showing 5-hour and 7-day quota pacing" width="860">
-</p>
+A native macOS island for Codex tasks, output rate and account quota. Hover to expand, move away to collapse, or pin it open.
 
-**Codex Pacer** is a local-first desktop app for understanding Codex usage as pace, value, and session-level activity. It helps you see how quickly you are consuming quota, what that usage is worth in API-equivalent terms, and which conversations or subagents are driving it.
+![Codex Pacer 2.0](docs/assets/pacer-2.0.png)
 
-> Current stable release: **v1.2.2**
-> Official download: signed and notarized **macOS Apple Silicon DMG** via GitHub Releases. Windows installer publishing is paused for this release.
+- See local and enabled SSH tasks, their current stage, and ended turns; click a task to open its conversation.
+- See the aggregate output-rate estimate for running tasks, with tool waits handled separately from generation.
+- Track short and seven-day quota, reset countdowns, pacing and the current cycle. Banked resets expiring within the current cycle appear on the curve.
+- Keep ended-turn cards until clicked, their state changes, or the configured retention expires; receive a reminder while the island is collapsed.
+- Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
 
-## Highlights
+**Requirements:** macOS 14 or later, Apple Silicon or Intel. Liquid Glass requires macOS 26 or later. An authenticated Codex installation and Python 3 provide account/task data; remote sources require existing non-interactive OpenSSH access.
 
-- Imports local Codex usage data from `~/.codex` or a custom `CODEX_HOME`
-- Builds a local SQLite index for fast analysis and drill-down views
-- Estimates API-equivalent value and subscription payoff from token usage
-- Recognizes GPT-5.6 Sol, Terra, and Luna with bundled Standard API pricing
-- Tracks rolling quota windows, including `5-hour` and `7-day` pacing when available
-- Breaks usage down by conversation, root session, subagent, model, and token composition
-- Provides a macOS menu bar experience for quick quota checks
-
-## Why people use it
-
-Codex Pacer is built for practical questions:
-
-- Am I on pace to use this window well before reset?
-- How much value have I already extracted from my subscription?
-- Which sessions, models, or subagents are consuming the most?
-- How does my remaining quota compare with the time left in the window?
-
-## Privacy
-
-Codex Pacer is local-first:
-
-- it reads local Codex session and rate-limit data
-- it stores derived analysis in a local SQLite database
-- it does not require a cloud account or sync service to work
-
-## Getting started
-
-The documentation set for installation, packaging, and release notes is maintained for the public `v1.2.2` release. Start with:
-
-- [Getting started](./docs/en/getting-started.md)
-- [Installing on macOS](./docs/en/installing-on-macos.md)
-- [Installing on Windows](./docs/en/installing-on-windows.md)
-- [Packaging and release](./docs/en/packaging-and-release.md)
-- [Release notes for v1.2.2](./docs/en/release-notes-v1.2.2.md)
-
-On macOS, Codex Pacer can use the Codex CLI bundled with the ChatGPT desktop app for live quota reads. It discovers `/Applications/ChatGPT.app/Contents/Resources/codex` automatically. A standalone Codex CLI and the `CODEX_BIN` override remain supported.
+Download the DMG and drag Codex Pacer into Applications. Official 2.0 packages are Developer ID signed and Apple notarized. See the [Chinese user guide](docs/usage.zh-CN.md) and [release notes](docs/release-notes-2.0.zh-CN.md).
 
 ## Development
 
-Requirements:
+Requires Xcode 26 or newer. The app has no npm or Rust dependencies.
 
-- Node.js 22.18+
-- Rust toolchain
-- Tauri build prerequisites for your platform
-- Local Codex data under `~/.codex` or a custom `CODEX_HOME`
-
-Common commands:
-
-```bash
-npm install
-npm run tauri dev
+```sh
+make test
+make build
 ```
 
-Browser preview:
+Builds run in local temporary directories and print the app path. Development builds are ad hoc signed; production releases follow a separate signing/notarization pipeline. See [development and data semantics](docs/development.md) and [releasing](docs/releasing.md).
 
-```bash
-npm run dev
-```
+The 2.0 main branch maintains only native macOS code. React/Tauri and Windows 1.x remain available in [Git history and previous releases](https://github.com/RyanZhangNTU/codex-pacer/releases).
 
-Production build:
-
-```bash
-npm install
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-npm run tauri build
-```
-
-## Project status
-
-`v1.2.2` is the current stable release line.
-
-Current release packaging focus:
-
-- officially released: signed macOS Apple Silicon DMG
-- paused for this release: Windows NSIS setup EXE
-- source build support: additional Tauri-compatible desktop environments
-
-## Open source
-
-- [Changelog](./CHANGELOG.md)
-- [Contributing](./CONTRIBUTING.md)
-- [Security policy](./SECURITY.md)
-- [Code of conduct](./CODE_OF_CONDUCT.md)
-- [License](./LICENSE)
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)
