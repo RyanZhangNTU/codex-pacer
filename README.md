@@ -17,12 +17,17 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 
 ## Install the unsigned release
 
-2.0.0 is an unsigned build, so macOS may block its first launch.
+2.0.0 is unsigned, so macOS may block the DMG before it opens. Quit the old version before updating.
 
-1. [Download the DMG](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg), open it, and drag **Codex Pacer** into **Applications**. Quit the old version before updating.
-2. Launch the app. If macOS blocks it, go to **System Settings → Privacy & Security → Security**, find Codex Pacer, and choose **Open / Open Anyway**. Confirm when prompted.
+1. [Download the DMG](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg) and **double-click it first**. Dismiss the macOS blocking alert.
+2. Go to **System Settings → Privacy & Security**, **scroll to Security at the bottom**, find the blocked installer, and choose **Open / Open Anyway**. Confirm when prompted.
+3. **Double-click the DMG again**, drag **Codex Pacer** into **Applications**, then launch it from Applications.
 
-[First-launch help from Apple](https://support.apple.com/guide/mac-help/mh40616/mac) · [Chinese user guide](docs/usage.zh-CN.md)
+If macOS also blocks the app, repeat step 2 for Codex Pacer, then launch it again.
+
+![Privacy & Security in the sidebar and Security at the bottom](docs/assets/macos-open-guide.png)
+
+[First-launch help from Apple](https://support.apple.com/102445) · [Chinese user guide](docs/usage.zh-CN.md)
 
 ## Development
 

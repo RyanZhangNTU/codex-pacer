@@ -43,9 +43,7 @@ else
     [[ "$task_signature" == *'Signature=adhoc'* ]] || { echo 'Expected an ad hoc application signature.' >&2; exit 1; }
 fi
 codesign --verify --strict "$task_app"
-ln -s /Applications "$task_build/stage/Applications"
-cp -X docs/release-notes-2.0.zh-CN.md "$task_build/stage/安装与版本说明.md"
-hdiutil create -volname "Codex Pacer $task_version" -srcfolder "$task_build/stage" -ov -format UDZO "$task_dmg"
+"${PACER_DMG_PYTHON:-python3}" scripts/release/package-dmg.py "$task_app" "$task_dmg"
 if [[ "$task_mode" == signed ]]; then
     codesign --force --sign "$task_identity" --timestamp "$task_dmg"
     python3 scripts/release/notarize.py "$task_dmg"
