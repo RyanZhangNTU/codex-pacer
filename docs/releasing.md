@@ -4,9 +4,17 @@ Changes land in `develop`; release promotion targets `main`. Both branches must 
 
 ## Prepare and verify
 
+Install the pinned packaging dependencies in an isolated Python environment (Python 3.9+):
+
+```sh
+python3 -m venv /private/tmp/codex-pacer-dmg-tools
+/private/tmp/codex-pacer-dmg-tools/bin/python -m pip install -r scripts/release/dmg-requirements.txt
+export PACER_DMG_PYTHON=/private/tmp/codex-pacer-dmg-tools/bin/python
+```
+
 1. Update `native/Info.plist`, README installation instructions and release notes. Run `make test`; inspect the native UI, shutdown and single-instance behavior when application code changes.
 2. Merge the preparation PR into `develop`, promote it to `main`, then fast-forward `develop` to the final `main` commit. Stop if either remote branch gained unrelated changes; integrate those without force-pushing.
-3. Build from that clean final commit using exactly one distribution mode below. Both modes build arm64 + x86_64 in `/private/tmp`, verify the app signature and DMG structure, mount the DMG read-only, compare the inner executable, check the Applications link, and write a source receipt and `SHA256SUMS.txt`.
+3. Build from that clean final commit using exactly one distribution mode below. Both modes build arm64 + x86_64 in `/private/tmp`, verify the app signature and DMG structure, mount the DMG read-only, compare the inner executable, check the Applications link, and write a source receipt and `SHA256SUMS.txt`. The DMG opens in a fixed icon-view window with only the app and Applications shortcut visible; its Retina background shows the drag direction and one installation sentence. Check this layout in Finder before publishing.
 4. Launch the actual packaged application on the available Mac. Report any platform/architecture that was compiled but not tested on hardware.
 5. Tag the verified commit `vVERSION`, push the tag, and publish using the matching mode. The publisher checks the local/remote tag, source commit, version, distribution mode and checksum. Verify that the Release has only the DMG as an uploaded asset, then download it and compare against the local checksum.
 
@@ -20,7 +28,9 @@ make publish-unsigned
 
 Outputs are in `output/releases/VERSION/unsigned/`. The DMG filename includes `-unsigned`. The app has a local **ad hoc** signature required for execution compatibility, but no Developer ID identity; the DMG is unsigned and neither artifact is notarized or stapled. No Apple credentials are used. The receipt records this distinction explicitly.
 
-Include the Apple-documented first-launch steps in the Release and README: attempt to launch once, then use System Settings → Privacy & Security → Security to grant an exception for this app. Do not describe this distribution as Developer ID signed, notarized, or Gatekeeper-approved. The DMG includes the release/installation notes.
+Include the first-open steps in the Release and README: double-click the downloaded DMG first; after a blocking alert, scroll to Security at the bottom of System Settings → Privacy & Security and allow that installer. Open the DMG again and drag the app into Applications. If the app is also blocked, repeat for the app. Link [Apple's instructions](https://support.apple.com/102445) and embed the annotated Settings screenshot in the Release body, not as a download. Do not describe this distribution as Developer ID signed, notarized, or Gatekeeper-approved. Installation notes stay outside the DMG.
+
+For an explicitly approved packaging-only correction to an existing release, preserve the original DMG and receipts locally. Reuse its verified app with `"$PACER_DMG_PYTHON" scripts/release/package-dmg.py /path/to/Codex\ Pacer.app /path/to/new.dmg`, confirm every app file is unchanged, and repeat the mounted-image and Finder checks. Keep the published tag at the original application source; record the packaging commit separately in the local receipt. Replace only the DMG asset and release notes, then download the public asset and verify it again.
 
 ## Developer ID signed distribution
 

@@ -17,12 +17,17 @@
 
 ## 安装未签名版
 
-2.0.0 为未签名版，首次打开可能被 macOS 拦截。
+2.0.0 为未签名版，首次打开 DMG 时可能被 macOS 拦截。更新前先退出旧版。
 
-1. [下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg)，打开后将 **Codex Pacer** 拖入 **应用程序**。更新前先退出旧版。
-2. 双击启动。如被拦截，前往 **系统设置 → 隐私与安全 → 安全性**，找到 Codex Pacer，点击 **“打开”或“仍要打开”**，按提示确认即可。
+1. [下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.0/Codex-Pacer-2.0.0-universal-unsigned.dmg)并双击，出现系统拦截提示后关闭提示。
+2. 前往 **系统设置 → 隐私与安全**，**滚动到页面最下方的“安全性”**，找到刚被拦截的安装包，点击 **“打开”或“仍要打开”**，按提示确认。
+3. **再次双击 DMG**，将 **Codex Pacer** 拖入右侧的 **Applications（应用程序）**，再从应用程序启动。
 
-[首次打开帮助（Apple 官方）](https://support.apple.com/zh-cn/guide/mac-help/mh40616/mac) · [使用指南](docs/usage.zh-CN.md)
+若启动应用时再次被拦截，按第 2 步放行 Codex Pacer，再双击启动。
+
+![在隐私与安全页面最下方找到安全性](docs/assets/macos-open-guide.png)
+
+[首次打开帮助（Apple 官方）](https://support.apple.com/zh-cn/102445) · [使用指南](docs/usage.zh-CN.md)
 
 ## 开发
 
