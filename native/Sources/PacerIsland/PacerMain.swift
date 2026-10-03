@@ -117,6 +117,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
                 Task { @MainActor in self?.panel.show() }
             }
         model.onSettings = { [weak self] in self?.showSettings() }
+        model.onQuit = { [weak self] in self?.quit() }
         model.onOpenActivity = { [weak self] activity in self?.openActivity(activity) }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
         UNUserNotificationCenter.current().delegate = self

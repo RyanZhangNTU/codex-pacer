@@ -26,6 +26,7 @@ final class IslandModel: ObservableObject {
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
+    var onQuit: (() -> Void)?
     var onOpenActivity: ((SessionActivity) -> Void)?
     var onFocusRequested: (() -> Void)?
     func canOpen(_ activity: SessionActivity) -> Bool {
