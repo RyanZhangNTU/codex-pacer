@@ -128,26 +128,11 @@ struct SettingsView: View {
                     let attached = model.streamStatuses.values.reduce(0) { $0 + $1.attachedThreads }
                     Text("连接 \(connected) 个来源，订阅 \(attached) 个运行会话").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                Section {
-                    DisclosureGroup("数据与计算说明") {
-                        Text("本机与 SSH 任务通过实时订阅更新。日志仅用于启动补全和低频兜底。")
-                        Text("工具等待不计入生成速度；收到模型生成事件后继续计算。长时间执行工具不会自动结束任务。")
-                        Text("token/s 合计运行中任务的输出增量，排除 autoreview。采样停顿时保留灰色估算值；首次采样前，折叠时隐藏速度，展开时显示采样中。")
-                        Text("配速 = 剩余额度比例 ÷ 剩余时间比例 × 100。100% 为均匀配速，低于 85% 需放慢，高于 115% 较充裕。")
-                        Text("额度进度条显示剩余额度；灰条显示已过时间。倒计时按服务返回的重置日期计算。")
-                        Text("重置次数和券到期时间来自账户明细。credit 读取服务余额，不按 API 价格换算。")
-                        Text("曲线只保存当前七天窗口。额度重置或切换账户后重新记录，虚线为配速参考。")
-                        Text("结束任务保留到点击、状态变化或设定时间。折叠提示显示未查看的结束轮次，点击直接打开会话。")
-                        Text("系统通知需授权。关闭时，提醒显示在状态岛。")
-                        if let message = model.errorMessage { Text(message).foregroundStyle(.orange) }
-                        if let warning = model.historyWarning { Text(warning).foregroundStyle(.orange) }
-                    }.font(.system(size: 12)).foregroundStyle(.secondary)
-                }
             }.formStyle(.grouped).disabled(saving)
             if let validation { Text(validation).foregroundStyle(.orange).font(.system(size: 12)) }
             HStack {
                 Button("退出 Codex Pacer") { model.onQuit?() }
-                Text("2.0.0-preview.2").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development").font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 Button("取消", action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
                 Button(saving ? "正在保存" : "保存", action: save).keyboardShortcut(.defaultAction).disabled(saving)

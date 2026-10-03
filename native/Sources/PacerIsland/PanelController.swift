@@ -27,7 +27,7 @@ final class PanelController: NSObject {
         hosting = NSHostingView(rootView: IslandView(model: model, presentation: presentation))
         panel = IslandPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
-        panel.title = "Codex Pacer Island"
+        panel.title = "Codex Pacer"
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.appearance = NSAppearance(named: .darkAqua)
@@ -73,13 +73,15 @@ final class PanelController: NSObject {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue == model.displayID
         }
         guard let screen = selected ?? NSScreen.screens.first else { return }
-        let hasNotch = screen.safeAreaInsets.top > 0 && !model.prefersFloating
+        let demoNotch = model.isDemo && CommandLine.arguments.contains("--demo-notch")
+        let hasNotch = demoNotch || (screen.safeAreaInsets.top > 0 && !model.prefersFloating)
         let notchWidth: CGFloat
-        if hasNotch, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+        if demoNotch { notchWidth = 180 }
+        else if hasNotch, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notchWidth = max(0, right.minX - left.maxX)
         } else { notchWidth = 0 }
         if model.notchWidth != notchWidth { model.notchWidth = notchWidth }
-        let topHeight = hasNotch ? max(32, screen.safeAreaInsets.top) : 38
+        let topHeight: CGFloat = demoNotch ? 36 : (hasNotch ? max(32, screen.safeAreaInsets.top) : 38)
         if model.topHeight != topHeight { model.topHeight = topHeight }
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
             topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch,

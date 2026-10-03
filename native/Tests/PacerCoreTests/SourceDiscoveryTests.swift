@@ -67,7 +67,7 @@ final class SourceDiscoveryTests: XCTestCase {
         try JSONSerialization.data(withJSONObject:state).write(to:home.appendingPathComponent(".codex-global-state.json"))
         XCTAssertEqual(RemoteActivityTarget.configured(home:home).map(\.alias), ["one"])
     }
-    func testRemoteProbeFindsResumedTaskAndNeverTransmitsConversationContent() throws {
+    func testRealtimeFallbackFindsResumedTaskAndNeverTransmitsConversationContent() throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let day = home.appendingPathComponent("sessions/2025/01/01")
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
@@ -88,7 +88,7 @@ final class SourceDiscoveryTests: XCTestCase {
         sqlite3_close(db)
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath:"/usr/bin/python3")
-        process.arguments = ["-u","-c",RemoteProbe.script,Data(home.path.utf8).base64EncodedString(),"once"]
+        process.arguments = ["-u","-c",RealtimeProbe.script,Data(home.path.utf8).base64EncodedString(),"once"]
         process.standardOutput=output; process.standardError=FileHandle.nullDevice
         try process.run()
         let bytes=output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
@@ -96,7 +96,8 @@ final class SourceDiscoveryTests: XCTestCase {
         let text=String(decoding:bytes,as:UTF8.self)
         XCTAssertFalse(text.contains("private")); XCTAssertFalse(text.contains("input_tokens"))
         XCTAssertTrue(text.contains("output_tokens"))
-        let frame=try XCTUnwrap(JSONSerialization.jsonObject(with:bytes) as? [String:Any])
+        let frames = try bytes.split(separator: 10).compactMap { try JSONSerialization.jsonObject(with: Data($0)) as? [String: Any] }
+        let frame = try XCTUnwrap(frames.first { $0["sessions"] != nil })
         let sessions=try XCTUnwrap(frame["sessions"] as? [[String:Any]])
         XCTAssertEqual(sessions.count,1)
         XCTAssertEqual((sessions.first?["title"] as? String)?.count, 240)

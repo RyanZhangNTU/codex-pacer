@@ -4,7 +4,7 @@
 
 Security fixes are currently provided for the following release line:
 
-- `1.0.x`
+- `2.0.x` (native macOS)
 
 ## Reporting a vulnerability
 

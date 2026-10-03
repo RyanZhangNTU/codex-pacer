@@ -1,348 +1,42 @@
-#!/usr/bin/env bash
-
+#!/bin/bash
 set -euo pipefail
-
-usage() {
-  cat <<'EOF'
-Usage: ./scripts/release/build-macos-release.sh VERSION
-
-Required environment variables:
-  APPLE_SIGNING_IDENTITY
-
-Notarization environment variables (optional; choose at most one path):
-  APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID
-  or
-  APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH
-
-Optional environment variables:
-  TAURI_TARGET        e.g. aarch64-apple-darwin
-  TAURI_BUILD_ARGS    extra Tauri build args appended before the Cargo `--` boundary
-  CARGO_TARGET_DIR    defaults to ~/Library/Caches/CodexPacer/cargo-target
-EOF
-}
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-
-default_cargo_target_dir() {
-  printf '%s\n' "${HOME}/Library/Caches/CodexPacer/cargo-target"
-}
-
-path_is_cloud_synced() {
-  local path="$1"
-  [[ "${path}" == *"/Mobile Documents/"* || "${path}" == *"/CloudStorage/"* ]]
-}
-
-require_command() {
-  local command_name="$1"
-  if ! command -v "${command_name}" >/dev/null 2>&1; then
-    echo "ERROR: Missing required command: ${command_name}" >&2
-    exit 1
-  fi
-}
-
-json_value() {
-  local file_path="$1"
-  local expression="$2"
-  node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(${expression});" "${file_path}"
-}
-
-require_clean_worktree() {
-  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "ERROR: ${REPO_ROOT} is not inside a git work tree." >&2
-    exit 1
-  fi
-
-  git update-index -q --refresh
-
-  if [[ -n "$(git status --porcelain)" ]]; then
-    echo "ERROR: Working tree is not clean. Commit, stash, or remove local changes before building a release." >&2
-    git status --short
-    exit 1
-  fi
-}
-
-latest_recent_match() {
-  local search_root="$1"
-  local start_epoch="$2"
-  local find_type="$3"
-  local expected_name="$4"
-  local expected_fragment="$5"
-  local expected_suffix="$6"
-  local latest_path=""
-  local latest_mtime=0
-  local candidate
-
-  while IFS= read -r -d '' candidate; do
-    local base_name mtime
-    base_name="$(basename "${candidate}")"
-    if [[ -n "${expected_name}" && "${base_name}" != "${expected_name}" ]]; then
-      continue
-    fi
-
-    if [[ -n "${expected_fragment}" && "${candidate}" != *"${expected_fragment}"* ]]; then
-      continue
-    fi
-
-    if [[ -n "${expected_suffix}" && "${base_name}" != *"${expected_suffix}" ]]; then
-      continue
-    fi
-
-    mtime="$(stat -f '%m' "${candidate}")"
-    if (( mtime < start_epoch )); then
-      continue
-    fi
-
-    if (( mtime >= latest_mtime )); then
-      latest_path="${candidate}"
-      latest_mtime="${mtime}"
-    fi
-  done < <(find "${search_root}" -type "${find_type}" -print0)
-
-  if [[ -z "${latest_path}" ]]; then
-    return 1
-  fi
-
-  printf '%s\n' "${latest_path}"
-}
-
-main() {
-  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
-  fi
-
-  local version="${1:-}"
-  if [[ -z "${version}" ]]; then
-    usage >&2
-    exit 1
-  fi
-
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "ERROR: macOS release builds must run on Darwin." >&2
-    exit 1
-  fi
-
-  require_command npm
-  require_command cargo
-  require_command node
-  require_command codesign
-  require_command spctl
-  require_command xcrun
-  require_command hdiutil
-  require_command shasum
-  require_command git
-
-  cd "${REPO_ROOT}"
-  require_clean_worktree
-
-  local build_target_root package_version tauri_version product_name
-  build_target_root="${CARGO_TARGET_DIR:-$(default_cargo_target_dir)}"
-  mkdir -p "${build_target_root}"
-  build_target_root="$(cd "${build_target_root}" && pwd)"
-  if path_is_cloud_synced "${build_target_root}"; then
-    echo "ERROR: CARGO_TARGET_DIR points to a cloud-synced path: ${build_target_root}" >&2
-    echo "Use a local path such as $(default_cargo_target_dir) to avoid FinderInfo metadata breaking macOS code signing." >&2
-    exit 1
-  fi
-  export CARGO_TARGET_DIR="${build_target_root}"
-
-  package_version="$(json_value "${REPO_ROOT}/package.json" "data.version")"
-  tauri_version="$(json_value "${REPO_ROOT}/src-tauri/tauri.conf.json" "data.version")"
-  product_name="$(json_value "${REPO_ROOT}/src-tauri/tauri.conf.json" "data.productName")"
-
-  if [[ "${package_version}" != "${version}" ]]; then
-    echo "ERROR: package.json version is ${package_version}, expected ${version}." >&2
-    exit 1
-  fi
-
-  if [[ "${tauri_version}" != "${version}" ]]; then
-    echo "ERROR: src-tauri/tauri.conf.json version is ${tauri_version}, expected ${version}." >&2
-    exit 1
-  fi
-
-  if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-    echo "ERROR: APPLE_SIGNING_IDENTITY is required for a signed macOS release build." >&2
-    exit 1
-  fi
-
-  if [[ "${APPLE_SIGNING_IDENTITY}" == "-" ]]; then
-    echo "ERROR: APPLE_SIGNING_IDENTITY='-' is ad-hoc signing and is not suitable for the public release workflow." >&2
-    exit 1
-  fi
-
-  local has_apple_id_path=0
-  local has_api_path=0
-  local apple_id_field_count=0
-  local api_field_count=0
-
-  [[ -n "${APPLE_ID:-}" ]] && (( apple_id_field_count += 1 ))
-  [[ -n "${APPLE_PASSWORD:-}" ]] && (( apple_id_field_count += 1 ))
-  [[ -n "${APPLE_TEAM_ID:-}" ]] && (( apple_id_field_count += 1 ))
-
-  [[ -n "${APPLE_API_ISSUER:-}" ]] && (( api_field_count += 1 ))
-  [[ -n "${APPLE_API_KEY:-}" ]] && (( api_field_count += 1 ))
-  [[ -n "${APPLE_API_KEY_PATH:-}" ]] && (( api_field_count += 1 ))
-
-  if (( apple_id_field_count > 0 && apple_id_field_count < 3 )); then
-    echo "ERROR: Incomplete Apple ID notarization credentials." >&2
-    echo "  Provide APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or unset all three for a signed-only build." >&2
-    exit 1
-  fi
-
-  if (( api_field_count > 0 && api_field_count < 3 )); then
-    echo "ERROR: Incomplete App Store Connect API notarization credentials." >&2
-    echo "  Provide APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH, or unset all three for a signed-only build." >&2
-    exit 1
-  fi
-
-  if [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
-    has_apple_id_path=1
-  fi
-
-  if [[ -n "${APPLE_API_ISSUER:-}" && -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_KEY_PATH:-}" ]]; then
-    has_api_path=1
-  fi
-
-  if (( has_apple_id_path + has_api_path > 1 )); then
-    echo "ERROR: Provide at most one notarization credential path." >&2
-    echo "  Apple ID: APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID" >&2
-    echo "  API key : APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH" >&2
-    exit 1
-  fi
-
-  if (( has_api_path == 1 )) && [[ ! -f "${APPLE_API_KEY_PATH}" ]]; then
-    echo "ERROR: APPLE_API_KEY_PATH does not exist: ${APPLE_API_KEY_PATH}" >&2
-    exit 1
-  fi
-
-  local notarization_mode="not configured; signed-only DMG"
-  local should_notarize=0
-  if (( has_apple_id_path == 1 )); then
-    notarization_mode="Apple ID"
-    should_notarize=1
-  elif (( has_api_path == 1 )); then
-    notarization_mode="App Store Connect API"
-    should_notarize=1
-  fi
-
-  local -a notarytool_auth_args tauri_build_args cargo_runner_args
-  notarytool_auth_args=()
-  if (( has_apple_id_path == 1 )); then
-    notarytool_auth_args+=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
-  elif (( has_api_path == 1 )); then
-    notarytool_auth_args+=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}")
-    if [[ -n "${APPLE_API_ISSUER:-}" ]]; then
-      notarytool_auth_args+=(--issuer "${APPLE_API_ISSUER}")
-    fi
-  fi
-  tauri_build_args=(--ci --bundles app,dmg)
-  cargo_runner_args=(--locked)
-
-  if [[ -n "${TAURI_TARGET:-}" ]]; then
-    tauri_build_args+=(--target "${TAURI_TARGET}")
-  fi
-
-  if [[ -n "${TAURI_BUILD_ARGS:-}" ]]; then
-    # shellcheck disable=SC2206
-    local extra_args=( ${TAURI_BUILD_ARGS} )
-    tauri_build_args+=("${extra_args[@]}")
-  fi
-
-  echo "Building Codex Pacer v${version}"
-  echo "Signing identity : ${APPLE_SIGNING_IDENTITY}"
-  echo "Notarization via : ${notarization_mode}"
-  echo "Cargo target dir : ${build_target_root}"
-  if [[ -n "${TAURI_TARGET:-}" ]]; then
-  echo "Tauri target     : ${TAURI_TARGET}"
-  fi
-
-  echo
-  echo "Installing dependencies from the committed package-lock.json..."
-  npm ci
-
-  echo
-  echo "Running public branding audit..."
-  "${REPO_ROOT}/scripts/release/audit-public-branding.sh"
-
-  echo
-  echo "Running lint..."
-  npm run lint
-
-  echo
-  echo "Building frontend..."
-  npm run build
-
-  echo
-  echo "Running Rust tests..."
-  cargo test --manifest-path src-tauri/Cargo.toml --locked
-
-  echo
-  echo "Running Tauri release build..."
-  local build_start
-  build_start="$(date +%s)"
-  npm run tauri build -- "${tauri_build_args[@]}" -- "${cargo_runner_args[@]}"
-
-  local app_name dmg_fragment app_path dmg_path checksum_path
-  app_name="${product_name}.app"
-  dmg_fragment="_${version}_"
-
-  app_path="$(latest_recent_match "${build_target_root}" "${build_start}" d "${app_name}" "" "")" || {
-    echo "ERROR: Could not locate the built app bundle for ${app_name}." >&2
-    exit 1
-  }
-
-  dmg_path="$(latest_recent_match "${build_target_root}" "${build_start}" f "" "${dmg_fragment}" ".dmg")" || {
-    echo "ERROR: Could not locate the built DMG for version ${version}." >&2
-    exit 1
-  }
-
-  checksum_path="${dmg_path}.sha256"
-
-  echo
-  echo "Verifying signed app..."
-  codesign --verify --deep --strict --verbose=2 "${app_path}"
-  if (( should_notarize == 1 )); then
-    spctl -a -vv --type exec "${app_path}"
-    xcrun stapler validate "${app_path}"
-  else
-    echo "Skipping Gatekeeper and stapler app checks because notarization credentials were not provided."
-  fi
-
-  if (( should_notarize == 1 )); then
-    echo
-    echo "Notarizing DMG..."
-    xcrun notarytool submit "${dmg_path}" "${notarytool_auth_args[@]}" --wait
-    echo "Stapling DMG..."
-    xcrun stapler staple "${dmg_path}"
-  else
-    echo
-    echo "Skipping DMG notarization; build is signed-only."
-  fi
-
-  echo
-  echo "Verifying signed DMG..."
-  codesign --verify --verbose=2 "${dmg_path}"
-  hdiutil verify "${dmg_path}"
-  if (( should_notarize == 1 )); then
-    spctl -a -vv --type open --context context:primary-signature "${dmg_path}"
-    xcrun stapler validate "${dmg_path}"
-  else
-    echo "Skipping Gatekeeper and stapler DMG checks because notarization credentials were not provided."
-  fi
-
-  echo
-  echo "Writing DMG checksum..."
-  (
-    cd "$(dirname "${dmg_path}")"
-    shasum -a 256 "$(basename "${dmg_path}")" > "${checksum_path}"
-  )
-
-  echo
-  echo "Build complete."
-  echo "App bundle : ${app_path}"
-  echo "DMG        : ${dmg_path}"
-  echo "Checksum   : ${checksum_path}"
-}
-
-main "$@"
+task_root="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$task_root"
+: "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to a Developer ID Application identity}"
+if [[ -n "$(git status --porcelain)" ]]; then echo 'Commit source changes before building a release.' >&2; exit 1; fi
+task_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' native/Info.plist)"
+task_build="$(mktemp -d /private/tmp/codex-pacer-release.XXXXXX)"
+task_app="$task_build/stage/Codex Pacer.app"
+task_name="Codex-Pacer-${task_version}-universal.dmg"
+task_dmg="$task_build/$task_name"
+task_output="$task_root/output/releases/$task_version"
+mkdir -p "$task_build/stage" "$task_output"
+PACER_UNIVERSAL=1 bash scripts/native/build-island.sh "$task_app" "$APPLE_SIGNING_IDENTITY"
+# Notarize the app first so dragging it out of the DMG also carries its ticket.
+ditto -c -k --keepParent --norsrc --noextattr "$task_app" "$task_build/app.zip"
+python3 scripts/release/notarize.py "$task_build/app.zip"
+xcrun stapler staple "$task_app"
+xcrun stapler validate "$task_app"
+codesign --verify --strict "$task_app"
+ln -s /Applications "$task_build/stage/Applications"
+hdiutil create -volname "Codex Pacer $task_version" -srcfolder "$task_build/stage" -ov -format UDZO "$task_dmg"
+codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$task_dmg"
+python3 scripts/release/notarize.py "$task_dmg"
+xcrun stapler staple "$task_dmg"
+xcrun stapler validate "$task_dmg"
+codesign --verify --strict "$task_dmg"
+spctl --assess --type execute --verbose=2 "$task_app"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$task_dmg"
+hdiutil verify "$task_dmg"
+cp -X "$task_dmg" "$task_output/$task_name"
+(cd "$task_output" && shasum -a 256 "$task_name" > SHA256SUMS.txt)
+python3 - "$task_output" "$task_build" "$task_version" "$(git rev-parse HEAD)" <<'PY'
+import json, pathlib, sys
+out, build, version, commit = sys.argv[1:]
+pathlib.Path(out, 'build.json').write_text(json.dumps({
+    'version': version, 'commit': commit, 'architectures': ['arm64', 'x86_64'],
+    'appPath': str(pathlib.Path(build, 'stage', 'Codex Pacer.app')),
+    'signed': True, 'notarized': True, 'stapled': True
+}, indent=2) + '\n')
+PY
+printf 'Verified release: %s\n' "$task_output/$task_name"
