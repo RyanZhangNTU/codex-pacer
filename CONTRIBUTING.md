@@ -2,6 +2,8 @@
 
 Codex Pacer 2.0 maintains a native macOS app written in SwiftUI/AppKit. Create focused branches from `develop` and open PRs back into `develop`; `main` accepts release promotions.
 
+Agents should start with [AGENTS.md](AGENTS.md). Packaging and publication follow the canonical [release workflow](docs/releasing.md), with [automatic updates](docs/automatic-updates.md) covering Sparkle details. Documentation-only changes do not require a new app version or binary release.
+
 Use Xcode 26 or newer and run:
 
 ```sh
