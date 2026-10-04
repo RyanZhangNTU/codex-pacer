@@ -1,3 +1,4 @@
+import PacerCore
 import SwiftUI
 
 enum IslandAppearance: String, CaseIterable {
@@ -19,12 +20,12 @@ enum IslandAppearance: String, CaseIterable {
 struct IslandGlassSettings {
     enum Style: String, CaseIterable {
         case regular, clear
-        var label: String { self == .regular ? "标准" : "清透" }
+        var label: String { self == .regular ? L10n.text("glass.regular") : L10n.text("glass.clear") }
     }
     enum Tint: String, CaseIterable {
         case neutral, cool, warm
         var label: String {
-            switch self { case .neutral: return "中性"; case .cool: return "冷色"; case .warm: return "暖色" }
+            switch self { case .neutral: return L10n.text("glass.neutral"); case .cool: return L10n.text("glass.cool"); case .warm: return L10n.text("glass.warm") }
         }
         var color: Color {
             switch self {

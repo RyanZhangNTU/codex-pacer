@@ -26,7 +26,7 @@ enum PacerMain {
         do { instance = try IslandInstanceLock(at: lockURL) }
         catch {
             let alert = NSAlert()
-            alert.messageText = "无法启动 Codex Pacer"
+            alert.messageText = L10n.text("app.launch_failed")
             alert.informativeText = error.localizedDescription
             alert.runModal()
             return
@@ -61,10 +61,17 @@ enum PacerMain {
     }
 
     private static func diagnose() async {
-        guard let executable = CodexClient.findExecutable() else {
-            print("Codex CLI unavailable"); exit(1)
+        let discovery = CodexExecutableResolver.discover(customPath: UserDefaults.standard.string(forKey: "codexExecutable") ?? "")
+        guard let selection = discovery.selected else {
+            print(discovery.issue ?? "Codex CLI unavailable"); exit(1)
         }
-        let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
+        let executable = selection.url
+        print("CLI source: \(selection.source)")
+        print("CLI path: \(executable.path)")
+        let configuredHome = UserDefaults.standard.string(forKey: "codexHome") ?? ""
+        let home = URL(fileURLWithPath: CodexExecutableResolver.normalize(configuredHome.isEmpty
+            ? (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex") : configuredHome))
+        print("Codex home: \(home.path)")
         let client = CodexClient(executable: executable, home: home)
         do {
             let snapshot = try await client.readQuota()
@@ -91,7 +98,7 @@ enum PacerMain {
             await remote.shutdown()
             await client.disconnect()
         } catch {
-            print((error as? CodexClientError)?.errorDescription ?? "Quota unavailable")
+            print(CodexDiagnosticText.description(of: error))
             await client.disconnect()
             exit(1)
         }
@@ -99,8 +106,9 @@ enum PacerMain {
 }
 
 @MainActor
-private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuItemValidation {
     private var model: IslandModel!
+    private var updater: AppUpdater!
     private var panel: PanelController!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
@@ -114,6 +122,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": "auto", "showInMenuBar": false])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
+        updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
         reopenObserver = DistributedNotificationCenter.default().addObserver(forName: showExistingIsland,
             object: nil, queue: .main) { [weak self] _ in
@@ -121,23 +130,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             }
         model.onSettings = { [weak self] in self?.showSettings() }
         model.onQuit = { [weak self] in self?.quit() }
+        model.onRelaunch = { [weak self] in self?.relaunchForLanguage() }
         model.onOpenActivity = { [weak self] activity in self?.openActivity(activity) }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
         UNUserNotificationCenter.current().delegate = self
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu()
-        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: L10n.text("common.settings_menu"), action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         applicationMenu.addItem(settingsItem)
+        let updateItem = NSMenuItem(title: L10n.text("updates.check"), action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        applicationMenu.addItem(updateItem)
         if model.isDemo {
             for stage in DemoTaskStage.allCases {
-                let item = NSMenuItem(title: "演示：" + stage.label, action: #selector(demoStageChanged(_:)), keyEquivalent: String(stage.rawValue + 1))
+                let item = NSMenuItem(title: L10n.text("demo.menu", stage.label), action: #selector(demoStageChanged(_:)), keyEquivalent: String(stage.rawValue + 1))
                 item.tag = stage.rawValue; item.target = self; applicationMenu.addItem(item)
             }
         }
         applicationMenu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "退出 Codex Pacer", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L10n.text("common.quit"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         applicationMenu.addItem(quitItem)
         applicationItem.submenu = applicationMenu
@@ -145,6 +158,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         NSApp.mainMenu = mainMenu
         updateStatusItem()
         model.start()
+        updater.start()
+        if CommandLine.arguments.contains("--settings") { showSettings() }
     }
 
     private func updateStatusItem() {
@@ -179,7 +194,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     }
     private func showMenu() {
         let menu = NSMenu()
-        for (title, selector) in [("显示状态岛", #selector(showIsland)), ("打开 Codex", #selector(openCodex)), ("刷新额度", #selector(refresh)), ("设置…", #selector(showSettings)), ("退出 Codex Pacer", #selector(quit))] {
+        for (title, selector) in [(L10n.text("menu.show_island"), #selector(showIsland)), (L10n.text("menu.open_codex"), #selector(openCodex)), (L10n.text("menu.refresh_quota"), #selector(refresh)), (L10n.text("updates.check"), #selector(checkForUpdates)), (L10n.text("common.settings_menu"), #selector(showSettings)), (L10n.text("common.quit"), #selector(quit))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
             item.target = self
             menu.addItem(item)
@@ -188,7 +203,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     }
     @objc private func showIsland() { panel.show() }
     @objc private func refresh() { model.refreshQuota() }
+    @objc private func checkForUpdates() { updater.checkForUpdates() }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action == #selector(checkForUpdates) ? updater.canCheck : true
+    }
     @objc private func quit() { NSApp.terminate(nil) }
+    private func relaunchForLanguage() -> String? {
+        guard let helper = Bundle.main.url(forAuxiliaryExecutable: "PacerRelaunch") else {
+            return L10n.text("language.missing_helper")
+        }
+        let process = Process()
+        process.executableURL = helper
+        process.arguments = [String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundlePath, "--settings"]
+            + CommandLine.arguments.filter { ["--demo", "--demo-notch"].contains($0) }
+        do { try process.run() }
+        catch { return CodexDiagnosticText.description(of: error) }
+        // Schedule outside both the actor job and main dispatch-queue drain.
+        // terminateLater's nested AppKit loop must be able to run shutdown tasks.
+        perform(#selector(quit), with: nil, afterDelay: 0)
+        return nil
+    }
     @objc private func openCodex() {
         let url = URL(fileURLWithPath: "/Applications/Codex.app")
         guard FileManager.default.fileExists(atPath: url.path) else { return }
@@ -202,7 +236,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         if model.isDemo {
             let window = demoConversationWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 320),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "会话跳转 · 演示"; window.isReleasedWhenClosed = false
+            window.title = L10n.text("demo.chat_title"); window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: DemoConversationView(activity: activity) { [weak self] in
                 self?.demoConversationWindow?.orderOut(nil); self?.panel.show()
             })
@@ -231,12 +265,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         if settingsWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 670),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "Codex Pacer 设置"
+            window.title = L10n.text("menu.settings_title")
             window.isReleasedWhenClosed = false
             window.center()
             settingsWindow = window
         }
-        settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model) { [weak self] in
+        settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater) { [weak self] in
             self?.settingsWindow?.orderOut(nil)
         })
         settingsWindow?.makeKeyAndOrderFront(nil)

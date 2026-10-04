@@ -237,7 +237,7 @@ final class RuntimeStateTests: XCTestCase {
         XCTAssertEqual(overview.activities.count, 4)
         XCTAssertEqual(overview.tokensPerSecond, 30)
         XCTAssertEqual(overview.phase, .running)
-        XCTAssertEqual(overview.title, "2 个任务运行中")
+        XCTAssertEqual(overview.title, L10n.text("activity.running_count", 2))
         XCTAssertNil(ActivityOverview(activities: [first, second], at: epoch.addingTimeInterval(20)).tokensPerSecond)
     }
     func testEndedConversationCannotOverrideUnknownOrRunningUserTask() {
@@ -246,13 +246,13 @@ final class RuntimeStateTests: XCTestCase {
         let unknown = SessionActivity(id: "unknown")
         XCTAssertEqual(ActivityOverview(activities: [ended, unknown], at: epoch.addingTimeInterval(5)).phase, .unknown)
         XCTAssertEqual(ActivityOverview(activities: [ended, running("active", rate: 10)], at: epoch.addingTimeInterval(5)).phase, .running)
-        XCTAssertEqual(ActivityOverview(activities: [ended], at: epoch.addingTimeInterval(5)).title, "空闲")
+        XCTAssertEqual(ActivityOverview(activities: [ended], at: epoch.addingTimeInterval(5)).title, L10n.text("activity.idle"))
     }
     func testVerifiedIdleDoesNotDecayIntoAnUnknownActiveTask() {
         var activity = running("ended", rate: 10)
         activity.consume(log("task_complete", at: epoch.addingTimeInterval(4), payload: ["turn_id": "ended"]))
         XCTAssertEqual(activity.observedPhase(at: epoch.addingTimeInterval(600)), .completed)
-        XCTAssertEqual(ActivityOverview(activities: [activity], at: epoch.addingTimeInterval(600)).title, "空闲")
+        XCTAssertEqual(ActivityOverview(activities: [activity], at: epoch.addingTimeInterval(600)).title, L10n.text("activity.idle"))
     }
     func testOrphanCompletionCannotDeclareAnUnobservedTaskEnded() {
         var activity = SessionActivity(id: "unknown")

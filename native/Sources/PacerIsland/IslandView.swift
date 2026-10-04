@@ -33,6 +33,7 @@ struct IslandView: View {
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
         .preferredColorScheme(.dark)
+        .environment(\.locale, L10n.locale)
     }
 }
 
@@ -60,17 +61,17 @@ private struct IslandHeader: View {
                         Text(String(format: "%.0f", rate))
                             .font(.system(size: 10)).monospacedDigit()
                             .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
-                            .help(String(format: model.rateIsFresh ? "合计输出速度：%.1f token/s" : "最近估算：%.1f token/s", rate))
+                            .help(L10n.text(model.rateIsFresh ? "rate.total" : "rate.recent", rate))
                         Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
                     } else if model.expanded && model.showsRate && model.pendingCompletions.isEmpty {
-                        Text("采样中").font(.system(size: 10)).foregroundStyle(secondary)
+                        Text(L10n.text("activity.sampling")).font(.system(size: 10)).foregroundStyle(secondary)
                     }
                 }.frame(height: model.topHeight).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: attached ? .infinity : nil, alignment: .leading)
-            .help(model.pendingCompletions.first.map { "打开会话 · " + model.projectName($0) } ?? "固定展开")
-            .accessibilityLabel(model.pendingCompletions.isEmpty ? "\(model.compactStatus)。点击固定展开" : "\(model.completionSummary)。点击打开会话")
+            .help(model.pendingCompletions.first.map { L10n.text("activity.open_help", model.projectName($0)) } ?? L10n.text("common.pin"))
+            .accessibilityLabel(model.pendingCompletions.isEmpty ? L10n.text("activity.header_pin", model.compactStatus) : L10n.text("activity.header_open", model.completionSummary))
             if model.notchWidth > 0 { Color.clear.frame(width: model.notchWidth + 8, height: model.topHeight) }
             else { Spacer(minLength: 10) }
             Button { model.togglePin() } label: {
@@ -84,7 +85,7 @@ private struct IslandHeader: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: attached ? .infinity : nil, alignment: .trailing)
-            .accessibilityLabel("\(model.compactWindow)\(model.quotaSummary)。点击固定展开")
+            .accessibilityLabel(L10n.text("activity.quota_pin", model.compactWindow, model.quotaSummary))
         }.padding(.horizontal, 15)
     }
 }
@@ -121,12 +122,12 @@ private struct IslandExpandedContent: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.isDemo {
-                Text("演示").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 10)
+                Text(L10n.text("demo.label")).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 10)
             }
 
             VStack(alignment: .leading, spacing: 0) {
                 if let notice = model.notice {
-                    Label(notice.title + "：" + notice.detail, systemImage: "bell")
+                    Label(L10n.text("notice.body", notice.title, notice.detail), systemImage: "bell")
                         .font(.system(size: 12)).foregroundStyle(model.accent).padding(.bottom, 8)
                 }
                 taskContent
@@ -145,20 +146,23 @@ private struct IslandExpandedContent: View {
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
-            Text("暂无运行任务").font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
+            Text(L10n.text("activity.no_tasks")).font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
         } else {
             TaskPagerView(model: model)
         }
         if !model.unavailableSSH.isEmpty {
-            Label("SSH 未连接", systemImage: "network").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
+            Label(L10n.text("source.ssh_unavailable"), systemImage: "network").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
                 .help(model.unavailableSSH.joined(separator: "、"))
         }
     }
 
     @ViewBuilder private var quotaContent: some View {
         if let message = model.errorMessage {
-            Label("额度暂不可用", systemImage: "exclamationmark.circle")
-                .font(.system(size: 12)).foregroundStyle(secondary).help(message).padding(.bottom, 12)
+            QuotaErrorView(message: message, cliPath: model.quotaCLI?.url.path, homePath: model.home.path,
+                cachedAt: model.quota.flatMap { $0.windows.isEmpty ? nil : $0.capturedAt },
+                refreshing: model.refreshing, onRetry: { model.retryQuotaConnection() },
+                onSettings: { model.onSettings?() })
+                .padding(.bottom, 12)
         }
         if let quota = model.quota, !quota.buckets.isEmpty || quota.resetCredits != nil {
             VStack(alignment: .leading, spacing: 20) {
@@ -178,33 +182,33 @@ private struct IslandExpandedContent: View {
                 QuotaCycleChart(data: QuotaChartData(cycle: cycle, resetCredits: quota.resetCredits, now: model.now),
                     accent: model.accent).equatable().padding(.top, 22)
             } else if model.weeklyWindow != nil {
-                Text("等待采样").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
+                Text(L10n.text("quota.waiting_sample")).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
             }
             AccountUsageView(snapshot: quota, now: model.now).padding(.top, 20)
             if let warning = model.historyWarning {
-                Label("曲线记录异常", systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(secondary).help(warning).padding(.top, 10)
+                Label(L10n.text("quota.chart_warning"), systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(secondary).help(warning).padding(.top, 10)
             }
         } else if model.errorMessage == nil {
-            Text(model.refreshing ? "正在读取账户额度" : "尚未连接 Codex").font(.system(size: 13))
+            Text(model.refreshing ? L10n.text("quota.loading") : L10n.text("quota.not_connected")).font(.system(size: 13))
         }
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
             if model.stale || model.errorMessage != nil {
-                Label("未更新", systemImage: "clock").font(.system(size: 12)).help(model.freshnessText)
+                Label(L10n.text("common.not_updated"), systemImage: "clock").font(.system(size: 12)).help(model.freshnessText)
             }
             Spacer(minLength: 4)
             Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").frame(width: 24, height: 26) }
-                .help(model.pinned ? "取消固定" : "固定展开").accessibilityLabel(model.pinned ? "取消固定" : "固定展开")
+                .help(model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin")).accessibilityLabel(model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"))
             Button { model.refreshQuota(); model.refreshActivity() } label: { Image(systemName: "arrow.clockwise").frame(width: 24, height: 26) }
-                .disabled(model.refreshing).help("刷新 · " + model.freshnessText).accessibilityLabel("刷新")
+                .disabled(model.refreshing).help(L10n.text("quota.refresh_help", model.freshnessText)).accessibilityLabel(L10n.text("common.refresh"))
             Button { model.onSettings?() } label: { Image(systemName: "gearshape").frame(width: 24, height: 26) }
-                .help("设置").accessibilityLabel("设置")
+                .help(L10n.text("common.settings")).accessibilityLabel(L10n.text("common.settings"))
             Button { model.onQuit?() } label: { Image(systemName: "power").frame(width: 24, height: 26) }
-                .help("退出 Codex Pacer").accessibilityLabel("退出 Codex Pacer")
+                .help(L10n.text("common.quit")).accessibilityLabel(L10n.text("common.quit"))
             Button { model.close() } label: { Image(systemName: "chevron.up").frame(width: 24, height: 26) }
-                .help("收起").accessibilityLabel("收起")
+                .help(L10n.text("common.collapse")).accessibilityLabel(L10n.text("common.collapse"))
         }
         .font(.system(size: 13)).buttonStyle(.plain).foregroundStyle(secondary)
         .padding(.top, 8).padding(.bottom, 12)

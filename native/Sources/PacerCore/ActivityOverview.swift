@@ -31,13 +31,13 @@ public struct ActivityOverview: Sendable {
 
     public var title: String {
         switch phase {
-        case .running: return running.count == 1 ? "运行中" : "\(running.count) 个任务运行中"
-        case .waitingForInput: return "等待回复"
-        case .unknown: return "状态未确认"
-        default: return "空闲"
+        case .running: return running.count == 1 ? L10n.text("activity.running") : L10n.text("activity.running_count", running.count)
+        case .waitingForInput: return L10n.text("activity.waiting")
+        case .unknown: return L10n.text("activity.unknown")
+        default: return L10n.text("activity.idle")
         }
     }
     public var compactTitle: String {
-        phase == .running && running.count > 1 ? "\(running.count) 个任务" : title
+        phase == .running && running.count > 1 ? L10n.text("activity.task_count", running.count) : title
     }
 }

@@ -101,7 +101,7 @@ enum RealtimeProbe {
     class Session:
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known={}; self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
-            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.0.2'},'capabilities':{'experimentalApi':True}},'initialize')
+            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.1.1'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')

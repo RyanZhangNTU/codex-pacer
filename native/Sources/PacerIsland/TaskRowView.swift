@@ -12,7 +12,7 @@ struct TaskRowView: View {
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var phase: ActivityPhase { activity.observedPhase(at: now) }
-    private var detail: String { phase == .completed ? "本轮结束" : activity.detail(at: now) }
+    private var detail: String { phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now) }
     private var color: Color {
         switch phase {
         case .waitingForInput, .interrupted: return Color(red: 0.91, green: 0.75, blue: 0.48)
@@ -39,7 +39,7 @@ struct TaskRowView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(name).font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
-                        if unread { Circle().fill(color).frame(width: 5, height: 5).accessibilityLabel("未查看") }
+                        if unread { Circle().fill(color).frame(width: 5, height: 5).accessibilityLabel(L10n.text("common.not_viewed")) }
                     }
                     HStack(spacing: 8) {
                         Text(detail).foregroundStyle(color).lineLimit(1)
@@ -59,7 +59,7 @@ struct TaskRowView: View {
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-        .help(enabled ? ["打开会话", activity.modelName].compactMap { $0 }.joined(separator: " · ") : "此来源没有可用的会话链接")
-        .accessibilityLabel("\(name)，\(detail)，\(activity.sourceHost ?? "本机")。打开会话")
+        .help(enabled ? [L10n.text("common.open_chat"), activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
+        .accessibilityLabel(L10n.text("activity.row_accessibility", name, detail, activity.sourceHost ?? L10n.text("common.local")))
     }
 }

@@ -6,10 +6,22 @@
 <key>CFBundleDisplayName</key><string>Codex Pacer</string>
 <key>CFBundleExecutable</key><string>CodexPacerIsland</string>
 <key>CFBundleIconFile</key><string>Pacer.icns</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.0.2</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>2.1.1</string>
+<key>CFBundleVersion</key><string>7</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>SUFeedURL</key><string>https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast.xml</string>
+<key>SUPublicEDKey</key><string>XdAbV7Q9i+LVC2U0mIPfBjI4WRRH0YEb9e3aUOkjHDE=</string>
+<key>SUEnableAutomaticChecks</key><true/>
+<key>SUScheduledCheckInterval</key><integer>86400</integer>
+<key>SUAutomaticallyUpdate</key><false/>
+<key>SUAllowsAutomaticUpdates</key><false/>
+<key>SUEnableSystemProfiling</key><false/>
+<key>SUVerifyUpdateBeforeExtraction</key><true/>
+<key>SURequireSignedFeed</key><true/>
+<key>SUSignedFeedFailureExpirationInterval</key><integer>0</integer>
 </dict></plist>

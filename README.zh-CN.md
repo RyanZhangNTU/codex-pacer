@@ -1,6 +1,6 @@
-# Codex Pacer 2.0
+# Codex Pacer 2.1
 
-[English](README.md) · [下载 2.0.1 未签名版](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.1)
+[English](README.md) · [下载最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
 
 原生 macOS 灵动岛，集中显示 Codex 任务、输出速度和账户额度。悬停展开，离开收起；需要时固定在桌面。
 
@@ -12,14 +12,17 @@
 - 查看账户 Credit 余额与可用重置券，点击到期标记查看具体日期。
 - 本轮结束提示可在折叠状态显示；完成卡片保留到点击、状态变化或设定时间。
 - 支持液态玻璃、显示器、提醒和隐私设置；菜单栏显示可选。灵动岛与设置中均可退出。
+- 所有显示器均可选择自动、刘海或悬浮模式；任务按每页三个切换，额度始终可见。
+- 支持简体中文与英文，默认跟随 Mac 语言，也可在设置中选择。
+- 支持应用内更新，默认每天检查，点击安装后自动完成下载、验证、替换和重启。
 
 **系统要求：** macOS 14 或更新，Apple Silicon 或 Intel。Liquid Glass 需要 macOS 26 或更新。已登录的 Codex 与 Python 3 用于读取账户和任务状态；SSH 来源需要现有的免交互 OpenSSH 连接。
 
 ## 安装未签名版
 
-2.0.1 为未签名版，首次打开 DMG 时可能被 macOS 拦截。更新前先退出旧版。
+未签名版首次打开 DMG 时可能被 macOS 拦截。手动替换前先退出旧版。若当前版本已有“检查更新”，可直接使用它完成下载、验证、安装和重启。
 
-1. [下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.1/Codex-Pacer-2.0.1-universal-unsigned.dmg)并双击，出现系统拦截提示后关闭提示。
+1. [从最新 Release 下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)并双击，出现系统拦截提示后关闭提示。
 2. 前往 **系统设置 → 隐私与安全**，**滚动到页面最下方的“安全性”**，找到刚被拦截的安装包，点击 **“打开”或“仍要打开”**，按提示确认。
 3. **再次双击 DMG**，将 **Codex Pacer** 拖入右侧的 **Applications（应用程序）**，再从应用程序启动。
 
