@@ -34,8 +34,16 @@ final class IslandModel: ObservableObject {
         (demo || activity.threadURL != nil) && (demo || activity.sourceHostID != nil ||
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
     }
+    private var measuredContentHeight: CGFloat?
     var panelContentHeight: CGFloat {
-        min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 56 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
+        measuredContentHeight ?? min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 56 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
+    }
+    func updateMeasuredContentHeight(_ height: CGFloat) {
+        guard height.isFinite, height > 0 else { return }
+        let rounded = ceil(height)
+        guard measuredContentHeight.map({ abs($0 - rounded) >= 1 }) ?? true else { return }
+        measuredContentHeight = rounded
+        onLayoutChange?()
     }
     private var client: CodexClient?
     private let reader = LocalActivityReader()

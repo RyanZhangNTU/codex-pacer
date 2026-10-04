@@ -95,37 +95,59 @@ private struct IslandExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            ViewThatFits(in: .vertical) {
+                content
+                ScrollView(.vertical) {
+                    content.background(CompactScrollbarStyle())
+                }
+                .scrollIndicators(.visible)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            footer
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: ExpandedContentHeight.self,
+                        value: .init(footer: geometry.size.height))
+                })
+        }
+        .onPreferenceChange(ExpandedContentHeight.self) { measurement in
+            guard measurement.content > 0, measurement.footer > 0 else { return }
+            DispatchQueue.main.async {
+                model.updateMeasuredContentHeight(measurement.content + measurement.footer)
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if model.isDemo {
                 Text("演示").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 10)
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if let notice = model.notice {
-                        Label(notice.title + "：" + notice.detail, systemImage: "bell")
-                            .font(.system(size: 12)).foregroundStyle(model.accent).padding(.bottom, 8)
-                    }
-                    taskContent
-                    Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.vertical, 16)
-                    quotaContent
+            VStack(alignment: .leading, spacing: 0) {
+                if let notice = model.notice {
+                    Label(notice.title + "：" + notice.detail, systemImage: "bell")
+                        .font(.system(size: 12)).foregroundStyle(model.accent).padding(.bottom, 8)
                 }
-                .padding(.top, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }.scrollIndicators(.hidden).frame(maxHeight: .infinity)
-            footer
+                taskContent
+                Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.vertical, 16)
+                quotaContent
+            }
+            .padding(.top, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .fixedSize(horizontal: false, vertical: true)
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: ExpandedContentHeight.self,
+                value: .init(content: geometry.size.height))
+        })
     }
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
             Text("暂无运行任务").font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
         } else {
-            VStack(spacing: 2) {
-                ForEach(model.visibleActivities) { activity in
-                    TaskRowView(activity: activity, name: model.projectName(activity), now: model.now,
-                        enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.accent) { model.open(activity) }
-                }
-            }
+            TaskPagerView(model: model)
         }
         if !model.unavailableSSH.isEmpty {
             Label("SSH 未连接", systemImage: "network").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
@@ -186,5 +208,19 @@ private struct IslandExpandedContent: View {
         }
         .font(.system(size: 13)).buttonStyle(.plain).foregroundStyle(secondary)
         .padding(.top, 8).padding(.bottom, 12)
+    }
+}
+
+private struct ExpandedContentMeasurement: Equatable {
+    var content: CGFloat = 0
+    var footer: CGFloat = 0
+}
+
+private struct ExpandedContentHeight: PreferenceKey {
+    static var defaultValue = ExpandedContentMeasurement()
+    static func reduce(value: inout ExpandedContentMeasurement, nextValue: () -> ExpandedContentMeasurement) {
+        let next = nextValue()
+        value.content = max(value.content, next.content)
+        value.footer = max(value.footer, next.footer)
     }
 }

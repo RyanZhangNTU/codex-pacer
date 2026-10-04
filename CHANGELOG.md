@@ -5,6 +5,8 @@
 - Add Automatic, Notch, and Floating display modes on every monitor, including non-Retina displays.
 - Keep Notch mode attached to the top edge on monitors without a physical notch, without reserving a camera gap.
 - Preserve existing display preferences when upgrading.
+- Size the expanded panel to its content, including source and account notices.
+- Page task lists three at a time, keeping the quota section in place while navigating.
 
 ## 2.0.0
 
