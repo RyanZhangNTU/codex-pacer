@@ -22,15 +22,15 @@ struct TaskPagerView: View {
         VStack(alignment: .leading, spacing: 6) {
             if pagination.isPaginated {
                 HStack(spacing: 8) {
-                    Text("\(tasks.count) 个任务")
+                    Text(L10n.text("activity.task_count", tasks.count))
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                     Spacer()
-                    pageButton(delta: -1, symbol: "chevron.left", title: "上一页任务")
+                    pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
                     Text("\(currentPage + 1) / \(pagination.pageCount)")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
                         .frame(minWidth: 32)
-                        .accessibilityLabel("第 \(currentPage + 1) 页，共 \(pagination.pageCount) 页")
-                    pageButton(delta: 1, symbol: "chevron.right", title: "下一页任务")
+                        .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
+                    pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
                 }
                 .padding(.horizontal, 8)
             }
@@ -61,7 +61,7 @@ struct TaskPagerView: View {
                 changePage(value.translation.width < 0 ? 1 : -1)
             })
             .accessibilityElement(children: .contain)
-            .accessibilityLabel(pagination.isPaginated ? "任务分页区域" : "任务列表")
+            .accessibilityLabel(pagination.isPaginated ? L10n.text("activity.page_region") : L10n.text("activity.task_list"))
         }
         .onChange(of: tasks.map(\.id)) { _, _ in
             page = pagination.clampedPage(page)

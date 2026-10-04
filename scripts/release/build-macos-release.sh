@@ -18,6 +18,10 @@ else
 fi
 if [[ -n "$(git status --porcelain)" ]]; then echo 'Commit source changes before building a release.' >&2; exit 1; fi
 task_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' native/Info.plist)"
+task_notes="$task_root/docs/release-notes-${task_version}.en.md"
+task_notes_zh="$task_root/docs/release-notes-${task_version}.zh-CN.md"
+[[ -f "$task_notes" ]] || { echo "Missing release notes: $task_notes" >&2; exit 1; }
+[[ -f "$task_notes_zh" ]] || { echo "Missing release notes: $task_notes_zh" >&2; exit 1; }
 task_build="$(mktemp -d /private/tmp/codex-pacer-release.XXXXXX)"
 task_app="$task_build/stage/Codex Pacer.app"
 task_name="Codex-Pacer-${task_version}-universal.dmg"
@@ -28,9 +32,12 @@ if [[ "$task_mode" == unsigned ]]; then
 fi
 task_dmg="$task_build/$task_name"
 mkdir -p "$task_build/stage" "$task_output"
-PACER_UNIVERSAL=1 bash scripts/native/build-island.sh "$task_app" "$task_identity"
+PACER_UNIVERSAL=1 bash scripts/native/build-island.sh "$task_app" "$task_identity" | tee "$task_build/native-build.log"
+task_sparkle_tools="$(sed -n 's/^Sparkle tools: //p' "$task_build/native-build.log")"
+[[ -x "$task_sparkle_tools/generate_appcast" ]] || { echo 'Sparkle signing tools are missing.' >&2; exit 1; }
+task_architectures=" $(lipo -archs "$task_app/Contents/MacOS/CodexPacerIsland") "
 for task_arch in arm64 x86_64; do
-    lipo -verify_arch "$task_arch" "$task_app/Contents/MacOS/CodexPacerIsland"
+    [[ "$task_architectures" == *" $task_arch "* ]] || { echo "Missing application architecture: $task_arch" >&2; exit 1; }
 done
 if [[ "$task_mode" == signed ]]; then
     # Carry the notarization ticket with the app after it leaves the DMG.
@@ -65,7 +72,9 @@ cmp "$task_app/Contents/MacOS/CodexPacerIsland" "$task_mount/Codex Pacer.app/Con
 hdiutil detach "$task_mount" >/dev/null
 trap - EXIT
 cp -X "$task_dmg" "$task_output/$task_name"
-(cd "$task_output" && shasum -a 256 "$task_name" > SHA256SUMS.txt)
+python3 scripts/release/prepare-update.py --info-plist "$task_app/Contents/Info.plist" --archive "$task_output/$task_name" \
+    --tools "$task_sparkle_tools" --notes "$task_notes" --notes-zh "$task_notes_zh"
+(cd "$task_output" && shasum -a 256 "$task_name" appcast.xml > SHA256SUMS.txt)
 python3 - "$task_output" "$task_build" "$task_version" "$(git rev-parse HEAD)" "$task_mode" "$task_name" <<'PY'
 import json, pathlib, sys
 out, build, version, commit, mode, filename = sys.argv[1:]

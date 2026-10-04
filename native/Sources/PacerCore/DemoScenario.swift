@@ -5,10 +5,10 @@ public enum DemoTaskStage: Int, CaseIterable {
     case thinking, tool, responding, completed
     public var label: String {
         switch self {
-        case .thinking: return "模型思考"
-        case .tool: return "执行工具"
-        case .responding: return "输出回复"
-        case .completed: return "本轮结束"
+        case .thinking: return L10n.text("demo.thinking")
+        case .tool: return L10n.text("demo.tool")
+        case .responding: return L10n.text("activity.responding")
+        case .completed: return L10n.text("activity.turn_finished")
         }
     }
 }
@@ -43,8 +43,8 @@ public enum DemoScenario {
     }
 
     public static func tasks(stage: DemoTaskStage, at now: Date) -> [SessionActivity] {
-        [task(id: "00000000-0000-4000-8000-000000000001", name: "优化应用界面", stage: stage, at: now),
-         task(id: "00000000-0000-4000-8000-000000000002", name: "验证远程构建", stage: .tool, at: now,
+        [task(id: "00000000-0000-4000-8000-000000000001", name: L10n.text("demo.optimize"), stage: stage, at: now),
+         task(id: "00000000-0000-4000-8000-000000000002", name: L10n.text("demo.verify_remote"), stage: .tool, at: now,
               sourceID: "remote-ssh-discovered:demo", sourceName: "SSH")]
     }
 

@@ -1,6 +1,6 @@
 # Release workflow
 
-Changes land in `develop`; release promotion targets `main`. Both branches must contain the final source before a release is built. A release includes a matching Git tag and a published GitHub Release with exactly one uploaded asset: the universal DMG. Source receipts and SHA-256 checksums stay local for maintainer verification. Previous tags/releases remain intact.
+Changes land in `develop`; release promotion targets `main`. Both branches must contain the final source before a release is built. A release includes a matching Git tag and a published GitHub Release with exactly two uploaded assets: the universal DMG and its signed `appcast.xml`. Source receipts and SHA-256 checksums stay local for maintainer verification. Previous tags/releases remain intact. See [automatic updates](automatic-updates.md) for signing keys and bilingual feed generation.
 
 ## Prepare and verify
 
@@ -15,14 +15,14 @@ export PACER_DMG_PYTHON=/private/tmp/codex-pacer-dmg-tools/bin/python
 1. Update `native/Info.plist`, README installation instructions and release notes. Run `make test`; inspect the native UI, shutdown and single-instance behavior when application code changes.
 2. Merge the preparation PR into `develop`, promote it to `main`, then fast-forward `develop` to the final `main` commit. Stop if either remote branch gained unrelated changes; integrate those without force-pushing.
 3. Build from that clean final commit using exactly one distribution mode below. Both modes build arm64 + x86_64 in `/private/tmp`, verify the app signature and DMG structure, mount the DMG read-only, compare the inner executable, check the Applications link, and write a source receipt and `SHA256SUMS.txt`. The DMG opens in a fixed icon-view window with only the app and Applications shortcut visible; its Retina background shows the drag direction and one installation sentence. Check this layout in Finder before publishing.
-4. Launch the actual packaged application on the available Mac. Report any platform/architecture that was compiled but not tested on hardware.
-5. Tag the verified commit `vVERSION`, push the tag, and publish using the matching mode. The publisher checks the local/remote tag, source commit, version, distribution mode and checksum. Verify that the Release has only the DMG as an uploaded asset, then download it and compare against the local checksum.
+4. Check the packaged application on the available Mac. When validating an upgrade from an installed version, retain that installation until the release is published, then use its updater for the replacement and relaunch. Report any platform/architecture that was compiled but not tested on hardware.
+5. Tag the verified commit `vVERSION`, push the tag, and publish using the matching mode. The publisher checks the local/remote tag, source commit, version, distribution mode, checksums and update signatures. It uploads both assets to a draft, downloads them for byte comparison, then publishes the release. Verify the latest release and complete any installed-app update test.
 
-## 2.0.0 unsigned distribution
+## Unsigned distribution
 
 ```sh
 make release-unsigned
-# After verification and pushing v2.0.0:
+# After verification and pushing vVERSION:
 make publish-unsigned
 ```
 
@@ -45,4 +45,4 @@ This mode signs with hardened runtime, notarizes/staples the app and DMG, and ve
 
 ## Promotional assets
 
-Regenerate the approved portrait and matching landscape with `python3 marketing/render.py --stills-only`. Inspect both, commit the README image and source assets, and deliver the full-size images separately. Keep the Release attachments limited to the DMG; do not upload images, checksums or build receipts there. Generated outputs remain ignored by Git.
+Regenerate the approved portrait and matching landscape with `python3 marketing/render.py --stills-only`. Inspect both, commit the README image and source assets, and deliver the full-size images separately. Keep the Release attachments limited to the DMG and signed appcast; do not upload images, checksums or build receipts there. Generated outputs remain ignored by Git.

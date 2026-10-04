@@ -23,50 +23,50 @@ struct QuotaCycleChart: View, Equatable {
         VStack(spacing: 8) {
             chart.frame(height: 118)
             HStack {
-                Text(data.startedAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits))
+                Text(data.startedAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits).locale(L10n.locale))
                 Spacer()
-                Text(data.resetsAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits))
+                Text(data.resetsAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits).locale(L10n.locale))
             }
             .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             .padding(.leading, 4).padding(.trailing, 34)
-            .help("实线为实际剩余额度，虚线为均匀配速参考")
+            .help(L10n.text("chart.line_help"))
             .accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("当前窗口剩余额度折线。\(points.count) 个显示采样点；虚线为均匀配速参考。")
+        .accessibilityLabel(L10n.text("chart.accessibility", points.count))
     }
 
     private var chart: some View {
         Chart {
             ForEach(points) { point in
-                AreaMark(x: .value("时间", point.timestamp),
-                    yStart: .value("剩余 %", 0), yEnd: .value("剩余 %", point.remaining))
+                AreaMark(x: .value(L10n.text("chart.time"), point.timestamp),
+                    yStart: .value(L10n.text("chart.remaining_axis"), 0), yEnd: .value(L10n.text("chart.remaining_axis"), point.remaining))
                     .interpolationMethod(.linear)
                     .foregroundStyle(LinearGradient(colors: [accent.opacity(0.13), accent.opacity(0.015)],
                         startPoint: .top, endPoint: .bottom))
                     .accessibilityHidden(true)
             }
             ForEach([data.startedAt, data.resetsAt], id: \.self) { date in
-                LineMark(x: .value("时间", date), y: .value("剩余 %", date == data.startedAt ? 100 : 0),
-                    series: .value("曲线", "均匀配速"))
+                LineMark(x: .value(L10n.text("chart.time"), date), y: .value(L10n.text("chart.remaining_axis"), date == data.startedAt ? 100 : 0),
+                    series: .value(L10n.text("chart.series"), L10n.text("chart.pace_reference")))
                     .foregroundStyle(Color.white.opacity(0.23))
                     .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, dash: [3, 5]))
             }
             ForEach(points) { point in
-                LineMark(x: .value("时间", point.timestamp), y: .value("剩余 %", point.remaining),
-                    series: .value("曲线", "实际额度"))
+                LineMark(x: .value(L10n.text("chart.time"), point.timestamp), y: .value(L10n.text("chart.remaining_axis"), point.remaining),
+                    series: .value(L10n.text("chart.series"), L10n.text("chart.actual_quota")))
                     .interpolationMethod(.linear).foregroundStyle(accent)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
             if let selected {
-                RuleMark(x: .value("时间", selected.timestamp))
+                RuleMark(x: .value(L10n.text("chart.time"), selected.timestamp))
                     .foregroundStyle(Color.white.opacity(0.24)).lineStyle(StrokeStyle(lineWidth: 1))
             }
             if let highlighted = selected ?? points.last {
-                PointMark(x: .value("时间", highlighted.timestamp), y: .value("剩余 %", highlighted.remaining))
+                PointMark(x: .value(L10n.text("chart.time"), highlighted.timestamp), y: .value(L10n.text("chart.remaining_axis"), highlighted.remaining))
                     .foregroundStyle(accent.opacity(0.16)).symbolSize(selected == nil ? 80 : 130)
                     .accessibilityHidden(true)
-                PointMark(x: .value("时间", highlighted.timestamp), y: .value("剩余 %", highlighted.remaining))
+                PointMark(x: .value(L10n.text("chart.time"), highlighted.timestamp), y: .value(L10n.text("chart.remaining_axis"), highlighted.remaining))
                     .foregroundStyle(accent).symbolSize(selected == nil ? 18 : 30)
                     .accessibilityHidden(true)
             }
@@ -127,7 +127,7 @@ struct QuotaCycleChart: View, Equatable {
                        let x = proxy.position(forX: selected.timestamp) {
                         let plot = geometry[anchor]
                         HStack(spacing: 10) {
-                            Text(selected.timestamp, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute())
+                            Text(selected.timestamp, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(L10n.locale))
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
                             Text("\(Int(selected.remaining.rounded()))%")
                                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(accent)
@@ -196,16 +196,16 @@ struct QuotaCycleChart: View, Equatable {
 
     private func expiryTooltip(_ marker: ExpiryMarker) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(data.hasPartialExpiryDetails ? "已知 " : "")\(marker.count) 次重置即将到期")
+            Text(L10n.text(data.hasPartialExpiryDetails ? "chart.known_expiring" : "chart.expiring", marker.count))
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(expiryColor)
             ForEach(marker.expiries.prefix(3)) { expiry in
                 HStack(spacing: 10) {
-                    Text(expiry.date, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute())
-                    if marker.expiries.count > 1 { Text("\(expiry.count) 次") }
+                    Text(expiry.date, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(L10n.locale))
+                    if marker.expiries.count > 1 { Text(L10n.text("chart.expiry_count", expiry.count)) }
                 }.font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             }
             if marker.expiries.count > 3 {
-                Text("另有 \(marker.expiries.count - 3) 个到期时间")
+                Text(L10n.text("chart.more_expiries", marker.expiries.count - 3))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
@@ -217,8 +217,8 @@ struct QuotaCycleChart: View, Equatable {
     }
 
     private func expiryDescription(_ marker: ExpiryMarker) -> String {
-        let details = marker.expiries.map { "\($0.count) 次于 \($0.date.formatted(date: .abbreviated, time: .shortened)) 到期" }
-        return "\(marker.count) 次 banked reset 即将到期。" + details.joined(separator: "；")
+        let details = marker.expiries.map { L10n.text("chart.expiry_item", $0.count, L10n.date($0.date)) }
+        return L10n.text("chart.expiry_summary", marker.count, details.joined(separator: L10n.text("chart.detail_separator")))
     }
 }
 
