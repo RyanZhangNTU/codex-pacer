@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2
+
+- Add Automatic, Notch, and Floating display modes on every monitor, including non-Retina displays.
+- Keep Notch mode attached to the top edge on monitors without a physical notch, without reserving a camera gap.
+- Preserve existing display preferences when upgrading.
+
 ## 2.0.0
 
 - Replace the main-branch React/Tauri app with the native macOS island.
