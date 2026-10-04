@@ -37,7 +37,12 @@ if [[ -f "$task_bin/PacerCore.o" ]]; then
 else
     task_objects=("$task_bin/PacerCore.build/"*.o)
 fi
-swiftc -O -module-name PacerUIReplay -target "$(uname -m)-apple-macosx14.0" -I "$task_bin" -I "$task_bin/Modules" \
+task_ui_flags=(-O)
+# Older baselines infer attachment from notchWidth instead of storing it explicitly.
+if [[ -f "$task_build/native/Sources/PacerCore/IslandDisplayMode.swift" ]]; then
+    task_ui_flags+=(-D PACER_EXPLICIT_DISPLAY_MODE)
+fi
+swiftc "${task_ui_flags[@]}" -module-name PacerUIReplay -target "$(uname -m)-apple-macosx14.0" -I "$task_bin" -I "$task_bin/Modules" \
     -module-cache-path "$task_build/module-cache" "${task_sources[@]}" "$task_root/scripts/performance/ui-replay.swift" \
     "${task_objects[@]}" "$task_build/metrics.o" -lsqlite3 -o "$task_app/Contents/MacOS/UIReplay"
 codesign --force --sign - "$task_app"

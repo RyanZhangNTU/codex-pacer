@@ -74,24 +74,25 @@ final class PanelController: NSObject {
         }
         guard let screen = selected ?? NSScreen.screens.first else { return }
         let demoNotch = model.isDemo && CommandLine.arguments.contains("--demo-notch")
-        let hasNotch = demoNotch || (screen.safeAreaInsets.top > 0 && !model.prefersFloating)
-        let notchWidth: CGFloat
-        if demoNotch { notchWidth = 180 }
-        else if hasNotch, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
-            notchWidth = max(0, right.minX - left.maxX)
-        } else { notchWidth = 0 }
-        if model.notchWidth != notchWidth { model.notchWidth = notchWidth }
-        let topHeight: CGFloat = demoNotch ? 36 : (hasNotch ? max(32, screen.safeAreaInsets.top) : 38)
-        if model.topHeight != topHeight { model.topHeight = topHeight }
-        let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
-            topHeight: model.topHeight, expanded: model.expanded, attached: hasNotch,
+        let hardwareNotchWidth: CGFloat
+        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            hardwareNotchWidth = max(0, right.minX - left.maxX)
+        } else { hardwareNotchWidth = 0 }
+        let mode: IslandDisplayMode = demoNotch ? .notch : model.displayMode
+        let layout = mode.layout(safeAreaTop: demoNotch ? 36 : screen.safeAreaInsets.top,
+            hardwareNotchWidth: demoNotch ? 180 : hardwareNotchWidth)
+        if model.isAttached != layout.attached { model.isAttached = layout.attached }
+        if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
+        if model.topHeight != layout.topHeight { model.topHeight = layout.topHeight }
+        let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
+            topHeight: model.topHeight, expanded: model.expanded, attached: layout.attached,
             contentHeight: model.panelContentHeight)
-        let expandedFrame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: notchWidth,
-            topHeight: model.topHeight, expanded: true, attached: hasNotch, contentHeight: model.panelContentHeight)
+        let expandedFrame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
+            topHeight: model.topHeight, expanded: true, attached: layout.attached, contentHeight: model.panelContentHeight)
         if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample
-        let hasBlackHeader = notchWidth > 0 && model.appearance == .liquidGlass
+        let hasBlackHeader = layout.attached && model.appearance == .liquidGlass
         let target = IslandTransition.Sample.resting(at: frame, expanded: model.expanded, hasBlackHeader: hasBlackHeader)
         let sameAnchor = abs(current.frame.maxY - frame.maxY) < 1 && abs(current.frame.midX - frame.midX) < 1
         if animated && sameAnchor && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {

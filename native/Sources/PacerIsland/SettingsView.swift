@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
+import PacerCore
 
 struct SettingsView: View {
     @ObservedObject var model: IslandModel
     let onClose: () -> Void
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
-    @State private var floating = UserDefaults.standard.bool(forKey: "floatingIsland")
+    @State private var displayMode = IslandDisplayMode.load()
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -35,7 +36,12 @@ struct SettingsView: View {
                     }
                     .disabled(!IslandAppearance.supportsLiquidGlass)
                     .help(IslandAppearance.supportsLiquidGlass ? "保存后立即应用" : "液态玻璃需要 macOS 26 或更新版本")
-                    Toggle("使用悬浮胶囊", isOn: $floating)
+                    Picker("显示模式", selection: $displayMode) {
+                        Text("自动").tag(IslandDisplayMode.automatic)
+                        Text("刘海").tag(IslandDisplayMode.notch)
+                        Text("悬浮").tag(IslandDisplayMode.floating)
+                    }
+                    .help("自动跟随显示器；刘海贴顶显示，悬浮位于菜单栏下方。所有显示器均可选择。")
                     Toggle("在菜单栏显示", isOn: $showInMenuBar)
                         .help("关闭后仍可从灵动岛的齿轮按钮打开设置。")
                     Toggle("在全屏空间显示", isOn: $fullscreen)
@@ -181,7 +187,7 @@ struct SettingsView: View {
             defaults.set(monitorSSH, forKey: "monitorSSH")
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
-            defaults.set(floating, forKey: "floatingIsland")
+            displayMode.save(to: defaults)
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")

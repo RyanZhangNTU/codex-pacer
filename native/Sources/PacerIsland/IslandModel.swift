@@ -21,6 +21,7 @@ final class IslandModel: ObservableObject {
     @Published var pinned = false
     @Published var now = Date()
     @Published var settingsRevision = 0
+    @Published var isAttached = false
     @Published var notchWidth: CGFloat = 0
     @Published var topHeight: CGFloat = 38
     var onLayoutChange: (() -> Void)?
@@ -65,7 +66,7 @@ final class IslandModel: ObservableObject {
         let path = configured.isEmpty ? (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex") : configured
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
-    var prefersFloating: Bool { UserDefaults.standard.bool(forKey: "floatingIsland") }
+    var displayMode: IslandDisplayMode { .load() }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
     var showInMenuBar: Bool { UserDefaults.standard.bool(forKey: "showInMenuBar") }

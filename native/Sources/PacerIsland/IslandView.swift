@@ -4,7 +4,7 @@ import PacerCore
 struct IslandView: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var presentation: IslandPresentation
-    private var attached: Bool { model.notchWidth > 0 }
+    private var attached: Bool { model.isAttached }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,7 +41,7 @@ private struct IslandHeader: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
     private let completionColor = Color(red: 0.56, green: 0.84, blue: 0.79)
-    private var attached: Bool { model.notchWidth > 0 }
+    private var attached: Bool { model.isAttached }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -71,7 +71,7 @@ private struct IslandHeader: View {
             .frame(maxWidth: attached ? .infinity : nil, alignment: .leading)
             .help(model.pendingCompletions.first.map { "打开会话 · " + model.projectName($0) } ?? "固定展开")
             .accessibilityLabel(model.pendingCompletions.isEmpty ? "\(model.compactStatus)。点击固定展开" : "\(model.completionSummary)。点击打开会话")
-            if attached { Color.clear.frame(width: model.notchWidth + 8, height: model.topHeight) }
+            if model.notchWidth > 0 { Color.clear.frame(width: model.notchWidth + 8, height: model.topHeight) }
             else { Spacer(minLength: 10) }
             Button { model.togglePin() } label: {
                 HStack(spacing: 6) {
