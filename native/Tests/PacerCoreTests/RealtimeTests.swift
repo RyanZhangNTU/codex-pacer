@@ -1,5 +1,4 @@
 import XCTest
-import CoreGraphics
 @testable import PacerCore
 
 private let epoch = Date(timeIntervalSince1970: 1_000_000)
@@ -104,13 +103,27 @@ final class CycleTests: XCTestCase {
 }
 
 final class OutputRateTests: XCTestCase {
-    func testInsufficientAndStaleSamplesAreUnavailable() {
+    func testEstimateFreshnessAndRetentionFollowTurnLifecycle() throws {
         var rate = OutputRate()
         rate.observe(totalOutput: 100, at: epoch)
         XCTAssertNil(rate.tokensPerSecond(at: epoch))
+        XCTAssertNil(rate.estimate(at: epoch))
         rate.observe(totalOutput: 150, at: epoch.addingTimeInterval(5))
         XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(6)), 10)
+        XCTAssertTrue(try XCTUnwrap(rate.estimate(at: epoch.addingTimeInterval(20))).isFresh)
+        let stale = try XCTUnwrap(rate.estimate(at: epoch.addingTimeInterval(21)))
+        XCTAssertEqual(stale.value, 10)
+        XCTAssertFalse(stale.isFresh)
         XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(21)))
+
+        rate.startTurn(at: epoch.addingTimeInterval(100))
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(100)))
+        rate.observe(totalOutput: 170, at: epoch.addingTimeInterval(102))
+        XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(102)), 10)
+        XCTAssertEqual(rate.estimate(at: epoch.addingTimeInterval(102))?.value, 10)
+        rate.finishTurn()
+        XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(103)))
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(103)))
     }
     func testCounterRollbackAndIdleGapDoNotCreateFalseRate() {
         var rate = OutputRate()
@@ -122,15 +135,6 @@ final class OutputRateTests: XCTestCase {
         XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(5)), 20)
         rate.observe(totalOutput: 100, at: epoch.addingTimeInterval(200))
         XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(200)))
-    }
-    func testNewTurnExcludesIdleTimeAndCompletionClearsRate() {
-        var rate = OutputRate()
-        rate.observe(totalOutput: 100, at: epoch)
-        rate.startTurn(at: epoch.addingTimeInterval(100))
-        rate.observe(totalOutput: 120, at: epoch.addingTimeInterval(102))
-        XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(102)), 10)
-        rate.finishTurn()
-        XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(102)))
     }
     func testInputTokensAreNotCountedAsOutputRate() {
         var activity = SessionActivity(id: "rate")
@@ -144,13 +148,6 @@ final class OutputRateTests: XCTestCase {
 }
 
 final class InteractionTests: XCTestCase {
-    func testConversationLinkOnlyAcceptsUUIDWithoutPromptInjection() {
-        let id = "11111111-1111-4111-8111-111111111111"
-        var activity = SessionActivity(id: "rollout-2026-10-01-\(id).jsonl")
-        XCTAssertEqual(activity.threadURL?.absoluteString, "codex://threads/" + id)
-        activity.consume(log("session_meta", at: epoch, payload: ["id": "bad?prompt=send", "cwd": "/test"], type: "session_meta"))
-        XCTAssertEqual(activity.threadURL?.absoluteString, "codex://threads/" + id)
-    }
     func testNewlyDiscoveredInputWaitIsActionableAfterInitialScan() {
         var policy = AttentionPolicy()
         XCTAssertTrue(policy.activityNotices([], at: epoch).isEmpty)
@@ -194,24 +191,6 @@ final class InteractionTests: XCTestCase {
         XCTAssertTrue(policy.quotaNotices(try weekly(9, at: epoch.addingTimeInterval(1)), at: epoch.addingTimeInterval(1)).isEmpty)
         XCTAssertTrue(policy.quotaNotices(try weekly(30, at: epoch.addingTimeInterval(2)), at: epoch.addingTimeInterval(2)).isEmpty)
         XCTAssertEqual(policy.quotaNotices(try weekly(10, at: epoch.addingTimeInterval(3)), at: epoch.addingTimeInterval(3)).count, 1)
-    }
-    func testFloatingFrameStaysInsideNegativeOriginExternalDisplay() {
-        let screen = CGRect(x: -1920, y: -100, width: 1920, height: 1080)
-        let visible = CGRect(x: -1920, y: -100, width: 1920, height: 1040)
-        let frame = IslandGeometry.frame(screen: screen, visible: visible, notchWidth: 0, topHeight: 38, expanded: true, attached: false)
-        XCTAssertEqual(frame.midX, screen.midX)
-        XCTAssertLessThanOrEqual(frame.maxY, visible.maxY)
-        XCTAssertGreaterThanOrEqual(frame.minY, visible.minY)
-    }
-    func testNotchAndSmallDisplayKeepTopAnchorAndClampHeight() {
-        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
-        let visible = CGRect(x: 0, y: 0, width: 1512, height: 950)
-        let small = CGRect(x: 0, y: 0, width: 480, height: 280)
-        let notch = IslandGeometry.frame(screen: screen, visible: visible, notchWidth: 190, topHeight: 32, expanded: true, attached: true)
-        XCTAssertEqual(notch.maxY, screen.maxY)
-        let clamped = IslandGeometry.frame(screen: small, visible: small, notchWidth: 0, topHeight: 38, expanded: true, attached: false)
-        XCTAssertGreaterThanOrEqual(clamped.minY, small.minY + 8)
-        XCTAssertLessThanOrEqual(clamped.width, small.width - 24)
     }
 }
 

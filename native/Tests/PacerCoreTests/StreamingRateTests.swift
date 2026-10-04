@@ -48,12 +48,19 @@ final class StreamingRateTests: XCTestCase {
         XCTAssertEqual(a.outputEstimate(at: start.addingTimeInterval(20))?.value, 20)
     }
     func testMidRequestAttachSeedsCounterWithoutInventingFirstRate() {
-        var a = SessionActivity(id: thread, phaseAwareRate: true)
-        live(&a, "item/agentMessage/delta", seconds: 1)
-        live(&a, "thread/tokenUsage/updated", seconds: 2, fields: ["outputTokens": 1000, "lastOutputTokens": 800])
-        XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(2)))
-        live(&a, "thread/tokenUsage/updated", seconds: 4, fields: ["outputTokens": 1060, "lastOutputTokens": 60])
-        XCTAssertEqual(a.outputEstimate(at: start.addingTimeInterval(4))?.value, 30)
+        let cases: [(method: String, id: String, firstCounterAt: Double, nextUsage: [String: Any])] = [
+            ("item/agentMessage/delta", thread, 2, ["outputTokens": 1060, "lastOutputTokens": 60]),
+            ("turn/attached", "local:" + thread, 1, ["outputTokens": 1060])
+        ]
+        for (method, id, firstCounterAt, nextUsage) in cases {
+            var a = SessionActivity(id: id, phaseAwareRate: true)
+            live(&a, method, seconds: 1, fields: ["startedAt": start.addingTimeInterval(-100).timeIntervalSince1970])
+            if method == "turn/attached" { XCTAssertTrue(a.liveTurnStarted) }
+            live(&a, "thread/tokenUsage/updated", seconds: firstCounterAt, fields: ["outputTokens": 1000, "lastOutputTokens": 800])
+            XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(firstCounterAt)), method)
+            live(&a, "thread/tokenUsage/updated", seconds: firstCounterAt + 2, fields: nextUsage)
+            XCTAssertEqual(a.outputEstimate(at: start.addingTimeInterval(firstCounterAt + 2))?.value, 30, method)
+        }
     }
     func testStreamStartUsageAndBlockingStateUseAuthoritativeCounts() {
         var a = SessionActivity(id: thread, phaseAwareRate: true)

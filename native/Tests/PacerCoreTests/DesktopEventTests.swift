@@ -95,15 +95,6 @@ final class DesktopEventTests: XCTestCase {
         XCTAssertFalse(state.status.watchingLogs)
         XCTAssertEqual(state.status.fallbackScans, 0)
     }
-    func testMidTurnSnapshotSeedsCounterWithoutUsingEarlierTokens() {
-        var activity = SessionActivity(id: "local:" + thread, phaseAwareRate: true)
-        activity.consumeLive(["method": "turn/attached", "threadId": thread, "turnId": "turn", "at": 1000.0, "startedAt": 900.0])
-        activity.consumeLive(["method": "thread/tokenUsage/updated", "threadId": thread, "turnId": "turn", "at": 1000.0, "outputTokens": 10000, "lastOutputTokens": 5000])
-        XCTAssertTrue(activity.liveTurnStarted)
-        XCTAssertNil(activity.outputEstimate(at: Date(timeIntervalSince1970: 1000)))
-        activity.consumeLive(["method": "thread/tokenUsage/updated", "threadId": thread, "turnId": "turn", "at": 1010.0, "outputTokens": 10100])
-        XCTAssertEqual(activity.outputEstimate(at: Date(timeIntervalSince1970: 1010))?.value, 10)
-    }
     func testGapInvalidationReturnsToLogFallbackWithoutInventingCompletion() {
         var state = RuntimeEventState(sourceID: nil, sourceName: nil)
         var fallback = SessionActivity(id: "local:" + thread)

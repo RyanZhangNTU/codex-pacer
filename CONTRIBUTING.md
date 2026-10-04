@@ -1,8 +1,8 @@
 # Contributing
 
-Codex Pacer 2.0 maintains a native macOS app written in SwiftUI/AppKit. Create focused branches from `develop` and open PRs back into `develop`; `main` accepts release promotions.
+Codex Pacer is a native macOS app written in SwiftUI/AppKit. Create focused branches from `develop` and open PRs back into `develop`; `main` accepts release promotions.
 
-Agents should start with [AGENTS.md](AGENTS.md). Packaging and publication follow the canonical [release workflow](docs/releasing.md), with [automatic updates](docs/automatic-updates.md) covering Sparkle details. Documentation-only changes do not require a new app version or binary release.
+Agents should start with [AGENTS.md](AGENTS.md). Packaging and publication follow the [release workflow](docs/releasing.md).
 
 Use Xcode 26 or newer and run:
 
@@ -11,6 +11,6 @@ make test
 make build
 ```
 
-Read [development and data semantics](docs/development.md) before changing lifecycle, rate or transport logic. Preserve meaningful regression tests and verify the actual app for visual/interaction changes. Document what was tested and which OS/architecture was used. Never include account credentials or private task content in issues, logs or screenshots.
+Read [development and data semantics](docs/development.md) for architecture, regression coverage and manual verification. Document what was tested and which OS/architecture was used. Never include account credentials or private task content in issues, logs or screenshots.
 
 Keep user-facing behavior and relevant docs aligned. Report bugs with the app/macOS versions, source type, reproduction steps and redacted screenshots. Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).

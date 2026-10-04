@@ -65,6 +65,7 @@ final class IslandDisplayModeTests: XCTestCase {
                     XCTAssertEqual(frame.midX, screen.midX)
                     XCTAssertGreaterThanOrEqual(frame.minX, screen.minX)
                     XCTAssertLessThanOrEqual(frame.maxX, screen.maxX)
+                    XCTAssertGreaterThanOrEqual(frame.minY, visible.minY + 8)
                     for edge in [frame.minX, frame.minY, frame.maxX, frame.maxY] {
                         XCTAssertEqual(edge, edge.rounded())
                     }
@@ -73,6 +74,19 @@ final class IslandDisplayModeTests: XCTestCase {
                 XCTAssertEqual(frames[0].width, 300)
                 XCTAssertEqual(frames[0].maxY, frames[1].maxY)
             }
+        }
+    }
+
+    func testSmallDisplayClampsExpandedFrame() {
+        let screen = CGRect(x: 0, y: 0, width: 400, height: 280)
+        for mode in [IslandDisplayMode.notch, .floating] {
+            let layout = mode.layout(safeAreaTop: 0, hardwareNotchWidth: 0)
+            let frame = IslandGeometry.frame(screen: screen, visible: screen, notchWidth: layout.notchWidth,
+                topHeight: layout.topHeight, expanded: true, attached: layout.attached)
+            XCTAssertEqual(frame.midX, screen.midX)
+            XCTAssertEqual(frame.maxY, mode == .notch ? screen.maxY : screen.maxY - 10)
+            XCTAssertGreaterThanOrEqual(frame.minY, screen.minY + 8)
+            XCTAssertLessThanOrEqual(frame.width, screen.width - 24)
         }
     }
 

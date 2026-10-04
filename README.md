@@ -43,6 +43,6 @@ make build
 
 Builds run in local temporary directories and print the app path. Use `make release-unsigned` for the unsigned universal DMG, or `make release` for the separate Developer ID signing/notarization workflow. See [development and data semantics](docs/development.md) and [releasing](docs/releasing.md).
 
-The 2.0 main branch maintains only native macOS code. React/Tauri and Windows 1.x remain available in [Git history and previous releases](https://github.com/RyanZhangNTU/codex-pacer/releases).
+The maintained codebase contains only native macOS code. React/Tauri and Windows 1.x remain available in [Git history and previous releases](https://github.com/RyanZhangNTU/codex-pacer/releases).
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)
