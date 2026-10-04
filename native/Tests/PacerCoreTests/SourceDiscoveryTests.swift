@@ -106,20 +106,6 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertEqual(activity.phase,.running)
         XCTAssertEqual(activity.sourceHost,"one")
     }
-    func testRetainedEstimateDoesNotDisappearButNeverPretendsToBeFresh() {
-        let start=Date(timeIntervalSince1970:1000000)
-        var rate=OutputRate()
-        rate.observe(totalOutput:100,at:start); rate.observe(totalOutput:120,at:start.addingTimeInterval(2))
-        let estimate=rate.estimate(at:start.addingTimeInterval(60))
-        XCTAssertEqual(estimate?.value,10)
-        XCTAssertFalse(estimate!.isFresh)
-        XCTAssertNil(rate.tokensPerSecond(at:start.addingTimeInterval(60)))
-        rate.startTurn(at:start.addingTimeInterval(100))
-        XCTAssertNil(rate.estimate(at:start.addingTimeInterval(100)))
-        rate.observe(totalOutput:140,at:start.addingTimeInterval(102))
-        XCTAssertEqual(rate.estimate(at:start.addingTimeInterval(102))?.value,10)
-        rate.finishTurn(); XCTAssertNil(rate.estimate(at:start.addingTimeInterval(103)))
-    }
     func testLocalAndSshRetainedRatesAreAggregatedWithoutSelection() throws {
         let start = Date(timeIntervalSince1970: 1000000)
         var local = SessionActivity(id: "local")

@@ -6,7 +6,7 @@
 - `native/Sources/PacerIsland`: SwiftUI/AppKit presentation, settings, notifications and native glass.
 - `native/Tests/PacerCoreTests`: regression coverage for lifecycle, privacy, transport, rate calculation, account isolation, retention, geometry, singleton locking and preferences migration.
 - `scripts/native`: isolated local build/test entry points.
-- `scripts/performance`: controlled event and native UI replays; see [measurements and reproduction](performance.md).
+- `scripts/performance/benchmark-events.py`: controlled Desktop IPC event replay; see [performance checks](#performance-checks).
 - `scripts/release`: native signing, notarization and publication.
 - `marketing`: editable Chinese campaign source and reproducible exports.
 
@@ -14,7 +14,7 @@ Run `make test` and `make build` with Xcode 26 or newer. Both copy native source
 
 Development builds are ad hoc signed. The build prints its app path; open that app in Finder for UI checks. Exit the installed app first: all copies share the same singleton lock. Demo arguments `--demo` and `--demo-completion` supply labeled sample data without querying Codex. `--demo-notch` supplies hardware-notch geometry for marketing on virtual displays; production mode uses the screen’s own safe areas. Command+1/2/3/4 switches synthetic thinking/tool/reply/completion events through the same runtime projection. Demo clicks open an explicitly labeled sample destination, never a real conversation. `--expanded` starts with the island open. Command-line diagnostics `--diagnose` and `--diagnose-events --observe-seconds 20` report protocol/counter availability without credentials, account identity or task text.
 
-For an installed-app update test, retain the older installed version and use an isolated QA copy before publishing. Give that copy separate identity, executable, lock, preferences and data/cache locations, disable SSH, and use demo task data. Demo mode normally disables Sparkle; enable the real updater only in the isolated QA copy with a loopback test feed. Keep the production panel, model, updater and shutdown path in the test: a standalone update window does not exercise island occlusion. Follow the [release workflow](releasing.md) for publication and the final in-app upgrade.
+Updater isolation, publication and installed-app acceptance are defined in the [release workflow](releasing.md#3-verify-before-promotion).
 
 ## Data and calculation
 
@@ -35,3 +35,19 @@ SSH uses enabled discovered aliases, known host keys and existing non-interactiv
 The production bundle is `com.codexpacer.app`. A one-time allowlist migration copies unset native preview preferences; existing production choices take precedence. `~/Library/Application Support/CodexPacerIsland` remains the cache/lock location for continuity. Completed cards and unread reminders are in memory; startup history does not replay old alerts.
 
 After presentation changes, check the actual app: expand/collapse with fixed top anchoring, rapid reversal, pin/Esc, menu-bar visibility, settings save, quota states, expiry-marker hover/tap and both quit controls. Check reduced motion/transparency and older macOS separately when those behaviors change. Source tests do not establish live appearance, protected Codex deep-link behavior or every OS/display configuration.
+
+Keep tests grouped by the behavior they protect. When consolidating overlapping scenarios, preserve distinct input paths and boundary assertions, especially account isolation, sanitized transport, real helper shutdown and window rounding. Avoid fixed test counts or catalog-size thresholds as acceptance criteria.
+
+## Performance checks
+
+The event benchmark compares the embedded Desktop IPC projection from two source trees with identical synthetic patches. It checks projected state and emitted events for equivalence, excluding wall-clock timestamps, and alternates execution order. To compare an uncommitted change against the current commit:
+
+```sh
+task_baseline="$(mktemp -d /private/tmp/pacer-baseline.XXXXXX)"
+git archive HEAD native | tar -x -C "$task_baseline"
+python3 scripts/performance/benchmark-events.py \
+  --baseline "$task_baseline" --candidate . \
+  --output output/performance/events.json
+```
+
+Use the intended baseline ref instead of `HEAD` for committed changes. Results measure component CPU cost, not whole-app speed, memory, energy or SSH I/O. Keep raw results under ignored `output/`; profile the current packaged app for UI measurements. [Historical measurements and their replay harness](https://github.com/RyanZhangNTU/codex-pacer/blob/v2.1.3/docs/performance.md) remain in tagged source, but that UI harness predates the current app packaging and is no longer maintained.
