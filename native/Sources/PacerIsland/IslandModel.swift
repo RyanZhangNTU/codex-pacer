@@ -63,6 +63,7 @@ final class IslandModel: ObservableObject {
     private var noticeWork: DispatchWorkItem?
     private var sleeping = false
     private var stopped = false
+    private(set) var interactionSuspended = false
     private var lastQuotaAttempt = Date.distantPast
     private var lastDiscovery = Date.distantPast
     private var failureCount = 0
@@ -202,6 +203,7 @@ final class IslandModel: ObservableObject {
         })
     }
     func setExpanded(_ value: Bool) {
+        guard !value || !interactionSuspended else { return }
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
@@ -210,6 +212,7 @@ final class IslandModel: ObservableObject {
         if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
     }
     func hover(_ entered: Bool) {
+        guard !interactionSuspended else { return }
         closeWork?.cancel()
         if entered { setExpanded(true) }
         else if !pinned {
@@ -218,7 +221,14 @@ final class IslandModel: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
         }
     }
-    func togglePin() { pinned.toggle(); setExpanded(true); if pinned { onFocusRequested?() } }
+    func togglePin() {
+        guard !interactionSuspended else { return }
+        pinned.toggle(); setExpanded(true); if pinned { onFocusRequested?() }
+    }
+    func setInteractionSuspended(_ suspended: Bool) {
+        interactionSuspended = suspended
+        if suspended { close() }
+    }
     func close() { pinned = false; setExpanded(false) }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity) else { return }

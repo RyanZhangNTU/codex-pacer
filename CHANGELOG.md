@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.2
+
+- Keep update dialogs and installation controls accessible when the island is expanded or pinned.
+- Collapse the island immediately and suspend its hover, pin and focus actions while update UI is open; restore normal interaction when the update is dismissed, cancelled or finished.
+- Leave the island undisturbed during background checks that do not show an update.
+
 ## 2.1.1
 
 - Add English and Simplified Chinese throughout the interface, with automatic macOS language selection and a language override in Settings.

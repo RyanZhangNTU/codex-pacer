@@ -124,6 +124,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
+        updater.onPresentationChange = { [weak self] active in
+            self?.panel.setUpdatePresentationActive(active)
+        }
         reopenObserver = DistributedNotificationCenter.default().addObserver(forName: showExistingIsland,
             object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.panel.show() }
