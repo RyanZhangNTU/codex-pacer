@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.3
+
+- Restore the island's window level before its frame after dismissing update UI, keeping Notch mode attached to the screen's top edge.
+- Retain the update-dialog focus and interaction fixes from 2.1.2.
+
 ## 2.1.2
 
 - Keep update dialogs and installation controls accessible when the island is expanded or pinned.

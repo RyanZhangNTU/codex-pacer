@@ -74,10 +74,12 @@ final class PanelController: NSObject {
     func setUpdatePresentationActive(_ active: Bool) {
         guard active != model.interactionSuspended else { return }
         model.setInteractionSuspended(active)
+        panel.ignoresMouseEvents = active
+        // A normal-level window is constrained below the menu bar. Restore the
+        // status-bar level before laying out the island at the screen's top edge.
+        panel.level = active ? .normal : .statusBar
         // Snap closed before runModal; animation timers may not advance there.
         layout(animated: false)
-        panel.ignoresMouseEvents = active
-        panel.level = active ? .normal : .statusBar
         if active {
             panel.resignKey()
             panel.orderBack(nil)
