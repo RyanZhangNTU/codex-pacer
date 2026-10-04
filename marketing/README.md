@@ -22,7 +22,7 @@
 
 演示趋势只含七天窗口，由不均匀工作时段和连续空闲平台组成。状态通过 `RuntimeEventState` 解析合成事件，不连接真实账户。宣传素材不将演示连接或跳转称为真实私人会话录屏。
 
-MacBook 硬件场景由内置 Imagegen 生成，参考 Apple 官方 MacBook Pro 快速入门图示；macOS 风格桌面、菜单栏与硬件刘海遮罩按测量坐标合成。放大视图保留真实原生界面，模拟显示器几何用 `--demo-notch` 开启，不改变正式模式的显示器检测。没有使用生成式工具重画 UI、标志、数字或文字。产品标志来自 `native/Resources/Pacer.png`；配乐由脚本合成，没有外部音乐/配音素材。导出后检查画面、文字安全区、MP4 时长/分辨率/音轨与 `manifest.json`，宣传图单独交付并用于 README；Release 只提供 DMG 安装包。
+MacBook 硬件场景由内置 Imagegen 生成，参考 Apple 官方 MacBook Pro 快速入门图示；macOS 风格桌面、菜单栏与硬件刘海遮罩按测量坐标合成。放大视图保留真实原生界面，模拟显示器几何用 `--demo-notch` 开启，不改变正式模式的显示器检测。没有使用生成式工具重画 UI、标志、数字或文字。产品标志来自 `native/Resources/Pacer.png`；配乐由脚本合成，没有外部音乐/配音素材。导出后检查画面、文字安全区、MP4 时长/分辨率/音轨与 `manifest.json`，宣传图单独交付并用于 README；发布附件按[发布流程](../docs/releasing.md)维护。
 
 ## 已确认的海报设计
 

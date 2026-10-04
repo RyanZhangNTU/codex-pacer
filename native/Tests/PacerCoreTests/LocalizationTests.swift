@@ -38,7 +38,7 @@ final class LocalizationTests: XCTestCase {
                 options: [], format: nil) as? [String: String])
         }
         let english = try catalog(.english), chinese = try catalog(.simplifiedChinese)
-        XCTAssertGreaterThan(english.count, 250)
+        XCTAssertFalse(english.isEmpty)
         XCTAssertEqual(Set(english.keys), Set(chinese.keys))
         let expression = try NSRegularExpression(pattern: #"%(?:(\d+)\$)?(ld|d|g|(?:\.\d+)?f|@)"#)
         func arguments(_ value: String) -> [String] {

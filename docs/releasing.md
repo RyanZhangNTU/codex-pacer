@@ -8,7 +8,7 @@ Changes land in `develop`; release promotion targets `main`. Both branches must 
 
 Use authorization already given for the current work. If the user has requested implementation, merge, publication and an in-app upgrade test, continue through those stages without asking for the same approval again. A request to inspect or edit code alone does not authorize a public release: prepare the reviewable result and finish applicable validation before asking for the missing authorization. This document does not grant blanket permission for future releases.
 
-Documentation-only work does not require a version bump, installer build or binary release. When merging such work is authorized, land it in `develop` and promote the documentation to `main`, then synchronize the branches without creating a release tag.
+Documentation, test and tooling maintenance that does not change the shipped app does not require a version bump, installer build or binary release. Validate the affected tests, scripts and links. When merging such work is authorized, land it in `develop` and promote it to `main`, then synchronize the branches without creating a release tag.
 
 ## 1. Inspect the live state
 
@@ -41,6 +41,8 @@ Use a focused branch from the current `develop`. Update all relevant version and
 | `docs/release-notes-VERSION.en.md` | English release notes |
 | `docs/release-notes-VERSION.zh-CN.md` | Simplified Chinese release notes |
 | README and usage/development docs | Update when behavior, setup or installation instructions change |
+
+Keep release-note files for the version in `native/Info.plist`. After a new release is published, older notes can be removed from the working tree; [CHANGELOG.md](../CHANGELOG.md), published Releases and their source tags retain the history. Packaging and publication require both current language files.
 
 Keep the bundle identifier, `SUFeedURL` and `SUPublicEDKey` compatible with installed clients. The stable feed is `https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast.xml`; its presence in Release assets is part of the current update service. Moving it or rotating the key requires a planned compatibility migration.
 
