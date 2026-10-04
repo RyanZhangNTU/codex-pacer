@@ -14,10 +14,11 @@ Keep a secure backup of the release signing key using Sparkle's documented key e
 
 ## Release workflow
 
-1. Increase `CFBundleVersion` for every update. The marketing version alone is not used for update ordering.
-2. Add `docs/release-notes-<version>.en.md` and `docs/release-notes-<version>.zh-CN.md`, commit the source, and use the existing release build script. `--unsigned` builds an ad-hoc app while still requiring Sparkle update signatures.
-3. `build-macos-release.sh` embeds Sparkle, builds the universal app/DMG, and invokes `prepare-update.py`. The latter checks the configured feed and key, embeds both release notes with `xml:lang`, signs the completed feed, and verifies both feed and archive signatures. Local metadata includes the build number and signing-tool location. See Sparkle's [localized release notes](https://sparkle-project.org/documentation/publishing/#localization).
-4. After reviewing the artifacts and obtaining publication approval, use `publish-github-release.sh`. It verifies signatures, source/tag identity, archive size and URL, and increasing build numbers. It creates a draft, uploads and downloads both assets for byte comparison, and then publishes it as the latest release.
+Follow [the canonical release workflow](releasing.md) for authorization, versioning, branch promotion, commands, publication, installed-app acceptance and download-count reporting. Do not substitute a separate release procedure here.
+
+`build-macos-release.sh` embeds Sparkle and invokes `prepare-update.py`. It generates the archive signature, embeds English and Chinese Markdown with `xml:lang`, signs the completed feed, and verifies both signatures. Editing the XML after signing invalidates it. See Sparkle's [localized release notes](https://sparkle-project.org/documentation/publishing/#localization).
+
+The publisher validates the feed's release-specific download URL, archive length and signatures, and requires its integer build number to exceed the latest published feed. It uploads both assets to a draft and compares their downloaded bytes before publishing as latest. The checked-in `SUPublicEDKey` and stable `SUFeedURL` are already embedded in installed versions: changing either requires a compatibility migration, not simply removing the old asset or generating another key.
 
 The first public release with Sparkle must still be installed manually by users of older versions. Local integration tests use a separate app identity, test archives and a loopback-only server. Test feeds and fixtures are not published or embedded in production builds.
 
