@@ -41,7 +41,10 @@ final class PanelController: NSObject {
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
         model.onLayoutChange = { [weak self] in self?.layout() }
-        model.onFocusRequested = { [weak self] in self?.panel.makeKey() }
+        model.onFocusRequested = { [weak self] in
+            guard let self, !self.model.interactionSuspended else { return }
+            self.panel.makeKey()
+        }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.layout(animated: false) }
         })
@@ -61,10 +64,27 @@ final class PanelController: NSObject {
     }
 
     func show() {
+        guard !model.interactionSuspended else { return }
         model.pinned = true
         model.setExpanded(true)
         panel.orderFrontRegardless()
         panel.makeKey()
+    }
+
+    func setUpdatePresentationActive(_ active: Bool) {
+        guard active != model.interactionSuspended else { return }
+        model.setInteractionSuspended(active)
+        // Snap closed before runModal; animation timers may not advance there.
+        layout(animated: false)
+        panel.ignoresMouseEvents = active
+        panel.level = active ? .normal : .statusBar
+        if active {
+            panel.resignKey()
+            panel.orderBack(nil)
+        } else {
+            // Return only the collapsed island without stealing updater focus.
+            panel.orderFrontRegardless()
+        }
     }
 
     private func layout(animated: Bool = true) {
