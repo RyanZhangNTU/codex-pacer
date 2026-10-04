@@ -16,25 +16,36 @@ final class IslandModel: ObservableObject {
     @Published var historyWarning: String?
     @Published var notice: IslandNotice?
     @Published var errorMessage: String?
+    @Published var quotaCLI: CodexExecutableResolver.Candidate?
     @Published var refreshing = false
     @Published var expanded = false
     @Published var pinned = false
     @Published var now = Date()
     @Published var settingsRevision = 0
+    @Published var isAttached = false
     @Published var notchWidth: CGFloat = 0
     @Published var topHeight: CGFloat = 38
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) -> Void)?
     var onFocusRequested: (() -> Void)?
     func canOpen(_ activity: SessionActivity) -> Bool {
         (demo || activity.threadURL != nil) && (demo || activity.sourceHostID != nil ||
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
     }
+    private var measuredContentHeight: CGFloat?
     var panelContentHeight: CGFloat {
-        min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 56 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
+        measuredContentHeight ?? min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 56 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
+    }
+    func updateMeasuredContentHeight(_ height: CGFloat) {
+        guard height.isFinite, height > 0 else { return }
+        let rounded = ceil(height)
+        guard measuredContentHeight.map({ abs($0 - rounded) >= 1 }) ?? true else { return }
+        measuredContentHeight = rounded
+        onLayoutChange?()
     }
     private var client: CodexClient?
     private let reader = LocalActivityReader()
@@ -65,7 +76,7 @@ final class IslandModel: ObservableObject {
         let path = configured.isEmpty ? (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex") : configured
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
-    var prefersFloating: Bool { UserDefaults.standard.bool(forKey: "floatingIsland") }
+    var displayMode: IslandDisplayMode { .load() }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
     var showInMenuBar: Bool { UserDefaults.standard.bool(forKey: "showInMenuBar") }
@@ -99,7 +110,7 @@ final class IslandModel: ObservableObject {
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { completionInbox.isUnread(activity) }
     var completionSummary: String {
         let pending = pendingCompletions
-        return pending.count == 1 ? (pending[0].phase == .interrupted ? "本轮中断" : "本轮结束") : "\(pending.count) 轮结束"
+        return pending.count == 1 ? (pending[0].phase == .interrupted ? L10n.text("activity.turn_interrupted") : L10n.text("activity.turn_finished")) : L10n.text("activity.finished_count", pending.count)
     }
     func openCompletionOrPin() {
         if let activity = pendingCompletions.first, canOpen(activity) { open(activity) }
@@ -128,8 +139,8 @@ final class IslandModel: ObservableObject {
         return remaining.map { "\(Int($0.rounded()))%" } ?? "—"
     }
     var compactWindow: String {
-        UserDefaults.standard.string(forKey: "compactMetric") == "pace" ? "配速" :
-        (selectedWindow?.label.replacingOccurrences(of: "额度", with: "") ?? "")
+        UserDefaults.standard.string(forKey: "compactMetric") == "pace" ? L10n.text("quota.pace") :
+        (selectedWindow?.compactLabel ?? "")
     }
     var statusTitle: String { overview.title }
     var compactStatus: String {
@@ -139,7 +150,7 @@ final class IslandModel: ObservableObject {
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
     var showsRate: Bool { !running.isEmpty }
-    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? "采样中" : "—") }
+    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? L10n.text("activity.sampling") : "—") }
     var monitorsSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH") }
     var accent: Color {
         if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
@@ -148,14 +159,14 @@ final class IslandModel: ObservableObject {
         return Color(red: 0.56, green: 0.84, blue: 0.79)
     }
     var freshnessText: String {
-        guard let quota else { return refreshing ? "正在读取额度" : "尚未读取额度" }
-        if selectedWindow?.resetsAt.map({ $0 <= now }) == true { return "窗口已到期，等待更新" }
+        guard let quota else { return refreshing ? L10n.text("quota.reading") : L10n.text("quota.not_read") }
+        if selectedWindow?.resetsAt.map({ $0 <= now }) == true { return L10n.text("quota.expired") }
         let elapsed = max(0, Int(now.timeIntervalSince(quota.capturedAt)))
-        if stale || errorMessage != nil { return "\(max(1, elapsed / 60)) 分钟前的额度" }
-        return elapsed < 10 ? "刚刚更新" : elapsed < 60 ? "\(elapsed) 秒前更新" : "\(elapsed / 60) 分钟前更新"
+        if stale || errorMessage != nil { return L10n.text("quota.age", max(1, elapsed / 60)) }
+        return elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60)
     }
     func projectName(_ activity: SessionActivity) -> String {
-        hideProjects ? "Codex 任务" : (activity.title ?? activity.project)
+        hideProjects ? L10n.text("activity.hidden_name") : (activity.title ?? activity.project)
     }
 
     init(demo: Bool = false, initiallyExpanded: Bool = false) {
@@ -230,8 +241,15 @@ final class IslandModel: ObservableObject {
             do {
                 if self.client == nil {
                     let custom = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
-                    guard let executable = CodexClient.findExecutable(customPath: custom) else { throw CodexClientError.missingExecutable }
-                    self.client = CodexClient(executable: executable, home: sourceHome)
+                    let report = await Task.detached(priority: .utility) {
+                        CodexExecutableResolver.discover(customPath: custom)
+                    }.value
+                    guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+                    self.quotaCLI = report.selected
+                    guard let selection = report.selected else {
+                        throw CodexClientError.executableNotFound(report.issue ?? L10n.text("cli.missing_short"))
+                    }
+                    self.client = CodexClient(executable: selection.url, home: sourceHome)
                 }
                 let snapshot = try await self.client!.readQuota()
                 guard !Task.isCancelled, generation == self.sourceGeneration else { return }
@@ -244,15 +262,16 @@ final class IslandModel: ObservableObject {
                 }
                 self.quota = snapshot
                 self.history.record(snapshot)
-                self.errorMessage = snapshot.windows.isEmpty ? "当前登录方式未返回订阅额度。请检查 Codex 账户。" : nil
+                self.errorMessage = snapshot.windows.isEmpty
+                    ? L10n.text("quota.no_windows") : nil
                 self.failureCount = 0
                 self.now = Date()
                 if snapshot.accountScope == nil {
-                    self.historyWarning = "账户标识暂不可用，曲线尚未开始记录。"
+                    self.historyWarning = L10n.text("quota.no_identity")
                 } else {
                     let saved = await self.historyStore.save(home: sourceHome, snapshot: snapshot, history: self.history)
                     guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                    self.historyWarning = saved ? nil : "曲线暂未保存，退出后可能丢失。"
+                    self.historyWarning = saved ? nil : L10n.text("quota.history_unsaved")
                 }
                 self.present(self.attention.quotaNotices(snapshot, at: self.now))
             } catch {
@@ -270,10 +289,22 @@ final class IslandModel: ObservableObject {
                     self.quota = restored?.0
                     self.history = restored?.1 ?? QuotaCycleHistory()
                 }
-                self.errorMessage = (error as? CodexClientError)?.errorDescription ?? "额度读取失败，请稍后刷新。"
+                self.errorMessage = CodexDiagnosticText.description(of: error)
+                // A moved/upgraded CLI must be rediscovered on the next attempt.
+                self.client = nil
                 self.failureCount = min(self.failureCount + 1, 4)
             }
             self.onStatusChange?()
+        }
+    }
+
+    func retryQuotaConnection() {
+        guard !refreshing else { return }
+        let previous = client
+        client = nil
+        Task { [weak self] in
+            await previous?.disconnect()
+            self?.refreshQuota()
         }
     }
 
@@ -332,7 +363,7 @@ final class IslandModel: ObservableObject {
         if clock != nil { scheduleClock() }
         pruneCompletions()
         if hideProjects, let current = notice, current.kind != .lowQuota {
-            notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: "Codex 任务")
+            notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: L10n.text("activity.hidden_name"))
         }
         onLayoutChange?()
         onStatusChange?()
@@ -349,6 +380,7 @@ final class IslandModel: ObservableObject {
         notice = nil
         noticeWork?.cancel()
         errorMessage = nil
+        quotaCLI = nil
         failureCount = 0
         Task { [weak self, reader] in
             await previous?.disconnect()
@@ -426,7 +458,7 @@ final class IslandModel: ObservableObject {
         }
         guard let newest = enabled.last else { return }
         let visible = hideProjects && newest.kind != .lowQuota ?
-            IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: "Codex 任务") : newest
+            IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: L10n.text("activity.hidden_name")) : newest
         notifications.deliver(visible)
         noticeWork?.cancel()
         if [.completed, .interrupted].contains(visible.kind) {

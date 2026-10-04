@@ -4,11 +4,11 @@ public enum ActivityPhase: String, Codable, Sendable {
     case running, waitingForInput, completed, interrupted, unknown
     public var label: String {
         switch self {
-        case .running: return "正在处理任务"
-        case .waitingForInput: return "等待你的回复"
-        case .completed: return "空闲"
-        case .interrupted: return "任务已中断"
-        case .unknown: return "状态未确认"
+        case .running: return L10n.text("activity.running_long")
+        case .waitingForInput: return L10n.text("activity.waiting_long")
+        case .completed: return L10n.text("activity.idle")
+        case .interrupted: return L10n.text("activity.interrupted")
+        case .unknown: return L10n.text("activity.unknown")
         }
     }
 }
@@ -17,10 +17,10 @@ public enum ActivityStage: String, Sendable {
     case starting, thinking, tool, responding
     public var label: String {
         switch self {
-        case .starting: return "正在处理"
-        case .thinking: return "思考中"
-        case .tool: return "正在执行工具"
-        case .responding: return "输出回复"
+        case .starting: return L10n.text("activity.starting")
+        case .thinking: return L10n.text("activity.thinking")
+        case .tool: return L10n.text("activity.tool")
+        case .responding: return L10n.text("activity.responding")
         }
     }
 }
@@ -66,7 +66,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return value
     }
 
-    public init(id: String, project: String = "本地任务", sourceHost: String? = nil, sourceHostID: String? = nil, phaseAwareRate: Bool = false) {
+    public init(id: String, project: String = L10n.text("activity.local_task"), sourceHost: String? = nil, sourceHostID: String? = nil, phaseAwareRate: Bool = false) {
         self.id = id
         self.phaseAwareRate = phaseAwareRate
         self.sourceHost = sourceHost
@@ -96,8 +96,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return phaseAwareRate ? generationRate.estimate(at: now) : outputRate.estimate(at: now)
     }
     public func detail(at now: Date) -> String {
-        if observedPhase(at: now) == .unknown, phase == .waitingForInput { return "最后状态：等待你的回复" }
-        if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return "最后状态：等待工具结果" }
+        if observedPhase(at: now) == .unknown, phase == .waitingForInput { return L10n.text("activity.last_waiting") }
+        if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return L10n.text("activity.last_tool") }
         return observedPhase(at: now) == .running ? stage.label : observedPhase(at: now).label
     }
 

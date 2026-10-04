@@ -12,8 +12,8 @@ final class QuotaTests: XCTestCase {
         XCTAssertEqual(snapshot.buckets.map(\.id), ["codex", "special"])
         XCTAssertEqual(snapshot.windows.count, 3)
         XCTAssertEqual(snapshot.limitingWindow?.remainingPercent, 20)
-        XCTAssertEqual(snapshot.windows.first?.label, "5 小时额度")
-        XCTAssertEqual(snapshot.windows[1].label, "7 天额度")
+        XCTAssertEqual(snapshot.windows.first?.label, L10n.text("quota.hours", 5))
+        XCTAssertEqual(snapshot.windows[1].label, L10n.text("quota.days", 7))
     }
     func testNullUsageIsUnavailableRatherThanFullQuota() throws {
         let snapshot = try decode("{\"rateLimits\":{\"primary\":{\"usedPercent\":null},\"secondary\":null}}")
@@ -22,7 +22,7 @@ final class QuotaTests: XCTestCase {
     }
     func testUnknownDurationDoesNotPretendToBeFiveHours() throws {
         let snapshot = try decode("{\"rateLimits\":{\"primary\":{\"usedPercent\":0}}}")
-        XCTAssertEqual(snapshot.windows.first?.label, "额度窗口")
+        XCTAssertEqual(snapshot.windows.first?.label, L10n.text("quota.generic_window"))
         XCTAssertEqual(snapshot.windows.first?.remainingPercent, 100)
     }
     func testAuthoritativeEmptyResultReplacesPreviousWindows() throws {
@@ -124,7 +124,7 @@ final class ClientTests: XCTestCase {
         let (client, directory) = try fixture(timeout: 2, answerQuota: true, differentAccount: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         do { _ = try await client.readQuota(); XCTFail("expected account mismatch rejection") }
-        catch CodexClientError.invalidResponse { }
+        catch CodexClientError.accountMismatch { }
         catch { XCTFail("unexpected error: \(error)") }
         let scope = await client.currentAccountScope()
         XCTAssertNil(scope)

@@ -11,36 +11,37 @@ struct AccountUsageView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Label(count.map { "\($0) 次重置" } ?? "重置 —", systemImage: "arrow.counterclockwise")
+            Label(count.map { L10n.text("account.reset_count", $0) } ?? L10n.text("account.resets_unknown"), systemImage: "arrow.counterclockwise")
                 .foregroundStyle(expirySoon ? Color.orange : .secondary)
                 .help(expiryDescription)
-                .accessibilityLabel("可用重置 \(count.map(String.init) ?? "未知") 次。\(expiryDescription)")
+                .accessibilityLabel(L10n.text("account.resets_accessibility", count.map(String.init) ?? L10n.text("common.unknown"), expiryDescription))
             Spacer(minLength: 8)
             HStack(spacing: 5) {
                 Text(balanceText).foregroundStyle(.primary).monospacedDigit()
-                Text("credit").foregroundStyle(.secondary)
+                Text(L10n.text("account.credits")).foregroundStyle(.secondary)
             }
-            .help("账户剩余 credit")
+            .help(L10n.text("account.credits_help"))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("剩余 credit：\(balanceText)")
+            .accessibilityLabel(L10n.text("account.credit_balance", balanceText))
         }
         .font(.system(size: 13)).lineLimit(1)
         .padding(.vertical, 3)
     }
     private var expiryDescription: String {
-        if count == 0 { return "暂无可用重置券" }
+        if count == 0 { return L10n.text("account.no_resets") }
         if let expiry {
-            let label = summary?.hasCompleteDetails == false ? "已知最近到期：" : "最近到期："
-            return label + expiry.formatted(date: .complete, time: .shortened)
+            return L10n.text(summary?.hasCompleteDetails == false ? "account.known_expiry" : "account.next_expiry",
+                L10n.date(expiry, date: .complete))
         }
-        return summary?.hasNoExpiringCredits(at: now) == true ? "可用重置券不过期" : "重置券到期时间未知"
+        return summary?.hasNoExpiringCredits(at: now) == true ? L10n.text("account.no_expiry") : L10n.text("account.expiry_unknown")
     }
     private var balanceText: String {
         guard let credits = snapshot.credits else { return "—" }
-        if credits.unlimited { return "不限" }
+        if credits.unlimited { return L10n.text("common.unlimited") }
         guard let amount = credits.amount else { return "—" }
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
+        formatter.locale = L10n.locale
         formatter.maximumFractionDigits = 2
         return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "—"
     }

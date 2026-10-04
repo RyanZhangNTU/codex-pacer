@@ -16,7 +16,7 @@ struct QuotaWindowView: View {
                 if let remaining = window.remainingPercent {
                     Text("\(Int(remaining.rounded()))%")
                         .font(.system(size: 28, weight: .medium)).monospacedDigit()
-                        .accessibilityLabel("剩余 \(Int(remaining.rounded()))%")
+                        .accessibilityLabel(L10n.text("quota.remaining", Int(remaining.rounded())))
                 } else { Text("—").font(.system(size: 28)).foregroundStyle(secondary) }
             }
             quotaTrack
@@ -24,8 +24,8 @@ struct QuotaWindowView: View {
                 Text(countdown).help(resetDate)
                 Spacer(minLength: 4)
                 if allowPace, let pace = window.pacePercent(at: now) {
-                    Text("配速 \(Int(pace.rounded()))%").foregroundStyle(pace < 85 ? Color.orange : pace > 115 ? accent : secondary)
-                } else { Text("配速 —") }
+                    Text(L10n.text("quota.pace_value", Int(pace.rounded()))).foregroundStyle(pace < 85 ? Color.orange : pace > 115 ? accent : secondary)
+                } else { Text(L10n.text("quota.pace_unknown")) }
             }.font(.system(size: 12)).foregroundStyle(secondary).monospacedDigit()
         }.accessibilityElement(children: .combine)
     }
@@ -42,19 +42,19 @@ struct QuotaWindowView: View {
                 }
             }
         }.frame(height: 5).padding(.vertical, 3)
-        .help("实色为剩余额度，刻度为按时间均匀使用时应剩的额度")
+        .help(L10n.text("quota.track_help"))
         .accessibilityHidden(true)
     }
     private var countdown: String {
-        guard let seconds = window.remainingSeconds(at: now) else { return "重置时间未知" }
-        if seconds <= 0 { return "等待更新" }
-        if seconds < 60 { return "1 分钟内重置" }
+        guard let seconds = window.remainingSeconds(at: now) else { return L10n.text("quota.reset_unknown") }
+        if seconds <= 0 { return L10n.text("quota.waiting_update") }
+        if seconds < 60 { return L10n.text("quota.reset_soon") }
         let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
-        if days > 0 { return "\(days)天\(hours)小时后重置" }
-        if hours > 0 { return "\(hours)小时\(minutes)分后重置" }
-        return "\(minutes)分钟后重置"
+        if days > 0 { return L10n.text("quota.reset_days", days, hours) }
+        if hours > 0 { return L10n.text("quota.reset_hours", hours, minutes) }
+        return L10n.text("quota.reset_minutes", minutes)
     }
     private var resetDate: String {
-        window.resetsAt.map { "重置：" + $0.formatted(date: .abbreviated, time: .shortened) } ?? "重置时间未知"
+        window.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? L10n.text("quota.reset_unknown")
     }
 }

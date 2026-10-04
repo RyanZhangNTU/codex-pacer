@@ -62,6 +62,9 @@ private final class ReplayDelegate: NSObject, NSApplicationDelegate {
             model.quota = try quota(at: epoch, used: 57)
             model.activities = DemoScenario.tasks(stage: .responding, at: epoch)
             model.notchWidth = 180
+            #if PACER_EXPLICIT_DISPLAY_MODE
+            model.isAttached = true
+            #endif
             model.topHeight = 32
             model.onQuit = { NSApp.terminate(nil) }
             let size = CGSize(width: 440, height: 466)

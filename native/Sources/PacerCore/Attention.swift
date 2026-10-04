@@ -26,8 +26,8 @@ public struct AttentionPolicy: Sendable {
             let key = "\(window.id):\(Int(reset.timeIntervalSince1970 / 60))"
             if remaining > threshold + 5 { lowWindows.remove(key) }
             if remaining <= threshold, lowWindows.insert(key).inserted {
-                notices.append(IslandNotice(id: key, kind: .lowQuota, title: "额度偏低",
-                    detail: "\(window.label)剩余 \(Int(remaining.rounded()))%"))
+                notices.append(IslandNotice(id: key, kind: .lowQuota, title: L10n.text("notice.low_quota"),
+                    detail: L10n.text("notice.quota_remaining", window.label, Int(remaining.rounded()))))
             }
         }
         let activeIDs = Set(snapshot.windows.compactMap { window -> String? in
@@ -56,7 +56,7 @@ public struct AttentionPolicy: Sendable {
             default: return nil
             }
             return IslandNotice(id: "\(activity.id):\(activity.turnID ?? ""):\(kind.rawValue):\(changed.timeIntervalSince1970)",
-                kind: kind, title: kind == .completed ? "本轮结束" : activity.phase.label, detail: activity.project)
+                kind: kind, title: kind == .completed ? L10n.text("activity.turn_finished") : activity.phase.label, detail: activity.project)
         }
     }
 }

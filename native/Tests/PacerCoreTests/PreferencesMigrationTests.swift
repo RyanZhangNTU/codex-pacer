@@ -9,11 +9,12 @@ final class PreferencesMigrationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         defaults.set(false, forKey: "showInMenuBar")
         PreferencesMigration.migrate(to: defaults, from: [
-            "showInMenuBar": true, "glassCornerRadius": 31.0,
+            "showInMenuBar": true, "glassCornerRadius": 31.0, "islandDisplayMode": "notch",
             "completedRetentionMinutes": 0, "codexHome": "/fixture/.codex", "unrelated": "private"
         ])
         XCTAssertFalse(defaults.bool(forKey: "showInMenuBar"))
         XCTAssertEqual(defaults.double(forKey: "glassCornerRadius"), 31)
+        XCTAssertEqual(defaults.string(forKey: "islandDisplayMode"), "notch")
         XCTAssertEqual(defaults.integer(forKey: "completedRetentionMinutes"), 0)
         XCTAssertEqual(defaults.string(forKey: "codexHome"), "/fixture/.codex")
         XCTAssertNil(defaults.object(forKey: "unrelated"))

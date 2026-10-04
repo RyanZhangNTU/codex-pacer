@@ -1,6 +1,6 @@
-# Codex Pacer 2.0
+# Codex Pacer 2.1
 
-[简体中文](README.zh-CN.md) · [Download 2.0.1 unsigned](https://github.com/RyanZhangNTU/codex-pacer/releases/tag/v2.0.1)
+[简体中文](README.zh-CN.md) · [Download the latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
 
 A native macOS island for Codex tasks, output rate and account quota. Hover to expand, move away to collapse, or pin it open.
 
@@ -12,14 +12,17 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 - View account Credit balance and available reset credits; select an expiry marker to see its date.
 - Keep ended-turn cards until clicked, their state changes, or the configured retention expires; receive a reminder while the island is collapsed.
 - Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
+- Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.
+- Use English or Simplified Chinese, following your Mac's language by default or selecting a language in Settings.
+- Update inside the app: daily checks by default, with download and installation after you choose to install.
 
 **Requirements:** macOS 14 or later, Apple Silicon or Intel. Liquid Glass requires macOS 26 or later. An authenticated Codex installation and Python 3 provide account/task data; remote sources require existing non-interactive OpenSSH access.
 
 ## Install the unsigned release
 
-2.0.1 is unsigned, so macOS may block the DMG before it opens. Quit the old version before updating.
+The unsigned release may be blocked by macOS before the DMG opens. For a manual replacement, quit the old version first. If your installed version has **Check for Updates**, use it to download, verify, install and relaunch automatically.
 
-1. [Download the DMG](https://github.com/RyanZhangNTU/codex-pacer/releases/download/v2.0.1/Codex-Pacer-2.0.1-universal-unsigned.dmg) and **double-click it first**. Dismiss the macOS blocking alert.
+1. [Download the DMG from the latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest) and **double-click it first**. Dismiss the macOS blocking alert.
 2. Go to **System Settings → Privacy & Security**, **scroll to Security at the bottom**, find the blocked installer, and choose **Open / Open Anyway**. Confirm when prompted.
 3. **Double-click the DMG again**, drag **Codex Pacer** into **Applications**, then launch it from Applications.
 

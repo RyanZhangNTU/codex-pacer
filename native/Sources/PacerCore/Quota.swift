@@ -8,10 +8,16 @@ public struct QuotaWindow: Codable, Equatable, Sendable, Identifiable {
 
     public var remainingPercent: Double? { usedPercent.map { 100 - min(100, max(0, $0)) } }
     public var label: String {
-        guard let minutes = durationMinutes, minutes > 0 else { return "额度窗口" }
-        if minutes % 1440 == 0 { return "\(minutes / 1440) 天额度" }
-        if minutes % 60 == 0 { return "\(minutes / 60) 小时额度" }
-        return "\(minutes) 分钟额度"
+        guard let minutes = durationMinutes, minutes > 0 else { return L10n.text("quota.generic_window") }
+        if minutes % 1440 == 0 { return L10n.text("quota.days", minutes / 1440) }
+        if minutes % 60 == 0 { return L10n.text("quota.hours", minutes / 60) }
+        return L10n.text("quota.minutes", minutes)
+    }
+    public var compactLabel: String {
+        guard let minutes = durationMinutes, minutes > 0 else { return "" }
+        if minutes % 1440 == 0 { return L10n.text("quota.compact_days", minutes / 1440) }
+        if minutes % 60 == 0 { return L10n.text("quota.compact_hours", minutes / 60) }
+        return L10n.text("quota.compact_minutes", minutes)
     }
     public func remainingTimePercent(at now: Date) -> Double? {
         guard let minutes = durationMinutes, minutes > 0, let reset = resetsAt, reset > now else { return nil }

@@ -12,8 +12,8 @@ final class NotificationDelivery {
             guard [.authorized, .provisional].contains(settings.authorizationStatus) else { return }
             let content = UNMutableNotificationContent()
             content.title = "Codex Pacer"
-            let detail = UserDefaults.standard.bool(forKey: "hideProjects") && notice.kind != .lowQuota ? "本地 Codex 任务" : notice.detail
-            content.body = notice.title + "：" + detail
+            let detail = UserDefaults.standard.bool(forKey: "hideProjects") && notice.kind != .lowQuota ? L10n.text("activity.hidden_local_name") : notice.detail
+            content.body = L10n.text("notice.body", notice.title, detail)
             try? await center.add(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
         }
     }

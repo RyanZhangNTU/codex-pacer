@@ -1,12 +1,14 @@
 import AppKit
 import SwiftUI
+import PacerCore
 
 struct SettingsView: View {
     @ObservedObject var model: IslandModel
+    @ObservedObject var updater: AppUpdater
     let onClose: () -> Void
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
-    @State private var floating = UserDefaults.standard.bool(forKey: "floatingIsland")
+    @State private var displayMode = IslandDisplayMode.load()
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -23,34 +25,58 @@ struct SettingsView: View {
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var validation: String?
     @State private var saving = false
+    @State private var language = LanguagePreference.load()
+    @State private var automaticUpdateChecks = true
+    @State private var cliReport: CodexExecutableResolver.Report?
+    @State private var cliScanRevision = 0
+    @State private var testingCLI = false
+    @State private var cliTestMessage: String?
+    @State private var cliTestSucceeded = false
+    private var languageChanges: Bool { language.resolved() != L10n.language }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Codex Pacer").font(.system(size: 23, weight: .semibold))
             Form {
-                Section("显示") {
-                    Picker("外观", selection: $appearance) {
-                        Text("经典").tag(IslandAppearance.classic)
-                        Text("液态玻璃").tag(IslandAppearance.liquidGlass)
+                Section(L10n.text("language.section")) {
+                    Picker(L10n.text("language.label"), selection: $language) {
+                        ForEach(LanguagePreference.allCases, id: \.rawValue) { preference in
+                            Text(preference.label).tag(preference)
+                        }
+                    }
+                    Text(L10n.text(languageChanges ? "language.restart_hint" : "language.hint"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                UpdateSettingsView(updater: updater, automaticallyChecks: $automaticUpdateChecks)
+                Section(L10n.text("settings.display")) {
+                    Picker(L10n.text("settings.appearance"), selection: $appearance) {
+                        Text(L10n.text("settings.classic")).tag(IslandAppearance.classic)
+                        Text(L10n.text("settings.liquid_glass")).tag(IslandAppearance.liquidGlass)
                     }
                     .disabled(!IslandAppearance.supportsLiquidGlass)
-                    .help(IslandAppearance.supportsLiquidGlass ? "保存后立即应用" : "液态玻璃需要 macOS 26 或更新版本")
-                    Toggle("使用悬浮胶囊", isOn: $floating)
-                    Toggle("在菜单栏显示", isOn: $showInMenuBar)
-                        .help("关闭后仍可从灵动岛的齿轮按钮打开设置。")
-                    Toggle("在全屏空间显示", isOn: $fullscreen)
-                    Picker("显示器", selection: $displayID) {
-                        Text("主显示器").tag(0)
+                    .help(IslandAppearance.supportsLiquidGlass ? L10n.text("settings.applies_on_save") : L10n.text("settings.glass_requirement"))
+                    Picker(L10n.text("settings.display_mode"), selection: $displayMode) {
+                        Text(L10n.text("settings.automatic")).tag(IslandDisplayMode.automatic)
+                        Text(L10n.text("settings.notch")).tag(IslandDisplayMode.notch)
+                        Text(L10n.text("settings.floating")).tag(IslandDisplayMode.floating)
+                    }
+                    .help(L10n.text("settings.display_mode_help"))
+                    Toggle(L10n.text("settings.menu_bar"), isOn: $showInMenuBar)
+                        .help(L10n.text("settings.menu_bar_help"))
+                    Toggle(L10n.text("settings.fullscreen"), isOn: $fullscreen)
+                    Picker(L10n.text("settings.display_picker"), selection: $displayID) {
+                        Text(L10n.text("settings.main_display")).tag(0)
                         ForEach(Array(NSScreen.screens.enumerated()), id: \.offset) { _, screen in
                             Text(screen.localizedName).tag((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0)
                         }
                     }
-                    Picker("收起时的百分比", selection: $metric) {
-                        Text("剩余额度").tag("remaining")
-                        Text("配速百分比").tag("pace")
+                    Picker(L10n.text("settings.compact_metric"), selection: $metric) {
+                        Text(L10n.text("settings.remaining_quota")).tag("remaining")
+                        Text(L10n.text("settings.pace_percentage")).tag("pace")
                     }
-                    Picker("额度窗口", selection: $windowID) {
-                        Text("自动，优先 7 天窗口").tag("auto")
+                    Picker(L10n.text("settings.quota_window"), selection: $windowID) {
+                        Text(L10n.text("settings.auto_weekly")).tag("auto")
                         ForEach(model.quota?.buckets ?? []) { bucket in
                             ForEach(bucket.windows) { window in
                                 Text(window.label + ((model.quota?.buckets.count ?? 0) > 1 ? " · " + (bucket.name ?? bucket.id) : "")).tag(window.id)
@@ -59,7 +85,7 @@ struct SettingsView: View {
                     }
                 }
                 if appearance == .liquidGlass, IslandAppearance.supportsLiquidGlass {
-                    Section("液态玻璃") {
+                    Section(L10n.text("settings.liquid_glass")) {
                         HStack(spacing: 8) {
                             Circle().fill(Color(red: 0.56, green: 0.84, blue: 0.79)).frame(width: 6, height: 6)
                             Text("Codex Pacer").font(.system(size: 13, weight: .medium))
@@ -69,107 +95,199 @@ struct SettingsView: View {
                         .foregroundStyle(.white).padding(.horizontal, 18).frame(height: 58)
                         .modifier(IslandSurface(appearance: .liquidGlass, attached: false, expanded: true, settings: glass))
                         .preferredColorScheme(.dark)
-                        .accessibilityLabel("液态玻璃外观预览")
-                        Picker("玻璃风格", selection: $glass.style) {
+                        .accessibilityLabel(L10n.text("settings.glass_preview"))
+                        Picker(L10n.text("settings.glass_style"), selection: $glass.style) {
                             ForEach(IslandGlassSettings.Style.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                         }
-                        LabeledContent("通透度") {
+                        LabeledContent(L10n.text("settings.transparency")) {
                             HStack(spacing: 10) {
                                 Slider(value: $glass.transparency, in: 0...1, step: 0.05)
-                                    .accessibilityLabel("通透度")
+                                    .accessibilityLabel(L10n.text("settings.transparency"))
                                 Text("\(Int((glass.transparency * 100).rounded()))%")
                                     .monospacedDigit().frame(width: 40, alignment: .trailing)
                             }
                         }
-                        Picker("色调", selection: $glass.tint) {
+                        Picker(L10n.text("settings.tint"), selection: $glass.tint) {
                             ForEach(IslandGlassSettings.Tint.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                         }
-                        LabeledContent("圆角") {
+                        LabeledContent(L10n.text("settings.corner_radius")) {
                             HStack(spacing: 10) {
                                 Slider(value: $glass.cornerRadius, in: 12...36, step: 1)
-                                    .accessibilityLabel("圆角")
+                                    .accessibilityLabel(L10n.text("settings.corner_radius"))
                                 Text("\(Int(glass.cornerRadius))").monospacedDigit().frame(width: 40, alignment: .trailing)
                             }
                         }
-                        Button("恢复默认") { glass = IslandGlassSettings() }
+                        Button(L10n.text("common.restore_defaults")) { glass = IslandGlassSettings() }
                             .buttonStyle(.borderless)
                     }
                 }
-                Section("提醒") {
-                    Toggle("低额度提醒", isOn: $lowReminder)
-                    Toggle("等待回复提醒", isOn: $inputReminder)
-                    Toggle("本轮结束或中断提醒", isOn: $completionReminder)
-                    Picker("结束任务保留", selection: $completedRetention) {
-                        Text("5 分钟").tag(5)
-                        Text("15 分钟").tag(15)
-                        Text("30 分钟").tag(30)
-                        Text("1 小时").tag(60)
-                        Text("4 小时").tag(240)
-                        Text("直到点击").tag(0)
+                Section(L10n.text("settings.reminders")) {
+                    Toggle(L10n.text("settings.low_quota"), isOn: $lowReminder)
+                    Toggle(L10n.text("settings.waiting_reminder"), isOn: $inputReminder)
+                    Toggle(L10n.text("settings.completion_reminder"), isOn: $completionReminder)
+                    Picker(L10n.text("settings.retention"), selection: $completedRetention) {
+                        Text(L10n.text("settings.five_minutes")).tag(5)
+                        Text(L10n.text("settings.fifteen_minutes")).tag(15)
+                        Text(L10n.text("settings.thirty_minutes")).tag(30)
+                        Text(L10n.text("settings.one_hour")).tag(60)
+                        Text(L10n.text("settings.four_hours")).tag(240)
+                        Text(L10n.text("settings.until_clicked")).tag(0)
                     }
-                    Toggle("同时使用系统通知", isOn: $systemNotifications)
+                    Toggle(L10n.text("settings.system_notifications"), isOn: $systemNotifications)
                 }
-                Section("隐私") {
-                    Toggle("隐藏项目名称", isOn: $hideProjects)
+                Section(L10n.text("settings.privacy")) {
+                    Toggle(L10n.text("settings.hide_projects"), isOn: $hideProjects)
                 }
-                Section("Codex 数据来源") {
-                    Toggle("统计 Codex SSH 任务", isOn: $monitorSSH)
+                Section(L10n.text("settings.data_source")) {
+                    Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
                     HStack {
-                        TextField("CLI 路径", text: $executable, prompt: Text("自动查找"))
-                        Button("选择…") { choose(directory: false) }
+                        TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))
+                        Button(L10n.text("common.choose")) { choose(directory: false) }
                     }
+                    cliDiscovery
                     HStack {
-                        TextField("Codex 目录", text: $home, prompt: Text("CODEX_HOME 或 ~/.codex"))
-                        Button("选择…") { choose(directory: true) }
+                        TextField(L10n.text("settings.codex_home"), text: $home, prompt: Text(L10n.text("settings.home_placeholder")))
+                        Button(L10n.text("common.choose")) { choose(directory: true) }
                     }
                 }
-                Section("实时订阅") {
+                Section(L10n.text("settings.subscriptions")) {
                     let connected = model.streamStatuses.values.filter(\.connected).count
                     let attached = model.streamStatuses.values.reduce(0) { $0 + $1.attachedThreads }
-                    Text("连接 \(connected) 个来源，订阅 \(attached) 个运行会话").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(L10n.text("settings.connections", connected, attached)).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-            }.formStyle(.grouped).disabled(saving)
+            }.formStyle(.grouped).disabled(saving || testingCLI)
             if let validation { Text(validation).foregroundStyle(.orange).font(.system(size: 12)) }
             HStack {
-                Button("退出 Codex Pacer") { model.onQuit?() }
-                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development").font(.system(size: 11)).foregroundStyle(.secondary)
+                Button(L10n.text("common.quit")) { model.onQuit?() }
+                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? L10n.text("build.development")).font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
-                Button("取消", action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
-                Button(saving ? "正在保存" : "保存", action: save).keyboardShortcut(.defaultAction).disabled(saving)
+                Button(L10n.text("common.cancel"), action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
+                Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: save)
+                    .keyboardShortcut(.defaultAction).disabled(saving)
             }
         }
         .padding(24)
         .frame(width: 480, height: 670)
+        .environment(\.locale, L10n.locale)
         .onAppear {
+            automaticUpdateChecks = updater.automaticallyChecks
             if windowID != "auto", !((model.quota?.windows ?? []).contains { $0.id == windowID }) { windowID = "auto" }
+        }
+        .task(id: "\(cliScanRevision):\(executable)") {
+            cliReport = nil
+            cliTestMessage = nil
+            let path = executable
+            let report = await Task.detached(priority: .utility) {
+                CodexExecutableResolver.discover(customPath: path)
+            }.value
+            guard !Task.isCancelled else { return }
+            cliReport = report
+        }
+        .onChange(of: home) { _, _ in cliTestMessage = nil }
+    }
+
+    @ViewBuilder private var cliDiscovery: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let report = cliReport {
+                if let selected = report.selected {
+                    Text(L10n.text("settings.detected_cli", selected.source))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(selected.url.path)
+                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                } else if let issue = report.issue {
+                    Text(issue).font(.system(size: 11)).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
+                HStack(spacing: 12) {
+                    Button(L10n.text("settings.rescan")) { cliScanRevision += 1 }
+                    if !executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button(L10n.text("settings.use_automatic")) { executable = "" }
+                    }
+                    if report.candidates.count > 1 {
+                        Menu(L10n.text("settings.other_locations")) {
+                            ForEach(report.candidates) { candidate in
+                                Button(L10n.text("settings.cli_candidate", candidate.source, candidate.url.path)) { executable = candidate.url.path }
+                            }
+                        }.fixedSize()
+                    }
+                    Button(testingCLI ? L10n.text("settings.testing") : L10n.text("settings.test_connection"), action: testCLIConnection)
+                        .disabled(report.selected == nil)
+                }.font(.system(size: 11))
+            } else {
+                Text(L10n.text("settings.finding_cli")).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            if let cliTestMessage {
+                Text(cliTestMessage)
+                    .font(.system(size: 11)).foregroundStyle(cliTestSucceeded ? Color.green : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+        }
+    }
+
+    private func testCLIConnection() {
+        guard let candidate = cliReport?.selected, !testingCLI else { return }
+        let requestedHome = home.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawHome = requestedHome.isEmpty
+            ? (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex") : requestedHome
+        let resolvedHome = CodexExecutableResolver.normalize(rawHome)
+        if !requestedHome.isEmpty {
+            var isDirectory: ObjCBool = false
+            guard resolvedHome.hasPrefix("/"), FileManager.default.fileExists(atPath: resolvedHome, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                cliTestSucceeded = false
+                cliTestMessage = L10n.text("settings.home_missing", resolvedHome)
+                return
+            }
+        }
+        testingCLI = true
+        cliTestMessage = L10n.text("settings.testing_detail")
+        cliTestSucceeded = false
+        Task { @MainActor in
+            let client = CodexClient(executable: candidate.url, home: URL(fileURLWithPath: resolvedHome), timeout: 8)
+            do {
+                let snapshot = try await client.readQuota()
+                cliTestSucceeded = !snapshot.windows.isEmpty
+                cliTestMessage = snapshot.windows.isEmpty
+                    ? L10n.text("settings.empty_quota")
+                    : L10n.text("settings.connection_succeeded", snapshot.windows.count)
+            } catch {
+                cliTestSucceeded = false
+                cliTestMessage = CodexDiagnosticText.description(of: error)
+            }
+            await client.disconnect()
+            testingCLI = false
         }
     }
 
     private func choose(directory: Bool) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = !directory
-        panel.canChooseDirectories = directory
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
-        panel.message = directory ? "选择 Codex 数据目录" : "选择 Codex 可执行文件"
+        panel.message = directory ? L10n.text("settings.choose_home") : L10n.text("settings.choose_cli")
         if panel.runModal() == .OK, let path = panel.url?.path {
             if directory { home = path } else { executable = path }
         }
     }
     private func save() {
-        let cli = executable.trimmingCharacters(in: .whitespacesAndNewlines)
+        if languageChanges && updater.sessionInProgress {
+            validation = L10n.text("language.update_busy"); return
+        }
+        let shouldRelaunch = languageChanges
+        let cli = CodexExecutableResolver.normalize(executable)
         let directory = home.trimmingCharacters(in: .whitespacesAndNewlines)
         if !cli.isEmpty {
-            let path = (cli as NSString).expandingTildeInPath
-            guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else {
-                validation = "CLI 路径必须指向可执行的 Codex 文件。"; return
+            if let issue = CodexExecutableResolver.discover(customPath: cli).issue {
+                validation = issue; return
             }
         }
         if !directory.isEmpty {
             let expanded = (directory as NSString).expandingTildeInPath
             var isDirectory: ObjCBool = false
             guard expanded.hasPrefix("/"), FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue else {
-                validation = "请选择现有的 Codex 目录，使用绝对路径或 ~/ 路径。"; return
+                validation = L10n.text("settings.invalid_home"); return
             }
         }
         saving = true
@@ -181,7 +299,7 @@ struct SettingsView: View {
             defaults.set(monitorSSH, forKey: "monitorSSH")
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
-            defaults.set(floating, forKey: "floatingIsland")
+            displayMode.save(to: defaults)
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")
@@ -195,11 +313,19 @@ struct SettingsView: View {
             defaults.set(completedRetention, forKey: "completedRetentionMinutes")
             defaults.set(allowed, forKey: "systemNotifications")
             defaults.set(hideProjects, forKey: "hideProjects")
+            language.save(to: defaults)
+            updater.setAutomaticallyChecks(automaticUpdateChecks)
             model.applySettings(sourceChanged: sourceChanged)
             saving = false
             systemNotifications = allowed
             if requestedSystem && !allowed {
-                validation = "其他设置已保存。系统通知未授权，状态岛提醒仍可使用。"
+                validation = L10n.text("settings.notification_denied")
+            } else if shouldRelaunch {
+                if let relaunch = model.onRelaunch {
+                    if let reason = relaunch() { validation = L10n.text("language.restart_failed", reason) }
+                } else {
+                    validation = L10n.text("language.restart_failed", L10n.text("language.missing_helper"))
+                }
             } else { onClose() }
         }
     }

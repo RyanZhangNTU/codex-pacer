@@ -4,7 +4,7 @@ import Foundation
 public enum PreferencesMigration {
     private static let marker = "migratedNativePreviewPreferences"
     private static let keys = [
-        "codexExecutable", "codexHome", "monitorSSH", "floatingIsland",
+        "codexExecutable", "codexHome", "monitorSSH", "floatingIsland", "islandDisplayMode",
         "islandAppearance", "showInFullscreen", "showInMenuBar", "displayID",
         "compactMetric", "quotaWindowID", "lowQuotaReminder", "inputReminder",
         "completionReminder", "completedRetentionMinutes", "systemNotifications",
