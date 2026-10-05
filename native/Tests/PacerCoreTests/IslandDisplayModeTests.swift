@@ -71,7 +71,7 @@ final class IslandDisplayModeTests: XCTestCase {
                     }
                     frames.append(frame)
                 }
-                XCTAssertEqual(frames[0].width, 300)
+                XCTAssertEqual(frames[0].width, mode == .notch ? 480 : 300)
                 XCTAssertEqual(frames[0].maxY, frames[1].maxY)
             }
         }

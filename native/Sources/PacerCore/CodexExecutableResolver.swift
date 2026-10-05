@@ -1,5 +1,4 @@
 import Foundation
-import CoreServices
 
 public enum CodexExecutableResolver {
     public struct Candidate: Identifiable, Equatable, Sendable {
@@ -32,10 +31,7 @@ public enum CodexExecutableResolver {
         if !requested.isEmpty { return customSelection(requested) }
 
         var paths: [(String, String)] = []
-        let apps = applicationURLs ?? [
-            URL(fileURLWithPath: "/Applications/Codex.app"),
-            userHome.appendingPathComponent("Applications/Codex.app")
-        ] + registeredApplications()
+        let apps = applicationURLs ?? CodexApplicationResolver.locations(userHome: userHome)
         for app in apps.prefix(12) {
             for executable in appExecutables {
                 paths.append((app.appendingPathComponent(executable).path, L10n.text("cli.source_app")))
@@ -129,11 +125,6 @@ public enum CodexExecutableResolver {
 
     private static func absolutePathEntries(_ value: String) -> [String] {
         value.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
-    }
-
-    private static func registeredApplications() -> [URL] {
-        guard let value = LSCopyApplicationURLsForBundleIdentifier("com.openai.codex" as CFString, nil) else { return [] }
-        return value.takeRetainedValue() as? [URL] ?? []
     }
 
     private static func managerBinDirectories(environment: [String: String], userHome: URL) -> [String] {

@@ -86,7 +86,7 @@ final class CycleTests: XCTestCase {
     }
     func testDisplaySamplingKeepsActualEndpoints() throws {
         var history = QuotaCycleHistory()
-        for index in 0..<300 { history.record(try weekly(100 - Double(index) / 10, at: epoch.addingTimeInterval(Double(index)))) }
+        for index in 0..<300 { history.record(try weekly(100 - Double(index) / 10, at: epoch.addingTimeInterval(Double(index) * 600))) }
         let cycle = history.cycles[0]
         let points = cycle.displayPoints(limit: 20)
         XCTAssertEqual(points.count, 20)
@@ -110,20 +110,20 @@ final class OutputRateTests: XCTestCase {
         XCTAssertNil(rate.estimate(at: epoch))
         rate.observe(totalOutput: 150, at: epoch.addingTimeInterval(5))
         XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(6)), 10)
-        XCTAssertTrue(try XCTUnwrap(rate.estimate(at: epoch.addingTimeInterval(20))).isFresh)
-        let stale = try XCTUnwrap(rate.estimate(at: epoch.addingTimeInterval(21)))
-        XCTAssertEqual(stale.value, 10)
-        XCTAssertFalse(stale.isFresh)
+        XCTAssertTrue(try XCTUnwrap(rate.estimate(at: epoch.addingTimeInterval(19.9))).isFresh)
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(20)))
         XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(21)))
 
         rate.startTurn(at: epoch.addingTimeInterval(100))
         XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(100)))
         rate.observe(totalOutput: 170, at: epoch.addingTimeInterval(102))
-        XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(102)), 10)
-        XCTAssertEqual(rate.estimate(at: epoch.addingTimeInterval(102))?.value, 10)
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(102)))
+        rate.observe(totalOutput: 190, at: epoch.addingTimeInterval(104))
+        XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(104)), 10)
+        XCTAssertEqual(rate.estimate(at: epoch.addingTimeInterval(104))?.value, 10)
         rate.finishTurn()
-        XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(103)))
-        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(103)))
+        XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(105)))
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(105)))
     }
     func testCounterRollbackAndIdleGapDoNotCreateFalseRate() {
         var rate = OutputRate()
@@ -135,6 +135,33 @@ final class OutputRateTests: XCTestCase {
         XCTAssertEqual(rate.tokensPerSecond(at: epoch.addingTimeInterval(5)), 20)
         rate.observe(totalOutput: 100, at: epoch.addingTimeInterval(200))
         XCTAssertNil(rate.tokensPerSecond(at: epoch.addingTimeInterval(200)))
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(200)))
+    }
+    func testBurstsAccumulateAndDuplicateCountersDoNotRefreshOrShortenTheWindow() throws {
+        var rate = OutputRate()
+        rate.observe(totalOutput: 100, at: epoch)
+        for i in 1...10 {
+            rate.observe(totalOutput: 100 + i * 5, at: epoch.addingTimeInterval(Double(i) * 0.05))
+        }
+        XCTAssertEqual(try XCTUnwrap(rate.tokensPerSecond(at: epoch.addingTimeInterval(0.5))), 100, accuracy: 0.001)
+        // Repeated cached counts are neither new zero-speed samples nor new baselines.
+        rate.observe(totalOutput: 150, at: epoch.addingTimeInterval(10))
+        XCTAssertEqual(rate.estimate(at: epoch.addingTimeInterval(10))?.reportedAt, epoch.addingTimeInterval(0.5))
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(15.5)))
+        rate.observe(totalOutput: 300, at: epoch.addingTimeInterval(20))
+        XCTAssertEqual(try XCTUnwrap(rate.tokensPerSecond(at: epoch.addingTimeInterval(20))), 10, accuracy: 0.001)
+    }
+    func testPendingBurstRollbackAndOutOfOrderCountersResetSafely() throws {
+        var rate = OutputRate()
+        rate.observe(totalOutput: 100, at: epoch)
+        rate.observe(totalOutput: 200, at: epoch.addingTimeInterval(0.1))
+        rate.observe(totalOutput: 150, at: epoch.addingTimeInterval(0.2))
+        XCTAssertNil(rate.estimate(at: epoch.addingTimeInterval(0.2)))
+        rate.observe(totalOutput: 190, at: epoch.addingTimeInterval(2.2))
+        XCTAssertEqual(try XCTUnwrap(rate.tokensPerSecond(at: epoch.addingTimeInterval(2.2))), 20, accuracy: 0.001)
+        rate.observe(totalOutput: 5000, at: epoch.addingTimeInterval(1))
+        rate.observe(totalOutput: 230, at: epoch.addingTimeInterval(4.2))
+        XCTAssertEqual(try XCTUnwrap(rate.tokensPerSecond(at: epoch.addingTimeInterval(4.2))), 20, accuracy: 0.001)
     }
     func testInputTokensAreNotCountedAsOutputRate() {
         var activity = SessionActivity(id: "rate")

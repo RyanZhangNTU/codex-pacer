@@ -2,6 +2,7 @@ import SwiftUI
 import PacerCore
 
 struct TaskRowView: View {
+    var attention: PendingAttentionRequest.Kind? = nil
     let activity: SessionActivity
     let name: String
     let now: Date
@@ -12,8 +13,16 @@ struct TaskRowView: View {
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var phase: ActivityPhase { activity.observedPhase(at: now) }
-    private var detail: String { phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now) }
+    private var detail: String {
+        if let attention {
+            let prompt = L10n.text(attention == .approval ? "attention.approval" : "attention.input")
+            return phase == .running ? prompt + " · " + activity.detail(at: now) : prompt
+        }
+        return phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now)
+    }
     private var color: Color {
+        if attention != nil { return .orange }
+        if activity.turnFailed { return .red }
         switch phase {
         case .waitingForInput, .interrupted: return Color(red: 0.91, green: 0.75, blue: 0.48)
         case .running: return accent
@@ -22,13 +31,7 @@ struct TaskRowView: View {
         }
     }
     private var symbol: String {
-        switch phase {
-        case .running: return activity.stage == .tool ? "terminal.fill" : "curlybraces"
-        case .waitingForInput: return "bubble.left.and.text.bubble.right.fill"
-        case .interrupted: return "pause.fill"
-        case .completed: return "checkmark"
-        default: return "circle.lefthalf.filled"
-        }
+        StatusSymbols.symbol(for: activity, attention: attention)
     }
 
     var body: some View {

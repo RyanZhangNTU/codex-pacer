@@ -3,20 +3,75 @@ import XCTest
 
 final class RealtimeTransportTests: XCTestCase {
     private let active = "019a0000-0000-7000-8000-000000000001"
-    private func runProbe(badAccept: Bool = false, server: Bool = true) throws -> String {
+    private func runProbe(badAccept: Bool = false, server: Bool = true, hintOnly: Bool = false, indexOnly: Bool = false) throws -> String {
         let home = URL(fileURLWithPath: "/private/tmp/pacer-ws-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
-        let prefix = server ? Self.fixture.replacingOccurrences(of: "BAD_ACCEPT", with: badAccept ? "True" : "False") : ""
-        let child = Process(), stdout = Pipe()
+        var prefix = server ? Self.fixture.replacingOccurrences(of: "BAD_ACCEPT", with: badAccept ? "True" : "False") : ""
+        if hintOnly || indexOnly {
+            prefix = prefix.replacingOccurrences(of: "result={'data':[fixture_active,fixture_idle,fixture_review]}", with: indexOnly ? "result={'data':[fixture_active] if fixture_ready.is_set() else []}" : "result={'data':[]}")
+            let first = try XCTUnwrap(prefix.range(of: "send({'method':'item/agentMessage/delta'"))
+            let last = try XCTUnwrap(prefix.range(of: "send({'method':'turn/completed'", range: first.lowerBound..<prefix.endIndex))
+            let line = prefix[..<first.lowerBound].lastIndex(of: "\n").map { prefix.index(after: $0) } ?? prefix.startIndex
+            let indent = String(prefix[line..<first.lowerBound])
+            prefix.replaceSubrange(first.lowerBound..<last.lowerBound, with: "time.sleep(.35)\n" + indent)
+        }
+        if indexOnly {
+            let setup = #"""
+            fixture_ready=threading.Event();fixture_finished=threading.Event()
+            fixture_index=fixture_home/'state_5.sqlite-wal';fixture_index.write_bytes(b'0')
+            def fixture_activate():
+                fixture_index.write_bytes(b'1');threading.Timer(.6,fixture_ready.set).start()
+            """#
+            prefix = prefix.replacingOccurrences(of: "fixture_dir=", with: setup + "\nfixture_dir=")
+            prefix = prefix.replacingOccurrences(of: "send({'id':v['id'],'result':result})", with: "send({'id':v['id'],'result':result})\n            if method=='thread/loaded/list' and not fixture_ready.is_set():threading.Timer(.3,fixture_activate).start()")
+            prefix = prefix.replacingOccurrences(of: "tid==fixture_idle else 'active'", with: "tid==fixture_idle or fixture_finished.is_set() else 'active'")
+            prefix = prefix.replacingOccurrences(of: "'PRIVATE final'}]}}})", with: "'PRIVATE final'}]}}});fixture_finished.set()")
+        }
+        let child = Process(), stdout = Pipe(), stdin = Pipe(), stderr = Pipe()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), "once"]
-        child.standardOutput = stdout; child.standardError = FileHandle.nullDevice
+        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), hintOnly || indexOnly ? "ssh-lifetime" : "once"]
+        child.standardOutput = stdout; child.standardError = stderr
+        if hintOnly || indexOnly { child.standardInput = stdin }
         try child.run()
+        if hintOnly {
+            let hint = try JSONSerialization.data(withJSONObject: ["kind": "discover", "threadIds": [active]]) + Data([10])
+            try stdin.fileHandleForWriting.write(contentsOf: hint)
+        }
+        if hintOnly || indexOnly {
+            DispatchQueue.global().asyncAfter(deadline: .now() + (indexOnly ? 3.5 : 1.5)) { try? stdin.fileHandleForWriting.close() }
+        }
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
         child.waitUntilExit()
-        XCTAssertEqual(child.terminationStatus, 0)
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         return String(decoding: data, as: UTF8.self)
+    }
+    func testStdinDiscoveryObservesQuietActiveTaskAndExplicitEndingWithoutItemReplay() throws {
+        try assertQuietTaskLifecycle(runProbe(hintOnly: true))
+    }
+    func testIndexWriteDiscoversTaskWithoutDesktopHintOrRuntimeAnnouncement() throws {
+        let output = try runProbe(indexOnly: true)
+        try assertQuietTaskLifecycle(output)
+        let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let requests = try XCTUnwrap(frames.last?["testRequests"] as? [[String: Any]])
+        let lists = requests.filter { $0["method"] as? String == "thread/loaded/list" }.count
+        XCTAssertTrue((2...4).contains(lists), "An in-place index write must trigger bounded discovery retries")
+        XCTAssertEqual(requests.filter { $0["method"] as? String == "thread/resume" }.count, 1)
+    }
+    private func assertQuietTaskLifecycle(_ output: String) throws {
+        var state = RuntimeEventState(sourceID: "remote-ssh-discovered:fixture", sourceName: "SSH"), inbox = CompletionInbox()
+        var sawActive = false
+        for line in output.split(separator: "\n") {
+            let frame = try JSONSerialization.jsonObject(with: Data(line.utf8)) as! [String: Any]
+            state.consume(frame)
+            sawActive = sawActive || state.activities.contains { $0.phase == .running && $0.turnID == nil && $0.hasLiveEvidence }
+            inbox.observe(state.activities, at: Date(), retention: 1800)
+            state.releasePublishedState()
+        }
+        XCTAssertTrue(sawActive, "Discovery must publish a quiet running task before any item event")
+        XCTAssertEqual(inbox.unreadActivities.count, 1)
+        XCTAssertEqual(inbox.unreadActivities.first?.turnID, "test-turn")
+        XCTAssertFalse(output.contains("PRIVATE"))
     }
     func testRealUnixWebSocketFramesSubscribeOnlyActiveUserThreadAndDropContent() throws {
         let output = try runProbe()
@@ -40,7 +95,10 @@ final class RealtimeTransportTests: XCTestCase {
         XCTAssertEqual(state.activities.count, 1)
         XCTAssertEqual(state.activities.first?.phase, .completed)
         XCTAssertEqual(state.activities.first?.turnID, "test-turn")
-        XCTAssertEqual(state.status.attachedThreads, 1)
+        XCTAssertEqual(state.status.attachedThreads, 0, "The completed turn must release its subscription slot")
+        XCTAssertTrue(frames.contains { frame in
+            (frame["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "stream/released" } == true
+        })
     }
     func testInvalidWebSocketAcceptCannotCreateLiveConnection() throws {
         let output = try runProbe(badAccept: true)

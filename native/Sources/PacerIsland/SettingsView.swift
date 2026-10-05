@@ -77,6 +77,9 @@ struct SettingsView: View {
                     }
                     Picker(L10n.text("settings.quota_window"), selection: $windowID) {
                         Text(L10n.text("settings.auto_weekly")).tag("auto")
+                        if windowID != "auto", !(model.quota?.windows ?? []).contains(where: { $0.id == windowID }) {
+                            Text(L10n.text("settings.saved_quota_window")).tag(windowID)
+                        }
                         ForEach(model.quota?.buckets ?? []) { bucket in
                             ForEach(bucket.windows) { window in
                                 Text(window.label + ((model.quota?.buckets.count ?? 0) > 1 ? " · " + (bucket.name ?? bucket.id) : "")).tag(window.id)
@@ -191,7 +194,10 @@ struct SettingsView: View {
         .environment(\.locale, L10n.locale)
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
-            if windowID != "auto", !((model.quota?.windows ?? []).contains { $0.id == windowID }) { windowID = "auto" }
+            windowID = QuotaWindowSelection.validated(windowID, snapshot: model.quota)
+        }
+        .onChange(of: model.quota?.windows.map(\.id)) { _, _ in
+            windowID = QuotaWindowSelection.validated(windowID, snapshot: model.quota)
         }
         .task(id: "\(cliScanRevision):\(executable)") {
             cliReport = nil

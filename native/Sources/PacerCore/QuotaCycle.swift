@@ -23,6 +23,8 @@ public struct QuotaCycle: Codable, Equatable, Sendable, Identifiable {
 
 /// Only the current seven-day cycle for each bucket is retained.
 public struct QuotaCycleHistory: Codable, Equatable, Sendable {
+    public static let sampleInterval: TimeInterval = 5 * 60
+    public static let maximumPoints = 2018
     public private(set) var cycles: [QuotaCycle] = []
     public private(set) var accountScope: String?
     public private(set) var lastCapturedAt: Date?
@@ -32,6 +34,32 @@ public struct QuotaCycleHistory: Codable, Equatable, Sendable {
         let oldest = now.addingTimeInterval(-retention)
         for index in cycles.indices { cycles[index].points.removeAll { $0.timestamp < oldest } }
         cycles.removeAll { $0.resetsAt <= now || $0.points.isEmpty }
+    }
+
+    /// Keep the first actual reading and the latest reading in each five-minute
+    /// interval. This also bounds fine-grained caches written by older versions.
+    public mutating func compact() {
+        for index in cycles.indices {
+            let cycle = cycles[index]
+            var points: [QuotaPoint] = []
+            for point in cycle.points.sorted(by: { $0.timestamp < $1.timestamp }) {
+                Self.append(point, to: &points, origin: cycle.startedAt)
+            }
+            cycles[index].points = points
+        }
+    }
+
+    private static func append(_ point: QuotaPoint, to points: inout [QuotaPoint], origin: Date) {
+        if let last = points.last, last.timestamp == point.timestamp {
+            points[points.count - 1] = point
+        } else if points.count > 1, let last = points.last,
+                  floor(last.timestamp.timeIntervalSince(origin) / sampleInterval) ==
+                  floor(point.timestamp.timeIntervalSince(origin) / sampleInterval) {
+            points[points.count - 1] = point
+        } else { points.append(point) }
+        if points.count > maximumPoints {
+            points = [points[0]] + Array(points.suffix(maximumPoints - 1))
+        }
     }
 
     public mutating func record(_ snapshot: QuotaSnapshot) {
@@ -60,14 +88,8 @@ public struct QuotaCycleHistory: Codable, Equatable, Sendable {
                 let earliest = max(cycles[index].startedAt, oldest)
                 cycles[index].points.removeAll { $0.timestamp < earliest }
                 let point = QuotaPoint(timestamp: snapshot.capturedAt, remaining: remaining)
-                if cycles[index].points.last?.timestamp == point.timestamp {
-                    cycles[index].points[cycles[index].points.count - 1] = point
-                } else { cycles[index].points.append(point) }
-                if cycles[index].points.count > 20161 {
-                    // Bound manual-refresh bursts while retaining the newest readings.
-                    let first = cycles[index].points.first!
-                    cycles[index].points = [first] + Array(cycles[index].points.suffix(20160))
-                }
+                let origin = cycles[index].startedAt
+                Self.append(point, to: &cycles[index].points, origin: origin)
             } else {
                 if let existing { cycles.remove(at: existing) }
                 cycles.append(QuotaCycle(id: window.id, bucketName: bucket.name, startedAt: start,
@@ -85,13 +107,58 @@ public struct QuotaCycleHistory: Codable, Equatable, Sendable {
 
 public actor QuotaHistoryStore {
     private let cache: QuotaCycleCache
+    private struct Pending {
+        let home: URL
+        let snapshot: QuotaSnapshot
+        let history: QuotaCycleHistory
+    }
+    private var pending: Pending?
+    private var lastWritten: Pending?
+    private var lastWriteAt: Date?
+    private var scheduledFlush: Task<Void, Never>?
+    public static let saveInterval: TimeInterval = 30 * 60
     public init(directory: URL) { cache = QuotaCycleCache(directory: directory) }
+    deinit { scheduledFlush?.cancel() }
     public func restore(home: URL, accountScope: String, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
         cache.load(home: home, accountScope: accountScope, now: now)
     }
-    public func save(home: URL, snapshot: QuotaSnapshot, history: QuotaCycleHistory) -> Bool {
-        do { try cache.save(home: home, snapshot: snapshot, history: history); return true }
-        catch { return false }
+    public func save(home: URL, snapshot: QuotaSnapshot, history: QuotaCycleHistory,
+                     now: Date = Date()) -> Bool {
+        guard snapshot.accountScope != nil else { return true }
+        let next = Pending(home: home, snapshot: snapshot, history: history)
+        if let pending, !sameContext(pending, next), !flush(at: now) { return false }
+        if let pending, sameContext(pending, next), snapshot.capturedAt < pending.snapshot.capturedAt { return true }
+        pending = next
+        if (lastWritten.map({ !sameContext($0, next) }) ?? true) ||
+           now.timeIntervalSince(lastWriteAt ?? .distantPast) >= Self.saveInterval {
+            return flush(at: now)
+        }
+        if scheduledFlush == nil {
+            let delay = max(0, Self.saveInterval - now.timeIntervalSince(lastWriteAt ?? .distantPast))
+            scheduledFlush = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                _ = await self?.flush()
+            }
+        }
+        return true
+    }
+    @discardableResult
+    public func flush(at now: Date = Date()) -> Bool {
+        scheduledFlush?.cancel(); scheduledFlush = nil
+        guard let value = pending else { return true }
+        do {
+            try cache.save(home: value.home, snapshot: value.snapshot, history: value.history)
+            lastWritten = value; lastWriteAt = now; pending = nil
+            return true
+        } catch { return false }
+    }
+    private func sameContext(_ a: Pending, _ b: Pending) -> Bool {
+        a.home.standardizedFileURL == b.home.standardizedFileURL &&
+        a.snapshot.accountScope == b.snapshot.accountScope &&
+        a.history.cycles.map { $0.id } == b.history.cycles.map { $0.id } &&
+        a.history.cycles.map { $0.startedAt } == b.history.cycles.map { $0.startedAt }
     }
 }
 
@@ -116,7 +183,7 @@ public struct QuotaCycleCache: Sendable {
               now.timeIntervalSince(value.snapshot.capturedAt) <= 7 * 86400 else { return nil }
         var history = value.history
         history.prune(at: now)
-        if history != value.history { try? save(home: home, snapshot: value.snapshot, history: history) }
+        history.compact()
         return (value.snapshot, history)
     }
 

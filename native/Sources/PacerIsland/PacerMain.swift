@@ -48,7 +48,7 @@ enum PacerMain {
         let index = args.firstIndex(of: "--observe-seconds")
         let seconds = index.flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }.map { min(60, max(5, $0)) } ?? 20
         print("Local event endpoint available: \(RealtimeActivityMonitor.localEndpointAvailable(home: home))")
-        await monitor.start(home: home) { _, _, _ in }
+        await monitor.start(home: home, useSSHFallback: !args.contains("--desktop-only")) { _, _, _ in }
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         let statuses = await monitor.statuses()
         for (source, status) in statuses.sorted(by: { $0.key < $1.key }) {
@@ -134,7 +134,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         model.onSettings = { [weak self] in self?.showSettings() }
         model.onQuit = { [weak self] in self?.quit() }
         model.onRelaunch = { [weak self] in self?.relaunchForLanguage() }
-        model.onOpenActivity = { [weak self] activity in self?.openActivity(activity) }
+        model.onOpenActivity = { [weak self] activity in
+            guard let self else { return L10n.text("activity.open_failed") }
+            return await self.openActivity(activity)
+        }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
         UNUserNotificationCenter.current().delegate = self
         let mainMenu = NSMenu()
@@ -227,15 +230,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         return nil
     }
     @objc private func openCodex() {
-        let url = URL(fileURLWithPath: "/Applications/Codex.app")
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        guard let url = CodexApplicationResolver.find() else {
+            model.navigationError = L10n.text("activity.app_missing"); panel.show(); return
+        }
         model.close()
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            guard let error else { return }
+            let message = L10n.text("activity.open_failed_detail", CodexDiagnosticText.description(of: error))
+            Task { @MainActor in self?.model.navigationError = message; self?.panel.show() }
+        }
     }
     @objc private func demoStageChanged(_ sender: NSMenuItem) {
         if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
     }
-    private func openActivity(_ activity: SessionActivity) {
+    private func openActivity(_ activity: SessionActivity) async -> String? {
         if model.isDemo {
             let window = demoConversationWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 320),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -244,14 +252,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
                 self?.demoConversationWindow?.orderOut(nil); self?.panel.show()
             })
             window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-            demoConversationWindow = window; model.close(); return
+            demoConversationWindow = window; model.close(); return nil
         }
-        guard model.canOpen(activity), let threadURL = activity.threadURL else { return }
-        let appURL = URL(fileURLWithPath: "/Applications/Codex.app")
-        guard FileManager.default.fileExists(atPath: appURL.path) else { return }
+        guard model.canOpen(activity), let threadURL = activity.threadURL else { return L10n.text("activity.open_failed") }
+        guard let appURL = CodexApplicationResolver.find() else { return L10n.text("activity.app_missing") }
         model.close()
-        NSWorkspace.shared.open([threadURL], withApplicationAt: appURL,
-            configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+        return await withCheckedContinuation { continuation in
+            NSWorkspace.shared.open([threadURL], withApplicationAt: appURL,
+                configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                    continuation.resume(returning: error.map { L10n.text("activity.open_failed_detail", CodexDiagnosticText.description(of: $0)) })
+                }
+        }
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {

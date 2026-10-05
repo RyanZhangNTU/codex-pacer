@@ -15,7 +15,18 @@ public struct AttentionPolicy: Sendable {
     private var activityBaseline: [String: SessionActivity]?
     private var quotaScope: String?
     private var lowWindows: Set<String> = []
+    private var pendingRequests: Set<String> = []
     public init() {}
+
+    public mutating func requestNotices(_ requests: [PendingAttentionRequest]) -> [IslandNotice] {
+        let current = Set(requests.map { $0.id + ":" + $0.kind.rawValue })
+        defer { pendingRequests = current }
+        return requests.filter { !pendingRequests.contains($0.id + ":" + $0.kind.rawValue) }.map { request in
+            IslandNotice(id: "request:" + request.id, kind: .waitingForInput,
+                title: L10n.text(request.kind == .approval ? "attention.approval" : "attention.input"),
+                detail: request.sourceName ?? L10n.text("activity.local_task"))
+        }
+    }
 
     public mutating func quotaNotices(_ snapshot: QuotaSnapshot, at now: Date, threshold: Double = 15) -> [IslandNotice] {
         guard !snapshot.isStale(at: now) else { return [] }
@@ -56,7 +67,7 @@ public struct AttentionPolicy: Sendable {
             default: return nil
             }
             return IslandNotice(id: "\(activity.id):\(activity.turnID ?? ""):\(kind.rawValue):\(changed.timeIntervalSince1970)",
-                kind: kind, title: kind == .completed ? L10n.text("activity.turn_finished") : activity.phase.label, detail: activity.project)
+                kind: kind, title: activity.turnFailed ? L10n.text("activity.failed") : kind == .completed ? L10n.text("activity.turn_finished") : activity.phase.label, detail: activity.project)
         }
     }
 }

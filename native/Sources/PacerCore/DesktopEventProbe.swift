@@ -219,12 +219,20 @@ enum DesktopEventProbe {
         def close(self):self.s.close()
     class DesktopSession:
         def __init__(self,ipc):
-            self.ws=ipc;self.ready=False;self.client=None;self.pending_follow={};self.streams={};self.attached=set();self.followed=set();self.excluded=set();self.queue=[];self.notices=0;self.opened=time.monotonic();self.last_receive=self.opened;self.resync={}
+            self.ws=ipc;self.ready=False;self.client=None;self.pending_follow={};self.streams={};self.attached=set();self.followed=set();self.waiting=OrderedDict();self.excluded=set();self.queue=[];self.notices=0;self.opened=time.monotonic();self.last_receive=self.opened;self.resync={}
             ipc.send({'type':'request','method':'initialize','requestId':str(uuid.uuid4()),'sourceClientId':'initializing-client','version':0,'params':{'clientType':'codex-pacer-events'}})
         def follow(self,tid,value):
             self.ws.send({'type':'broadcast','method':'thread-stream-following-changed','sourceClientId':self.client,'version':1,'params':{'conversationId':tid,'hostId':'local','following':value}})
             if value:self.followed.add(tid)
             else:self.followed.discard(tid)
+        def drain_waiting(self):
+            while self.waiting and len(self.followed)<32:
+                tid,_=self.waiting.popitem(last=False)
+                if tid not in self.excluded and tid not in self.followed:self.follow(tid,True)
+        def release(self,tid):
+            self.queue_event({'method':'stream/released','threadId':tid,'at':time.time()})
+            self.follow(tid,False);self.streams.pop(tid,None);self.attached.discard(tid);self.resync.pop(tid,None)
+            self.waiting.pop(tid,None);self.drain_waiting()
         def queue_event(self,e):
             if self.queue and ('Delta' in e['method'] or e['method'].endswith('/delta')) and self.queue[-1].get('method')==e['method'] and self.queue[-1].get('itemId')==e.get('itemId') and self.queue[-1].get('threadId')==e['threadId']:self.queue[-1]=e
             else:self.queue.append(e)
@@ -251,7 +259,10 @@ enum DesktopEventProbe {
             targets=v.get('targetClientIds')
             if targets is not None and self.client not in targets:return
             if method in ('thread-stream-following-changed','thread-stream-following-status-requested') and v.get('version')==1:
-                if (method.endswith('status-requested') or p.get('following') is True) and tid not in self.excluded and tid not in self.followed and len(self.followed)<32:self.follow(tid,True)
+                if (method.endswith('status-requested') or p.get('following') is True) and tid not in self.excluded and tid not in self.followed:
+                    if len(self.waiting)<64:self.waiting[tid]=True
+                    self.drain_waiting()
+                elif p.get('following') is False:self.waiting.pop(tid,None)
                 return
             if method!='thread-stream-state-changed' or tid not in self.followed:return
             if v.get('version')!=11:raise ValueError('IPC version changed')
@@ -266,12 +277,14 @@ enum DesktopEventProbe {
                 emit({'kind':'streamInvalidated','threadId':tid})
                 if str(error)=='excluded review':
                     self.excluded.add(tid);self.follow(tid,False)
+                    self.waiting.pop(tid,None);self.drain_waiting()
                 elif time.monotonic()>=self.resync.get(tid,0):
                     self.resync[tid]=time.monotonic()+30;self.follow(tid,True)
                 return
             if projection.turn and projection.turn.get('status')=='inProgress':self.attached.add(tid)
             else:self.attached.discard(tid)
             for e in events:self.queue_event(e)
+            if projection.turn and projection.turn.get('status') in TERMINAL:self.release(tid)
     """#
     static let script = library + "\n" + #"""
     ipc=None;session=None;reconnect_at=0;next_status=0;flush_at=0;status_stamp=None;loop_iterations=0;scans=0

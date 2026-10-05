@@ -39,47 +39,46 @@ struct IslandView: View {
 
 private struct IslandHeader: View {
     @ObservedObject var model: IslandModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
-    private let completionColor = Color(red: 0.56, green: 0.84, blue: 0.79)
     private var attached: Bool { model.isAttached }
 
     var body: some View {
         HStack(spacing: 6) {
             Button { model.openCompletionOrPin() } label: {
                 HStack(spacing: attached ? 4 : 6) {
-                    if !model.pendingCompletions.isEmpty {
-                        Image(systemName: model.pendingCompletions.first?.phase == .interrupted ? "pause.circle.fill" : "checkmark.circle.fill")
-                            .font(.system(size: 12)).foregroundStyle(completionColor)
-                            .symbolEffect(.bounce, value: reduceMotion ? nil : model.pendingCompletions.first?.phaseChangedAt)
-                    } else {
-                        Circle().fill(model.accent).frame(width: 6, height: 6)
-                    }
-                    Text(model.pendingCompletions.isEmpty ? model.compactStatus : model.completionSummary)
-                        .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    if model.showsRate, let rate = model.rate {
-                        Text(String(format: "%.0f", rate))
+                    Image(systemName: model.headerSymbol).font(.system(size: 12)).foregroundStyle(model.headerTint)
+                    Text(model.headerDisplayStatus)
+                        .font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
+                    if !model.hidesHeaderRate, model.showsRate, let rate = model.rate {
+                        Text(model.headerRateText ?? "—")
                             .font(.system(size: 10)).monospacedDigit()
                             .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
-                            .help(L10n.text(model.rateIsFresh ? "rate.total" : "rate.recent", rate))
+                            .help(L10n.text(model.rateIsFresh ? "rate.total" : "rate.partial", rate))
                         Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
-                    } else if model.expanded && model.showsRate && model.pendingCompletions.isEmpty {
+                    } else if !attached && model.expanded && model.showsRate && model.pendingCompletions.isEmpty {
                         Text(L10n.text("activity.sampling")).font(.system(size: 10)).foregroundStyle(secondary)
                     }
                 }.frame(height: model.topHeight).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: attached ? .infinity : nil, alignment: .leading)
-            .help(model.pendingCompletions.first.map { L10n.text("activity.open_help", model.projectName($0)) } ?? L10n.text("common.pin"))
-            .accessibilityLabel(model.pendingCompletions.isEmpty ? L10n.text("activity.header_pin", model.compactStatus) : L10n.text("activity.header_open", model.completionSummary))
+            .help(model.pendingInputRequests.first.map { L10n.text("attention.open", $0.sourceName ?? L10n.text("activity.local_task")) } ??
+                model.pendingCompletions.first.map { L10n.text("activity.open_help", model.projectName($0)) } ?? L10n.text("common.pin"))
+            .accessibilityLabel(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ?
+                L10n.text("activity.header_pin", model.headerStatus) : L10n.text("activity.header_open", model.headerStatus))
             if model.notchWidth > 0 { Color.clear.frame(width: model.notchWidth + 8, height: model.topHeight) }
             else { Spacer(minLength: 10) }
             Button { model.togglePin() } label: {
                 HStack(spacing: 6) {
+                    if let warning = model.quotaWarningSymbol {
+                        Image(systemName: warning).font(.system(size: 10))
+                            .foregroundStyle((model.remaining ?? 100) <= 0 ? Color.red : Color.orange)
+                            .accessibilityLabel(L10n.text((model.remaining ?? 100) <= 0 ? "quota.exhausted" : "notice.low_quota"))
+                    }
                     Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
                     Text(model.compactWindow).font(.system(size: 10)).foregroundStyle(secondary)
                     if model.stale || model.errorMessage != nil {
-                        Image(systemName: "clock").font(.system(size: 10)).foregroundStyle(secondary)
+                        Image(systemName: StatusSymbols.freshness).font(.system(size: 10)).foregroundStyle(secondary)
                     }
                 }.frame(height: model.topHeight).contentShape(Rectangle())
             }
@@ -126,7 +125,7 @@ private struct IslandExpandedContent: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
-                if let notice = model.notice {
+                if let notice = model.notice, !notice.id.hasPrefix("request:") {
                     Label(L10n.text("notice.body", notice.title, notice.detail), systemImage: "bell")
                         .font(.system(size: 12)).foregroundStyle(model.accent).padding(.bottom, 8)
                 }
@@ -150,16 +149,9 @@ private struct IslandExpandedContent: View {
         } else {
             TaskPagerView(model: model)
         }
-        if !model.unavailableSSH.isEmpty {
-            Button { model.onSettings?() } label: {
-                Label(model.unavailableSSH.count == 1
-                    ? L10n.text("source.ssh_unavailable_named", model.unavailableSSH[0])
-                    : L10n.text("source.ssh_unavailable_count", model.unavailableSSH.count), systemImage: "network")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
-            .help(L10n.text("common.open_settings"))
+        if let error = model.navigationError {
+            Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
         }
     }
 
@@ -203,7 +195,7 @@ private struct IslandExpandedContent: View {
     private var footer: some View {
         HStack(spacing: 12) {
             if model.stale || model.errorMessage != nil {
-                Label(L10n.text("common.not_updated"), systemImage: "clock").font(.system(size: 12)).help(model.freshnessText)
+                Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness).font(.system(size: 12)).help(model.freshnessText)
             }
             Spacer(minLength: 4)
             Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").frame(width: 24, height: 26) }

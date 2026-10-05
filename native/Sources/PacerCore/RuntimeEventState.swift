@@ -17,6 +17,13 @@ struct RuntimeEventState: Sendable {
     private var fallback: [String: SessionActivity] = [:]
     private var live: [String: SessionActivity] = [:]
     private var invalidated: Set<String> = []
+    private var released: Set<String> = []
+    private var idleOrder: [String: Int] = [:]
+    private var confirmedIdle: [String: Date] = [:]
+    private var arrival = 0
+    private var snapshotID: String?
+    private var nextSnapshotPart = 0
+    private var stagedFallback: [String: SessionActivity] = [:]
     private(set) var status = RuntimeStreamStatus()
     let sourceID: String?
     let sourceName: String?
@@ -27,10 +34,34 @@ struct RuntimeEventState: Sendable {
             streamed: live.values.filter {
                 (status.connected && ($0.hasLiveEvidence || invalidated.contains($0.id))) ||
                 ($0.hasLiveEvidence && [.completed, .interrupted].contains($0.phase))
-            })
+            }).filter { value in
+                guard let idle = confirmedIdle[value.id], ![.completed, .interrupted].contains(value.phase) else { return true }
+                return (value.phaseChangedAt ?? value.turnStartedAt ?? .distantPast) > idle
+            }
     }
     mutating func replaceLocalFallback(_ values: [SessionActivity]) {
         fallback = Dictionary(values.map { ($0.canonicalized().id, $0.canonicalized()) }, uniquingKeysWith: { _, newer in newer })
+    }
+    func isConfirmedIdle(thread: String) -> Bool {
+        let id = (sourceID ?? "local") + ":" + thread.lowercased()
+        guard let idle = confirmedIdle[id] else { return false }
+        return ![live[id], fallback[id]].compactMap { $0 }.contains {
+            [.running, .waitingForInput].contains($0.phase) && ($0.phaseChangedAt ?? .distantPast) > idle
+        }
+    }
+    /// Deliver terminal/gap evidence once before reclaiming unloaded transport
+    /// state. CompletionInbox owns card retention and rejects older log replay.
+    mutating func releasePublishedState() {
+        for id in released {
+            if let value = live[id], let logged = fallback[id],
+               let merged = ActivitySourceMerger.merge(logged: [logged], streamed: [value]).first {
+                fallback[id] = merged
+            }
+            live.removeValue(forKey: id)
+            invalidated.remove(id)
+            idleOrder.removeValue(forKey: id)
+        }
+        released.removeAll()
     }
     mutating func consume(_ frame: [String: Any]) {
         if frame["kind"] as? String == "streamInvalidated", let thread = frame["threadId"] as? String {
@@ -51,21 +82,74 @@ struct RuntimeEventState: Sendable {
             if !status.connected {
                 live = live.filter { [.completed, .interrupted].contains($0.value.phase) }
                 invalidated.removeAll()
+                idleOrder = idleOrder.filter { live[$0.key] != nil }
+                released.formIntersection(live.keys)
+                snapshotID = nil; stagedFallback.removeAll()
             }
         } else if frame["kind"] as? String == "runtime", let event = frame["event"] as? [String: Any],
                   let thread = event["threadId"] as? String, UUID(uuidString: thread) != nil {
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
             var value = live[id] ?? fallback[id] ?? SessionActivity(id: id, sourceHost: sourceName, sourceHostID: sourceID, phaseAwareRate: true)
+            if event["method"] as? String == "stream/released" {
+                if ![.completed, .interrupted].contains(value.phase) { value.markUnconfirmed(); invalidated.insert(id) }
+                live[id] = value; released.insert(id)
+                return
+            }
             value.consumeLive(event)
+            if event["method"] as? String == "thread/observed", event["status"] as? String == "idle", let seconds = event["at"] as? Double {
+                confirmedIdle[id] = Date(timeIntervalSince1970: seconds)
+                if confirmedIdle.count > 64 {
+                    for key in confirmedIdle.keys.sorted(by: { confirmedIdle[$0]! > confirmedIdle[$1]! }).dropFirst(64) { confirmedIdle.removeValue(forKey: key) }
+                }
+            } else if event["method"] as? String == "turn/started" || event["method"] as? String == "turn/attached" ||
+                        (event["method"] as? String == "thread/observed" && event["status"] as? String == "active") {
+                confirmedIdle.removeValue(forKey: id)
+            }
+            if event["method"] as? String == "turn/completed", [.completed, .interrupted].contains(value.phase), let date = value.phaseChangedAt {
+                confirmedIdle[id] = date
+                if confirmedIdle.count > 64 {
+                    for key in confirmedIdle.keys.sorted(by: { confirmedIdle[$0]! > confirmedIdle[$1]! }).dropFirst(64) { confirmedIdle.removeValue(forKey: key) }
+                }
+            }
             live[id] = value
+            arrival &+= 1
             if value.hasLiveEvidence { invalidated.remove(id) }
+            if event["method"] as? String == "thread/status/changed", event["status"] as? String == "notLoaded" {
+                if value.phase == .unknown { invalidated.insert(id) }
+                released.insert(id)
+            } else if value.hasLiveEvidence, [.running, .waitingForInput].contains(value.phase) {
+                released.remove(id)
+            }
+            // Idle metadata never grows with every thread seen during a launch.
+            if !value.hasLiveEvidence && !invalidated.contains(id) && !released.contains(id) {
+                idleOrder[id] = arrival
+            } else { idleOrder.removeValue(forKey: id) }
+            if idleOrder.count > 64 {
+                for key in idleOrder.keys.sorted(by: { (idleOrder[$0] ?? 0) > (idleOrder[$1] ?? 0) }).dropFirst(64) {
+                    live.removeValue(forKey: key)
+                    idleOrder.removeValue(forKey: key)
+                }
+            }
         } else if let rows = frame["sessions"] as? [[String: Any]] {
-            var current: [String: SessionActivity] = [:]
+            let chunked = frame["kind"] as? String == "fallbackChunk"
+            var current: [String: SessionActivity]
+            if chunked {
+                guard let id = frame["snapshotId"] as? String, id.count <= 64,
+                      let part = frame["part"] as? Int, part >= 0, rows.count <= 32 else { return }
+                if part == 0 { snapshotID = id; nextSnapshotPart = 0; stagedFallback = [:] }
+                guard snapshotID == id, part == nextSnapshotPart else {
+                    snapshotID = nil; stagedFallback = [:]; return
+                }
+                nextSnapshotPart += 1
+                current = stagedFallback
+            } else { current = [:] }
             for row in rows {
                 guard let file = row["id"] as? String, file.count < 256, let records = row["records"] as? [[String: Any]] else { continue }
                 let seeded = SessionActivity(id: (sourceID ?? "local") + ":" + file,
                     sourceHost: sourceName, sourceHostID: sourceID, phaseAwareRate: true).canonicalized()
-                var value = row["reset"] as? Bool == true ? seeded : (fallback[seeded.id] ?? seeded)
+                let continuation = chunked && row["continuation"] as? Bool == true
+                var value = continuation ? (current[seeded.id] ?? seeded) :
+                    (row["reset"] as? Bool == true ? seeded : (fallback[seeded.id] ?? seeded))
                 let partial = row["partial"] as? Bool == true
                 let prelude = row["preludeCount"] as? Int ?? 0
                 if partial && prelude == 0 { value.markPartialRate() }
@@ -77,6 +161,12 @@ struct RuntimeEventState: Sendable {
                 if fallback[seeded.id] == nil, [.running, .waitingForInput].contains(value.phase),
                    Date().timeIntervalSince(value.lastObserved ?? .distantPast) > 900 { value.markUnconfirmed() }
                 current[value.canonicalized().id] = value.canonicalized()
+            }
+            if chunked {
+                guard current.count <= 32 else { snapshotID = nil; stagedFallback = [:]; return }
+                stagedFallback = current
+                guard frame["final"] as? Bool == true else { return }
+                snapshotID = nil; stagedFallback = [:]
             }
             fallback = current
         }

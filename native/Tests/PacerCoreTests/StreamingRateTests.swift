@@ -65,6 +65,7 @@ final class StreamingRateTests: XCTestCase {
     func testStreamStartUsageAndBlockingStateUseAuthoritativeCounts() {
         var a = SessionActivity(id: thread, phaseAwareRate: true)
         live(&a, "turn/started", seconds: 0)
+        live(&a, "thread/tokenUsage/updated", seconds: 0, fields: ["outputTokens": 600])
         live(&a, "item/started", seconds: 5, fields: ["itemId": "tool", "itemType": "commandExecution"])
         XCTAssertEqual(a.outputEstimate(at: start.addingTimeInterval(12))?.value, 0)
         live(&a, "item/completed", seconds: 20, fields: ["itemId": "tool", "itemType": "commandExecution"])
@@ -74,6 +75,38 @@ final class StreamingRateTests: XCTestCase {
         live(&a, "thread/tokenUsage/updated", seconds: 22, fields: ["outputTokens": 910])
         XCTAssertEqual(a.phase, .completed)
         XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(22)))
+    }
+    func testNewTurnsSeedCountersWithoutReusingCachedLastRequestOrPreviousTurn() {
+        var a = SessionActivity(id: thread, phaseAwareRate: true)
+        live(&a, "turn/started", seconds: 0)
+        live(&a, "thread/tokenUsage/updated", seconds: 0.5, fields: ["outputTokens": 10_000, "lastOutputTokens": 8_000])
+        XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(0.5)), "Cached request usage is not a measurement of this turn")
+        live(&a, "thread/tokenUsage/updated", seconds: 2.5, fields: ["outputTokens": 10_040, "lastOutputTokens": 40])
+        XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(2.5)), 20)
+        live(&a, "turn/completed", seconds: 3, fields: ["status": "completed"])
+        live(&a, "thread/tokenUsage/updated", seconds: 3.1, fields: ["outputTokens": 20_000])
+        live(&a, "turn/started", seconds: 4, turn: "next")
+        live(&a, "thread/tokenUsage/updated", seconds: 4.5, turn: "next", fields: ["outputTokens": 20_000, "lastOutputTokens": 9_960])
+        XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(4.5)), "Missed final accounting must not enter the next turn's rate")
+        live(&a, "thread/tokenUsage/updated", seconds: 6.5, turn: "next", fields: ["outputTokens": 20_040])
+        XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(6.5)), 20)
+    }
+    func testLateUsageCannotSwitchToAnOldTurnAndToolResumeNeedsANewMeasurement() {
+        var a = SessionActivity(id: thread, phaseAwareRate: true)
+        live(&a, "turn/started", seconds: 0)
+        live(&a, "thread/tokenUsage/updated", seconds: 0, fields: ["outputTokens": 100])
+        live(&a, "thread/tokenUsage/updated", seconds: 2, fields: ["outputTokens": 200])
+        XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(2)), 50)
+        live(&a, "thread/tokenUsage/updated", seconds: 2.5, turn: "old", fields: ["outputTokens": 50_000])
+        XCTAssertEqual(a.turnID, "turn")
+        XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(2.5)), 50)
+        live(&a, "item/started", seconds: 3, fields: ["itemId": "tool", "itemType": "commandExecution"])
+        XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(3)), 0)
+        live(&a, "item/completed", seconds: 4, fields: ["itemId": "tool", "itemType": "commandExecution"])
+        XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(4)), "Finishing a tool must not revive the pre-tool speed")
+        live(&a, "thread/tokenUsage/updated", seconds: 6, fields: ["outputTokens": 400])
+        XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(6)), 60)
+        XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(21)), "A quiet generating turn must expire its numeric estimate")
     }
     func testIdleStatusAndOrphanTerminalDoNotDeclareTaskFinished() {
         var a = SessionActivity(id: thread, phaseAwareRate: true)

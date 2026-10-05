@@ -68,7 +68,7 @@ final class IslandWindowFrameTests: XCTestCase {
                                           topHeight: 32, expanded: false, attached: true)
         let open = IslandGeometry.frame(screen: screen, visible: screen, notchWidth: 185,
                                         topHeight: 32, expanded: true, attached: true, contentHeight: 550)
-        XCTAssertEqual(closed, CGRect(x: 652, y: 1085, width: 424, height: 32))
+        XCTAssertEqual(closed, CGRect(x: 622, y: 1085, width: 484, height: 32))
         let motion = IslandMotion(from: .resting(at: open, expanded: true), to: closed, opening: false, start: 0)
         var previous = open
         var lastChange = 0.0

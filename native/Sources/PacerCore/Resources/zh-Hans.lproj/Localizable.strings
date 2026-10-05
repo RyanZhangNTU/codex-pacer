@@ -199,7 +199,7 @@
 "quota.unavailable" = "额度暂不可用";
 "quota.waiting_sample" = "等待采样";
 "quota.waiting_update" = "等待更新";
-"rate.recent" = "最近估算：%.1f token/s";
+"rate.partial" = "已测得任务合计：%.1f token/s；其余任务等待用量数据";
 "rate.total" = "合计输出速度：%.1f token/s";
 "redaction.account" = "[账户已隐藏]";
 "redaction.bearer" = "Bearer [已隐藏]";
@@ -277,6 +277,16 @@
 "source.ssh_unavailable_named" = "SSH %@ 未连接";
 "source.ssh_unavailable_count" = "%ld 个 SSH 未连接";
 "source.ssh_retrying" = "将自动重试这些 SSH 连接。";
+"settings.saved_quota_window" = "已保存的额度窗口（数据暂不可用）";
+"activity.app_missing" = "未找到 Codex，请确认已安装 Codex 应用。";
+"activity.open_failed" = "无法打开会话。";
+"activity.open_failed_detail" = "无法打开会话：%@";
+"attention.approval" = "待你审批";
+"attention.input" = "待你回复";
+"attention.count" = "%d 项待处理";
+"attention.connection_issue" = "连接异常";
+"attention.open" = "%@ 需要你处理，打开会话";
+"attention.local_connection_issue" = "本机实时连接不可用，状态更新可能延迟。";
 "updates.automatic" = "自动检查更新";
 "updates.available" = "发现新版本 %@，可在更新窗口中安装。";
 "updates.cancelled" = "已取消更新。";
@@ -288,3 +298,17 @@
 "updates.no_update" = "本次没有找到可安装的新版本。";
 "updates.policy" = "每天检查新版本，点击安装后下载并重启应用。";
 "updates.section" = "应用更新";
+
+"activity.task_count_compact" = "%@ 个任务";
+"activity.tool_compact" = "执行工具";
+"activity.responding_compact" = "正在回复";
+
+"activity.done_compact" = "1 已完成";
+
+"activity.stopped_compact" = "1 已中断";
+
+"activity.ended_compact" = "%ld 已结束";
+
+"activity.failed" = "任务失败";
+
+"quota.exhausted" = "额度用尽";
