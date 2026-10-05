@@ -151,8 +151,15 @@ private struct IslandExpandedContent: View {
             TaskPagerView(model: model)
         }
         if !model.unavailableSSH.isEmpty {
-            Label(L10n.text("source.ssh_unavailable"), systemImage: "network").font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
-                .help(model.unavailableSSH.joined(separator: "、"))
+            Button { model.onSettings?() } label: {
+                Label(model.unavailableSSH.count == 1
+                    ? L10n.text("source.ssh_unavailable_named", model.unavailableSSH[0])
+                    : L10n.text("source.ssh_unavailable_count", model.unavailableSSH.count), systemImage: "network")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 8)
+            .help(L10n.text("common.open_settings"))
         }
     }
 

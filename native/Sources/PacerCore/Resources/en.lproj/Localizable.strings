@@ -261,6 +261,7 @@
 "settings.reminders" = "Reminders";
 "settings.rescan" = "Rescan";
 "settings.retention" = "Keep Finished Tasks";
+"settings.ssh_unavailable" = "Disconnected SSH Sources";
 "settings.subscriptions" = "Live Subscriptions";
 "settings.system_notifications" = "Also Use System Notifications";
 "settings.test_connection" = "Test Connection";
@@ -273,6 +274,9 @@
 "settings.use_automatic" = "Use Automatic Discovery";
 "settings.waiting_reminder" = "Waiting for Reply";
 "source.ssh_unavailable" = "SSH disconnected";
+"source.ssh_unavailable_named" = "SSH %@ is disconnected";
+"source.ssh_unavailable_count" = "%ld SSH connections disconnected";
+"source.ssh_retrying" = "Pacer will retry these connections automatically.";
 "updates.automatic" = "Automatically Check for Updates";
 "updates.available" = "Version %@ is available to install in the update window.";
 "updates.cancelled" = "Update cancelled.";
