@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.4
+
+- Name the SSH source when one connection is unavailable, and show the number of disconnected SSH sources when there are several.
+- Open Settings from the connection notice and list each disconnected SSH source in Data Sources.
+
 ## 2.1.3
 
 - Restore the island's window level before its frame after dismissing update UI, keeping Notch mode attached to the screen's top edge.
