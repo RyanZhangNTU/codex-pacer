@@ -261,6 +261,7 @@
 "settings.reminders" = "提醒";
 "settings.rescan" = "重新检测";
 "settings.retention" = "结束任务保留";
+"settings.ssh_unavailable" = "未连接的 SSH 来源";
 "settings.subscriptions" = "实时订阅";
 "settings.system_notifications" = "同时使用系统通知";
 "settings.test_connection" = "测试连接";
@@ -273,6 +274,9 @@
 "settings.use_automatic" = "使用自动查找";
 "settings.waiting_reminder" = "等待回复提醒";
 "source.ssh_unavailable" = "SSH 未连接";
+"source.ssh_unavailable_named" = "SSH %@ 未连接";
+"source.ssh_unavailable_count" = "%ld 个 SSH 未连接";
+"source.ssh_retrying" = "将自动重试这些 SSH 连接。";
 "updates.automatic" = "自动检查更新";
 "updates.available" = "发现新版本 %@，可在更新窗口中安装。";
 "updates.cancelled" = "已取消更新。";
