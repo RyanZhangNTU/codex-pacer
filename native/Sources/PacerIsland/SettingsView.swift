@@ -140,6 +140,26 @@ struct SettingsView: View {
                 }
                 Section(L10n.text("settings.data_source")) {
                     Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
+                    if monitorSSH, !model.unavailableSSH.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(L10n.text("settings.ssh_unavailable"))
+                                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                            ForEach(Array(model.unavailableSSH.enumerated()), id: \.offset) { _, name in
+                                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                    Text(name).fixedSize(horizontal: false, vertical: true)
+                                        .textSelection(.enabled)
+                                    Spacer(minLength: 8)
+                                    Text(L10n.text("source.ssh_unavailable"))
+                                        .font(.system(size: 11)).foregroundStyle(.orange).fixedSize()
+                                }
+                                .font(.system(size: 12))
+                            }
+                            Text(L10n.text("source.ssh_retrying"))
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 4)
+                    }
                     HStack {
                         TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))
                         Button(L10n.text("common.choose")) { choose(directory: false) }
