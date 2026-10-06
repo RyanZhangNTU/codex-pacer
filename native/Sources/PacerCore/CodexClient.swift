@@ -400,4 +400,15 @@ final class PipeChunkReader: @unchecked Sendable {
         return count == 0 ? Data() : nil
     }
     func stop() { lock.lock(); active = false; lock.unlock() }
+
+    /// Pause the OS reader after one chunk. The actor rearms it after consuming
+    /// that chunk, so a large fallback cannot overrun the bounded AsyncStream.
+    func pausingHandler(_ continuation: AsyncStream<Data>.Continuation) -> @Sendable (FileHandle) -> Void {
+        { [self] handle in
+            guard let data = read() else { return }
+            handle.readabilityHandler = nil
+            if data.isEmpty { continuation.finish() }
+            else if case .dropped = continuation.yield(data) { continuation.finish() }
+        }
+    }
 }

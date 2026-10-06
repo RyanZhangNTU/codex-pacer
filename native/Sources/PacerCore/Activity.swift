@@ -46,9 +46,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     public private(set) var phase: ActivityPhase = .unknown
     public private(set) var turnID: String?
+    public private(set) var turnStartedAt: Date?
     public private(set) var lastObserved: Date?
     public private(set) var phaseChangedAt: Date?
     public private(set) var stage: ActivityStage = .starting
+    public private(set) var turnFailed = false
+    public private(set) var waitingForApproval = false
     public private(set) var modelName: String?
     public private(set) var isInternalReview = false
     private var waitingCallID: String?
@@ -59,6 +62,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var liveItems: Set<String> = []
     public private(set) var hasLiveEvidence = false
     public private(set) var liveTurnStarted = false
+    private var liveStatusOnly = false
+    private var retiredTurns: [String] = []
+    private var lastIdentifiedTurn: String?
     public func canonicalized() -> SessionActivity {
         guard let threadID else { return self }
         var value = self
@@ -72,7 +78,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         self.sourceHost = sourceHost
         self.sourceHostID = sourceHostID
         self.project = project
-        threadID = UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36)))?.uuidString.lowercased()
+        // Canonical host IDs may contain dots (SSH aliases/IP addresses). Do
+        // not strip a supposed file extension before checking their UUID tail.
+        threadID = (UUID(uuidString: String(id.suffix(36))) ??
+            UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36))))?.uuidString.lowercased()
     }
 
     mutating func updateTitle(_ value: String?) {
@@ -95,7 +104,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard phase == .running else { return nil }
         return phaseAwareRate ? generationRate.estimate(at: now) : outputRate.estimate(at: now)
     }
+    public var rateExpiresAt: Date? {
+        guard phase == .running else { return nil }
+        return phaseAwareRate ? generationRate.expiresAt : outputRate.expiresAt
+    }
     public func detail(at now: Date) -> String {
+        if turnFailed, phase == .interrupted { return L10n.text("activity.failed") }
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return L10n.text("activity.last_waiting") }
         if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return L10n.text("activity.last_tool") }
         return observedPhase(at: now) == .running ? stage.label : observedPhase(at: now).label
@@ -147,7 +161,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         case "task_started":
             beginTurn(eventTurn, at: date)
         case "task_complete", "turn_aborted":
+            retireTurn(turnID)
             phase = kind == "turn_aborted" ? .interrupted : .completed
+            turnFailed = false; waitingForApproval = false
             waitingCallID = nil
             toolCalls.removeAll()
             outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll()
@@ -157,29 +173,46 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                let total = info["total_token_usage"] as? [String: Any],
                let output = total["output_tokens"] as? Int {
                 outputRate.observe(totalOutput: output, at: date)
-                generationRate.observe(total: output, last: (info["last_token_usage"] as? [String: Any])?["output_tokens"] as? Int, at: date)
+                generationRate.observe(total: output, at: date)
             }
         default: break
         }
     }
 
     private mutating func beginTurn(_ id: String?, at date: Date) {
-        hasLiveEvidence = false; liveTurnStarted = false
+        // An unknown ID during reconnect does not prove the old turn ended.
+        if let id { identifyTurn(id) }
+        hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
         turnID = id
+        turnStartedAt = date
         phase = .running
+        turnFailed = false; waitingForApproval = false
         stage = .starting
         lastObserved = date
         waitingCallID = nil
         toolCalls.removeAll()
         outputRate.startTurn(at: date)
-        generationRate.start(at: date, complete: true); liveItems.removeAll()
+        generationRate.start(); liveItems.removeAll()
         phaseChangedAt = date
+    }
+
+    private mutating func retireTurn(_ id: String?) {
+        guard let id, !retiredTurns.contains(id) else { return }
+        retiredTurns.append(id)
+        if retiredTurns.count > 64 { retiredTurns.removeFirst(retiredTurns.count - 64) }
+    }
+
+    private mutating func identifyTurn(_ id: String) {
+        if id != lastIdentifiedTurn { retireTurn(lastIdentifiedTurn) }
+        lastIdentifiedTurn = id; turnID = id
     }
 
     /// Retain provenance while rejecting lifecycle/rate assumptions across a gap.
     mutating func markDiscontinuity() {
         phase = .unknown
+        turnFailed = false; waitingForApproval = false
         turnID = nil
+        turnStartedAt = nil
         lastObserved = nil
         phaseChangedAt = nil
         waitingCallID = nil
@@ -189,13 +222,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     mutating func markUnconfirmed() {
         phase = .unknown
-        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); hasLiveEvidence = false; liveTurnStarted = false
+        waitingForApproval = false
+        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
     }
 
     mutating func markPartialRate() {
         guard phaseAwareRate else { return }
         let date = lastObserved ?? Date()
-        generationRate.start(at: date, complete: false)
+        generationRate.start()
         generationRate.setWaiting(!toolCalls.isEmpty, at: date)
     }
 
@@ -218,6 +252,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if name == "request_user_input" || name.hasSuffix(".request_user_input") {
                 waitingCallID = callID
                 phase = .waitingForInput
+                waitingForApproval = false
                 phaseChangedAt = date
             } else if phase == .running { stage = .tool }
         case "function_call_output", "custom_tool_call_output":
@@ -228,6 +263,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if waitingCallID == callID {
                 waitingCallID = nil
                 phase = .running
+                waitingForApproval = false
                 phaseChangedAt = date
             }
             if phase == .running { stage = toolCalls.isEmpty ? .thinking : .tool }
@@ -262,16 +298,38 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 modelName?.lowercased().hasPrefix("codex-auto-review") == true
             return
         }
+        if method == "thread/observed" {
+            // The remote runtime's metadata read confirms activity even during
+            // a quiet tool/sleep, before this subscriber sees an item or turn ID.
+            guard event["status"] as? String == "active" else { return }
+            if !hasLiveEvidence || [.completed, .interrupted, .unknown].contains(phase) {
+                beginTurn(nil, at: date); generationRate.start()
+                liveStatusOnly = true
+            }
+            hasLiveEvidence = true; liveTurnStarted = true; lastObserved = date
+            let flags = event["flags"] as? [String] ?? []
+            if flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput") {
+                phase = .waitingForInput; waitingForApproval = flags.contains("waitingOnApproval")
+                generationRate.setWaiting(true, at: date)
+            } else if phase == .waitingForInput { phase = .running; waitingForApproval = false }
+            return
+        }
         if method == "thread/status/changed" {
             let status = event["status"] as? String
-            if ["notLoaded", "systemError"].contains(status ?? "") { markUnconfirmed() }
+            // Loading/error status cannot revoke an authoritative turn ending.
+            guard ![.completed, .interrupted].contains(phase) else { return }
+            if ["notLoaded", "systemError"].contains(status ?? "") {
+                markUnconfirmed(); lastObserved = date; phaseChangedAt = date
+            }
             // Idle status alone cannot prove that a particular turn completed.
             if status == "active", let flags = event["flags"] as? [String],
                flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput"), turnID != nil {
                 phase = .waitingForInput; phaseChangedAt = date
+                waitingForApproval = flags.contains("waitingOnApproval")
                 generationRate.setWaiting(true, at: date)
             } else if status == "active", phase == .waitingForInput {
                 phase = .running; phaseChangedAt = date
+                waitingForApproval = false
                 if liveItems.isEmpty { generationRate.setWaiting(false, at: date) }
             }
             return
@@ -279,29 +337,47 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard ["turn/started", "turn/attached", "turn/completed", "item/started", "item/completed", "thread/tokenUsage/updated",
                "item/agentMessage/delta", "item/plan/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"].contains(method),
               let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
+        guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
-            guard turnID == eventTurn, [.running, .waitingForInput].contains(phase) else { return }
+            guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            identifyTurn(eventTurn); liveStatusOnly = false
+            retireTurn(eventTurn)
             phase = event["status"] as? String == "completed" ? .completed : .interrupted
+            turnFailed = event["status"] as? String == "failed"; waitingForApproval = false
             phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true
             generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolCalls.removeAll()
             return
         }
         if !["turn/started", "turn/attached"].contains(method), turnID == eventTurn, [.completed, .interrupted].contains(phase) { return }
+        if method == "thread/tokenUsage/updated" {
+            // Delayed accounting from another turn cannot start or switch the
+            // current task. A metadata-confirmed active turn may adopt its ID.
+            guard [.running, .waitingForInput].contains(phase),
+                  turnID == eventTurn || (turnID == nil && liveStatusOnly) else { return }
+        }
         if ["turn/started", "turn/attached"].contains(method) {
             let start = (event["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? date
             beginTurn(eventTurn, at: start <= date ? start : date)
-            if method == "turn/attached" { generationRate.start(at: date, complete: false) }
-            liveTurnStarted = true
+            if method == "turn/attached" { generationRate.start() }
+            liveTurnStarted = true; liveStatusOnly = false
+        } else if turnID == nil, liveStatusOnly, hasLiveEvidence, liveTurnStarted,
+                  [.running, .waitingForInput].contains(phase) {
+            // Runtime metadata already confirmed this new turn. Its first
+            // item only supplies the missing ID; restarting the accumulator
+            // here would erase that evidence and let an older completed log
+            // override every subsequent item and the ending.
+            identifyTurn(eventTurn); liveStatusOnly = false
         } else if turnID != eventTurn || !hasLiveEvidence {
             // Attaching halfway through a request must not divide all of that
             // request's tokens by the short period since we attached.
             beginTurn(eventTurn, at: date)
-            generationRate.start(at: date, complete: false)
+            generationRate.start()
+            liveStatusOnly = false
         } else if [.completed, .interrupted].contains(phase) { return }
         hasLiveEvidence = true; phaseAwareRate = true; lastObserved = max(date, lastObserved ?? date)
-        let kind = event["itemType"] as? String ?? ""
+        let kind = RuntimeItemKind.normalized(event["itemType"] as? String ?? "")
         let modelItem = ["reasoning", "agentMessage", "plan"].contains(kind)
-        let toolItem = ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabToolCall", "webSearch", "imageView"].contains(kind)
+        let toolItem = RuntimeItemKind.isTool(kind)
         if method == "item/started", let id = event["itemId"] as? String {
             if toolItem {
                 if liveItems.count < 128 { liveItems.insert(id) }
@@ -318,7 +394,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             generationRate.setWaiting(false, at: date); phase = .running
             stage = method.contains("reasoning") ? .thinking : .responding
         } else if method == "thread/tokenUsage/updated", let total = event["outputTokens"] as? Int {
-            generationRate.observe(total: total, last: event["lastOutputTokens"] as? Int, at: date)
+            generationRate.observe(total: total, at: date)
         }
     }
 
@@ -378,11 +454,24 @@ public actor LocalActivityReader {
             if !files.contains(where: { $0.0 == file }) { files.append((file, date)) }
             watchURLs.append(file.deletingLastPathComponent())
         }
+        var unavailable: [SessionActivity] = []
+        for (file, cursor) in cursors where !manager.isReadableFile(atPath: file.path) {
+            var activity = cursor.activity
+            if ![.completed, .interrupted].contains(activity.phase) { activity.markUnconfirmed() }
+            unavailable.append(activity)
+            cursors.removeValue(forKey: file)
+            metadata.removeValue(forKey: file)
+        }
         for (file, cursor) in cursors where [.running, .waitingForInput].contains(cursor.activity.phase) && !files.contains(where: { $0.0 == file }) {
             files.append((file, cursor.activity.lastObserved ?? .distantPast))
         }
         // Reviews must not consume the user-task discovery slots.
-        var selected = cursors.filter { [.running, .waitingForInput].contains($0.value.activity.phase) }.map(\.key)
+        func covered(_ file: URL) -> Bool {
+            excludingThreads.contains(String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased())
+        }
+        var selected = cursors.filter {
+            [.running, .waitingForInput].contains($0.value.activity.phase) && !covered($0.key)
+        }.map(\.key)
         let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
         for file in candidates {
@@ -406,13 +495,21 @@ public actor LocalActivityReader {
             }
             if metadata[file]?.activity.isInternalReview != true, !selected.contains(file) { selected.append(file) }
         }
-        cursors = cursors.filter { selected.contains($0.key) }
+        // Keep covered baselines for reconnects without spending fallback slots.
+        cursors = cursors.filter { selected.contains($0.key) || covered($0.key) }
         for file in selected {
             let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
             if excludingThreads.contains(id) { continue }
             guard let attributes = try? manager.attributesOfItem(atPath: file.path),
                   let size = (attributes[.size] as? NSNumber)?.uint64Value,
-                  let handle = try? FileHandle(forReadingFrom: file) else { continue }
+                  let handle = try? FileHandle(forReadingFrom: file) else {
+                if var activity = cursors.removeValue(forKey: file)?.activity {
+                    if ![.completed, .interrupted].contains(activity.phase) { activity.markUnconfirmed() }
+                    unavailable.append(activity)
+                }
+                metadata.removeValue(forKey: file)
+                continue
+            }
             defer { try? handle.close() }
             let identity = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
             var cursor = cursors[file]
@@ -454,9 +551,14 @@ public actor LocalActivityReader {
                     metadata[file] = (identity, current.activity)
                     cursors.removeValue(forKey: file)
                 } else { cursors[file] = current }
-            } catch { continue }
+            } catch {
+                if ![.completed, .interrupted].contains(current.activity.phase) { current.activity.markUnconfirmed() }
+                unavailable.append(current.activity)
+                cursors.removeValue(forKey: file)
+                metadata.removeValue(forKey: file)
+            }
         }
-        return (cursors.values.map(\.activity).filter { !$0.isInternalReview }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
+        return ((cursors.values.map(\.activity) + unavailable).filter { !$0.isInternalReview }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
                 Array(Set(watchURLs + selected)))
     }
     /// Recover the latest explicit turn anchor without loading conversation history.

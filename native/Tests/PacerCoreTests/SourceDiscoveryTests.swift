@@ -3,6 +3,43 @@ import SQLite3
 @testable import PacerCore
 
 final class SourceDiscoveryTests: XCTestCase {
+    func testCoveredCursorsDoNotSpendNewLogDiscoverySlots() async throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + formatter.string(from: now))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let ids = (0..<16).map { _ in UUID().uuidString.lowercased() }
+        func write(_ id: String, at date: Date) throws {
+            let file = day.appendingPathComponent("rollout-" + id + ".jsonl")
+            try record("event_msg", payload: ["type": "task_started", "turn_id": id], at: date).write(to: file)
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
+        }
+        for id in ids { try write(id, at: now) }
+        let reader = LocalActivityReader()
+        let initial = await reader.read(home: home, now: now)
+        XCTAssertEqual(initial.activities.count, 16)
+        let new = UUID().uuidString.lowercased(); try write(new, at: now.addingTimeInterval(1))
+        let result = await reader.read(home: home, now: now.addingTimeInterval(2), excludingThreads: Set(ids))
+        XCTAssertTrue(result.activities.contains { $0.threadID == new })
+        XCTAssertTrue(result.activities.contains { $0.threadID == ids[0] })
+    }
+
+    func testRemovedRunningLogBecomesUnconfirmedAndFreesItsCursor() async throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + formatter.string(from: now))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-" + UUID().uuidString + ".jsonl")
+        try record("event_msg", payload: ["type": "task_started", "turn_id": "turn"], at: now).write(to: file)
+        let reader = LocalActivityReader()
+        let first = await reader.read(home: home, now: now)
+        XCTAssertEqual(first.activities.first?.phase, .running)
+        try FileManager.default.removeItem(at: file)
+        let lost = await reader.read(home: home, now: now.addingTimeInterval(3600))
+        XCTAssertEqual(lost.activities.first?.phase, .unknown)
+        let next = await reader.read(home: home, now: now.addingTimeInterval(3601))
+        XCTAssertTrue(next.activities.isEmpty)
+    }
     private func temp() throws -> URL {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -106,7 +143,7 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertEqual(activity.phase,.running)
         XCTAssertEqual(activity.sourceHost,"one")
     }
-    func testLocalAndSshRetainedRatesAreAggregatedWithoutSelection() throws {
+    func testLocalAndSshFreshRatesAggregateAndExpiredRatesDisappearWithoutSelection() throws {
         let start = Date(timeIntervalSince1970: 1000000)
         var local = SessionActivity(id: "local")
         var ssh = SessionActivity(id: "ssh", sourceHost: "one")
@@ -118,9 +155,12 @@ final class SourceDiscoveryTests: XCTestCase {
             local.consume(try record("event_msg", payload: ["type":"token_count","info":["total_token_usage":["output_tokens":count]]], at:start.addingTimeInterval(seconds)))
             ssh.consume(try record("event_msg", payload: ["type":"token_count","info":["total_token_usage":["output_tokens":count * 2]]], at:start.addingTimeInterval(seconds)))
         }
+        let fresh = ActivityOverview(activities: [local, ssh], at: start.addingTimeInterval(3))
+        XCTAssertEqual(fresh.displayedRate, 30)
+        XCTAssertTrue(fresh.rateIsFresh)
         let overview = ActivityOverview(activities: [local, ssh], at:start.addingTimeInterval(60))
         XCTAssertEqual(overview.running.count, 2)
-        XCTAssertEqual(overview.displayedRate, 30)
+        XCTAssertNil(overview.displayedRate)
         XCTAssertFalse(overview.rateIsFresh)
         XCTAssertNil(overview.tokensPerSecond)
     }

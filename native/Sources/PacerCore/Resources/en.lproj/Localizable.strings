@@ -199,7 +199,7 @@
 "quota.unavailable" = "Quota unavailable";
 "quota.waiting_sample" = "Waiting for samples";
 "quota.waiting_update" = "Waiting for an update";
-"rate.recent" = "Recent estimate: %.1f token/s";
+"rate.partial" = "Measured tasks: %.1f token/s; other tasks are awaiting usage data";
 "rate.total" = "Total output rate: %.1f token/s";
 "redaction.account" = "[redacted]";
 "redaction.bearer" = "Bearer [redacted]";
@@ -277,6 +277,16 @@
 "source.ssh_unavailable_named" = "SSH %@ is disconnected";
 "source.ssh_unavailable_count" = "%ld SSH connections disconnected";
 "source.ssh_retrying" = "Pacer will retry these connections automatically.";
+"settings.saved_quota_window" = "Saved quota window (data unavailable)";
+"activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
+"activity.open_failed" = "The conversation could not be opened.";
+"activity.open_failed_detail" = "The conversation could not be opened: %@";
+"attention.approval" = "Approval needed";
+"attention.input" = "Reply needed";
+"attention.count" = "%d pending";
+"attention.connection_issue" = "Link issue";
+"attention.open" = "%@ needs your input. Open chat";
+"attention.local_connection_issue" = "Local live connection unavailable. Status updates may be delayed.";
 "updates.automatic" = "Automatically Check for Updates";
 "updates.available" = "Version %@ is available to install in the update window.";
 "updates.cancelled" = "Update cancelled.";
@@ -288,3 +298,17 @@
 "updates.no_update" = "No installable update was found.";
 "updates.policy" = "Check for updates daily. Choose to install an update to download it and relaunch the app.";
 "updates.section" = "App Updates";
+
+"activity.task_count_compact" = "%@ tasks";
+"activity.tool_compact" = "Using tools";
+"activity.responding_compact" = "Replying";
+
+"activity.done_compact" = "1 done";
+
+"activity.stopped_compact" = "1 stopped";
+
+"activity.ended_compact" = "%ld ended";
+
+"activity.failed" = "Task failed";
+
+"quota.exhausted" = "Quota exhausted";

@@ -5,9 +5,13 @@ public struct CompletionInbox: Sendable {
     private struct Identity: Equatable, Sendable {
         let turnID: String?
         let phase: ActivityPhase
+        let failed: Bool
         let changedAt: Date?
+        let startedAt: Date?
         init(_ activity: SessionActivity) {
             turnID = activity.turnID; phase = activity.phase; changedAt = activity.phaseChangedAt
+            failed = activity.turnFailed
+            startedAt = activity.turnStartedAt
         }
     }
     private struct Entry: Sendable {
@@ -34,8 +38,23 @@ public struct CompletionInbox: Sendable {
         dismissed[activity.id] = Identity(activity)
         entries.removeValue(forKey: activity.id)
     }
-    public mutating func observe(_ activities: [SessionActivity], at now: Date, retention: TimeInterval) {
-        let current = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+    @discardableResult
+    public mutating func observe(_ activities: [SessionActivity], at now: Date, retention: TimeInterval) -> [SessionActivity] {
+        // A released stream may be followed by an older log baseline. Only a
+        // newer state/new live turn can supersede a retained or dismissed ending.
+        let current = Dictionary(activities.filter { activity in
+            let ended = entries[activity.id].map { Identity($0.activity) } ?? dismissed[activity.id]
+            guard let ended, let endedAt = ended.changedAt else { return true }
+            if activity.hasLiveEvidence, activity.liveTurnStarted, activity.turnID != ended.turnID { return true }
+            if let turn = activity.turnID, turn != ended.turnID,
+               let started = activity.turnStartedAt, let previousStart = ended.startedAt,
+               started > previousStart { return true }
+            // Source state can be reclaimed or its bounded idle marker evicted.
+            // An unknown transport state alone cannot revoke a proven ending.
+            if activity.phase == .unknown { return false }
+            let changed = activity.phaseChangedAt ?? activity.lastObserved ?? .distantPast
+            return changed > endedAt || (changed == endedAt && [.completed, .interrupted].contains(activity.phase))
+        }.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         for activity in current.values {
             guard !activity.isInternalReview, [.completed, .interrupted].contains(activity.phase),
                   let changedAt = activity.phaseChangedAt else {
@@ -46,17 +65,24 @@ public struct CompletionInbox: Sendable {
             if let old = entries[activity.id], Identity(old.activity) != identity { entries.removeValue(forKey: activity.id) }
             guard dismissed[activity.id] != identity else { continue }
             let age = now.timeIntervalSince(changedAt)
-            guard age >= 0, retention == 0 || age < retention else { continue }
+            // Converting Date through Unix seconds can round the same instant
+            // slightly forward. Do not lose a just-delivered ending to that
+            // sub-millisecond difference; genuinely future records stay out.
+            guard age >= -0.001, retention == 0 || age < retention else { continue }
             if var entry = entries[activity.id] {
                 entry.activity = activity; entries[activity.id] = entry
             } else {
                 let old = previous[activity.id]
-                let unread = old.map { [.running, .waitingForInput].contains($0.phase) && $0.turnID == activity.turnID } ?? false
+                let unread = (activity.hasLiveEvidence && activity.liveTurnStarted) || (old.map {
+                    [.running, .waitingForInput].contains($0.phase) &&
+                        ($0.turnID == activity.turnID || ($0.turnID == nil && $0.hasLiveEvidence))
+                } ?? false)
                 entries[activity.id] = Entry(activity: activity, unread: unread)
             }
         }
         previous = current.filter { !$0.value.isInternalReview }
         prune(at: now, retention: retention)
+        return Array(current.values)
     }
     public mutating func prune(at now: Date, retention: TimeInterval) {
         guard retention > 0 else { return }

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.2.0
+
+- Flush queued SSH completions before disconnect, discover later loaded tasks through bounded pagination, and prevent retired-turn events or stale fallback logs from overriding current state.
+- Recognize live SSH tasks without a fallback log when the host alias contains dots, including IP-address aliases.
+- Keep completion reminders when a completed subscription has been released and a later unload/error status arrives.
+- Preserve active turns and their endings when start timestamps are missing; notify once for short live turns completed within one UI batch, and normalize collaboration-tool wait states across local and SSH sources.
+- Seed output-rate counters independently for each turn, accumulate rapid updates, and expire stale numbers after 15 seconds without extra polling; prevent cached usage and delayed previous-turn reports from inflating new-turn speed.
+- Discover new Desktop/SSH tasks from routing-index changes even when the owner emits no new following announcement.
+- Run the usual local Desktop event subscription natively, skip transcript bodies and release historical item storage to reduce collection overhead.
+- Retain five-minute weekly curve samples and coalesce normal cache writes over thirty minutes; flush on account/cycle changes, sleep and orderly exit.
+- Keep nonblocking questions visible while a task continues running, observing both server requests and Desktop message questions for local and enabled SSH sources.
+- Use approved native status icons with explicit task/reply/approval labels; show pending attention in matching task rows and keep quota warnings on the right.
+- Show the current stage for a single running task and a task count for multiple tasks.
+- Use Desktop hints and remote runtime-index changes to discover SSH activity, including when no Desktop owner announces a new turn; confirm states through the runtime and retain explicit completion reminders.
+- Preserve a metadata-confirmed new turn when its first item supplies the turn ID, so an older completed log cannot hide running state or the next completion reminder.
+- Keep the next turn in an open local conversation visible immediately, clear asynchronous reminders on steering replies, and preserve event order through connection shutdown.
+- Preserve completion reminders across reconnects and failed conversation opens, exclude internal reviews, bound fallback transport, and improve CLI/application discovery and saved quota-window handling.
+
 ## 2.1.4
 
 - Name the SSH source when one connection is unavailable, and show the number of disconnected SSH sources when there are several.

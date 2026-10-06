@@ -7,9 +7,13 @@ final class IslandModel: ObservableObject {
     @Published var quota: QuotaSnapshot? {
         didSet { if oldValue?.windows.count != quota?.windows.count { onLayoutChange?() } }
     }
-    @Published var activities: [SessionActivity] = []
+    @Published var activities: [SessionActivity] = [] {
+        didSet { scheduleRateExpiry() }
+    }
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var unavailableSSH: [String] = []
+    @Published var navigationError: String?
+    @Published private(set) var attentionRequests: [PendingAttentionRequest] = []
     private var localActivities: [SessionActivity] = []
     private var remoteActivities: [SessionActivity] = []
     @Published var history = QuotaCycleHistory()
@@ -30,7 +34,8 @@ final class IslandModel: ObservableObject {
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
     var onRelaunch: (() -> String?)?
-    var onOpenActivity: ((SessionActivity) -> Void)?
+    var onOpenActivity: ((SessionActivity) async -> String?)?
+    private var openingActivities: Set<String> = []
     var onFocusRequested: (() -> Void)?
     func canOpen(_ activity: SessionActivity) -> Bool {
         (demo || activity.threadURL != nil) && (demo || activity.sourceHostID != nil ||
@@ -61,6 +66,8 @@ final class IslandModel: ObservableObject {
     private var localTask: Task<Void, Never>?
     private var closeWork: DispatchWorkItem?
     private var noticeWork: DispatchWorkItem?
+    private var rateExpiryWork: DispatchWorkItem?
+    private var rateExpiryAt: Date?
     private var sleeping = false
     private var stopped = false
     private(set) var interactionSuspended = false
@@ -70,6 +77,7 @@ final class IslandModel: ObservableObject {
     private var sourceGeneration = 0
     private var observations: [NSObjectProtocol] = []
     private let demo: Bool
+    private let demoClock: () -> Date
     var isDemo: Bool { demo }
 
     var home: URL {
@@ -87,15 +95,22 @@ final class IslandModel: ObservableObject {
     var running: [SessionActivity] { overview.running }
     var waiting: [SessionActivity] { overview.waiting }
     var visibleActivities: [SessionActivity] {
-        activities.filter {
+        var displayed = activities.filter {
             guard !$0.isInternalReview else { return false }
             if [.completed, .interrupted].contains($0.phase) {
                 return true
             }
-            return [.running, .waitingForInput, .unknown].contains($0.observedPhase(at: now)) ||
-            now.timeIntervalSince($0.phaseChangedAt ?? .distantPast) < 120
-        }.sorted {
-            let lhs = priority($0.observedPhase(at: now)), rhs = priority($1.observedPhase(at: now))
+            return [.running, .waitingForInput].contains($0.observedPhase(at: now))
+        }
+        // Pending input can arrive before runtime metadata. Keep its routing
+        // visible in the same paginated task region without duplicating a task.
+        var ids = Set(displayed.map(\.id))
+        for request in pendingInputRequests where ids.insert(request.activity.id).inserted {
+            displayed.append(request.activity)
+        }
+        return displayed.sorted {
+            let lhs = attentionKind(for: $0) != nil ? 0 : priority($0.observedPhase(at: now))
+            let rhs = attentionKind(for: $1) != nil ? 0 : priority($1.observedPhase(at: now))
             if lhs != rhs { return lhs < rhs }
             let left = $0.phaseChangedAt ?? .distantPast, right = $1.phaseChangedAt ?? .distantPast
             return left == right ? $0.id < $1.id : left > right
@@ -108,13 +123,71 @@ final class IslandModel: ObservableObject {
     var pendingCompletions: [SessionActivity] {
         UserDefaults.standard.bool(forKey: "completionReminder") ? completionInbox.unreadActivities : []
     }
+    var pendingInputRequests: [PendingAttentionRequest] {
+        UserDefaults.standard.bool(forKey: "inputReminder") ? attentionRequests : []
+    }
+    var headerStatus: String {
+        if let first = pendingInputRequests.first {
+            return L10n.text(first.kind == .approval ? "attention.approval" : "attention.input")
+        }
+        if !pendingCompletions.isEmpty { return completionSummary }
+        if let first = waiting.first { return L10n.text(first.waitingForApproval ? "attention.approval" : "attention.input") }
+        let count = running.count + waiting.count
+        if count == 1, let task = running.first {
+            switch task.stage {
+            case .tool: return L10n.text("activity.tool_compact")
+            case .responding: return L10n.text("activity.responding_compact")
+            case .thinking, .starting: return task.stage.label
+            }
+        }
+        return count == 0 ? L10n.text("activity.idle") : L10n.text("activity.task_count_compact", count > 99 ? "99+" : String(count))
+    }
+    var headerDisplayStatus: String { headerStatus }
+    var headerSymbol: String {
+        if let request = pendingInputRequests.first { return request.kind == .approval ? StatusSymbols.approval : StatusSymbols.input }
+        if let completed = pendingCompletions.first { return StatusSymbols.symbol(for: completed) }
+        if let first = waiting.first { return StatusSymbols.symbol(for: first) }
+        let latest = running.max {
+            let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
+            return left == right ? $0.id < $1.id : left < right
+        }
+        return latest.map { StatusSymbols.symbol(for: $0) } ?? StatusSymbols.idle
+    }
+    var taskAccent: Color { Color(red: 0.56, green: 0.84, blue: 0.79) }
+    var headerTint: Color {
+        if !pendingInputRequests.isEmpty || !waiting.isEmpty { return .orange }
+        if let first = pendingCompletions.first { return first.turnFailed ? .red : first.phase == .interrupted ? .orange : taskAccent }
+        return running.isEmpty ? .secondary : taskAccent
+    }
+    func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? {
+        let matching = pendingInputRequests.filter { $0.activity.id == activity.id }
+        if matching.contains(where: { $0.kind == .approval }) { return .approval }
+        if !matching.isEmpty { return .input }
+        return activity.phase == .waitingForInput ? (activity.waitingForApproval ? .approval : .input) : nil
+    }
+    var hidesHeaderRate: Bool {
+        isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
+    }
+    var quotaWarningSymbol: String? {
+        guard !stale, errorMessage == nil, let remaining, remaining <= 15 else { return nil }
+        return remaining <= 0 ? StatusSymbols.empty : StatusSymbols.low
+    }
+    var headerRateText: String? {
+        guard let rate else { return nil }
+        if isAttached && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
+        if isAttached && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
+        return String(format: "%.0f", rate)
+    }
+    var hasConnectionIssue: Bool { !unavailableSSH.isEmpty || streamStatuses["local"].map { !$0.connected } == true }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { completionInbox.isUnread(activity) }
     var completionSummary: String {
         let pending = pendingCompletions
-        return pending.count == 1 ? (pending[0].phase == .interrupted ? L10n.text("activity.turn_interrupted") : L10n.text("activity.turn_finished")) : L10n.text("activity.finished_count", pending.count)
+        guard let first = pending.first else { return L10n.text("activity.idle") }
+        return pending.count == 1 ? L10n.text(first.turnFailed ? "activity.failed" : first.phase == .interrupted ? "activity.stopped_compact" : "activity.done_compact") : L10n.text("activity.ended_compact", pending.count)
     }
     func openCompletionOrPin() {
-        if let activity = pendingCompletions.first, canOpen(activity) { open(activity) }
+        if let request = pendingInputRequests.first, canOpen(request.activity) { open(request.activity) }
+        else if let activity = pendingCompletions.first, canOpen(activity) { open(activity) }
         else { togglePin() }
     }
     var selectedWindow: QuotaWindow? {
@@ -170,8 +243,9 @@ final class IslandModel: ObservableObject {
         hideProjects ? L10n.text("activity.hidden_name") : (activity.title ?? activity.project)
     }
 
-    init(demo: Bool = false, initiallyExpanded: Bool = false) {
+    init(demo: Bool = false, initiallyExpanded: Bool = false, demoClock: @escaping () -> Date = { Date() }) {
         self.demo = demo
+        self.demoClock = demoClock
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
@@ -183,12 +257,14 @@ final class IslandModel: ObservableObject {
     func start() {
         if !demo { refreshQuota(); refreshActivity(); refreshRemote() }
         scheduleClock()
+        scheduleRateExpiry()
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.sleeping = true
                 self.invalidateWork()
+                _ = await self.historyStore.flush()
                 await self.realtimeMonitor.shutdown()
                 if let client = self.client { await client.disconnect() }
             }
@@ -198,6 +274,7 @@ final class IslandModel: ObservableObject {
                 guard let self else { return }
                 self.sleeping = false
                 self.now = Date()
+                self.scheduleRateExpiry()
                 self.refreshQuota(); self.refreshActivity(); self.refreshRemote()
             }
         })
@@ -231,12 +308,29 @@ final class IslandModel: ObservableObject {
     }
     func close() { pinned = false; setExpanded(false) }
     func open(_ activity: SessionActivity) {
-        guard canOpen(activity) else { return }
-        completionInbox.dismiss(activity)
-        activities.removeAll { $0.id == activity.id && [.completed, .interrupted].contains($0.phase) }
-        if notice?.id.hasPrefix(activity.id + ":") == true { noticeWork?.cancel(); notice = nil }
-        onLayoutChange?(); onStatusChange?()
-        onOpenActivity?(activity)
+        guard canOpen(activity), let open = onOpenActivity, openingActivities.insert(activity.id).inserted else { return }
+        navigationError = nil
+        let generation = sourceGeneration
+        let prefix = activity.id + ":" + (activity.turnID ?? "") + ":"
+        let openedNoticeID = notice.flatMap { $0.id.hasPrefix(prefix) ? $0.id : nil }
+        Task { [weak self] in
+            let failure = await open(activity)
+            guard let self else { return }
+            defer { self.openingActivities.remove(activity.id) }
+            guard !self.stopped, generation == self.sourceGeneration else { return }
+            if let failure {
+                self.navigationError = failure
+                self.setExpanded(true)
+            } else {
+                self.completionInbox.dismiss(activity)
+                self.activities.removeAll {
+                    $0.id == activity.id && $0.turnID == activity.turnID && $0.phase == activity.phase &&
+                    $0.phaseChangedAt == activity.phaseChangedAt && [.completed, .interrupted].contains($0.phase)
+                }
+                if let openedNoticeID, self.notice?.id == openedNoticeID { self.noticeWork?.cancel(); self.notice = nil }
+            }
+            self.onLayoutChange?(); self.onStatusChange?()
+        }
     }
 
     func refreshQuota() {
@@ -346,25 +440,43 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
-            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable in
-                Task { @MainActor in
+            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable, requests in
+                // The monitor publishes serially. Keep that order on the UI
+                // queue so a later empty snapshot cannot overtake an ending.
+                DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    self.now = Date(); self.remoteActivities = activities; self.streamStatuses = statuses
-                    self.unavailableSSH = unavailable; self.combineActivities()
+                    self.now = Date(); self.remoteActivities = activities
+                    if self.streamStatuses != statuses { self.streamStatuses = statuses }
+                    if self.unavailableSSH != unavailable { self.unavailableSSH = unavailable }
+                    self.observeAttentionRequests(requests)
+                    self.combineActivities()
                 }
             }
         }
     }
+    func observeAttentionRequests(_ requests: [PendingAttentionRequest]) {
+        if attentionRequests != requests { attentionRequests = requests }
+        present(attention.requestNotices(requests))
+        // A resolved async request clears its persistent UI immediately. Its
+        // tool completion alone cannot clear it because the tool is nonblocking.
+        if requests.isEmpty, notice?.id.hasPrefix("request:") == true { noticeWork?.cancel(); notice = nil }
+    }
     private func combineActivities() {
         let oldHeight = panelContentHeight
-        let observed = ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities)
-        completionInbox.observe(observed, at: now, retention: completedRetention)
-        activities = observed.filter {
+        let observed = completionInbox.observe(
+            ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities),
+            at: now, retention: completedRetention)
+        let combined = observed.filter {
             !$0.isInternalReview && ![.completed, .interrupted].contains($0.phase) &&
                 ([.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
         } + completionInbox.activities
+        if activities != combined { activities = combined }
+        if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: combined) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
-        present(attention.activityNotices(activities, at: now))
+        let inputs = Set(pendingInputRequests.map { ($0.sourceHostID ?? "local") + ":" + $0.threadID })
+        present(attention.activityNotices(activities, at: now).filter { notice in
+            notice.kind != .waitingForInput || !inputs.contains(where: { notice.id.hasPrefix($0 + ":") })
+        })
         onStatusChange?()
     }
 
@@ -385,14 +497,17 @@ final class IslandModel: ObservableObject {
         history = QuotaCycleHistory()
         historyWarning = nil
         attention = AttentionPolicy()
+        attentionRequests = []
         completionInbox = CompletionInbox()
         activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         notice = nil
+        navigationError = nil
         noticeWork?.cancel()
         errorMessage = nil
         quotaCLI = nil
         failureCount = 0
         Task { [weak self, reader] in
+            _ = await self?.historyStore.flush()
             await previous?.disconnect()
             await self?.realtimeMonitor.shutdown()
             await reader.reset()
@@ -409,11 +524,13 @@ final class IslandModel: ObservableObject {
         noticeWork?.cancel()
         invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        _ = await historyStore.flush()
         await realtimeMonitor.shutdown()
         await client?.shutdown()
     }
 
     private func invalidateWork() {
+        rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
         sourceGeneration += 1
         refreshTask?.cancel()
         localTask?.cancel()
@@ -435,6 +552,23 @@ final class IslandModel: ObservableObject {
             Task { @MainActor in self?.tick() }
         }
         clock?.tolerance = interval * 0.2
+    }
+    private func scheduleRateExpiry() {
+        let deadline = activities.compactMap(\.rateExpiresAt).filter { $0 > now }.min()
+        guard deadline != rateExpiryAt else { return }
+        rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
+        guard !sleeping, !stopped, let deadline else { return }
+        rateExpiryAt = deadline
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.sleeping, !self.stopped else { return }
+            self.rateExpiryWork = nil; self.rateExpiryAt = nil
+            self.now = Date()
+            self.scheduleRateExpiry()
+            self.onStatusChange?()
+        }
+        rateExpiryWork = work
+        // One UI-only wake-up at the earliest expiry; no quota, log or SSH work.
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow) + 0.01, execute: work)
     }
     private func tick() {
         now = Date()
@@ -476,6 +610,7 @@ final class IslandModel: ObservableObject {
             return
         }
         notice = visible
+        if visible.id.hasPrefix("request:") { return }
         let work = DispatchWorkItem { [weak self] in self?.notice = nil }
         noticeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
@@ -487,7 +622,7 @@ final class IslandModel: ObservableObject {
     }
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
-        now = Date()
+        now = demoClock()
         let observed = DemoScenario.tasks(stage: stage, at: now)
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed
