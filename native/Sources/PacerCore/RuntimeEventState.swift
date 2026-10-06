@@ -89,6 +89,14 @@ struct RuntimeEventState: Sendable {
         } else if frame["kind"] as? String == "runtime", let event = frame["event"] as? [String: Any],
                   let thread = event["threadId"] as? String, UUID(uuidString: thread) != nil {
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
+            if event["method"] as? String == "thread/status/changed",
+               ["notLoaded", "systemError"].contains(event["status"] as? String ?? ""), isConfirmedIdle(thread: thread) {
+                // Terminal state may already have been published and reclaimed.
+                // A later unload cannot create a fresh unknown task that clears
+                // the completion inbox. A confirmed new turn clears this guard.
+                if event["status"] as? String == "notLoaded" { released.insert(id) }
+                return
+            }
             var value = live[id] ?? fallback[id] ?? SessionActivity(id: id, sourceHost: sourceName, sourceHostID: sourceID, phaseAwareRate: true)
             if event["method"] as? String == "stream/released" {
                 if ![.completed, .interrupted].contains(value.phase) { value.markUnconfirmed(); invalidated.insert(id) }
@@ -117,6 +125,9 @@ struct RuntimeEventState: Sendable {
             if event["method"] as? String == "thread/status/changed", event["status"] as? String == "notLoaded" {
                 if value.phase == .unknown { invalidated.insert(id) }
                 released.insert(id)
+            } else if event["method"] as? String == "thread/status/changed", event["status"] as? String == "systemError", value.phase == .unknown {
+                // Keep explicit invalidation ahead of an older running log.
+                invalidated.insert(id)
             } else if value.hasLiveEvidence, [.running, .waitingForInput].contains(value.phase) {
                 released.remove(id)
             }

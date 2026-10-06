@@ -1,5 +1,9 @@
 For macOS 14 or later. This 2.2.0 candidate is being tested locally; it has not been published to the update feed.
 
+- Preserve queued SSH endings across disconnects and discover active tasks beyond an idle first page using bounded metadata requests. Late events from retired turns and old logs cannot overwrite newer task state or explicit runtime errors.
+- Recognize newly observed SSH tasks without a fallback log when their host alias contains dots, including IP-address aliases.
+- Keep completion reminders after the finished subscription is released, including a subsequent conversation unload or archive.
+- Keep timestamp-less active turns and their completion visible, deliver one notification for a live turn that starts and ends within one UI batch, and treat collaboration-tool waits consistently on local and SSH tasks.
 - Fix inflated new-turn token/s and frozen estimates: seed each turn independently, accumulate rapid counters, ignore delayed previous-turn usage, and expire numbers after 15 seconds without extra polling or disk I/O.
 - Discover SSH activity from Desktop routing hints and remote runtime-index changes, including when no Desktop owner announces the new turn. Confirm task states through the runtime.
 - Reduce local event-collection CPU and memory overhead with a native, bounded Desktop subscription that skips transcript bodies.

@@ -2,6 +2,10 @@
 
 ## 2.2.0
 
+- Flush queued SSH completions before disconnect, discover later loaded tasks through bounded pagination, and prevent retired-turn events or stale fallback logs from overriding current state.
+- Recognize live SSH tasks without a fallback log when the host alias contains dots, including IP-address aliases.
+- Keep completion reminders when a completed subscription has been released and a later unload/error status arrives.
+- Preserve active turns and their endings when start timestamps are missing; notify once for short live turns completed within one UI batch, and normalize collaboration-tool wait states across local and SSH sources.
 - Seed output-rate counters independently for each turn, accumulate rapid updates, and expire stale numbers after 15 seconds without extra polling; prevent cached usage and delayed previous-turn reports from inflating new-turn speed.
 - Discover new Desktop/SSH tasks from routing-index changes even when the owner emits no new following announcement.
 - Run the usual local Desktop event subscription natively, skip transcript bodies and release historical item storage to reduce collection overhead.

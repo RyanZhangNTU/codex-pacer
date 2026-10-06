@@ -30,6 +30,56 @@ final class NativeDesktopTests: XCTestCase {
         XCTAssertEqual(runtime.activities.first?.tokensPerSecond(at: epoch.addingTimeInterval(3)), 20)
         XCTAssertNil(ActivityOverview(activities: runtime.activities, at: epoch.addingTimeInterval(18)).displayedRate)
     }
+    func testActiveTurnWithoutTimestampKeepsItsItemsAndEndingAcrossWireFormats() throws {
+        for canonical in [false, true] {
+            for mode in ["snapshot", "add", "collection"] {
+                for timestamp: Any in [NSNull(), 0, 900000] {
+                    var projection = DesktopWireProjection(threadID: thread)
+                    let old: [String: Any] = ["turnId": "old", "status": "completed", "turnStartedAtMs": 900000, "items": []]
+                    let new: [String: Any] = ["turnId": "new", "status": "inProgress", "turnStartedAtMs": timestamp,
+                        "items": [["id": "agent", "type": "collabAgentToolCall", "status": "inProgress"]]]
+                    let collectionPath: [Any] = canonical ? ["turnHistory", "history", "entitiesByKey"] : ["turns"]
+                    let turnPath = collectionPath + (canonical ? ["new"] : [1])
+                    func state(_ includeNew: Bool) -> [String: Any] {
+                        canonical ? ["turnHistory": ["kind": "canonical", "history": ["entitiesByKey": includeNew ? ["old": old, "new": new] : ["old": old]]]] :
+                            ["turns": includeNew ? [old, new] : [old]]
+                    }
+                    var events = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": state(mode == "snapshot")]), owner: "owner", at: epoch)
+                    var revision = 0
+                    if mode != "snapshot" {
+                        let patch: [String: Any] = mode == "add" ? ["op": "add", "path": turnPath, "value": new] :
+                            ["op": "replace", "path": collectionPath, "value": canonical ? ["old": old, "new": new] as Any : [old, new] as Any]
+                        events = try projection.consume(view(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [patch]]), owner: "owner", at: epoch)
+                        revision = 1
+                    }
+                    XCTAssertTrue(projection.isActive)
+                    XCTAssertEqual(projection.currentTurnID, "new")
+                    XCTAssertEqual(projection.retainedItemCount, 1)
+                    XCTAssertTrue(events.contains { $0["itemType"] as? String == "collabToolCall" })
+                    var activity = SessionActivity(id: thread, phaseAwareRate: true)
+                    for event in events { activity.consumeLive(event) }
+                    XCTAssertEqual(activity.stage, .tool)
+                    let ending = try projection.consume(view(["type": "patches", "baseRevision": revision, "revision": revision + 1,
+                        "patches": [["op": "replace", "path": turnPath + ["status"], "value": "completed"]]]), owner: "owner", at: epoch.addingTimeInterval(1))
+                    XCTAssertEqual(projection.currentTurnID, "new")
+                    XCTAssertTrue(ending.contains { $0["method"] as? String == "turn/completed" && $0["turnId"] as? String == "new" })
+                    XCTAssertEqual(projection.retainedItemCount, 0)
+                }
+            }
+        }
+    }
+    func testKnownChronologyKeepsNewerCompletionAheadOfOlderActiveTurn() throws {
+        for canonical in [false, true] {
+            var projection = DesktopWireProjection(threadID: thread)
+            let old: [String: Any] = ["turnId": "old", "status": "inProgress", "turnStartedAtMs": 900000, "items": []]
+            let new: [String: Any] = ["turnId": "new", "status": "completed", "turnStartedAtMs": 950000, "items": []]
+            let state: [String: Any] = canonical ? ["turnHistory": ["kind": "canonical", "history": ["entitiesByKey": ["new": new, "old": old]]]] : ["turns": [new, old]]
+            let events = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": state]), owner: "owner", at: epoch)
+            XCTAssertEqual(projection.currentTurnID, "new")
+            XCTAssertFalse(projection.isActive)
+            XCTAssertFalse(events.contains { $0["method"] as? String == "turn/attached" })
+        }
+    }
     func testRouteDiscoveryBoundsBootstrapWithoutLosingLaterTasks() throws {
         let home = URL(fileURLWithPath: "/private/tmp/pacer-route-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

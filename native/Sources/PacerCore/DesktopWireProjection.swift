@@ -106,7 +106,6 @@ struct DesktopWireProjection {
     private(set) var isTerminal = false
     let threadID: String
     let attentionOnly: Bool
-    private static let tools: Set<String> = ["commandExecution", "mcpToolCall", "fileChange", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView"]
     private static let models: Set<String> = ["reasoning", "agentMessage", "plan"]
     private static let terminal: Set<String> = ["completed", "failed", "interrupted"]
 
@@ -125,17 +124,36 @@ struct DesktopWireProjection {
     }
     private func currentPath() -> [DesktopPath]? { selectionResolved ? selection : findCurrentPath() }
     private func findCurrentPath() -> [DesktopPath]? {
-        var selected: [DesktopPath]?, maximum = -Double.infinity
+        var selected: [DesktopPath]?, selectedTurn: DesktopValue?
         let candidates: [[DesktopPath]]
         if tree["turnHistory"]?["kind"]?.text == "canonical" {
             candidates = canonicalKeys.map { [.key("turnHistory"), .key("history"), .key("entitiesByKey"), .key($0)] }
         } else { candidates = tree["turns"]?.list.indices.map { [.key("turns"), .index($0)] } ?? [] }
         for path in candidates {
             guard let turn = tree.at(path[...]), turn["turnId"]?.text != nil else { continue }
-            let started = turn["turnStartedAtMs"]?.number ?? 0
-            if selected == nil || started > maximum { maximum = started; selected = path }
+            if Self.prefers(turn, over: selectedTurn, currentID: currentTurnID) { selectedTurn = turn; selected = path }
         }
         return selected
+    }
+    private static func prefers(_ turn: DesktopValue, over previous: DesktopValue?, currentID: String?) -> Bool {
+        guard let previous else { return true }
+        let start = turn["turnStartedAtMs"]?.number.flatMap { $0 > 0 ? $0 : nil }
+        let oldStart = previous["turnStartedAtMs"]?.number.flatMap { $0 > 0 ? $0 : nil }
+        if let start, let oldStart, start != oldStart { return start > oldStart }
+        // Activity can arrive before startedAt. A completed historical timestamp
+        // must not hide it; known unequal timestamps still preserve chronology.
+        let active = turn["status"]?.text == "inProgress"
+        let oldActive = previous["status"]?.text == "inProgress"
+        if active != oldActive { return active }
+        // Once observed, a timestamp-less turn must also keep its terminal
+        // event when older history still has a timestamp.
+        if let currentID {
+            let current = turn["turnId"]?.text == currentID
+            let oldCurrent = previous["turnId"]?.text == currentID
+            if current != oldCurrent { return current }
+        }
+        if (start != nil) != (oldStart != nil) { return start != nil }
+        return true // Equal/absent timestamps retain the later wire position.
     }
     private static func string(_ view: JSONFieldView?, limit: Int = 256) -> DesktopValue? {
         view?.string(limit: limit).map(DesktopValue.text)
@@ -265,16 +283,15 @@ struct DesktopWireProjection {
             if let view = views[key] { try tree.patch(path[...], op: "replace", value: Self.turn(view, hydrate: true, attentionOnly: attentionOnly)) }
         }
     }
-    private static func collection(_ view: JSONFieldView, canonical: Bool, attentionOnly: Bool) throws -> DesktopValue {
+    private static func collection(_ view: JSONFieldView, canonical: Bool, attentionOnly: Bool, currentID: String?) throws -> DesktopValue {
         var keys: [String] = [], headers: [String: DesktopValue] = [:], views: [String: JSONFieldView] = [:]
-        var selected: String?, maximum = -Double.infinity
+        var selected: String?
         func append(_ key: String, _ value: JSONFieldView) throws {
             let header = try turn(value, hydrate: false, attentionOnly: attentionOnly)
             if headers[key] == nil { keys.append(key) }
             headers[key] = header; views[key] = value
             if header["turnId"]?.text != nil {
-                let started = header["turnStartedAtMs"]?.number ?? 0
-                if selected == nil || started > maximum { selected = key; maximum = started }
+                if Self.prefers(header, over: selected.flatMap { headers[$0] }, currentID: currentID) { selected = key }
             }
         }
         if canonical { try view.forEachField { try append($0, $1) } }
@@ -293,7 +310,8 @@ struct DesktopWireProjection {
     private static func selectionAffected(_ path: [DesktopPath]) -> Bool {
         guard case .key(let root)? = path.first, ["turnHistory", "turns"].contains(root) else { return false }
         if path.count <= (root == "turns" ? 2 : 4) { return true }
-        return [.key("turnId"), .key("turnStartedAtMs")].contains(path.last ?? .key(""))
+        let headerDepth = root == "turns" ? 3 : 5
+        return path.count == headerDepth && [.key("turnId"), .key("turnStartedAtMs"), .key("status")].contains(path.last ?? .key(""))
     }
     private func projectedValue(path: [DesktopPath], view: JSONFieldView?, op: String) throws -> DesktopValue? {
         guard case .key(let root)? = path.first else { return nil }
@@ -353,25 +371,24 @@ struct DesktopWireProjection {
         if root == "turns" || root == "turnHistory" {
             let start = root == "turns" ? 2 : 4
             if root == "turns", path.count == 1, let view {
-                return try Self.collection(view, canonical: false, attentionOnly: attentionOnly)
+                return try Self.collection(view, canonical: false, attentionOnly: attentionOnly, currentID: currentTurnID)
             }
             if root == "turnHistory", path.count == 1, let view {
                 let fields = try view.fields(["kind", "history"])
                 var entities: DesktopValue = .object([:])
                 if fields["kind"]?.string() == "canonical", let source = try fields["history"]?.fields(["entitiesByKey"])["entitiesByKey"], source.isObject {
-                    entities = try Self.collection(source, canonical: true, attentionOnly: attentionOnly)
+                    entities = try Self.collection(source, canonical: true, attentionOnly: attentionOnly, currentID: currentTurnID)
                 }
                 return .object(["kind": Self.string(fields["kind"]) ?? .null, "history": .object(["entitiesByKey": entities])])
             }
             if root == "turnHistory", keys.prefix(3) != ["turnHistory", "history", "entitiesByKey"] { return keys == [root, "kind"] ? Self.string(view) ?? .null : nil }
             if root == "turnHistory", path.count == 3, let view {
-                return try Self.collection(view, canonical: true, attentionOnly: attentionOnly)
+                return try Self.collection(view, canonical: true, attentionOnly: attentionOnly, currentID: currentTurnID)
             }
             if path.count == start, let view {
                 let header = try Self.turn(view, hydrate: false, attentionOnly: attentionOnly)
                 let current = currentPath().flatMap { tree.at($0[...]) }
-                let hydrate = path == currentPath() || current == nil ||
-                    (header["turnStartedAtMs"]?.number ?? 0) > (current?["turnStartedAtMs"]?.number ?? 0)
+                let hydrate = path == currentPath() || Self.prefers(header, over: current, currentID: currentTurnID)
                 return hydrate ? try Self.turn(view, hydrate: true, attentionOnly: attentionOnly) : header
             }
             guard path.count > start else { return op == "remove" ? .null : nil }
@@ -514,9 +531,9 @@ struct DesktopWireProjection {
                     for item in current["items"]?.list ?? [] {
                         guard let id = item["id"]?.text, let kind = item["type"]?.text else { continue }
                         let old = staged.previousItems[id]
-                        if Self.tools.contains(kind) {
-                            if item["status"]?.text == "inProgress" && old?["status"]?.text != "inProgress" { events.append(event("item/started", ["turnId": turn, "itemId": id, "itemType": kind == "collabAgentToolCall" ? "collabToolCall" : kind])) }
-                            else if old?["status"]?.text == "inProgress", Self.terminal.contains(item["status"]?.text ?? "") { events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": kind])) }
+                        if RuntimeItemKind.isTool(kind) {
+                            if item["status"]?.text == "inProgress" && old?["status"]?.text != "inProgress" { events.append(event("item/started", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
+                            else if old?["status"]?.text == "inProgress", Self.terminal.contains(item["status"]?.text ?? "") { events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
                         }
                     }
                     // Snapshots and whole-container replacements have no
@@ -527,7 +544,7 @@ struct DesktopWireProjection {
                         return selected.starts(with: path) || path == selected + [.key("items")]
                     }
                     if replacedItems, let latest = current["items"]?.list.last(where: {
-                        Self.models.contains($0["type"]?.text ?? "") || Self.tools.contains($0["type"]?.text ?? "")
+                        Self.models.contains($0["type"]?.text ?? "") || RuntimeItemKind.isTool($0["type"]?.text ?? "")
                     }), let kind = latest["type"]?.text, Self.models.contains(kind), let id = latest["id"]?.text {
                         events.append(event("item/started", ["turnId": turn, "itemId": id, "itemType": kind]))
                     }

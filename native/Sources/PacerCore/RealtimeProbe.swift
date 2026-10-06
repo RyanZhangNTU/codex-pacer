@@ -148,17 +148,43 @@ enum RealtimeProbe {
     class Session:
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
+            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set()
             self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.2.0'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')
             rid=self.next_id; self.next_id+=1; self.pending[rid]=(kind,tid,time.monotonic())
             self.ws.send({'id':rid,'method':method,'params':params})
+        def queue_thread(self,tid,priority=False):
+            if not valid_id(tid):return
+            tid=tid.lower()
+            if tid in self.excluded or tid in self.attached or tid in self.attaching or any(v[0]=='read' and v[1]==tid for v in self.pending.values()):return
+            if tid not in self.read_queue and len(self.read_queue)>=128:return
+            self.read_queue[tid]=None
+            if priority:self.read_queue.move_to_end(tid,last=False)
         def read_thread(self,tid):
-            if not valid_id(tid) or tid in self.excluded or any(v[0]=='read' and v[1]==tid for v in self.pending.values()): return
-            if tid in self.attached or tid in self.attaching:return
-            if len(self.pending)>=64 or len(self.attached)>=32: return
-            self.request('thread/read',{'threadId':tid,'includeTurns':False},'read',tid)
+            self.queue_thread(tid,priority=True);self.pump_discovery()
+        def request_loaded(self):
+            if self.listing:return False
+            self.listing=True;self.list_cursor=None;self.list_cursors=set()
+            self.request('thread/loaded/list',{'limit':64},'list');self.last_list=time.monotonic()
+            return True
+        def pump_discovery(self):
+            if not self.ready:return
+            reads=sum(v[0]=='read' for v in self.pending.values())
+            # Reserve an active slot for every outstanding metadata read, so
+            # concurrent active replies cannot exceed the subscription budget.
+            while self.read_queue and reads<8 and len(self.pending)<64 and len(self.attached|self.attaching)+reads<32:
+                tid,_=self.read_queue.popitem(last=False)
+                if tid in self.excluded or tid in self.attached or tid in self.attaching or any(v[0]=='read' and v[1]==tid for v in self.pending.values()):continue
+                self.request('thread/read',{'threadId':tid,'includeTurns':False},'read',tid);reads+=1
+            if self.listing and not self.read_queue and not any(v[0] in ('read','resume','list') for v in self.pending.values()):
+                if self.list_cursor is not None:
+                    cursor=self.list_cursor;self.list_cursor=None
+                    if cursor in self.list_cursors or len(self.list_cursors)>=256:raise ValueError('loaded cursor loop')
+                    self.list_cursors.add(cursor)
+                    self.request('thread/loaded/list',{'limit':64,'cursor':cursor},'list')
+                else:self.listing=False
         def queue_event(self,e):
             if e is None:return
             if e.get('turnId'):self.evidenced.add(e['threadId'])
@@ -169,7 +195,7 @@ enum RealtimeProbe {
         def release(self,tid):
             self.queue_event({'method':'stream/released','threadId':tid,'at':time.time()})
             self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
-            self.known.pop(tid,None);self.buffered.pop(tid,None)
+            self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None)
             for rid,value in list(self.pending.items()):
                 if value[1]==tid and value[0] in ('read','resume'):self.pending.pop(rid,None)
         def trim_metadata(self):
@@ -177,6 +203,9 @@ enum RealtimeProbe {
                 if len(self.known)<=64:break
                 if tid not in self.attached and tid not in self.attaching:self.known.pop(tid,None)
         def receive(self,v):
+            try:self.receive_message(v)
+            finally:self.pump_discovery()
+        def receive_message(self,v):
             if v is None:return
             if 'id' in v and v['id'] in self.pending:
                 kind,tid,_=self.pending.pop(v['id'])
@@ -186,9 +215,13 @@ enum RealtimeProbe {
                 result=v.get('result') or {}
                 if kind=='initialize':
                     self.ws.send({'method':'initialized'}); self.ready=True
-                    self.request('thread/loaded/list',{},'list'); self.last_list=time.monotonic()
+                    self.request_loaded()
                 elif kind=='list':
-                    for thread in result.get('data',[])[:32]: self.read_thread(thread)
+                    threads=result.get('data',[]);cursor=result.get('nextCursor')
+                    if not isinstance(threads,list) or len(threads)>64:raise ValueError('loaded page bound')
+                    if cursor is not None and (not isinstance(cursor,str) or not cursor or len(cursor)>2048 or cursor in self.list_cursors):raise ValueError('loaded cursor')
+                    self.list_cursor=cursor
+                    for thread in threads:self.queue_thread(thread)
                 elif kind in ('read','resume'):
                     thread=result.get('thread') or {}
                     if not isinstance(thread,dict) or thread.get('id')!=tid or is_review(thread):
@@ -245,6 +278,11 @@ enum RealtimeProbe {
         data=obj if isinstance(obj,bytes) else (json.dumps(obj,separators=(',',':'))+'\n').encode()
         while data:
             written=os.write(1,data);data=data[written:]
+    def flush_events(session):
+        if session and session.queue:
+            events=session.queue;session.queue=[]
+            for offset in range(0,len(events),512):
+                emit({'kind':'runtimeBatch','events':events[offset:offset+512]})
     def emit_snapshot(frame):
         # Serialize each batch once; encoded fragments stay within the wire
         # bound without re-encoding every record or an already encoded frame.
@@ -330,8 +368,7 @@ enum RealtimeProbe {
                     ws=None;session=None;reconnect_at=now+30
             if session and (any(now-v[2]>5 for v in session.pending.values()) or now-ws.last_receive>45):raise TimeoutError()
             if session and session.ready and (now-session.last_list>=60 or discovery_dirty and now>=next_discovery):
-                if not any(v[0]=='list' for v in session.pending.values()):
-                    session.request('thread/loaded/list',{},'list');session.last_list=now
+                if session.request_loaded():
                     # The index can be committed before the runtime becomes
                     # active. Recheck twice, bounded and coalesced with writes.
                     discovery_dirty=index_rechecks>0
@@ -348,7 +385,7 @@ enum RealtimeProbe {
                 latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ());scans+=1;emit_snapshot(latest_snapshot);last_scan=time.monotonic()
                 next_scan=now+(120 if session and session.ready else 60)
             if session and session.queue and now>=flush_at:
-                emit({'kind':'runtimeBatch','events':session.queue});session.queue=[];flush_at=now+.25
+                flush_events(session);flush_at=now+.25
             stamp=(bool(session and session.ready),len(session.attached) if session else 0)
             if stamp!=status_stamp and last_scan>-1e8:
                 next_scan=last_scan+(120 if session and session.ready else 60)
@@ -359,7 +396,7 @@ enum RealtimeProbe {
                 if quiet_since is None:quiet_since=now
             else:quiet_since=None
             if once and (ws is None or now>=once_deadline or quiet_since is not None and now-quiet_since>=.3 and not ws.buf):
-                if session and session.queue: emit({'kind':'runtimeBatch','events':session.queue});session.queue=[]
+                flush_events(session)
                 emit(stats(session,scans))
                 break
             if session and session.ready and now>=next_ping:
@@ -368,7 +405,7 @@ enum RealtimeProbe {
             if session and session.pending:delay=min(delay,max(.01,min(5-(now-v[2]) for v in session.pending.values())))
             if session and session.ready and hints:delay=min(delay,max(.01,min(due-now for _,due in hints.values())))
             if index_changes:delay=min(delay,max(.01,index_changes.next_check-now))
-            if session and session.ready and discovery_dirty and not any(v[0]=='list' for v in session.pending.values()):delay=min(delay,max(.01,next_discovery-now))
+            if session and session.ready and discovery_dirty and not session.listing:delay=min(delay,max(.01,next_discovery-now))
             if once:delay=min(delay,.1,max(.01,once_deadline-now))
             readers=([ws.s] if ws else [])+([0] if ssh_lifetime else [])
             if index_changes and index_changes.fd>=0:readers.append(index_changes.fd)
@@ -380,9 +417,15 @@ enum RealtimeProbe {
             else:time.sleep(delay)
         except (BrokenPipeError,KeyboardInterrupt):break
         except (OSError,ValueError,EOFError,TimeoutError,TypeError,AttributeError,KeyError,struct.error):
+            # Valid endings may still be waiting for the 250ms batch deadline.
+            # Deliver them before a disconnected status can revoke live state.
+            try:flush_events(session)
+            except BrokenPipeError:break
             if ws:ws.close()
             ws=None;session=None;reconnect_at=time.monotonic()+30;next_status=0
             if once:emit({'kind':'status','connected':False,'attached':0,'notifications':0,'fallbackScans':scans});break
+    try:flush_events(session)
+    except BrokenPipeError:pass
     if ws:ws.close()
     if index_changes:index_changes.close()
     """#

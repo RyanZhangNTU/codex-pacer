@@ -28,6 +28,143 @@ final class RuntimeLifecycleTests: XCTestCase {
             XCTAssertEqual(inbox.unreadActivities.count, 1)
         }
     }
+    func testUnloadAfterTerminalPublicationCannotClearTheCompletionInbox() {
+        for ending in ["completed", "interrupted", "failed"] {
+            var state = RuntimeEventState(sourceID: "remote-ssh-discovered:gpu.example.com", sourceName: "SSH"), inbox = CompletionInbox()
+            state.consume(["kind": "status", "connected": true])
+            state.consume(event("turn/started"))
+            state.consume(event("turn/completed", at: 1001, fields: ["status": ending]))
+            state.consume(event("stream/released", at: 1001.1))
+            inbox.observe(state.activities, at: Date(timeIntervalSince1970: 1002), retention: 1800)
+            state.releasePublishedState()
+            XCTAssertTrue(state.activities.isEmpty)
+            for status in ["systemError", "notLoaded"] {
+                state.consume(event("thread/status/changed", at: 1003, fields: ["status": status]))
+                if status == "notLoaded" { state.consume(event("stream/released", at: 1003.1)) }
+                XCTAssertTrue(state.activities.isEmpty, "Late transport status cannot create an unknown task after completion")
+                inbox.observe(state.activities, at: Date(timeIntervalSince1970: 1004), retention: 1800)
+                state.releasePublishedState()
+                XCTAssertEqual(inbox.unreadActivities.count, 1)
+                XCTAssertEqual(inbox.unreadActivities.first?.phase, ending == "completed" ? .completed : .interrupted)
+            }
+            state.consume(event("thread/observed", at: 1005, fields: ["status": "active"]))
+            XCTAssertEqual(state.activities.first?.phase, .running)
+            state.consume(event("thread/status/changed", at: 1006, fields: ["status": "systemError"]))
+            XCTAssertEqual(state.activities.first?.phase, .unknown, "Errors in the next active turn must still invalidate it")
+        }
+    }
+    func testDottedSSHHostDiscoversAndCompletesWithoutAnyFallbackLog() {
+        for host in ["remote-ssh-discovered:gpu.example.com", "remote-ssh-discovered:SSH-192.0.2.1"] {
+            for suffix in [thread, "rollout-" + thread + ".jsonl"] {
+                let activity = SessionActivity(id: host + ":" + suffix, sourceHostID: host)
+                XCTAssertEqual(activity.threadID, thread)
+                XCTAssertEqual(activity.canonicalized().id, host + ":" + thread)
+            }
+            var state = RuntimeEventState(sourceID: host, sourceName: "Synthetic SSH"), inbox = CompletionInbox()
+            state.consume(["kind": "status", "connected": true])
+            state.consume(event("metadata", at: 1000, fields: ["name": "Synthetic SSH task"]))
+            state.consume(event("thread/observed", at: 1001, fields: ["status": "idle"]))
+            state.consume(event("thread/observed", at: 1002, fields: ["status": "active"]))
+            XCTAssertEqual(state.activities.first?.phase, .running)
+            XCTAssertEqual(state.activities.first?.threadID, thread)
+            XCTAssertTrue(state.activities.first?.liveTurnStarted == true)
+            inbox.observe(state.activities, at: Date(timeIntervalSince1970: 1002), retention: 1800)
+            state.consume(event("item/started", at: 1003, fields: ["itemId": "tool", "itemType": "commandExecution"]))
+            XCTAssertEqual(state.activities.first?.turnID, "turn")
+            XCTAssertEqual(state.activities.first?.stage, .tool)
+            state.consume(event("turn/completed", at: 1004, fields: ["status": "completed"]))
+            state.consume(event("stream/released", at: 1004.1))
+            inbox.observe(state.activities, at: Date(timeIntervalSince1970: 1005), retention: 1800)
+            state.releasePublishedState()
+            XCTAssertTrue(state.activities.isEmpty)
+            XCTAssertEqual(inbox.unreadActivities.first?.phase, .completed)
+            XCTAssertEqual(inbox.unreadActivities.first?.sourceHostID, host)
+        }
+    }
+    func testSystemErrorOverridesOldFallbackUntilFreshEvidenceArrives() throws {
+        var fallback = SessionActivity(id: thread, phaseAwareRate: true)
+        fallback.consume(try JSONSerialization.data(withJSONObject: ["timestamp": "1970-01-01T00:16:40Z", "type": "event_msg",
+            "payload": ["type": "task_started", "turn_id": "turn"]]))
+        var state = RuntimeEventState(sourceID: nil, sourceName: nil)
+        state.replaceLocalFallback([fallback])
+        state.consume(["kind": "status", "connected": true])
+        state.consume(event("turn/started", at: 1001))
+        state.consume(event("thread/status/changed", at: 1002, fields: ["status": "systemError"]))
+        for _ in 0..<3 {
+            state.replaceLocalFallback([fallback])
+            state.releasePublishedState()
+            state.consume(["kind": "status", "connected": true])
+            let value = try XCTUnwrap(state.activities.first)
+            XCTAssertEqual(value.phase, .unknown)
+            XCTAssertEqual(value.phaseChangedAt, Date(timeIntervalSince1970: 1002))
+            XCTAssertFalse(value.hasLiveEvidence)
+        }
+        var inbox = CompletionInbox()
+        inbox.observe(state.activities, at: Date(timeIntervalSince1970: 1003), retention: 1800)
+        XCTAssertTrue(inbox.unreadActivities.isEmpty, "Transport errors are not task completions")
+        state.consume(event("turn/started", at: 1004, fields: ["turnId": "next"]))
+        XCTAssertEqual(state.activities.first?.phase, .running)
+        XCTAssertEqual(state.activities.first?.turnID, "next")
+    }
+    func testLoadedDiscoveryReachesLaterPagesWithBoundedRequestsAndReusesFreedSlots() throws {
+        let script = #"""
+        class Fake:
+            def __init__(self):self.sent=[]
+            def send(self,v):self.sent.append(v)
+        def tid(i):return str(uuid.UUID(int=i+1))
+        ws=Fake();s=Session(ws);s.receive({'id':1,'result':{}})
+        catalog=[tid(i) for i in range(145)]
+        read=[];pages=[];max_reads=0
+        def reply():
+            global max_reads
+            max_reads=max(max_reads,sum(v[0]=='read' for v in s.pending.values()))
+            assert len(s.attached|s.attaching)+sum(v[0]=='read' for v in s.pending.values())<=32
+            rid,(kind,id,_) = next(iter(s.pending.items()))
+            if kind=='list':
+                request=next(v for v in ws.sent if v.get('id')==rid)
+                assert request['params']['limit']==64
+                offset=int(request['params'].get('cursor','0'));pages.append(offset)
+                s.receive({'id':rid,'result':{'data':catalog[offset:offset+64], 'nextCursor':str(offset+64) if offset+64<len(catalog) else None}})
+            else:
+                if kind=='read':read.append(id)
+                # The entire first page and more are idle, followed by 40 active threads.
+                index=catalog.index(id);active=index>=105
+                if index==10:
+                    s.receive({'id':rid,'error':{'code':-1}})
+                else:
+                    s.receive({'id':rid,'result':{'thread':{'id':id,'status':{'type':'active' if active else 'idle'}}}})
+            s.queue=[] # The real publisher flushes each batch on its deadline.
+        while s.pending:reply()
+        assert pages==[0,64,128] and max_reads==8
+        assert len(s.attached)==32 and len(s.read_queue)==8
+        assert tid(105) in s.attached,'idle prefix must not starve later active tasks'
+        assert len(s.known)<=64 and not s.request_loaded(),'a scan waits for capacity without restarting its first page'
+        for i in range(105,113):
+            s.receive({'method':'turn/completed','params':{'threadId':tid(i),'turn':{'id':'turn','status':'completed'}}})
+            while s.pending:reply()
+        assert not s.listing and not s.read_queue and len(s.attached)==32
+        assert all(tid(i) in s.attached for i in range(137,145))
+        assert read==catalog,'each metadata entry is visited once per scan'
+        # Repeated cursors are rejected rather than entering an infinite scan.
+        ws=Fake();s=Session(ws);s.receive({'id':1,'result':{}})
+        rid=next(iter(s.pending));s.receive({'id':rid,'result':{'data':[],'nextCursor':'same'}})
+        rid=next(iter(s.pending))
+        try:s.receive({'id':rid,'result':{'data':[],'nextCursor':'same'}})
+        except ValueError:pass
+        else:raise AssertionError('cursor cycle accepted')
+        # A queue-bound disconnect still flushes accepted events in wire-sized batches.
+        s.queue=[];packets=[];emit=lambda value:packets.append(value)
+        for i in range(513):
+            try:s.queue_event({'method':'turn/completed','threadId':tid(i),'turnId':'turn','at':i})
+            except ValueError:
+                assert i==512
+                flush_events(s)
+        assert [len(p['events']) for p in packets]==[512,1] and not s.queue
+        assert [e['at'] for p in packets for e in p['events']]==list(range(513))
+        print('bounded discovery passed')
+        """#
+        XCTAssertTrue(try python(RealtimeProbe.library + "\n" + script).contains("bounded discovery passed"))
+    }
     func testPublishingReleaseReclaimsStateButNewTurnBeforePublishSurvives() {
         var state = RuntimeEventState(sourceID: nil, sourceName: nil)
         state.consume(["kind": "status", "connected": true])

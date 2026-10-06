@@ -3,11 +3,15 @@ import XCTest
 
 final class RealtimeTransportTests: XCTestCase {
     private let active = "019a0000-0000-7000-8000-000000000001"
-    private func runProbe(badAccept: Bool = false, server: Bool = true, hintOnly: Bool = false, indexOnly: Bool = false) throws -> String {
+    private func runProbe(badAccept: Bool = false, server: Bool = true, hintOnly: Bool = false, indexOnly: Bool = false, closeAfterTerminal: Bool = false) throws -> String {
         let home = URL(fileURLWithPath: "/private/tmp/pacer-ws-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         var prefix = server ? Self.fixture.replacingOccurrences(of: "BAD_ACCEPT", with: badAccept ? "True" : "False") : ""
+        if closeAfterTerminal {
+            prefix = prefix.replacingOccurrences(of: "send({'method':'turn/completed'", with: "time.sleep(.05);send({'method':'turn/completed'")
+            prefix = prefix.replacingOccurrences(of: "'PRIVATE final'}]}}})", with: "'PRIVATE final'}]}}});time.sleep(.01);break")
+        }
         if hintOnly || indexOnly {
             prefix = prefix.replacingOccurrences(of: "result={'data':[fixture_active,fixture_idle,fixture_review]}", with: indexOnly ? "result={'data':[fixture_active] if fixture_ready.is_set() else []}" : "result={'data':[]}")
             let first = try XCTUnwrap(prefix.range(of: "send({'method':'item/agentMessage/delta'"))
@@ -100,6 +104,25 @@ final class RealtimeTransportTests: XCTestCase {
             (frame["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "stream/released" } == true
         })
     }
+    func testRemoteEOFDeliversQueuedCompletionBeforeDisconnectAndRetainsUnreadCard() throws {
+        for _ in 0..<3 {
+            let output = try runProbe(closeAfterTerminal: true)
+            let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+            let terminal = try XCTUnwrap(frames.firstIndex { ($0["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "turn/completed" } == true })
+            let disconnected = try XCTUnwrap(frames.lastIndex { $0["kind"] as? String == "status" && $0["connected"] as? Bool == false })
+            XCTAssertLessThan(terminal, disconnected)
+            var state = RuntimeEventState(sourceID: "remote-ssh-discovered:fixture", sourceName: "SSH"), inbox = CompletionInbox()
+            for frame in frames {
+                state.consume(frame)
+                inbox.observe(state.activities, at: Date(), retention: 1800)
+                state.releasePublishedState()
+            }
+            XCTAssertEqual(inbox.unreadActivities.count, 1)
+            XCTAssertEqual(inbox.unreadActivities.first?.phase, .completed)
+            XCTAssertEqual(inbox.unreadActivities.first?.turnID, "test-turn")
+            XCTAssertFalse(output.contains("PRIVATE"))
+        }
+    }
     func testInvalidWebSocketAcceptCannotCreateLiveConnection() throws {
         let output = try runProbe(badAccept: true)
         let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
@@ -134,8 +157,9 @@ final class RealtimeTransportTests: XCTestCase {
             def close(self):pass
         class TestSession:
             def __init__(self,ws):
-                self.ready=True;self.pending={};self.attached=set();self.evidenced={'covered'};self.queue=[];self.notices=0;self.last_list=0
+                self.ready=True;self.pending={};self.attached=set();self.evidenced={'covered'};self.queue=[];self.notices=0;self.last_list=0;self.listing=False
             def request(self,*args):pass
+            def request_loaded(self):self.last_list=time.monotonic();return True
         def test_snapshot(excluding=()):
             test_scans.append(clock[0]);assert excluding==({'covered'} if CONNECTED else ())
             return {'sessions':[]}

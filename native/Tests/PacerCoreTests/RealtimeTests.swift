@@ -212,6 +212,36 @@ final class InteractionTests: XCTestCase {
         XCTAssertEqual(policy.activityNotices([activity], at: epoch.addingTimeInterval(1)).first?.kind, .completed)
         XCTAssertTrue(policy.activityNotices([activity], at: epoch.addingTimeInterval(2)).isEmpty)
     }
+    func testFastLiveEndingsNotifyOnceEvenWithoutAnIntermediateRunningPublication() {
+        let thread = "019a0000-0000-7000-8000-000000000001"
+        for initialPublication in [false, true] {
+            var policy = AttentionPolicy(), inbox = CompletionInbox()
+            var activity = SessionActivity(id: thread, phaseAwareRate: true)
+            if !initialPublication { XCTAssertTrue(policy.activityNotices([], at: epoch).isEmpty) }
+            for (index, status) in ["completed", "completed", "interrupted", "failed"].enumerated() {
+                let turn = "turn-\(index)", time = epoch.addingTimeInterval(Double(index * 3 + 1))
+                activity.consumeLive(["method": "turn/started", "threadId": thread, "turnId": turn, "at": time.timeIntervalSince1970])
+                activity.consumeLive(["method": "turn/completed", "threadId": thread, "turnId": turn, "at": time.timeIntervalSince1970 + 0.1, "status": status])
+                let now = time.addingTimeInterval(0.2)
+                inbox.observe([activity], at: now, retention: 1800)
+                XCTAssertEqual(inbox.unreadActivities.count, 1)
+                let notices = policy.activityNotices([activity], at: now)
+                XCTAssertEqual(notices.count, 1)
+                XCTAssertEqual(notices.first?.kind, status == "completed" ? .completed : .interrupted)
+                XCTAssertTrue(policy.activityNotices([activity], at: now).isEmpty)
+                _ = policy.activityNotices([], at: now)
+                XCTAssertTrue(policy.activityNotices([activity], at: now).isEmpty, "Reappearing retained cards must not alert twice")
+            }
+            XCTAssertTrue(policy.activityNotices([activity], at: epoch.addingTimeInterval(120)).isEmpty)
+        }
+        var historical = SessionActivity(id: thread)
+        historical.consume(log("task_started", at: epoch, payload: ["turn_id": "history"]))
+        historical.consume(log("task_complete", at: epoch.addingTimeInterval(1), payload: ["turn_id": "history"]))
+        var policy = AttentionPolicy()
+        XCTAssertTrue(policy.activityNotices([historical], at: epoch.addingTimeInterval(2)).isEmpty)
+        _ = policy.activityNotices([], at: epoch.addingTimeInterval(3))
+        XCTAssertTrue(policy.activityNotices([historical], at: epoch.addingTimeInterval(4)).isEmpty, "Historical log discovery stays quiet")
+    }
     func testLowQuotaDoesNotRepeatEveryRefreshAndRearmsAfterRecovery() throws {
         var policy = AttentionPolicy()
         XCTAssertEqual(policy.quotaNotices(try weekly(10), at: epoch).count, 1)

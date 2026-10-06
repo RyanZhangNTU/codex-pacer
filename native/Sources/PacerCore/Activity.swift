@@ -63,6 +63,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var hasLiveEvidence = false
     public private(set) var liveTurnStarted = false
     private var liveStatusOnly = false
+    private var retiredTurns: [String] = []
+    private var lastIdentifiedTurn: String?
     public func canonicalized() -> SessionActivity {
         guard let threadID else { return self }
         var value = self
@@ -76,7 +78,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         self.sourceHost = sourceHost
         self.sourceHostID = sourceHostID
         self.project = project
-        threadID = UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36)))?.uuidString.lowercased()
+        // Canonical host IDs may contain dots (SSH aliases/IP addresses). Do
+        // not strip a supposed file extension before checking their UUID tail.
+        threadID = (UUID(uuidString: String(id.suffix(36))) ??
+            UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36))))?.uuidString.lowercased()
     }
 
     mutating func updateTitle(_ value: String?) {
@@ -156,6 +161,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         case "task_started":
             beginTurn(eventTurn, at: date)
         case "task_complete", "turn_aborted":
+            retireTurn(turnID)
             phase = kind == "turn_aborted" ? .interrupted : .completed
             turnFailed = false; waitingForApproval = false
             waitingCallID = nil
@@ -174,6 +180,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private mutating func beginTurn(_ id: String?, at date: Date) {
+        // An unknown ID during reconnect does not prove the old turn ended.
+        if let id { identifyTurn(id) }
         hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
         turnID = id
         turnStartedAt = date
@@ -186,6 +194,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         outputRate.startTurn(at: date)
         generationRate.start(); liveItems.removeAll()
         phaseChangedAt = date
+    }
+
+    private mutating func retireTurn(_ id: String?) {
+        guard let id, !retiredTurns.contains(id) else { return }
+        retiredTurns.append(id)
+        if retiredTurns.count > 64 { retiredTurns.removeFirst(retiredTurns.count - 64) }
+    }
+
+    private mutating func identifyTurn(_ id: String) {
+        if id != lastIdentifiedTurn { retireTurn(lastIdentifiedTurn) }
+        lastIdentifiedTurn = id; turnID = id
     }
 
     /// Retain provenance while rejecting lifecycle/rate assumptions across a gap.
@@ -299,7 +318,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let status = event["status"] as? String
             // Loading/error status cannot revoke an authoritative turn ending.
             guard ![.completed, .interrupted].contains(phase) else { return }
-            if ["notLoaded", "systemError"].contains(status ?? "") { markUnconfirmed() }
+            if ["notLoaded", "systemError"].contains(status ?? "") {
+                markUnconfirmed(); lastObserved = date; phaseChangedAt = date
+            }
             // Idle status alone cannot prove that a particular turn completed.
             if status == "active", let flags = event["flags"] as? [String],
                flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput"), turnID != nil {
@@ -316,9 +337,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard ["turn/started", "turn/attached", "turn/completed", "item/started", "item/completed", "thread/tokenUsage/updated",
                "item/agentMessage/delta", "item/plan/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"].contains(method),
               let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
+        guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
             guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
-            turnID = eventTurn; liveStatusOnly = false
+            identifyTurn(eventTurn); liveStatusOnly = false
+            retireTurn(eventTurn)
             phase = event["status"] as? String == "completed" ? .completed : .interrupted
             turnFailed = event["status"] as? String == "failed"; waitingForApproval = false
             phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true
@@ -343,7 +366,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             // item only supplies the missing ID; restarting the accumulator
             // here would erase that evidence and let an older completed log
             // override every subsequent item and the ending.
-            turnID = eventTurn; liveStatusOnly = false
+            identifyTurn(eventTurn); liveStatusOnly = false
         } else if turnID != eventTurn || !hasLiveEvidence {
             // Attaching halfway through a request must not divide all of that
             // request's tokens by the short period since we attached.
@@ -352,9 +375,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             liveStatusOnly = false
         } else if [.completed, .interrupted].contains(phase) { return }
         hasLiveEvidence = true; phaseAwareRate = true; lastObserved = max(date, lastObserved ?? date)
-        let kind = event["itemType"] as? String ?? ""
+        let kind = RuntimeItemKind.normalized(event["itemType"] as? String ?? "")
         let modelItem = ["reasoning", "agentMessage", "plan"].contains(kind)
-        let toolItem = ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabToolCall", "webSearch", "imageView"].contains(kind)
+        let toolItem = RuntimeItemKind.isTool(kind)
         if method == "item/started", let id = event["itemId"] as? String {
             if toolItem {
                 if liveItems.count < 128 { liveItems.insert(id) }

@@ -18,6 +18,25 @@ final class CompletionInboxTests: XCTestCase {
         XCTAssertEqual(inbox.observe([next], at: epoch.addingTimeInterval(4), retention: 0).first?.turnID, "next")
         XCTAssertTrue(inbox.activities.isEmpty)
     }
+    func testRecreatedUnknownSourceCannotRevokeRetainedOrDismissedEnding() {
+        let thread = UUID().uuidString.lowercased()
+        var finished = running("local:" + thread)
+        event(&finished, "task_complete", seconds: 1)
+        for dismiss in [false, true] {
+            var inbox = CompletionInbox()
+            inbox.observe([finished], at: epoch.addingTimeInterval(2), retention: 1800)
+            if dismiss { inbox.dismiss(finished) }
+            var fresh = SessionActivity(id: finished.id)
+            fresh.consumeLive(["method": "thread/status/changed", "threadId": thread, "status": "notLoaded", "at": epoch.addingTimeInterval(3).timeIntervalSince1970])
+            XCTAssertEqual(fresh.phase, .unknown)
+            XCTAssertTrue(inbox.observe([fresh], at: epoch.addingTimeInterval(4), retention: 1800).isEmpty)
+            XCTAssertEqual(inbox.activities.count, dismiss ? 0 : 1)
+            fresh.consumeLive(["method": "turn/started", "threadId": thread, "turnId": "next", "at": epoch.addingTimeInterval(5).timeIntervalSince1970])
+            fresh.markUnconfirmed()
+            XCTAssertEqual(inbox.observe([fresh], at: epoch.addingTimeInterval(6), retention: 1800).first?.turnID, "next", "A proven later turn may replace the old ending even if its connection subsequently fails")
+            XCTAssertTrue(inbox.activities.isEmpty)
+        }
+    }
     func testReleasedStreamCannotResurrectOlderLogOrDismissedCompletion() {
         var inbox = CompletionInbox(), activity = running()
         let oldLog = activity

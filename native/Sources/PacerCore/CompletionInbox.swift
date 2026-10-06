@@ -49,6 +49,9 @@ public struct CompletionInbox: Sendable {
             if let turn = activity.turnID, turn != ended.turnID,
                let started = activity.turnStartedAt, let previousStart = ended.startedAt,
                started > previousStart { return true }
+            // Source state can be reclaimed or its bounded idle marker evicted.
+            // An unknown transport state alone cannot revoke a proven ending.
+            if activity.phase == .unknown { return false }
             let changed = activity.phaseChangedAt ?? activity.lastObserved ?? .distantPast
             return changed > endedAt || (changed == endedAt && [.completed, .interrupted].contains(activity.phase))
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })

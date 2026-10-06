@@ -108,6 +108,63 @@ final class StreamingRateTests: XCTestCase {
         XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(6)), 60)
         XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(21)), "A quiet generating turn must expire its numeric estimate")
     }
+    func testRetiredTurnEventsCannotReplaceANewerTurn() {
+        for observedEnding in [false, true] {
+            var a = SessionActivity(id: thread, phaseAwareRate: true)
+            live(&a, "turn/started", seconds: 0, turn: "old")
+            live(&a, "item/started", seconds: 1, turn: "old", fields: ["itemId": "old-tool", "itemType": "commandExecution"])
+            if observedEnding { live(&a, "turn/completed", seconds: 2, turn: "old", fields: ["status": "interrupted"]) }
+            live(&a, "turn/started", seconds: 3, turn: "new")
+            live(&a, "item/started", seconds: 3.1, turn: "new", fields: ["itemId": "reasoning", "itemType": "reasoning"])
+            let current = a
+            for method in ["item/completed", "item/started", "item/agentMessage/delta", "turn/attached", "turn/started", "turn/completed"] {
+                live(&a, method, seconds: 3.2, turn: "old", fields: ["itemId": "old-tool", "itemType": "commandExecution", "status": "completed"])
+                XCTAssertEqual(a, current, method)
+            }
+            live(&a, "turn/completed", seconds: 4, turn: "new", fields: ["status": "completed"])
+            XCTAssertEqual(a.phase, .completed)
+            XCTAssertTrue(a.liveTurnStarted)
+        }
+    }
+    func testReconnectCanReattachCurrentTurnAndAdoptAnUnseenTurn() {
+        var a = SessionActivity(id: thread, phaseAwareRate: true)
+        live(&a, "turn/started", seconds: 0)
+        live(&a, "thread/status/changed", seconds: 1, fields: ["status": "systemError"])
+        live(&a, "thread/observed", seconds: 2, fields: ["status": "active"])
+        live(&a, "item/started", seconds: 3, fields: ["itemId": "reasoning", "itemType": "reasoning"])
+        XCTAssertEqual(a.turnID, "turn")
+        XCTAssertTrue(a.liveTurnStarted)
+        a.markDiscontinuity()
+        live(&a, "turn/attached", seconds: 4)
+        XCTAssertEqual(a.phase, .running)
+        live(&a, "thread/status/changed", seconds: 4.1, fields: ["status": "systemError"])
+        live(&a, "thread/observed", seconds: 4.2, fields: ["status": "active"])
+        live(&a, "item/started", seconds: 5, turn: "unseen", fields: ["itemId": "new-reasoning", "itemType": "reasoning"])
+        XCTAssertEqual(a.turnID, "unseen", "Mid-turn attach remains supported without a start event")
+        XCTAssertTrue(a.hasLiveEvidence)
+        let adopted = a
+        live(&a, "item/completed", seconds: 5.1, fields: ["itemId": "old-tool", "itemType": "commandExecution"])
+        XCTAssertEqual(a, adopted, "Adopting a new ID after metadata-only reconnect retires the last known turn")
+        live(&a, "turn/completed", seconds: 6, turn: "unseen", fields: ["status": "completed"])
+        XCTAssertEqual(a.phase, .completed)
+    }
+    func testBothCollaborationToolNamesPauseRateAndResumeOnCompletion() {
+        for kind in ["collabAgentToolCall", "collabToolCall"] {
+            var a = SessionActivity(id: thread, phaseAwareRate: true)
+            live(&a, "turn/started", seconds: 0)
+            live(&a, "thread/tokenUsage/updated", seconds: 0, fields: ["outputTokens": 100])
+            live(&a, "thread/tokenUsage/updated", seconds: 2, fields: ["outputTokens": 200])
+            XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(2)), 50)
+            live(&a, "item/started", seconds: 3, fields: ["itemId": "agent", "itemType": kind])
+            XCTAssertEqual(a.stage, .tool)
+            XCTAssertEqual(a.outputEstimate(at: start.addingTimeInterval(10))?.value, 0)
+            live(&a, "item/completed", seconds: 13, fields: ["itemId": "agent", "itemType": kind])
+            XCTAssertEqual(a.stage, .thinking)
+            XCTAssertNil(a.outputEstimate(at: start.addingTimeInterval(13)))
+            live(&a, "thread/tokenUsage/updated", seconds: 15, fields: ["outputTokens": 350])
+            XCTAssertEqual(a.tokensPerSecond(at: start.addingTimeInterval(15)), 50, "Tool wait is excluded from generation time")
+        }
+    }
     func testIdleStatusAndOrphanTerminalDoNotDeclareTaskFinished() {
         var a = SessionActivity(id: thread, phaseAwareRate: true)
         live(&a, "turn/completed", seconds: 0, fields: ["status": "completed"])
