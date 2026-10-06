@@ -6,7 +6,7 @@ public enum ActivitySourceMerger {
             (new.lastObserved ?? .distantPast) >= (old.lastObserved ?? .distantPast) ? new : old
         })
         for item in streamed {
-            let value = item.canonicalized()
+            var value = item.canonicalized()
             guard !value.isInternalReview else { continue }
             if value.phase == .unknown, let previous = result[value.id], previous.turnID == value.turnID,
                [.completed, .interrupted].contains(previous.phase) { continue }
@@ -17,6 +17,9 @@ public enum ActivitySourceMerger {
                    (previous.phaseChangedAt ?? .distantPast) > (value.lastObserved ?? .distantPast) { continue }
             } else if let previous = result[value.id],
                       (previous.lastObserved ?? .distantPast) > (value.lastObserved ?? .distantPast) { continue }
+            if value.title == nil, !value.titleWasExplicitlyCleared, let title = result[value.id]?.title {
+                value.updateTitle(title)
+            }
             result[value.id] = value
         }
         return result.values.filter { !$0.isInternalReview }

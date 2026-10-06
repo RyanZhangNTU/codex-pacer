@@ -29,6 +29,7 @@ enum DesktopEventProbe {
         return {'type':text(v.get('type'),32),'activeFlags':[f for f in v.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]}
     def snapshot_projection(v):
         out={k:text(v[k],2048 if k=='cwd' else 256) for k in ('title','cwd','latestModel','threadSource') if isinstance(v.get(k),str)}
+        if v.get('ephemeral') is True:out['ephemeral']=True
         out['latestTokenUsageInfo']=usage_projection(v.get('latestTokenUsageInfo'))
         out['threadRuntimeStatus']=runtime_projection(v.get('threadRuntimeStatus'))
         turns=v.get('turns') or []
@@ -44,6 +45,7 @@ enum DesktopEventProbe {
         # Return only values used by status/rate; drop arbitrary body fields.
         if not path:return False,None
         root=path[0]
+        if root=='ephemeral' and len(path)==1:return True,v is True
         if root in ('title','cwd','latestModel','threadSource') and len(path)==1:return True,text(v,2048 if root=='cwd' else 256)
         if root=='latestTokenUsageInfo':
             if len(path)==1:return True,usage_projection(v)
@@ -126,6 +128,7 @@ enum DesktopEventProbe {
             if snapshot:
                 raw=change.get('conversationState')
                 if not isinstance(raw,dict) or is_review({'source':raw.get('source'),'threadSource':raw.get('threadSource'),'model':raw.get('latestModel')}):raise ValueError('excluded review')
+                if raw.get('ephemeral') is True:raise ValueError('excluded ephemeral')
                 self.tree=snapshot_projection(raw);self.owner=owner;self.revision=revision
             else:
                 if change.get('type')!='patches' or owner!=self.owner or change.get('baseRevision')!=self.revision or revision!=self.revision+1:raise ValueError('revision gap')
@@ -141,6 +144,7 @@ enum DesktopEventProbe {
                     # Apply atomically: malformed patches never manufacture a terminal turn.
                     tree=copy.deepcopy(self.tree)
                     for patch in projected:apply_patch(tree,patch)
+                    if tree.get('ephemeral') is True:raise ValueError('excluded ephemeral')
                     self.tree=tree
                 self.revision=revision
             now=time.time();events=[]
@@ -275,7 +279,7 @@ enum DesktopEventProbe {
             except ValueError as error:
                 self.streams.pop(tid,None);self.attached.discard(tid);self.queue=[e for e in self.queue if e.get('threadId')!=tid]
                 emit({'kind':'streamInvalidated','threadId':tid})
-                if str(error)=='excluded review':
+                if str(error) in ('excluded review','excluded ephemeral'):
                     self.excluded.add(tid);self.follow(tid,False)
                     self.waiting.pop(tid,None);self.drain_waiting()
                 elif time.monotonic()>=self.resync.get(tid,0):

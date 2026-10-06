@@ -30,6 +30,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public let sourceHost: String?
     public let sourceHostID: String?
     public private(set) var title: String?
+    private(set) var titleWasExplicitlyCleared = false
     public var project: String
     public private(set) var threadID: String?
     public var threadURL: URL? {
@@ -87,6 +88,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     mutating func updateTitle(_ value: String?) {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         title = trimmed?.isEmpty == false ? String(trimmed!.prefix(240)) : nil
+        titleWasExplicitlyCleared = false
     }
 
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
@@ -289,6 +291,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let remoteID = event["threadId"] as? String, remoteID == threadID,
               let seconds = event["at"] as? Double, seconds.isFinite else { return }
         let date = Date(timeIntervalSince1970: seconds)
+        if method == "thread/name/updated" {
+            updateTitle(event["name"] as? String)
+            titleWasExplicitlyCleared = title == nil
+            return
+        }
         if method == "metadata" {
             if let name = event["name"] as? String { updateTitle(name) }
             modelName = event["model"] as? String ?? modelName

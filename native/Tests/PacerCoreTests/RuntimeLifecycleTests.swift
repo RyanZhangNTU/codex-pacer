@@ -325,6 +325,76 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue((cleared.first { $0.label == "idleOrder" }?.value as? [String: Int])?.isEmpty == true)
     }
 
+    func testRemoteNameUpdatesDoNotChangeTurnStateAndClearedNamesDoNotReturnFromCache() {
+        let host = "remote-ssh-discovered:synthetic"
+        var logged = SessionActivity(id: host + ":" + thread, sourceHostID: host)
+        logged.consumeLive(["method": "metadata", "threadId": thread, "at": 999.0, "name": "Cached session name"])
+        logged.consumeLive(["method": "turn/started", "threadId": thread, "turnId": "turn", "at": 999.0])
+        var state = RuntimeEventState(sourceID: host, sourceName: "Synthetic")
+        state.consume(["kind": "status", "connected": true])
+        state.consume(event("turn/started"))
+        XCTAssertEqual(ActivitySourceMerger.merge(logged: [logged], streamed: state.activities).first?.title, "Cached session name")
+        state.consume(event("thread/tokenUsage/updated", at: 1001, fields: ["outputTokens": 100]))
+        state.consume(event("thread/tokenUsage/updated", at: 1003, fields: ["outputTokens": 120]))
+        let before = state.activities[0]
+        state.consume(event("thread/name/updated", at: 1004, fields: ["name": "Renamed session"]))
+        let updated = state.activities[0]
+        XCTAssertEqual(updated.title, "Renamed session")
+        XCTAssertEqual(updated.phase, before.phase)
+        XCTAssertEqual(updated.turnID, before.turnID)
+        XCTAssertEqual(updated.lastObserved, before.lastObserved)
+        XCTAssertEqual(updated.tokensPerSecond(at: Date(timeIntervalSince1970: 1004)), before.tokensPerSecond(at: Date(timeIntervalSince1970: 1004)))
+        state.consume(event("thread/name/updated", at: 1005, fields: ["name": NSNull()]))
+        XCTAssertNil(ActivitySourceMerger.merge(logged: [logged], streamed: state.activities).first?.title)
+        var otherHost = SessionActivity(id: "local:" + thread)
+        otherHost.consumeLive(["method": "metadata", "threadId": thread, "at": 999.0, "name": "Other host name"])
+        XCTAssertNil(ActivitySourceMerger.merge(logged: [otherHost], streamed: state.activities).first { $0.sourceHostID == host }?.title)
+    }
+
+    func testRemoteNameNotificationsAndEphemeralThreadsStayWithinTheSanitizedProtocol() throws {
+        let script = #"""
+        class Fake:
+            def __init__(self):self.sent=[]
+            def send(self,v):self.sent.append(v)
+        tid='019a0000-0000-7000-8000-000000000001'
+        ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
+        s.known[tid]={'type':'active'};s.attached.add(tid)
+        before=len(ws.sent)
+        s.receive({'method':'thread/name/updated','params':{'threadId':tid,'threadName':'A'*300,'extra':'PRIVATE'}})
+        assert s.queue[-1]['method']=='thread/name/updated' and s.queue[-1]['name']=='A'*240
+        assert len(ws.sent)==before,'attached task renames need no new metadata RPC'
+        assert 'PRIVATE' not in repr(s.queue)
+        s.receive({'method':'thread/name/updated','params':{'threadId':tid,'threadName':None}})
+        assert s.queue[-1]['name'] is None
+        before=len(s.queue)
+        s.receive({'method':'thread/name/updated','params':{'threadId':tid,'threadName':42}})
+        assert len(s.queue)==before,'malformed names cannot erase a known title'
+        for source in ({'ephemeral':True},{'source':{'subAgent':{'other':'guardian'}}}):
+            ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
+            s.receive({'method':'thread/started','params':{'thread':dict(source,id=tid,status={'type':'active'})}})
+            assert tid in s.excluded and not s.queue and not ws.sent[1:]
+            ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
+            s.request('thread/read',{'threadId':tid},'read',tid);rid=ws.sent[-1]['id']
+            s.receive({'id':rid,'result':{'thread':dict(source,id=tid,status={'type':'active'})}})
+            assert tid in s.excluded and tid not in s.known and not s.attached and not s.queue
+        ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
+        s.request('thread/read',{'threadId':tid},'read',tid);rid=ws.sent[-1]['id']
+        s.receive({'method':'thread/started','params':{'thread':{'id':tid,'ephemeral':True}}})
+        s.receive({'id':rid,'result':{'thread':{'id':tid,'status':{'type':'active'}}}})
+        assert tid not in s.known and not s.attached and not s.queue,'an in-flight reply cannot recreate an excluded task'
+        for initial in (True,False):
+            p=Projection(tid)
+            raw={'ephemeral':initial,'turns':[]}
+            try:
+                p.consume({'type':'snapshot','revision':0,'conversationState':raw},'owner')
+                p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['ephemeral'],'value':True}]},'owner')
+            except ValueError as e:assert str(e)=='excluded ephemeral'
+            else:raise AssertionError('compatibility projection retained an ephemeral thread')
+        print('remote metadata passed')
+        """#
+        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + script).contains("remote metadata passed"))
+    }
+
     private func python(_ script: String) throws -> String {
         let child = Process(), output = Pipe(), error = Pipe()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
