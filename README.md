@@ -9,7 +9,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 - See local and enabled SSH tasks, their current stage, and ended turns; click a task to open its conversation.
 - See the aggregate output-rate estimate for running tasks, with tool waits handled separately from generation.
 - Track short and seven-day quota, reset countdowns, pacing and the current cycle. Banked resets expiring within the current cycle appear on the curve.
-- View account Credit balance and available reset credits; select an expiry marker to see its date.
+- View account Credit balance and available reset credits; click the reset count to see exact expiry times, or select an expiry marker on the curve.
 - Keep ended-turn cards until clicked, their state changes, or the configured retention expires; receive a reminder while the island is collapsed.
 - Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
 - Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.

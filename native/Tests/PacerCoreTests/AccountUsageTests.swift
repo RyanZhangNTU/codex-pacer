@@ -79,6 +79,45 @@ final class AccountUsageTests: XCTestCase {
         let value = try snapshot(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":1,"credits":[{"id":"same","grantedAt":999000,"expiresAt":1000100,"status":"available"},{"id":"same","grantedAt":999000,"expiresAt":1000100,"status":"available"}]}}"#)
         XCTAssertEqual(value.resetCredits?.remainingCount(at: date.addingTimeInterval(101), capturedAt: date), 0)
     }
+
+    func testExpiryDetailsIncludeEveryKnownDeadlineAndTrackExpiryBoundaries() {
+        func credit(_ id: String, _ expiry: Double?, status: String = "available") -> QuotaResetCredit {
+            QuotaResetCredit(id: id, status: status, expiresAt: expiry.map { date.addingTimeInterval($0) }, grantedAt: date)
+        }
+        let summary = QuotaResetSummary(availableCount: 5, credits: [
+            credit("later", 604801), credit("first", 60), credit("first", 60), credit("second", 60),
+            credit("forever", nil), credit("used", 10, status: "redeemed"), credit("past", -1)
+        ])
+        let details = summary.expiryDetails(at: date, capturedAt: date)
+        XCTAssertEqual(details.expiries.map(\.date), [date.addingTimeInterval(60), date.addingTimeInterval(604801)])
+        XCTAssertEqual(details.expiries.map(\.count), [2, 1])
+        XCTAssertEqual(details.nonExpiringCount, 1)
+        XCTAssertEqual(details.unknownCount, 1)
+        XCTAssertEqual(details, summary.expiryDetails(at: date.addingTimeInterval(59.999), capturedAt: date))
+        let expired = summary.expiryDetails(at: date.addingTimeInterval(60), capturedAt: date)
+        XCTAssertEqual(expired.expiries.map(\.count), [1])
+        XCTAssertEqual(expired.nonExpiringCount, 1)
+        XCTAssertEqual(expired.unknownCount, 1)
+        XCTAssertEqual(summary.remainingCount(at: date.addingTimeInterval(60), capturedAt: date), 3)
+    }
+
+    func testExpiryDetailsDistinguishMissingDetailsNoExpiryAndZeroAvailability() throws {
+        let missing = try snapshot(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":3,"credits":null}}"#)
+        let unknown = try XCTUnwrap(missing.resetCredits).expiryDetails(at: date, capturedAt: date)
+        XCTAssertTrue(unknown.expiries.isEmpty)
+        XCTAssertEqual(unknown.nonExpiringCount, 0)
+        XCTAssertEqual(unknown.unknownCount, 3)
+        let endless = try snapshot(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":1,"credits":[{"id":"forever","grantedAt":999500,"expiresAt":null,"status":"available"}]}}"#)
+        let known = try XCTUnwrap(endless.resetCredits).expiryDetails(at: date, capturedAt: date)
+        XCTAssertEqual(known.nonExpiringCount, 1)
+        XCTAssertEqual(known.unknownCount, 0)
+        // An inconsistent or stale row cannot invent availability beyond the server count.
+        let zero = QuotaResetSummary(availableCount: 0, credits: endless.resetCredits?.credits)
+            .expiryDetails(at: date, capturedAt: date)
+        XCTAssertTrue(zero.expiries.isEmpty)
+        XCTAssertEqual(zero.nonExpiringCount, 0)
+        XCTAssertEqual(zero.unknownCount, 0)
+    }
     func testLegacyCacheWithoutNewMetadataStillLoads() throws {
         let raw = #"{"buckets":[{"id":"codex","windows":[]}],"capturedAt":-977307200}"#
         let restored = try JSONDecoder().decode(QuotaSnapshot.self, from: Data(raw.utf8))

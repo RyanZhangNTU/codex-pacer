@@ -128,6 +128,8 @@ private struct IslandHeader: View {
 
 private struct IslandExpandedContent: View {
     @ObservedObject var model: IslandModel
+    // Both ViewThatFits candidates share disclosure state when height changes.
+    @State private var showsResetExpiryDetails = false
     private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
 
     var body: some View {
@@ -223,7 +225,7 @@ private struct IslandExpandedContent: View {
             } else if model.weeklyWindow != nil {
                 Text(L10n.text("quota.waiting_sample")).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
             }
-            AccountUsageView(snapshot: quota, now: model.now).padding(.top, 20)
+            AccountUsageView(snapshot: quota, now: model.now, showsExpiryDetails: $showsResetExpiryDetails).padding(.top, 20)
             if let warning = model.historyWarning {
                 Label(L10n.text("quota.chart_warning"), systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(secondary).help(warning).padding(.top, 10)
             }

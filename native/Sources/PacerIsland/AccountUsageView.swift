@@ -4,17 +4,36 @@ import PacerCore
 struct AccountUsageView: View {
     let snapshot: QuotaSnapshot
     let now: Date
+    @Binding var showsExpiryDetails: Bool
     private var summary: QuotaResetSummary? { snapshot.resetCredits }
     private var count: Int? { summary?.remainingCount(at: now, capturedAt: snapshot.capturedAt) }
     private var expiry: Date? { summary?.nextExpiry(at: now) }
     private var expirySoon: Bool { expiry.map { $0.timeIntervalSince(now) < 3 * 86400 } ?? false }
+    private var details: QuotaResetExpiryDetails? { summary?.expiryDetails(at: now, capturedAt: snapshot.capturedAt) }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            accountSummary
+            if showsExpiryDetails { expiryDetails }
+        }
+        .onChange(of: snapshot.accountScope) { _, _ in showsExpiryDetails = false }
+    }
+
+    private var accountSummary: some View {
         HStack(spacing: 14) {
-            Label(count.map { L10n.text("account.reset_count", $0) } ?? L10n.text("account.resets_unknown"), systemImage: "arrow.counterclockwise")
-                .foregroundStyle(expirySoon ? Color.orange : .secondary)
-                .help(expiryDescription)
-                .accessibilityLabel(L10n.text("account.resets_accessibility", count.map(String.init) ?? L10n.text("common.unknown"), expiryDescription))
+            Button { showsExpiryDetails.toggle() } label: {
+                HStack(spacing: 6) {
+                    Label(count.map { L10n.text("account.reset_count", $0) } ?? L10n.text("account.resets_unknown"), systemImage: "arrow.counterclockwise")
+                    Image(systemName: showsExpiryDetails ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+                .padding(.vertical, 3).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(expirySoon ? Color.orange : .secondary)
+            .help(expiryDescription)
+            .accessibilityLabel(L10n.text("account.resets_accessibility", count.map(String.init) ?? L10n.text("common.unknown"), expiryDescription))
+            .accessibilityHint(L10n.text(showsExpiryDetails ? "account.hide_expiries" : "account.show_expiries"))
+            .accessibilityValue(L10n.text(showsExpiryDetails ? "account.expiries_expanded" : "account.expiries_collapsed"))
             Spacer(minLength: 8)
             HStack(spacing: 5) {
                 Text(balanceText).foregroundStyle(.primary).monospacedDigit()
@@ -26,6 +45,44 @@ struct AccountUsageView: View {
         }
         .font(.system(size: 13)).lineLimit(1)
         .padding(.vertical, 3)
+    }
+
+    private var expiryDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L10n.text("account.expiry_title")).font(.system(size: 12, weight: .medium))
+            if count == 0 {
+                Text(L10n.text("account.no_resets")).foregroundStyle(.secondary)
+            } else if let details {
+                ForEach(details.expiries) { expiry in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(L10n.date(expiry.date, time: .standard)).monospacedDigit()
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        Text(L10n.text("chart.expiry_count", expiry.count)).foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(L10n.text("chart.expiry_item", expiry.count, L10n.date(expiry.date, time: .standard)))
+                }
+                if details.nonExpiringCount > 0 {
+                    Text(L10n.text("account.non_expiring_count", details.nonExpiringCount)).foregroundStyle(.secondary)
+                }
+                if details.unknownCount > 0 {
+                    Text(L10n.text("account.unknown_expiry_count", details.unknownCount)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !details.expiries.isEmpty {
+                    Text(L10n.text("account.expiry_timezone", TimeZone.current.identifier))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(L10n.text("account.expiry_unknown")).foregroundStyle(.secondary)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
     private var expiryDescription: String {
         if count == 0 { return L10n.text("account.no_resets") }

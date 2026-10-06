@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Click the available-reset count to view exact expiry times, including deadlines beyond the weekly chart; distinguish unknown expiry details and non-expiring resets.
+
 ## 2.2.1
 
 - Support custom and adaptive width modes.
