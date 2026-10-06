@@ -14,9 +14,11 @@ public enum IslandGeometry {
     }
 
     public static func frame(screen: CGRect, visible: CGRect, notchWidth: CGFloat,
-                             topHeight: CGFloat, expanded: Bool, attached: Bool, contentHeight: CGFloat = 342) -> CGRect {
-        let desiredWidth: CGFloat = attached ? max(480, notchWidth + 300) : expanded ? 440 : 300
-        let width = min(screen.width - 24, desiredWidth)
+                             topHeight: CGFloat, expanded: Bool, attached: Bool, contentHeight: CGFloat = 342,
+                             desiredWidth: CGFloat? = nil) -> CGRect {
+        let legacyWidth: CGFloat = attached ? max(480, notchWidth + 300) : expanded ? 440 : 300
+        let requestedWidth = desiredWidth.flatMap { $0.isFinite ? max(1, $0) : nil } ?? legacyWidth
+        let width = max(1, min(screen.width - 24, requestedWidth))
         let top = attached ? screen.maxY : visible.maxY - 10
         let desiredHeight: CGFloat = expanded ? topHeight + max(0, contentHeight) : topHeight
         let height = min(desiredHeight, max(topHeight, top - visible.minY - 8))

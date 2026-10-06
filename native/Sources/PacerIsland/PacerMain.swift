@@ -120,7 +120,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             UserDefaults.standard.persistentDomain(forName: "com.codexpacer.island.preview") ?? [:])
         UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
             "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false,
-            "compactMetric": "remaining", "quotaWindowID": "auto", "showInMenuBar": false])
+            "compactMetric": "remaining", "quotaWindowID": "auto", "showInMenuBar": false,
+            "islandWidthMode": IslandWidthSettings.Mode.adaptive.rawValue])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)

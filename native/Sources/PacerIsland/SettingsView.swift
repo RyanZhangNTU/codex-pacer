@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var displayMode = IslandDisplayMode.load()
+    @State private var widthSettings = IslandWidthSettings.load()
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -62,6 +63,15 @@ struct SettingsView: View {
                         Text(L10n.text("settings.floating")).tag(IslandDisplayMode.floating)
                     }
                     .help(L10n.text("settings.display_mode_help"))
+                    Picker(L10n.text("settings.width_mode"), selection: $widthSettings.mode) {
+                        Text(L10n.text("settings.width_adaptive")).tag(IslandWidthSettings.Mode.adaptive)
+                        Text(L10n.text("settings.width_fixed")).tag(IslandWidthSettings.Mode.fixed)
+                    }
+                    IslandWidthControl(settings: $widthSettings,
+                        attached: displayMode == .notch || (displayMode == .automatic && model.isAttached))
+                    Text(L10n.text(widthSettings.mode == .adaptive ? "settings.width_adaptive_help" : "settings.width_fixed_help"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Toggle(L10n.text("settings.menu_bar"), isOn: $showInMenuBar)
                         .help(L10n.text("settings.menu_bar_help"))
                     Toggle(L10n.text("settings.fullscreen"), isOn: $fullscreen)
@@ -316,6 +326,7 @@ struct SettingsView: View {
                 validation = L10n.text("settings.invalid_home"); return
             }
         }
+        widthSettings = widthSettings.normalized
         saving = true
         Task { @MainActor in
             let allowed = systemNotifications ? await NotificationDelivery.requestPermission() : false
@@ -326,6 +337,7 @@ struct SettingsView: View {
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
             displayMode.save(to: defaults)
+            widthSettings.save(to: defaults)
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")

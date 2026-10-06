@@ -106,11 +106,18 @@ final class PanelController: NSObject {
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
         if model.topHeight != layout.topHeight { model.topHeight = layout.topHeight }
+        let widths = model.widthSettings
+        let collapsedWidth = widths.desiredWidth(expanded: false, notchWidth: layout.notchWidth,
+            leading: model.measuredHeaderLeading, trailing: model.measuredHeaderTrailing)
+        let expandedWidth = widths.desiredWidth(expanded: true, notchWidth: layout.notchWidth,
+            leading: model.measuredHeaderLeading, trailing: model.measuredHeaderTrailing,
+            contentWidth: model.measuredContentWidth)
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
             topHeight: model.topHeight, expanded: model.expanded, attached: layout.attached,
-            contentHeight: model.panelContentHeight)
+            contentHeight: model.panelContentHeight, desiredWidth: model.expanded ? expandedWidth : collapsedWidth)
         let expandedFrame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
-            topHeight: model.topHeight, expanded: true, attached: layout.attached, contentHeight: model.panelContentHeight)
+            topHeight: model.topHeight, expanded: true, attached: layout.attached, contentHeight: model.panelContentHeight,
+            desiredWidth: expandedWidth)
         if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample

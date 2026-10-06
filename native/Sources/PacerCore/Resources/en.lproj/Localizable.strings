@@ -228,6 +228,15 @@
 "settings.detected_cli" = "Executable found · %@";
 "settings.display" = "Display";
 "settings.display_mode" = "Display Mode";
+"settings.width_preview" = "Island width preview";
+"settings.width_narrow" = "Narrow";
+"settings.width_medium" = "Medium";
+"settings.width_wide" = "Wide";
+"settings.width_mode" = "Width";
+"settings.width_adaptive" = "Adaptive";
+"settings.width_fixed" = "Specified Width";
+"settings.width_adaptive_help" = "Fits the current status, rate, quota and task rows. Applied when you save.";
+"settings.width_fixed_help" = "Drag the slider to preview the width. One width applies to the island and expanded panel, with room for the camera and display edges. Applied when you save.";
 "settings.display_mode_help" = "Automatic follows the display. Notch attaches to the top edge; Floating sits below the menu bar. All modes work on every display.";
 "settings.display_picker" = "Display";
 "settings.empty_quota" = "The CLI runs, but the account service returned no quota windows. Check the subscription quota for the current account or workspace.";
