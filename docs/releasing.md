@@ -44,6 +44,8 @@ Use a focused branch from the current `develop`. Update all relevant version and
 
 Keep release-note files for the version in `native/Info.plist`. After a new release is published, older notes can be removed from the working tree; [CHANGELOG.md](../CHANGELOG.md), published Releases and their source tags retain the history. Packaging and publication require both current language files.
 
+Release notes describe shipped changes and installation guidance. Do not carry forward a deferred-issue appendix unless the maintainer explicitly requests one.
+
 Keep the bundle identifier, `SUFeedURL` and `SUPublicEDKey` compatible with installed clients. The stable feed is `https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast.xml`; its presence in Release assets is part of the current update service. Moving it or rotating the key requires a planned compatibility migration.
 
 ## 3. Verify before promotion

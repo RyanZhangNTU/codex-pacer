@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+
+- Support custom and adaptive width modes.
+
 ## 2.2.0
 
 - Flush queued SSH completions before disconnect, discover later loaded tasks through bounded pagination, and prevent retired-turn events or stale fallback logs from overriding current state.
