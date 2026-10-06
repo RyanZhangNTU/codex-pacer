@@ -228,6 +228,15 @@
 "settings.detected_cli" = "检测到可执行文件 · %@";
 "settings.display" = "显示";
 "settings.display_mode" = "显示模式";
+"settings.width_preview" = "灵动岛宽度预览";
+"settings.width_narrow" = "窄";
+"settings.width_medium" = "适中";
+"settings.width_wide" = "宽";
+"settings.width_mode" = "宽度";
+"settings.width_adaptive" = "自适应";
+"settings.width_fixed" = "指定宽度";
+"settings.width_adaptive_help" = "随当前状态、速率、额度和任务行调整。保存后立即应用。";
+"settings.width_fixed_help" = "拖动滑块预览宽度。灵动岛与展开面板共用一个宽度，并为刘海和屏幕边界保留空间。保存后立即应用。";
 "settings.display_mode_help" = "自动跟随显示器；刘海贴顶显示，悬浮位于菜单栏下方。所有显示器均可选择。";
 "settings.display_picker" = "显示器";
 "settings.empty_quota" = "CLI 可以运行，但账户服务没有返回可显示的额度窗口。请检查当前账户或工作区的订阅额度。";

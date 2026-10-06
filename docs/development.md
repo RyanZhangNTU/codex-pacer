@@ -55,6 +55,8 @@ After presentation changes, check the actual app: expand/collapse with fixed top
 
 Settings retain the saved quota-window choice while quota is unavailable and validate it after usable data returns. Conversation navigation uses the same application locations as CLI discovery; a failed open preserves the card and its unread reminder, and reports the failure separately from quota errors.
 
+Island width defaults to Adaptive for new installations and upgrades from earlier releases, in Automatic, Notch and Floating modes. Existing display/appearance choices remain intact; a subsequently saved Specified Width choice persists across launches. The header measures its unconstrained labels; a real notch reserves equal wings around the camera. Expanded task rows supply an independent preferred width, bounded at 680 pt with a 440 pt minimum. Specified mode uses one shared width for collapsed and expanded states, controlled by a live preview and one slider without numeric width fields. The internal width range is 360–900 points. A saved width from the earlier local two-field build is migrated on load, and obsolete keys are removed on save. Hardware-notch clearance and the selected display's edges constrain both modes. Width changes use the existing top-anchored, centered and quantized spring, and content height is measured again at the resulting width. Settings apply on Save.
+
 Keep tests grouped by the behavior they protect. When consolidating overlapping scenarios, preserve distinct input paths and boundary assertions, especially account isolation, sanitized transport, real helper shutdown and window rounding. Avoid fixed test counts or catalog-size thresholds as acceptance criteria.
 
 ## Performance checks

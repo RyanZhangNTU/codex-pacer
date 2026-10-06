@@ -13,6 +13,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 - Keep ended-turn cards until clicked, their state changes, or the configured retention expires; receive a reminder while the island is collapsed.
 - Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
 - Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.
+- Use adaptive width by default, or adjust a single width with a preview and slider in Settings.
 - Use English or Simplified Chinese, following your Mac's language by default or selecting a language in Settings.
 - Update inside the app: daily checks by default, with download and installation after you choose to install.
 

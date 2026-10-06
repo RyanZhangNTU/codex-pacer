@@ -7,7 +7,7 @@ For macOS 14 or later, with support for Apple Silicon and Intel.
 - Fix inflated token/s at the start of a turn and stale displayed estimates. Each turn establishes its own counter baseline; numbers expire after fifteen seconds without a new counter.
 - Preserve existing preferences and improve reconnects, conversation-opening failures, failure-state labels and quota-window selection.
 
-An abnormal exit may lose up to thirty minutes of local curve history. Remaining uncommon event-ordering, subscription, clock-skew and reset-correction cases are documented in [known issues](https://github.com/RyanZhangNTU/codex-pacer/blob/v2.2.0/docs/known-issues-2.2.0.md).
+An abnormal exit may lose up to thirty minutes of local curve history.
 
 Install from Settings → Check for Updates.
 
