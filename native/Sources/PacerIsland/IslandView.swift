@@ -70,13 +70,14 @@ private struct IslandHeader: View {
     }
 
     private func header(wingWidth: CGFloat?) -> some View {
+        // Only a hardware camera gap needs equal wings. Without that gap,
+        // keep each label's natural width to match the adaptive measurement.
         HStack(spacing: 6) {
             Button { model.openCompletionOrPin() } label: {
                 leadingContent.frame(height: model.topHeight).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(width: wingWidth, alignment: .leading)
-            .frame(maxWidth: attached && wingWidth == nil ? .infinity : nil, alignment: .leading)
             .help(model.pendingInputRequests.first.map { L10n.text("attention.open", $0.sourceName ?? L10n.text("activity.local_task")) } ??
                 model.pendingCompletions.first.map { L10n.text("activity.open_help", model.projectName($0)) } ?? L10n.text("common.pin"))
             .accessibilityLabel(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ?
@@ -88,7 +89,6 @@ private struct IslandHeader: View {
             }
             .buttonStyle(.plain)
             .frame(width: wingWidth, alignment: .trailing)
-            .frame(maxWidth: attached && wingWidth == nil ? .infinity : nil, alignment: .trailing)
             .accessibilityLabel(L10n.text("activity.quota_pin", model.compactWindow, model.quotaSummary))
         }.padding(.horizontal, 15)
     }

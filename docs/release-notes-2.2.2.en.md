@@ -2,7 +2,8 @@ For macOS 14 or later, with support for Apple Silicon and Intel.
 
 - Click the available-reset count to view exact expiry times.
 - Prevent ephemeral conversations from appearing as duplicate tasks that cannot open, while keeping normal input and approval reminders.
-- Update remote session names as they change and retain known names while live metadata is incomplete.
+- Update remote session names during tasks and after completion, including delayed automatic naming; retain known names while live metadata is incomplete.
+- Fix clipped status text when token rates appear in adaptive Notch mode on displays without a camera gap.
 
 Install from Settings → Check for Updates.
 

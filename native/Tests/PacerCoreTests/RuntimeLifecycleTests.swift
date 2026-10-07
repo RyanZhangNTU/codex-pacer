@@ -320,9 +320,11 @@ final class RuntimeLifecycleTests: XCTestCase {
         for _ in 0..<1000 { state.consume(event("metadata", thread: UUID().uuidString.lowercased(), fields: ["name": "Synthetic"])) }
         let fields = Mirror(reflecting: state).children
         XCTAssertLessThanOrEqual((fields.first { $0.label == "live" }?.value as? [String: SessionActivity])?.count ?? 0, 64)
+        XCTAssertLessThanOrEqual(state.nameUpdates.count, 64, "Display metadata shares the bounded idle cache")
         state.consume(["kind": "status", "connected": false])
         let cleared = Mirror(reflecting: state).children
         XCTAssertTrue((cleared.first { $0.label == "idleOrder" }?.value as? [String: Int])?.isEmpty == true)
+        XCTAssertTrue(state.nameUpdates.isEmpty)
     }
 
     func testRemoteNameUpdatesDoNotChangeTurnStateAndClearedNamesDoNotReturnFromCache() {
@@ -344,6 +346,8 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(updated.turnID, before.turnID)
         XCTAssertEqual(updated.lastObserved, before.lastObserved)
         XCTAssertEqual(updated.tokensPerSecond(at: Date(timeIntervalSince1970: 1004)), before.tokensPerSecond(at: Date(timeIntervalSince1970: 1004)))
+        state.consume(event("metadata", at: 1004, fields: ["name": " \n "]))
+        XCTAssertEqual(state.activities[0].title, "Renamed session", "Incomplete RPC metadata cannot erase a known name")
         state.consume(event("thread/name/updated", at: 1005, fields: ["name": NSNull()]))
         XCTAssertNil(ActivitySourceMerger.merge(logged: [logged], streamed: state.activities).first?.title)
         var otherHost = SessionActivity(id: "local:" + thread)
@@ -369,6 +373,8 @@ final class RuntimeLifecycleTests: XCTestCase {
         before=len(s.queue)
         s.receive({'method':'thread/name/updated','params':{'threadId':tid,'threadName':42}})
         assert len(s.queue)==before,'malformed names cannot erase a known title'
+        s.receive({'method':'thread/name/updated','params':{'threadId':tid}})
+        assert len(s.queue)==before,'an absent field is not an explicit name removal'
         for source in ({'ephemeral':True},{'source':{'subAgent':{'other':'guardian'}}}):
             ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
             s.receive({'method':'thread/started','params':{'thread':dict(source,id=tid,status={'type':'active'})}})

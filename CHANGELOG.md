@@ -4,7 +4,8 @@
 
 - Click the available-reset count to view exact expiry times, including deadlines beyond the weekly chart; distinguish unknown expiry details and non-expiring resets.
 - Exclude ephemeral conversations from task and input-reminder lists, preventing duplicate entries that cannot open; preserve normal input and approval reminders.
-- Apply remote session-name updates immediately and retain known names when a live stream has no title.
+- Apply remote session-name updates to running tasks and retained completion cards, including automatic naming after the first turn; preserve known names when live metadata is incomplete.
+- Keep status text and token rates fully visible in adaptive Notch mode on displays without a camera gap.
 
 ## 2.2.1
 

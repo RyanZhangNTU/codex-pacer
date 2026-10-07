@@ -6,6 +6,7 @@ import Darwin
 public actor RealtimeActivityMonitor {
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String]) -> Void
     public typealias AttentionUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest]) -> Void
+    public typealias MetadataUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate]) -> Void
     private struct Source: Equatable {
         let id: String
         let name: String?
@@ -42,7 +43,7 @@ public actor RealtimeActivityMonitor {
     private var attentionRequests: [String: PendingAttentionRequest] = [:]
     private var failed: [String: Source] = [:]
     private var retryAfter: [String: Date] = [:]
-    private var callback: AttentionUpdate?
+    private var callback: MetadataUpdate?
     private var localUnavailable = true
     private var disconnected: [String: [SessionActivity]] = [:]
     private var pendingHints: [String: Set<String>] = [:]
@@ -52,6 +53,11 @@ public actor RealtimeActivityMonitor {
         start(home: home, includeSSH: includeSSH, useSSHFallback: useSSHFallback) { activities, status, unavailable, _ in update(activities, status, unavailable) }
     }
     public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true, update: @escaping AttentionUpdate) {
+        start(home: home, includeSSH: includeSSH, useSSHFallback: useSSHFallback) { activities, status, unavailable, requests, _ in
+            update(activities, status, unavailable, requests)
+        }
+    }
+    public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true, update: @escaping MetadataUpdate) {
         callback = update
         let local = Source(id: "local", name: nil, alias: nil, home: home.path,
             desktopIPC: !Self.controlEndpointAvailable(home: home))
@@ -318,7 +324,10 @@ public actor RealtimeActivityMonitor {
             guard let host = request.sourceHostID else { return true }
             return connections[host]?.state.isConfirmedIdle(thread: request.threadID) != true
         }
-        callback?(activities(), status, failed.values.filter { status[$0.id]?.connected != true }.compactMap(\.name).sorted(), requests.sorted { $0.detectedAt < $1.detectedAt })
+        let names = connections.values.flatMap { $0.state.nameUpdates } +
+            (desktop?.states.values.flatMap { $0.nameUpdates } ?? [])
+        callback?(activities(), status, failed.values.filter { status[$0.id]?.connected != true }.compactMap(\.name).sorted(),
+                  requests.sorted { $0.detectedAt < $1.detectedAt }, names)
         if let hosts = desktop?.states.keys { for host in hosts { desktop?.states[host]?.releasePublishedState() } }
         for id in Array(connections.keys) { connections[id]?.state.releasePublishedState() }
     }

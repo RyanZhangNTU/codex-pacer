@@ -143,6 +143,7 @@ enum RealtimeProbe {
             e['status']=str(status.get('type',''))[:32]
             e['flags']=[f for f in status.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]
         elif method=='thread/name/updated':
+            if 'threadName' not in p:return None
             name=p.get('threadName')
             if name is not None and not isinstance(name,str):return None
             e['name']=name[:240] if name is not None else None

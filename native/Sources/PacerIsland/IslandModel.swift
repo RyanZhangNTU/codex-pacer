@@ -459,19 +459,25 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
-            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable, requests in
+            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable, requests, names in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    self.now = Date(); self.remoteActivities = activities
-                    if self.streamStatuses != statuses { self.streamStatuses = statuses }
-                    if self.unavailableSSH != unavailable { self.unavailableSSH = unavailable }
-                    self.observeAttentionRequests(requests)
-                    self.combineActivities()
+                    self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names)
                 }
             }
         }
+    }
+
+    func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
+                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate]) {
+        now = Date(); remoteActivities = activities
+        completionInbox.updateNames(names)
+        if streamStatuses != statuses { streamStatuses = statuses }
+        if unavailableSSH != unavailable { unavailableSSH = unavailable }
+        observeAttentionRequests(requests)
+        combineActivities()
     }
     func observeAttentionRequests(_ requests: [PendingAttentionRequest]) {
         if attentionRequests != requests { attentionRequests = requests }

@@ -91,6 +91,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         titleWasExplicitlyCleared = false
     }
 
+    mutating func updateName(_ value: String?) {
+        updateTitle(value)
+        titleWasExplicitlyCleared = title == nil
+    }
+
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
         if [.completed, .interrupted].contains(phase) { return phase }
         guard lastObserved != nil else { return .unknown }
@@ -292,12 +297,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let seconds = event["at"] as? Double, seconds.isFinite else { return }
         let date = Date(timeIntervalSince1970: seconds)
         if method == "thread/name/updated" {
-            updateTitle(event["name"] as? String)
-            titleWasExplicitlyCleared = title == nil
+            guard event["name"] is String || event["name"] is NSNull else { return }
+            updateName(event["name"] as? String)
             return
         }
         if method == "metadata" {
-            if let name = event["name"] as? String { updateTitle(name) }
+            if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                updateTitle(name)
+            }
             modelName = event["model"] as? String ?? modelName
             if let cwd = event["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
