@@ -52,12 +52,18 @@ struct NativeDesktopSession {
     }
     private mutating func queue(_ event: [String: Any], host: String) throws {
         let method = event["method"] as? String ?? ""
-        let next = HostEvent(host: host, value: event)
+        var value = event
         if let previous = events.last, previous.host == host, (method.contains("Delta") || method.hasSuffix("/delta")),
            previous.value["method"] as? String == method, previous.value["threadId"] as? String == event["threadId"] as? String,
-           previous.value["itemId"] as? String == event["itemId"] as? String { events[events.count - 1] = next }
-        else { events.append(next) }
+           previous.value["itemId"] as? String == event["itemId"] as? String {
+            if previous.value["hasText"] as? Bool == true {
+                value["hasText"] = true
+                value["firstDeltaAt"] = previous.value["firstDeltaAt"] ?? previous.value["at"]
+            }
+            events[events.count - 1] = HostEvent(host: host, value: value)
+        } else { events.append(HostEvent(host: host, value: value)) }
         guard events.count <= 512 else { throw JSONFieldView.Failure.limit }
+        if event["firstTextDelta"] as? Bool == true || ["turn/started", "turn/completed", "thread/status/changed"].contains(method) { try publishEvents() }
     }
     private mutating func release(_ key: Key, at now: Date) throws {
         if dormant[key] == nil, key.host == "local" && localRuntime { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }

@@ -152,10 +152,14 @@ final class RuntimeLifecycleTests: XCTestCase {
         try:s.receive({'id':rid,'result':{'data':[],'nextCursor':'same'}})
         except ValueError:pass
         else:raise AssertionError('cursor cycle accepted')
-        # A queue-bound disconnect still flushes accepted events in wire-sized batches.
+        # Endings bypass batching. Ordinary events still preserve the queue-bound
+        # disconnect boundary and flush in wire-sized batches.
         s.queue=[];packets=[];emit=lambda value:packets.append(value)
+        s.queue_event({'method':'turn/completed','threadId':tid(0),'turnId':'turn','at':0})
+        assert len(packets)==1 and packets[0]['events'][0]['method']=='turn/completed' and not s.queue
+        packets=[]
         for i in range(513):
-            try:s.queue_event({'method':'turn/completed','threadId':tid(i),'turnId':'turn','at':i})
+            try:s.queue_event({'method':'item/plan/delta','threadId':tid(i),'turnId':'turn','at':i})
             except ValueError:
                 assert i==512
                 flush_events(s)

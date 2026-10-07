@@ -9,6 +9,7 @@ public struct ActivityOverview: Sendable {
     public let tokensPerSecond: Double?
     public let displayedRate: Double?
     public let rateIsFresh: Bool
+    public let usesResponseRate: Bool
 
     public init(activities: [SessionActivity], at now: Date) {
         self.activities = activities.filter { !$0.isInternalReview }
@@ -18,6 +19,20 @@ public struct ActivityOverview: Sendable {
         else if !waiting.isEmpty { phase = .waitingForInput }
         else if self.activities.contains(where: { $0.observedPhase(at: now) == .unknown }) { phase = .unknown }
         else { phase = .completed }
+        let generating = running.filter { $0.outputEstimate(at: now)?.value != 0 }
+        let responses = generating.compactMap(\.responsePerformance)
+        usesResponseRate = !responses.isEmpty
+        if !responses.isEmpty {
+            // Different request windows cannot be added as concurrent decode
+            // speed. Divide total output by total measured duration instead.
+            let mean = responses.reduce(0.0) { $0 + Double($1.outputTokens) } / responses.reduce(0) { $0 + $1.duration }
+            displayedRate = mean
+            rateIsFresh = responses.count == generating.count && responses.allSatisfy {
+                now >= $0.completedAt && now.timeIntervalSince($0.completedAt) < OutputEstimate.freshnessInterval
+            }
+            tokensPerSecond = rateIsFresh ? mean : nil
+            return
+        }
         let rates = running.compactMap { $0.tokensPerSecond(at: now) }
         // Never carry an old rate from a waiting, ended, stale or internal turn.
         tokensPerSecond = rates.isEmpty ? nil : rates.reduce(0, +)

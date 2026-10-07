@@ -329,3 +329,17 @@
 "activity.failed" = "任务失败";
 
 "quota.exhausted" = "额度用尽";
+
+// Response performance and presentation energy
+"performance.awaiting_usage" = "等待用量";
+"performance.awaiting_usage_help" = "请求结算且完整观察到输出时段后显示 TPS；波浪号表示旧版累计计数估算。";
+"performance.first_output" = "首输出 %@";
+"performance.latency_help" = "从本轮开始到首次收到文本或推理文本，包含排队、网络和客户端传递时间；中途接入时不提供延迟。";
+"performance.response_help" = "最近一次已结算请求：%d 个输出 token / %.2f 秒，推理 token 只计算一次，排除工具等待。时段截止至最后观察到的生成条目，表示响应吞吐而非解码速度。";
+"performance.response_mean_help" = "%.1f t/s：最近一次已测请求的输出 token 总数除以观测时段总和。未测到的任务不计入；这不是并发解码速度。";
+"performance.settings_section" = "性能与能耗";
+"performance.refresh" = "展示更新";
+"performance.mode.efficient" = "省电 · 1 秒";
+"performance.mode.balanced" = "均衡 · 0.25 秒";
+"performance.mode.responsive" = "更及时 · 0.1 秒";
+"performance.refresh_help" = "均衡沿用原有更新间隔；更及时在任务活跃时可能增加能耗。只合并常规展示更新，用量精度不变；首输出、任务结束与输入提醒即时处理。";

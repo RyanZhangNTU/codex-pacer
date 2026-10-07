@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0
+
+- Show settled per-request output throughput using authoritative usage, including reasoning once and excluding tool waits; supplement local and SSH streams with bounded, incremental request logs.
+- Display observed first-output latency in each task and retain the last measured response through sparse usage reports and completion.
+- Add Energy Saving, Balanced and More Responsive display-update modes; retain the existing 0.25-second interval by default, with immediate first-output, ending and attention handling.
+- Settle usage before a same-batch completion, keep metric-only updates independent of task lifecycle, and avoid adding speeds measured over different request windows.
+
 ## 2.2.2
 
 - Click the available-reset count to view exact expiry times, including deadlines beyond the weekly chart; distinguish unknown expiry details and non-expiring resets.

@@ -100,6 +100,7 @@ struct DesktopWireProjection {
     private(set) var revision: Int?
     private var previousTurn: DesktopValue?
     private var previousItems: [String: DesktopValue] = [:]
+    private var firstTextSeen = false
     private var previousUsage: Int?
     private(set) var requests: [DesktopRequestDescriptor] = []
     private(set) var isActive = false
@@ -167,6 +168,9 @@ struct DesktopWireProjection {
             $0[$1.key] = Self.string($1.value, limit: $1.key == "id" ? 256 : 80)
         }
         values["questions"] = questions
+        if !attentionOnly, Self.models.contains(fields["type"]?.string() ?? "") {
+            values["hasGeneratedText"] = .boolean(try view.containsTextMetadata())
+        }
         return .object(values)
     }
     private static func questionMarkers(_ view: JSONFieldView?) throws -> DesktopValue {
@@ -198,8 +202,12 @@ struct DesktopWireProjection {
         guard let view, view.isObject else { return .object([:]) }
         var output: [String: DesktopValue] = [:]
         for (key, value) in try view.fields(["total", "last"]) where value.isObject {
-            if let count = try value.fields(["outputTokens"])["outputTokens"]?.integer(), count >= 0 {
-                output[key] = .object(["outputTokens": .integer(count)])
+            if let count = try value.fields(["outputTokens", "reasoningOutputTokens"])["outputTokens"]?.integer(), count >= 0 {
+                var row: [String: DesktopValue] = ["outputTokens": .integer(count)]
+                if let reasoning = try value.fields(["reasoningOutputTokens"])["reasoningOutputTokens"]?.integer(), reasoning >= 0 {
+                    row["reasoningOutputTokens"] = .integer(reasoning)
+                }
+                output[key] = .object(row)
             }
         }
         return .object(output)
@@ -325,7 +333,7 @@ struct DesktopWireProjection {
             if ["title", "cwd", "latestModel", "threadSource"].contains(root) { return path.count == 1 ? .null : nil }
             if root == "latestTokenUsageInfo" {
                 return path.count == 1 || (path.count <= 3 && keys.count == path.count &&
-                    ["total", "last"].contains(keys[1]) && (path.count == 2 || keys[2] == "outputTokens")) ? .null : nil
+                    ["total", "last"].contains(keys[1]) && (path.count == 2 || ["outputTokens", "reasoningOutputTokens"].contains(keys[2]))) ? .null : nil
             }
             if root == "threadRuntimeStatus" { return path.count == 1 || keys == [root, "type"] || keys == [root, "activeFlags"] ? .null : nil }
             if root == "requests" {
@@ -350,10 +358,16 @@ struct DesktopWireProjection {
         if root == "latestTokenUsageInfo" {
             if path.count == 1 { return try Self.usage(view) }
             if path.count == 2 && ["total", "last"].contains(keys.last ?? "") {
-                if let view, view.isObject, let count = try view.fields(["outputTokens"])["outputTokens"]?.integer(), count >= 0 { return .object(["outputTokens": .integer(count)]) }
+                if let view, view.isObject {
+                    var row: [String: DesktopValue] = [:]
+                    for (key, field) in try view.fields(["outputTokens", "reasoningOutputTokens"]) {
+                        if let count = field.integer(), count >= 0 { row[key] = .integer(count) }
+                    }
+                    return .object(row)
+                }
                 return .object([:])
             }
-            if path.count == 3 && keys.last == "outputTokens", let count = view?.integer(), count >= 0 { return .integer(count) }
+            if path.count == 3 && ["outputTokens", "reasoningOutputTokens"].contains(keys.last ?? ""), let count = view?.integer(), count >= 0 { return .integer(count) }
             return nil
         }
         if root == "threadRuntimeStatus" {
@@ -458,6 +472,7 @@ struct DesktopWireProjection {
         let snapshot = fields["type"]?.string() == "snapshot"
         var staged = self
         var rawPaths: [[DesktopPath]] = []
+        var textPaths: [[DesktopPath]] = []
         if snapshot {
             guard let state = fields["conversationState"], state.isObject else { throw JSONFieldView.Failure.malformed }
             try staged.snapshot(state); staged.owner = owner
@@ -469,6 +484,9 @@ struct DesktopWireProjection {
                 let p = try patch.fields(["op", "path", "value"])
                 guard let op = p["op"]?.string(), ["add", "replace", "remove"].contains(op) else { throw JSONFieldView.Failure.malformed }
                 let path = try Self.path(p["path"]); rawPaths.append(path)
+                if op != "remove", path.contains(.key("items")), let raw = p["value"],
+                   path.contains(where: { if case .key(let key) = $0 { return ["text", "delta", "content", "summary", "summaryText"].contains(key) }; return false }),
+                   try raw.containsTextMetadata() { textPaths.append(path) }
                 if let value = try staged.projectedValue(path: path, view: p["value"], op: op) {
                     try staged.tree.patch(path[...], op: op, value: value)
                     let prefix: [DesktopPath] = [.key("turnHistory"), .key("history"), .key("entitiesByKey")]
@@ -520,25 +538,26 @@ struct DesktopWireProjection {
             if let current, let turn = current["turnId"]?.text {
                 let status = current["status"]?.text ?? "", changed = previousTurn?["turnId"]?.text != turn
                 if changed {
-                    staged.previousItems = [:]; staged.previousUsage = nil
+                    staged.previousItems = [:]; staged.previousUsage = nil; staged.firstTextSeen = false
                     if status == "inProgress" {
                         let milliseconds = current["turnStartedAtMs"]?.number ?? 0
                         let started = milliseconds > 0 && milliseconds <= now.timeIntervalSince1970 * 1000 + 5000 ? milliseconds / 1000 : now.timeIntervalSince1970
                         events.append(event(snapshot ? "turn/attached" : "turn/started", ["turnId": turn, "startedAt": started]))
                     }
-                } else if previousTurn?["status"]?.text == "inProgress", Self.terminal.contains(status) {
-                    events.append(event("turn/completed", ["turnId": turn, "status": status]))
                 }
+                let ending = previousTurn?["status"]?.text == "inProgress" && Self.terminal.contains(status)
                 let items = Dictionary(current["items"]?.list.compactMap { item -> (String, DesktopValue)? in
                     item["id"]?.text.map { ($0, item) }
                 } ?? [], uniquingKeysWith: { _, new in new })
-                if status == "inProgress" {
+                if status == "inProgress" || ending {
                     for item in current["items"]?.list ?? [] {
                         guard let id = item["id"]?.text, let kind = item["type"]?.text else { continue }
                         let old = staged.previousItems[id]
                         if RuntimeItemKind.isTool(kind) {
                             if item["status"]?.text == "inProgress" && old?["status"]?.text != "inProgress" { events.append(event("item/started", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
                             else if old?["status"]?.text == "inProgress", Self.terminal.contains(item["status"]?.text ?? "") { events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
+                        } else if Self.models.contains(kind), Self.terminal.contains(item["status"]?.text ?? ""), old?["status"]?.text == "inProgress" {
+                            events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": kind]))
                         }
                     }
                     // Snapshots and whole-container replacements have no
@@ -551,26 +570,45 @@ struct DesktopWireProjection {
                     if replacedItems, let latest = current["items"]?.list.last(where: {
                         Self.models.contains($0["type"]?.text ?? "") || RuntimeItemKind.isTool($0["type"]?.text ?? "")
                     }), let kind = latest["type"]?.text, Self.models.contains(kind), let id = latest["id"]?.text {
-                        events.append(event("item/started", ["turnId": turn, "itemId": id, "itemType": kind]))
+                        var marker: [String: Any] = ["turnId": turn, "itemId": id, "itemType": kind]
+                        if !snapshot, latest["hasGeneratedText"] == .boolean(true) {
+                            marker["hasText"] = true
+                            if !staged.firstTextSeen { marker["firstTextDelta"] = true; staged.firstTextSeen = true }
+                        }
+                        events.append(event("item/started", marker))
                     }
                     if !snapshot {
                         for path in rawPaths {
                             guard let offset = path.firstIndex(of: .key("items")), Array(path.prefix(offset)) == selected,
                                   path.count > offset + 1, let item = staged.tree.at(path.prefix(offset + 2)),
                                   let kind = item["type"]?.text, Self.models.contains(kind), let id = item["id"]?.text else { continue }
-                            events.append(event(kind == "reasoning" ? "item/reasoning/textDelta" : "item/agentMessage/delta", ["turnId": turn, "itemId": id]))
+                            var delta: [String: Any] = ["turnId": turn, "itemId": id]
+                            let hasText = textPaths.contains(path)
+                            if hasText {
+                                delta["hasText"] = true
+                                if !staged.firstTextSeen { delta["firstTextDelta"] = true; staged.firstTextSeen = true }
+                            }
+                            events.append(event(kind == "reasoning" ? "item/reasoning/textDelta" : "item/agentMessage/delta", delta))
                         }
                     }
                     let runtime = staged.tree["threadRuntimeStatus"]
                     var state: [String: Any] = ["flags": runtime?["activeFlags"]?.list.compactMap(\.text) ?? []]
                     state["status"] = runtime?["type"]?.text
-                    events.append(event("thread/status/changed", state))
-                    if let count = staged.tree["latestTokenUsageInfo"]?["total"]?["outputTokens"]?.integer, count != staged.previousUsage {
-                        var usage: [String: Any] = ["turnId": turn, "outputTokens": count]
-                        usage["lastOutputTokens"] = staged.tree["latestTokenUsageInfo"]?["last"]?["outputTokens"]?.integer
-                        events.append(event("thread/tokenUsage/updated", usage)); staged.previousUsage = count
+                    if snapshot || changed || runtime != tree["threadRuntimeStatus"] {
+                        events.append(event("thread/status/changed", state))
                     }
                 }
+                // Settle final usage before releasing the turn, even when one
+                // atomic patch contains both the count and the completion.
+                if let count = staged.tree["latestTokenUsageInfo"]?["total"]?["outputTokens"]?.integer, count != staged.previousUsage,
+                   status == "inProgress" || ending {
+                    var usage: [String: Any] = ["turnId": turn, "outputTokens": count]
+                    usage["lastOutputTokens"] = staged.tree["latestTokenUsageInfo"]?["last"]?["outputTokens"]?.integer
+                    usage["lastReasoningTokens"] = staged.tree["latestTokenUsageInfo"]?["last"]?["reasoningOutputTokens"]?.integer
+                    usage["cachedUsage"] = snapshot || (changed && !rawPaths.contains { $0.first == .key("latestTokenUsageInfo") })
+                    events.append(event("thread/tokenUsage/updated", usage)); staged.previousUsage = count
+                }
+                if ending { events.append(event("turn/completed", ["turnId": turn, "status": status])) }
                 staged.previousItems = items
             }
         }

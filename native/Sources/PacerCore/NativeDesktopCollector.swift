@@ -11,11 +11,17 @@ final class NativeDesktopCollector: @unchecked Sendable {
     private let home: URL
     private let hosts: Set<String>
     private let localRuntime: Bool
+    private var batchInterval: TimeInterval
+    func setBatchInterval(_ value: TimeInterval) {
+        lock.lock(); batchInterval = min(1, max(0.1, value)); lock.unlock()
+    }
+    private var currentBatchInterval: TimeInterval { lock.lock(); defer { lock.unlock() }; return batchInterval }
     private let onFrame: @Sendable (Data) -> Void
     private let onClosed: @Sendable () -> Void
-    init(id: UUID = UUID(), home: URL, hosts: Set<String>, localRuntime: Bool = true, onFrame: @escaping @Sendable (Data) -> Void,
+    init(id: UUID = UUID(), home: URL, hosts: Set<String>, localRuntime: Bool = true, batchInterval: TimeInterval = 0.25, onFrame: @escaping @Sendable (Data) -> Void,
          onClosed: @escaping @Sendable () -> Void) {
-        self.id = id; self.home = home; self.hosts = hosts; self.localRuntime = localRuntime; self.onFrame = onFrame; self.onClosed = onClosed
+        self.id = id; self.home = home; self.hosts = hosts; self.localRuntime = localRuntime
+        self.batchInterval = min(1, max(0.1, batchInterval)); self.onFrame = onFrame; self.onClosed = onClosed
     }
     func start() throws {
         let path = home.appendingPathComponent("ipc/ipc.sock")
@@ -130,7 +136,7 @@ final class NativeDesktopCollector: @unchecked Sendable {
                     routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
                 }
                 if !session.ready && now.timeIntervalSince(opened) > 5 { throw POSIXError(.ETIMEDOUT) }
-                if session.hasEvents && now >= nextFlush { try session.publishEvents(); nextFlush = now.addingTimeInterval(0.25) }
+                if session.hasEvents && now >= nextFlush { try session.publishEvents(); nextFlush = now.addingTimeInterval(currentBatchInterval) }
                 if now >= nextStatus { try session.status(loopIterations: iterations); nextStatus = now.addingTimeInterval(15) }
                 for frame in session.takeFrames() { onFrame(frame) }
                 var delay = min(15, max(0.01, nextStatus.timeIntervalSinceNow))

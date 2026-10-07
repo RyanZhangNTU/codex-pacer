@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import pathlib
+import re
 import statistics
 import sys
 import textwrap
@@ -20,8 +21,9 @@ sys.argv = ['benchmark-events', base64.b64encode(b'/private/tmp/pacer-replay-no-
 
 def load(root):
     files = [root / 'native/Sources/PacerCore' / name for name in
-             ('SessionLogProbe.swift', 'RealtimeProbe.swift', 'DesktopEventProbe.swift')]
-    source = '\n'.join(textwrap.dedent(p.read_text().split('#"""', 1)[1].split('"""#', 1)[0]) for p in files)
+             ('SessionLogProbe.swift', 'RequestLogProbe.swift', 'RealtimeProbe.swift', 'DesktopEventProbe.swift')]
+    source = '\n'.join(textwrap.dedent(block) for p in files if p.exists()
+                       for block in re.findall(r'#"""\n(.*?)\n    """#', p.read_text().split('    static let script =')[0], re.S))
     namespace = {}
     exec(compile(source, str(root / 'DesktopEventProbe'), 'exec'), namespace)
     return namespace, hashlib.sha256(source.encode()).hexdigest()

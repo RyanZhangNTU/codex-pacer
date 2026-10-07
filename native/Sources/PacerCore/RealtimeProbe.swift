@@ -138,6 +138,7 @@ enum RealtimeProbe {
             if not isinstance(total.get('outputTokens'),int) or total['outputTokens']<0: return None
             e['outputTokens']=total['outputTokens']
             if isinstance(last.get('outputTokens'),int) and last['outputTokens']>=0: e['lastOutputTokens']=last['outputTokens']
+            if isinstance(last.get('reasoningOutputTokens'),int) and last['reasoningOutputTokens']>=0: e['lastReasoningTokens']=last['reasoningOutputTokens']
         elif method=='thread/status/changed':
             status=p.get('status') or {}
             e['status']=str(status.get('type',''))[:32]
@@ -149,14 +150,15 @@ enum RealtimeProbe {
             e['name']=name[:240] if name is not None else None
         elif method in ('item/agentMessage/delta','item/plan/delta','item/reasoning/summaryTextDelta','item/reasoning/textDelta'):
             if isinstance(p.get('itemId'),str): e['itemId']=p['itemId'][:256]
-            # Text content is deliberately never forwarded or tokenized.
+            # Only presence crosses the host boundary, never text or tokenization.
+            e['hasText']=isinstance(p.get('delta'),str) and bool(p['delta'])
         else: return None
         return e
     class Session:
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
-            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set()
-            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.2.2'},'capabilities':{'experimentalApi':True}},'initialize')
+            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict()
+            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.3.0'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')
@@ -195,14 +197,22 @@ enum RealtimeProbe {
         def queue_event(self,e):
             if e is None:return
             if e.get('turnId'):self.evidenced.add(e['threadId'])
+            if e.get('method')=='turn/started':self.first_text.discard(e['threadId'])
+            first=e.get('hasText') is True and e['threadId'] not in self.first_text
+            if first:self.first_text.add(e['threadId']);e['firstTextDelta']=True
             if self.queue and ('Delta' in e['method'] or e['method'].endswith('/delta')) and self.queue[-1].get('method')==e['method'] and self.queue[-1].get('itemId')==e.get('itemId') and self.queue[-1].get('threadId')==e['threadId']:
+                previous=self.queue[-1]
+                if previous.get('hasText'):
+                    e['hasText']=True;e['firstDeltaAt']=previous.get('firstDeltaAt',previous['at'])
                 self.queue[-1]=e
             else: self.queue.append(e)
             if len(self.queue)>512: raise ValueError('event queue bound')
+            if first or e['method'] in ('turn/started','turn/completed','thread/status/changed'):flush_events(self)
         def release(self,tid):
             self.queue_event({'method':'stream/released','threadId':tid,'at':time.time()})
             self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
-            self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None)
+            self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None);self.first_text.discard(tid)
+            if tid in self.rollout_paths:self.rollout_paths[tid]=(self.rollout_paths[tid][0],time.monotonic()+30)
             for rid,value in list(self.pending.items()):
                 if value[1]==tid and value[0] in ('read','resume'):self.pending.pop(rid,None)
         def trim_metadata(self):
@@ -211,7 +221,8 @@ enum RealtimeProbe {
                 if tid not in self.attached and tid not in self.attaching:self.known.pop(tid,None)
         def exclude_thread(self,tid):
             if len(self.excluded)<1024:self.excluded.add(tid)
-            self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None)
+            self.rollout_paths.pop(tid,None)
+            self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None);self.first_text.discard(tid)
             self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
             self.queue=[e for e in self.queue if e.get('threadId')!=tid]
             for rid,value in list(self.pending.items()):
@@ -249,7 +260,11 @@ enum RealtimeProbe {
                     status=self.known[tid]
                     self.queue_event({'method':'thread/observed','threadId':tid.lower(),'at':time.time(),
                         'status':status.get('type',''),'flags':[f for f in status.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]})
-                    if status.get('type')=='active':self.evidenced.add(tid)
+                    if status.get('type')=='active':
+                        self.evidenced.add(tid)
+                        if isinstance(thread.get('path'),str):
+                            self.rollout_paths[tid]=(thread['path'],float('inf'));self.rollout_paths.move_to_end(tid)
+                            while len(self.rollout_paths)>64:self.rollout_paths.popitem(last=False)
                     if kind=='resume':
                         self.attaching.discard(tid); self.attached.add(tid)
                     elif self.known[tid].get('type')=='active' and tid not in self.attached and tid not in self.attaching:
@@ -291,6 +306,7 @@ enum RealtimeProbe {
                 q=self.buffered.setdefault(tid,[])
                 if len(q)<64:q.append(e)
     import resource
+    """# + "\n" + RequestLogProbe.library + "\n" + #"""
     def emit(obj):
         data=obj if isinstance(obj,bytes) else (json.dumps(obj,separators=(',',':'))+'\n').encode()
         while data:
@@ -345,18 +361,21 @@ enum RealtimeProbe {
         else:publish(pending,True)
     def stats(session,scans):
         usage=resource.getrusage(resource.RUSAGE_SELF)
-        return {'kind':'status','connected':bool(session and session.ready),'attached':len(session.attached) if session else 0,'notifications':session.notices if session else 0,'fallbackScans':scans,'watchingLogs':False,'helperCpuSeconds':round(usage.ru_utime+usage.ru_stime,6),'helperLoopIterations':loop_iterations}
+        return {'kind':'status','connected':bool(session and session.ready),'attached':len(session.attached) if session else 0,'notifications':session.notices if session else 0,'fallbackScans':scans,'watchingLogs':bool(globals().get('request_logs')),'helperCpuSeconds':round(usage.ru_utime+usage.ru_stime,6),'helperLoopIterations':loop_iterations}
     """#
     static let script = library + "\n" + #"""
     ws=None; session=None; reconnect_at=0; next_scan=0; next_status=0; next_ping=0; flush_at=0; scans=0; last_scan=-1e9; latest_snapshot=None; status_stamp=None; once_deadline=time.monotonic()+6; quiet_since=None; loop_iterations=0
     once=len(sys.argv)>2 and sys.argv[2]=='once'
     local_only=len(sys.argv)>2 and sys.argv[2]=='socket-only'
     ssh_lifetime=len(sys.argv)>2 and sys.argv[2]=='ssh-lifetime'
+    controlled_input=ssh_lifetime or local_only and len(sys.argv)>4 and sys.argv[4]=='control'
+    batch_interval=min(1,max(.1,float(sys.argv[3]))) if len(sys.argv)>3 else .25
     index_changes=RuntimeIndexChanges(home) if ssh_lifetime else None
+    request_logs=RequestLogTailer() if ssh_lifetime else None
     discovery_dirty=False;next_discovery=0;index_rechecks=0
     hint_buffer=b'';hints=OrderedDict()
     def read_hints():
-        global hint_buffer
+        global hint_buffer,batch_interval
         data=os.read(0,4096)
         if not data:return False
         hint_buffer+=data
@@ -365,6 +384,9 @@ enum RealtimeProbe {
             line,hint_buffer=hint_buffer.split(b'\n',1)
             try:value=json.loads(line)
             except ValueError:continue
+            if isinstance(value,dict) and value.get('kind')=='settings':
+                if value.get('batchInterval') in (.1,.25,1):batch_interval=value['batchInterval']
+                continue
             ids=value.get('threadIds') if isinstance(value,dict) and value.get('kind')=='discover' else None
             if not isinstance(ids,list) or len(ids)>32:continue
             for tid in ids:
@@ -376,7 +398,7 @@ enum RealtimeProbe {
         try:
             now=time.monotonic()
             if index_changes and index_changes.check(now):discovery_dirty=True;index_rechecks=2
-            if ssh_lifetime and select.select([0],[],[],0)[0] and not read_hints():break
+            if controlled_input and select.select([0],[],[],0)[0] and not read_hints():break
             if ws is None and now>=reconnect_at:
                 try:
                     ws=WebSocket(home/'app-server-control'/'app-server-control.sock');session=Session(ws);next_status=now
@@ -401,8 +423,11 @@ enum RealtimeProbe {
             if now>=next_scan and not local_only:
                 latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ());scans+=1;emit_snapshot(latest_snapshot);last_scan=time.monotonic()
                 next_scan=now+(120 if session and session.ready else 60)
+            if request_logs:
+                request_logs.sync(session.rollout_paths if session else {},now,batch_interval)
+                request_logs.read(now,batch_interval)
             if session and session.queue and now>=flush_at:
-                flush_events(session);flush_at=now+.25
+                flush_events(session);flush_at=now+batch_interval
             stamp=(bool(session and session.ready),len(session.attached) if session else 0)
             if stamp!=status_stamp and last_scan>-1e8:
                 next_scan=last_scan+(120 if session and session.ready else 60)
@@ -418,18 +443,23 @@ enum RealtimeProbe {
                 break
             if session and session.ready and now>=next_ping:
                 ws.send_frame(9,b'pacer');next_ping=now+15
-            delay=max(.01,min(.25 if session and session.queue else 15,next_status-now,next_scan-now if not local_only else 15,(reconnect_at-now) if ws is None else 15))
+            delay=max(.01,min(batch_interval if session and session.queue else 15,next_status-now,next_scan-now if not local_only else 15,(reconnect_at-now) if ws is None else 15))
             if session and session.pending:delay=min(delay,max(.01,min(5-(now-v[2]) for v in session.pending.values())))
             if session and session.ready and hints:delay=min(delay,max(.01,min(due-now for _,due in hints.values())))
             if index_changes:delay=min(delay,max(.01,index_changes.next_check-now))
+            if request_logs:
+                delay=min(delay,max(.01,request_logs.next_poll-now))
+                if request_logs.due is not None:delay=min(delay,max(.01,request_logs.due-now))
             if session and session.ready and discovery_dirty and not session.listing:delay=min(delay,max(.01,next_discovery-now))
             if once:delay=min(delay,.1,max(.01,once_deadline-now))
-            readers=([ws.s] if ws else [])+([0] if ssh_lifetime else [])
+            readers=([ws.s] if ws else [])+([0] if controlled_input else [])
             if index_changes and index_changes.fd>=0:readers.append(index_changes.fd)
+            if request_logs and request_logs.fd>=0:readers.append(request_logs.fd)
             if readers:
                 ready=select.select(readers,[],[],0 if ws and ws.buf else delay)[0]
                 if index_changes and index_changes.fd in ready and index_changes.drain():discovery_dirty=True;index_rechecks=2
-                if ssh_lifetime and 0 in ready and not read_hints():break
+                if request_logs and request_logs.fd in ready:request_logs.drain(time.monotonic(),batch_interval)
+                if controlled_input and 0 in ready and not read_hints():break
                 if ws and (ws.buf or ws.s in ready):session.receive(ws.receive())
             else:time.sleep(delay)
         except (BrokenPipeError,KeyboardInterrupt):break
@@ -445,5 +475,6 @@ enum RealtimeProbe {
     except BrokenPipeError:pass
     if ws:ws.close()
     if index_changes:index_changes.close()
+    if request_logs:request_logs.close()
     """#
 }

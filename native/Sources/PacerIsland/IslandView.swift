@@ -98,14 +98,14 @@ private struct IslandHeader: View {
             Image(systemName: model.headerSymbol).font(.system(size: 12)).foregroundStyle(model.headerTint)
             Text(model.headerDisplayStatus)
                 .font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
-            if !model.hidesHeaderRate, model.showsRate, let rate = model.rate {
+            if !model.hidesHeaderRate, model.showsRate, model.rate != nil {
                 Text(model.headerRateText ?? "—")
                     .font(.system(size: 10)).monospacedDigit()
                     .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
-                    .help(L10n.text(model.rateIsFresh ? "rate.total" : "rate.partial", rate))
+                    .help(model.rateHelp)
                 Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
             } else if !attached && model.expanded && model.showsRate && model.pendingCompletions.isEmpty {
-                Text(L10n.text("activity.sampling")).font(.system(size: 10)).foregroundStyle(secondary)
+                Text(L10n.text("performance.awaiting_usage")).font(.system(size: 10)).foregroundStyle(secondary)
             }
         }
     }
