@@ -59,6 +59,48 @@ final class NativeDesktopSocketTests: XCTestCase {
         let report = try JSONSerialization.jsonObject(with: stdout.fileHandleForReading.readDataToEndOfFile()) as! [String: Any]
         XCTAssertTrue(report["onlyMonitoringRequests"] as? Bool == true)
     }
+    func testExpandingFlushesPendingNativeEventsWithoutSocketTrafficOrReconnect() async throws {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-native-cadence-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let child = Process(), stderr = Pipe()
+        let marker = try XCTUnwrap(Self.server.range(of: "time.sleep(.3)"))
+        let script = String(Self.server[..<marker.lowerBound]) + #"""
+        time.sleep(.3)
+        change({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['latestTokenUsageInfo','total','outputTokens'],'value':12}]})
+        try:
+            while True:read()
+        except (EOFError,ConnectionResetError):pass
+        finally:connection.close();server.close()
+        """#
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", script, home.path]
+        child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
+        try child.run(); defer { if child.isRunning { child.terminate() } }
+        let socket = home.appendingPathComponent("ipc/ipc.sock")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        let initial = expectation(description: "initial count"), expanded = expectation(description: "pending count on expansion")
+        let closed = expectation(description: "owned collector stopped")
+        let frames = Frames()
+        let collector = NativeDesktopCollector(home: home, hosts: ["local"], batchInterval: 5, onFrame: { data in
+            _ = frames.append(data)
+            let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let events = value?["events"] as? [[String: Any]] ?? []
+            if events.contains(where: { $0["outputTokens"] as? Int == 10 }) { initial.fulfill() }
+            if events.contains(where: { $0["outputTokens"] as? Int == 12 }) { expanded.fulfill() }
+        }, onClosed: { closed.fulfill() })
+        try collector.start()
+        await fulfillment(of: [initial], timeout: 2)
+        try await Task.sleep(nanoseconds: 1_300_000_000)
+        let pending = try frames.all().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+        XCTAssertFalse(pending.contains { ($0["events"] as? [[String: Any]])?.contains { $0["outputTokens"] as? Int == 12 } == true })
+        collector.setBatchInterval(1, flushPending: true)
+        await fulfillment(of: [expanded], timeout: 1)
+        collector.stop(); await fulfillment(of: [closed], timeout: 2)
+        child.waitUntilExit()
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+
     func testMonitorDeliversFinalEndingBeforeSocketEOF() async throws {
         for routing in [false, true] {
             for atomic in routing ? [true, false] : [true] {

@@ -62,8 +62,11 @@ struct NativeDesktopSession {
             }
             events[events.count - 1] = HostEvent(host: host, value: value)
         } else { events.append(HostEvent(host: host, value: value)) }
-        guard events.count <= 512 else { throw JSONFieldView.Failure.limit }
-        if event["firstTextDelta"] as? Bool == true || ["turn/started", "turn/completed", "thread/status/changed"].contains(method) { try publishEvents() }
+        let toolBoundary = ["item/started", "item/completed"].contains(method) && RuntimeItemKind.isTool(event["itemType"] as? String ?? "")
+        // A busy multi-chat stream must flush at the bound during a long batch,
+        // rather than disconnecting and losing its observed response windows.
+        if events.count >= 512 || toolBoundary || event["firstTextDelta"] as? Bool == true ||
+            ["turn/started", "turn/completed", "thread/status/changed"].contains(method) { try publishEvents() }
     }
     private mutating func release(_ key: Key, at now: Date) throws {
         if dormant[key] == nil, key.host == "local" && localRuntime { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }

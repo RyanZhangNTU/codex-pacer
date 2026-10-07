@@ -2,6 +2,26 @@ import XCTest
 @testable import PacerCore
 
 final class ActivityLogWatcherTests: XCTestCase {
+    func testExpansionFlushesPendingFiveSecondAppendWithoutAnotherWrite() async throws {
+        let folder = URL(fileURLWithPath: "/private/tmp/pacer-watch-expand-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("fixture.jsonl")
+        try Data("initial\n".utf8).write(to: file)
+        let delivered = expectation(description: "pending append delivered on expansion")
+        let watcher = ActivityLogWatcher(interval: 5) { discovery in
+            XCTAssertFalse(discovery); delivered.fulfill()
+        }
+        watcher.update([file], interval: 5)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd(); try handle.write(contentsOf: Data("next\n".utf8)); try handle.close()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        watcher.update([file], interval: 1, flushPending: true)
+        await fulfillment(of: [delivered], timeout: 1)
+        watcher.stop()
+    }
+
     func testAppendAndDirectoryCreationWakeAndStoppingCancelsPendingDelivery() async throws {
         let folder = URL(fileURLWithPath: "/private/tmp/pacer-watch-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

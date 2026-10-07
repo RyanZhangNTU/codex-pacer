@@ -206,8 +206,8 @@ enum RealtimeProbe {
                     e['hasText']=True;e['firstDeltaAt']=previous.get('firstDeltaAt',previous['at'])
                 self.queue[-1]=e
             else: self.queue.append(e)
-            if len(self.queue)>512: raise ValueError('event queue bound')
-            if first or e['method'] in ('turn/started','turn/completed','thread/status/changed'):flush_events(self)
+            tool_boundary=e['method'] in ('item/started','item/completed') and e.get('itemType') in ('commandExecution','fileChange','mcpToolCall','dynamicToolCall','collabToolCall','collabAgentToolCall','webSearch','imageView')
+            if len(self.queue)>=512 or tool_boundary or first or e['method'] in ('turn/started','turn/completed','thread/status/changed'):flush_events(self)
         def release(self,tid):
             self.queue_event({'method':'stream/released','threadId':tid,'at':time.time()})
             self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
@@ -364,18 +364,18 @@ enum RealtimeProbe {
         return {'kind':'status','connected':bool(session and session.ready),'attached':len(session.attached) if session else 0,'notifications':session.notices if session else 0,'fallbackScans':scans,'watchingLogs':bool(globals().get('request_logs')),'helperCpuSeconds':round(usage.ru_utime+usage.ru_stime,6),'helperLoopIterations':loop_iterations}
     """#
     static let script = library + "\n" + #"""
-    ws=None; session=None; reconnect_at=0; next_scan=0; next_status=0; next_ping=0; flush_at=0; scans=0; last_scan=-1e9; latest_snapshot=None; status_stamp=None; once_deadline=time.monotonic()+6; quiet_since=None; loop_iterations=0
+    ws=None; session=None; reconnect_at=0; next_scan=0; next_status=0; next_ping=0; flush_at=0; last_flush=-1e9; scans=0; last_scan=-1e9; latest_snapshot=None; status_stamp=None; once_deadline=time.monotonic()+6; quiet_since=None; loop_iterations=0
     once=len(sys.argv)>2 and sys.argv[2]=='once'
     local_only=len(sys.argv)>2 and sys.argv[2]=='socket-only'
     ssh_lifetime=len(sys.argv)>2 and sys.argv[2]=='ssh-lifetime'
     controlled_input=ssh_lifetime or local_only and len(sys.argv)>4 and sys.argv[4]=='control'
-    batch_interval=min(1,max(.1,float(sys.argv[3]))) if len(sys.argv)>3 else .25
+    batch_interval=min(5,max(.1,float(sys.argv[3]))) if len(sys.argv)>3 else 5
     index_changes=RuntimeIndexChanges(home) if ssh_lifetime else None
     request_logs=RequestLogTailer() if ssh_lifetime else None
     discovery_dirty=False;next_discovery=0;index_rechecks=0
     hint_buffer=b'';hints=OrderedDict()
     def read_hints():
-        global hint_buffer,batch_interval
+        global hint_buffer,batch_interval,flush_at
         data=os.read(0,4096)
         if not data:return False
         hint_buffer+=data
@@ -385,7 +385,12 @@ enum RealtimeProbe {
             try:value=json.loads(line)
             except ValueError:continue
             if isinstance(value,dict) and value.get('kind')=='settings':
-                if value.get('batchInterval') in (.1,.25,1):batch_interval=value['batchInterval']
+                interval=value.get('batchInterval')
+                if type(interval) in (int,float) and interval in (1,5):
+                    batch_interval=interval;now=time.monotonic()
+                    flush=value.get('flushPending') is True
+                    flush_at=now if flush else last_flush+interval
+                    if request_logs:request_logs.reschedule(now,interval,flush)
                 continue
             ids=value.get('threadIds') if isinstance(value,dict) and value.get('kind')=='discover' else None
             if not isinstance(ids,list) or len(ids)>32:continue
@@ -427,7 +432,7 @@ enum RealtimeProbe {
                 request_logs.sync(session.rollout_paths if session else {},now,batch_interval)
                 request_logs.read(now,batch_interval)
             if session and session.queue and now>=flush_at:
-                flush_events(session);flush_at=now+batch_interval
+                flush_events(session);last_flush=now;flush_at=now+batch_interval
             stamp=(bool(session and session.ready),len(session.attached) if session else 0)
             if stamp!=status_stamp and last_scan>-1e8:
                 next_scan=last_scan+(120 if session and session.ready else 60)
@@ -443,7 +448,7 @@ enum RealtimeProbe {
                 break
             if session and session.ready and now>=next_ping:
                 ws.send_frame(9,b'pacer');next_ping=now+15
-            delay=max(.01,min(batch_interval if session and session.queue else 15,next_status-now,next_scan-now if not local_only else 15,(reconnect_at-now) if ws is None else 15))
+            delay=max(.01,min(flush_at-now if session and session.queue else 15,next_status-now,next_scan-now if not local_only else 15,(reconnect_at-now) if ws is None else 15))
             if session and session.pending:delay=min(delay,max(.01,min(5-(now-v[2]) for v in session.pending.values())))
             if session and session.ready and hints:delay=min(delay,max(.01,min(due-now for _,due in hints.values())))
             if index_changes:delay=min(delay,max(.01,index_changes.next_check-now))
@@ -464,7 +469,7 @@ enum RealtimeProbe {
             else:time.sleep(delay)
         except (BrokenPipeError,KeyboardInterrupt):break
         except (OSError,ValueError,EOFError,TimeoutError,TypeError,AttributeError,KeyError,struct.error):
-            # Valid endings may still be waiting for the 250ms batch deadline.
+            # Valid endings may still be waiting for the batch deadline.
             # Deliver them before a disconnected status can revoke live state.
             try:flush_events(session)
             except BrokenPipeError:break

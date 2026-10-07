@@ -14,6 +14,22 @@ final class ActivityOpeningTests: XCTestCase {
         return (model, activity, clock)
     }
 
+    func testVisibilitySwitchesAutomaticCadenceAndKeepsCompletionCards() throws {
+        let (model, _, _) = try completion()
+        let before = model.activities
+        model.close()
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 5)
+        model.hover(true)
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 1)
+        model.togglePin(); model.close()
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 5)
+        model.setInteractionSuspended(true); model.hover(true)
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 5)
+        model.setInteractionSuspended(false); model.setExpanded(true)
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 1)
+        XCTAssertEqual(model.activities, before)
+    }
+
     func testFailedOpenPreservesCardAndUnreadReminder() async throws {
         let (model, activity, _) = try completion()
         let finished = expectation(description: "open attempted")

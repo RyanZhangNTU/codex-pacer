@@ -83,16 +83,6 @@ final class ResponsePerformanceTests: XCTestCase {
         meter.observeRuntime(total: 1600, last: 600, reasoning: nil, at: start.addingTimeInterval(20))
         XCTAssertEqual(meter.latest?.completedAt, start.addingTimeInterval(10))
     }
-    func testRefreshPreferenceDefaultsAndRoundTripsWithoutChangingOtherSettings() throws {
-        let name = "com.codexpacer.performance-tests." + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: name)); defer { defaults.removePersistentDomain(forName: name) }
-        defaults.set("adaptive", forKey: "islandWidthMode")
-        XCTAssertEqual(PerformanceRefreshMode.load(from: defaults), .balanced)
-        for mode in PerformanceRefreshMode.allCases { mode.save(to: defaults); XCTAssertEqual(PerformanceRefreshMode.load(from: defaults), mode) }
-        XCTAssertEqual(defaults.string(forKey: "islandWidthMode"), "adaptive")
-        defaults.set("invalid", forKey: "performanceRefreshMode")
-        XCTAssertEqual(PerformanceRefreshMode.load(from: defaults), .balanced)
-    }
     func testNativeFirstNonemptyOutputAndFinalUsageAreObservedBeforeCompletion() throws {
         var projection = DesktopWireProjection(threadID: thread)
         var activity = SessionActivity(id: thread, phaseAwareRate: true)

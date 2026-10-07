@@ -14,7 +14,7 @@ public actor RealtimeActivityMonitor {
         let alias: String?
         let home: String
         var desktopIPC = false
-        var refreshMode = PerformanceRefreshMode.balanced
+        var refreshPolicy = ActivityRefreshPolicy.collapsed
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.id == rhs.id && lhs.name == rhs.name && lhs.alias == rhs.alias && lhs.home == rhs.home && lhs.desktopIPC == rhs.desktopIPC
         }
@@ -63,23 +63,23 @@ public actor RealtimeActivityMonitor {
         }
     }
     public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true,
-                      refreshMode: PerformanceRefreshMode = .balanced, update: @escaping MetadataUpdate) {
-        start(home: home, includeSSH: includeSSH, useSSHFallback: useSSHFallback, refreshMode: refreshMode) { activities, status, unavailable, requests, names, _ in
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping MetadataUpdate) {
+        start(home: home, includeSSH: includeSSH, useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { activities, status, unavailable, requests, names, _ in
             update(activities, status, unavailable, requests, names)
         }
     }
     public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true,
-                      refreshMode: PerformanceRefreshMode = .balanced, update: @escaping PerformanceUpdate) {
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping PerformanceUpdate) {
         callback = update
         let local = Source(id: "local", name: nil, alias: nil, home: home.path,
-            desktopIPC: !Self.controlEndpointAvailable(home: home), refreshMode: refreshMode)
+            desktopIPC: !Self.controlEndpointAvailable(home: home), refreshPolicy: refreshPolicy)
         primaryLocalIsDesktop = local.desktopIPC
         var sources: [Source] = []
         localUnavailable = !Self.localEndpointAvailable(home: home)
         if !localUnavailable && !local.desktopIPC { sources.append(local) }
         let targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : []
         if includeSSH && useSSHFallback {
-            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshMode: refreshMode) }
+            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshPolicy: refreshPolicy) }
         }
         let names = Dictionary(targets.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
         let desktopAvailable = Self.desktopEndpointAvailable(home: home)
@@ -88,7 +88,6 @@ public actor RealtimeActivityMonitor {
             attentionRequests.removeAll(); desktopRetryAfter = .distantPast
         }
         if desktopAvailable && desktop == nil && Date() >= desktopRetryAfter { connectDesktop(local, hosts: names) }
-        desktop?.collector.setBatchInterval(refreshMode.interval)
         let wanted = Set(sources.map(\.id)).union(local.desktopIPC ? ["local"] : [])
         pendingHints = pendingHints.filter { wanted.contains($0.key) }
         for (id, connection) in Array(connections) where !wanted.contains(id) || sources.first(where: { $0.id == id }) != connection.source {
@@ -100,13 +99,21 @@ public actor RealtimeActivityMonitor {
             closed(id, process: connection.process)
         }
         for source in sources where connections[source.id] == nil && Date() >= (retryAfter[source.id] ?? .distantPast) { connect(source) }
-        for (id, var connection) in connections where connection.source.refreshMode != refreshMode {
-            if let input = connection.input, var bytes = try? JSONSerialization.data(withJSONObject: ["kind": "settings", "batchInterval": refreshMode.interval]) {
+        updateRefreshPolicy(refreshPolicy)
+        publish()
+    }
+    /// Updates existing owned transports, without discovery or reconnecting.
+    public func updateRefreshPolicy(_ policy: ActivityRefreshPolicy, flushPending: Bool = false) {
+        desktop?.collector.setBatchInterval(policy.interval, flushPending: flushPending)
+        for (id, var connection) in connections where connection.source.refreshPolicy != policy || flushPending {
+            if let input = connection.input, var bytes = try? JSONSerialization.data(withJSONObject: [
+                "kind": "settings", "batchInterval": policy.interval, "flushPending": flushPending]) {
                 bytes.append(10); try? input.write(contentsOf: bytes)
             }
-            connection.source.refreshMode = refreshMode; connections[id] = connection
+            connection.source.refreshPolicy = policy; connections[id] = connection
         }
-        publish()
+        for id in Array(failed.keys) { failed[id]?.refreshPolicy = policy }
+        if flushPending { publish() }
     }
     public func activities() -> [SessionActivity] {
         ActivitySourceMerger.merge(
@@ -135,7 +142,7 @@ public actor RealtimeActivityMonitor {
         let id = UUID()
         let frames = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let collector = NativeDesktopCollector(id: id, home: URL(fileURLWithPath: source.home), hosts: Set(hosts.keys).union(["local"]),
-            localRuntime: source.desktopIPC, batchInterval: source.refreshMode.interval, onFrame: { bytes in
+            localRuntime: source.desktopIPC, batchInterval: source.refreshPolicy.interval, onFrame: { bytes in
                 // Never silently keep a stream after dropping one of its frames.
                 if case .dropped = frames.continuation.yield(bytes) { frames.continuation.finish() }
             }, onClosed: { frames.continuation.finish() })
@@ -241,13 +248,13 @@ public actor RealtimeActivityMonitor {
         let encodedHome = Data(source.home.utf8).base64EncodedString()
         if let alias = source.alias {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime \(source.refreshMode.interval)"
+            let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime \(source.refreshPolicy.interval)"
             process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
                 "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             process.arguments = ["-u", "-c", source.desktopIPC ? DesktopEventProbe.script : RealtimeProbe.script,
-                encodedHome, "socket-only", String(source.refreshMode.interval), "control"]
+                encodedHome, "socket-only", String(source.refreshPolicy.interval), "control"]
         }
         // Keep SSH stdin open while the owner lives. EOF lets the remote helper
         // stop immediately, even if no event would otherwise touch stdout.

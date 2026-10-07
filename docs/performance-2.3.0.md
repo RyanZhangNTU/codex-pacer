@@ -4,7 +4,7 @@ Measured on 7 October 2026, macOS 27.0.1, arm64. This records the initial build 
 
 ## Measurement and interpretation
 
-The default Balanced mode did not show a large increase in main-process cost in this bounded workload. More Responsive roughly doubled interrupt wakeups compared with Balanced. Energy Saving reduced wakeups, but its short-window CPU/energy differences were small and noisy; it should not be described as a measured battery-life improvement. Retain Balanced by default and expose all three modes for the user's tradeoff.
+The default Balanced mode did not show a large increase in main-process cost in this bounded workload. More Responsive roughly doubled interrupt wakeups compared with Balanced. Energy Saving reduced wakeups, but its short-window CPU/energy differences were small and noisy; it should not be described as a measured battery-life improvement. Those samples did not justify three energy-labelled modes. Build 37 replaces them with automatic visibility-based coalescing; the table below remains historical build 35 evidence, not a measurement of the new policy.
 
 The table uses read-only Darwin `proc_pid_rusage` counters over approximately 31 seconds per run. CPU is a percentage of one core; joules come from the system's `ri_energy_nj` estimate. They are not wall-meter readings or battery discharge measurements. Daily figures assume 8 hours with 10% active work and 90% idle, using the measured process power in each state:
 
@@ -46,7 +46,7 @@ The QA copy differs only in its independent identity/cache/lock, disabled prefer
 xcrun clang -Wall -Wextra scripts/performance/process-energy.c -o /private/tmp/pacer-process-energy
 python3 scripts/performance/profile-island.py \
   --app '/path/to/isolated/QA.app' --sampler /private/tmp/pacer-process-energy \
-  --mode balanced --workload active --expanded --seconds 30 \
+  --workload active --expanded --seconds 30 \
   --output output/performance/2.3.0/replay.json
 ```
 
@@ -57,3 +57,11 @@ The existing compatibility-Python event replay also retained projected-state/eve
 ## Build 36 header correction
 
 The header now adds the available TPS values of all running chats. For example, requests measured at 60 and 30 t/s produce a 90 t/s total, independently of their request durations. Confirmed tool waits contribute zero; waiting, ended and internal-review chats are excluded. Missing/older data makes the total partial. Per-chat request TPS, first-output latency, collection frequency and collectors are unchanged. Affected regression checks cover modern/legacy mixing, missing and stale measurements, tool waits, lifecycle exclusions and large numeric sums.
+
+## Build 37 automatic refresh
+
+The three Settings modes are removed. Ordinary native/helper events and incremental log reads coalesce at five seconds collapsed or one second expanded. Opening flushes pending events and known log cursors immediately. Turn start/end, first nonempty output, tool boundaries and input/approval reminders bypass the ordinary interval. Existing connections, task cards and original accounting timestamps are preserved. A full 512-event batch flushes early so high concurrent traffic does not force a reconnect. Quota and discovery intervals are unchanged.
+
+No battery-life improvement or precise energy reduction is claimed for this revision: the initial table did not measure the five-second policy. The current profiler selects presentation with `--expanded` rather than a removed mode preference.
+
+Affected lifecycle, response accounting, localization and presentation suites passed, including real native-socket and controlled helper subprocess cases. These verify a five-second pending batch, immediate expansion without further socket traffic, tool boundaries, queue-cap flushing and one helper initialization/subscription across cadence changes. The final native build produced no compiler warnings. On macOS 27.0.1 arm64, the installed Settings picker was absent and expand/collapse retained task metrics. A locally authorized build 36 → 37 overwrite retained a verified rollback archive, preserved existing preferences, removed the obsolete refresh key, verified the old PID exit and one Applications process, and matched the installed bundle to the candidate. This is local installation acceptance, not Sparkle or public-release acceptance.

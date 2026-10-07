@@ -111,7 +111,7 @@ final class IslandModel: ObservableObject {
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
     var displayMode: IslandDisplayMode { .load() }
-    var performanceRefreshMode: PerformanceRefreshMode { .load() }
+    var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
     var showInMenuBar: Bool { UserDefaults.standard.bool(forKey: "showInMenuBar") }
@@ -312,6 +312,15 @@ final class IslandModel: ObservableObject {
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
+        if !demo, !sleeping, !stopped {
+            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: value)
+            let generation = sourceGeneration
+            Task { [weak self] in
+                guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped else { return }
+                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+            }
+            if value { refreshActivity(metricsOnly: true) }
+        }
         if clock != nil { scheduleClock() }
         onLayoutChange?()
         if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
@@ -467,7 +476,7 @@ final class IslandModel: ObservableObject {
             self.localActivities = result.activities
             if !onlyMetrics {
                 self.watchedLogURLs = result.watchURLs
-                self.logWatcher.update(result.watchURLs, interval: self.performanceRefreshMode.interval)
+                self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
             }
             self.combineActivities()
             self.onStatusChange?()
@@ -482,7 +491,7 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
-            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, refreshMode: self.performanceRefreshMode) { [weak self] activities, statuses, unavailable, requests, names, performance in
+            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, refreshPolicy: self.activityRefreshPolicy) { [weak self] activities, statuses, unavailable, requests, names, performance in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
@@ -490,6 +499,8 @@ final class IslandModel: ObservableObject {
                     self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names, performance: performance)
                 }
             }
+            // A hover/collapse can occur while start is awaiting the monitor.
+            await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
         }
     }
 
@@ -542,7 +553,7 @@ final class IslandModel: ObservableObject {
         onLayoutChange?()
         onStatusChange?()
         guard sourceChanged else {
-            logWatcher.update(watchedLogURLs, interval: performanceRefreshMode.interval)
+            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval)
             refreshRemote()
             return
         }

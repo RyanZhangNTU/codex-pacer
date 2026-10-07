@@ -36,6 +36,9 @@ enum RequestLogProbe {
                     wd=self.libc.inotify_add_watch(self.fd,os.fsencode(path),0x2|0x8|0x400|0x800)
                     if wd>=0:self.watches[wd]=tid
             if self.dirty and self.due is None:self.due=now+interval
+        def reschedule(self,now,interval,flush=False):
+            if flush:self.dirty.update(self.entries)
+            if self.dirty:self.due=now if flush else min(self.due if self.due is not None else now+interval,now+interval)
         def drain(self,now,interval):
             for _ in range(8):
                 try:data=os.read(self.fd,65536)

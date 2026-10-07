@@ -24,7 +24,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', required=True, type=pathlib.Path)
     parser.add_argument('--sampler', required=True, type=pathlib.Path)
-    parser.add_argument('--mode', choices=['efficient', 'balanced', 'responsive'], default='balanced')
     parser.add_argument('--workload', choices=['idle', 'active'], default='active')
     parser.add_argument('--seconds', type=float, default=30)
     parser.add_argument('--expanded', action='store_true')
@@ -39,7 +38,7 @@ def main():
         parser.error('Turn duration must include the eight-second response window')
     if args.seconds < 10:
         parser.error('Use at least a 10-second measurement window')
-    for key, kind, value in [('performanceRefreshMode', '-string', args.mode), ('monitorSSH', '-bool', 'false'),
+    for key, kind, value in [('monitorSSH', '-bool', 'false'),
                               ('systemNotifications', '-bool', 'false'), ('appLanguage', '-string', 'en'),
                               ('islandDisplayMode', '-string', 'floating')]:
         subprocess.run(['defaults', 'write', bundle, key, kind, value], check=True)
@@ -119,7 +118,7 @@ def main():
             cpu = (after['user_ns']+after['system_ns']-before['user_ns']-before['system_ns'])/1e9
             energy = (after['energy_nj']-before['energy_nj'])/1e9
             result = {'scope': 'QA main process, synthetic quota and native IPC/logs; excludes WindowServer, other processes, network and remote hosts',
-                'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'], 'mode': args.mode, 'workload': args.workload,
+                'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'], 'presentation': 'expanded' if args.expanded else 'collapsed', 'workload': args.workload,
                 'expanded': args.expanded, 'durationSeconds': duration, 'cpuSeconds': cpu, 'cpuPercentOneCore': cpu/duration*100,
                 'wakeupsPerSecond': (after['wakeups']-before['wakeups'])/duration, 'systemEstimatedJoules': energy,
                 'systemEstimatedWatts': energy/duration, 'residentBytes': after['rss'],

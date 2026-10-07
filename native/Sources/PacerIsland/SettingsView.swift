@@ -8,7 +8,6 @@ struct SettingsView: View {
     let onClose: () -> Void
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
-    @State private var performanceRefreshMode = PerformanceRefreshMode.load()
     @State private var displayMode = IslandDisplayMode.load()
     @State private var widthSettings = IslandWidthSettings.load()
     @State private var appearance = IslandAppearance.stored
@@ -51,15 +50,6 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 UpdateSettingsView(updater: updater, automaticallyChecks: $automaticUpdateChecks)
-                Section(L10n.text("performance.settings_section")) {
-                    Picker(L10n.text("performance.refresh"), selection: $performanceRefreshMode) {
-                        ForEach(PerformanceRefreshMode.allCases, id: \.rawValue) { mode in
-                            Text(L10n.text("performance.mode." + mode.rawValue)).tag(mode)
-                        }
-                    }
-                    Text(L10n.text("performance.refresh_help"))
-                        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
                 Section(L10n.text("settings.display")) {
                     Picker(L10n.text("settings.appearance"), selection: $appearance) {
                         Text(L10n.text("settings.classic")).tag(IslandAppearance.classic)
@@ -348,7 +338,7 @@ struct SettingsView: View {
             defaults.set(directory, forKey: "codexHome")
             displayMode.save(to: defaults)
             widthSettings.save(to: defaults)
-            performanceRefreshMode.save(to: defaults)
+            defaults.removeObject(forKey: "performanceRefreshMode")
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")

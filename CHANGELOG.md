@@ -4,7 +4,7 @@
 
 - Show settled per-request output throughput using authoritative usage, including reasoning once and excluding tool waits; supplement local and SSH streams with bounded, incremental request logs.
 - Display observed first-output latency in each task and retain the last measured response through sparse usage reports and completion.
-- Add Energy Saving, Balanced and More Responsive display-update modes; retain the existing 0.25-second interval by default, with immediate first-output, ending and attention handling.
+- Automatically coalesce ordinary updates at five seconds collapsed and one second expanded; flush pending data on expansion and handle first output, tool waits, lifecycle and attention immediately.
 - Settle usage before a same-batch completion, keep metric-only updates independent of task lifecycle, and show global total TPS by summing available rates across active chats.
 
 ## 2.2.2

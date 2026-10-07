@@ -30,6 +30,14 @@ final class RequestLogProbeTests: XCTestCase {
     assert 'PRIVATE' not in json.dumps(emitted)
     assert emitted[0]['sessions'][0]['records'][-1]['payload']['usage']['output_tokens']==600
     emitted.clear();tail.read(.3,.1);assert not emitted
+    # Collapsed reads retain a five-second deadline; expanding flushes the same
+    # cursor immediately, without rediscovery, replay or a second batch delay.
+    with path.open('a') as f:f.write(record('token_usage_record',{'thread_id':tid,'turn_id':'turn','response_id':'expanded','usage':{'output_tokens':10}}))
+    tail.dirty.add(tid);tail.due=5.3;tail.read(.35,5);assert not emitted
+    tail.reschedule(.35,1,True);tail.read(.35,1)
+    assert len(emitted)==1 and not emitted[0]['sessions'][0]['reset']
+    assert emitted[0]['sessions'][0]['records'][0]['payload']['response_id']=='expanded'
+    emitted.clear()
     line=record('token_usage_record',{'thread_id':tid,'turn_id':'turn','response_id':'r2','usage':{'output_tokens':40}})
     with path.open('a') as f:f.write(line[:20])
     tail.dirty.add(tid);tail.due=.4;tail.read(.4,.1);assert not emitted

@@ -7,21 +7,33 @@ final class NativeDesktopCollector: @unchecked Sendable {
     let id: UUID
     private let lock = NSLock()
     private var descriptor: Int32 = -1
+    private var eventQueue: Int32 = -1
+    private var flushRequested = false
     private var cancelled = false
     private let home: URL
     private let hosts: Set<String>
     private let localRuntime: Bool
     private var batchInterval: TimeInterval
-    func setBatchInterval(_ value: TimeInterval) {
-        lock.lock(); batchInterval = min(1, max(0.1, value)); lock.unlock()
+    func setBatchInterval(_ value: TimeInterval, flushPending: Bool = false) {
+        lock.lock(); defer { lock.unlock() }
+        let interval = min(5, max(0.1, value))
+        guard interval != batchInterval || flushPending else { return }
+        batchInterval = interval; flushRequested = flushRequested || flushPending
+        if eventQueue >= 0 {
+            var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
+            _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
+        }
     }
-    private var currentBatchInterval: TimeInterval { lock.lock(); defer { lock.unlock() }; return batchInterval }
+    private func batchUpdate() -> (interval: TimeInterval, flush: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        let result = (batchInterval, flushRequested); flushRequested = false; return result
+    }
     private let onFrame: @Sendable (Data) -> Void
     private let onClosed: @Sendable () -> Void
-    init(id: UUID = UUID(), home: URL, hosts: Set<String>, localRuntime: Bool = true, batchInterval: TimeInterval = 0.25, onFrame: @escaping @Sendable (Data) -> Void,
+    init(id: UUID = UUID(), home: URL, hosts: Set<String>, localRuntime: Bool = true, batchInterval: TimeInterval = 5, onFrame: @escaping @Sendable (Data) -> Void,
          onClosed: @escaping @Sendable () -> Void) {
         self.id = id; self.home = home; self.hosts = hosts; self.localRuntime = localRuntime
-        self.batchInterval = min(1, max(0.1, batchInterval)); self.onFrame = onFrame; self.onClosed = onClosed
+        self.batchInterval = min(5, max(0.1, batchInterval)); self.onFrame = onFrame; self.onClosed = onClosed
     }
     func start() throws {
         let path = home.appendingPathComponent("ipc/ipc.sock")
@@ -95,7 +107,7 @@ final class NativeDesktopCollector: @unchecked Sendable {
         do {
             var session = try NativeDesktopSession(hosts: hosts, localRuntime: localRuntime) { [self] value in try send(value, fd: fd) }
             defer {
-                // EOF can arrive during the 250ms batch interval. Deliver the
+                // EOF can arrive during the batch interval. Deliver the
                 // last valid events before signalling closure to the consumer.
                 try? session.publishEvents()
                 for frame in session.takeFrames() { onFrame(frame) }
@@ -103,15 +115,19 @@ final class NativeDesktopCollector: @unchecked Sendable {
             }
             let queue = kqueue()
             guard queue >= 0 else { throw POSIXError(.EIO) }
-            defer { Darwin.close(queue) }
+            defer {
+                lock.lock(); eventQueue = -1; Darwin.close(queue); lock.unlock()
+            }
             let directory = Darwin.open(home.path, O_EVTONLY | O_CLOEXEC)
             defer { if directory >= 0 { Darwin.close(directory) } }
-            var registrations = [kevent64_s(ident: UInt64(fd), filter: Int16(EVFILT_READ), flags: UInt16(EV_ADD), fflags: 0, data: 0, udata: 0, ext: (0, 0))]
+            var registrations = [kevent64_s(ident: UInt64(fd), filter: Int16(EVFILT_READ), flags: UInt16(EV_ADD), fflags: 0, data: 0, udata: 0, ext: (0, 0)),
+                kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: UInt16(EV_ADD | EV_CLEAR), fflags: 0, data: 0, udata: 0, ext: (0, 0))]
             if directory >= 0 {
                 registrations.append(kevent64_s(ident: UInt64(directory), filter: Int16(EVFILT_VNODE), flags: UInt16(EV_ADD | EV_CLEAR),
                     fflags: UInt32(NOTE_WRITE | NOTE_RENAME | NOTE_DELETE), data: 0, udata: 0, ext: (0, 0)))
             }
             guard Darwin.kevent64(queue, &registrations, Int32(registrations.count), nil, 0, 0, nil) == 0 else { throw POSIXError(.EIO) }
+            lock.lock(); eventQueue = queue; lock.unlock()
             var routingFile: Int32 = -1
             defer { if routingFile >= 0 { Darwin.close(routingFile) } }
             func reopenRoutingWatch() throws {
@@ -125,10 +141,12 @@ final class NativeDesktopCollector: @unchecked Sendable {
             }
             try reopenRoutingWatch()
             var routing = DesktopRouteHints(), routingDirty = true, reopenRouting = false, nextRoutingRead = Date.distantPast
-            let opened = Date(); var nextStatus = Date.distantPast, nextFlush = Date.distantPast, iterations = 0
+            let opened = Date(); var nextStatus = Date.distantPast, lastFlush = Date.distantPast, iterations = 0
             while !stopped {
                 iterations += 1
                 let now = Date()
+                let batch = batchUpdate()
+                let nextFlush = lastFlush.addingTimeInterval(batch.interval)
                 try session.service(at: now)
                 if routingDirty && now >= nextRoutingRead {
                     if reopenRouting { try reopenRoutingWatch(); reopenRouting = false }
@@ -136,11 +154,11 @@ final class NativeDesktopCollector: @unchecked Sendable {
                     routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
                 }
                 if !session.ready && now.timeIntervalSince(opened) > 5 { throw POSIXError(.ETIMEDOUT) }
-                if session.hasEvents && now >= nextFlush { try session.publishEvents(); nextFlush = now.addingTimeInterval(currentBatchInterval) }
+                if session.hasEvents && (batch.flush || now >= nextFlush) { try session.publishEvents(); lastFlush = now }
                 if now >= nextStatus { try session.status(loopIterations: iterations); nextStatus = now.addingTimeInterval(15) }
                 for frame in session.takeFrames() { onFrame(frame) }
                 var delay = min(15, max(0.01, nextStatus.timeIntervalSinceNow))
-                if session.hasEvents { delay = min(delay, max(0.01, nextFlush.timeIntervalSinceNow)) }
+                if session.hasEvents { delay = min(delay, max(0.01, lastFlush.addingTimeInterval(batch.interval).timeIntervalSinceNow)) }
                 if !session.ready { delay = min(delay, max(0.01, 5 - Date().timeIntervalSince(opened))) }
                 if routingDirty { delay = min(delay, max(0.01, nextRoutingRead.timeIntervalSinceNow)) }
                 if let service = session.nextServiceDate { delay = min(delay, max(0.01, service.timeIntervalSinceNow)) }
@@ -160,7 +178,7 @@ final class NativeDesktopCollector: @unchecked Sendable {
                 if changed.prefix(Int(result)).contains(where: { $0.filter == Int16(EVFILT_READ) }) {
                     try session.receive(receive(fd))
                     // Pending questions and approvals are delivered immediately,
-                    // independently of the 250ms token/activity batch.
+                    // independently of the ordinary token/activity batch.
                     for frame in session.takeFrames() { onFrame(frame) }
                 }
             }
