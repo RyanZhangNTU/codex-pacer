@@ -59,6 +59,8 @@ enum RealtimeProbe {
         model=str(t.get('model') or '').lower()
         s=t.get('source') or {}; sub=s.get('subAgent',s.get('subagent',{})) if isinstance(s,dict) else {}
         return source in ('guardianreview','autoreview','subagentreview') or model.startswith('codex-auto-review') or sub=='review' or isinstance(sub,dict) and (sub.get('other') in ('guardian','autoreview','auto_review') or 'review' in sub)
+    def is_excluded_thread(t):
+        return t.get('ephemeral') is True or is_review(t)
     class WebSocket:
         def __init__(self,path):
             uid=os.getuid(); parent=path.parent.stat(); link=path.lstat(); target=path.stat(); actual_parent=path.resolve().parent.stat()
@@ -140,6 +142,11 @@ enum RealtimeProbe {
             status=p.get('status') or {}
             e['status']=str(status.get('type',''))[:32]
             e['flags']=[f for f in status.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]
+        elif method=='thread/name/updated':
+            if 'threadName' not in p:return None
+            name=p.get('threadName')
+            if name is not None and not isinstance(name,str):return None
+            e['name']=name[:240] if name is not None else None
         elif method in ('item/agentMessage/delta','item/plan/delta','item/reasoning/summaryTextDelta','item/reasoning/textDelta'):
             if isinstance(p.get('itemId'),str): e['itemId']=p['itemId'][:256]
             # Text content is deliberately never forwarded or tokenized.
@@ -149,7 +156,7 @@ enum RealtimeProbe {
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
             self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set()
-            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.2.1'},'capabilities':{'experimentalApi':True}},'initialize')
+            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.2.2'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')
@@ -202,6 +209,13 @@ enum RealtimeProbe {
             for tid in list(self.known):
                 if len(self.known)<=64:break
                 if tid not in self.attached and tid not in self.attaching:self.known.pop(tid,None)
+        def exclude_thread(self,tid):
+            if len(self.excluded)<1024:self.excluded.add(tid)
+            self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None)
+            self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
+            self.queue=[e for e in self.queue if e.get('threadId')!=tid]
+            for rid,value in list(self.pending.items()):
+                if value[1]==tid and value[0] in ('read','resume'):self.pending.pop(rid,None)
         def receive(self,v):
             try:self.receive_message(v)
             finally:self.pump_discovery()
@@ -224,9 +238,8 @@ enum RealtimeProbe {
                     for thread in threads:self.queue_thread(thread)
                 elif kind in ('read','resume'):
                     thread=result.get('thread') or {}
-                    if not isinstance(thread,dict) or thread.get('id')!=tid or is_review(thread):
-                        if len(self.excluded)<1024:self.excluded.add(tid)
-                        self.known.pop(tid,None);self.buffered.pop(tid,None);self.attached.discard(tid);self.attaching.discard(tid);return
+                    if not isinstance(thread,dict) or thread.get('id')!=tid or is_excluded_thread(thread):
+                        self.exclude_thread(tid);return
                     self.known[tid]=thread.get('status') or {}
                     self.known.move_to_end(tid)
                     meta={'method':'metadata','threadId':tid.lower(),'at':time.time(),'source':thread.get('threadSource') if isinstance(thread.get('threadSource'),str) else ''}
@@ -257,7 +270,11 @@ enum RealtimeProbe {
             if not isinstance(method,str) or not isinstance(p,dict):return
             self.notices+=1;self.last_rpc=time.monotonic()
             if method=='thread/started':
-                tid=(p.get('thread') or {}).get('id');self.read_thread(tid);return
+                thread=p.get('thread') or {}
+                if not isinstance(thread,dict):return
+                tid=thread.get('id')
+                if valid_id(tid) and is_excluded_thread(thread):self.exclude_thread(tid.lower());return
+                self.read_thread(tid);return
             e=event(method,p)
             if e is None:return
             tid=e['threadId']

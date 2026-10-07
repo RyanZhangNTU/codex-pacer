@@ -17,6 +17,7 @@ public struct CompletionInbox: Sendable {
     private struct Entry: Sendable {
         var activity: SessionActivity
         var unread: Bool
+        var nameUpdate: SessionNameUpdate?
     }
     private var entries: [String: Entry] = [:]
     private var dismissed: [String: Identity] = [:]
@@ -37,6 +38,14 @@ public struct CompletionInbox: Sendable {
         guard let entry = entries[activity.id], Identity(entry.activity) == Identity(activity) else { return }
         dismissed[activity.id] = Identity(activity)
         entries.removeValue(forKey: activity.id)
+    }
+    public mutating func updateNames(_ updates: [SessionNameUpdate]) {
+        for update in updates {
+            guard var entry = entries[update.id] else { continue }
+            update.apply(to: &entry.activity)
+            entry.nameUpdate = update
+            entries[update.id] = entry
+        }
     }
     @discardableResult
     public mutating func observe(_ activities: [SessionActivity], at now: Date, retention: TimeInterval) -> [SessionActivity] {
@@ -70,14 +79,17 @@ public struct CompletionInbox: Sendable {
             // sub-millisecond difference; genuinely future records stay out.
             guard age >= -0.001, retention == 0 || age < retention else { continue }
             if var entry = entries[activity.id] {
-                entry.activity = activity; entries[activity.id] = entry
+                entry.activity = activity
+                // Older log replay must not undo a later metadata-only rename.
+                entry.nameUpdate?.apply(to: &entry.activity)
+                entries[activity.id] = entry
             } else {
                 let old = previous[activity.id]
                 let unread = (activity.hasLiveEvidence && activity.liveTurnStarted) || (old.map {
                     [.running, .waitingForInput].contains($0.phase) &&
                         ($0.turnID == activity.turnID || ($0.turnID == nil && $0.hasLiveEvidence))
                 } ?? false)
-                entries[activity.id] = Entry(activity: activity, unread: unread)
+                entries[activity.id] = Entry(activity: activity, unread: unread, nameUpdate: nil)
             }
         }
         previous = current.filter { !$0.value.isInternalReview }

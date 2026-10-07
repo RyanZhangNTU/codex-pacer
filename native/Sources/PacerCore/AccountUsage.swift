@@ -42,4 +42,35 @@ public struct QuotaResetSummary: Codable, Equatable, Sendable {
         }
         return hasCompleteDetails && !active.isEmpty && active.allSatisfy { $0.expiresAt == nil }
     }
+
+    /// All available deadlines, including those outside the displayed quota cycle.
+    /// Missing rows remain unknown rather than inheriting another credit's expiry.
+    public func expiryDetails(at now: Date, capturedAt: Date) -> QuotaResetExpiryDetails {
+        let remaining = remainingCount(at: now, capturedAt: capturedAt)
+        var seen = Set<String>()
+        let active = (credits ?? []).filter {
+            $0.status == "available" && ($0.expiresAt == nil || $0.expiresAt! > now)
+        }.sorted {
+            let left = $0.expiresAt ?? .distantFuture, right = $1.expiresAt ?? .distantFuture
+            return left == right ? $0.id < $1.id : left < right
+        }.filter { seen.insert($0.id).inserted }.prefix(remaining)
+        let deadlines = active.compactMap(\.expiresAt)
+        let expiries = Dictionary(grouping: deadlines, by: { $0 })
+            .map { QuotaResetExpiryDetails.Expiry(date: $0.key, count: $0.value.count) }
+            .sorted { $0.date < $1.date }
+        return QuotaResetExpiryDetails(expiries: expiries,
+            nonExpiringCount: active.filter { $0.expiresAt == nil }.count,
+            unknownCount: max(0, remaining - active.count))
+    }
+}
+
+public struct QuotaResetExpiryDetails: Equatable, Sendable {
+    public struct Expiry: Equatable, Sendable, Identifiable {
+        public let date: Date
+        public let count: Int
+        public var id: Date { date }
+    }
+    public let expiries: [Expiry]
+    public let nonExpiringCount: Int
+    public let unknownCount: Int
 }

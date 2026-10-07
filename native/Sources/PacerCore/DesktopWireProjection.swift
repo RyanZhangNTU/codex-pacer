@@ -246,7 +246,8 @@ struct DesktopWireProjection {
     }
     private mutating func snapshot(_ view: JSONFieldView) throws {
         selectionResolved = false
-        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "latestTokenUsageInfo", "threadRuntimeStatus", "turns", "turnHistory", "requests"])
+        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "turns", "turnHistory", "requests"])
+        guard fields["ephemeral"]?.boolean() != true else { throw DesktopProjectionFailure.ephemeral }
         guard !(try Self.review(fields)) else { throw DesktopProjectionFailure.review }
         var values = fields.filter { ["title", "cwd", "latestModel", "threadSource"].contains($0.key) }
             .reduce(into: [String: DesktopValue]()) { $0[$1.key] = Self.string($1.value, limit: $1.key == "cwd" ? 2048 : 256) ?? .null }
@@ -316,6 +317,10 @@ struct DesktopWireProjection {
     private func projectedValue(path: [DesktopPath], view: JSONFieldView?, op: String) throws -> DesktopValue? {
         guard case .key(let root)? = path.first else { return nil }
         let keys = path.compactMap { if case .key(let key) = $0 { return key }; return nil }
+        if root == "ephemeral", path.count == 1 {
+            guard op == "remove" || view?.boolean() != true else { throw DesktopProjectionFailure.ephemeral }
+            return nil
+        }
         if op == "remove" {
             if ["title", "cwd", "latestModel", "threadSource"].contains(root) { return path.count == 1 ? .null : nil }
             if root == "latestTokenUsageInfo" {
@@ -596,4 +601,4 @@ struct DesktopWireProjection {
     }
 }
 
-enum DesktopProjectionFailure: Error { case review, gap }
+enum DesktopProjectionFailure: Error { case review, ephemeral, gap }

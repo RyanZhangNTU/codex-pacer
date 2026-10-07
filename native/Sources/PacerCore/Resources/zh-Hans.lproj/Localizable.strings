@@ -10,6 +10,14 @@
 "account.reset_count" = "%ld 次重置";
 "account.resets_accessibility" = "可用重置 %1$@ 次。%2$@";
 "account.resets_unknown" = "重置 —";
+"account.expiry_title" = "重置到期时间";
+"account.show_expiries" = "查看重置到期时间";
+"account.hide_expiries" = "收起重置到期时间";
+"account.expiries_expanded" = "已展开";
+"account.expiries_collapsed" = "已收起";
+"account.non_expiring_count" = "%ld 次重置不过期";
+"account.unknown_expiry_count" = "%ld 次重置的到期时间未知";
+"account.expiry_timezone" = "本地时间（%@）";
 "activity.finished_count" = "%ld 轮结束";
 "activity.header_open" = "%@。点击打开会话";
 "activity.header_pin" = "%@。点击固定展开";

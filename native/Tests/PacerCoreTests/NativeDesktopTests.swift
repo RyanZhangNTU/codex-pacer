@@ -317,4 +317,60 @@ final class NativeDesktopTests: XCTestCase {
         XCTAssertEqual((sent.values.last?["params"] as? [String: Any])?["following"] as? Bool, true)
         XCTAssertFalse(String(describing: frames).contains("PRIVATE"))
     }
+
+    func testEphemeralSnapshotsAndPatchesClearRequestsAndStopFollowingOnlyThatThread() throws {
+        let remote = "remote-ssh-discovered:synthetic"
+        for host in ["local", remote] {
+            for initiallyEphemeral in [true, false] {
+                final class Sent { var values: [[String: Any]] = [] }
+                let sent = Sent()
+                var session = try NativeDesktopSession(hosts: ["local", remote]) { sent.values.append($0) }
+                let client = "019a0000-0000-7000-8000-000000000010", owner = "019a0000-0000-7000-8000-000000000020"
+                func send(_ value: [String: Any]) throws { try session.receive(JSONSerialization.data(withJSONObject: value), at: epoch) }
+                func follow(_ id: String) throws {
+                    try send(["type": "broadcast", "method": "thread-stream-following-status-requested", "version": 1,
+                        "sourceClientId": owner, "params": ["hostId": host, "conversationId": id]])
+                }
+                func change(_ id: String, _ value: [String: Any]) throws {
+                    try send(["type": "broadcast", "method": "thread-stream-state-changed", "version": 11,
+                        "sourceClientId": owner, "params": ["hostId": host, "conversationId": id, "change": value]])
+                }
+                try send(["type": "response", "method": "initialize", "resultType": "success", "result": ["clientId": client]])
+                try follow(thread)
+                var raw = state()
+                raw["ephemeral"] = initiallyEphemeral
+                raw["requests"] = [
+                    ["id": "synthetic-input", "method": "item/tool/requestUserInput", "params": ["isBlocking": false]],
+                    ["id": "synthetic-approval", "method": "item/commandExecution/requestApproval", "params": [:]]]
+                try change(thread, ["type": "snapshot", "revision": 0, "conversationState": raw])
+                var frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+                func attentionCount(_ frames: [[String: Any]], id: String) -> Int {
+                    frames.filter { $0["kind"] as? String == "attention" && $0["threadId"] as? String == id }
+                        .reduce(0) { $0 + (($1["requests"] as? [[String: String]])?.count ?? 0) }
+                }
+                XCTAssertEqual(attentionCount(frames, id: thread), initiallyEphemeral ? 0 : 2)
+                if !initiallyEphemeral {
+                    try change(thread, ["type": "patches", "baseRevision": 0, "revision": 1,
+                        "patches": [["op": "replace", "path": ["ephemeral"], "value": true]]])
+                    frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+                }
+                XCTAssertTrue(frames.contains { $0["kind"] as? String == "attention" && $0["threadId"] as? String == thread &&
+                    ($0["requests"] as? [Any])?.isEmpty == true }, "A previous temporary request must clear")
+                XCTAssertTrue(sent.values.contains { value in
+                    let p = value["params"] as? [String: Any]
+                    return p?["conversationId"] as? String == thread && p?["following"] as? Bool == false
+                })
+                let sentCount = sent.values.count
+                try follow(thread)
+                XCTAssertEqual(sent.values.count, sentCount, "An excluded temporary thread cannot reacquire an interest")
+                let ordinary = "019a0000-0000-7000-8000-000000000003"
+                try follow(ordinary)
+                raw["ephemeral"] = false
+                try change(ordinary, ["type": "snapshot", "revision": 0, "conversationState": raw])
+                let ordinaryFrames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+                XCTAssertEqual(attentionCount(ordinaryFrames, id: ordinary), 2, "Normal input and approval reminders on that host remain available")
+                session.close()
+            }
+        }
+    }
 }
