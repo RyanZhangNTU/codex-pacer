@@ -70,13 +70,14 @@ private struct IslandHeader: View {
     }
 
     private func header(wingWidth: CGFloat?) -> some View {
+        // Only a hardware camera gap needs equal wings. Without that gap,
+        // keep each label's natural width to match the adaptive measurement.
         HStack(spacing: 6) {
             Button { model.openCompletionOrPin() } label: {
                 leadingContent.frame(height: model.topHeight).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(width: wingWidth, alignment: .leading)
-            .frame(maxWidth: attached && wingWidth == nil ? .infinity : nil, alignment: .leading)
             .help(model.pendingInputRequests.first.map { L10n.text("attention.open", $0.sourceName ?? L10n.text("activity.local_task")) } ??
                 model.pendingCompletions.first.map { L10n.text("activity.open_help", model.projectName($0)) } ?? L10n.text("common.pin"))
             .accessibilityLabel(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ?
@@ -88,7 +89,6 @@ private struct IslandHeader: View {
             }
             .buttonStyle(.plain)
             .frame(width: wingWidth, alignment: .trailing)
-            .frame(maxWidth: attached && wingWidth == nil ? .infinity : nil, alignment: .trailing)
             .accessibilityLabel(L10n.text("activity.quota_pin", model.compactWindow, model.quotaSummary))
         }.padding(.horizontal, 15)
     }
@@ -128,6 +128,8 @@ private struct IslandHeader: View {
 
 private struct IslandExpandedContent: View {
     @ObservedObject var model: IslandModel
+    // Both ViewThatFits candidates share disclosure state when height changes.
+    @State private var showsResetExpiryDetails = false
     private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
 
     var body: some View {
@@ -223,7 +225,7 @@ private struct IslandExpandedContent: View {
             } else if model.weeklyWindow != nil {
                 Text(L10n.text("quota.waiting_sample")).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
             }
-            AccountUsageView(snapshot: quota, now: model.now).padding(.top, 20)
+            AccountUsageView(snapshot: quota, now: model.now, showsExpiryDetails: $showsResetExpiryDetails).padding(.top, 20)
             if let warning = model.historyWarning {
                 Label(L10n.text("quota.chart_warning"), systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(secondary).help(warning).padding(.top, 10)
             }

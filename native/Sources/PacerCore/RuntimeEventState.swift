@@ -16,6 +16,7 @@ public struct RuntimeStreamStatus: Equatable, Sendable {
 struct RuntimeEventState: Sendable {
     private var fallback: [String: SessionActivity] = [:]
     private var live: [String: SessionActivity] = [:]
+    private var names: [String: SessionNameUpdate] = [:]
     private var invalidated: Set<String> = []
     private var released: Set<String> = []
     private var idleOrder: [String: Int] = [:]
@@ -29,6 +30,7 @@ struct RuntimeEventState: Sendable {
     let sourceName: String?
 
     init(sourceID: String?, sourceName: String?) { self.sourceID = sourceID; self.sourceName = sourceName }
+    var nameUpdates: [SessionNameUpdate] { Array(names.values) }
     var activities: [SessionActivity] {
         ActivitySourceMerger.merge(logged: Array(fallback.values),
             streamed: live.values.filter {
@@ -58,6 +60,7 @@ struct RuntimeEventState: Sendable {
                 fallback[id] = merged
             }
             live.removeValue(forKey: id)
+            names.removeValue(forKey: id)
             invalidated.remove(id)
             idleOrder.removeValue(forKey: id)
         }
@@ -81,6 +84,7 @@ struct RuntimeEventState: Sendable {
             status.helperLoopIterations = frame["helperLoopIterations"] as? Int ?? 0
             if !status.connected {
                 live = live.filter { [.completed, .interrupted].contains($0.value.phase) }
+                names = names.filter { live[$0.key] != nil }
                 invalidated.removeAll()
                 idleOrder = idleOrder.filter { live[$0.key] != nil }
                 released.formIntersection(live.keys)
@@ -104,6 +108,13 @@ struct RuntimeEventState: Sendable {
                 return
             }
             value.consumeLive(event)
+            let method = event["method"] as? String
+            let hasName = (event["name"] as? String).map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+            if (method == "metadata" && hasName) ||
+                (method == "thread/name/updated" && (event["name"] is String || event["name"] is NSNull)),
+               let update = SessionNameUpdate(value) {
+                names[id] = update
+            }
             if event["method"] as? String == "thread/observed", event["status"] as? String == "idle", let seconds = event["at"] as? Double {
                 confirmedIdle[id] = Date(timeIntervalSince1970: seconds)
                 if confirmedIdle.count > 64 {
@@ -138,6 +149,7 @@ struct RuntimeEventState: Sendable {
             if idleOrder.count > 64 {
                 for key in idleOrder.keys.sorted(by: { (idleOrder[$0] ?? 0) > (idleOrder[$1] ?? 0) }).dropFirst(64) {
                     live.removeValue(forKey: key)
+                    names.removeValue(forKey: key)
                     idleOrder.removeValue(forKey: key)
                 }
             }

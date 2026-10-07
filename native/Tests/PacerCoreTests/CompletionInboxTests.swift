@@ -2,6 +2,79 @@ import XCTest
 @testable import PacerCore
 
 final class CompletionInboxTests: XCTestCase {
+    func testLateSshNameUpdatesRetainedEndingWithoutRecreatingActivity() {
+        let thread = UUID().uuidString.lowercased(), host = "remote-ssh-discovered:fixture"
+        for initialName in [nil, "Original name"] as [String?] {
+            for ending in ["completed", "failed"] {
+                var state = RuntimeEventState(sourceID: host, sourceName: "SSH"), inbox = CompletionInbox()
+                func event(_ method: String, _ seconds: Double, _ fields: [String: Any] = [:]) -> [String: Any] {
+                    var values = fields
+                    values["method"] = method; values["threadId"] = thread
+                    values["at"] = epoch.timeIntervalSince1970 + seconds
+                    return ["kind": "runtime", "event": values]
+                }
+                state.consume(["kind": "status", "connected": true])
+                var metadata: [String: Any] = ["cwd": "/synthetic/project"]
+                if let initialName { metadata["name"] = initialName }
+                state.consume(event("metadata", 0, metadata))
+                state.consume(event("turn/started", 1, ["turnId": "first"]))
+                inbox.observe(state.activities, at: epoch.addingTimeInterval(1), retention: 300)
+                state.consume(event("turn/completed", 2, ["turnId": "first", "status": ending]))
+                state.consume(event("stream/released", 2))
+                inbox.observe(state.activities, at: epoch.addingTimeInterval(2), retention: 300)
+                let before = inbox.activities[0]
+                state.releasePublishedState()
+                XCTAssertTrue(state.activities.isEmpty)
+                // Automatic naming may finish after both the ending and release.
+                state.consume(event("metadata", 3, ["name": "Generated session name"]))
+                state.consume(event("thread/observed", 3, ["status": "idle"]))
+                XCTAssertTrue(state.activities.isEmpty, "A name cannot invent a running or completed task")
+                inbox.updateNames(state.nameUpdates)
+                inbox.observe(state.activities, at: epoch.addingTimeInterval(3), retention: 300)
+                let renamed = inbox.activities[0]
+                XCTAssertEqual(renamed.title, "Generated session name")
+                XCTAssertEqual(renamed.phase, before.phase)
+                XCTAssertEqual(renamed.turnID, before.turnID)
+                XCTAssertEqual(renamed.phaseChangedAt, before.phaseChangedAt)
+                XCTAssertEqual(renamed.lastObserved, before.lastObserved)
+                XCTAssertEqual(renamed.turnFailed, before.turnFailed)
+                XCTAssertEqual(inbox.unreadActivities.count, 1)
+                // A subsequent older completed log cannot undo that display name.
+                inbox.observe([before], at: epoch.addingTimeInterval(4), retention: 300)
+                XCTAssertEqual(inbox.activities[0].title, "Generated session name")
+                state.consume(event("thread/name/updated", 5, ["name": NSNull()]))
+                inbox.updateNames(state.nameUpdates)
+                inbox.observe([before], at: epoch.addingTimeInterval(5), retention: 300)
+                XCTAssertNil(inbox.activities[0].title, "An explicit removal must not restore a cached title")
+                XCTAssertEqual(inbox.unreadActivities.count, 1)
+                inbox.dismiss(inbox.activities[0])
+                state.consume(event("metadata", 6, ["name": "Another name"]))
+                inbox.updateNames(state.nameUpdates)
+                inbox.observe([before], at: epoch.addingTimeInterval(6), retention: 300)
+                XCTAssertTrue(inbox.activities.isEmpty, "Renaming cannot resurrect a dismissed completion")
+            }
+        }
+    }
+
+    func testCompletionNameUpdatesAreIsolatedByHostAndDoNotExtendRetention() {
+        let thread = UUID().uuidString.lowercased(), host = "remote-ssh-discovered:fixture"
+        var finished = SessionActivity(id: host + ":" + thread, sourceHostID: host)
+        finished.consumeLive(["method": "turn/started", "threadId": thread, "turnId": "first", "at": epoch.timeIntervalSince1970])
+        finished.consumeLive(["method": "turn/completed", "threadId": thread, "turnId": "first", "status": "completed", "at": epoch.timeIntervalSince1970 + 1])
+        var inbox = CompletionInbox()
+        inbox.observe([finished], at: epoch.addingTimeInterval(1), retention: 300)
+        var sibling = SessionActivity(id: "local:" + thread)
+        sibling.consumeLive(["method": "metadata", "threadId": thread, "name": "Other host", "at": epoch.timeIntervalSince1970 + 2])
+        inbox.updateNames([SessionNameUpdate(sibling)!])
+        XCTAssertNil(inbox.activities[0].title)
+        finished.consumeLive(["method": "metadata", "threadId": thread, "name": "Same host", "at": epoch.timeIntervalSince1970 + 250])
+        inbox.updateNames([SessionNameUpdate(finished)!])
+        XCTAssertEqual(inbox.activities[0].title, "Same host")
+        inbox.prune(at: epoch.addingTimeInterval(301), retention: 300)
+        inbox.updateNames([SessionNameUpdate(finished)!])
+        XCTAssertTrue(inbox.activities.isEmpty, "A display update cannot extend expiry or recreate a card")
+    }
+
     func testDistinctNewLogTurnSurvivesDelayedLiveCompletionButOlderTurnDoesNot() {
         let thread = UUID().uuidString.lowercased()
         var live = SessionActivity(id: "local:" + thread)

@@ -10,6 +10,14 @@
 "account.reset_count" = "Resets: %ld";
 "account.resets_accessibility" = "Available resets: %1$@. %2$@";
 "account.resets_unknown" = "Resets —";
+"account.expiry_title" = "Reset expiry times";
+"account.show_expiries" = "Show reset expiry times";
+"account.hide_expiries" = "Hide reset expiry times";
+"account.expiries_expanded" = "Expanded";
+"account.expiries_collapsed" = "Collapsed";
+"account.non_expiring_count" = "Non-expiring resets: %ld";
+"account.unknown_expiry_count" = "Resets with unknown expiry: %ld";
+"account.expiry_timezone" = "Local time (%@)";
 "activity.finished_count" = "%ld turns finished";
 "activity.header_open" = "%@. Click to open chat";
 "activity.header_pin" = "%@. Click to keep expanded";

@@ -182,12 +182,13 @@ struct NativeDesktopSession {
             // invalidating the projection so the consumer observes wire order.
             try publishEvents()
             if host == "local" && localRuntime { try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread]) }
-            if case DesktopProjectionFailure.review = error {
+            switch error {
+            case DesktopProjectionFailure.review, DesktopProjectionFailure.ephemeral:
                 if excluded.count < 1024 { excluded.insert(key) }
                 try frame(["kind": "attention", "hostId": host, "threadId": thread, "requests": []])
                 try follow(key, value: false); waiting.removeAll { $0 == key }; try drain()
-            } else if awaitingSnapshot[key] == nil {
-                try follow(key, value: true)
+            default:
+                if awaitingSnapshot[key] == nil { try follow(key, value: true) }
             }
         }
     }
