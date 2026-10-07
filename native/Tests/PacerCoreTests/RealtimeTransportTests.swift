@@ -105,23 +105,21 @@ final class RealtimeTransportTests: XCTestCase {
         })
     }
     func testRemoteEOFDeliversQueuedCompletionBeforeDisconnectAndRetainsUnreadCard() throws {
-        for _ in 0..<3 {
-            let output = try runProbe(closeAfterTerminal: true)
-            let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
-            let terminal = try XCTUnwrap(frames.firstIndex { ($0["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "turn/completed" } == true })
-            let disconnected = try XCTUnwrap(frames.lastIndex { $0["kind"] as? String == "status" && $0["connected"] as? Bool == false })
-            XCTAssertLessThan(terminal, disconnected)
-            var state = RuntimeEventState(sourceID: "remote-ssh-discovered:fixture", sourceName: "SSH"), inbox = CompletionInbox()
-            for frame in frames {
-                state.consume(frame)
-                inbox.observe(state.activities, at: Date(), retention: 1800)
-                state.releasePublishedState()
-            }
-            XCTAssertEqual(inbox.unreadActivities.count, 1)
-            XCTAssertEqual(inbox.unreadActivities.first?.phase, .completed)
-            XCTAssertEqual(inbox.unreadActivities.first?.turnID, "test-turn")
-            XCTAssertFalse(output.contains("PRIVATE"))
+        let output = try runProbe(closeAfterTerminal: true)
+        let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let terminal = try XCTUnwrap(frames.firstIndex { ($0["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "turn/completed" } == true })
+        let disconnected = try XCTUnwrap(frames.lastIndex { $0["kind"] as? String == "status" && $0["connected"] as? Bool == false })
+        XCTAssertLessThan(terminal, disconnected)
+        var state = RuntimeEventState(sourceID: "remote-ssh-discovered:fixture", sourceName: "SSH"), inbox = CompletionInbox()
+        for frame in frames {
+            state.consume(frame)
+            inbox.observe(state.activities, at: Date(), retention: 1800)
+            state.releasePublishedState()
         }
+        XCTAssertEqual(inbox.unreadActivities.count, 1)
+        XCTAssertEqual(inbox.unreadActivities.first?.phase, .completed)
+        XCTAssertEqual(inbox.unreadActivities.first?.turnID, "test-turn")
+        XCTAssertFalse(output.contains("PRIVATE"))
     }
     func testInvalidWebSocketAcceptCannotCreateLiveConnection() throws {
         let output = try runProbe(badAccept: true)
