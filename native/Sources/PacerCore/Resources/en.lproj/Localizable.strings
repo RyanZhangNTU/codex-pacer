@@ -336,10 +336,11 @@
 "performance.first_output" = "First output %@";
 "performance.latency_help" = "Observed from this turn’s start to the first received text or reasoning text. Includes queue, network and client delivery time; unavailable when attached mid-turn.";
 "performance.response_help" = "Latest settled request: %d output tokens / %.2f s, including reasoning once and excluding tool waits. Timing ends at the last observed generated item. This is response throughput, not decoder speed.";
-"performance.response_mean_help" = "%.1f t/s: output tokens divided by total observed duration of the latest measured requests. Unmeasured tasks are excluded; this is not concurrent decode speed.";
 "performance.settings_section" = "Performance and energy";
 "performance.refresh" = "Display updates";
 "performance.mode.efficient" = "Energy saving · 1 s";
 "performance.mode.balanced" = "Balanced · 0.25 s";
 "performance.mode.responsive" = "More responsive · 0.1 s";
 "performance.refresh_help" = "Balanced uses the existing update interval. More responsive updates can use more energy during activity. Only regular display updates are batched; token accounting stays equally precise, and first output, turn endings and input reminders are handled immediately.";
+"performance.total_help" = "Global total TPS: %.1f t/s, the sum of available rates across running chats. Tool waits contribute zero; waiting, finished and internal-review chats are excluded. Each chat uses its latest measured request rate.";
+"performance.partial_total_help" = "Global total TPS: %.1f t/s. Some running chats have missing or older measurements, so this is a partial total. Tool waits contribute zero; waiting, finished and internal-review chats are excluded.";

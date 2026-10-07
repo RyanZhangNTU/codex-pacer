@@ -249,7 +249,7 @@ final class IslandModel: ObservableObject {
     }
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
-    var rateHelp: String { L10n.text(overview.usesResponseRate ? "performance.response_mean_help" : (rateIsFresh ? "rate.total" : "rate.partial"), rate ?? 0) }
+    var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
     var showsRate: Bool { !running.isEmpty }
     var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? L10n.text("performance.awaiting_usage") : "—") }
     var monitorsSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH") }

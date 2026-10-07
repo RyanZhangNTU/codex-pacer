@@ -166,7 +166,7 @@ final class ResponsePerformanceTests: XCTestCase {
         inbox.observe([before], at: start.addingTimeInterval(42), retention: 30); inbox.updatePerformance(stream.performanceUpdates)
         XCTAssertTrue(inbox.activities.isEmpty, "Accounting cannot extend expiry")
     }
-    func testResponseMeanDoesNotAddDifferentWindowsAndKeepsLastMeasuredValue() {
+    func testGlobalTPSAddsRequestRatesAndKeepsFreshnessAndParticipationBoundaries() {
         func task(_ id: String, tokens: Int, duration: Double) -> SessionActivity {
             var value = SessionActivity(id: id, phaseAwareRate: true)
             let began = start.addingTimeInterval(10-duration)
@@ -182,9 +182,38 @@ final class ResponsePerformanceTests: XCTestCase {
             task("019a0000-0000-7000-8000-000000000002", tokens: Int.max, duration: 20)], at: start.addingTimeInterval(10))
         XCTAssertTrue(large.displayedRate?.isFinite == true, "Large numeric metadata cannot overflow the cross-task sum")
         let overview = ActivityOverview(activities: tasks, at: start.addingTimeInterval(10))
-        XCTAssertEqual(overview.displayedRate, 40); XCTAssertTrue(overview.usesResponseRate)
+        XCTAssertEqual(overview.displayedRate, 90); XCTAssertEqual(overview.tokensPerSecond, 90); XCTAssertTrue(overview.rateIsFresh)
         let older = ActivityOverview(activities: tasks, at: start.addingTimeInterval(30))
-        XCTAssertEqual(older.displayedRate, 40); XCTAssertFalse(older.rateIsFresh); XCTAssertNil(older.tokensPerSecond)
+        XCTAssertEqual(older.displayedRate, 90); XCTAssertFalse(older.rateIsFresh); XCTAssertNil(older.tokensPerSecond)
+
+        func live(_ activity: inout SessionActivity, method: String, fields: [String: Any]) {
+            var data: [String: Any] = ["method": method, "threadId": activity.threadID!, "turnId": "turn", "at": start.addingTimeInterval(11).timeIntervalSince1970]
+            data.merge(fields) { _, new in new }; activity.consumeLive(data)
+        }
+        var blocked = tasks[1]
+        live(&blocked, method: "item/started", fields: ["itemId": "tool", "itemType": "commandExecution"])
+        XCTAssertEqual(blocked.responsePerformance?.tokensPerSecond, 30, "Task row retains its last request")
+        XCTAssertEqual(ActivityOverview(activities: [tasks[0], blocked], at: start.addingTimeInterval(11)).displayedRate, 60, "A confirmed tool wait contributes zero")
+        for (method, fields) in [("thread/status/changed", ["status": "active", "flags": ["waitingOnUserInput"]]),
+                                 ("turn/completed", ["status": "completed"]),
+                                 ("metadata", ["source": "guardian_review"])] as [(String, [String: Any])] {
+            var excluded = tasks[1]; live(&excluded, method: method, fields: fields)
+            XCTAssertEqual(ActivityOverview(activities: [tasks[0], excluded], at: start.addingTimeInterval(11)).displayedRate, 60, method)
+        }
+        var unmeasured = SessionActivity(id: "019a0000-0000-7000-8000-000000000003", phaseAwareRate: true)
+        live(&unmeasured, method: "turn/started", fields: [:])
+        let partial = ActivityOverview(activities: [tasks[0], unmeasured], at: start.addingTimeInterval(11))
+        XCTAssertEqual(partial.displayedRate, 60); XCTAssertFalse(partial.rateIsFresh)
+        var legacy = SessionActivity(id: "019a0000-0000-7000-8000-000000000004", phaseAwareRate: true)
+        for (method, seconds, fields) in [("turn/started", 0.0, [:]),
+            ("thread/tokenUsage/updated", 0.0, ["outputTokens": 0]),
+            ("thread/tokenUsage/updated", 2.0, ["outputTokens": 100])] as [(String, Double, [String: Any])] {
+            var data: [String: Any] = ["method": method, "threadId": legacy.threadID!, "turnId": "turn", "at": start.addingTimeInterval(seconds).timeIntervalSince1970]
+            data.merge(fields) { _, new in new }; legacy.consumeLive(data)
+        }
+        let mixed = ActivityOverview(activities: [tasks[0], legacy], at: start.addingTimeInterval(10))
+        XCTAssertEqual(mixed.displayedRate, 110, "Legacy estimates also contribute alongside settled request rates")
+        XCTAssertTrue(mixed.rateIsFresh)
     }
     func testRuntimeEstimateCanUpgradeToExactRecordAndInvalidWindowsAreRejected() {
         var meter = ResponsePerformanceMeter(); meter.start(turnID: "turn", at: start, observed: true)

@@ -1,6 +1,6 @@
 # 2.3.0 performance evaluation
 
-Measured on 7 October 2026, macOS 27.0.1, arm64. This is development validation, not a release or installed-app upgrade.
+Measured on 7 October 2026, macOS 27.0.1, arm64. This records the initial build 35 development validation, not a release or installed-app upgrade. Build 36 subsequently restores global total TPS in the header; the collector and per-request timing are unchanged, so the energy table remains a measurement of the initial candidate.
 
 ## Measurement and interpretation
 
@@ -36,7 +36,7 @@ The complete test run covered the application suites. Its one obsolete terminal-
 
 ## Reproduction and receipts
 
-The preserved baseline is `develop` commit `8b70709e20b27ac99154cc5865eabf7bd9f3b109` (2.2.2 build 34). The final candidate is 2.3.0 build 35. Production native-source SHA-256, excluding tests and generated artifacts:
+The preserved baseline is `develop` commit `8b70709e20b27ac99154cc5865eabf7bd9f3b109` (2.2.2 build 34). The candidate measured in this report is 2.3.0 build 35. Production native-source SHA-256, excluding tests and generated artifacts:
 
 `c58c543b8b83a19e1c10b2d78c553333400bf14b67bcca446953791c802a7498`
 
@@ -53,3 +53,7 @@ python3 scripts/performance/profile-island.py \
 Use only a QA app with a separate bundle identifier/executable/cache/lock, no production preference migration, disabled live quota/updater/SSH, and the temporary `--energy-fixture` quota hook. The profiler refuses the production identity. The ordinary 10-second request cycle is used for energy runs; `--turn-seconds 30` holds a completed card longer for UI acceptance. The profiler launches and stops only its own child app and deletes its own synthetic home. Raw counters and receipts remain ignored under `output/performance/2.3.0/`.
 
 The existing compatibility-Python event replay also retained projected-state/event equivalence for body and body/count patches. Its timings were effectively unchanged; that component check is separate from the native-app measurements above.
+
+## Build 36 header correction
+
+The header now adds the available TPS values of all running chats. For example, requests measured at 60 and 30 t/s produce a 90 t/s total, independently of their request durations. Confirmed tool waits contribute zero; waiting, ended and internal-review chats are excluded. Missing/older data makes the total partial. Per-chat request TPS, first-output latency, collection frequency and collectors are unchanged. Affected regression checks cover modern/legacy mixing, missing and stale measurements, tool waits, lifecycle exclusions and large numeric sums.
