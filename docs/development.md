@@ -11,11 +11,11 @@
 - `scripts/release`: native signing, notarization and publication.
 - `marketing`: editable Chinese campaign source and reproducible exports.
 
-Run `make test` and `make build` with Xcode 26 or newer. Both copy native sources into `/private/tmp` with isolated SwiftPM/module caches, avoiding iCloud metadata and restricted shared caches. The executable remains `CodexPacerIsland`; the user-facing app is Codex Pacer. `native/Info.plist` is the production version source.
+Use Xcode 26 or newer. Run affected suites with `make test TEST_FILTER='SuiteName|OtherSuite'` during development and one full `make test` for a release candidate. `make build` creates an app for UI checks; a release build already performs compilation and packaging. Sources and build outputs are isolated in `/private/tmp`; pinned dependencies and compiler modules reuse a per-user cache there. Resolution follows `Package.resolved` without refreshing unchanged dependencies. The executable remains `CodexPacerIsland`; the user-facing app is Codex Pacer. `native/Info.plist` is the production version source.
 
 Development builds are ad hoc signed. The build prints its app path; open that app in Finder for UI checks. Exit the installed app first: all copies share the same singleton lock. Demo arguments `--demo` and `--demo-completion` supply labeled sample data without querying Codex. `--demo-notch` supplies hardware-notch geometry for marketing on virtual displays; production mode uses the screen’s own safe areas. Command+1/2/3/4 switches synthetic thinking/tool/reply/completion events through the same runtime projection. Demo clicks open an explicitly labeled sample destination, never a real conversation. `--expanded` starts with the island open. Command-line diagnostics `--diagnose` and `--diagnose-events --observe-seconds 20` report protocol/counter availability without credentials, account identity or task text. Add `--desktop-only` to verify local runtime and Desktop attention/discovery without starting SSH helpers.
 
-Updater isolation, publication and installed-app acceptance are defined in the [release workflow](releasing.md#3-verify-before-promotion).
+Applicable manual checks, updater isolation and publication are defined in the [release workflow](releasing.md#validation-scope).
 
 ## Data and calculation
 
@@ -55,7 +55,7 @@ Canonical activity IDs recognize their UUID suffix before treating a rollout pat
 
 The production bundle is `com.codexpacer.app`. A one-time allowlist migration copies unset native preview preferences; existing production choices take precedence. `~/Library/Application Support/CodexPacerIsland` remains the cache/lock location for continuity. Completed cards and unread reminders are in memory; startup history does not replay old alerts.
 
-After presentation changes, check the actual app: expand/collapse with fixed top anchoring, rapid reversal, pin/Esc, menu-bar visibility, settings save, quota states, expiry-marker hover/tap and both quit controls. Check reduced motion/transparency and older macOS separately when those behaviors change. Source tests do not establish live appearance, protected Codex deep-link behavior or every OS/display configuration.
+After presentation changes, reproduce the changed interaction in the actual app and check its affected layout. Exercise anchors/reversal for geometry changes, persistence for settings changes, expiry hover/tap for expiry changes, and quit controls for shutdown changes. Do not rerun unrelated presentation or updater matrices. Check reduced motion/transparency and older macOS when those behaviors change. Source tests do not establish live appearance, protected Codex deep-link behavior or every OS/display configuration.
 
 Settings retain the saved quota-window choice while quota is unavailable and validate it after usable data returns. Conversation navigation uses the same application locations as CLI discovery; a failed open preserves the card and its unread reminder, and reports the failure separately from quota errors.
 

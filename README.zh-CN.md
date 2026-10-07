@@ -38,11 +38,11 @@
 需要 Xcode 26 或更新。应用没有 npm 或 Rust 依赖。
 
 ```sh
-make test
-make build
+make test TEST_FILTER='CompletionInboxTests|SessionNameTests' # 开发时只跑相关测试
+make build # 需要应用做界面验证时使用
 ```
 
-构建在本机临时目录中完成，终端会打印 `.app` 路径。`make release-unsigned` 生成本次未签名通用 DMG；需要 Developer ID 签名和 Apple 公证时使用独立的 `make release` 流程。参见[开发与数据说明](docs/development.md)和[发布流程](docs/releasing.md)。
+发布候选只执行一次全量 `make test`。构建在本机临时目录中完成并复用固定依赖缓存，终端会打印 `.app` 路径。`make release-unsigned` 生成本次未签名通用 DMG，发布无需额外构建同源预览版；需要 Developer ID 签名和 Apple 公证时使用独立的 `make release` 流程。参见[开发与数据说明](docs/development.md)和[发布流程](docs/releasing.md)。
 
 当前代码库仅维护 Swift 原生 macOS 实现。React/Tauri 与 Windows 1.x 可从 [Git 历史及旧版 Release](https://github.com/RyanZhangNTU/codex-pacer/releases)找回。
 

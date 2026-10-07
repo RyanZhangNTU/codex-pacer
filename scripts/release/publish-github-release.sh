@@ -48,7 +48,7 @@ else
     if codesign -dv "$task_dmg" >/dev/null 2>&1; then
         echo 'Unsigned distribution must not contain a signed DMG.' >&2; exit 1
     fi
-    hdiutil verify "$task_dmg"
+    # The image was verified when packaged; the checksum above proves it is unchanged.
 fi
 # Keep the current update feed live until both new assets are uploaded and checked.
 task_verify="$(mktemp -d /private/tmp/codex-pacer-published.XXXXXX)"

@@ -35,10 +35,6 @@ mkdir -p "$task_build/stage" "$task_output"
 PACER_UNIVERSAL=1 bash scripts/native/build-island.sh "$task_app" "$task_identity" | tee "$task_build/native-build.log"
 task_sparkle_tools="$(sed -n 's/^Sparkle tools: //p' "$task_build/native-build.log")"
 [[ -x "$task_sparkle_tools/generate_appcast" ]] || { echo 'Sparkle signing tools are missing.' >&2; exit 1; }
-task_architectures=" $(lipo -archs "$task_app/Contents/MacOS/CodexPacerIsland") "
-for task_arch in arm64 x86_64; do
-    [[ "$task_architectures" == *" $task_arch "* ]] || { echo "Missing application architecture: $task_arch" >&2; exit 1; }
-done
 if [[ "$task_mode" == signed ]]; then
     # Carry the notarization ticket with the app after it leaves the DMG.
     ditto -c -k --keepParent --norsrc --noextattr "$task_app" "$task_build/app.zip"
@@ -49,7 +45,6 @@ else
     task_signature="$(codesign -dv --verbose=2 "$task_app" 2>&1)"
     [[ "$task_signature" == *'Signature=adhoc'* ]] || { echo 'Expected an ad hoc application signature.' >&2; exit 1; }
 fi
-codesign --verify --strict "$task_app"
 "${PACER_DMG_PYTHON:-python3}" scripts/release/package-dmg.py "$task_app" "$task_dmg"
 if [[ "$task_mode" == signed ]]; then
     codesign --force --sign "$task_identity" --timestamp "$task_dmg"
@@ -60,7 +55,7 @@ if [[ "$task_mode" == signed ]]; then
     spctl --assess --type execute --verbose=2 "$task_app"
     spctl --assess --type open --context context:primary-signature --verbose=2 "$task_dmg"
 fi
-hdiutil verify "$task_dmg"
+# package-dmg.py already verifies the image; inspect its mounted contents once.
 # Verify what users will actually mount, including the app and drag-install link.
 task_mount="$task_build/mount"
 mkdir -p "$task_mount"

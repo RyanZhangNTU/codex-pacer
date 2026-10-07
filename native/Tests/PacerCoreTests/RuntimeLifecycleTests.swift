@@ -266,7 +266,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         let script = #"""
         now=datetime.datetime.now(datetime.timezone.utc).isoformat()
         records=[{'timestamp':now,'type':'event_msg','payload':{'type':'task_started','turn_id':'turn'}}]
-        records += [{'timestamp':now,'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':i}}}} for i in range(2500)]
+        # Cross the same wire boundaries with fewer records. Padding is ignored
+        # by activity decoding; counters still exercise ordered reconstruction.
+        records += [{'timestamp':now,'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':i}},'fixturePadding':'x'*4096}} for i in range(64)]
         frame={'sessions':[{'id':'rollout-'+str(uuid.UUID(int=i+1))+'.jsonl','reset':True,'records':records*4 if i==0 else records} for i in range(16)]}
         assert len(json.dumps(frame).encode())>4*1024*1024
         packets=[]
@@ -281,6 +283,12 @@ final class RuntimeLifecycleTests: XCTestCase {
         let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try python(RealtimeProbe.library + "\n" + script).utf8)) as? [String: Any])
         let frames = try XCTUnwrap(value["packets"] as? [[String: Any]])
         XCTAssertGreaterThan(frames.count, 1)
+        let firstSession = "rollout-00000000-0000-0000-0000-000000000001.jsonl"
+        let parts = frames.compactMap { $0["sessions"] as? [[String: Any]] }.flatMap { $0 }
+            .filter { $0["id"] as? String == firstSession }
+        XCTAssertGreaterThan(parts.count, 1, "A single session must still cross the frame boundary")
+        XCTAssertEqual(parts.first?["reset"] as? Bool, true)
+        XCTAssertTrue(parts.dropFirst().allSatisfy { $0["continuation"] as? Bool == true && $0["reset"] as? Bool == false })
         var chunked = RuntimeEventState(sourceID: "remote-ssh-discovered:test", sourceName: "test")
         var legacy = chunked
         legacy.consume(try XCTUnwrap(value["legacy"] as? [String: Any]))
