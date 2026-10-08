@@ -77,7 +77,7 @@ enum RequestLogProbe {
                         if gap:
                             meta=header(f)
                             if meta:records.append(meta)
-                            seed=anchor(f,stat.st_size)
+                            seed=anchor(f,stat.st_size,tid)
                             if seed:records.append(seed)
                             offset=max(0,stat.st_size-budget);fragment=b'';reset=True
                         prelude=len(records);f.seek(offset);data=f.read(budget);fragment+=data;offset+=len(data)

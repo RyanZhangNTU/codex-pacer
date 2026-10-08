@@ -4,6 +4,8 @@ Measured on 7 October 2026, macOS 27.0.1, arm64. This records the initial build 
 
 ## Measurement and interpretation
 
+CPU accounting correction, 8 October 2026: the original sampler labelled Mach CPU-time units as nanoseconds. A one-CPU-second calibration on this machine established a `125/3` timebase. The CPU column below has been recalculated from the original raw samples with that conversion (previously 0.044%, 0.037%, 0.028% and 0.077%). Energy and wakeup counters do not need this conversion and are unchanged. This is a correction to historical build 35 data, not a new measurement. See [the build 37 versus build 42 comparison](performance-2.3.1.md) for the current policy and subagent workload.
+
 The default Balanced mode did not show a large increase in main-process cost in this bounded workload. More Responsive roughly doubled interrupt wakeups compared with Balanced. Energy Saving reduced wakeups, but its short-window CPU/energy differences were small and noisy; it should not be described as a measured battery-life improvement. Those samples did not justify three energy-labelled modes. Build 37 replaces them with automatic visibility-based coalescing; the table below remains historical build 35 evidence, not a measurement of the new policy.
 
 The table uses read-only Darwin `proc_pid_rusage` counters over approximately 31 seconds per run. CPU is a percentage of one core; joules come from the system's `ri_energy_nj` estimate. They are not wall-meter readings or battery discharge measurements. Daily figures assume 8 hours with 10% active work and 90% idle, using the measured process power in each state:
@@ -12,10 +14,10 @@ The table uses read-only Darwin `proc_pid_rusage` counters over approximately 31
 
 | Build/mode | Active CPU | Interrupt wakeups/s | Estimated active process power | Estimated 8-hour mixed use |
 | --- | ---: | ---: | ---: | ---: |
-| 2.2.2 baseline | 0.044% | 6.64 | 0.0243 W | 0.023 Wh |
-| 2.3.0 Energy Saving | 0.037% | 3.73 | 0.0192 W | 0.017 Wh |
-| 2.3.0 Balanced | 0.028% | 4.58 | 0.0199 W | 0.018 Wh |
-| 2.3.0 More Responsive | 0.077% | 9.41 | 0.0376 W | 0.032 Wh |
+| 2.2.2 baseline | 1.844% | 6.64 | 0.0243 W | 0.023 Wh |
+| 2.3.0 Energy Saving | 1.556% | 3.73 | 0.0192 W | 0.017 Wh |
+| 2.3.0 Balanced | 1.169% | 4.58 | 0.0199 W | 0.018 Wh |
+| 2.3.0 More Responsive | 3.197% | 9.41 | 0.0376 W | 0.032 Wh |
 
 The measured idle process power was approximately 0.00046 W for the baseline and 0.00027 W for the candidate, with about 0.3 interrupt wakeups/s. These very small short-window estimates have substantial relative uncertainty. Continuous active use for 8 hours extrapolates to about 0.16 Wh in Balanced and 0.30 Wh in More Responsive. Neither extrapolation includes the cost of the rest of the machine.
 

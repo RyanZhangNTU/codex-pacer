@@ -41,6 +41,7 @@ struct ResponsePerformanceMeter: Equatable, Sendable {
     private var waiting = false
     private var finished = false
     private var hasRequestUsage = false
+    var hasPendingOutput: Bool { !finished && generatedEnd.map { end in latest.map { end > $0.completedAt } ?? true } == true }
 
     mutating func start(turnID: String?, at date: Date, observed: Bool) {
         self = Self(); self.turnID = turnID; turnStart = observed ? date : nil

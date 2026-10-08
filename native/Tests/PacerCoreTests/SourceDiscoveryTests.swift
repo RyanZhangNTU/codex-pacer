@@ -143,7 +143,7 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertEqual(activity.phase,.running)
         XCTAssertEqual(activity.sourceHost,"one")
     }
-    func testLocalAndSshFreshRatesAggregateAndExpiredRatesDisappearWithoutSelection() throws {
+    func testLocalAndSshFreshRatesAggregateAndOldRatesRemainMarkedWithoutSelection() throws {
         let start = Date(timeIntervalSince1970: 1000000)
         var local = SessionActivity(id: "local")
         var ssh = SessionActivity(id: "ssh", sourceHost: "one")
@@ -160,7 +160,7 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertTrue(fresh.rateIsFresh)
         let overview = ActivityOverview(activities: [local, ssh], at:start.addingTimeInterval(60))
         XCTAssertEqual(overview.running.count, 2)
-        XCTAssertNil(overview.displayedRate)
+        XCTAssertEqual(overview.displayedRate, 30)
         XCTAssertFalse(overview.rateIsFresh)
         XCTAssertNil(overview.tokensPerSecond)
     }
