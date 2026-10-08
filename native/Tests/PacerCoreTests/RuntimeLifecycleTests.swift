@@ -152,13 +152,20 @@ final class RuntimeLifecycleTests: XCTestCase {
         try:s.receive({'id':rid,'result':{'data':[],'nextCursor':'same'}})
         except ValueError:pass
         else:raise AssertionError('cursor cycle accepted')
-        # A queue-bound disconnect still flushes accepted events in wire-sized batches.
+        # Endings and tool boundaries bypass batching. A busy long batch flushes
+        # at 512 events, preserving the order and wire-size bound without reconnect.
         s.queue=[];packets=[];emit=lambda value:packets.append(value)
+        s.queue_event({'method':'turn/completed','threadId':tid(0),'turnId':'turn','at':0})
+        assert len(packets)==1 and packets[0]['events'][0]['method']=='turn/completed' and not s.queue
+        for method in ('item/started','item/completed'):
+            for kind in ('commandExecution','collabToolCall','collabAgentToolCall'):
+                packets=[];s.queue_event({'method':method,'threadId':tid(0),'turnId':'turn','itemType':kind,'at':0})
+                assert len(packets)==1 and not s.queue
+        packets=[]
         for i in range(513):
-            try:s.queue_event({'method':'turn/completed','threadId':tid(i),'turnId':'turn','at':i})
-            except ValueError:
-                assert i==512
-                flush_events(s)
+            s.queue_event({'method':'item/plan/delta','threadId':tid(i),'turnId':'turn','at':i})
+        assert [len(p['events']) for p in packets]==[512] and len(s.queue)==1
+        flush_events(s)
         assert [len(p['events']) for p in packets]==[512,1] and not s.queue
         assert [e['at'] for p in packets for e in p['events']]==list(range(513))
         print('bounded discovery passed')
@@ -266,7 +273,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         let script = #"""
         now=datetime.datetime.now(datetime.timezone.utc).isoformat()
         records=[{'timestamp':now,'type':'event_msg','payload':{'type':'task_started','turn_id':'turn'}}]
-        records += [{'timestamp':now,'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':i}}}} for i in range(2500)]
+        # Cross the same wire boundaries with fewer records. Padding is ignored
+        # by activity decoding; counters still exercise ordered reconstruction.
+        records += [{'timestamp':now,'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':i}},'fixturePadding':'x'*4096}} for i in range(64)]
         frame={'sessions':[{'id':'rollout-'+str(uuid.UUID(int=i+1))+'.jsonl','reset':True,'records':records*4 if i==0 else records} for i in range(16)]}
         assert len(json.dumps(frame).encode())>4*1024*1024
         packets=[]
@@ -281,6 +290,12 @@ final class RuntimeLifecycleTests: XCTestCase {
         let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try python(RealtimeProbe.library + "\n" + script).utf8)) as? [String: Any])
         let frames = try XCTUnwrap(value["packets"] as? [[String: Any]])
         XCTAssertGreaterThan(frames.count, 1)
+        let firstSession = "rollout-00000000-0000-0000-0000-000000000001.jsonl"
+        let parts = frames.compactMap { $0["sessions"] as? [[String: Any]] }.flatMap { $0 }
+            .filter { $0["id"] as? String == firstSession }
+        XCTAssertGreaterThan(parts.count, 1, "A single session must still cross the frame boundary")
+        XCTAssertEqual(parts.first?["reset"] as? Bool, true)
+        XCTAssertTrue(parts.dropFirst().allSatisfy { $0["continuation"] as? Bool == true && $0["reset"] as? Bool == false })
         var chunked = RuntimeEventState(sourceID: "remote-ssh-discovered:test", sourceName: "test")
         var legacy = chunked
         legacy.consume(try XCTUnwrap(value["legacy"] as? [String: Any]))

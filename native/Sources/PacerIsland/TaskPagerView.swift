@@ -7,7 +7,7 @@ struct TaskPagerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
     @State private var direction: CGFloat = 1
-    private let rowHeight: CGFloat = 56
+    private let rowHeight: CGFloat = 74
     private let rowSpacing: CGFloat = 2
 
     private var tasks: [SessionActivity] { model.visibleActivities }

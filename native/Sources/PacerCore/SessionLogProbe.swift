@@ -32,7 +32,17 @@ enum SessionLogProbe {
                 if isinstance(output,int) and output >= 0:
                     q['info'] = {'total_token_usage':{'output_tokens':output}}
                     last=(p.get('info') or {}).get('last_token_usage') or {}
-                    if isinstance(last.get('output_tokens'),int): q['info']['last_token_usage']={'output_tokens':last['output_tokens']}
+                    if isinstance(last.get('output_tokens'),int):
+                        q['info']['last_token_usage']={'output_tokens':last['output_tokens']}
+                        if isinstance(last.get('reasoning_output_tokens'),int):q['info']['last_token_usage']['reasoning_output_tokens']=last['reasoning_output_tokens']
+        elif outer == 'token_usage_record':
+            usage=p.get('usage') or {}
+            if not isinstance(usage,dict) or not isinstance(usage.get('output_tokens'),int) or isinstance(usage.get('output_tokens'),bool) or usage['output_tokens']<0:return None
+            for k in ('response_id','thread_id','turn_id'):
+                if not isinstance(p.get(k),str) or not p[k] or len(p[k])>256:return None
+                q[k]=p[k]
+            q['usage']={'output_tokens':usage['output_tokens']}
+            if isinstance(usage.get('reasoning_output_tokens'),int) and not isinstance(usage.get('reasoning_output_tokens'),bool):q['usage']['reasoning_output_tokens']=usage['reasoning_output_tokens']
         elif outer == 'response_item' and kind in ('function_call','custom_tool_call','function_call_output','custom_tool_call_output','reasoning','message'):
             if kind == 'message' and p.get('role') != 'assistant': return None
             q['type'] = kind

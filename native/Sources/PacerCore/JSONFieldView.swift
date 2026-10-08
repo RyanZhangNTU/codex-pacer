@@ -21,6 +21,23 @@ struct JSONFieldView {
     var isObject: Bool { data[range.lowerBound] == 123 }
     var isArray: Bool { data[range.lowerBound] == 91 }
     var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
+    var hasNonemptyString: Bool { data[range.lowerBound] == 34 && range.count > 2 }
+
+    /// Detect generated-text presence without decoding or retaining its text.
+    func containsTextMetadata(depth: Int = 0) throws -> Bool {
+        guard depth < 8 else { return false }
+        if hasNonemptyString { return true }
+        if isObject {
+            for (_, value) in try fields(["text", "delta", "content", "summary", "summaryText"]) {
+                if try value.containsTextMetadata(depth: depth + 1) { return true }
+            }
+        } else if isArray {
+            for value in try elements(maximumCount: 2048) {
+                if try value.containsTextMetadata(depth: depth + 1) { return true }
+            }
+        }
+        return false
+    }
 
     func fields(_ allowed: Set<String>? = nil, maximumCount: Int = 512) throws -> [String: Self] {
         try data.withUnsafeBytes { raw in

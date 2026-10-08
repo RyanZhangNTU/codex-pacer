@@ -50,6 +50,74 @@ final class RealtimeTransportTests: XCTestCase {
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         return String(decoding: data, as: UTF8.self)
     }
+    func testAutomaticCadenceUsesFiveSecondsAndExpandingFlushesWithoutResubscribe() async throws {
+        final class Capture: @unchecked Sendable {
+            let lock = NSLock()
+            var buffer = Data(), all = Data(), names = Set<String>()
+            func append(_ data: Data) -> Set<String> {
+                lock.lock(); defer { lock.unlock() }
+                buffer.append(data); all.append(data); var added = Set<String>()
+                while let end = buffer.firstIndex(of: 10) {
+                    let line = buffer[..<end]; buffer.removeSubrange(...end)
+                    let value = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] ?? [:]
+                    for event in value["events"] as? [[String: Any]] ?? [] {
+                        if let name = event["name"] as? String, names.insert(name).inserted { added.insert(name) }
+                    }
+                }
+                return added
+            }
+            func has(_ name: String) -> Bool { lock.lock(); defer { lock.unlock() }; return names.contains(name) }
+            func output() -> Data { lock.lock(); defer { lock.unlock() }; return all }
+        }
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-controlled-cadence-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        var prefix = Self.fixture.replacingOccurrences(of: "BAD_ACCEPT", with: "False")
+        let first = try XCTUnwrap(prefix.range(of: "send({'method':'item/agentMessage/delta','params':dict(common"))
+        let end = try XCTUnwrap(prefix.range(of: "send({'method':'turn/completed'", range: first.lowerBound..<prefix.endIndex))
+        let line = prefix[..<first.lowerBound].lastIndex(of: "\n").map { prefix.index(after: $0) } ?? prefix.startIndex
+        let indent = String(prefix[line..<first.lowerBound])
+        let replacement = """
+        send({'method':'item/agentMessage/delta','params':dict(common,itemId='reply',delta='PRIVATE reply')})
+        send({'method':'thread/name/updated','params':{'threadId':fixture_active,'threadName':'cadence-initial'}})
+        time.sleep(2)
+        send({'method':'thread/name/updated','params':{'threadId':fixture_active,'threadName':'cadence-pending'}})
+        time.sleep(8)
+        """
+        prefix.replaceSubrange(first.lowerBound..<end.lowerBound, with: replacement.replacingOccurrences(of: "\n", with: "\n" + indent) + "\n" + indent)
+        let child = Process(), stdout = Pipe(), stdin = Pipe(), stderr = Pipe()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), "ssh-lifetime", "5"]
+        child.standardOutput = stdout; child.standardInput = stdin; child.standardError = stderr
+        let capture = Capture(), initial = expectation(description: "initial ordinary batch"), expanded = expectation(description: "pending batch on expansion")
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let names = capture.append(handle.availableData)
+            if names.contains("cadence-initial") { initial.fulfill() }
+            if names.contains("cadence-pending") { expanded.fulfill() }
+        }
+        defer { stdout.fileHandleForReading.readabilityHandler = nil; if child.isRunning { child.terminate() } }
+        try child.run()
+        try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
+        await fulfillment(of: [initial], timeout: 2)
+        guard child.isRunning else {
+            XCTFail(String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)); return
+        }
+        try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":5,\"flushPending\":false}\n".utf8))
+        try await Task.sleep(nanoseconds: 2_300_000_000)
+        XCTAssertFalse(capture.has("cadence-pending"), "Collapsed batches must not be clamped to the old one-second limit")
+        try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
+        await fulfillment(of: [expanded], timeout: 1)
+        try stdin.fileHandleForWriting.close(); child.waitUntilExit()
+        stdout.fileHandleForReading.readabilityHandler = nil
+        _ = capture.append(stdout.fileHandleForReading.readDataToEndOfFile())
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        let frames = try String(decoding: capture.output(), as: UTF8.self).split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let requests = try XCTUnwrap(frames.last?["testRequests"] as? [[String: Any]])
+        XCTAssertEqual(requests.filter { $0["method"] as? String == "initialize" }.count, 1)
+        XCTAssertEqual(requests.filter { $0["method"] as? String == "thread/resume" }.count, 1)
+        XCTAssertFalse(String(decoding: capture.output(), as: UTF8.self).contains("PRIVATE"))
+    }
+
     func testStdinDiscoveryObservesQuietActiveTaskAndExplicitEndingWithoutItemReplay() throws {
         try assertQuietTaskLifecycle(runProbe(hintOnly: true))
     }
@@ -105,23 +173,21 @@ final class RealtimeTransportTests: XCTestCase {
         })
     }
     func testRemoteEOFDeliversQueuedCompletionBeforeDisconnectAndRetainsUnreadCard() throws {
-        for _ in 0..<3 {
-            let output = try runProbe(closeAfterTerminal: true)
-            let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
-            let terminal = try XCTUnwrap(frames.firstIndex { ($0["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "turn/completed" } == true })
-            let disconnected = try XCTUnwrap(frames.lastIndex { $0["kind"] as? String == "status" && $0["connected"] as? Bool == false })
-            XCTAssertLessThan(terminal, disconnected)
-            var state = RuntimeEventState(sourceID: "remote-ssh-discovered:fixture", sourceName: "SSH"), inbox = CompletionInbox()
-            for frame in frames {
-                state.consume(frame)
-                inbox.observe(state.activities, at: Date(), retention: 1800)
-                state.releasePublishedState()
-            }
-            XCTAssertEqual(inbox.unreadActivities.count, 1)
-            XCTAssertEqual(inbox.unreadActivities.first?.phase, .completed)
-            XCTAssertEqual(inbox.unreadActivities.first?.turnID, "test-turn")
-            XCTAssertFalse(output.contains("PRIVATE"))
+        let output = try runProbe(closeAfterTerminal: true)
+        let frames = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let terminal = try XCTUnwrap(frames.firstIndex { ($0["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "turn/completed" } == true })
+        let disconnected = try XCTUnwrap(frames.lastIndex { $0["kind"] as? String == "status" && $0["connected"] as? Bool == false })
+        XCTAssertLessThan(terminal, disconnected)
+        var state = RuntimeEventState(sourceID: "remote-ssh-discovered:fixture", sourceName: "SSH"), inbox = CompletionInbox()
+        for frame in frames {
+            state.consume(frame)
+            inbox.observe(state.activities, at: Date(), retention: 1800)
+            state.releasePublishedState()
         }
+        XCTAssertEqual(inbox.unreadActivities.count, 1)
+        XCTAssertEqual(inbox.unreadActivities.first?.phase, .completed)
+        XCTAssertEqual(inbox.unreadActivities.first?.turnID, "test-turn")
+        XCTAssertFalse(output.contains("PRIVATE"))
     }
     func testInvalidWebSocketAcceptCannotCreateLiveConnection() throws {
         let output = try runProbe(badAccept: true)

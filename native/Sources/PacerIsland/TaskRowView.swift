@@ -20,6 +20,18 @@ struct TaskRowView: View {
         }
         return phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now)
     }
+    private var performanceText: String {
+        let speed = activity.responsePerformance.map { String(format: "%.1f t/s", $0.tokensPerSecond) }
+            ?? activity.outputEstimate(at: now).map { String(format: "~%.1f t/s", $0.value) }
+            ?? L10n.text("performance.awaiting_usage")
+        let latency = activity.firstTokenLatency.map { String(format: "%.2f s", $0) } ?? "—"
+        return speed + "  ·  " + L10n.text("performance.first_output", latency)
+    }
+    private var performanceHelp: String {
+        let latency = L10n.text("performance.latency_help")
+        guard let sample = activity.responsePerformance else { return L10n.text("performance.awaiting_usage_help") + "\n" + latency }
+        return L10n.text("performance.response_help", sample.outputTokens, sample.duration) + "\n" + latency
+    }
     private var color: Color {
         if attention != nil { return .orange }
         if activity.turnFailed { return .red }
@@ -51,7 +63,7 @@ struct TaskRowView: View {
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
         .help(enabled ? [L10n.text("common.open_chat"), activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
-        .accessibilityLabel(L10n.text("activity.row_accessibility", name, detail, activity.sourceHost ?? L10n.text("common.local")))
+        .accessibilityLabel(L10n.text("activity.row_accessibility", name, detail, activity.sourceHost ?? L10n.text("common.local")) + ", " + performanceText)
     }
 
     private var rowContent: some View {
@@ -70,6 +82,8 @@ struct TaskRowView: View {
                         Text(host).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }.font(.system(size: 12))
+                Text(performanceText).font(.system(size: 11)).monospacedDigit()
+                    .foregroundStyle(.secondary).lineLimit(1).help(performanceHelp)
             }
             Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(hovered && enabled ? 0.8 : 0))

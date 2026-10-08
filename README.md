@@ -14,6 +14,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 - Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
 - Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.
 - Use adaptive width by default, or adjust a single width with a preview and slider in Settings.
+- View per-request TPS and observed first-output latency for each task; ordinary updates adapt automatically to the island’s collapsed or expanded state.
 - Use English or Simplified Chinese, following your Mac's language by default or selecting a language in Settings.
 - Update inside the app: daily checks by default, with download and installation after you choose to install.
 
@@ -38,11 +39,11 @@ If macOS also blocks the app, repeat step 2 for Codex Pacer, then launch it agai
 Requires Xcode 26 or newer. The app has no npm or Rust dependencies.
 
 ```sh
-make test
-make build
+make test TEST_FILTER='CompletionInboxTests|SessionNameTests' # during development
+make build # when an app is needed for UI checks
 ```
 
-Builds run in local temporary directories and print the app path. Use `make release-unsigned` for the unsigned universal DMG, or `make release` for the separate Developer ID signing/notarization workflow. See [development and data semantics](docs/development.md) and [releasing](docs/releasing.md).
+Run the full suite once for a release candidate. Builds run in local temporary directories, reuse pinned dependency caches and print the app path. Use `make release-unsigned` for the unsigned universal DMG, or `make release` for the separate Developer ID signing/notarization workflow; no separate preview build is needed just for publication. See [development and data semantics](docs/development.md) and [releasing](docs/releasing.md).
 
 The maintained codebase contains only native macOS code. React/Tauri and Windows 1.x remain available in [Git history and previous releases](https://github.com/RyanZhangNTU/codex-pacer/releases).
 

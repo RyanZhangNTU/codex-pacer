@@ -7,15 +7,20 @@ public actor RealtimeActivityMonitor {
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String]) -> Void
     public typealias AttentionUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest]) -> Void
     public typealias MetadataUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate]) -> Void
+    public typealias PerformanceUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate], [SessionPerformanceUpdate]) -> Void
     private struct Source: Equatable {
         let id: String
         let name: String?
         let alias: String?
         let home: String
         var desktopIPC = false
+        var refreshPolicy = ActivityRefreshPolicy.collapsed
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.id == rhs.id && lhs.name == rhs.name && lhs.alias == rhs.alias && lhs.home == rhs.home && lhs.desktopIPC == rhs.desktopIPC
+        }
     }
     private struct Connection {
-        let source: Source
+        var source: Source
         let process: Process
         let output: FileHandle
         let input: FileHandle?
@@ -43,7 +48,7 @@ public actor RealtimeActivityMonitor {
     private var attentionRequests: [String: PendingAttentionRequest] = [:]
     private var failed: [String: Source] = [:]
     private var retryAfter: [String: Date] = [:]
-    private var callback: MetadataUpdate?
+    private var callback: PerformanceUpdate?
     private var localUnavailable = true
     private var disconnected: [String: [SessionActivity]] = [:]
     private var pendingHints: [String: Set<String>] = [:]
@@ -57,17 +62,24 @@ public actor RealtimeActivityMonitor {
             update(activities, status, unavailable, requests)
         }
     }
-    public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true, update: @escaping MetadataUpdate) {
+    public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true,
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping MetadataUpdate) {
+        start(home: home, includeSSH: includeSSH, useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { activities, status, unavailable, requests, names, _ in
+            update(activities, status, unavailable, requests, names)
+        }
+    }
+    public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true,
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping PerformanceUpdate) {
         callback = update
         let local = Source(id: "local", name: nil, alias: nil, home: home.path,
-            desktopIPC: !Self.controlEndpointAvailable(home: home))
+            desktopIPC: !Self.controlEndpointAvailable(home: home), refreshPolicy: refreshPolicy)
         primaryLocalIsDesktop = local.desktopIPC
         var sources: [Source] = []
         localUnavailable = !Self.localEndpointAvailable(home: home)
         if !localUnavailable && !local.desktopIPC { sources.append(local) }
         let targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : []
         if includeSSH && useSSHFallback {
-            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home) }
+            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshPolicy: refreshPolicy) }
         }
         let names = Dictionary(targets.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
         let desktopAvailable = Self.desktopEndpointAvailable(home: home)
@@ -87,7 +99,21 @@ public actor RealtimeActivityMonitor {
             closed(id, process: connection.process)
         }
         for source in sources where connections[source.id] == nil && Date() >= (retryAfter[source.id] ?? .distantPast) { connect(source) }
+        updateRefreshPolicy(refreshPolicy)
         publish()
+    }
+    /// Updates existing owned transports, without discovery or reconnecting.
+    public func updateRefreshPolicy(_ policy: ActivityRefreshPolicy, flushPending: Bool = false) {
+        desktop?.collector.setBatchInterval(policy.interval, flushPending: flushPending)
+        for (id, var connection) in connections where connection.source.refreshPolicy != policy || flushPending {
+            if let input = connection.input, var bytes = try? JSONSerialization.data(withJSONObject: [
+                "kind": "settings", "batchInterval": policy.interval, "flushPending": flushPending]) {
+                bytes.append(10); try? input.write(contentsOf: bytes)
+            }
+            connection.source.refreshPolicy = policy; connections[id] = connection
+        }
+        for id in Array(failed.keys) { failed[id]?.refreshPolicy = policy }
+        if flushPending { publish() }
     }
     public func activities() -> [SessionActivity] {
         ActivitySourceMerger.merge(
@@ -116,7 +142,7 @@ public actor RealtimeActivityMonitor {
         let id = UUID()
         let frames = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let collector = NativeDesktopCollector(id: id, home: URL(fileURLWithPath: source.home), hosts: Set(hosts.keys).union(["local"]),
-            localRuntime: source.desktopIPC, onFrame: { bytes in
+            localRuntime: source.desktopIPC, batchInterval: source.refreshPolicy.interval, onFrame: { bytes in
                 // Never silently keep a stream after dropping one of its frames.
                 if case .dropped = frames.continuation.yield(bytes) { frames.continuation.finish() }
             }, onClosed: { frames.continuation.finish() })
@@ -217,23 +243,22 @@ public actor RealtimeActivityMonitor {
     }
     private func connect(_ source: Source) {
         let process = Process(), output = Pipe()
-        let input = source.alias == nil ? nil : Pipe()
+        let input = Pipe()
         let program = Data(RealtimeProbe.script.utf8).base64EncodedString()
         let encodedHome = Data(source.home.utf8).base64EncodedString()
         if let alias = source.alias {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime"
+            let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime \(source.refreshPolicy.interval)"
             process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
                 "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             process.arguments = ["-u", "-c", source.desktopIPC ? DesktopEventProbe.script : RealtimeProbe.script,
-                encodedHome, "socket-only"]
+                encodedHome, "socket-only", String(source.refreshPolicy.interval), "control"]
         }
         // Keep SSH stdin open while the owner lives. EOF lets the remote helper
         // stop immediately, even if no event would otherwise touch stdout.
-        if let input { process.standardInput = input }
-        else { process.standardInput = FileHandle.nullDevice }
+        process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
@@ -242,12 +267,12 @@ public actor RealtimeActivityMonitor {
         output.fileHandleForReading.readabilityHandler = readHandler
         do { try process.run() }
         catch {
-            try? input?.fileHandleForWriting.close()
+            try? input.fileHandleForWriting.close()
             reader.stop(); output.fileHandleForReading.readabilityHandler = nil; channel.continuation.finish()
             failed[source.id] = source; retryAfter[source.id] = Date().addingTimeInterval(30); return
         }
         var connection = Connection(source: source, process: process, output: output.fileHandleForReading,
-            input: input?.fileHandleForWriting,
+            input: input.fileHandleForWriting,
             reader: reader, continuation: channel.continuation, readHandler: readHandler,
             state: RuntimeEventState(sourceID: source.alias == nil ? nil : source.id, sourceName: source.name))
         connection.task = Task { [weak self] in
@@ -327,7 +352,7 @@ public actor RealtimeActivityMonitor {
         let names = connections.values.flatMap { $0.state.nameUpdates } +
             (desktop?.states.values.flatMap { $0.nameUpdates } ?? [])
         callback?(activities(), status, failed.values.filter { status[$0.id]?.connected != true }.compactMap(\.name).sorted(),
-                  requests.sorted { $0.detectedAt < $1.detectedAt }, names)
+                  requests.sorted { $0.detectedAt < $1.detectedAt }, names, connections.values.flatMap { $0.state.performanceUpdates })
         if let hosts = desktop?.states.keys { for host in hosts { desktop?.states[host]?.releasePublishedState() } }
         for id in Array(connections.keys) { connections[id]?.state.releasePublishedState() }
     }

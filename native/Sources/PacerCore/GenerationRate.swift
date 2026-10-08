@@ -43,11 +43,11 @@ struct GenerationRate: Equatable, Sendable {
             seed(total, at: date); return
         }
         let wall = date.timeIntervalSince(previous.date)
-        guard wall <= 120 else { seed(total, at: date); return }
         let blocked = (waits + (waitStart.map { [($0, date)] } ?? [])).reduce(0.0) {
             $0 + max(0, min(date, $1.1).timeIntervalSince(max(previous.date, $1.0)))
         }
         let active = max(0, wall - blocked)
+        guard active <= 120 else { seed(total, at: date); return }
         // A counter reported entirely inside a known wait has no observed
         // generation duration. Do not carry its tokens into a later request.
         if active == 0, waitStart != nil { seed(total, at: date); return }

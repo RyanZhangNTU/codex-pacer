@@ -1,4 +1,5 @@
 .PHONY: build test release publish release-unsigned publish-unsigned
+export TEST_FILTER
 build:
 	bash scripts/native/build-island.sh
 test:
