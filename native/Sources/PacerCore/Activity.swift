@@ -81,6 +81,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var lastMeasuredRate: OutputEstimate?
     private var lastMeasuredTurnID: String?
     private var lastMeasuredExact = false
+    private var latencyTurnID: String?
+    private var latencyStart: Date?
+    private var retainedLatency: TimeInterval?
+    private var logTurnStart: Date?
     private var ignoringInheritedHistory = false
     mutating func updateParent(_ value: String?) {
         guard let value, let id = UUID(uuidString: value)?.uuidString.lowercased(), id != threadID else { return }
@@ -94,6 +98,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return raw.flatMap { UUID(uuidString: $0)?.uuidString.lowercased() }
     }
     private mutating func rememberRate() {
+        if retainedLatency == nil, let latency = performanceMeter.firstTokenLatency, let turnID {
+            latencyTurnID = turnID; retainedLatency = latency
+        }
         if let sample = responsePerformance {
             if lastMeasuredRate == nil || sample.completedAt >= lastMeasuredRate!.reportedAt {
                 lastMeasuredRate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
@@ -109,16 +116,20 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     /// Display continuity is independent of the new turn's accounting baseline.
     public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
         guard let sample = lastMeasuredRate, now >= sample.reportedAt else { return nil }
-        let fresh = !projectedRate && lastMeasuredTurnID == turnID && stage != .tool &&
-            !performanceMeter.hasPendingOutput && now < sample.expiresAt
+        let fresh = now < sample.expiresAt
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
     public func displayedRateIsEstimated(at now: Date) -> Bool {
-        !lastMeasuredExact || displayedOutputEstimate(at: now)?.isFresh != true
+        !lastMeasuredExact || projectedRate || lastMeasuredTurnID != turnID || stage == .tool ||
+            performanceMeter.hasPendingOutput || displayedOutputEstimate(at: now)?.isFresh != true
     }
     public mutating func mergeDisplayMetadata(from other: SessionActivity) {
         guard canonicalized().id == other.canonicalized().id else { return }
         if parentThreadID == nil { parentThreadID = other.parentThreadID }
+        if let key = other.latencyTurnID, key == turnID || (turnID == nil && !liveStatusOnly) {
+            if retainedLatency == nil { retainedLatency = other.retainedLatency; latencyTurnID = key }
+            if latencyStart == nil { latencyStart = other.latencyStart; latencyTurnID = key }
+        }
         if turnID == other.turnID, subagentStates.isEmpty { subagentStates = other.subagentStates }
         if let sample = other.lastMeasuredRate,
            lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt ||
@@ -132,10 +143,36 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var generationRate = GenerationRate()
     private var performanceMeter = ResponsePerformanceMeter()
     public var responsePerformance: ResponsePerformance? { performanceMeter.latest }
-    public var firstTokenLatency: TimeInterval? { performanceMeter.firstTokenLatency }
+    public var firstTokenLatency: TimeInterval? {
+        if latencyTurnID == turnID || turnID == nil, let retainedLatency { return retainedLatency }
+        return performanceMeter.firstTokenLatency
+    }
+    private mutating func observeFirstText(at date: Date) {
+        guard retainedLatency == nil, latencyTurnID == turnID, let start = latencyStart,
+              date >= start, date.timeIntervalSince(start) <= 3600 else { return }
+        retainedLatency = date.timeIntervalSince(start)
+    }
+    fileprivate static func loggedFirstOutput(_ payload: [String: Any]) -> Double? {
+        if let value = payload["first_output_at_ms"] as? Double { return value }
+        guard let item = payload["item"] as? [String: Any], let kind = item["type"] as? String,
+              ["AgentMessage", "Reasoning", "agentMessage", "reasoning"].contains(kind) else { return nil }
+        let hasText = ["text", "summary_text", "summary", "content"].contains { key in
+            if let value = item[key] as? String { return !value.isEmpty }
+            if let values = item[key] as? [Any] {
+                return values.prefix(64).contains {
+                    if let text = $0 as? String { return !text.isEmpty }
+                    return (($0 as? [String: Any])?["text"] as? String)?.isEmpty == false
+                }
+            }
+            return false
+        }
+        guard hasText else { return nil }
+        return payload[kind.lowercased() == "reasoning" ? "completed_at_ms" : "started_at_ms"] as? Double
+    }
     mutating func mergePerformance(from other: SessionActivity) {
         guard canonicalized().id == other.canonicalized().id, turnID == other.turnID else { return }
         performanceMeter.merge(from: other.performanceMeter)
+        performanceMeter.apply(sample: nil, latency: other.firstTokenLatency)
         rememberRate()
     }
     mutating func applyPerformance(_ update: SessionPerformanceUpdate) {
@@ -201,6 +238,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return legacy
     }
     public var rateExpiresAt: Date? {
+        if let sample = lastMeasuredRate { return sample.expiresAt }
         guard phase == .running else { return nil }
         if let sample = responsePerformance { return sample.completedAt.addingTimeInterval(OutputEstimate.freshnessInterval) }
         return phaseAwareRate ? generationRate.expiresAt : outputRate.expiresAt
@@ -269,6 +307,23 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 reasoning: usage["reasoning_output_tokens"] as? Int, at: date)
             return // Accounting cannot create activity, change state or extend retention.
         }
+        if value["type"] as? String == "event_msg", payload["type"] as? String == "item_completed" {
+            guard payload["thread_id"] as? String == threadID, payload["turn_id"] as? String == turnID,
+                  retainedLatency == nil, let began = logTurnStart,
+                  let ms = Self.loggedFirstOutput(payload), ms.isFinite,
+                  let stamp = value["timestamp"] as? String, let reported = Self.parseDate(stamp) else { return }
+            let first = Date(timeIntervalSince1970: ms / 1000)
+            guard first >= began, first <= reported, first.timeIntervalSince(began) <= 3600 else { return }
+            latencyTurnID = turnID; retainedLatency = first.timeIntervalSince(began)
+            return // Numeric timing does not drive lifecycle or TPS accounting.
+        }
+        if value["type"] as? String == "event_msg", payload["type"] as? String == "task_complete",
+           payload["turn_id"] as? String == turnID, retainedLatency == nil,
+           let milliseconds = payload["time_to_first_token_ms"] as? Double,
+           milliseconds.isFinite, milliseconds >= 0, milliseconds <= 3_600_000,
+           (payload["duration_ms"] as? Double).map({ milliseconds <= $0 }) ?? true {
+            latencyTurnID = turnID; retainedLatency = milliseconds / 1000
+        }
         guard ["event_msg", "response_item"].contains(value["type"] as? String ?? ""),
               let timestamp = value["timestamp"] as? String,
               let date = Self.parseDate(timestamp),
@@ -278,6 +333,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if ["task_complete", "turn_aborted"].contains(kind ?? ""), value["type"] as? String == "event_msg" {
             // Without an observed start/context there is no current turn to end.
             guard let turnID, eventTurn == turnID else { return }
+            if [.completed, .interrupted].contains(phase) { return }
         }
         lastObserved = date
         if value["type"] as? String == "response_item" {
@@ -287,6 +343,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         switch kind {
         case "task_started":
             beginTurn(eventTurn, at: date)
+            logTurnStart = date
+            if retainedLatency == nil, let ms = payload["first_output_latency_ms"] as? Double,
+               ms.isFinite, ms >= 0, ms <= 3_600_000 {
+                latencyTurnID = eventTurn; retainedLatency = ms / 1000
+            }
         case "task_complete", "turn_aborted":
             retireTurn(turnID)
             phase = kind == "turn_aborted" ? .interrupted : .completed
@@ -312,6 +373,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     private mutating func beginTurn(_ id: String?, at date: Date, observed: Bool = true) {
         rememberRate()
+        logTurnStart = nil
+        if (id != nil && id != latencyTurnID) || (id == nil && [.completed, .interrupted].contains(phase)) {
+            latencyTurnID = id; latencyStart = nil; retainedLatency = nil
+        }
         // An unknown ID during reconnect does not prove the old turn ended.
         if let id { identifyTurn(id) }
         subagentStates = [:]; projectedRate = false
@@ -337,6 +402,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private mutating func identifyTurn(_ id: String) {
+        if let latencyTurnID, latencyTurnID != id { latencyStart = nil; retainedLatency = nil }
+        latencyTurnID = id
         if id != lastIdentifiedTurn { retireTurn(lastIdentifiedTurn) }
         lastIdentifiedTurn = id; turnID = id
         performanceMeter.identify(id)
@@ -344,6 +411,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     /// Retain provenance while rejecting lifecycle/rate assumptions across a gap.
     mutating func markDiscontinuity() {
+        logTurnStart = nil
         phase = .unknown
         turnFailed = false; waitingForApproval = false
         turnID = nil
@@ -357,6 +425,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     mutating func markUnconfirmed() {
+        logTurnStart = nil
         phase = .unknown
         waitingForApproval = false
         outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
@@ -364,6 +433,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     mutating func markPartialRate() {
         guard phaseAwareRate else { return }
+        logTurnStart = nil
         let date = lastObserved ?? Date()
         generationRate.start()
         performanceMeter.start(turnID: turnID, at: date, observed: false)
@@ -519,11 +589,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                   turnID == eventTurn || (turnID == nil && liveStatusOnly) else { return }
         }
         if ["turn/started", "turn/attached"].contains(method) {
-            let retained = method == "turn/attached" && turnID == eventTurn ? performanceMeter : nil
+            let duplicateStart = method == "turn/started" && turnID == eventTurn && hasLiveEvidence && liveTurnStarted
+            let retained = turnID == eventTurn ? performanceMeter : nil
             let originalStart = retained == nil ? nil : turnStartedAt
             let start = originalStart ?? (event["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? date
-            beginTurn(eventTurn, at: start <= date ? start : date, observed: method == "turn/started")
-            if let retained { performanceMeter.merge(from: retained) }
+            if !duplicateStart {
+                beginTurn(eventTurn, at: start <= date ? start : date, observed: method == "turn/started")
+                if let retained { performanceMeter.merge(from: retained) }
+            }
+            if method == "turn/started", latencyStart == nil {
+                latencyTurnID = eventTurn; latencyStart = start <= date ? start : date
+            }
             if method == "turn/attached" { generationRate.start() }
             liveTurnStarted = true; liveStatusOnly = false
         } else if turnID == nil, liveStatusOnly, hasLiveEvidence, liveTurnStarted,
@@ -544,7 +620,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         let kind = RuntimeItemKind.normalized(event["itemType"] as? String ?? "")
         let modelItem = ["reasoning", "agentMessage", "plan"].contains(kind)
         let toolItem = RuntimeItemKind.isTool(kind)
-        if method == "item/completed", modelItem { performanceMeter.modelOutput(at: date, textDelta: false) }
+        if method == "item/completed", modelItem {
+            if event["hasText"] as? Bool == true { observeFirstText(at: date) }
+            performanceMeter.modelOutput(at: date, textDelta: event["hasText"] as? Bool == true)
+        }
         if method == "item/started", let id = event["itemId"] as? String {
             if toolItem {
                 if liveItems.count < 128 { liveItems.insert(id) }
@@ -552,7 +631,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 performanceMeter.modelOutput(at: date, textDelta: false)
                 performanceMeter.setWaiting(true, at: date)
             } else if modelItem {
-                if event["hasText"] as? Bool == true { performanceMeter.modelOutput(at: date, textDelta: true) }
+                if event["hasText"] as? Bool == true {
+                    observeFirstText(at: date); performanceMeter.modelOutput(at: date, textDelta: true)
+                }
                 generationRate.setWaiting(false, at: date); phase = .running
                 stage = kind == "reasoning" ? .thinking : .responding
             }
@@ -564,6 +645,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         } else if method.hasSuffix("/delta") || method.contains("TextDelta") || method.contains("textDelta") {
             let first = (event["firstDeltaAt"] as? Double).flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil } ?? date
             if event["hasText"] as? Bool == true {
+                observeFirstText(at: first)
                 performanceMeter.modelOutput(at: first, textDelta: true)
                 if first != date { performanceMeter.modelOutput(at: date, textDelta: false) }
             }
@@ -577,7 +659,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private static let dates = LogDateParser()
-    private static func parseDate(_ string: String) -> Date? { dates.parse(string) }
+    fileprivate static func parseDate(_ string: String) -> Date? { dates.parse(string) }
 }
 
 /// Reads recent files and resumed sessions from the read-only Codex index.
@@ -706,7 +788,7 @@ public actor LocalActivityReader {
             var cursor = cursors[file]
             if cursor == nil || cursor!.offset > size || cursor!.identity != identity {
                 var activity = metadata[file]?.activity ?? SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
-                if let anchor = latestTurnAnchor(handle: handle, size: size) { activity.consume(anchor) }
+                if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: activity.threadID) { activity.consume(anchor) }
                 cursor = Cursor(offset: 0, fragment: Data(), activity: activity, identity: identity)
             }
             guard var current = cursor else { continue }
@@ -717,7 +799,7 @@ public actor LocalActivityReader {
                 current.fragment.removeAll()
                 if cursors[file] != nil {
                     current.activity.markDiscontinuity()
-                    if let anchor = latestTurnAnchor(handle: handle, size: size) { current.activity.consume(anchor) }
+                    if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: current.activity.threadID) { current.activity.consume(anchor) }
                 }
                 dropPartial = true
                 current.activity.markPartialRate()
@@ -754,11 +836,14 @@ public actor LocalActivityReader {
                 watchURLs + selected.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) })
     }
     /// Recover the latest explicit turn anchor without loading conversation history.
-    /// Scan at most 8 MiB backwards, retaining at most one bounded line.
-    private func latestTurnAnchor(handle: FileHandle, size: UInt64) -> Data? {
+    /// Scan the existing 8 MiB budget; retain one anchor and numeric first-output times.
+    private func latestTurnAnchor(handle: FileHandle, size: UInt64, threadID: String?) -> Data? {
         var offset = size
         let floor = size > 8 * 1024 * 1024 ? size - 8 * 1024 * 1024 : 0
         var fragment = Data()
+        var fallback: Data?
+        var latestTurn: String?
+        var firstTimes: [String: Double] = [:]
         while offset > floor {
             let start = max(floor, offset > 128 * 1024 ? offset - 128 * 1024 : 0)
             do {
@@ -768,19 +853,33 @@ public actor LocalActivityReader {
                 let lines = data.split(separator: 10, omittingEmptySubsequences: false)
                 for line in lines.dropFirst().reversed() {
                     guard line.count <= 1024 * 1024,
-                          line.range(of: Data("turn_context".utf8)) != nil || line.range(of: Data("task_started".utf8)) != nil,
-                          let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                          let payload = value["payload"] as? [String: Any], payload["turn_id"] as? String != nil,
-                          value["type"] as? String == "turn_context" ||
-                          (value["type"] as? String == "event_msg" && payload["type"] as? String == "task_started") else { continue }
-                    return Data(line)
+                          line.range(of: Data("turn_context".utf8)) != nil || line.range(of: Data("task_started".utf8)) != nil || line.range(of: Data("item_completed".utf8)) != nil,
+                          var value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                          var payload = value["payload"] as? [String: Any], let turn = payload["turn_id"] as? String else { continue }
+                    if value["type"] as? String == "event_msg", payload["type"] as? String == "item_completed",
+                       payload["thread_id"] as? String == threadID, let ms = SessionActivity.loggedFirstOutput(payload), ms.isFinite,
+                       let stamp = value["timestamp"] as? String, let reported = SessionActivity.parseDate(stamp),
+                       ms / 1000 <= reported.timeIntervalSince1970,
+                       firstTimes[turn] != nil || firstTimes.count < 64 {
+                        firstTimes[turn] = min(firstTimes[turn] ?? ms, ms)
+                    } else if value["type"] as? String == "turn_context", fallback == nil {
+                        fallback = Data(line); latestTurn = turn
+                    } else if value["type"] as? String == "event_msg", payload["type"] as? String == "task_started",
+                              latestTurn == nil || latestTurn == turn {
+                        if let ms = firstTimes[turn], let stamp = value["timestamp"] as? String,
+                           let began = SessionActivity.parseDate(stamp) {
+                            let duration = ms - began.timeIntervalSince1970 * 1000
+                            if duration >= 0, duration <= 3_600_000 { payload["first_output_latency_ms"] = duration; value["payload"] = payload }
+                        }
+                        return try? JSONSerialization.data(withJSONObject: value)
+                    }
                 }
                 fragment = lines.first.map(Data.init) ?? Data()
                 if fragment.count > 1024 * 1024 { fragment.removeAll() }
                 offset = start
             } catch { return nil }
         }
-        return nil
+        return fallback
     }
 
 }

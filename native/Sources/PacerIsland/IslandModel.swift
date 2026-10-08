@@ -205,10 +205,9 @@ final class IslandModel: ObservableObject {
     }
     var headerRateText: String? {
         guard let rate else { return nil }
-        let prefix = rateIsFresh ? "" : "~"
-        if isAttached && rate >= 1_000_000 { return prefix + String(format: "%.1fM", rate / 1_000_000) }
-        if isAttached && rate >= 1_000 { return prefix + String(format: "%.1fk", rate / 1_000) }
-        return prefix + String(format: "%.0f", rate)
+        if isAttached && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
+        if isAttached && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
+        return String(format: "%.0f", rate)
     }
     var hasConnectionIssue: Bool { !unavailableSSH.isEmpty || streamStatuses["local"].map { !$0.connected } == true }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }

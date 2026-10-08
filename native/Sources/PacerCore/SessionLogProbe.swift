@@ -3,7 +3,7 @@ import Foundation
 enum SessionLogProbe {
     // Only sanitized lifecycle and counters leave the remote host.
     static let library = #"""
-    import base64, datetime, json, pathlib, sqlite3, sys, time, uuid
+    import base64, datetime, json, math, pathlib, sqlite3, sys, time, uuid
     home = pathlib.Path(base64.b64decode(sys.argv[1]).decode()).expanduser()
     cursors = {}
     headers = {}
@@ -35,12 +35,31 @@ enum SessionLogProbe {
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
+        elif outer == 'event_msg' and kind == 'item_completed':
+            item=p.get('item') or {}
+            if not isinstance(item,dict) or item.get('type') not in ('AgentMessage','Reasoning','agentMessage','reasoning'):return None
+            present=False
+            for k in ('text','summary_text','summary','content'):
+                value=item.get(k)
+                if isinstance(value,str) and value:present=True
+                if isinstance(value,list):
+                    present=present or any((isinstance(x,str) and bool(x)) or (isinstance(x,dict) and isinstance(x.get('text'),str) and bool(x['text'])) for x in value[:64])
+            stamp=p.get('completed_at_ms' if item['type'].lower()=='reasoning' else 'started_at_ms')
+            if not present or not isinstance(stamp,(int,float)) or isinstance(stamp,bool) or not math.isfinite(stamp) or stamp<=0:return None
+            q={'type':kind,'first_output_at_ms':stamp}
+            for k in ('thread_id','turn_id'):
+                if not isinstance(p.get(k),str) or not p[k] or len(p[k])>256:return None
+                q[k]=p[k]
         elif outer == 'event_msg' and kind in ('task_started','task_complete','turn_aborted','token_count','thread_settings_applied'):
             q['type'] = kind
             if isinstance(p.get('turn_id'),str): q['turn_id'] = p['turn_id'][:256]
             if kind == 'thread_settings_applied':
                 try:q['thread_id']=str(uuid.UUID(p.get('thread_id')))
                 except (ValueError,TypeError,AttributeError):return None
+            if kind == 'task_complete':
+                for k in ('time_to_first_token_ms','duration_ms'):
+                    value=p.get(k)
+                    if isinstance(value,(int,float)) and not isinstance(value,bool) and 0<=value<=3600000:q[k]=value
             if kind == 'token_count':
                 total = (p.get('info') or {}).get('total_token_usage') or {}
                 output = total.get('output_tokens')
@@ -70,17 +89,34 @@ enum SessionLogProbe {
         except (ValueError,TypeError,AttributeError): return None
     def header(f):
         f.seek(0); return parse(f.readline(1024*1024))
-    def anchor(f,size):
+    def anchor(f,size,thread_id=None):
         offset, floor, fragment = size, max(0,size-8*1024*1024), b''
+        fallback=None;latest_turn=None;first_times={}
         while offset > floor:
             start = max(floor,offset-128*1024); f.seek(start)
             data = f.read(offset-start) + fragment; lines = data.split(b'\n')
             for line in reversed(lines[1:]):
-                if len(line) <= 1024*1024 and (b'turn_context' in line or b'task_started' in line):
+                if len(line) <= 1024*1024 and (b'turn_context' in line or b'task_started' in line or b'item_completed' in line):
                     v = parse(line)
-                    if v and v['payload'].get('turn_id') and (v['type']=='turn_context' or v['payload'].get('type')=='task_started'): return v
+                    if not v or not v['payload'].get('turn_id'):continue
+                    p=v['payload'];turn=p['turn_id']
+                    if p.get('type')=='item_completed' and p.get('thread_id')==thread_id:
+                        try:
+                            reported=datetime.datetime.fromisoformat(v['timestamp'].replace('Z','+00:00')).timestamp()*1000
+                            if p['first_output_at_ms']>reported:continue
+                        except (ValueError,TypeError):continue
+                        if turn in first_times or len(first_times)<64:first_times[turn]=min(first_times.get(turn,p['first_output_at_ms']),p['first_output_at_ms'])
+                    elif v['type']=='turn_context' and fallback is None:fallback=v;latest_turn=turn
+                    elif p.get('type')=='task_started' and (latest_turn is None or latest_turn==turn):
+                        if turn in first_times:
+                            try:
+                                began=datetime.datetime.fromisoformat(v['timestamp'].replace('Z','+00:00')).timestamp()*1000
+                                elapsed=first_times[turn]-began
+                                if 0<=elapsed<=3600000:p['first_output_latency_ms']=elapsed
+                            except (ValueError,TypeError):pass
+                        return v
             fragment = lines[0] if len(lines[0]) <= 1024*1024 else b''; offset=start
-        return None
+        return fallback
     def candidates():
         paths = set(cursors)
         titles.clear()
@@ -134,7 +170,7 @@ enum SessionLogProbe {
                     records=[]
                     if reset or gap:
                         if meta: records.append(meta)
-                        seed=anchor(f,stat.st_size)
+                        seed=anchor(f,stat.st_size,(meta.get('payload')or{}).get('id') if meta else None)
                         if seed: records.append(seed)
                         offset=max(0,stat.st_size-budget); fragment=b''; reset=True
                     prelude_count=len(records)

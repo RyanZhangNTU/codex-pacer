@@ -117,6 +117,15 @@ enum RealtimeProbe {
             return result if isinstance(result,dict) else None
         def close(self): self.s.close()
     import os
+    def item_has_text(item):
+        for key in ('text','summary','content'):
+            value=item.get(key)
+            if isinstance(value,str) and value:return True
+            if isinstance(value,list):
+                for part in value[:64]:
+                    if isinstance(part,str) and part:return True
+                    if isinstance(part,dict) and isinstance(part.get('text'),str) and part['text']:return True
+        return False
     def event(method,p):
         tid=p.get('threadId')
         if not valid_id(tid): return None
@@ -126,6 +135,8 @@ enum RealtimeProbe {
             item=p.get('item') or {}
             if not isinstance(item,dict): return None
             if isinstance(item.get('type'),str): e['itemType']=item['type'][:80]
+            if e.get('itemType') in ('agentMessage','reasoning','plan'):
+                e['hasText']=item_has_text(item)
             if isinstance(item.get('id'),str): e['itemId']=item['id'][:256]
             if item.get('type') in ('collabAgentToolCall','collabToolCall'):
                 ids=item.get('receiverThreadIds') or []

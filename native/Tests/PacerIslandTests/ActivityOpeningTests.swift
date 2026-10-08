@@ -58,7 +58,8 @@ final class ActivityOpeningTests: XCTestCase {
         XCTAssertEqual(model.visibleActivities.count, 1)
         XCTAssertEqual(model.taskGroup(for: parent)?.runningSubagentCount, 2)
         XCTAssertEqual(model.rate, 110)
-        XCTAssertTrue(model.headerRateText?.hasPrefix("~") == true)
+        XCTAssertEqual(model.headerRateText, "110")
+        XCTAssertTrue(model.rateIsFresh)
         clock.now = clock.now.addingTimeInterval(1)
         try log(&parent, "event_msg", ["type": "task_started", "turn_id": "new"])
         var new = SessionActivity(id: "019a0000-0000-7000-8000-000000000004", phaseAwareRate: true)
@@ -67,7 +68,12 @@ final class ActivityOpeningTests: XCTestCase {
         XCTAssertEqual(model.visibleActivities.count, 2)
         XCTAssertEqual(model.taskGroup(for: parent)?.displayedRate(at: clock.now)?.value, 110)
         XCTAssertEqual(model.rate, 110)
-        XCTAssertTrue(model.headerRateText?.hasPrefix("~") == true)
+        XCTAssertEqual(model.headerRateText, "110")
+        XCTAssertTrue(model.rateIsFresh)
+        model.now = clock.now.addingTimeInterval(15)
+        XCTAssertEqual(model.headerRateText, "110")
+        XCTAssertFalse(model.rateIsFresh)
+        model.now = clock.now
         try log(&child, "event_msg", ["type": "task_complete", "turn_id": "turn"])
         model.activities = [parent, child, otherChild, new]
         XCTAssertEqual(model.visibleActivities.count, 2)

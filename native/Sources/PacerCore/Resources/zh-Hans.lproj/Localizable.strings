@@ -332,13 +332,13 @@
 
 // Response performance
 "performance.awaiting_usage" = "等待用量";
-"performance.awaiting_usage_help" = "请求结算且完整观察到输出时段后显示 TPS；波浪号表示估算值或等待新数据时保留的上次测量。";
+"performance.awaiting_usage_help" = "请求结算且完整观察到输出时段后显示 TPS。保留上次测量：更新后 15 秒内显示白色，之后显示灰色。";
 "performance.first_output" = "首输出 %@";
-"performance.latency_help" = "从本轮开始到首次收到文本或推理文本，包含排队、网络和客户端传递时间；中途接入时不提供延迟。";
+"performance.latency_help" = "观察到的轮次开始至首次收到模型或推理文字的耗时；无法完整观察时使用服务返回的首输出耗时。本轮内保留，不等同于模型解码延迟。";
 "performance.response_help" = "最近一次已结算请求：%d 个输出 token / %.2f 秒，推理 token 只计算一次，排除工具等待。时段截止至最后观察到的生成条目，表示响应吞吐而非解码速度。";
 "performance.total_help" = "全局总 TPS：%.1f t/s，为所有运行会话可用速率之和。工具等待保留上次测量；待回复、已结束和内部审查会话不计入。各会话使用最近一次测得的请求均速。";
 "performance.partial_total_help" = "全局总 TPS：%.1f t/s。部分运行会话缺少测量或数据已过期，因此合计不完整。工具等待保留上次测量；待回复、已结束和内部审查会话不计入。";
 
 "activity.subagents_running" = "%d 个子代理运行中";
-"performance.group_help" = "本会话与运行中子代理的最新可用 TPS 之和。波浪号表示保留的旧值或不完整测量；工具等待不清除上次测得的速率。";
-"performance.retained_help" = "本会话上次测得的 TPS；等待新测量、执行工具或数据变旧时保留数值并标记波浪号。";
+"performance.group_help" = "本会话与运行中子代理的最新可用 TPS 之和，缺失测量时合计不完整。15 秒内更新显示白色，之后显示灰色；工具等待不清除上次速率。";
+"performance.retained_help" = "本会话上次测得的 TPS，跨工具和新轮次保留。15 秒内更新显示白色，之后显示灰色。";

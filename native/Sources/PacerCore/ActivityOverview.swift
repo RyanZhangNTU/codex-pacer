@@ -25,7 +25,7 @@ public struct ActivityOverview: Sendable {
         tokensPerSecond = rates.isEmpty ? nil : rates.reduce(0, +)
         let estimates = agents.compactMap { $0.displayedOutputEstimate(at: now) }
         displayedRate = estimates.isEmpty ? nil : estimates.reduce(0) { $0 + $1.value }
-        rateIsFresh = !estimates.isEmpty && estimates.count == agents.count && estimates.allSatisfy(\.isFresh)
+        rateIsFresh = estimates.contains(where: \.isFresh)
     }
 
     public var title: String {

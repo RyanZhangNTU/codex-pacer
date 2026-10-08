@@ -26,8 +26,7 @@ struct TaskRowView: View {
     }
     private var performanceText: String {
         let rate = group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now)
-        let estimated = group?.rateIsEstimated(at: now) ?? activity.displayedRateIsEstimated(at: now)
-        let speed = rate.map { (estimated ? "~" : "") + String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
+        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
         let latency = activity.firstTokenLatency.map { String(format: "%.2f s", $0) } ?? "—"
         return speed + "  ·  " + L10n.text("performance.first_output", latency)
     }
@@ -90,7 +89,8 @@ struct TaskRowView: View {
                     }
                 }.font(.system(size: 12))
                 Text(performanceText).font(.system(size: 11)).monospacedDigit()
-                    .foregroundStyle(.secondary).lineLimit(1).help(performanceHelp)
+                    .foregroundStyle((group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now))?.isFresh == true ? Color.white : Color.secondary)
+                    .lineLimit(1).help(performanceHelp)
             }
             Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(hovered && enabled ? 0.8 : 0))

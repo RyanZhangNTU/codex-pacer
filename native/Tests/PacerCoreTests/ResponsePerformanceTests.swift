@@ -193,7 +193,7 @@ final class ResponsePerformanceTests: XCTestCase {
         var unmeasured = SessionActivity(id: "019a0000-0000-7000-8000-000000000003", phaseAwareRate: true)
         live(&unmeasured, method: "turn/started", fields: [:])
         let partial = ActivityOverview(activities: [tasks[0], unmeasured], at: start.addingTimeInterval(11))
-        XCTAssertEqual(partial.displayedRate, 60); XCTAssertFalse(partial.rateIsFresh)
+        XCTAssertEqual(partial.displayedRate, 60); XCTAssertTrue(partial.rateIsFresh)
         var legacy = SessionActivity(id: "019a0000-0000-7000-8000-000000000004", phaseAwareRate: true)
         for (method, seconds, fields) in [("turn/started", 0.0, [:]),
             ("thread/tokenUsage/updated", 0.0, ["outputTokens": 0]),

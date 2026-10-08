@@ -101,7 +101,7 @@ private struct IslandHeader: View {
             if !model.hidesHeaderRate, model.showsRate, model.rate != nil {
                 Text(model.headerRateText ?? "—")
                     .font(.system(size: 10)).monospacedDigit()
-                    .foregroundStyle(model.rateIsFresh ? Color.primary : secondary)
+                    .foregroundStyle(model.rateIsFresh ? Color.white : secondary)
                     .help(model.rateHelp)
                 Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
             } else if !attached && model.expanded && model.showsRate && model.pendingCompletions.isEmpty {

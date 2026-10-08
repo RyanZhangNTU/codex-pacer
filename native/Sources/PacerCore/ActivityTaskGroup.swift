@@ -14,8 +14,8 @@ public struct ActivityTaskGroup: Sendable {
         let measured = (active.isEmpty ? members : active).compactMap { $0.displayedOutputEstimate(at: now) }
         guard !measured.isEmpty else { return nil }
         return OutputEstimate(value: measured.reduce(0) { $0 + $1.value },
-            reportedAt: measured.map(\.reportedAt).min()!,
-            isFresh: measured.count == (active.isEmpty ? members.count : active.count) && measured.allSatisfy(\.isFresh))
+            reportedAt: measured.map(\.reportedAt).max()!,
+            isFresh: measured.contains(where: \.isFresh))
     }
     public func rateIsEstimated(at now: Date) -> Bool {
         let active = members.filter { $0.phase == .running }
