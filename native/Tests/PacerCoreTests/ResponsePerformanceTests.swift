@@ -183,7 +183,7 @@ final class ResponsePerformanceTests: XCTestCase {
         var blocked = tasks[1]
         live(&blocked, method: "item/started", fields: ["itemId": "tool", "itemType": "commandExecution"])
         XCTAssertEqual(blocked.responsePerformance?.tokensPerSecond, 30, "Task row retains its last request")
-        XCTAssertEqual(ActivityOverview(activities: [tasks[0], blocked], at: start.addingTimeInterval(11)).displayedRate, 60, "A confirmed tool wait contributes zero")
+        XCTAssertEqual(ActivityOverview(activities: [tasks[0], blocked], at: start.addingTimeInterval(11)).displayedRate, 90, "Tool waits retain the last measured rate in the displayed total")
         for (method, fields) in [("thread/status/changed", ["status": "active", "flags": ["waitingOnUserInput"]]),
                                  ("turn/completed", ["status": "completed"]),
                                  ("metadata", ["source": "guardian_review"])] as [(String, [String: Any])] {
@@ -193,7 +193,7 @@ final class ResponsePerformanceTests: XCTestCase {
         var unmeasured = SessionActivity(id: "019a0000-0000-7000-8000-000000000003", phaseAwareRate: true)
         live(&unmeasured, method: "turn/started", fields: [:])
         let partial = ActivityOverview(activities: [tasks[0], unmeasured], at: start.addingTimeInterval(11))
-        XCTAssertEqual(partial.displayedRate, 60); XCTAssertFalse(partial.rateIsFresh)
+        XCTAssertEqual(partial.displayedRate, 60); XCTAssertTrue(partial.rateIsFresh)
         var legacy = SessionActivity(id: "019a0000-0000-7000-8000-000000000004", phaseAwareRate: true)
         for (method, seconds, fields) in [("turn/started", 0.0, [:]),
             ("thread/tokenUsage/updated", 0.0, ["outputTokens": 0]),

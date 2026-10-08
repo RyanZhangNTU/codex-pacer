@@ -117,6 +117,15 @@ enum RealtimeProbe {
             return result if isinstance(result,dict) else None
         def close(self): self.s.close()
     import os
+    def item_has_text(item):
+        for key in ('text','summary','content'):
+            value=item.get(key)
+            if isinstance(value,str) and value:return True
+            if isinstance(value,list):
+                for part in value[:64]:
+                    if isinstance(part,str) and part:return True
+                    if isinstance(part,dict) and isinstance(part.get('text'),str) and part['text']:return True
+        return False
     def event(method,p):
         tid=p.get('threadId')
         if not valid_id(tid): return None
@@ -126,7 +135,12 @@ enum RealtimeProbe {
             item=p.get('item') or {}
             if not isinstance(item,dict): return None
             if isinstance(item.get('type'),str): e['itemType']=item['type'][:80]
+            if e.get('itemType') in ('agentMessage','reasoning','plan'):
+                e['hasText']=item_has_text(item)
             if isinstance(item.get('id'),str): e['itemId']=item['id'][:256]
+            if item.get('type') in ('collabAgentToolCall','collabToolCall'):
+                ids=item.get('receiverThreadIds') or []
+                if isinstance(ids,list):e['receiverThreadIds']=[v.lower() for v in ids[:64] if valid_id(v)]
             stamp=p.get('startedAtMs') if method=='item/started' else p.get('completedAtMs')
             if isinstance(stamp,(int,float)) and 0<stamp<=now*1000+5000: e['at']=stamp/1000
         elif method in ('turn/started','turn/completed'):
@@ -158,7 +172,7 @@ enum RealtimeProbe {
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
             self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict()
-            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.3.0'},'capabilities':{'experimentalApi':True}},'initialize')
+            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.3.1'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')
@@ -196,6 +210,7 @@ enum RealtimeProbe {
                 else:self.listing=False
         def queue_event(self,e):
             if e is None:return
+            for child in e.get('receiverThreadIds',[]):self.queue_thread(child,priority=True)
             if e.get('turnId'):self.evidenced.add(e['threadId'])
             if e.get('method')=='turn/started':self.first_text.discard(e['threadId'])
             first=e.get('hasText') is True and e['threadId'] not in self.first_text
@@ -254,6 +269,10 @@ enum RealtimeProbe {
                     self.known[tid]=thread.get('status') or {}
                     self.known.move_to_end(tid)
                     meta={'method':'metadata','threadId':tid.lower(),'at':time.time(),'source':thread.get('threadSource') if isinstance(thread.get('threadSource'),str) else ''}
+                    parent=parent_thread(thread)
+                    if parent and parent!=tid:
+                        meta['parentThreadId']=parent
+                        self.queue_thread(parent,priority=True)
                     for k,bound in (('name',240),('cwd',2048),('model',256)):
                         if isinstance(thread.get(k),str):meta[k]=thread[k][:bound]
                     self.queue_event(meta)

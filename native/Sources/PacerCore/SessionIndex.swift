@@ -6,6 +6,7 @@ public enum SessionIndex {
     public struct Entry: Sendable {
         public let url: URL
         public let title: String?
+        public let parentThreadID: String?
     }
     public static func files(home: URL, limit: Int = 256) -> [URL] { entries(home: home, limit: limit).map(\.url) }
     public static func entries(home: URL, limit: Int = 256) -> [Entry] {
@@ -34,7 +35,8 @@ public enum SessionIndex {
             let title: String
             if columns.contains("name"), columns.contains("title") { title = "COALESCE(NULLIF(TRIM(name),''),title)" }
             else { title = columns.contains("name") ? "name" : columns.contains("title") ? "title" : "NULL" }
-            let query = "SELECT rollout_path, \(title) FROM threads WHERE \(predicates.joined(separator: " AND ")) ORDER BY \(order) DESC LIMIT \(min(1024, max(1, limit)))"
+            let source = columns.contains("source") ? "source" : "NULL"
+            let query = "SELECT rollout_path, \(title), \(source) FROM threads WHERE \(predicates.joined(separator: " AND ")) ORDER BY \(order) DESC LIMIT \(min(1024, max(1, limit)))"
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else { continue }
             defer { sqlite3_finalize(statement) }
@@ -45,7 +47,10 @@ public enum SessionIndex {
                 let url = URL(fileURLWithPath: String(cString: raw)).standardizedFileURL
                 if url.path.hasPrefix(root), url.pathExtension == "jsonl", manager.fileExists(atPath: url.path) {
                     let name = sqlite3_column_text(statement, 1).map { String(cString: $0) }
-                    result.append(Entry(url: url, title: name))
+                    let raw = sqlite3_column_text(statement, 2).map { String(cString: $0) }
+                    let source = raw.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+                    let parent = source.flatMap { SessionActivity.parentID(in: ["source": $0]) }
+                    result.append(Entry(url: url, title: name, parentThreadID: parent))
                 }
             }
             return result

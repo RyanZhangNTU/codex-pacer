@@ -28,7 +28,10 @@ final class NativeDesktopTests: XCTestCase {
             "op": "replace", "path": ["latestTokenUsageInfo"], "value": [
                 "total": ["outputTokens": 10_040], "last": ["outputTokens": 40]]]]], seconds: 3)
         XCTAssertEqual(runtime.activities.first?.tokensPerSecond(at: epoch.addingTimeInterval(3)), 20)
-        XCTAssertNil(ActivityOverview(activities: runtime.activities, at: epoch.addingTimeInterval(18)).displayedRate)
+        let old = ActivityOverview(activities: runtime.activities, at: epoch.addingTimeInterval(18))
+        XCTAssertEqual(old.displayedRate, 20)
+        XCTAssertFalse(old.rateIsFresh)
+        XCTAssertNil(old.tokensPerSecond)
     }
     func testActiveTurnWithoutTimestampKeepsItsItemsAndEndingAcrossWireFormats() throws {
         for canonical in [false, true] {

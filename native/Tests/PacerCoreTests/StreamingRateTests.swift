@@ -236,6 +236,6 @@ final class StreamingRateTests: XCTestCase {
         let overview = ActivityOverview(activities: [blocked, unmeasured], at: start.addingTimeInterval(2))
         XCTAssertEqual(overview.running.count, 2)
         XCTAssertNil(overview.displayedRate)
-        XCTAssertEqual(ActivityOverview(activities: [blocked], at: start.addingTimeInterval(2)).displayedRate, 0)
+        XCTAssertNil(ActivityOverview(activities: [blocked], at: start.addingTimeInterval(2)).displayedRate, "An unmeasured tool wait cannot fabricate a measured zero")
     }
 }

@@ -15,23 +15,25 @@ final class RateDisplayTests: XCTestCase {
         }
         return try XCTUnwrap(runtime.activities.first)
     }
-    func testCollapsedRateExpiresWithoutAnotherSourceEventOrPeriodicClock() async throws {
+    func testCollapsedRateBecomesStaleWithoutAnotherSourceEventOrPeriodicClock() async throws {
         let model = IslandModel()
         let now = Date()
         model.now = now
         model.activities = [try activity(at: now.addingTimeInterval(-14.5))]
         XCTAssertFalse(model.expanded)
         XCTAssertEqual(model.rate, 10)
-        let expired = expectation(description: "numeric rate expires without polling")
-        model.onStatusChange = { if model.rate == nil { expired.fulfill() } }
+        XCTAssertTrue(model.rateIsFresh)
+        let stale = expectation(description: "retained rate becomes stale without polling")
+        model.onStatusChange = { if !model.rateIsFresh { stale.fulfill() } }
         // Deliberately never call start(): no quota, file, SSH or periodic-clock work.
-        await fulfillment(of: [expired], timeout: 2)
-        XCTAssertNil(model.rate)
-        XCTAssertEqual(model.running.count, 1, "Speed expiry must not change task lifecycle")
+        await fulfillment(of: [stale], timeout: 2)
+        XCTAssertEqual(model.rate, 10, "Freshness expiry must retain the last measured speed")
+        XCTAssertFalse(model.rateIsFresh)
+        XCTAssertEqual(model.running.count, 1, "Freshness expiry must not change task lifecycle")
         model.onStatusChange = nil
         await model.shutdown()
     }
-    func testNewReportReplacesThePendingExpiryAndCompletionClearsTheRate() async throws {
+    func testNewReportReplacesThePendingExpiryAndCompletionRemovesRateFromActiveTotal() async throws {
         let model = IslandModel()
         let now = Date()
         model.now = now
@@ -44,6 +46,13 @@ final class RateDisplayTests: XCTestCase {
         model.activities = [try activity(at: now.addingTimeInterval(-1))]
         await fulfillment(of: [noOldExpiry], timeout: 0.8)
         XCTAssertEqual(model.rate, 10)
+        XCTAssertTrue(model.rateIsFresh)
+        var ended = try activity(at: now.addingTimeInterval(-1))
+        ended.consumeLive(["method": "turn/completed", "threadId": ended.threadID!, "turnId": "turn",
+            "at": now.timeIntervalSince1970])
+        model.activities = [ended]
+        XCTAssertNil(model.rate, "Ended tasks must not contribute to the active total")
+        XCTAssertEqual(ended.displayedOutputEstimate(at: model.now)?.value, 10, "The completion card retains its measured rate")
         model.activities = []
         XCTAssertNil(model.rate)
         model.onStatusChange = nil

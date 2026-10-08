@@ -48,6 +48,18 @@ public enum DemoScenario {
               sourceID: "remote-ssh-discovered:demo", sourceName: "SSH")]
     }
 
+    /// Bounded synthetic graph for native grouping/retained-rate UI acceptance.
+    public static func subagentTasks(stage: DemoTaskStage, at now: Date) -> [SessionActivity] {
+        let parent = "019a0000-0000-7000-8000-000000000101"
+        var result = [task(id: parent, name: L10n.text("demo.optimize"), stage: stage, at: now)]
+        for index in 1...3 {
+            var child = task(id: String(format: "019a0000-0000-7000-8000-%012d", 101 + index),
+                name: "Demo subagent", stage: stage, at: now)
+            child.updateParent(parent); result.append(child)
+        }
+        return result
+    }
+
     private static func task(id: String, name: String, stage: DemoTaskStage, at now: Date,
                              sourceID: String? = nil, sourceName: String? = nil) -> SessionActivity {
         var stream = RuntimeEventState(sourceID: sourceID, sourceName: sourceName)

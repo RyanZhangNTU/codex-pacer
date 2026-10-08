@@ -38,7 +38,7 @@ struct TaskPagerView: View {
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
                     ForEach(pageTasks) { activity in
-                        TaskRowView(attention: model.attentionKind(for: activity), activity: activity, name: model.projectName(activity), now: model.now,
+                        TaskRowView(attention: model.attentionKind(for: activity), group: model.taskGroup(for: activity), activity: activity, name: model.projectName(activity), now: model.now,
                             enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.taskAccent) {
                                 model.open(activity)
                             }
