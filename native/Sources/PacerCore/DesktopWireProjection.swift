@@ -159,15 +159,56 @@ struct DesktopWireProjection {
     private static func string(_ view: JSONFieldView?, limit: Int = 256) -> DesktopValue? {
         view?.string(limit: limit).map(DesktopValue.text)
     }
+    private static func relationship(_ view: JSONFieldView?, depth: Int = 0) throws -> DesktopValue {
+        guard let view, depth < 5 else { return .null }
+        if let raw = view.string(), let id = UUID(uuidString: raw) { return .text(id.uuidString.lowercased()) }
+        guard view.isObject else { return .null }
+        var result: [String: DesktopValue] = [:]
+        for (key, value) in try view.fields(["subAgent", "subagent", "thread_spawn", "threadSpawn", "parent_thread_id", "parentThreadId"]) {
+            result[key] = try relationship(value, depth: depth + 1)
+        }
+        return .object(result)
+    }
+    private static func threadIDs(_ view: JSONFieldView?) throws -> DesktopValue {
+        guard let view, !view.isNull else { return .list([]) }
+        return .list(try view.elements(maximumCount: 64).compactMap { $0.string().flatMap { UUID(uuidString: $0)?.uuidString.lowercased() } }.map(DesktopValue.text))
+    }
+    private(set) var collaborationThreadIDs: [String] = []
+    private var previousAgentStates: [String: String] = [:]
+    private var projectedCollaborationThreadIDs: [String] {
+        guard let current = currentPath().flatMap({ tree.at($0[...]) }) else { return [] }
+        return Array(Set((current["items"]?.list ?? []).flatMap { ($0["receiverThreadIds"]?.list ?? []).compactMap(\.text) + ($0["agentThreadId"]?.text.map { [$0] } ?? []) })).sorted().prefix(64).map { $0 }
+    }
+    private var subagentStates: [String: String] {
+        guard let current = currentPath().flatMap({ tree.at($0[...]) }) else { return [:] }
+        var result: [String: String] = [:]
+        for item in current["items"]?.list ?? [] where item["type"]?.text == "subAgentActivity" {
+            guard let id = item["agentThreadId"]?.text, result[id] != nil || result.count < 64 else { continue }
+            switch item["kind"]?.text {
+            case "started", "interacted": result[id] = "running"
+            case "completed", "interrupted", "closed": result[id] = "completed"
+            default: break
+            }
+        }
+        return result
+    }
     private static func item(_ view: JSONFieldView, attentionOnly: Bool = false) throws -> DesktopValue {
         guard view.isObject else { return .object([:]) }
-        let fields = try view.fields(["id", "type", "status", "questions"])
+        let fields = try view.fields(["id", "type", "status", "questions", "receiverThreadIds", "agentThreadId", "kind"])
         let questions = try questionMarkers(fields["questions"])
         if attentionOnly, !["userMessage", "steeringUserMessage", "agentMessage"].contains(fields["type"]?.string() ?? "") { return .object([:]) }
-        var values = fields.filter { $0.key != "questions" }.reduce(into: [String: DesktopValue]()) {
+        var values = fields.filter { ["id", "type", "status"].contains($0.key) }.reduce(into: [String: DesktopValue]()) {
             $0[$1.key] = Self.string($1.value, limit: $1.key == "id" ? 256 : 80)
         }
         values["questions"] = questions
+        if fields["type"]?.string() == "subAgentActivity" {
+            values["agentThreadId"] = try relationship(fields["agentThreadId"])
+            let kind = fields["kind"]?.string(limit: 32)
+            values["kind"] = kind.flatMap { ["started", "interacted", "completed", "interrupted", "closed"].contains($0) ? .text($0) : nil } ?? .null
+        }
+        if ["collabAgentToolCall", "collabToolCall"].contains(fields["type"]?.string() ?? "") {
+            values["receiverThreadIds"] = try threadIDs(fields["receiverThreadIds"])
+        }
         if !attentionOnly, Self.models.contains(fields["type"]?.string() ?? "") {
             values["hasGeneratedText"] = .boolean(try view.containsTextMetadata())
         }
@@ -254,11 +295,13 @@ struct DesktopWireProjection {
     }
     private mutating func snapshot(_ view: JSONFieldView) throws {
         selectionResolved = false
-        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "turns", "turnHistory", "requests"])
+        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "parentThreadId", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "turns", "turnHistory", "requests"])
         guard fields["ephemeral"]?.boolean() != true else { throw DesktopProjectionFailure.ephemeral }
         guard !(try Self.review(fields)) else { throw DesktopProjectionFailure.review }
         var values = fields.filter { ["title", "cwd", "latestModel", "threadSource"].contains($0.key) }
             .reduce(into: [String: DesktopValue]()) { $0[$1.key] = Self.string($1.value, limit: $1.key == "cwd" ? 2048 : 256) ?? .null }
+        values["source"] = try Self.relationship(fields["source"])
+        values["parentThreadId"] = try Self.relationship(fields["parentThreadId"])
         values["latestTokenUsageInfo"] = try Self.usage(fields["latestTokenUsageInfo"])
         values["threadRuntimeStatus"] = try Self.runtime(fields["threadRuntimeStatus"])
         values["requests"] = try Self.requests(fields["requests"])
@@ -335,7 +378,11 @@ struct DesktopWireProjection {
                 return path.count == 1 || (path.count <= 3 && keys.count == path.count &&
                     ["total", "last"].contains(keys[1]) && (path.count == 2 || ["outputTokens", "reasoningOutputTokens"].contains(keys[2]))) ? .null : nil
             }
-            if root == "threadRuntimeStatus" { return path.count == 1 || keys == [root, "type"] || keys == [root, "activeFlags"] ? .null : nil }
+            if root == "source", keys.allSatisfy({ ["source", "subAgent", "subagent", "thread_spawn", "threadSpawn", "parent_thread_id", "parentThreadId"].contains($0) }) {
+            return try Self.relationship(view)
+        }
+        if root == "parentThreadId", path.count == 1 { return try Self.relationship(view) }
+        if root == "threadRuntimeStatus" { return path.count == 1 || keys == [root, "type"] || keys == [root, "activeFlags"] ? .null : nil }
             if root == "requests" {
                 return keys.allSatisfy { ["requests", "request", "params", "id", "requestId", "itemId", "method", "type", "kind", "status", "isBlocking"].contains($0) } ? .null : nil
             }
@@ -423,6 +470,10 @@ struct DesktopWireProjection {
                 guard case .index(let index) = suffix[1], index < 8192 else { throw JSONFieldView.Failure.limit }
                 if suffix.count == 2, let view { return try Self.item(view, attentionOnly: attentionOnly) }
                 if suffix.count == 3, case .key(let key) = suffix[2], ["id", "type", "status"].contains(key) { return Self.string(view) ?? .null }
+                if suffix.count == 3, suffix[2] == .key("agentThreadId") { return try Self.relationship(view) }
+                if suffix.count == 3, suffix[2] == .key("kind") { return Self.string(view, limit: 32) }
+                if suffix.count == 3, suffix[2] == .key("receiverThreadIds") { return try Self.threadIDs(view) }
+                if suffix.count == 4, suffix[2] == .key("receiverThreadIds"), let raw = view?.string(), let id = UUID(uuidString: raw) { return .text(id.uuidString.lowercased()) }
                 if suffix.count == 3, suffix[2] == .key("questions") { return try Self.questionMarkers(view) }
                 if suffix.count == 4, suffix[2] == .key("questions") { return .null }
             }
@@ -530,9 +581,13 @@ struct DesktopWireProjection {
             ["method": method, "threadId": threadID, "at": now.timeIntervalSince1970].merging(values) { _, new in new }
         }
         if !attentionOnly {
-            if snapshot || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("threadSource")].contains($0.first ?? .key("")) }) {
+            if snapshot || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("threadSource"), .key("source"), .key("parentThreadId")].contains($0.first ?? .key("")) }) {
                 var meta: [String: Any] = [:]
                 for (source, target) in [("title", "name"), ("cwd", "cwd"), ("latestModel", "model"), ("threadSource", "source")] { meta[target] = staged.tree[source]?.text }
+                let source = staged.tree["source"]
+                let sub = source?["subAgent"] ?? source?["subagent"]
+                let spawn = sub?["thread_spawn"] ?? sub?["threadSpawn"]
+                meta["parentThreadId"] = staged.tree["parentThreadId"]?.text ?? spawn?["parent_thread_id"]?.text ?? spawn?["parentThreadId"]?.text
                 events.append(event("metadata", meta))
             }
             if let current, let turn = current["turnId"]?.text {
@@ -615,6 +670,12 @@ struct DesktopWireProjection {
         if let current {
             staged.previousTurn = .object(["turnId", "status", "turnStartedAtMs"].reduce(into: [:]) { $0[$1] = current[$1] })
         } else { staged.previousTurn = nil }
+        let childStates = staged.subagentStates
+        staged.collaborationThreadIDs = staged.projectedCollaborationThreadIDs
+        if !attentionOnly, childStates != previousAgentStates || (snapshot && !childStates.isEmpty), let turn = staged.currentTurnID {
+            events.append(event("subagents/updated", ["turnId": turn, "states": childStates]))
+        }
+        staged.previousAgentStates = childStates
         staged.isActive = current?["status"]?.text == "inProgress"
         staged.isTerminal = Self.terminal.contains(current?["status"]?.text ?? "")
         if staged.isTerminal, let selected, case .items(let count, _, _)? = current?["items"] {

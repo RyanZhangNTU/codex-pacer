@@ -8,6 +8,10 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 @main
 enum PacerMain {
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--diagnose-task") {
+            Task.detached { await diagnoseTask(); exit(0) }
+            dispatchMain()
+        }
         if CommandLine.arguments.contains("--diagnose-events") {
             Task.detached { await diagnoseEvents(); exit(0) }
             dispatchMain()
@@ -39,6 +43,36 @@ enum PacerMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         withExtendedLifetime((delegate, instance)) { app.run() }
+    }
+
+    /// Read-only numeric summary; never prints task names, text or account data.
+    private static func diagnoseTask() async {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--thread-id"), index + 1 < args.count,
+              let thread = UUID(uuidString: args[index + 1])?.uuidString.lowercased() else {
+            print("A valid --thread-id is required."); return
+        }
+        let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
+        let monitor = RealtimeActivityMonitor()
+        await monitor.start(home: home, includeSSH: false, useSSHFallback: false) { _, _, _ in }
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        let streamed = await monitor.activities()
+        var evidence: [String: SessionActivity.SubagentEvidence] = [:]
+        for value in streamed where value.sourceHostID == nil { evidence.merge(value.subagentStates) { old, new in old.observedAt > new.observedAt ? old : new } }
+        let reader = LocalActivityReader()
+        let logged = await reader.read(home: home, phaseAwareRate: true, includeCoveredMetrics: true, subagentStates: evidence)
+        let merged = ActivitySourceMerger.merge(logged: logged.activities, streamed: streamed)
+        let group = ActivityTaskGroup.make(merged).first { $0.primary.threadID == thread && $0.primary.sourceHostID == nil }
+        let now = Date()
+        let summary: [String: Any] = ["observed": group != nil,
+            "liveParentObserved": group?.primary.hasLiveEvidence ?? false,
+            "runningSubagents": group?.runningSubagentCount ?? 0,
+            "observedSubagents": max(0, (group?.members.count ?? 1) - 1),
+            "taskTPS": group?.displayedRate(at: now)?.value as Any? ?? NSNull(),
+            "estimated": group?.rateIsEstimated(at: now) ?? true]
+        if let bytes = try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]),
+           let text = String(data: bytes, encoding: .utf8) { print(text) }
+        await monitor.shutdown()
     }
 
     private static func diagnoseEvents() async {

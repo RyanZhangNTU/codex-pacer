@@ -332,9 +332,13 @@
 
 // Response performance
 "performance.awaiting_usage" = "Awaiting usage";
-"performance.awaiting_usage_help" = "TPS is available once a request settles and its full output window is observed. A tilde marks the older cumulative-counter estimate.";
+"performance.awaiting_usage_help" = "TPS is available once a request settles and its output window is observed. A tilde marks an estimate or the last retained measurement while new data is pending.";
 "performance.first_output" = "First output %@";
 "performance.latency_help" = "Observed from this turn’s start to the first received text or reasoning text. Includes queue, network and client delivery time; unavailable when attached mid-turn.";
 "performance.response_help" = "Latest settled request: %d output tokens / %.2f s, including reasoning once and excluding tool waits. Timing ends at the last observed generated item. This is response throughput, not decoder speed.";
-"performance.total_help" = "Global total TPS: %.1f t/s, the sum of available rates across running chats. Tool waits contribute zero; waiting, finished and internal-review chats are excluded. Each chat uses its latest measured request rate.";
-"performance.partial_total_help" = "Global total TPS: %.1f t/s. Some running chats have missing or older measurements, so this is a partial total. Tool waits contribute zero; waiting, finished and internal-review chats are excluded.";
+"performance.total_help" = "Global total TPS: %.1f t/s, the sum of available rates across running chats. Tool waits keep their last measured rate; waiting, finished and internal-review chats are excluded. Each chat uses its latest measured request rate.";
+"performance.partial_total_help" = "Global total TPS: %.1f t/s. Some running chats have missing or older measurements, so this is a partial total. Tool waits keep their last measured rate; waiting, finished and internal-review chats are excluded.";
+
+"activity.subagents_running" = "%d subagents running";
+"performance.group_help" = "Total of the latest available TPS from this chat and its running subagents. A tilde marks retained or incomplete measurements; tool waits do not erase the last measured rate.";
+"performance.retained_help" = "Last measured TPS for this chat. Kept with a tilde while a new measurement is pending, during tools or after the measurement becomes old.";

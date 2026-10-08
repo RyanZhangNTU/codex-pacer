@@ -55,6 +55,76 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var waitingForApproval = false
     public private(set) var modelName: String?
     public private(set) var isInternalReview = false
+    public private(set) var parentThreadID: String?
+    public struct SubagentEvidence: Equatable, Sendable {
+        public let parentThreadID: String
+        public let state: String
+        public let observedAt: Date
+    }
+    public private(set) var subagentStates: [String: SubagentEvidence] = [:]
+    private var projectedRate = false
+    mutating func applySubagentEvidence(_ evidence: SubagentEvidence) {
+        guard !hasLiveEvidence, !isInternalReview, threadID != evidence.parentThreadID,
+              parentThreadID == nil || parentThreadID == evidence.parentThreadID else { return }
+        updateParent(evidence.parentThreadID)
+        if evidence.state == "completed", turnStartedAt.map({ $0 > evidence.observedAt }) != true {
+            if ![.completed, .interrupted].contains(phase) { phaseChangedAt = evidence.observedAt }
+            phase = .completed; projectedRate = true
+        } else if evidence.state == "running" {
+            projectedRate = lastMeasuredRate.map { $0.reportedAt < evidence.observedAt } ?? true
+            if ![.running, .waitingForInput].contains(phase) {
+                phase = .running; stage = .starting; phaseChangedAt = evidence.observedAt
+                lastObserved = evidence.observedAt
+            }
+        }
+    }
+    private var lastMeasuredRate: OutputEstimate?
+    private var lastMeasuredTurnID: String?
+    private var lastMeasuredExact = false
+    mutating func updateParent(_ value: String?) {
+        guard let value, let id = UUID(uuidString: value)?.uuidString.lowercased(), id != threadID else { return }
+        parentThreadID = id
+    }
+    static func parentID(in metadata: [String: Any]) -> String? {
+        let source = metadata["source"] as? [String: Any]
+        let sub = (source?["subAgent"] ?? source?["subagent"]) as? [String: Any]
+        let spawn = (sub?["thread_spawn"] ?? sub?["threadSpawn"]) as? [String: Any]
+        let raw = (metadata["parentThreadId"] ?? metadata["parent_thread_id"] ?? spawn?["parent_thread_id"] ?? spawn?["parentThreadId"]) as? String
+        return raw.flatMap { UUID(uuidString: $0)?.uuidString.lowercased() }
+    }
+    private mutating func rememberRate() {
+        if let sample = responsePerformance {
+            if lastMeasuredRate == nil || sample.completedAt >= lastMeasuredRate!.reportedAt {
+                lastMeasuredRate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
+                lastMeasuredTurnID = sample.turnID; lastMeasuredExact = true
+            }
+        } else if let at = lastObserved,
+                  let sample = (phaseAwareRate ? generationRate.estimate(at: at) : outputRate.estimate(at: at)),
+                  sample.value > 0, sample.value.isFinite,
+                  lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt {
+            lastMeasuredRate = sample; lastMeasuredTurnID = turnID; lastMeasuredExact = false
+        }
+    }
+    /// Display continuity is independent of the new turn's accounting baseline.
+    public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
+        guard let sample = lastMeasuredRate, now >= sample.reportedAt else { return nil }
+        let fresh = !projectedRate && lastMeasuredTurnID == turnID && stage != .tool &&
+            !performanceMeter.hasPendingOutput && now < sample.expiresAt
+        return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
+    }
+    public func displayedRateIsEstimated(at now: Date) -> Bool {
+        !lastMeasuredExact || displayedOutputEstimate(at: now)?.isFresh != true
+    }
+    public mutating func mergeDisplayMetadata(from other: SessionActivity) {
+        guard canonicalized().id == other.canonicalized().id else { return }
+        if parentThreadID == nil { parentThreadID = other.parentThreadID }
+        if turnID == other.turnID, subagentStates.isEmpty { subagentStates = other.subagentStates }
+        if let sample = other.lastMeasuredRate,
+           lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt ||
+            (sample.reportedAt == lastMeasuredRate!.reportedAt && other.lastMeasuredExact && !lastMeasuredExact) {
+            lastMeasuredRate = sample; lastMeasuredTurnID = other.lastMeasuredTurnID; lastMeasuredExact = other.lastMeasuredExact
+        }
+    }
     private var waitingCallID: String?
     private var toolCalls: Set<String> = []
     private var outputRate = OutputRate()
@@ -65,10 +135,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     mutating func mergePerformance(from other: SessionActivity) {
         guard canonicalized().id == other.canonicalized().id, turnID == other.turnID else { return }
         performanceMeter.merge(from: other.performanceMeter)
+        rememberRate()
     }
     mutating func applyPerformance(_ update: SessionPerformanceUpdate) {
         guard canonicalized().id == update.id, turnID == update.turnID else { return }
         performanceMeter.apply(sample: update.response, latency: update.firstTokenLatency)
+        rememberRate()
     }
     private var phaseAwareRate: Bool
     private var liveItems: Set<String> = []
@@ -142,13 +214,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public mutating func consume(_ line: Data) {
         guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let payload = value["payload"] as? [String: Any] else { return }
+        defer { rememberRate() }
         if value["type"] as? String == "session_meta" {
             if let title = payload["title"] as? String { updateTitle(title) }
+            updateParent(Self.parentID(in: payload))
             let source = payload["source"] as? [String: Any]
-            let subagent = source?["subagent"] as? [String: Any]
+            let rawSubagent = source?["subagent"] ?? source?["subAgent"]
+            let subagent = rawSubagent as? [String: Any]
             let role = (subagent?["other"] as? String)?.lowercased()
             let threadSource = (payload["thread_source"] as? String)?.lowercased()
-            isInternalReview = isInternalReview || ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
+            isInternalReview = isInternalReview || rawSubagent as? String == "review" || subagent?["review"] != nil ||
+                ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
                 ["guardian_review", "auto_review", "autoreview"].contains(threadSource ?? "")
             if let cwd = payload["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             if let id = payload["id"] as? String, let uuid = UUID(uuidString: id) { threadID = uuid.uuidString.lowercased() }
@@ -218,8 +294,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private mutating func beginTurn(_ id: String?, at date: Date, observed: Bool = true) {
+        rememberRate()
         // An unknown ID during reconnect does not prove the old turn ended.
         if let id { identifyTurn(id) }
+        subagentStates = [:]; projectedRate = false
         hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
         turnID = id
         turnStartedAt = date
@@ -335,12 +413,26 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let remoteID = event["threadId"] as? String, remoteID == threadID,
               let seconds = event["at"] as? Double, seconds.isFinite else { return }
         let date = Date(timeIntervalSince1970: seconds)
+        defer { rememberRate() }
+        if method == "subagents/updated" {
+            guard event["turnId"] as? String == turnID, let states = event["states"] as? [String: String], states.count <= 64,
+                  let parent = threadID else { return }
+            var next: [String: SubagentEvidence] = [:]
+            for (raw, state) in states {
+                guard let id = UUID(uuidString: raw)?.uuidString.lowercased(), id != parent,
+                      ["running", "completed"].contains(state) else { continue }
+                next[id] = subagentStates[id].flatMap { $0.state == state ? $0 : nil } ?? SubagentEvidence(parentThreadID: parent, state: state, observedAt: date)
+            }
+            subagentStates = next
+            return
+        }
         if method == "thread/name/updated" {
             guard event["name"] is String || event["name"] is NSNull else { return }
             updateName(event["name"] as? String)
             return
         }
         if method == "metadata" {
+            updateParent(Self.parentID(in: event))
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
             }
@@ -490,7 +582,8 @@ public actor LocalActivityReader {
     public func reset() { cursors.removeAll(); metadata.removeAll() }
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
-                     excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false) -> (activities: [SessionActivity], watchURLs: [URL]) {
+                     excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
+                     subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL]) {
         let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd"
@@ -522,6 +615,9 @@ public actor LocalActivityReader {
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             if !files.contains(where: { $0.0 == file }) { files.append((file, date)) }
             watchURLs.append(file.deletingLastPathComponent())
+        }
+        for file in Array(cursors.keys) {
+            if let id = cursors[file]?.activity.threadID, let evidence = subagentStates[id] { cursors[file]?.activity.applySubagentEvidence(evidence) }
         }
         var unavailable: [SessionActivity] = []
         for (file, cursor) in cursors where !manager.isReadableFile(atPath: file.path) {
@@ -585,7 +681,7 @@ public actor LocalActivityReader {
             }
             let identity = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
             if var existing = cursors[file], existing.identity == identity, existing.offset == size {
-                if let entry = indexed.first(where: { $0.url == file }) { existing.activity.updateTitle(entry.title); cursors[file] = existing }
+                if let entry = indexed.first(where: { $0.url == file }) { existing.activity.updateTitle(entry.title); existing.activity.updateParent(entry.parentThreadID); cursors[file] = existing }
                 continue
             }
             guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
@@ -622,7 +718,8 @@ public actor LocalActivityReader {
                     current.fragment.removeSubrange(...end)
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll() }
-                if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title) }
+                if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
+                if let id = current.activity.threadID, let evidence = subagentStates[id] { current.activity.applySubagentEvidence(evidence) }
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview {

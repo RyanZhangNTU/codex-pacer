@@ -3,23 +3,35 @@ import Foundation
 enum SessionLogProbe {
     // Only sanitized lifecycle and counters leave the remote host.
     static let library = #"""
-    import base64, datetime, json, pathlib, sqlite3, sys, time
+    import base64, datetime, json, pathlib, sqlite3, sys, time, uuid
     home = pathlib.Path(base64.b64decode(sys.argv[1]).decode()).expanduser()
     cursors = {}
     headers = {}
     titles = {}
+    def parent_thread(meta):
+        source=meta.get('source');sub=(source.get('subAgent',source.get('subagent')) if isinstance(source,dict) else None)
+        spawn=sub.get('thread_spawn',sub.get('threadSpawn')) if isinstance(sub,dict) else None
+        raw=meta.get('parentThreadId',meta.get('parent_thread_id'))
+        if raw is None and isinstance(spawn,dict):raw=spawn.get('parent_thread_id',spawn.get('parentThreadId'))
+        try:
+            return str(uuid.UUID(raw)) if isinstance(raw,str) and len(raw)==36 else None
+        except (ValueError,AttributeError):return None
     def sanitize(o):
         outer, p = o.get('type'), o.get('payload', {})
         if not isinstance(p, dict): return None
         kind = p.get('type'); q = {}
         if outer == 'session_meta':
+            parent=parent_thread(p)
+            if parent and parent!=p.get('id'):q['parent_thread_id']=parent
             for k in ('id','cwd','thread_source'):
                 if isinstance(p.get(k),str): q[k] = p[k][:2048]
             source = p.get('source')
             if isinstance(source,str): q['source'] = source[:80]
             elif isinstance(source,dict):
-                role = source.get('subagent',{}).get('other') if isinstance(source.get('subagent'),dict) else None
-                if isinstance(role,str): q['source'] = {'subagent':{'other':role[:80]}}
+                sub=source.get('subagent',source.get('subAgent'))
+                role=sub.get('other') if isinstance(sub,dict) else None
+                if sub=='review' or isinstance(sub,dict) and 'review' in sub:q['source']={'subagent':'review'}
+                elif isinstance(role,str):q['source']={'subagent':{'other':role[:80]}}
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
@@ -109,8 +121,10 @@ enum SessionLogProbe {
                     meta=cached[1] if cached and cached[0]==stat.st_ino else header(f)
                     headers[p]=(stat.st_ino,meta)
                     if meta:
-                        q=meta['payload']; role=(q.get('source') or {}).get('subagent',{}).get('other') if isinstance(q.get('source'),dict) else None
-                        if q.get('thread_source') in ('guardian_review','auto_review','autoreview') or role in ('guardian','auto_review','autoreview'): continue
+                        q=meta['payload'];source=q.get('source')
+                        sub=source.get('subagent',source.get('subAgent')) if isinstance(source,dict) else None
+                        role=sub.get('other') if isinstance(sub,dict) else None
+                        if q.get('thread_source') in ('guardian_review','auto_review','autoreview') or sub=='review' or isinstance(sub,dict) and 'review' in sub or role in ('guardian','auto_review','autoreview'):continue
                     selected.append(p); old=cursors.get(p); reset=old is None or old[0]!=stat.st_ino or old[1]>stat.st_size
                     offset=0 if reset else old[1]; fragment=b'' if reset else old[2]
                     budget=512*1024 if reset else 128*1024; gap=stat.st_size-offset>budget

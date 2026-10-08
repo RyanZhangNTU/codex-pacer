@@ -20,7 +20,10 @@ public enum ActivitySourceMerger {
             if value.title == nil, !value.titleWasExplicitlyCleared, let title = result[value.id]?.title {
                 value.updateTitle(title)
             }
-            if let previous = result[value.id] { value.mergePerformance(from: previous) }
+            if let previous = result[value.id] {
+                value.mergePerformance(from: previous)
+                value.mergeDisplayMetadata(from: previous)
+            }
             result[value.id] = value
         }
         return result.values.filter { !$0.isInternalReview }

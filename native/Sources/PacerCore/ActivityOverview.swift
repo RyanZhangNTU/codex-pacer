@@ -11,22 +11,21 @@ public struct ActivityOverview: Sendable {
     public let rateIsFresh: Bool
 
     public init(activities: [SessionActivity], at now: Date) {
-        self.activities = activities.filter { !$0.isInternalReview }
-        running = self.activities.filter { $0.observedPhase(at: now) == .running }
-        waiting = self.activities.filter { $0.observedPhase(at: now) == .waitingForInput }
+        let groups = ActivityTaskGroup.make(activities)
+        self.activities = groups.flatMap(\.members)
+        running = groups.filter(\.isRunning).map(\.primary)
+        waiting = groups.filter(\.isWaiting).map(\.primary)
         if !running.isEmpty { phase = .running }
         else if !waiting.isEmpty { phase = .waitingForInput }
         else if self.activities.contains(where: { $0.observedPhase(at: now) == .unknown }) { phase = .unknown }
         else { phase = .completed }
-        let rates = running.compactMap { $0.tokensPerSecond(at: now) }
+        let agents = self.activities.filter { $0.observedPhase(at: now) == .running }
+        let rates = agents.compactMap { $0.tokensPerSecond(at: now) }
         // Never carry an old rate from a waiting, ended, stale or internal turn.
         tokensPerSecond = rates.isEmpty ? nil : rates.reduce(0, +)
-        let estimates = running.compactMap { $0.outputEstimate(at: now) }
-        // Known blocked tasks contribute zero, but an unmeasured generating
-        // task must not turn that partial total into an apparent global zero.
-        let incompleteZero = estimates.count < running.count && estimates.allSatisfy { $0.value == 0 }
-        displayedRate = estimates.isEmpty || incompleteZero ? nil : estimates.reduce(0) { $0 + $1.value }
-        rateIsFresh = !estimates.isEmpty && estimates.count == running.count && estimates.allSatisfy(\.isFresh)
+        let estimates = agents.compactMap { $0.displayedOutputEstimate(at: now) }
+        displayedRate = estimates.isEmpty ? nil : estimates.reduce(0) { $0 + $1.value }
+        rateIsFresh = !estimates.isEmpty && estimates.count == agents.count && estimates.allSatisfy(\.isFresh)
     }
 
     public var title: String {

@@ -183,7 +183,7 @@ final class ResponsePerformanceTests: XCTestCase {
         var blocked = tasks[1]
         live(&blocked, method: "item/started", fields: ["itemId": "tool", "itemType": "commandExecution"])
         XCTAssertEqual(blocked.responsePerformance?.tokensPerSecond, 30, "Task row retains its last request")
-        XCTAssertEqual(ActivityOverview(activities: [tasks[0], blocked], at: start.addingTimeInterval(11)).displayedRate, 60, "A confirmed tool wait contributes zero")
+        XCTAssertEqual(ActivityOverview(activities: [tasks[0], blocked], at: start.addingTimeInterval(11)).displayedRate, 90, "Tool waits retain the last measured rate in the displayed total")
         for (method, fields) in [("thread/status/changed", ["status": "active", "flags": ["waitingOnUserInput"]]),
                                  ("turn/completed", ["status": "completed"]),
                                  ("metadata", ["source": "guardian_review"])] as [(String, [String: Any])] {

@@ -117,21 +117,20 @@ final class IslandModel: ObservableObject {
     var showInMenuBar: Bool { UserDefaults.standard.bool(forKey: "showInMenuBar") }
     var hideProjects: Bool { UserDefaults.standard.bool(forKey: "hideProjects") }
     var displayID: Int { UserDefaults.standard.integer(forKey: "displayID") }
+    var taskGroups: [ActivityTaskGroup] { ActivityTaskGroup.make(activities) }
+    func taskGroup(for activity: SessionActivity) -> ActivityTaskGroup? { taskGroups.first { $0.primary.id == activity.canonicalized().id } }
     var overview: ActivityOverview { ActivityOverview(activities: activities, at: now) }
     var running: [SessionActivity] { overview.running }
     var waiting: [SessionActivity] { overview.waiting }
     var visibleActivities: [SessionActivity] {
-        var displayed = activities.filter {
-            guard !$0.isInternalReview else { return false }
-            if [.completed, .interrupted].contains($0.phase) {
-                return true
-            }
-            return [.running, .waitingForInput].contains($0.observedPhase(at: now))
-        }
-        // Pending input can arrive before runtime metadata. Keep its routing
-        // visible in the same paginated task region without duplicating a task.
+        let groups = taskGroups
+        var displayed = groups.filter {
+            $0.isRunning || $0.isWaiting || [.completed, .interrupted].contains($0.primary.phase) ||
+                now.timeIntervalSince($0.primary.lastObserved ?? .distantPast) < 900
+        }.map(\.primary)
+        let known = Set(groups.flatMap { $0.members.map(\.id) })
         var ids = Set(displayed.map(\.id))
-        for request in pendingInputRequests where ids.insert(request.activity.id).inserted {
+        for request in pendingInputRequests where !known.contains(request.activity.id) && ids.insert(request.activity.id).inserted {
             displayed.append(request.activity)
         }
         return displayed.sorted {
@@ -147,7 +146,9 @@ final class IslandModel: ObservableObject {
         return Double([0, 5, 15, 30, 60, 240].contains(minutes) ? minutes : 30) * 60
     }
     var pendingCompletions: [SessionActivity] {
-        UserDefaults.standard.bool(forKey: "completionReminder") ? completionInbox.unreadActivities : []
+        guard UserDefaults.standard.bool(forKey: "completionReminder") else { return [] }
+        let roots = Set(taskGroups.filter { !$0.isRunning }.map { $0.primary.id })
+        return completionInbox.unreadActivities.filter { roots.contains($0.id) }
     }
     var pendingInputRequests: [PendingAttentionRequest] {
         UserDefaults.standard.bool(forKey: "inputReminder") ? attentionRequests : []
@@ -160,6 +161,7 @@ final class IslandModel: ObservableObject {
         if let first = waiting.first { return L10n.text(first.waitingForApproval ? "attention.approval" : "attention.input") }
         let count = running.count + waiting.count
         if count == 1, let task = running.first {
+            if let group = taskGroup(for: task), group.runningSubagentCount > 0 { return L10n.text("activity.subagents_running", group.runningSubagentCount) }
             switch task.stage {
             case .tool: return L10n.text("activity.tool_compact")
             case .responding: return L10n.text("activity.responding_compact")
@@ -177,7 +179,7 @@ final class IslandModel: ObservableObject {
             let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
             return left == right ? $0.id < $1.id : left < right
         }
-        return latest.map { StatusSymbols.symbol(for: $0) } ?? StatusSymbols.idle
+        return latest.map { taskGroup(for: $0)?.isRunning == true && $0.phase != .running ? StatusSymbols.thinking : StatusSymbols.symbol(for: $0) } ?? StatusSymbols.idle
     }
     var taskAccent: Color { Color(red: 0.56, green: 0.84, blue: 0.79) }
     var headerTint: Color {
@@ -186,10 +188,13 @@ final class IslandModel: ObservableObject {
         return running.isEmpty ? .secondary : taskAccent
     }
     func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? {
-        let matching = pendingInputRequests.filter { $0.activity.id == activity.id }
+        let group = taskGroup(for: activity)
+        let ids = Set(group?.members.map(\.id) ?? [activity.id])
+        let matching = pendingInputRequests.filter { ids.contains($0.activity.id) }
         if matching.contains(where: { $0.kind == .approval }) { return .approval }
         if !matching.isEmpty { return .input }
-        return activity.phase == .waitingForInput ? (activity.waitingForApproval ? .approval : .input) : nil
+        let waiting = group?.members.first { $0.phase == .waitingForInput } ?? (activity.phase == .waitingForInput ? activity : nil)
+        return waiting.map { $0.waitingForApproval ? .approval : .input }
     }
     var hidesHeaderRate: Bool {
         isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
@@ -200,12 +205,13 @@ final class IslandModel: ObservableObject {
     }
     var headerRateText: String? {
         guard let rate else { return nil }
-        if isAttached && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
-        if isAttached && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
-        return String(format: "%.0f", rate)
+        let prefix = rateIsFresh ? "" : "~"
+        if isAttached && rate >= 1_000_000 { return prefix + String(format: "%.1fM", rate / 1_000_000) }
+        if isAttached && rate >= 1_000 { return prefix + String(format: "%.1fk", rate / 1_000) }
+        return prefix + String(format: "%.0f", rate)
     }
     var hasConnectionIssue: Bool { !unavailableSSH.isEmpty || streamStatuses["local"].map { !$0.connected } == true }
-    func isUnreadCompletion(_ activity: SessionActivity) -> Bool { completionInbox.isUnread(activity) }
+    func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
     var completionSummary: String {
         let pending = pendingCompletions
         guard let first = pending.first else { return L10n.text("activity.idle") }
@@ -449,6 +455,15 @@ final class IslandModel: ObservableObject {
         }
     }
 
+    private func localSubagentStates(_ values: [SessionActivity]) -> [String: SessionActivity.SubagentEvidence] {
+        var result: [String: SessionActivity.SubagentEvidence] = [:]
+        for value in values where value.sourceHostID == nil {
+            for (id, evidence) in value.subagentStates {
+                if result[id] == nil || result[id]!.observedAt < evidence.observedAt { result[id] = evidence }
+            }
+        }
+        return result
+    }
     func refreshActivity(metricsOnly: Bool = false) {
         guard !sleeping, !stopped, !demo else { return }
         if !metricsOnly { localActivityNeedsDiscovery = true }
@@ -462,8 +477,9 @@ final class IslandModel: ObservableObject {
         let covered = streamStatuses["local"]?.connected == true ? Set(remoteActivities.filter {
             $0.sourceHostID == nil && $0.hasLiveEvidence && [.running, .waitingForInput].contains($0.phase)
         }.compactMap(\.threadID)) : []
+        let agentStates = localSubagentStates(remoteActivities)
         localTask = Task { [weak self, reader] in
-            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true, metricsOnly: onlyMetrics)
+            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true, metricsOnly: onlyMetrics, subagentStates: agentStates)
             guard let self else { return }
             defer {
                 if generation == self.sourceGeneration {
@@ -508,6 +524,7 @@ final class IslandModel: ObservableObject {
                              unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = []) {
         let oldLocal = Set(remoteActivities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
+        let agentStatesChanged = localSubagentStates(remoteActivities) != localSubagentStates(activities)
         now = Date(); remoteActivities = activities
         completionInbox.updateNames(names)
         completionInbox.updatePerformance(performance)
@@ -516,6 +533,7 @@ final class IslandModel: ObservableObject {
         observeAttentionRequests(requests)
         combineActivities()
         if oldLocal != newLocal { refreshActivity() }
+        else if agentStatesChanged { refreshActivity(metricsOnly: true) }
     }
     func observeAttentionRequests(_ requests: [PendingAttentionRequest]) {
         if attentionRequests != requests { attentionRequests = requests }
@@ -526,18 +544,25 @@ final class IslandModel: ObservableObject {
     }
     private func combineActivities() {
         let oldHeight = panelContentHeight
-        let observed = completionInbox.observe(
-            ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities),
-            at: now, retention: completedRetention)
+        let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        let merged = ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities).map { value in
+            var value = value
+            if let old = previous[value.id] { value.mergeDisplayMetadata(from: old) }
+            return value
+        }
+        let grouped = ActivityTaskGroup.make(merged).flatMap(\.members)
+        let observed = completionInbox.observe(grouped, at: now, retention: completedRetention)
+        let activeRoots = Set(ActivityTaskGroup.make(observed).filter(\.isRunning).map { $0.primary.id })
         let combined = observed.filter {
-            !$0.isInternalReview && ![.completed, .interrupted].contains($0.phase) &&
-                ([.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
-        } + completionInbox.activities
+            !$0.isInternalReview && (activeRoots.contains($0.id) || ![.completed, .interrupted].contains($0.phase)) &&
+                (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
+        } + completionInbox.activities.filter { !activeRoots.contains($0.id) }
         if activities != combined { activities = combined }
         if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: combined) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
         let inputs = Set(pendingInputRequests.map { ($0.sourceHostID ?? "local") + ":" + $0.threadID })
-        present(attention.activityNotices(activities, at: now).filter { notice in
+        let noticeTasks = taskGroups.filter { !($0.isRunning && [.completed, .interrupted].contains($0.primary.phase)) }.map(\.primary)
+        present(attention.activityNotices(noticeTasks, at: now).filter { notice in
             notice.kind != .waitingForInput || !inputs.contains(where: { notice.id.hasPrefix($0 + ":") })
         })
         onStatusChange?()
@@ -610,7 +635,7 @@ final class IslandModel: ObservableObject {
     private func pruneCompletions() {
         let oldHeight = panelContentHeight
         completionInbox.prune(at: now, retention: completedRetention)
-        let retained = Set(completionInbox.activities.map(\.id))
+        let retained = Set(completionInbox.activities.map(\.id)).union(taskGroups.filter(\.isRunning).map { $0.primary.id })
         activities.removeAll { [.completed, .interrupted].contains($0.phase) && !retained.contains($0.id) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
     }
@@ -692,7 +717,7 @@ final class IslandModel: ObservableObject {
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
         now = demoClock()
-        let observed = DemoScenario.tasks(stage: stage, at: now)
+        let observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed
         var status = RuntimeStreamStatus()

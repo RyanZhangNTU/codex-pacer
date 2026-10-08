@@ -14,7 +14,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 - Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
 - Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.
 - Use adaptive width by default, or adjust a single width with a preview and slider in Settings.
-- View per-request TPS and observed first-output latency for each task; ordinary updates adapt automatically to the island’s collapsed or expanded state.
+- View task TPS and observed first-output latency; spawned agents are grouped under the parent with their running count and summed TPS. Previous measurements stay visible with a tilde during tools or while awaiting new data. Updates adapt automatically to collapsed/expanded state.
 - Use English or Simplified Chinese, following your Mac's language by default or selecting a language in Settings.
 - Update inside the app: daily checks by default, with download and installation after you choose to install.
 

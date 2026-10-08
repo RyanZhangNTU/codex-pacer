@@ -66,7 +66,7 @@ struct NativeDesktopSession {
         // A busy multi-chat stream must flush at the bound during a long batch,
         // rather than disconnecting and losing its observed response windows.
         if events.count >= 512 || toolBoundary || event["firstTextDelta"] as? Bool == true ||
-            ["turn/started", "turn/completed", "thread/status/changed"].contains(method) { try publishEvents() }
+            ["turn/started", "turn/completed", "thread/status/changed", "subagents/updated"].contains(method) { try publishEvents() }
     }
     private mutating func release(_ key: Key, at now: Date) throws {
         if dormant[key] == nil, key.host == "local" && localRuntime { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
@@ -171,6 +171,8 @@ struct NativeDesktopSession {
         do {
             let output = try projection.consume(change, owner: owner, at: now)
             streams[key] = projection
+            let previousChildren = Set(old?.collaborationThreadIDs ?? [])
+            try discover(projection.collaborationThreadIDs.filter { $0 != thread && !previousChildren.contains($0) }.map { Key(host: host, thread: $0) })
             awaitingSnapshot.removeValue(forKey: key)
             if host != "local", (projection.isActive && (old?.isActive != true || old?.currentTurnID != projection.currentTurnID)) ||
                 (projection.isTerminal && old?.isActive == true) {

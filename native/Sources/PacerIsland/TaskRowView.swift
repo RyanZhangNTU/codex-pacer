@@ -3,6 +3,7 @@ import PacerCore
 
 struct TaskRowView: View {
     var attention: PendingAttentionRequest.Kind? = nil
+    var group: ActivityTaskGroup? = nil
     let activity: SessionActivity
     let name: String
     let now: Date
@@ -12,23 +13,28 @@ struct TaskRowView: View {
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var phase: ActivityPhase { activity.observedPhase(at: now) }
+    private var phase: ActivityPhase { group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now) }
     private var detail: String {
+        var base = phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now)
+        if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { base = L10n.text("activity.running_long") }
         if let attention {
             let prompt = L10n.text(attention == .approval ? "attention.approval" : "attention.input")
-            return phase == .running ? prompt + " · " + activity.detail(at: now) : prompt
+            base = phase == .running ? prompt + " · " + base : prompt
         }
-        return phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now)
+        let count = group?.runningSubagentCount ?? 0
+        return count > 0 ? base + " · " + L10n.text("activity.subagents_running", count) : base
     }
     private var performanceText: String {
-        let speed = activity.responsePerformance.map { String(format: "%.1f t/s", $0.tokensPerSecond) }
-            ?? activity.outputEstimate(at: now).map { String(format: "~%.1f t/s", $0.value) }
-            ?? L10n.text("performance.awaiting_usage")
+        let rate = group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now)
+        let estimated = group?.rateIsEstimated(at: now) ?? activity.displayedRateIsEstimated(at: now)
+        let speed = rate.map { (estimated ? "~" : "") + String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
         let latency = activity.firstTokenLatency.map { String(format: "%.2f s", $0) } ?? "—"
         return speed + "  ·  " + L10n.text("performance.first_output", latency)
     }
     private var performanceHelp: String {
         let latency = L10n.text("performance.latency_help")
+        if let group, group.members.count > 1 { return L10n.text("performance.group_help") + "\n" + latency }
+        if activity.displayedRateIsEstimated(at: now) { return L10n.text("performance.retained_help") + "\n" + latency }
         guard let sample = activity.responsePerformance else { return L10n.text("performance.awaiting_usage_help") + "\n" + latency }
         return L10n.text("performance.response_help", sample.outputTokens, sample.duration) + "\n" + latency
     }
@@ -43,7 +49,8 @@ struct TaskRowView: View {
         }
     }
     private var symbol: String {
-        StatusSymbols.symbol(for: activity, attention: attention)
+        if attention == nil, group?.isRunning == true, activity.phase != .running { return StatusSymbols.thinking }
+        return StatusSymbols.symbol(for: activity, attention: attention)
     }
 
     var body: some View {
