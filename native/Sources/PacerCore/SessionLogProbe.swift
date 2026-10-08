@@ -35,9 +35,12 @@ enum SessionLogProbe {
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
-        elif outer == 'event_msg' and kind in ('task_started','task_complete','turn_aborted','token_count'):
+        elif outer == 'event_msg' and kind in ('task_started','task_complete','turn_aborted','token_count','thread_settings_applied'):
             q['type'] = kind
             if isinstance(p.get('turn_id'),str): q['turn_id'] = p['turn_id'][:256]
+            if kind == 'thread_settings_applied':
+                try:q['thread_id']=str(uuid.UUID(p.get('thread_id')))
+                except (ValueError,TypeError,AttributeError):return None
             if kind == 'token_count':
                 total = (p.get('info') or {}).get('total_token_usage') or {}
                 output = total.get('output_tokens')

@@ -81,6 +81,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var lastMeasuredRate: OutputEstimate?
     private var lastMeasuredTurnID: String?
     private var lastMeasuredExact = false
+    private var ignoringInheritedHistory = false
     mutating func updateParent(_ value: String?) {
         guard let value, let id = UUID(uuidString: value)?.uuidString.lowercased(), id != threadID else { return }
         parentThreadID = id
@@ -216,6 +217,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let payload = value["payload"] as? [String: Any] else { return }
         defer { rememberRate() }
         if value["type"] as? String == "session_meta" {
+            if let raw = payload["id"] as? String, let uuid = UUID(uuidString: raw) {
+                let identity = uuid.uuidString.lowercased()
+                if let threadID, identity != threadID {
+                    // Forked logs embed ancestor headers/history before their
+                    // own first turn. They cannot rename or meter this cursor.
+                    ignoringInheritedHistory = true
+                    return
+                }
+                threadID = identity
+                ignoringInheritedHistory = false
+            }
             if let title = payload["title"] as? String { updateTitle(title) }
             updateParent(Self.parentID(in: payload))
             let source = payload["source"] as? [String: Any]
@@ -227,8 +239,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
                 ["guardian_review", "auto_review", "autoreview"].contains(threadSource ?? "")
             if let cwd = payload["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
-            if let id = payload["id"] as? String, let uuid = UUID(uuidString: id) { threadID = uuid.uuidString.lowercased() }
             return
+        }
+        if ignoringInheritedHistory {
+            // The first owned settings/item/accounting event proves that the
+            // copied prefix has ended. Its body is otherwise ignored normally.
+            guard payload["thread_id"] as? String == threadID else { return }
+            ignoringInheritedHistory = false
         }
         if value["type"] as? String == "turn_context" {
             guard let timestamp = value["timestamp"] as? String, let date = Self.parseDate(timestamp),

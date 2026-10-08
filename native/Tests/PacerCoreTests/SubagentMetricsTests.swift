@@ -84,6 +84,36 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertEqual(ActivityTaskGroup.make([a, b]).count, 1)
         XCTAssertEqual(ActivityOverview(activities: [a, b], at: start.addingTimeInterval(11)).displayedRate, 120)
     }
+    func testForkedHistoryCannotOverwriteChildIdentityOrSeedItsRate() throws {
+        var child = SessionActivity(id: id(2), phaseAwareRate: true)
+        let formatter = ISO8601DateFormatter()
+        func log(_ type: String, _ second: Double, _ payload: [String: Any]) throws {
+            child.consume(try JSONSerialization.data(withJSONObject: ["type": type,
+                "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": payload]))
+        }
+        try log("session_meta", 0, ["id": id(2), "parent_thread_id": id(1)])
+        try log("session_meta", 0, ["id": id(1), "title": "Ancestor title"])
+        try log("event_msg", 0, ["type": "task_started", "turn_id": "ancestor"])
+        try log("event_msg", 0, ["type": "token_count", "info": ["total_token_usage": ["output_tokens": 700_000]]])
+        try log("response_item", 1, ["type": "message", "role": "assistant", "phase": "commentary"])
+        try log("event_msg", 1, ["type": "token_count", "info": ["total_token_usage": ["output_tokens": 704_000]]])
+        XCTAssertEqual(child.threadID, id(2))
+        XCTAssertEqual(child.parentThreadID, id(1))
+        XCTAssertNil(child.title)
+        XCTAssertNil(child.turnID)
+        XCTAssertNil(child.displayedOutputEstimate(at: start.addingTimeInterval(2)))
+        try log("event_msg", 2, ["type": "thread_settings_applied", "thread_id": id(2)])
+        try log("event_msg", 2, ["type": "task_started", "turn_id": "child"])
+        try log("response_item", 7, ["type": "custom_tool_call", "call_id": "read", "name": "exec"])
+        try log("token_usage_record", 7, ["thread_id": id(2), "turn_id": "child", "response_id": "response", "usage": ["output_tokens": 100]])
+        XCTAssertEqual(child.responsePerformance?.outputTokens, 100)
+        XCTAssertEqual(child.displayedOutputEstimate(at: start.addingTimeInterval(8))?.value, 20)
+        XCTAssertTrue(child.displayedRateIsEstimated(at: start.addingTimeInterval(8)))
+        let grouped = ActivityTaskGroup.make([measured(1), child])
+        XCTAssertEqual(grouped.count, 1)
+        XCTAssertEqual(grouped.first?.runningSubagentCount, 1)
+        XCTAssertEqual(grouped.first?.displayedRate(at: start.addingTimeInterval(11))?.value, 80)
+    }
     func testNativeCollaborationDiscoversChildrenAndDropsPromptAndAgentMessages() throws {
         var messages: [[String: Any]] = []
         var session = try NativeDesktopSession(hosts: ["local"]) { messages.append($0) }
@@ -146,6 +176,8 @@ final class SubagentMetricsTests: XCTestCase {
         parent='019a0000-0000-7000-8000-000000000001';child='019a0000-0000-7000-8000-000000000002'
         header=sanitize({'type':'session_meta','payload':{'id':child,'source':{'subagent':{'thread_spawn':{'parent_thread_id':parent,'agent_path':'PRIVATE','agent_nickname':'PRIVATE'}}}}})
         assert header['payload']['parent_thread_id']==parent and 'PRIVATE' not in repr(header)
+        boundary=sanitize({'type':'event_msg','payload':{'type':'thread_settings_applied','thread_id':child,'thread_settings':{'prompt':'PRIVATE'}}})
+        assert boundary['payload']=={'type':'thread_settings_applied','thread_id':child} and 'PRIVATE' not in repr(boundary)
         ws=WS();s=Session(ws);s.pending={};s.ready=True;s.known[parent]={'type':'active'};s.attached.add(parent)
         packets=[];emit=lambda value:packets.append(value)
         s.receive({'method':'item/started','params':{'threadId':parent,'turnId':'turn','item':{'id':'spawn','type':'collabAgentToolCall','receiverThreadIds':[child],'prompt':'PRIVATE','agentsStates':{child:{'status':'running','message':'PRIVATE'}}}}})

@@ -4,6 +4,7 @@
 
 - Group spawned agents under their parent conversation, show the running descendant count and add the available parent/child TPS without duplicate task rows or totals.
 - Recognize Desktop subAgentActivity and runtime collaboration metadata; keep only thread relationships and status, with bounded discovery and log reads.
+- Ignore copied ancestor history in forked agent logs so it cannot replace the child identity, seed its rate or suppress its exact usage.
 - Retain each chat's last measured TPS with a tilde while awaiting a new measurement, including across tools and new turns; reset accounting baselines independently.
 
 ## 2.3.0
