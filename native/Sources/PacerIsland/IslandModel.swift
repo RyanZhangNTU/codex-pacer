@@ -62,7 +62,7 @@ final class IslandModel: ObservableObject {
         onLayoutChange?()
     }
     var panelContentHeight: CGFloat {
-        measuredContentHeight ?? min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 56 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
+        measuredContentHeight ?? min(640, max(424, 286 + CGFloat(max(1, min(3, visibleActivities.count))) * 74 + CGFloat(quota?.windows.count ?? 1) * 92 + (demo ? 25 : 0)))
     }
     func updateMeasuredContentHeight(_ height: CGFloat) {
         guard height.isFinite, height > 0 else { return }
@@ -87,6 +87,12 @@ final class IslandModel: ObservableObject {
     private var noticeWork: DispatchWorkItem?
     private var rateExpiryWork: DispatchWorkItem?
     private var rateExpiryAt: Date?
+    private var localActivityDirty = false
+    private var localActivityNeedsDiscovery = false
+    private var watchedLogURLs: [URL] = []
+    private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
+        Task { @MainActor in self?.refreshActivity(metricsOnly: !discover) }
+    }
     private var sleeping = false
     private var stopped = false
     private(set) var interactionSuspended = false
@@ -105,6 +111,7 @@ final class IslandModel: ObservableObject {
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
     var displayMode: IslandDisplayMode { .load() }
+    var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { UserDefaults.standard.bool(forKey: "showInFullscreen") }
     var showInMenuBar: Bool { UserDefaults.standard.bool(forKey: "showInMenuBar") }
@@ -242,8 +249,9 @@ final class IslandModel: ObservableObject {
     }
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
+    var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
     var showsRate: Bool { !running.isEmpty }
-    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? L10n.text("activity.sampling") : "—") }
+    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? L10n.text("performance.awaiting_usage") : "—") }
     var monitorsSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH") }
     var accent: Color {
         if !waiting.isEmpty || notice != nil { return Color(red: 0.91, green: 0.75, blue: 0.48) }
@@ -282,6 +290,7 @@ final class IslandModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.sleeping = true
+                self.logWatcher.stop()
                 self.invalidateWork()
                 _ = await self.historyStore.flush()
                 await self.realtimeMonitor.shutdown()
@@ -303,6 +312,15 @@ final class IslandModel: ObservableObject {
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
+        if !demo, !sleeping, !stopped {
+            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: value)
+            let generation = sourceGeneration
+            Task { [weak self] in
+                guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped else { return }
+                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+            }
+            if value { refreshActivity(metricsOnly: true) }
+        }
         if clock != nil { scheduleClock() }
         onLayoutChange?()
         if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
@@ -431,21 +449,35 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    func refreshActivity() {
-        guard localTask == nil, !sleeping, !stopped, !demo else { return }
-        lastDiscovery = Date()
+    func refreshActivity(metricsOnly: Bool = false) {
+        guard !sleeping, !stopped, !demo else { return }
+        if !metricsOnly { localActivityNeedsDiscovery = true }
+        guard localTask == nil else { localActivityDirty = true; return }
+        localActivityDirty = false
+        let onlyMetrics = !localActivityNeedsDiscovery
+        localActivityNeedsDiscovery = false
+        if !onlyMetrics { lastDiscovery = Date() }
         let generation = sourceGeneration
         let sourceHome = home
         let covered = streamStatuses["local"]?.connected == true ? Set(remoteActivities.filter {
             $0.sourceHostID == nil && $0.hasLiveEvidence && [.running, .waitingForInput].contains($0.phase)
         }.compactMap(\.threadID)) : []
         localTask = Task { [weak self, reader] in
-            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered)
+            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true, metricsOnly: onlyMetrics)
             guard let self else { return }
-            defer { if generation == self.sourceGeneration { self.localTask = nil } }
+            defer {
+                if generation == self.sourceGeneration {
+                    self.localTask = nil
+                    if self.localActivityDirty { self.refreshActivity(metricsOnly: !self.localActivityNeedsDiscovery) }
+                }
+            }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
             self.now = Date()
             self.localActivities = result.activities
+            if !onlyMetrics {
+                self.watchedLogURLs = result.watchURLs
+                self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
+            }
             self.combineActivities()
             self.onStatusChange?()
         }
@@ -459,25 +491,31 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
-            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH) { [weak self] activities, statuses, unavailable, requests, names in
+            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, refreshPolicy: self.activityRefreshPolicy) { [weak self] activities, statuses, unavailable, requests, names, performance in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names)
+                    self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names, performance: performance)
                 }
             }
+            // A hover/collapse can occur while start is awaiting the monitor.
+            await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
         }
     }
 
     func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
-                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate]) {
+                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = []) {
+        let oldLocal = Set(remoteActivities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
+        let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         now = Date(); remoteActivities = activities
         completionInbox.updateNames(names)
+        completionInbox.updatePerformance(performance)
         if streamStatuses != statuses { streamStatuses = statuses }
         if unavailableSSH != unavailable { unavailableSSH = unavailable }
         observeAttentionRequests(requests)
         combineActivities()
+        if oldLocal != newLocal { refreshActivity() }
     }
     func observeAttentionRequests(_ requests: [PendingAttentionRequest]) {
         if attentionRequests != requests { attentionRequests = requests }
@@ -514,7 +552,12 @@ final class IslandModel: ObservableObject {
         }
         onLayoutChange?()
         onStatusChange?()
-        guard sourceChanged else { return }
+        guard sourceChanged else {
+            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval)
+            refreshRemote()
+            return
+        }
+        logWatcher.stop()
         invalidateWork()
         let previous = client
         client = nil
@@ -544,6 +587,7 @@ final class IslandModel: ObservableObject {
 
     func shutdown() async {
         stopped = true
+        logWatcher.stop()
         clock?.invalidate()
         closeWork?.cancel()
         noticeWork?.cancel()

@@ -57,17 +57,19 @@ public enum DemoScenario {
             value.merge(fields) { _, new in new }; return value
         }
         var events = [event("metadata", -30, ["name": name, "model": "Codex"]), event("turn/started", -30),
-                      event("item/started", -28, ["itemId": "reasoning", "itemType": "reasoning"]),
+                      event("item/started", -28, ["itemId": "reasoning", "itemType": "reasoning", "hasText": true]),
                       event("thread/tokenUsage/updated", -25, ["outputTokens": 300]),
-                      event("thread/tokenUsage/updated", -14, ["outputTokens": 965])]
+                      event("item/completed", -14, ["itemId": "reasoning", "itemType": "reasoning"]),
+                      event("thread/tokenUsage/updated", -14, ["outputTokens": 965, "lastOutputTokens": 665, "lastReasoningTokens": 265])]
         if stage == .tool {
             events += [event("item/started", -10, ["itemId": "tool", "itemType": "commandExecution"])]
         } else {
             if stage == .responding {
                 events += [event("item/started", -9, ["itemId": "answer", "itemType": "agentMessage"]),
-                           event("item/agentMessage/delta", -1)]
+                           event("item/agentMessage/delta", -1, ["hasText": true])]
             }
-            events += [event("thread/tokenUsage/updated", 0, ["outputTokens": 1815])]
+            events += [event("item/completed", 0, ["itemId": "answer", "itemType": "agentMessage"]),
+                       event("thread/tokenUsage/updated", 0, ["outputTokens": 1815, "lastOutputTokens": 850, "lastReasoningTokens": 100])]
             if stage == .completed { events += [event("turn/completed", 0, ["status": "completed"])] }
         }
         stream.consume(["kind": "runtimeBatch", "events": events])

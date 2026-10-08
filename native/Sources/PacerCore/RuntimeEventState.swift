@@ -16,6 +16,8 @@ public struct RuntimeStreamStatus: Equatable, Sendable {
 struct RuntimeEventState: Sendable {
     private var fallback: [String: SessionActivity] = [:]
     private var live: [String: SessionActivity] = [:]
+    private var metricLogs: [String: SessionActivity] = [:]
+    private var metricUpdates: [String: SessionPerformanceUpdate] = [:]
     private var names: [String: SessionNameUpdate] = [:]
     private var invalidated: Set<String> = []
     private var released: Set<String> = []
@@ -30,13 +32,18 @@ struct RuntimeEventState: Sendable {
     let sourceName: String?
 
     init(sourceID: String?, sourceName: String?) { self.sourceID = sourceID; self.sourceName = sourceName }
+    var performanceUpdates: [SessionPerformanceUpdate] { Array(metricUpdates.values) }
     var nameUpdates: [SessionNameUpdate] { Array(names.values) }
     var activities: [SessionActivity] {
         ActivitySourceMerger.merge(logged: Array(fallback.values),
             streamed: live.values.filter {
                 (status.connected && ($0.hasLiveEvidence || invalidated.contains($0.id))) ||
                 ($0.hasLiveEvidence && [.completed, .interrupted].contains($0.phase))
-            }).filter { value in
+            }).map { value in
+                var value = value
+                if let logged = metricLogs[value.id] { value.mergePerformance(from: logged) }
+                return value
+            }.filter { value in
                 guard let idle = confirmedIdle[value.id], ![.completed, .interrupted].contains(value.phase) else { return true }
                 return (value.phaseChangedAt ?? value.turnStartedAt ?? .distantPast) > idle
             }
@@ -54,6 +61,7 @@ struct RuntimeEventState: Sendable {
     /// Deliver terminal/gap evidence once before reclaiming unloaded transport
     /// state. CompletionInbox owns card retention and rejects older log replay.
     mutating func releasePublishedState() {
+        metricUpdates.removeAll()
         for id in released {
             if let value = live[id], let logged = fallback[id],
                let merged = ActivitySourceMerger.merge(logged: [logged], streamed: [value]).first {
@@ -67,7 +75,27 @@ struct RuntimeEventState: Sendable {
         released.removeAll()
     }
     mutating func consume(_ frame: [String: Any]) {
-        if frame["kind"] as? String == "streamInvalidated", let thread = frame["threadId"] as? String {
+        if frame["kind"] as? String == "performance", let rows = frame["sessions"] as? [[String: Any]], rows.count <= 32 {
+            for row in rows {
+                guard let thread = row["threadId"] as? String, UUID(uuidString: thread) != nil,
+                      let records = row["records"] as? [[String: Any]], records.count <= 512 else { continue }
+                let id = (sourceID ?? "local") + ":" + thread.lowercased()
+                var value = row["reset"] as? Bool == true ? nil : metricLogs[id]
+                if value == nil { value = SessionActivity(id: id, sourceHost: sourceName, sourceHostID: sourceID, phaseAwareRate: true) }
+                let prelude = row["preludeCount"] as? Int ?? 0
+                for (index, record) in records.enumerated() {
+                    if let bytes = try? JSONSerialization.data(withJSONObject: record) { value!.consume(bytes) }
+                    if row["partial"] as? Bool == true, index + 1 == prelude { value!.markPartialRate() }
+                }
+                metricLogs[id] = value
+                if let update = SessionPerformanceUpdate(value!) { metricUpdates[id] = update }
+            }
+            if metricLogs.count > 64 {
+                for id in metricLogs.keys.sorted(by: { (metricLogs[$0]?.lastObserved ?? .distantPast) > (metricLogs[$1]?.lastObserved ?? .distantPast) }).dropFirst(64) {
+                    metricLogs.removeValue(forKey: id); metricUpdates.removeValue(forKey: id)
+                }
+            }
+        } else if frame["kind"] as? String == "streamInvalidated", let thread = frame["threadId"] as? String {
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
             if var value = live[id], ![.completed, .interrupted].contains(value.phase) {
                 value.markUnconfirmed(); live[id] = value; invalidated.insert(id)

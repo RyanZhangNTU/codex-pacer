@@ -329,3 +329,12 @@
 "activity.failed" = "Task failed";
 
 "quota.exhausted" = "Quota exhausted";
+
+// Response performance
+"performance.awaiting_usage" = "Awaiting usage";
+"performance.awaiting_usage_help" = "TPS is available once a request settles and its full output window is observed. A tilde marks the older cumulative-counter estimate.";
+"performance.first_output" = "First output %@";
+"performance.latency_help" = "Observed from this turn’s start to the first received text or reasoning text. Includes queue, network and client delivery time; unavailable when attached mid-turn.";
+"performance.response_help" = "Latest settled request: %d output tokens / %.2f s, including reasoning once and excluding tool waits. Timing ends at the last observed generated item. This is response throughput, not decoder speed.";
+"performance.total_help" = "Global total TPS: %.1f t/s, the sum of available rates across running chats. Tool waits contribute zero; waiting, finished and internal-review chats are excluded. Each chat uses its latest measured request rate.";
+"performance.partial_total_help" = "Global total TPS: %.1f t/s. Some running chats have missing or older measurements, so this is a partial total. Tool waits contribute zero; waiting, finished and internal-review chats are excluded.";

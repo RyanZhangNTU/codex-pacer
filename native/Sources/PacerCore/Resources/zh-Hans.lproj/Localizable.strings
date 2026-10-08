@@ -329,3 +329,12 @@
 "activity.failed" = "任务失败";
 
 "quota.exhausted" = "额度用尽";
+
+// Response performance
+"performance.awaiting_usage" = "等待用量";
+"performance.awaiting_usage_help" = "请求结算且完整观察到输出时段后显示 TPS；波浪号表示旧版累计计数估算。";
+"performance.first_output" = "首输出 %@";
+"performance.latency_help" = "从本轮开始到首次收到文本或推理文本，包含排队、网络和客户端传递时间；中途接入时不提供延迟。";
+"performance.response_help" = "最近一次已结算请求：%d 个输出 token / %.2f 秒，推理 token 只计算一次，排除工具等待。时段截止至最后观察到的生成条目，表示响应吞吐而非解码速度。";
+"performance.total_help" = "全局总 TPS：%.1f t/s，为所有运行会话可用速率之和。工具等待贡献 0；待回复、已结束和内部审查会话不计入。各会话使用最近一次测得的请求均速。";
+"performance.partial_total_help" = "全局总 TPS：%.1f t/s。部分运行会话缺少测量或数据已过期，因此合计不完整。工具等待贡献 0；待回复、已结束和内部审查会话不计入。";

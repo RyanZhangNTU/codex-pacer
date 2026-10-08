@@ -47,6 +47,13 @@ public struct CompletionInbox: Sendable {
             entries[update.id] = entry
         }
     }
+    public mutating func updatePerformance(_ updates: [SessionPerformanceUpdate]) {
+        for update in updates {
+            guard var entry = entries[update.id] else { continue }
+            update.apply(to: &entry.activity)
+            entries[update.id] = entry
+        }
+    }
     @discardableResult
     public mutating func observe(_ activities: [SessionActivity], at now: Date, retention: TimeInterval) -> [SessionActivity] {
         // A released stream may be followed by an older log baseline. Only a
@@ -79,7 +86,9 @@ public struct CompletionInbox: Sendable {
             // sub-millisecond difference; genuinely future records stay out.
             guard age >= -0.001, retention == 0 || age < retention else { continue }
             if var entry = entries[activity.id] {
+                let previousMetrics = entry.activity
                 entry.activity = activity
+                entry.activity.mergePerformance(from: previousMetrics)
                 // Older log replay must not undo a later metadata-only rename.
                 entry.nameUpdate?.apply(to: &entry.activity)
                 entries[activity.id] = entry

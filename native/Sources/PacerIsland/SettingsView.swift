@@ -338,6 +338,7 @@ struct SettingsView: View {
             defaults.set(directory, forKey: "codexHome")
             displayMode.save(to: defaults)
             widthSettings.save(to: defaults)
+            defaults.removeObject(forKey: "performanceRefreshMode")
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")
