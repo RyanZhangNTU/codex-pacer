@@ -309,6 +309,8 @@ final class RuntimeLifecycleTests: XCTestCase {
 
     func testPipeBackpressurePreservesBurstLargerThanStreamCapacity() async throws {
         let child = Process(), output = Pipe()
+        let childEnded = expectation(description: "Burst writer exited")
+        child.terminationHandler = { _ in childEnded.fulfill() }
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         child.arguments = ["-c", "import os; data=b'x'*(8*1024*1024);\nwhile data:\n n=os.write(1,data);data=data[n:]"]
         child.standardOutput = output; child.standardError = FileHandle.nullDevice
@@ -324,7 +326,9 @@ final class RuntimeLifecycleTests: XCTestCase {
             try await Task.sleep(nanoseconds: 1_000_000)
             output.fileHandleForReading.readabilityHandler = handler
         }
-        child.waitUntilExit()
+        // Foundation's synchronous exit wait can stall on an async executor
+        // after pipe EOF; observe the callback established before launch.
+        await fulfillment(of: [childEnded], timeout: 5)
         XCTAssertEqual(child.terminationStatus, 0)
         XCTAssertEqual(received, 8 * 1024 * 1024)
     }

@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var displayMode = IslandDisplayMode.load()
     @State private var widthSettings = IslandWidthSettings.load()
+    @State private var compactLayout = CompactIslandLayout.load()
+    @State private var editingCompactLayout = false
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -67,10 +69,13 @@ struct SettingsView: View {
                         Text(L10n.text("settings.width_adaptive")).tag(IslandWidthSettings.Mode.adaptive)
                         Text(L10n.text("settings.width_fixed")).tag(IslandWidthSettings.Mode.fixed)
                     }
-                    IslandWidthControl(settings: $widthSettings,
+                    IslandWidthControl(model: model, settings: $widthSettings, layout: compactLayout,
                         attached: displayMode == .notch || (displayMode == .automatic && model.isAttached))
                     Text(L10n.text(widthSettings.mode == .adaptive ? "settings.width_adaptive_help" : "settings.width_fixed_help"))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(L10n.text("layout.customize")) { editingCompactLayout = true }
+                    Text(L10n.text("layout.settings_hint")).font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Toggle(L10n.text("settings.menu_bar"), isOn: $showInMenuBar)
                         .help(L10n.text("settings.menu_bar_help"))
@@ -195,13 +200,18 @@ struct SettingsView: View {
                 Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? L10n.text("build.development")).font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 Button(L10n.text("common.cancel"), action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
-                Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: save)
+                Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: { save() })
                     .keyboardShortcut(.defaultAction).disabled(saving)
             }
         }
         .padding(24)
         .frame(width: 480, height: 670)
         .environment(\.locale, L10n.locale)
+        .sheet(isPresented: $editingCompactLayout) {
+            CompactLayoutEditor(model: model, layout: compactLayout,
+                attached: displayMode == .notch || (displayMode == .automatic && model.isAttached),
+                saving: saving || testingCLI, validation: validation) { value in save(layout: value) }
+        }
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             windowID = QuotaWindowSelection.validated(windowID, snapshot: model.quota)
@@ -307,7 +317,7 @@ struct SettingsView: View {
             if directory { home = path } else { executable = path }
         }
     }
-    private func save() {
+    private func save(layout: CompactIslandLayout? = nil) {
         if languageChanges && updater.sessionInProgress {
             validation = L10n.text("language.update_busy"); return
         }
@@ -326,6 +336,7 @@ struct SettingsView: View {
                 validation = L10n.text("settings.invalid_home"); return
             }
         }
+        if let layout { compactLayout = layout.normalized }
         widthSettings = widthSettings.normalized
         saving = true
         Task { @MainActor in
@@ -338,6 +349,7 @@ struct SettingsView: View {
             defaults.set(directory, forKey: "codexHome")
             displayMode.save(to: defaults)
             widthSettings.save(to: defaults)
+            compactLayout.save(to: defaults)
             defaults.removeObject(forKey: "performanceRefreshMode")
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
@@ -365,7 +377,7 @@ struct SettingsView: View {
                 } else {
                     validation = L10n.text("language.restart_failed", L10n.text("language.missing_helper"))
                 }
-            } else { onClose() }
+            } else { editingCompactLayout = false; onClose() }
         }
     }
 }

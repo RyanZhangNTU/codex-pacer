@@ -8,7 +8,8 @@ struct IslandView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            IslandHeader(model: model)
+            CompactIslandHeader(model: model, layout: model.compactLayout,
+                baseHeight: model.baseHeaderHeight, notchWidth: model.notchWidth)
                 .background(attached && model.appearance == .liquidGlass
                     ? Color.black.opacity(presentation.blackOpacity) : Color.clear)
         }
@@ -34,95 +35,6 @@ struct IslandView: View {
         .onExitCommand { model.close() }
         .preferredColorScheme(.dark)
         .environment(\.locale, L10n.locale)
-    }
-}
-
-private struct IslandHeader: View {
-    @ObservedObject var model: IslandModel
-    private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
-    private var attached: Bool { model.isAttached }
-
-    var body: some View {
-        GeometryReader { geometry in
-            let wing = model.notchWidth > 0 ? max(0, (geometry.size.width - 42 - model.notchWidth - 8) / 2) : nil
-            header(wingWidth: wing)
-        }
-        .frame(height: model.topHeight)
-        .background {
-            // Measure unconstrained labels, independently of the animated window.
-            // The hidden copy has no buttons, hover handlers or accessibility nodes.
-            HStack(spacing: 0) {
-                leadingContent.fixedSize().background(GeometryReader { geometry in
-                    Color.clear.preference(key: HeaderContentWidths.self,
-                        value: .init(leading: geometry.size.width))
-                })
-                trailingContent.fixedSize().background(GeometryReader { geometry in
-                    Color.clear.preference(key: HeaderContentWidths.self,
-                        value: .init(trailing: geometry.size.width))
-                })
-            }.hidden().allowsHitTesting(false).accessibilityHidden(true)
-        }
-        .onPreferenceChange(HeaderContentWidths.self) { widths in
-            DispatchQueue.main.async {
-                model.updateMeasuredHeaderWidth(leading: widths.leading, trailing: widths.trailing)
-            }
-        }
-    }
-
-    private func header(wingWidth: CGFloat?) -> some View {
-        // Only a hardware camera gap needs equal wings. Without that gap,
-        // keep each label's natural width to match the adaptive measurement.
-        HStack(spacing: 6) {
-            Button { model.openCompletionOrPin() } label: {
-                leadingContent.frame(height: model.topHeight).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(width: wingWidth, alignment: .leading)
-            .help(model.pendingInputRequests.first.map { L10n.text("attention.open", $0.sourceName ?? L10n.text("activity.local_task")) } ??
-                model.pendingCompletions.first.map { L10n.text("activity.open_help", model.projectName($0)) } ?? L10n.text("common.pin"))
-            .accessibilityLabel(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ?
-                L10n.text("activity.header_pin", model.headerStatus) : L10n.text("activity.header_open", model.headerStatus))
-            if model.notchWidth > 0 { Color.clear.frame(width: model.notchWidth + 8, height: model.topHeight) }
-            else { Spacer(minLength: 10) }
-            Button { model.togglePin() } label: {
-                trailingContent.frame(height: model.topHeight).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(width: wingWidth, alignment: .trailing)
-            .accessibilityLabel(L10n.text("activity.quota_pin", model.compactWindow, model.quotaSummary))
-        }.padding(.horizontal, 15)
-    }
-
-    private var leadingContent: some View {
-        HStack(spacing: attached ? 4 : 6) {
-            Image(systemName: model.headerSymbol).font(.system(size: 12)).foregroundStyle(model.headerTint)
-            Text(model.headerDisplayStatus)
-                .font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
-            if !model.hidesHeaderRate, model.showsRate, model.rate != nil {
-                Text(model.headerRateText ?? "—")
-                    .font(.system(size: 10)).monospacedDigit()
-                    .foregroundStyle(model.rateIsFresh ? Color.white : secondary)
-                    .help(model.rateHelp)
-                Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
-            } else if !attached && model.expanded && model.showsRate && model.pendingCompletions.isEmpty {
-                Text(L10n.text("performance.awaiting_usage")).font(.system(size: 10)).foregroundStyle(secondary)
-            }
-        }
-    }
-
-    private var trailingContent: some View {
-        HStack(spacing: 6) {
-            if let warning = model.quotaWarningSymbol {
-                Image(systemName: warning).font(.system(size: 10))
-                    .foregroundStyle((model.remaining ?? 100) <= 0 ? Color.red : Color.orange)
-                    .accessibilityLabel(L10n.text((model.remaining ?? 100) <= 0 ? "quota.exhausted" : "notice.low_quota"))
-            }
-            Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
-            Text(model.compactWindow).font(.system(size: 10)).foregroundStyle(secondary)
-            if model.stale || model.errorMessage != nil {
-                Image(systemName: StatusSymbols.freshness).font(.system(size: 10)).foregroundStyle(secondary)
-            }
-        }
     }
 }
 
@@ -267,19 +179,5 @@ private struct ExpandedContentHeight: PreferenceKey {
         let next = nextValue()
         value.content = max(value.content, next.content)
         value.footer = max(value.footer, next.footer)
-    }
-}
-
-private struct HeaderWidthMeasurement: Equatable {
-    var leading: CGFloat = 0
-    var trailing: CGFloat = 0
-}
-
-private struct HeaderContentWidths: PreferenceKey {
-    static var defaultValue = HeaderWidthMeasurement()
-    static func reduce(value: inout HeaderWidthMeasurement, nextValue: () -> HeaderWidthMeasurement) {
-        let next = nextValue()
-        value.leading = max(value.leading, next.leading)
-        value.trailing = max(value.trailing, next.trailing)
     }
 }

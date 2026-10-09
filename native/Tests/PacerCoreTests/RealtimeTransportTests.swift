@@ -251,6 +251,74 @@ final class RealtimeTransportTests: XCTestCase {
         XCTAssertEqual(try scanTimes(connected: false), [0, 60, 120])
     }
 
+    func testBrokenFallbackScanKeepsHealthySocketAndHeartbeatsWithoutImmediateRetries() throws {
+        let trace = try failureTimeline(scanFailure: true)
+        XCTAssertEqual(trace["scans"] as? [Double], [0, 120])
+        XCTAssertEqual(trace["connections"] as? Int, 1, "Log failures cannot disconnect a healthy subscription")
+        let statuses = try XCTUnwrap(trace["statuses"] as? [[String: Any]])
+        XCTAssertTrue(statuses.allSatisfy { $0["connected"] as? Bool == true })
+        XCTAssertEqual(statuses.compactMap { $0["at"] as? Double }, stride(from: 0.0, through: 120.0, by: 15.0).map { $0 })
+        XCTAssertLessThan(try XCTUnwrap(trace["loops"] as? Int), 200)
+    }
+
+    func testRecurringUnexpectedErrorsWaitAndContinueStatusHeartbeats() throws {
+        let trace = try failureTimeline(scanFailure: false)
+        XCTAssertEqual(trace["connections"] as? Int, 0)
+        let statuses = try XCTUnwrap(trace["statuses"] as? [[String: Any]])
+        XCTAssertTrue(statuses.allSatisfy { $0["connected"] as? Bool == false })
+        XCTAssertEqual(statuses.compactMap { $0["at"] as? Double }, stride(from: 0.0, through: 120.0, by: 15.0).map { $0 })
+        XCTAssertEqual(trace["loops"] as? Int, 130, "Persistent failures must wait instead of using a CPU-bound retry loop")
+    }
+
+    private func failureTimeline(scanFailure: Bool) throws -> [String: Any] {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-helper-failure-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let simulation = #"""
+        clock=[0.0];test_scans=[];test_statuses=[];test_connections=[]
+        def monotonic():
+            # Fail the regression promptly rather than hanging on the old spin.
+            if globals().get('loop_iterations',0)>1000:raise KeyboardInterrupt()
+            return clock[0]
+        time.monotonic=monotonic
+        def advance(delay):
+            clock[0]+=delay
+            if clock[0]>=130:raise KeyboardInterrupt()
+        time.sleep=advance
+        def ready(r,w,x,delay):advance(delay);return ([],[],[])
+        select.select=ready
+        class TestIndex:
+            def __init__(self,path):self.fd=-1;self.next_check=1e9
+            def check(self,now):
+                if not SCAN_FAILURE:raise AttributeError('synthetic persistent error')
+                return False
+            def close(self):pass
+        class TestWS:
+            def __init__(self,path):
+                test_connections.append(clock[0]);self.buf=b'';self.s=object();self.last_receive=1e9
+            def send_frame(self,*args):pass
+            def close(self):pass
+        class TestSession:
+            def __init__(self,ws):
+                self.ready=True;self.pending={};self.attached=set();self.evidenced=set();self.queue=[];self.notices=0;self.last_list=0;self.listing=False;self.rollout_paths={}
+            def request_loaded(self):self.last_list=clock[0];return True
+        def test_snapshot(excluding=()):
+            test_scans.append(clock[0]);raise AttributeError('synthetic broken log')
+        def test_emit(value):
+            if isinstance(value,dict) and value.get('kind')=='status':test_statuses.append({'at':clock[0],'connected':value['connected']})
+        WebSocket=TestWS;Session=TestSession;RuntimeIndexChanges=TestIndex;snapshot=test_snapshot;emit=test_emit
+        """#.replacingOccurrences(of: "SCAN_FAILURE", with: scanFailure ? "True" : "False")
+        let main = String(RealtimeProbe.script.dropFirst(RealtimeProbe.library.count))
+        let child = Process(), stdout = Pipe(), stderr = Pipe()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-c", RealtimeProbe.library + "\n" + simulation + main + "\nprint(json.dumps({'scans':test_scans,'statuses':test_statuses,'connections':len(test_connections),'loops':loop_iterations}))", Data(home.path.utf8).base64EncodedString(), "ssh-lifetime"]
+        child.standardOutput = stdout; child.standardError = stderr
+        try child.run()
+        let bytes = stdout.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    }
+
     /// A test-owned server sends real masked/unmasked and fragmented WS frames.
     /// It never connects to Codex, runs a model, or touches a user's thread.
     private static let fixture = #"""

@@ -81,9 +81,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var lastMeasuredRate: OutputEstimate?
     private var lastMeasuredTurnID: String?
     private var lastMeasuredExact = false
+    private var lastMeasuredPerformance: ResponsePerformance?
     private var latencyTurnID: String?
     private var latencyStart: Date?
     private var retainedLatency: TimeInterval?
+    public private(set) var firstTokenReportedAt: Date?
     private var logTurnStart: Date?
     private var ignoringInheritedHistory = false
     mutating func updateParent(_ value: String?) {
@@ -100,18 +102,28 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private mutating func rememberRate() {
         if retainedLatency == nil, let latency = performanceMeter.firstTokenLatency, let turnID {
             latencyTurnID = turnID; retainedLatency = latency
+            if firstTokenReportedAt == nil { firstTokenReportedAt = (latencyStart ?? logTurnStart ?? turnStartedAt)?.addingTimeInterval(latency) ?? lastObserved }
         }
         if let sample = responsePerformance {
-            if lastMeasuredRate == nil || sample.completedAt >= lastMeasuredRate!.reportedAt {
-                lastMeasuredRate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
+            let rate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
+            if shouldRemember(rate, turn: sample.turnID, performance: sample, exact: true) {
+                lastMeasuredRate = rate; lastMeasuredPerformance = sample
                 lastMeasuredTurnID = sample.turnID; lastMeasuredExact = true
             }
         } else if let at = lastObserved,
                   let sample = (phaseAwareRate ? generationRate.estimate(at: at) : outputRate.estimate(at: at)),
                   sample.value > 0, sample.value.isFinite,
-                  lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt {
-            lastMeasuredRate = sample; lastMeasuredTurnID = turnID; lastMeasuredExact = false
+                  shouldRemember(sample, turn: turnID, performance: nil, exact: false) {
+            lastMeasuredRate = sample; lastMeasuredPerformance = nil; lastMeasuredTurnID = turnID; lastMeasuredExact = false
         }
+    }
+    private func shouldRemember(_ sample: OutputEstimate, turn: String?, performance: ResponsePerformance?, exact: Bool) -> Bool {
+        guard let previous = lastMeasuredRate else { return true }
+        if turn == lastMeasuredTurnID, abs(sample.reportedAt.timeIntervalSince(previous.reportedAt)) < 2 {
+            let incoming = performance?.source == .requestUsage, retained = lastMeasuredPerformance?.source == .requestUsage
+            if incoming != retained { return incoming }
+        }
+        return sample.reportedAt > previous.reportedAt || (sample.reportedAt == previous.reportedAt && exact && !lastMeasuredExact)
     }
     /// Display continuity is independent of the new turn's accounting baseline.
     public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
@@ -129,12 +141,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if let key = other.latencyTurnID, key == turnID || (turnID == nil && !liveStatusOnly) {
             if retainedLatency == nil { retainedLatency = other.retainedLatency; latencyTurnID = key }
             if latencyStart == nil { latencyStart = other.latencyStart; latencyTurnID = key }
+            if firstTokenReportedAt == nil { firstTokenReportedAt = other.firstTokenReportedAt }
         }
         if turnID == other.turnID, subagentStates.isEmpty { subagentStates = other.subagentStates }
         if let sample = other.lastMeasuredRate,
-           lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt ||
-            (sample.reportedAt == lastMeasuredRate!.reportedAt && other.lastMeasuredExact && !lastMeasuredExact) {
+           shouldRemember(sample, turn: other.lastMeasuredTurnID, performance: other.lastMeasuredPerformance, exact: other.lastMeasuredExact) {
             lastMeasuredRate = sample; lastMeasuredTurnID = other.lastMeasuredTurnID; lastMeasuredExact = other.lastMeasuredExact
+            lastMeasuredPerformance = other.lastMeasuredPerformance
         }
     }
     private var waitingCallID: String?
@@ -151,6 +164,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard retainedLatency == nil, latencyTurnID == turnID, let start = latencyStart,
               date >= start, date.timeIntervalSince(start) <= 3600 else { return }
         retainedLatency = date.timeIntervalSince(start)
+        firstTokenReportedAt = date
     }
     fileprivate static func loggedFirstOutput(_ payload: [String: Any]) -> Double? {
         if let value = payload["first_output_at_ms"] as? Double { return value }
@@ -173,11 +187,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard canonicalized().id == other.canonicalized().id, turnID == other.turnID else { return }
         performanceMeter.merge(from: other.performanceMeter)
         performanceMeter.apply(sample: nil, latency: other.firstTokenLatency)
+        if firstTokenReportedAt == nil { firstTokenReportedAt = other.firstTokenReportedAt }
         rememberRate()
     }
     mutating func applyPerformance(_ update: SessionPerformanceUpdate) {
         guard canonicalized().id == update.id, turnID == update.turnID else { return }
         performanceMeter.apply(sample: update.response, latency: update.firstTokenLatency)
+        if firstTokenReportedAt == nil { firstTokenReportedAt = update.firstTokenReportedAt }
         rememberRate()
     }
     private var phaseAwareRate: Bool
@@ -315,6 +331,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let first = Date(timeIntervalSince1970: ms / 1000)
             guard first >= began, first <= reported, first.timeIntervalSince(began) <= 3600 else { return }
             latencyTurnID = turnID; retainedLatency = first.timeIntervalSince(began)
+            firstTokenReportedAt = first
             return // Numeric timing does not drive lifecycle or TPS accounting.
         }
         if value["type"] as? String == "event_msg", payload["type"] as? String == "task_complete",
@@ -323,6 +340,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
            milliseconds.isFinite, milliseconds >= 0, milliseconds <= 3_600_000,
            (payload["duration_ms"] as? Double).map({ milliseconds <= $0 }) ?? true {
             latencyTurnID = turnID; retainedLatency = milliseconds / 1000
+            firstTokenReportedAt = logTurnStart?.addingTimeInterval(milliseconds / 1000) ??
+                (value["timestamp"] as? String).flatMap(Self.parseDate)
         }
         guard ["event_msg", "response_item"].contains(value["type"] as? String ?? ""),
               let timestamp = value["timestamp"] as? String,
@@ -347,6 +366,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if retainedLatency == nil, let ms = payload["first_output_latency_ms"] as? Double,
                ms.isFinite, ms >= 0, ms <= 3_600_000 {
                 latencyTurnID = eventTurn; retainedLatency = ms / 1000
+                firstTokenReportedAt = date.addingTimeInterval(ms / 1000)
             }
         case "task_complete", "turn_aborted":
             retireTurn(turnID)
@@ -376,6 +396,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         logTurnStart = nil
         if (id != nil && id != latencyTurnID) || (id == nil && [.completed, .interrupted].contains(phase)) {
             latencyTurnID = id; latencyStart = nil; retainedLatency = nil
+            firstTokenReportedAt = nil
         }
         // An unknown ID during reconnect does not prove the old turn ended.
         if let id { identifyTurn(id) }
@@ -402,7 +423,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private mutating func identifyTurn(_ id: String) {
-        if let latencyTurnID, latencyTurnID != id { latencyStart = nil; retainedLatency = nil }
+        if let latencyTurnID, latencyTurnID != id { latencyStart = nil; retainedLatency = nil; firstTokenReportedAt = nil }
         latencyTurnID = id
         if id != lastIdentifiedTurn { retireTurn(lastIdentifiedTurn) }
         lastIdentifiedTurn = id; turnID = id
@@ -628,7 +649,6 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if toolItem {
                 if liveItems.count < 128 { liveItems.insert(id) }
                 generationRate.setWaiting(true, at: date); phase = .running; stage = .tool
-                performanceMeter.modelOutput(at: date, textDelta: false)
                 performanceMeter.setWaiting(true, at: date)
             } else if modelItem {
                 if event["hasText"] as? Bool == true {

@@ -105,13 +105,16 @@ final class PanelController: NSObject {
             hardwareNotchWidth: demoNotch ? 180 : hardwareNotchWidth)
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
-        if model.topHeight != layout.topHeight { model.topHeight = layout.topHeight }
+        if model.baseHeaderHeight != layout.topHeight { model.baseHeaderHeight = layout.topHeight }
+        let headerHeight = layout.topHeight
+        if model.topHeight != headerHeight { model.topHeight = headerHeight }
         let widths = model.widthSettings
         let collapsedWidth = widths.desiredWidth(expanded: false, notchWidth: layout.notchWidth,
-            leading: model.measuredHeaderLeading, trailing: model.measuredHeaderTrailing)
+            leading: 80, trailing: 65,
+            headerWidth: model.measuredCompactWidth)
         let expandedWidth = widths.desiredWidth(expanded: true, notchWidth: layout.notchWidth,
-            leading: model.measuredHeaderLeading, trailing: model.measuredHeaderTrailing,
-            contentWidth: model.measuredContentWidth)
+            leading: 80, trailing: 65,
+            contentWidth: model.measuredContentWidth, headerWidth: model.measuredCompactWidth)
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
             topHeight: model.topHeight, expanded: model.expanded, attached: layout.attached,
             contentHeight: model.panelContentHeight, desiredWidth: model.expanded ? expandedWidth : collapsedWidth)
