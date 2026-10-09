@@ -81,6 +81,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var lastMeasuredRate: OutputEstimate?
     private var lastMeasuredTurnID: String?
     private var lastMeasuredExact = false
+    private var lastMeasuredPerformance: ResponsePerformance?
     private var latencyTurnID: String?
     private var latencyStart: Date?
     private var retainedLatency: TimeInterval?
@@ -102,16 +103,25 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             latencyTurnID = turnID; retainedLatency = latency
         }
         if let sample = responsePerformance {
-            if lastMeasuredRate == nil || sample.completedAt >= lastMeasuredRate!.reportedAt {
-                lastMeasuredRate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
+            let rate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
+            if shouldRemember(rate, turn: sample.turnID, performance: sample, exact: true) {
+                lastMeasuredRate = rate; lastMeasuredPerformance = sample
                 lastMeasuredTurnID = sample.turnID; lastMeasuredExact = true
             }
         } else if let at = lastObserved,
                   let sample = (phaseAwareRate ? generationRate.estimate(at: at) : outputRate.estimate(at: at)),
                   sample.value > 0, sample.value.isFinite,
-                  lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt {
-            lastMeasuredRate = sample; lastMeasuredTurnID = turnID; lastMeasuredExact = false
+                  shouldRemember(sample, turn: turnID, performance: nil, exact: false) {
+            lastMeasuredRate = sample; lastMeasuredPerformance = nil; lastMeasuredTurnID = turnID; lastMeasuredExact = false
         }
+    }
+    private func shouldRemember(_ sample: OutputEstimate, turn: String?, performance: ResponsePerformance?, exact: Bool) -> Bool {
+        guard let previous = lastMeasuredRate else { return true }
+        if turn == lastMeasuredTurnID, abs(sample.reportedAt.timeIntervalSince(previous.reportedAt)) < 2 {
+            let incoming = performance?.source == .requestUsage, retained = lastMeasuredPerformance?.source == .requestUsage
+            if incoming != retained { return incoming }
+        }
+        return sample.reportedAt > previous.reportedAt || (sample.reportedAt == previous.reportedAt && exact && !lastMeasuredExact)
     }
     /// Display continuity is independent of the new turn's accounting baseline.
     public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
@@ -132,9 +142,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         if turnID == other.turnID, subagentStates.isEmpty { subagentStates = other.subagentStates }
         if let sample = other.lastMeasuredRate,
-           lastMeasuredRate == nil || sample.reportedAt > lastMeasuredRate!.reportedAt ||
-            (sample.reportedAt == lastMeasuredRate!.reportedAt && other.lastMeasuredExact && !lastMeasuredExact) {
+           shouldRemember(sample, turn: other.lastMeasuredTurnID, performance: other.lastMeasuredPerformance, exact: other.lastMeasuredExact) {
             lastMeasuredRate = sample; lastMeasuredTurnID = other.lastMeasuredTurnID; lastMeasuredExact = other.lastMeasuredExact
+            lastMeasuredPerformance = other.lastMeasuredPerformance
         }
     }
     private var waitingCallID: String?
@@ -628,7 +638,6 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if toolItem {
                 if liveItems.count < 128 { liveItems.insert(id) }
                 generationRate.setWaiting(true, at: date); phase = .running; stage = .tool
-                performanceMeter.modelOutput(at: date, textDelta: false)
                 performanceMeter.setWaiting(true, at: date)
             } else if modelItem {
                 if event["hasText"] as? Bool == true {

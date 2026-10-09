@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Preserve pending model-response timing across nested tools so delayed usage cannot divide a full request's output by the gap between tools.
+- Apply authoritative request-log corrections to retained TPS and prevent older runtime caches from restoring an inflated value; preserve the original freshness timestamp.
+
 ## 2.3.1
 
 - Group spawned agents under their parent conversation, show the running descendant count and add the available parent/child TPS without duplicate task rows or totals.
