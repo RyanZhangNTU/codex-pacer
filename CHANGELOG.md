@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.2
 
 - Preserve pending model-response timing across nested tools so delayed usage cannot divide a full request's output by the gap between tools.
 - Apply authoritative request-log corrections to retained TPS and prevent older runtime caches from restoring an inflated value; preserve the original freshness timestamp.
