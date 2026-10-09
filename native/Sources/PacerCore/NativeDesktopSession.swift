@@ -19,6 +19,9 @@ struct NativeDesktopSession {
     private(set) var notifications = 0
     let hosts: Set<String>
     let localRuntime: Bool
+    private func suppliesRuntime(_ host: String) -> Bool {
+        host == "local" ? localRuntime : host.hasPrefix("remote-control:")
+    }
     var send: ([String: Any]) throws -> Void
     init(hosts: Set<String>, localRuntime: Bool = true, send: @escaping ([String: Any]) throws -> Void) throws {
         self.hosts = hosts; self.localRuntime = localRuntime; self.send = send
@@ -69,7 +72,7 @@ struct NativeDesktopSession {
             ["turn/started", "turn/completed", "thread/status/changed", "subagents/updated"].contains(method) { try publishEvents() }
     }
     private mutating func release(_ key: Key, at now: Date) throws {
-        if dormant[key] == nil, key.host == "local" && localRuntime { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
+        if dormant[key] == nil, suppliesRuntime(key.host) { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
         try follow(key, value: false); streams.removeValue(forKey: key)
         dormant.removeValue(forKey: key)
         waiting.removeAll { $0 == key }; try drain()
@@ -79,7 +82,7 @@ struct NativeDesktopSession {
         // turn ending can hide the next turn in an already-open conversation.
         // Keep bounded revision/header-only interests, outside active slots.
         if dormant[key] == nil {
-            if key.host == "local" && localRuntime { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
+            if suppliesRuntime(key.host) { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
             retirementSequence &+= 1; dormant[key] = retirementSequence
         }
         let inactive = dormant.filter { $0.key.host == key.host }.sorted { $0.value < $1.value }
@@ -129,6 +132,21 @@ struct NativeDesktopSession {
                   let id = Self.valid(try result.fields(["clientId"])["clientId"]?.string()) else { throw JSONFieldView.Failure.malformed }
             client = id; ready = true; try drain(); try status(loopIterations: 0); return
         }
+        if kind == "broadcast", method == "client-status-changed", fields["version"]?.integer() == 0,
+           let params = fields["params"], params.isObject {
+            let status = try params.fields(["clientId", "status"])
+            if status["status"]?.string() == "disconnected", let owner = Self.valid(status["clientId"]?.string()),
+               fields["sourceClientId"]?.string() == owner {
+                try publishEvents()
+                for (key, projection) in Array(streams) where projection.isOwned(by: owner) {
+                    if suppliesRuntime(key.host) { try frame(["kind": "streamInvalidated", "hostId": key.host, "threadId": key.thread]) }
+                    streams.removeValue(forKey: key); dormant.removeValue(forKey: key)
+                    awaitingSnapshot[key] = SnapshotWait(retry: 0, next: now.addingTimeInterval(Self.snapshotDelays[0]))
+                    try follow(key, value: true)
+                }
+            }
+            return
+        }
         guard kind == "broadcast", let params = fields["params"], params.isObject else { return }
         let p = try params.fields(["conversationId", "hostId", "following", "change"])
         guard let host = p["hostId"]?.string(), hosts.contains(host), let thread = Self.valid(p["conversationId"]?.string()) else { return }
@@ -167,10 +185,15 @@ struct NativeDesktopSession {
         guard fields["version"]?.integer() == 11, let owner = Self.valid(fields["sourceClientId"]?.string()) else { throw JSONFieldView.Failure.malformed }
         notifications += 1
         let old = streams[key]
-        var projection = old ?? DesktopWireProjection(threadID: thread, attentionOnly: host != "local" || !localRuntime)
+        var projection = old ?? DesktopWireProjection(threadID: thread, attentionOnly: !suppliesRuntime(host),
+                                                      requiresResumedRuntime: host.hasPrefix("remote-control:"))
         do {
             let output = try projection.consume(change, owner: owner, at: now)
             streams[key] = projection
+            if !projection.runtimeAvailable, old?.runtimeAvailable == true, suppliesRuntime(host) {
+                try publishEvents()
+                try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread])
+            }
             let previousChildren = Set(old?.collaborationThreadIDs ?? [])
             try discover(projection.collaborationThreadIDs.filter { $0 != thread && !previousChildren.contains($0) }.map { Key(host: host, thread: $0) })
             awaitingSnapshot.removeValue(forKey: key)
@@ -192,7 +215,7 @@ struct NativeDesktopSession {
             // a completion awaiting the normal batch flush. Deliver it before
             // invalidating the projection so the consumer observes wire order.
             try publishEvents()
-            if host == "local" && localRuntime { try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread]) }
+            if suppliesRuntime(host) { try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread]) }
             switch error {
             case DesktopProjectionFailure.review, DesktopProjectionFailure.ephemeral:
                 if excluded.count < 1024 { excluded.insert(key) }
@@ -214,7 +237,7 @@ struct NativeDesktopSession {
         events.removeAll(keepingCapacity: true)
     }
     mutating func status(loopIterations: Int) throws {
-        for host in hosts.sorted() where host == "local" && localRuntime {
+        for host in hosts.sorted() where suppliesRuntime(host) {
             let current = streams.filter { $0.key.host == host }
             try frame(["kind": "status", "hostId": host, "connected": ready && (host == "local" || !current.isEmpty),
                 "attached": current.filter { $0.value.isActive }.count,

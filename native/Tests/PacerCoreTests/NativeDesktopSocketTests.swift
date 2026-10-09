@@ -108,6 +108,11 @@ final class NativeDesktopSocketTests: XCTestCase {
             }
         }
     }
+    func testRemoteControlMonitorDiscoversRoutingAndDeliversCompletionBeforeEOF() async throws {
+        for atomic in [true, false] {
+            try await verifyMonitorEnding(host: "remote-control:env_fixture", atomic: atomic, routing: true)
+        }
+    }
     private func verifyMonitorEnding(host: String, atomic: Bool, routing: Bool) async throws {
         final class Ending: @unchecked Sendable {
             let lock = NSLock()
@@ -125,9 +130,10 @@ final class NativeDesktopSocketTests: XCTestCase {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         if routing {
-            let config: [String: Any] = ["codex-managed-remote-connections": [
+            var config: [String: Any] = ["codex-managed-remote-connections": [
                 ["source": "discovered", "hostId": host, "alias": "synthetic", "displayName": "Synthetic SSH"]
             ], "remote-connection-auto-connect-by-host-id": [host: true]]
+            if host.hasPrefix("remote-control:") { config["remote-projects"] = [["hostId": host]] }
             try JSONSerialization.data(withJSONObject: config).write(to: home.appendingPathComponent(".codex-global-state.json"))
         }
         let child = Process(), stderr = Pipe()
@@ -140,6 +146,9 @@ final class NativeDesktopSocketTests: XCTestCase {
         // connection open until an ordinary timer flush can save the ending.
         script = script.replacingOccurrences(of: "time.sleep(.3)\nchange({'type':'patches','baseRevision':1", with: "time.sleep(.01)\nchange({'type':'patches','baseRevision':1")
         script = script.replacingOccurrences(of: "'hostId':'local'", with: "'hostId':'\(host)'")
+        if host.hasPrefix("remote-control:") {
+            script = script.replacingOccurrences(of: "'conversationState':{'threadRuntimeStatus'", with: "'conversationState':{'resumeState':'resumed','threadRuntimeStatus'")
+        }
         if routing {
             // This is the real missed-discovery path: the owner sends no
             // following announcement. A brand-new SSH task only adds routing

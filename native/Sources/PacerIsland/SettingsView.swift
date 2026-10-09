@@ -24,6 +24,7 @@ struct SettingsView: View {
     @State private var systemNotifications = UserDefaults.standard.bool(forKey: "systemNotifications")
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
+    @State private var monitorRemoteControl = UserDefaults.standard.object(forKey: "monitorRemoteControl") == nil || UserDefaults.standard.bool(forKey: "monitorRemoteControl")
     @State private var validation: String?
     @State private var saving = false
     @State private var language = LanguagePreference.load()
@@ -152,6 +153,10 @@ struct SettingsView: View {
                     Toggle(L10n.text("settings.hide_projects"), isOn: $hideProjects)
                 }
                 Section(L10n.text("settings.data_source")) {
+                    Toggle(L10n.text("settings.monitor_remote_control"), isOn: $monitorRemoteControl)
+                    Text(L10n.text("settings.remote_control_help"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
                     if monitorSSH, !model.unavailableSSH.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -332,8 +337,9 @@ struct SettingsView: View {
             let allowed = systemNotifications ? await NotificationDelivery.requestPermission() : false
             let requestedSystem = systemNotifications
             let defaults = UserDefaults.standard
-            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "") || monitorSSH != model.monitorsSSH
+            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "") || monitorSSH != model.monitorsSSH || monitorRemoteControl != model.monitorsRemoteControl
             defaults.set(monitorSSH, forKey: "monitorSSH")
+            defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
             defaults.set(cli, forKey: "codexExecutable")
             defaults.set(directory, forKey: "codexHome")
             displayMode.save(to: defaults)

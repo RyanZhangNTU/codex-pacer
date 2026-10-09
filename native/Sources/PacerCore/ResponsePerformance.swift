@@ -69,11 +69,18 @@ struct ResponsePerformanceMeter: Equatable, Sendable {
         guard waiting || generatedEnd == nil else { return } // A background tool finishing mid-response is not a new model request.
         responseStart = date; generatedEnd = nil; waiting = false
     }
-    mutating func observeRuntime(total: Int, last: Int?, reasoning: Int?, at date: Date, cached: Bool = false) {
+    mutating func observeRuntime(total: Int, last: Int?, reasoning: Int?, at date: Date, cached: Bool = false, allowAfterFinish: Bool = false) {
         guard total >= 0 else { return }
         let previous = cumulative
         cumulative = total
-        guard !hasRequestUsage, !cached, previous != total, !finished, let last, last > 0,
+        if cached {
+            if previous != nil, previous != total {
+                responseStart = nil; generatedEnd = nil
+                if latest?.source == .runtimeUsage { latest = nil }
+            }
+            return
+        }
+        guard !hasRequestUsage, previous != total, !finished || allowAfterFinish, let last, last > 0,
               let turnID, let start = responseStart, let end = generatedEnd, end >= start,
               date >= end, date.timeIntervalSince(end) <= 30 else { return }
         // An unchanged/replayed `last` cannot create a second response. A known
