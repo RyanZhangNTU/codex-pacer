@@ -7,10 +7,10 @@ final class CompactIslandLayoutTests: XCTestCase {
         layout.move(.tps, to: .trailing)
         layout.move(.status, to: .trailing, before: .tps)
         XCTAssertEqual(layout.trailing.suffix(2), [.status, .tps])
-        XCTAssertEqual(layout.leading, [.statusIcon])
+        XCTAssertEqual(layout.leading, [.statusIcon, .taskCount])
         layout.move(.tps, to: .trailing, before: .quotaMetric)
-        XCTAssertEqual(layout.leading, [.statusIcon])
-        XCTAssertEqual(layout.trailing, [.quotaWarning, .tps, .quotaMetric, .quotaWindow, .freshness, .status])
+        XCTAssertEqual(layout.leading, [.statusIcon, .taskCount])
+        XCTAssertEqual(layout.trailing, [.lowQuotaWarning, .tps, .quotaMetric, .quotaLabel, .quotaDelayWarning, .sshWarning, .status])
         let previous = layout
         layout.move(.status, to: .trailing, before: .status)
         XCTAssertEqual(layout, previous, "Dropping on itself must not lose the dragged component")
@@ -32,22 +32,22 @@ final class CompactIslandLayoutTests: XCTestCase {
         defaults.set(610, forKey: "specifiedIslandWidth")
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         XCTAssertNil(defaults.data(forKey: CompactIslandLayout.defaultsKey), "A new or upgraded profile must not write settings on load")
-        var layout = CompactIslandLayout(leading: [.tps], trailing: [.quotaMetric, .settings])
+        var layout = CompactIslandLayout(leading: [.tps], trailing: [.quotaMetric, .firstOutput])
         layout.save(to: defaults)
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
         XCTAssertEqual(IslandWidthSettings.load(from: defaults), .init(mode: .fixed, width: 610))
         for component in layout.components { layout.hide(component) }
         layout.save(to: defaults)
         XCTAssertTrue(CompactIslandLayout.load(from: defaults).components.isEmpty, "Hiding everything is intentional")
-        for invalid in [Data("broken".utf8), Data(#"{"version":3,"leading":[],"trailing":[]}"#.utf8), Data(repeating: 0, count: 8193)] {
+        for invalid in [Data("broken".utf8), Data(#"{"version":4,"leading":[],"trailing":[]}"#.utf8), Data(repeating: 0, count: 8193)] {
             defaults.set(invalid, forKey: CompactIslandLayout.defaultsKey)
             XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         }
     }
     func testLegacyCenterMigrationPreservesChoicesWithoutWritingUntilSave() throws {
-        let data = Data(#"{"version":1,"leading":["tps","futureMetric","status"],"center":["tps","settings"],"trailing":["status"]}"#.utf8)
+        let data = Data(#"{"version":1,"leading":["tps","futureMetric","status"],"center":["tps","firstOutput","settings"],"trailing":["status"]}"#.utf8)
         let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
-        XCTAssertEqual(layout.leading, [.tps, .status, .settings])
+        XCTAssertEqual(layout.leading, [.tps, .status, .firstOutput])
         XCTAssertTrue(layout.trailing.isEmpty)
         let name = "CompactLayoutMigrationTests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
@@ -58,7 +58,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         layout.save(to: defaults)
         let saved = try XCTUnwrap(defaults.data(forKey: CompactIslandLayout.defaultsKey))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
-        XCTAssertEqual(object["version"] as? Int, 2)
+        XCTAssertEqual(object["version"] as? Int, 3)
         XCTAssertNil(object["center"])
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
     }
@@ -72,5 +72,15 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(widths.desiredWidth(expanded: true, notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 440)
         XCTAssertEqual(IslandWidthSettings(mode: .fixed, width: 600).desiredWidth(expanded: false,
             notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 600)
+    }
+    func testLegacyComponentMigrationDropsRemovedControlsAndPreservesCustomOrder() throws {
+        let data = Data(#"{"version":2,"leading":["statusIcon","subagentCount","taskCount","settings"],"trailing":["pace","quotaMetric","quotaWindow","quotaLabel","resetCountdown","quotaWarning","freshness","pin","refresh","quit","collapse"]}"#.utf8)
+        let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
+        XCTAssertEqual(layout.leading, [.statusIcon, .taskCount])
+        XCTAssertEqual(layout.trailing, [.quotaMetric, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning])
+        let standard = Data(#"{"version":2,"leading":["statusIcon","status","tps"],"trailing":["quotaWarning","quotaMetric","quotaWindow","freshness"]}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: standard), .standard)
+        let empty = Data(#"{"version":2,"leading":[],"trailing":[]}"#.utf8)
+        XCTAssertTrue(try JSONDecoder().decode(CompactIslandLayout.self, from: empty).components.isEmpty)
     }
 }

@@ -85,8 +85,9 @@ struct CompactIslandComponent: View {
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
         switch component {
         case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .quotaWarning: return model.quotaWarningSymbol != nil
-        case .freshness: return model.stale || model.errorMessage != nil
+        case .lowQuotaWarning: return model.quotaWarningSymbol != nil
+        case .quotaDelayWarning: return model.stale || model.errorMessage != nil
+        case .sshWarning: return model.hasSSHConnectionIssue
         default: return true
         }
     }
@@ -96,7 +97,6 @@ struct CompactIslandComponent: View {
             .font(.system(size: 11))
             .lineLimit(1)
             .help(help)
-            .disabled(component == .refresh && model.refreshing)
     }
     @ViewBuilder private var content: some View {
         switch component {
@@ -110,66 +110,56 @@ struct CompactIslandComponent: View {
                 Text(model.headerRateText ?? "—").monospacedDigit()
                     .foregroundStyle(model.rateIsFresh ? Color.white : secondary)
                 Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
-            }.font(.system(size: 10))
+            }.font(.system(size: 10)).fixedSize(horizontal: true, vertical: false)
         case .taskCount:
-            Text(L10n.text("activity.task_count_compact", String(model.running.count + model.waiting.count)))
-        case .subagentCount:
-            Label(String(model.taskGroups.reduce(0) { $0 + $1.runningSubagentCount }), systemImage: "person.2")
+            let count = model.running.count + model.waiting.count
+            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                .frame(minWidth: 16, minHeight: 16).padding(.horizontal, count < 10 ? 0 : 2)
+                .background(Color.white.opacity(0.08), in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.6))
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(L10n.text("activity.task_count_compact", String(count)))
         case .firstOutput:
-            let latency = model.running.max(by: {
-                ($0.turnStartedAt ?? $0.lastObserved ?? .distantPast) < ($1.turnStartedAt ?? $1.lastObserved ?? .distantPast)
-            })?.firstTokenLatency
-            Text(L10n.text("performance.first_output", latency.map { String(format: "%.2f s", $0) } ?? "—"))
-                .monospacedDigit()
-        case .quotaWarning:
+            Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—").monospacedDigit()
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
+        case .lowQuotaWarning:
             Image(systemName: model.quotaWarningSymbol ?? "exclamationmark.triangle")
                 .foregroundStyle((model.remaining ?? 100) <= 0 ? Color.red : Color.orange)
                 .accessibilityLabel(L10n.text((model.remaining ?? 100) <= 0 ? "quota.exhausted" : "notice.low_quota"))
         case .quotaMetric:
             Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
-        case .quotaWindow:
-            Text(model.compactWindow).font(.system(size: 10)).foregroundStyle(secondary)
-        case .pace:
-            Text(model.pace.map { L10n.text("quota.pace_value", Int($0.rounded())) } ?? "—").monospacedDigit()
-        case .resetCountdown:
-            Text(resetText).foregroundStyle(secondary).monospacedDigit()
-        case .freshness:
-            Image(systemName: StatusSymbols.freshness).foregroundStyle(secondary)
-                .accessibilityLabel(model.freshnessText)
-        case .pin: Image(systemName: model.pinned ? "pin.fill" : "pin").accessibilityLabel(component.label)
-        case .refresh: Image(systemName: "arrow.clockwise").accessibilityLabel(component.label)
-        case .settings: Image(systemName: "gearshape").accessibilityLabel(component.label)
-        case .quit: Image(systemName: "power").accessibilityLabel(component.label)
-        case .collapse: Image(systemName: "chevron.up").accessibilityLabel(component.label)
+                .fixedSize(horizontal: true, vertical: false)
+        case .quotaLabel:
+            Text(model.compactMetricLabel).font(.system(size: 10)).foregroundStyle(secondary)
+        case .timeRemaining:
+            HStack(spacing: 3) {
+                Image(systemName: "hourglass").font(.system(size: 9))
+                Text(model.remainingTimePercent.map { "\(Int($0.rounded()))%" } ?? "—").monospacedDigit()
+            }.foregroundStyle(secondary).fixedSize(horizontal: true, vertical: false)
+        case .quotaDelayWarning:
+            Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+                .accessibilityLabel(component.label)
+        case .sshWarning:
+            Image(systemName: "wifi.slash").foregroundStyle(.orange).accessibilityLabel(component.label)
         }
-    }
-    private var resetText: String {
-        guard let seconds = model.selectedWindow?.remainingSeconds(at: model.now) else { return L10n.text("quota.reset_unknown") }
-        if seconds <= 0 { return L10n.text("quota.waiting_update") }
-        if seconds < 60 { return L10n.text("quota.reset_soon") }
-        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
-        if days > 0 { return L10n.text("quota.reset_days", days, hours) }
-        if hours > 0 { return L10n.text("quota.reset_hours", hours, minutes) }
-        return L10n.text("quota.reset_minutes", minutes)
     }
     private var help: String {
         switch component {
         case .statusIcon, .status:
             return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open", model.headerStatus)
         case .tps: return model.rateHelp
-        case .firstOutput: return L10n.text("performance.latency_help")
-        case .freshness: return model.freshnessText
-        case .resetCountdown: return model.selectedWindow?.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? component.label
+        case .firstOutput: return L10n.text("layout.latest_ttft_help")
+        case .quotaDelayWarning: return L10n.text("layout.component.quotaDelayWarning") + " · " + model.freshnessText
+        case .timeRemaining: return L10n.text("layout.time_remaining_help")
+        case .quotaMetric, .quotaLabel: return L10n.text("layout.metric_help")
+        case .sshWarning: return L10n.text("source.ssh_retrying")
         default: return component.label
         }
     }
     private func action() {
         switch component {
         case .statusIcon, .status: model.openCompletionOrPin()
-        case .refresh: model.refreshQuota(); model.refreshActivity()
-        case .settings: model.onSettings?()
-        case .quit: model.onQuit?()
-        case .collapse: model.close()
         default: model.togglePin()
         }
     }

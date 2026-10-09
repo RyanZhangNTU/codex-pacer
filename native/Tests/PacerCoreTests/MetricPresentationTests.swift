@@ -38,14 +38,17 @@ final class MetricPresentationTests: XCTestCase {
         event(&replacement, "turn/attached", 5)
         replacement.mergeDisplayMetadata(from: a)
         XCTAssertEqual(replacement.firstTokenLatency, 2)
+        XCTAssertEqual(replacement.firstTokenReportedAt, start.addingTimeInterval(2))
         replacement.markDiscontinuity()
         XCTAssertEqual(replacement.firstTokenLatency, 2)
         event(&replacement, "turn/attached", 6)
         XCTAssertEqual(replacement.firstTokenLatency, 2)
         event(&replacement, "turn/started", 7, turn: "next")
         XCTAssertNil(replacement.firstTokenLatency)
+        XCTAssertNil(replacement.firstTokenReportedAt)
         event(&replacement, "item/agentMessage/delta", 10, turn: "next", ["hasText": true])
         XCTAssertEqual(replacement.firstTokenLatency, 3)
+        XCTAssertEqual(replacement.firstTokenReportedAt, start.addingTimeInterval(10))
     }
     func testBackendLatencyEnrichesOnlyItsTurnAndDoesNotReplayCompletion() throws {
         var a = SessionActivity(id: thread, phaseAwareRate: true)

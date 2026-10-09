@@ -42,6 +42,10 @@ struct CompactLayoutEditor: View {
                 ForEach(CompactIslandLayout.Group.allCases, id: \.rawValue) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.label).font(.system(size: 13, weight: .semibold)).padding(.leading, 6)
+                        if group == .warnings {
+                            Text(L10n.text("layout.warnings_hint")).font(.system(size: 10)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true).padding(.leading, 6)
+                        }
                         VStack(spacing: 3) {
                             ForEach(group.components) { component in componentChoice(component) }
                         }
@@ -60,7 +64,7 @@ struct CompactLayoutEditor: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24).frame(width: 820, height: 570)
+        .padding(24).frame(width: 820, height: 500)
         .background(Color(nsColor: .windowBackgroundColor))
         .disabled(saving)
         .coordinateSpace(name: "compact-editor")
@@ -94,15 +98,20 @@ struct CompactLayoutEditor: View {
     private func laneEditor(_ lane: CompactIslandLayout.Lane) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(lane.label).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(draft[lane]) { component in chip(component) }
-                    if draft[lane].isEmpty {
-                        Text(L10n.text("layout.drop_here")).font(.system(size: 11)).foregroundStyle(.tertiary)
-                            .padding(.vertical, 7)
-                    }
-                }.padding(.bottom, 3)
-            }.scrollIndicators(.hidden)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(draft[lane]) { component in chip(component).id(component) }
+                        if draft[lane].isEmpty {
+                            Text(L10n.text("layout.drop_here")).font(.system(size: 11)).foregroundStyle(.tertiary)
+                                .padding(.vertical, 7)
+                        }
+                    }.padding(.bottom, 3)
+                }
+                .onChange(of: draft[lane]) { previous, current in
+                    if let added = current.first(where: { !previous.contains($0) }) { proxy.scrollTo(added, anchor: .trailing) }
+                }
+            }
         }
         .padding(10).frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))

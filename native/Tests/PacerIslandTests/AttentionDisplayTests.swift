@@ -83,6 +83,7 @@ final class AttentionDisplayTests: XCTestCase {
         let model = IslandModel(demo: true)
         XCTAssertEqual(model.headerSymbol, StatusSymbols.thinking, "The thinking fixture updates after the tool fixture")
         XCTAssertEqual(model.headerStatus, L10n.text("activity.task_count_compact", "2"))
+        XCTAssertEqual(model.headerDisplayStatus, L10n.text("activity.thinking"), "Visible status describes the stage; the task badge owns the count")
         let tint = model.headerTint
         model.unavailableSSH = ["Synthetic"]
         model.errorMessage = "Synthetic quota failure"

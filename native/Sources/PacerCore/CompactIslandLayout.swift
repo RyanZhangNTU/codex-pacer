@@ -3,21 +3,15 @@ import Foundation
 /// Presentation only. Hiding a component never stops its underlying collector.
 public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
-        case statusIcon, status, tps, taskCount, subagentCount, firstOutput
-        case quotaWarning, quotaMetric, quotaWindow, pace, resetCountdown, freshness
-        case pin, refresh, settings, quit, collapse
+        case statusIcon, status, taskCount, tps, firstOutput
+        case quotaMetric, quotaLabel, timeRemaining
+        case lowQuotaWarning, quotaDelayWarning, sshWarning
         public var id: String { rawValue }
         public var label: String { L10n.text("layout.component." + rawValue) }
-        public var shortLabel: String {
-            switch self {
-            case .statusIcon, .status, .tps, .quotaWarning, .quotaMetric, .quotaWindow, .freshness:
-                L10n.text("layout.short." + rawValue)
-            default: label
-            }
-        }
+        public var shortLabel: String { L10n.text("layout.short." + rawValue) }
         public var preferredLane: Lane {
             switch self {
-            case .statusIcon, .status, .tps, .taskCount, .subagentCount, .firstOutput: .leading
+            case .statusIcon, .status, .taskCount, .tps, .firstOutput: .leading
             default: .trailing
             }
         }
@@ -25,33 +19,36 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             switch self {
             case .statusIcon: "brain.head.profile"
             case .status: "text.alignleft"
+            case .taskCount: "number.circle"
             case .tps: "speedometer"
-            case .taskCount: "square.stack"
-            case .subagentCount: "person.2"
             case .firstOutput: "timer"
-            case .quotaWarning: "exclamationmark.triangle"
             case .quotaMetric: "chart.pie"
-            case .quotaWindow: "calendar"
-            case .pace: "gauge"
-            case .resetCountdown: "arrow.counterclockwise"
-            case .freshness: "clock.badge.checkmark"
-            case .pin: "pin"
-            case .refresh: "arrow.clockwise"
-            case .settings: "gearshape"
-            case .quit: "power"
-            case .collapse: "chevron.up"
+            case .quotaLabel: "tag"
+            case .timeRemaining: "hourglass"
+            case .lowQuotaWarning: "exclamationmark.triangle"
+            case .quotaDelayWarning: "clock.badge.exclamationmark"
+            case .sshWarning: "wifi.slash"
+            }
+        }
+        fileprivate static func saved(_ value: String) -> Self? {
+            switch value {
+            case "quotaWindow": .quotaLabel
+            case "resetCountdown": .timeRemaining
+            case "quotaWarning": .lowQuotaWarning
+            case "freshness": .quotaDelayWarning
+            default: Self(rawValue: value)
             }
         }
     }
     public enum Group: String, CaseIterable, Sendable {
-        case tasks, performance, quota, controls
+        case tasks, performance, quota, warnings
         public var label: String { L10n.text("layout.group." + rawValue) }
         public var components: [Component] {
             switch self {
-            case .tasks: [.statusIcon, .status, .taskCount, .subagentCount]
+            case .tasks: [.statusIcon, .status, .taskCount]
             case .performance: [.tps, .firstOutput]
-            case .quota: [.quotaMetric, .pace, .quotaWindow, .resetCountdown, .quotaWarning, .freshness]
-            case .controls: [.pin, .refresh, .settings, .quit, .collapse]
+            case .quota: [.quotaMetric, .quotaLabel, .timeRemaining]
+            case .warnings: [.lowQuotaWarning, .quotaDelayWarning, .sshWarning]
             }
         }
     }
@@ -60,14 +57,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 2
+    public let version = 3
     public var leading: [Component]
     public var trailing: [Component]
     public init(leading: [Component] = [], trailing: [Component] = []) {
         self.leading = leading; self.trailing = trailing
     }
-    public static let standard = Self(leading: [.statusIcon, .status, .tps],
-        trailing: [.quotaWarning, .quotaMetric, .quotaWindow, .freshness])
+    public static let standard = Self(leading: [.statusIcon, .status, .taskCount, .tps],
+        trailing: [.lowQuotaWarning, .quotaMetric, .quotaLabel, .quotaDelayWarning, .sshWarning])
     public subscript(_ lane: Lane) -> [Component] {
         get { lane == .leading ? leading : trailing }
         set { if lane == .leading { leading = newValue } else { trailing = newValue } }
@@ -107,14 +104,19 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard schema == 1 || schema == 2 else {
+        guard (1...3).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
-        leading = try values.decode([String].self, forKey: .leading).compactMap(Component.init(rawValue:))
+        leading = try values.decode([String].self, forKey: .leading).compactMap(Component.saved)
         if schema == 1 {
-            leading += try values.decodeIfPresent([String].self, forKey: .center)?.compactMap(Component.init(rawValue:)) ?? []
+            leading += try values.decodeIfPresent([String].self, forKey: .center)?.compactMap(Component.saved) ?? []
         }
-        trailing = try values.decode([String].self, forKey: .trailing).compactMap(Component.init(rawValue:))
+        trailing = try values.decode([String].self, forKey: .trailing).compactMap(Component.saved)
+        if schema < 3, leading == [.statusIcon, .status, .tps],
+           trailing == [.lowQuotaWarning, .quotaMetric, .quotaLabel, .quotaDelayWarning] {
+            leading.insert(.taskCount, at: 2)
+            trailing.append(.sshWarning)
+        }
     }
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
