@@ -24,7 +24,8 @@ final class CompactComponentDisplayTests: XCTestCase {
             "The latest first output may belong to a turn that started earlier")
         older.consumeLive(["method": "item/started", "threadId": firstID, "turnId": "turn", "at": now.timeIntervalSince1970,
             "itemType": "commandExecution", "itemId": "tool"])
-        XCTAssertEqual(older.firstTokenReportedAt, now.addingTimeInterval(-18))
+        XCTAssertEqual(try XCTUnwrap(older.firstTokenReportedAt).timeIntervalSince(now.addingTimeInterval(-18)), 0,
+            accuracy: 0.000001, "Tool events retain the original measurement timestamp within epoch conversion precision")
         latest.consumeLive(["method": "turn/completed", "threadId": secondID, "turnId": "turn", "at": now.timeIntervalSince1970])
         model.activities = [older, latest, activity(firstID, turn: "new", start: now, first: nil)]
         XCTAssertEqual(try XCTUnwrap(model.latestFirstOutputLatency), 22, accuracy: 0.000001)
