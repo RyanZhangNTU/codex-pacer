@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var displayMode = IslandDisplayMode.load()
     @State private var widthSettings = IslandWidthSettings.load()
+    @State private var compactLayout = CompactIslandLayout.load()
+    @State private var editingCompactLayout = false
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -67,10 +69,13 @@ struct SettingsView: View {
                         Text(L10n.text("settings.width_adaptive")).tag(IslandWidthSettings.Mode.adaptive)
                         Text(L10n.text("settings.width_fixed")).tag(IslandWidthSettings.Mode.fixed)
                     }
-                    IslandWidthControl(settings: $widthSettings,
+                    IslandWidthControl(model: model, settings: $widthSettings, layout: compactLayout,
                         attached: displayMode == .notch || (displayMode == .automatic && model.isAttached))
                     Text(L10n.text(widthSettings.mode == .adaptive ? "settings.width_adaptive_help" : "settings.width_fixed_help"))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(L10n.text("layout.customize")) { editingCompactLayout = true }
+                    Text(L10n.text("layout.settings_hint")).font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Toggle(L10n.text("settings.menu_bar"), isOn: $showInMenuBar)
                         .help(L10n.text("settings.menu_bar_help"))
@@ -202,6 +207,10 @@ struct SettingsView: View {
         .padding(24)
         .frame(width: 480, height: 670)
         .environment(\.locale, L10n.locale)
+        .sheet(isPresented: $editingCompactLayout) {
+            CompactLayoutEditor(model: model, layout: $compactLayout,
+                attached: displayMode == .notch || (displayMode == .automatic && model.isAttached))
+        }
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             windowID = QuotaWindowSelection.validated(windowID, snapshot: model.quota)
@@ -338,6 +347,7 @@ struct SettingsView: View {
             defaults.set(directory, forKey: "codexHome")
             displayMode.save(to: defaults)
             widthSettings.save(to: defaults)
+            compactLayout.save(to: defaults)
             defaults.removeObject(forKey: "performanceRefreshMode")
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()

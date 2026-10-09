@@ -35,15 +35,16 @@ public struct IslandWidthSettings: Equatable, Sendable {
 
     /// Hardware-notch headers need equal wings so the camera gap stays centered.
     public func desiredWidth(expanded: Bool, notchWidth: CGFloat, leading: CGFloat,
-                             trailing: CGFloat, contentWidth: CGFloat = 0) -> CGFloat {
+                             trailing: CGFloat, contentWidth: CGFloat = 0, headerWidth: CGFloat = 0) -> CGFloat {
         let gap = notchWidth.isFinite ? max(0, notchWidth) : 0
         let left = leading.isFinite ? max(0, leading) : 80
         let right = trailing.isFinite ? max(0, trailing) : 65
         let natural = gap > 0 ? gap + 8 + 42 + 2 * max(left, right) : 52 + left + right
-        let hardwareMinimum: CGFloat = gap > 0 ? gap + 200 : 180
+        let measured = headerWidth.isFinite ? max(0, headerWidth) : 0
+        let hardwareMinimum: CGFloat = measured > 0 ? (gap > 0 ? gap + 60 : 80) : (gap > 0 ? gap + 200 : 180)
         let settings = normalized
         if settings.mode == .fixed { return max(hardwareMinimum, CGFloat(settings.width)) }
-        let collapsed = max(hardwareMinimum, ceil(natural) + 2)
+        let collapsed = max(hardwareMinimum, ceil(measured > 0 ? measured : natural) + 2)
         guard expanded else { return collapsed }
         let content = contentWidth.isFinite ? max(0, contentWidth) : 0
         let panel = min(680, max(440, content))

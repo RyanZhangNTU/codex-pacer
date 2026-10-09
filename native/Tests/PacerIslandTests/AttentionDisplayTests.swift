@@ -19,6 +19,9 @@ final class AttentionDisplayTests: XCTestCase {
         XCTAssertEqual(model.headerStatus, L10n.text("attention.input"))
         XCTAssertEqual(model.headerDisplayStatus, model.headerStatus)
         model.isAttached = true
+        XCTAssertEqual(CompactIslandComponent.isVisible(.tps, model: model), !model.hidesHeaderRate)
+        XCTAssertTrue(CompactIslandComponent.isVisible(.tps, model: model, showsStatus: false),
+            "Hiding status text allows the chosen TPS component to remain visible during attention")
         XCTAssertEqual(model.headerDisplayStatus, L10n.text("attention.input"), "Notch retains the actionable meaning")
         XCTAssertEqual(model.headerStatus, L10n.text("attention.input"), "Accessibility retains the full meaning")
         let opened = expectation(description: "pending request destination opened")

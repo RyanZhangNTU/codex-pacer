@@ -29,6 +29,7 @@ final class IslandModel: ObservableObject {
     @Published var isAttached = false
     @Published var notchWidth: CGFloat = 0
     @Published var topHeight: CGFloat = 38
+    @Published var baseHeaderHeight: CGFloat = 38
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
@@ -42,16 +43,15 @@ final class IslandModel: ObservableObject {
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
     }
     private var measuredContentHeight: CGFloat?
-    private(set) var measuredHeaderLeading: CGFloat = 80
-    private(set) var measuredHeaderTrailing: CGFloat = 65
     private(set) var measuredContentWidth: CGFloat = 0
+    private(set) var measuredCompactWidth: CGFloat = 0
     var widthSettings: IslandWidthSettings { .load() }
-    func updateMeasuredHeaderWidth(leading: CGFloat, trailing: CGFloat) {
-        guard leading.isFinite, trailing.isFinite, leading > 0, trailing > 0 else { return }
-        let left = ceil(leading), right = ceil(trailing)
-        guard left != measuredHeaderLeading || right != measuredHeaderTrailing else { return }
-        measuredHeaderLeading = left
-        measuredHeaderTrailing = right
+    @Published private(set) var compactLayout = CompactIslandLayout.load()
+    func updateMeasuredCompactWidth(_ width: CGFloat) {
+        guard width.isFinite, width >= 0 else { return }
+        let rounded = ceil(width)
+        guard rounded != measuredCompactWidth else { return }
+        measuredCompactWidth = rounded
         onLayoutChange?()
     }
     func updateMeasuredContentWidth(_ width: CGFloat) {
@@ -568,6 +568,8 @@ final class IslandModel: ObservableObject {
     }
 
     func applySettings(sourceChanged: Bool) {
+        compactLayout = .load()
+        measuredCompactWidth = 0
         settingsRevision += 1
         if clock != nil { scheduleClock() }
         pruneCompletions()

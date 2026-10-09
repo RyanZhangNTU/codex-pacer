@@ -1,0 +1,180 @@
+import SwiftUI
+import PacerCore
+
+/// Three independently anchored lanes. Natural sizing keeps the center clear
+/// of both outer lanes, including when their widths are very different.
+struct CompactRowLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        guard sizes.count == 3 else { return .zero }
+        let left = sizes[0].width, middle = sizes[1].width, right = sizes[2].width
+        let natural = middle > 0 ? middle + 2 * max(left, right) + 16 : left + right + (left > 0 && right > 0 ? 10 : 0)
+        return CGSize(width: proposal.width ?? natural, height: sizes.map(\.height).max() ?? 0)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 3 else { return }
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let center = min(bounds.width, sizes[1].width)
+        let available = max(0, bounds.width - (center > 0 ? center + 16 : (sizes[0].width > 0 && sizes[2].width > 0 ? 10 : 0)))
+        let total = max(1, sizes[0].width + sizes[2].width)
+        let slots = center > 0 ? [available / 2, center, available / 2] :
+            [available * sizes[0].width / total, 0, available * sizes[2].width / total]
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(ProposedViewSize(width: slots[index], height: bounds.height))
+            let x = index == 0 ? bounds.minX : index == 1 ? bounds.midX - size.width / 2 : bounds.maxX - size.width
+            subviews[index].place(at: CGPoint(x: x, y: bounds.midY - size.height / 2), proposal: ProposedViewSize(size))
+        }
+    }
+}
+
+struct CompactIslandHeader: View {
+    @ObservedObject var model: IslandModel
+    let layout: CompactIslandLayout
+    let baseHeight: CGFloat
+    let notchWidth: CGFloat
+    var measuresLayout = true
+
+    var body: some View {
+        rowView
+            .padding(.horizontal, 15)
+            .frame(height: baseHeight)
+            .background {
+                rowView.fixedSize().background(GeometryReader { geometry in
+                    Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 30)
+                }).hidden().allowsHitTesting(false).accessibilityHidden(true)
+            }
+        .onPreferenceChange(CompactHeaderIdealWidth.self) { width in
+            guard measuresLayout else { return }
+            DispatchQueue.main.async { model.updateMeasuredCompactWidth(width) }
+        }
+        .contentShape(Rectangle())
+        .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.togglePin() })
+        .contextMenu {
+            Button(L10n.text("common.settings")) { model.onSettings?() }
+            Button(L10n.text("common.quit")) { model.onQuit?() }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.text("layout.collapsed"))
+    }
+
+    private var rowView: some View {
+        CompactRowLayout {
+            lane(layout.leading + (notchWidth > 0 ? layout.center : []), alignment: .leading)
+            if notchWidth > 0 { Color.clear.frame(width: notchWidth + 8, height: 1) }
+            else { lane(layout.center, alignment: .center) }
+            lane(layout.trailing, alignment: .trailing)
+        }
+    }
+    private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment) -> some View {
+        HStack(spacing: model.isAttached ? 4 : 6) {
+            ForEach(components.filter { CompactIslandComponent.isVisible($0, model: model,
+                showsStatus: layout.components.contains(.status)) }) { component in
+                CompactIslandComponent(model: model, component: component)
+            }
+        }.fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: alignment).clipped()
+    }
+}
+
+struct CompactIslandComponent: View {
+    @ObservedObject var model: IslandModel
+    let component: CompactIslandLayout.Component
+    private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
+
+    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
+        switch component {
+        case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
+        case .quotaWarning: return model.quotaWarningSymbol != nil
+        case .freshness: return model.stale || model.errorMessage != nil
+        default: return true
+        }
+    }
+    var body: some View {
+        Button(action: action) { content.padding(.vertical, 4).contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .lineLimit(1)
+            .help(help)
+            .disabled(component == .refresh && model.refreshing)
+    }
+    @ViewBuilder private var content: some View {
+        switch component {
+        case .statusIcon:
+            Image(systemName: model.headerSymbol).font(.system(size: 12)).foregroundStyle(model.headerTint)
+                .accessibilityLabel(component.label)
+        case .status:
+            Text(model.headerDisplayStatus).fontWeight(.medium)
+        case .tps:
+            HStack(spacing: 4) {
+                Text(model.headerRateText ?? "—").monospacedDigit()
+                    .foregroundStyle(model.rateIsFresh ? Color.white : secondary)
+                Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
+            }.font(.system(size: 10))
+        case .taskCount:
+            Text(L10n.text("activity.task_count_compact", String(model.running.count + model.waiting.count)))
+        case .subagentCount:
+            Label(String(model.taskGroups.reduce(0) { $0 + $1.runningSubagentCount }), systemImage: "person.2")
+        case .firstOutput:
+            let latency = model.running.max(by: {
+                ($0.turnStartedAt ?? $0.lastObserved ?? .distantPast) < ($1.turnStartedAt ?? $1.lastObserved ?? .distantPast)
+            })?.firstTokenLatency
+            Text(L10n.text("performance.first_output", latency.map { String(format: "%.2f s", $0) } ?? "—"))
+                .monospacedDigit()
+        case .quotaWarning:
+            Image(systemName: model.quotaWarningSymbol ?? "exclamationmark.triangle")
+                .foregroundStyle((model.remaining ?? 100) <= 0 ? Color.red : Color.orange)
+                .accessibilityLabel(L10n.text((model.remaining ?? 100) <= 0 ? "quota.exhausted" : "notice.low_quota"))
+        case .quotaMetric:
+            Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
+        case .quotaWindow:
+            Text(model.compactWindow).font(.system(size: 10)).foregroundStyle(secondary)
+        case .pace:
+            Text(model.pace.map { L10n.text("quota.pace_value", Int($0.rounded())) } ?? "—").monospacedDigit()
+        case .resetCountdown:
+            Text(resetText).foregroundStyle(secondary).monospacedDigit()
+        case .freshness:
+            Image(systemName: StatusSymbols.freshness).foregroundStyle(secondary)
+                .accessibilityLabel(model.freshnessText)
+        case .pin: Image(systemName: model.pinned ? "pin.fill" : "pin").accessibilityLabel(component.label)
+        case .refresh: Image(systemName: "arrow.clockwise").accessibilityLabel(component.label)
+        case .settings: Image(systemName: "gearshape").accessibilityLabel(component.label)
+        case .quit: Image(systemName: "power").accessibilityLabel(component.label)
+        case .collapse: Image(systemName: "chevron.up").accessibilityLabel(component.label)
+        }
+    }
+    private var resetText: String {
+        guard let seconds = model.selectedWindow?.remainingSeconds(at: model.now) else { return L10n.text("quota.reset_unknown") }
+        if seconds <= 0 { return L10n.text("quota.waiting_update") }
+        if seconds < 60 { return L10n.text("quota.reset_soon") }
+        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
+        if days > 0 { return L10n.text("quota.reset_days", days, hours) }
+        if hours > 0 { return L10n.text("quota.reset_hours", hours, minutes) }
+        return L10n.text("quota.reset_minutes", minutes)
+    }
+    private var help: String {
+        switch component {
+        case .statusIcon, .status:
+            return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open", model.headerStatus)
+        case .tps: return model.rateHelp
+        case .firstOutput: return L10n.text("performance.latency_help")
+        case .freshness: return model.freshnessText
+        case .resetCountdown: return model.selectedWindow?.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? component.label
+        default: return component.label
+        }
+    }
+    private func action() {
+        switch component {
+        case .statusIcon, .status: model.openCompletionOrPin()
+        case .refresh: model.refreshQuota(); model.refreshActivity()
+        case .settings: model.onSettings?()
+        case .quit: model.onQuit?()
+        case .collapse: model.close()
+        default: model.togglePin()
+        }
+    }
+}
+
+struct CompactHeaderIdealWidth: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}

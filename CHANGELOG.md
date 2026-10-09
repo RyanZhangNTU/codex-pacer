@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Customize the single-line collapsed bar with component visibility, drag ordering, left/center/right placement and a live preview; save or cancel the layout and restore defaults.
+- Fit adaptive collapsed width to the visible components while preserving the hardware camera gap, expanded task/quota layout and existing collection frequency.
+
 ## 2.3.2
 
 - Preserve pending model-response timing across nested tools so delayed usage cannot divide a full request's output by the gap between tools.
