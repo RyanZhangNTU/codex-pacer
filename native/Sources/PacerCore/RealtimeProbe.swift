@@ -172,7 +172,7 @@ enum RealtimeProbe {
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
             self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict()
-            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.3.1'},'capabilities':{'experimentalApi':True}},'initialize')
+            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'2.4.0'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')
@@ -445,8 +445,12 @@ enum RealtimeProbe {
                         if attempt>=3:hints.pop(tid,None)
                         else:hints[tid]=(attempt+1,now+[.5,1,2,5][attempt])
             if now>=next_scan and not local_only:
-                latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ());scans+=1;emit_snapshot(latest_snapshot);last_scan=time.monotonic()
-                next_scan=now+(120 if session and session.ready else 60)
+                # Reserve the next deadline before reading. A broken log must
+                # not spin on an overdue scan or interrupt a healthy socket.
+                last_scan=now;next_scan=now+(120 if session and session.ready else 60)
+                try:latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ())
+                except (OSError,ValueError,TypeError,AttributeError,KeyError,OverflowError):pass
+                else:scans+=1;emit_snapshot(latest_snapshot)
             if request_logs:
                 request_logs.sync(session.rollout_paths if session else {},now,batch_interval)
                 request_logs.read(now,batch_interval)
@@ -493,8 +497,19 @@ enum RealtimeProbe {
             try:flush_events(session)
             except BrokenPipeError:break
             if ws:ws.close()
-            ws=None;session=None;reconnect_at=time.monotonic()+30;next_status=0
+            ws=None;session=None;now=time.monotonic();reconnect_at=now+30
             if once:emit({'kind':'status','connected':False,'attached':0,'notifications':0,'fallbackScans':scans});break
+            if now>=next_status or status_stamp!=(False,0):
+                try:emit(stats(None,scans))
+                except BrokenPipeError:break
+                next_status=now+15;status_stamp=(False,0)
+            # Unexpected recurring failures still heartbeat, and wait at least
+            # one second. SSH stdin EOF remains interruptible during backoff.
+            try:
+                if controlled_input:
+                    if select.select([0],[],[],1)[0] and not read_hints():break
+                else:time.sleep(1)
+            except (BrokenPipeError,KeyboardInterrupt,OSError,ValueError):break
     try:flush_events(session)
     except BrokenPipeError:pass
     if ws:ws.close()

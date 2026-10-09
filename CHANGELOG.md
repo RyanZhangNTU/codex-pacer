@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.4.0
+
+- Customize the single-line collapsed bar with task/performance/quota/warning categories, drag ordering, left/right placement and a live preview; apply with one Save action, cancel changes or restore defaults.
+- Fit adaptive collapsed width to the visible components while preserving the hardware camera gap, expanded task/quota layout and existing collection frequency.
+- Fix Python 3.6 SSH log timestamp parsing, isolate failed scans from healthy subscriptions, and prevent recurring helper errors from spinning without heartbeats.
+- Use a numeric task badge, retain the latest TTFT in seconds, consolidate quota/pace labels and percentages, and show low-quota, delayed-update and SSH warnings only on issues.
+
+## 2.3.2
+
+- Preserve pending model-response timing across nested tools so delayed usage cannot divide a full request's output by the gap between tools.
+- Apply authoritative request-log corrections to retained TPS and prevent older runtime caches from restoring an inflated value; preserve the original freshness timestamp.
+
 ## 2.3.1
 
 - Group spawned agents under their parent conversation, show the running descendant count and add the available parent/child TPS without duplicate task rows or totals.

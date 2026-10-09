@@ -8,8 +8,10 @@ final class IslandModel: ObservableObject {
         didSet { if oldValue?.windows.count != quota?.windows.count { onLayoutChange?() } }
     }
     @Published var activities: [SessionActivity] = [] {
-        didSet { scheduleRateExpiry() }
+        didSet { observeFirstOutputs(activities); scheduleRateExpiry() }
     }
+    @Published private(set) var latestFirstOutputLatency: TimeInterval?
+    private var latestFirstOutputAt: Date?
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
@@ -29,6 +31,7 @@ final class IslandModel: ObservableObject {
     @Published var isAttached = false
     @Published var notchWidth: CGFloat = 0
     @Published var topHeight: CGFloat = 38
+    @Published var baseHeaderHeight: CGFloat = 38
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
@@ -42,16 +45,15 @@ final class IslandModel: ObservableObject {
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
     }
     private var measuredContentHeight: CGFloat?
-    private(set) var measuredHeaderLeading: CGFloat = 80
-    private(set) var measuredHeaderTrailing: CGFloat = 65
     private(set) var measuredContentWidth: CGFloat = 0
+    private(set) var measuredCompactWidth: CGFloat = 0
     var widthSettings: IslandWidthSettings { .load() }
-    func updateMeasuredHeaderWidth(leading: CGFloat, trailing: CGFloat) {
-        guard leading.isFinite, trailing.isFinite, leading > 0, trailing > 0 else { return }
-        let left = ceil(leading), right = ceil(trailing)
-        guard left != measuredHeaderLeading || right != measuredHeaderTrailing else { return }
-        measuredHeaderLeading = left
-        measuredHeaderTrailing = right
+    @Published private(set) var compactLayout = CompactIslandLayout.load()
+    func updateMeasuredCompactWidth(_ width: CGFloat) {
+        guard width.isFinite, width >= 0 else { return }
+        let rounded = ceil(width)
+        guard rounded != measuredCompactWidth else { return }
+        measuredCompactWidth = rounded
         onLayoutChange?()
     }
     func updateMeasuredContentWidth(_ width: CGFloat) {
@@ -170,15 +172,26 @@ final class IslandModel: ObservableObject {
         }
         return count == 0 ? L10n.text("activity.idle") : L10n.text("activity.task_count_compact", count > 99 ? "99+" : String(count))
     }
-    var headerDisplayStatus: String { headerStatus }
+    var headerDisplayStatus: String {
+        guard running.count > 1, waiting.isEmpty, pendingInputRequests.isEmpty, pendingCompletions.isEmpty,
+              let latest = latestRunningTask else { return headerStatus }
+        switch latest.stage {
+        case .tool: return L10n.text("activity.tool_compact")
+        case .responding: return L10n.text("activity.responding_compact")
+        case .thinking, .starting: return latest.stage.label
+        }
+    }
+    private var latestRunningTask: SessionActivity? {
+        running.max {
+            let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
+            return left == right ? $0.id < $1.id : left < right
+        }
+    }
     var headerSymbol: String {
         if let request = pendingInputRequests.first { return request.kind == .approval ? StatusSymbols.approval : StatusSymbols.input }
         if let completed = pendingCompletions.first { return StatusSymbols.symbol(for: completed) }
         if let first = waiting.first { return StatusSymbols.symbol(for: first) }
-        let latest = running.max {
-            let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
-            return left == right ? $0.id < $1.id : left < right
-        }
+        let latest = latestRunningTask
         return latest.map { taskGroup(for: $0)?.isRunning == true && $0.phase != .running ? StatusSymbols.thinking : StatusSymbols.symbol(for: $0) } ?? StatusSymbols.idle
     }
     var taskAccent: Color { Color(red: 0.56, green: 0.84, blue: 0.79) }
@@ -210,6 +223,11 @@ final class IslandModel: ObservableObject {
         return String(format: "%.0f", rate)
     }
     var hasConnectionIssue: Bool { !unavailableSSH.isEmpty || streamStatuses["local"].map { !$0.connected } == true }
+    var hasSSHConnectionIssue: Bool {
+        monitorsSSH && (!unavailableSSH.isEmpty || streamStatuses.contains {
+            $0.key.hasPrefix("remote-ssh-discovered:") && !$0.value.connected
+        })
+    }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
     var completionSummary: String {
         let pending = pendingCompletions
@@ -247,6 +265,10 @@ final class IslandModel: ObservableObject {
         UserDefaults.standard.string(forKey: "compactMetric") == "pace" ? L10n.text("quota.pace") :
         (selectedWindow?.compactLabel ?? "")
     }
+    var compactMetricLabel: String {
+        L10n.text(UserDefaults.standard.string(forKey: "compactMetric") == "pace" ? "quota.pace" : "layout.quota_label")
+    }
+    var remainingTimePercent: Double? { selectedWindow?.elapsedTimePercent(at: now).map { 100 - $0 } }
     var statusTitle: String { overview.title }
     var compactStatus: String {
         if let notice, ![.completed, .interrupted].contains(notice.kind) { return notice.title }
@@ -526,6 +548,9 @@ final class IslandModel: ObservableObject {
         let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let agentStatesChanged = localSubagentStates(remoteActivities) != localSubagentStates(activities)
         now = Date(); remoteActivities = activities
+        for update in performance {
+            rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt)
+        }
         completionInbox.updateNames(names)
         completionInbox.updatePerformance(performance)
         if streamStatuses != statuses { streamStatuses = statuses }
@@ -551,6 +576,7 @@ final class IslandModel: ObservableObject {
             return value
         }
         let grouped = ActivityTaskGroup.make(merged).flatMap(\.members)
+        observeFirstOutputs(grouped)
         let observed = completionInbox.observe(grouped, at: now, retention: completedRetention)
         let activeRoots = Set(ActivityTaskGroup.make(observed).filter(\.isRunning).map { $0.primary.id })
         let combined = observed.filter {
@@ -568,7 +594,20 @@ final class IslandModel: ObservableObject {
         onStatusChange?()
     }
 
+    private func observeFirstOutputs(_ values: [SessionActivity]) {
+        for activity in values where !activity.isInternalReview {
+            rememberFirstOutput(activity.firstTokenLatency, reportedAt: activity.firstTokenReportedAt)
+        }
+    }
+    private func rememberFirstOutput(_ latency: TimeInterval?, reportedAt: Date?) {
+        guard let latency, latency.isFinite, (0...3600).contains(latency), let reportedAt,
+              reportedAt <= now, latestFirstOutputAt.map({ reportedAt > $0 }) ?? true else { return }
+        latestFirstOutputAt = reportedAt; latestFirstOutputLatency = latency
+    }
+
     func applySettings(sourceChanged: Bool) {
+        compactLayout = .load()
+        measuredCompactWidth = 0
         settingsRevision += 1
         if clock != nil { scheduleClock() }
         pruneCompletions()
@@ -592,6 +631,7 @@ final class IslandModel: ObservableObject {
         attention = AttentionPolicy()
         attentionRequests = []
         completionInbox = CompletionInbox()
+        latestFirstOutputLatency = nil; latestFirstOutputAt = nil
         activities = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         notice = nil
         navigationError = nil

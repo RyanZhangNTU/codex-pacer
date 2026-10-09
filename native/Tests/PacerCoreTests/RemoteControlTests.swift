@@ -247,6 +247,63 @@ final class RemoteControlTests: XCTestCase {
         XCTAssertNil(meter.latest)
     }
 
+    func testCachedGapDiscardsUpstreamPendingAndAmbiguousWindows() {
+        for ambiguous in [false, true] {
+            for exact in [false, true] {
+                var meter = ResponsePerformanceMeter()
+                meter.start(turnID: "turn", at: epoch, observed: true)
+                meter.observeRuntime(total: 0, last: nil, reasoning: nil, at: epoch, cached: true)
+                meter.modelOutput(at: epoch.addingTimeInterval(1), textDelta: true)
+                meter.setWaiting(true, at: epoch.addingTimeInterval(2))
+                meter.inputBoundary(at: epoch.addingTimeInterval(3))
+                if ambiguous {
+                    meter.modelOutput(at: epoch.addingTimeInterval(4), textDelta: true)
+                    meter.setWaiting(true, at: epoch.addingTimeInterval(5))
+                }
+                meter.observeRuntime(total: 50000, last: 50000, reasoning: nil, at: epoch.addingTimeInterval(6), cached: true)
+                meter.modelOutput(at: epoch.addingTimeInterval(7), textDelta: true)
+                if exact { meter.observeRequest(id: "unmatched", turn: "turn", output: 1000, reasoning: nil, at: epoch.addingTimeInterval(8)) }
+                else { meter.observeRuntime(total: 51000, last: 1000, reasoning: nil, at: epoch.addingTimeInterval(8)) }
+                XCTAssertNil(meter.latest)
+                meter.inputBoundary(at: epoch.addingTimeInterval(9))
+                meter.modelOutput(at: epoch.addingTimeInterval(19), textDelta: true)
+                if exact { meter.observeRequest(id: "fresh", turn: "turn", output: 600, reasoning: nil, at: epoch.addingTimeInterval(19)) }
+                else { meter.observeRuntime(total: 51600, last: 600, reasoning: nil, at: epoch.addingTimeInterval(19)) }
+                XCTAssertEqual(meter.latest?.tokensPerSecond, 60)
+            }
+        }
+    }
+
+    func testLateTerminalUsageUsesUpstreamPendingWindowAndPreservesTTFTTimestamp() throws {
+        var runtime = RuntimeEventState(sourceID: host, sourceName: "Remote Control"), inbox = CompletionInbox()
+        runtime.consume(["kind": "status", "connected": true])
+        func event(_ method: String, _ seconds: Double, _ fields: [String: Any] = [:]) -> [String: Any] {
+            ["method": method, "threadId": thread, "turnId": "turn", "at": epoch.addingTimeInterval(seconds).timeIntervalSince1970]
+                .merging(fields) { _, new in new }
+        }
+        runtime.consume(["kind": "runtimeBatch", "events": [event("turn/started", 0),
+            event("thread/tokenUsage/updated", 0, ["outputTokens": 0, "cachedUsage": true]),
+            event("item/agentMessage/delta", 10, ["hasText": true]),
+            event("item/started", 11, ["itemId": "tool", "itemType": "commandExecution"]),
+            event("turn/completed", 12, ["status": "completed"])]])
+        inbox.observe(runtime.activities, at: epoch.addingTimeInterval(12), retention: 30)
+        let before = try XCTUnwrap(inbox.activities.first)
+        runtime.consume(["kind": "runtime", "event": event("stream/released", 12)]); runtime.releasePublishedState()
+        runtime.consume(["kind": "runtime", "event": event("thread/tokenUsage/updated", 13,
+            ["terminalUsage": true, "outputTokens": 110, "lastOutputTokens": 110])])
+        inbox.updatePerformance(runtime.performanceUpdates)
+        let after = try XCTUnwrap(inbox.activities.first)
+        XCTAssertEqual(after.responsePerformance?.tokensPerSecond, 10)
+        XCTAssertEqual(after.firstTokenLatency, 10)
+        XCTAssertEqual(after.firstTokenReportedAt, before.firstTokenReportedAt)
+        XCTAssertEqual(after.phaseChangedAt, before.phaseChangedAt)
+        XCTAssertTrue(runtime.activities.isEmpty)
+        runtime.releasePublishedState()
+        runtime.consume(["kind": "runtime", "event": event("thread/tokenUsage/updated", 14,
+            ["terminalUsage": true, "outputTokens": 110, "lastOutputTokens": 110])])
+        XCTAssertTrue(runtime.performanceUpdates.isEmpty)
+    }
+
     func testTerminalFirstUsageSecondEnrichesOnlyTheRetainedCard() throws {
         var session = try NativeDesktopSession(hosts: [host]) { _ in }
         try initialize(&session); _ = session.takeFrames()
