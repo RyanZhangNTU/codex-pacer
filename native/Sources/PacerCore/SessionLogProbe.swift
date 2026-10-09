@@ -3,11 +3,28 @@ import Foundation
 enum SessionLogProbe {
     // Only sanitized lifecycle and counters leave the remote host.
     static let library = #"""
-    import base64, datetime, json, math, pathlib, sqlite3, sys, time, uuid
+    import base64, datetime, json, math, pathlib, re, sqlite3, sys, time, uuid
     home = pathlib.Path(base64.b64decode(sys.argv[1]).decode()).expanduser()
     cursors = {}
     headers = {}
     titles = {}
+    # datetime.fromisoformat is unavailable on Python 3.6 SSH hosts. Parse
+    # the log's ISO timestamp identically on every supported interpreter.
+    timestamp_pattern=re.compile(r'^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})?$')
+    def timestamp_ms(value):
+        if not isinstance(value,str) or len(value)>80:return None
+        match=timestamp_pattern.fullmatch(value)
+        if not match:return None
+        try:
+            parts=match.groups();zone=parts[7];tz=None
+            if zone=='Z':tz=datetime.timezone.utc
+            elif zone:
+                offset=zone[1:].replace(':','');hours=int(offset[:2]);minutes=int(offset[2:])
+                if hours>23 or minutes>59:return None
+                tz=datetime.timezone(datetime.timedelta(minutes=(hours*60+minutes)*(1 if zone[0]=='+' else -1)))
+            micros=int(((parts[6] or '')+'000000')[:6])
+            return datetime.datetime(*(int(part) for part in parts[:6]),microsecond=micros,tzinfo=tz).timestamp()*1000
+        except (ValueError,TypeError,OverflowError,OSError):return None
     def parent_thread(meta):
         source=meta.get('source');sub=(source.get('subAgent',source.get('subagent')) if isinstance(source,dict) else None)
         spawn=sub.get('thread_spawn',sub.get('threadSpawn')) if isinstance(sub,dict) else None
@@ -101,19 +118,16 @@ enum SessionLogProbe {
                     if not v or not v['payload'].get('turn_id'):continue
                     p=v['payload'];turn=p['turn_id']
                     if p.get('type')=='item_completed' and p.get('thread_id')==thread_id:
-                        try:
-                            reported=datetime.datetime.fromisoformat(v['timestamp'].replace('Z','+00:00')).timestamp()*1000
-                            if p['first_output_at_ms']>reported:continue
-                        except (ValueError,TypeError):continue
+                        reported=timestamp_ms(v['timestamp'])
+                        if reported is None or p['first_output_at_ms']>reported:continue
                         if turn in first_times or len(first_times)<64:first_times[turn]=min(first_times.get(turn,p['first_output_at_ms']),p['first_output_at_ms'])
                     elif v['type']=='turn_context' and fallback is None:fallback=v;latest_turn=turn
                     elif p.get('type')=='task_started' and (latest_turn is None or latest_turn==turn):
                         if turn in first_times:
-                            try:
-                                began=datetime.datetime.fromisoformat(v['timestamp'].replace('Z','+00:00')).timestamp()*1000
+                            began=timestamp_ms(v['timestamp'])
+                            if began is not None:
                                 elapsed=first_times[turn]-began
                                 if 0<=elapsed<=3600000:p['first_output_latency_ms']=elapsed
-                            except (ValueError,TypeError):pass
                         return v
             fragment = lines[0] if len(lines[0]) <= 1024*1024 else b''; offset=start
         return fallback
