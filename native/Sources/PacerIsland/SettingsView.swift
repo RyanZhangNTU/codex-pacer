@@ -200,7 +200,7 @@ struct SettingsView: View {
                 Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? L10n.text("build.development")).font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 Button(L10n.text("common.cancel"), action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
-                Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: save)
+                Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: { save() })
                     .keyboardShortcut(.defaultAction).disabled(saving)
             }
         }
@@ -208,8 +208,9 @@ struct SettingsView: View {
         .frame(width: 480, height: 670)
         .environment(\.locale, L10n.locale)
         .sheet(isPresented: $editingCompactLayout) {
-            CompactLayoutEditor(model: model, layout: $compactLayout,
-                attached: displayMode == .notch || (displayMode == .automatic && model.isAttached))
+            CompactLayoutEditor(model: model, layout: compactLayout,
+                attached: displayMode == .notch || (displayMode == .automatic && model.isAttached),
+                saving: saving || testingCLI, validation: validation) { value in save(layout: value) }
         }
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
@@ -316,7 +317,7 @@ struct SettingsView: View {
             if directory { home = path } else { executable = path }
         }
     }
-    private func save() {
+    private func save(layout: CompactIslandLayout? = nil) {
         if languageChanges && updater.sessionInProgress {
             validation = L10n.text("language.update_busy"); return
         }
@@ -335,6 +336,7 @@ struct SettingsView: View {
                 validation = L10n.text("settings.invalid_home"); return
             }
         }
+        if let layout { compactLayout = layout.normalized }
         widthSettings = widthSettings.normalized
         saving = true
         Task { @MainActor in
@@ -375,7 +377,7 @@ struct SettingsView: View {
                 } else {
                     validation = L10n.text("language.restart_failed", L10n.text("language.missing_helper"))
                 }
-            } else { onClose() }
+            } else { editingCompactLayout = false; onClose() }
         }
     }
 }

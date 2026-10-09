@@ -2,7 +2,7 @@
 
 ## 2.4.0
 
-- Customize the single-line collapsed bar with component visibility, drag ordering, left/center/right placement and a live preview; save or cancel the layout and restore defaults.
+- Customize the single-line collapsed bar with task/performance/quota/control categories, drag ordering, left/right placement and a live preview; apply with one Save action, cancel changes or restore defaults.
 - Fit adaptive collapsed width to the visible components while preserving the hardware camera gap, expanded task/quota layout and existing collection frequency.
 
 ## 2.3.2

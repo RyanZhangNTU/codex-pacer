@@ -1,27 +1,30 @@
 import SwiftUI
 import PacerCore
 
-/// Three independently anchored lanes. Natural sizing keeps the center clear
-/// of both outer lanes, including when their widths are very different.
+/// Both display modes have only left and right content. A real camera needs
+/// equal wings; floating headers use each side's natural width.
 struct CompactRowLayout: Layout {
+    var notchWidth: CGFloat = 0
+    private var cameraGap: CGFloat { notchWidth > 0 ? notchWidth + 8 : 0 }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        guard sizes.count == 3 else { return .zero }
-        let left = sizes[0].width, middle = sizes[1].width, right = sizes[2].width
-        let natural = middle > 0 ? middle + 2 * max(left, right) + 16 : left + right + (left > 0 && right > 0 ? 10 : 0)
+        guard sizes.count == 2 else { return .zero }
+        let left = sizes[0].width, right = sizes[1].width
+        let natural = cameraGap > 0 ? cameraGap + 2 * max(left, right) + 16 :
+            left + right + (left > 0 && right > 0 ? 10 : 0)
         return CGSize(width: proposal.width ?? natural, height: sizes.map(\.height).max() ?? 0)
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard subviews.count == 3 else { return }
+        guard subviews.count == 2 else { return }
         let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        let center = min(bounds.width, sizes[1].width)
-        let available = max(0, bounds.width - (center > 0 ? center + 16 : (sizes[0].width > 0 && sizes[2].width > 0 ? 10 : 0)))
-        let total = max(1, sizes[0].width + sizes[2].width)
-        let slots = center > 0 ? [available / 2, center, available / 2] :
-            [available * sizes[0].width / total, 0, available * sizes[2].width / total]
+        let gap = cameraGap > 0 ? cameraGap + 16 : (sizes[0].width > 0 && sizes[1].width > 0 ? 10 : 0)
+        let available = max(0, bounds.width - gap)
+        let total = max(1, sizes[0].width + sizes[1].width)
+        let slots = cameraGap > 0 ? [available / 2, available / 2] :
+            [available * sizes[0].width / total, available * sizes[1].width / total]
         for index in subviews.indices {
             let size = subviews[index].sizeThatFits(ProposedViewSize(width: slots[index], height: bounds.height))
-            let x = index == 0 ? bounds.minX : index == 1 ? bounds.midX - size.width / 2 : bounds.maxX - size.width
+            let x = index == 0 ? bounds.minX : bounds.maxX - size.width
             subviews[index].place(at: CGPoint(x: x, y: bounds.midY - size.height / 2), proposal: ProposedViewSize(size))
         }
     }
@@ -58,10 +61,8 @@ struct CompactIslandHeader: View {
     }
 
     private var rowView: some View {
-        CompactRowLayout {
-            lane(layout.leading + (notchWidth > 0 ? layout.center : []), alignment: .leading)
-            if notchWidth > 0 { Color.clear.frame(width: notchWidth + 8, height: 1) }
-            else { lane(layout.center, alignment: .center) }
+        CompactRowLayout(notchWidth: notchWidth) {
+            lane(layout.leading, alignment: .leading)
             lane(layout.trailing, alignment: .trailing)
         }
     }

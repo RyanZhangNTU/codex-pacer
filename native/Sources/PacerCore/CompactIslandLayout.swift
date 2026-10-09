@@ -8,26 +8,71 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         case pin, refresh, settings, quit, collapse
         public var id: String { rawValue }
         public var label: String { L10n.text("layout.component." + rawValue) }
+        public var shortLabel: String {
+            switch self {
+            case .statusIcon, .status, .tps, .quotaWarning, .quotaMetric, .quotaWindow, .freshness:
+                L10n.text("layout.short." + rawValue)
+            default: label
+            }
+        }
+        public var preferredLane: Lane {
+            switch self {
+            case .statusIcon, .status, .tps, .taskCount, .subagentCount, .firstOutput: .leading
+            default: .trailing
+            }
+        }
+        public var symbol: String {
+            switch self {
+            case .statusIcon: "brain.head.profile"
+            case .status: "text.alignleft"
+            case .tps: "speedometer"
+            case .taskCount: "square.stack"
+            case .subagentCount: "person.2"
+            case .firstOutput: "timer"
+            case .quotaWarning: "exclamationmark.triangle"
+            case .quotaMetric: "chart.pie"
+            case .quotaWindow: "calendar"
+            case .pace: "gauge"
+            case .resetCountdown: "arrow.counterclockwise"
+            case .freshness: "clock.badge.checkmark"
+            case .pin: "pin"
+            case .refresh: "arrow.clockwise"
+            case .settings: "gearshape"
+            case .quit: "power"
+            case .collapse: "chevron.up"
+            }
+        }
+    }
+    public enum Group: String, CaseIterable, Sendable {
+        case tasks, performance, quota, controls
+        public var label: String { L10n.text("layout.group." + rawValue) }
+        public var components: [Component] {
+            switch self {
+            case .tasks: [.statusIcon, .status, .taskCount, .subagentCount]
+            case .performance: [.tps, .firstOutput]
+            case .quota: [.quotaMetric, .pace, .quotaWindow, .resetCountdown, .quotaWarning, .freshness]
+            case .controls: [.pin, .refresh, .settings, .quit, .collapse]
+            }
+        }
     }
     public enum Lane: String, CaseIterable, Codable, Sendable {
-        case leading, center, trailing
+        case leading, trailing
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public var version = 1
+    public let version = 2
     public var leading: [Component]
-    public var center: [Component]
     public var trailing: [Component]
-    public init(leading: [Component] = [], center: [Component] = [], trailing: [Component] = []) {
-        self.leading = leading; self.center = center; self.trailing = trailing
+    public init(leading: [Component] = [], trailing: [Component] = []) {
+        self.leading = leading; self.trailing = trailing
     }
     public static let standard = Self(leading: [.statusIcon, .status, .tps],
         trailing: [.quotaWarning, .quotaMetric, .quotaWindow, .freshness])
     public subscript(_ lane: Lane) -> [Component] {
-        get { switch lane { case .leading: leading; case .center: center; case .trailing: trailing } }
-        set { switch lane { case .leading: leading = newValue; case .center: center = newValue; case .trailing: trailing = newValue } }
+        get { lane == .leading ? leading : trailing }
+        set { if lane == .leading { leading = newValue } else { trailing = newValue } }
     }
-    public var components: Set<Component> { Set(leading + center + trailing) }
+    public var components: Set<Component> { Set(leading + trailing) }
     public var normalized: Self {
         var seen: Set<Component> = []
         var result = Self()
@@ -36,7 +81,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     }
     public static func load(from defaults: UserDefaults = .standard) -> Self {
         guard let data = defaults.data(forKey: defaultsKey), data.count <= 8192,
-              let value = try? JSONDecoder().decode(Self.self, from: data), value.version == 1 else { return .standard }
+              let value = try? JSONDecoder().decode(Self.self, from: data) else { return .standard }
         return value.normalized
     }
     public func save(to defaults: UserDefaults = .standard) {
@@ -58,13 +103,23 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         guard target != index else { return }
         self[lane].remove(at: index); self[lane].insert(component, at: target)
     }
-    private enum CodingKeys: String, CodingKey { case version, leading, center, trailing }
+    private enum CodingKeys: String, CodingKey { case version, leading, trailing, center }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        version = try values.decode(Int.self, forKey: .version)
-        // Newer component names do not discard the user's known choices.
+        let schema = try values.decode(Int.self, forKey: .version)
+        guard schema == 1 || schema == 2 else {
+            throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
+        }
         leading = try values.decode([String].self, forKey: .leading).compactMap(Component.init(rawValue:))
-        center = try values.decode([String].self, forKey: .center).compactMap(Component.init(rawValue:))
+        if schema == 1 {
+            leading += try values.decodeIfPresent([String].self, forKey: .center)?.compactMap(Component.init(rawValue:)) ?? []
+        }
         trailing = try values.decode([String].self, forKey: .trailing).compactMap(Component.init(rawValue:))
+    }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(version, forKey: .version)
+        try values.encode(leading.map(\.rawValue), forKey: .leading)
+        try values.encode(trailing.map(\.rawValue), forKey: .trailing)
     }
 }
