@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.4.0
 
 - Customize the single-line collapsed bar with component visibility, drag ordering, left/center/right placement and a live preview; save or cancel the layout and restore defaults.
 - Fit adaptive collapsed width to the visible components while preserving the hardware camera gap, expanded task/quota layout and existing collection frequency.
