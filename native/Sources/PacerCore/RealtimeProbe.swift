@@ -445,8 +445,12 @@ enum RealtimeProbe {
                         if attempt>=3:hints.pop(tid,None)
                         else:hints[tid]=(attempt+1,now+[.5,1,2,5][attempt])
             if now>=next_scan and not local_only:
-                latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ());scans+=1;emit_snapshot(latest_snapshot);last_scan=time.monotonic()
-                next_scan=now+(120 if session and session.ready else 60)
+                # Reserve the next deadline before reading. A broken log must
+                # not spin on an overdue scan or interrupt a healthy socket.
+                last_scan=now;next_scan=now+(120 if session and session.ready else 60)
+                try:latest_snapshot=snapshot(excluding=session.evidenced if session and session.ready else ())
+                except (OSError,ValueError,TypeError,AttributeError,KeyError,OverflowError):pass
+                else:scans+=1;emit_snapshot(latest_snapshot)
             if request_logs:
                 request_logs.sync(session.rollout_paths if session else {},now,batch_interval)
                 request_logs.read(now,batch_interval)
@@ -493,8 +497,19 @@ enum RealtimeProbe {
             try:flush_events(session)
             except BrokenPipeError:break
             if ws:ws.close()
-            ws=None;session=None;reconnect_at=time.monotonic()+30;next_status=0
+            ws=None;session=None;now=time.monotonic();reconnect_at=now+30
             if once:emit({'kind':'status','connected':False,'attached':0,'notifications':0,'fallbackScans':scans});break
+            if now>=next_status or status_stamp!=(False,0):
+                try:emit(stats(None,scans))
+                except BrokenPipeError:break
+                next_status=now+15;status_stamp=(False,0)
+            # Unexpected recurring failures still heartbeat, and wait at least
+            # one second. SSH stdin EOF remains interruptible during backoff.
+            try:
+                if controlled_input:
+                    if select.select([0],[],[],1)[0] and not read_hints():break
+                else:time.sleep(1)
+            except (BrokenPipeError,KeyboardInterrupt,OSError,ValueError):break
     try:flush_events(session)
     except BrokenPipeError:pass
     if ws:ws.close()

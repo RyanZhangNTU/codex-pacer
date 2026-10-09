@@ -85,6 +85,20 @@ final class MetricPresentationTests: XCTestCase {
         encrypted=sanitize({'type':'event_msg','payload':{'type':'item_completed','thread_id':tid,'turn_id':'turn','completed_at_ms':3137,'item':{'type':'Reasoning','summary_text':[],'raw_content':'PRIVATE'}}})
         assert encrypted is None
         import tempfile
+        class LegacyDateTimeMeta(type):
+            def __getattribute__(cls,name):
+                if name=='fromisoformat':raise AttributeError('Python 3.6 has no fromisoformat')
+                return super().__getattribute__(name)
+        class LegacyDateTime(datetime.datetime,metaclass=LegacyDateTimeMeta):pass
+        datetime.datetime=LegacyDateTime
+        assert not hasattr(datetime.datetime,'fromisoformat')
+        expected=1800000000123.456
+        for value in ('2027-01-15T08:00:00.123456Z','2027-01-15T16:00:00.123456+08:00','2027-01-15T04:30:00.123456-0330','2027-01-15T08:00:00.123456789+0000'):
+            assert abs(timestamp_ms(value)-expected)<.001
+        assert timestamp_ms('2027-01-15T08:00:00Z')==1800000000000
+        assert timestamp_ms('2027-01-15 08:00:00')==datetime.datetime(2027,1,15,8).timestamp()*1000
+        for value in (None,True,123,'bad','2027-02-30T08:00:00Z','2027-01-15T25:00:00Z','2027-01-15T08:00:00+00:60','2027-01-15T08:00:00+24:00','2027-01-15T08:00:00Z trailing'):
+            assert timestamp_ms(value) is None
         began=1800000000
         with tempfile.TemporaryFile() as f:
             rows=[{'type':'event_msg','timestamp':datetime.datetime.fromtimestamp(began,datetime.timezone.utc).isoformat(),'payload':{'type':'task_started','turn_id':'turn'}},

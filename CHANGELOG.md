@@ -4,6 +4,7 @@
 
 - Customize the single-line collapsed bar with task/performance/quota/control categories, drag ordering, left/right placement and a live preview; apply with one Save action, cancel changes or restore defaults.
 - Fit adaptive collapsed width to the visible components while preserving the hardware camera gap, expanded task/quota layout and existing collection frequency.
+- Fix Python 3.6 SSH log timestamp parsing, isolate failed scans from healthy subscriptions, and prevent recurring helper errors from spinning without heartbeats.
 
 ## 2.3.2
 
