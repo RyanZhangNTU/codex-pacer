@@ -3,42 +3,45 @@ import PacerCore
 
 struct CompactLayoutEditor: View {
     @ObservedObject var model: IslandModel
+    @Binding var layout: CompactIslandLayout
+    @Binding var widthSettings: IslandWidthSettings
     let attached: Bool
-    let saving: Bool
-    let validation: String?
-    let onSave: (CompactIslandLayout) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var draft: CompactIslandLayout
-    @State private var previewWidth: CGFloat = 320
+    let quotaPreview: CompactQuotaPreview
     @State private var dragged: CompactIslandLayout.Component?
     @State private var dragLocation = CGPoint.zero
     @State private var dropRegions: [CompactEditorDropRegion] = []
     @FocusState private var focusedComponent: CompactIslandLayout.Component?
-    private let accent = AgentProvider.codex.tint
-
-    init(model: IslandModel, layout: CompactIslandLayout, attached: Bool,
-         saving: Bool, validation: String?, onSave: @escaping (CompactIslandLayout) -> Void) {
-        self.model = model; self.attached = attached; self.saving = saving
-        self.validation = validation; self.onSave = onSave
-        _draft = State(initialValue: layout.normalized)
-    }
-    private var camera: CGFloat { attached ? model.notchWidth : 0 }
+    private let accent = Color.accentColor
+    private var providers: Set<AgentProvider> { Set(quotaPreview.providers) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text(L10n.text("layout.title")).font(.system(size: 20, weight: .semibold))
+                Text(L10n.text("layout.preview")).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 Spacer()
-                Button(L10n.text("common.restore_defaults")) { draft = .standard }
+                Button(L10n.text("common.restore_defaults")) { layout = .standard }
                     .buttonStyle(.borderless).font(.system(size: 12)).foregroundStyle(.secondary)
             }
+            IslandWidthControl(model: model, settings: $widthSettings, layout: layout,
+                attached: attached, quotaPreview: quotaPreview)
+            Picker(L10n.text("settings.width_mode"), selection: $widthSettings.mode) {
+                Text(L10n.text("settings.width_adaptive")).tag(IslandWidthSettings.Mode.adaptive)
+                Text(L10n.text("settings.width_fixed")).tag(IslandWidthSettings.Mode.fixed)
+            }
+            .pickerStyle(.segmented)
+            Text(L10n.text(widthSettings.mode == .adaptive ? "settings.width_adaptive_help" : "settings.width_fixed_help"))
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(L10n.text("layout.help")).font(.system(size: 12)).foregroundStyle(.secondary)
-            preview
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
                 laneEditor(.leading)
                 laneEditor(.trailing)
-            }.frame(height: 84)
+            }
+            if layout.components.contains(where: { $0.provider != nil && !$0.isAvailable(for: providers) }) {
+                Text(L10n.text("layout.disabled_provider_hint")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Divider().padding(.vertical, 2)
-            HStack(alignment: .top, spacing: 16) {
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)],
+                      alignment: .leading, spacing: 16) {
                 ForEach(CompactIslandLayout.Group.allCases, id: \.rawValue) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.label).font(.system(size: 13, weight: .semibold)).padding(.leading, 6)
@@ -47,26 +50,20 @@ struct CompactLayoutEditor: View {
                                 .fixedSize(horizontal: false, vertical: true).padding(.leading, 6)
                         }
                         VStack(spacing: 3) {
-                            ForEach(group.components) { component in componentChoice(component) }
+                            ForEach(group.components.filter { $0.isAvailable(for: providers) }) { component in componentChoice(component) }
+                            if group == .quota, providers.isEmpty {
+                                Text(L10n.text("layout.no_quota_providers")).font(.system(size: 11)).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true).padding(.leading, 6)
+                            }
                         }
                     }.frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-            }.frame(maxHeight: .infinity, alignment: .top)
-            if let validation {
-                Text(validation).font(.system(size: 11)).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Text(L10n.text("layout.single_save")).font(.system(size: 11)).foregroundStyle(.secondary)
-                Spacer()
-                Button(L10n.text("common.cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(L10n.text(saving ? "common.saving" : "common.save")) { onSave(draft.normalized) }
-                    .keyboardShortcut(.defaultAction)
-            }
+            Text(L10n.text("layout.providers_hint")).font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(L10n.text("layout.single_save")).font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .padding(24).frame(width: 740, height: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .disabled(saving)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .coordinateSpace(name: "compact-editor")
         .onPreferenceChange(CompactEditorDropRegions.self) { dropRegions = $0 }
         .overlay(alignment: .topLeading) {
@@ -78,41 +75,25 @@ struct CompactLayoutEditor: View {
         }
         .environment(\.locale, L10n.locale)
     }
-    private var preview: some View {
-        GeometryReader { geometry in
-            let scale = min(1, (geometry.size.width - 32) / max(80, previewWidth))
-            CompactIslandHeader(model: model, layout: draft, baseHeight: 38, notchWidth: camera, measuresLayout: false)
-                .frame(width: max(80, previewWidth), height: 38)
-                .foregroundStyle(.white)
-                .background(.black, in: UnevenRoundedRectangle(topLeadingRadius: attached ? 0 : 18,
-                    bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: attached ? 0 : 18))
-                .scaleEffect(scale)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .allowsHitTesting(false).accessibilityHidden(true)
-                .onPreferenceChange(CompactHeaderIdealWidth.self) { previewWidth = max(camera > 0 ? camera + 60 : 80, $0 + 2) }
-        }
-        .frame(height: 74)
-        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityLabel(L10n.text("layout.preview"))
-    }
     private func laneEditor(_ lane: CompactIslandLayout.Lane) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(lane.label).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(spacing: 6) {
-                        ForEach(draft[lane]) { component in chip(component).id(component) }
-                        if draft[lane].isEmpty {
+                        ForEach(layout.visibleComponents(in: lane, providers: providers)) { component in chip(component).id(component) }
+                        if layout.visibleComponents(in: lane, providers: providers).isEmpty {
                             Text(L10n.text("layout.drop_here")).font(.system(size: 11)).foregroundStyle(.tertiary)
                                 .padding(.vertical, 7)
                         }
                     }.padding(.bottom, 3)
                 }
-                .onChange(of: draft[lane]) { previous, current in
+                .onChange(of: layout.visibleComponents(in: lane, providers: providers)) { previous, current in
                     if let added = current.first(where: { !previous.contains($0) }) { proxy.scrollTo(added, anchor: .trailing) }
                 }
             }
         }
+        .frame(height: 56, alignment: .topLeading)
         .padding(10).frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(dragged == nil ? 0 : 0.55), lineWidth: 1))
@@ -124,12 +105,12 @@ struct CompactLayoutEditor: View {
             Text(component.shortLabel).font(.system(size: 11, weight: .medium)).fixedSize()
                 .contentShape(Rectangle()).gesture(rearrangeGesture(component))
                 .focusable().focusEffectDisabled().focused($focusedComponent, equals: component)
-                .onKeyPress(.leftArrow) { draft.shift(component, by: -1); return .handled }
-                .onKeyPress(.rightArrow) { draft.shift(component, by: 1); return .handled }
+                .onKeyPress(.leftArrow) { layout.shift(component, by: -1, providers: providers); return .handled }
+                .onKeyPress(.rightArrow) { layout.shift(component, by: 1, providers: providers); return .handled }
                 .accessibilityLabel(component.label)
-                .accessibilityAction(named: Text(L10n.text("layout.move_left"))) { draft.move(component, to: .leading) }
-                .accessibilityAction(named: Text(L10n.text("layout.move_right"))) { draft.move(component, to: .trailing) }
-            Button { draft.hide(component) } label: {
+                .accessibilityAction(named: Text(L10n.text("layout.move_left"))) { layout.move(component, to: .leading) }
+                .accessibilityAction(named: Text(L10n.text("layout.move_right"))) { layout.move(component, to: .trailing) }
+            Button { layout.hide(component) } label: {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary).frame(width: 15, height: 20).contentShape(Rectangle())
             }.buttonStyle(.plain).help(L10n.text("layout.hide_component", component.label))
@@ -138,19 +119,19 @@ struct CompactLayoutEditor: View {
         .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 5)
         .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
         .overlay(Capsule().stroke(focusedComponent == component ? accent : Color.primary.opacity(0.08), lineWidth: 1))
-        .background(dropRegion(draft.leading.contains(component) ? .leading : .trailing, before: component))
+        .background(dropRegion(layout.leading.contains(component) ? .leading : .trailing, before: component))
         .contextMenu {
-            Button(L10n.text("layout.move_left")) { draft.move(component, to: .leading) }
-            Button(L10n.text("layout.move_right")) { draft.move(component, to: .trailing) }
-            Button(L10n.text("layout.earlier")) { draft.shift(component, by: -1) }
-            Button(L10n.text("layout.later")) { draft.shift(component, by: 1) }
+            Button(L10n.text("layout.move_left")) { layout.move(component, to: .leading) }
+            Button(L10n.text("layout.move_right")) { layout.move(component, to: .trailing) }
+            Button(L10n.text("layout.earlier")) { layout.shift(component, by: -1, providers: providers) }
+            Button(L10n.text("layout.later")) { layout.shift(component, by: 1, providers: providers) }
         }
     }
     private func componentChoice(_ component: CompactIslandLayout.Component) -> some View {
-        let shown = draft.components.contains(component)
+        let shown = layout.components.contains(component)
         return Button {
-            if shown { draft.hide(component) }
-            else { draft.move(component, to: component.preferredLane) }
+            if shown { layout.hide(component) }
+            else { layout.move(component, to: component.preferredLane) }
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: component.symbol).font(.system(size: 12)).frame(width: 16)
@@ -181,7 +162,7 @@ struct CompactLayoutEditor: View {
                 let before = dropRegions.filter { $0.lane == lane && $0.before != nil }
                     .sorted { $0.frame.midX < $1.frame.midX }
                     .first { value.location.x < $0.frame.midX }?.before
-                draft.move(component, to: lane, before: before)
+                layout.move(component, to: lane, before: before)
             }
     }
 }

@@ -469,7 +469,7 @@ final class ProviderDisplayTests: XCTestCase {
         let before = model.selectedProvider
         model.selectProvider(.claude)
         XCTAssertEqual(model.selectedProvider, before)
-        for component in [CompactIslandLayout.Component.quotaMetric, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning] {
+        for component in [CompactIslandLayout.Component.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning] {
             XCTAssertFalse(CompactIslandComponent.isVisible(component, model: model))
         }
         await model.shutdown()

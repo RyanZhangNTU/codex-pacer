@@ -168,23 +168,23 @@ final class IslandModel: ObservableObject {
         defaults.set(provider.rawValue, forKey: "selectedQuotaProvider")
         onLayoutChange?(); onStatusChange?()
     }
-    func providerSelectedWindow(_ provider: AgentProvider) -> QuotaWindow? {
-        let selected = defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
+    func providerSelectedWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
+        let selected = selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
         let snapshot = providerQuota(provider)
         if let window = snapshot?.windows.first(where: { $0.id == selected }) { return window }
-        return providerWeeklyWindow(provider) ?? snapshot?.limitingWindow
+        return providerWeeklyWindow(provider, selection: selected) ?? snapshot?.limitingWindow
     }
-    private func providerWeeklyWindow(_ provider: AgentProvider) -> QuotaWindow? {
-        let selected = defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
+    private func providerWeeklyWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
+        let selected = selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
         let snapshot = providerQuota(provider)
         if let bucket = snapshot?.buckets.first(where: { $0.windows.contains(where: { $0.id == selected }) }),
            let weekly = bucket.windows.first(where: { $0.durationMinutes == 10080 }) { return weekly }
         return snapshot?.buckets.first(where: { $0.id == provider.rawValue })?.windows.first(where: { $0.durationMinutes == 10080 }) ??
             snapshot?.windows.first(where: { $0.durationMinutes == 10080 })
     }
-    func providerPace(_ provider: AgentProvider) -> Double? {
+    func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
         guard let snapshot = providerQuota(provider), !snapshot.isStale(at: now), providerQuotaError(provider) == nil else { return nil }
-        return providerSelectedWindow(provider)?.pacePercent(at: now)
+        return providerSelectedWindow(provider, selection: selection)?.pacePercent(at: now)
     }
     var claudeHome: URL {
         let configured = defaults.string(forKey: "claudeHome") ?? ""
@@ -210,6 +210,8 @@ final class IslandModel: ObservableObject {
     @Published var settingsRevision = 0
     @Published var isAttached = false
     @Published var notchWidth: CGFloat = 0
+    /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
+    @Published var screenNotchSize: CGSize = .zero
     @Published var topHeight: CGFloat = 38
     @Published var baseHeaderHeight: CGFloat = 38
     var onLayoutChange: (() -> Void)?
@@ -512,13 +514,13 @@ final class IslandModel: ObservableObject {
     var compactMetricLabel: String {
         L10n.text(defaults.string(forKey: "compactMetric") == "pace" ? "quota.pace" : "layout.quota_label")
     }
-    func compactQuotaText(_ provider: AgentProvider) -> String {
-        let value = defaults.string(forKey: "compactMetric") == "pace"
-            ? providerPace(provider) : providerSelectedWindow(provider)?.remainingPercent
+    func compactQuotaText(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String {
+        let value = (metric ?? defaults.string(forKey: "compactMetric")) == "pace"
+            ? providerPace(provider, selection: selection) : providerSelectedWindow(provider, selection: selection)?.remainingPercent
         return value.map { "\(Int($0.rounded()))%" } ?? "—"
     }
-    func compactTimeRemainingText(_ provider: AgentProvider) -> String {
-        providerSelectedWindow(provider)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
+    func compactTimeRemainingText(_ provider: AgentProvider, selection: String? = nil) -> String {
+        providerSelectedWindow(provider, selection: selection)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
     }
     var compactStatus: String {
         if let notice, ![.completed, .interrupted].contains(notice.kind) { return notice.title }
@@ -552,6 +554,7 @@ final class IslandModel: ObservableObject {
          claudeMonitor: ClaudeActivityMonitor = ClaudeActivityMonitor(),
          claudeRemoteSetup: ClaudeRemoteSetup = ClaudeRemoteSetup()) {
         self.defaults = defaults
+        self.compactLayout = .load(from: defaults)
         self.claudeMonitor = claudeMonitor
         self.claudeRemoteSetup = claudeRemoteSetup
         self.claudeQuotaReads = claudeQuotaReads ?? ClaudeQuotaReadDependencies()
@@ -1162,7 +1165,7 @@ final class IslandModel: ObservableObject {
         modules = .load(from: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
-        compactLayout = .load(); measuredCompactWidth = 0; settingsRevision += 1
+        compactLayout = .load(from: defaults); measuredCompactWidth = 0; settingsRevision += 1
         if clock != nil { scheduleClock() }
         pruneCompletions()
         if hideProjects, let current = notice, current.kind != .lowQuota {

@@ -21,7 +21,6 @@ struct SettingsView: View {
     @State private var displayMode = IslandDisplayMode.load()
     @State private var widthSettings = IslandWidthSettings.load()
     @State private var compactLayout = CompactIslandLayout.load()
-    @State private var editingCompactLayout = false
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -75,11 +74,6 @@ struct SettingsView: View {
         }
         .frame(width: 780, height: 600)
         .environment(\.locale, L10n.locale)
-        .sheet(isPresented: $editingCompactLayout) {
-            CompactLayoutEditor(model: model, layout: compactLayout,
-                attached: displayMode == .notch || (displayMode == .automatic && model.isAttached),
-                saving: saving || testingCLI || claudeSetupBusy || claudeRemoteSetupBusy, validation: validation) { value in save(layout: value) }
-        }
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             claudeSetupStatus = ClaudeHookInstaller.details(home: model.claudeHome)
@@ -211,19 +205,11 @@ struct SettingsView: View {
             if appearance == .liquidGlass, IslandAppearance.supportsLiquidGlass { glassSection }
         case .collapsedBar:
             Section {
-                IslandWidthControl(model: model, settings: $widthSettings, layout: compactLayout,
-                    attached: displayMode == .notch || (displayMode == .automatic && model.isAttached))
-                Picker(L10n.text("settings.width_mode"), selection: $widthSettings.mode) {
-                    Text(L10n.text("settings.width_adaptive")).tag(IslandWidthSettings.Mode.adaptive)
-                    Text(L10n.text("settings.width_fixed")).tag(IslandWidthSettings.Mode.fixed)
-                }
-                caption(L10n.text(widthSettings.mode == .adaptive ? "settings.width_adaptive_help" : "settings.width_fixed_help"))
-                LabeledContent {
-                    Button(L10n.text("layout.customize")) { editingCompactLayout = true }
-                } label: {
-                    Text(L10n.text("layout.title"))
-                    Text(L10n.text("layout.settings_hint"))
-                }
+                CompactLayoutEditor(model: model, layout: $compactLayout, widthSettings: $widthSettings,
+                    attached: displayMode.layout(safeAreaTop: model.screenNotchSize.height,
+                        hardwareNotchWidth: model.screenNotchSize.width).attached,
+                    quotaPreview: CompactQuotaPreview(providers: AgentProvider.allCases.filter { moduleEnabled($0) },
+                        metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID]))
             }
             Section(L10n.text("layout.group.quota")) {
                 Picker(L10n.text("settings.compact_metric"), selection: $metric) {
@@ -727,7 +713,7 @@ struct SettingsView: View {
             if directory { home = path } else { executable = path }
         }
     }
-    private func save(layout: CompactIslandLayout? = nil) {
+    private func save() {
         if languageChanges && updater.sessionInProgress {
             validation = L10n.text("language.update_busy"); return
         }
@@ -758,7 +744,6 @@ struct SettingsView: View {
         guard !moduleEnabled(.claude) || !monitorSSH || aliases.allSatisfy({ $0.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil }) else {
             validation = L10n.text("provider.invalid_ssh_hosts"); return
         }
-        if let layout { compactLayout = layout.normalized }
         widthSettings = widthSettings.normalized
         saving = true
         Task { @MainActor in
@@ -804,7 +789,7 @@ struct SettingsView: View {
                 } else {
                     validation = L10n.text("language.restart_failed", L10n.text("language.missing_helper"))
                 }
-            } else { editingCompactLayout = false; onClose() }
+            } else { onClose() }
         }
     }
 }

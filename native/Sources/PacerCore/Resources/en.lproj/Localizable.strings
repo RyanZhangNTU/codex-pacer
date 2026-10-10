@@ -300,6 +300,10 @@
 "settings.display" = "Display";
 "settings.display_mode" = "Display Mode";
 "settings.width_preview" = "Island width preview";
+"settings.width_preview_notch" = "Island width preview with the screen notch marked";
+"settings.width_notch_marker" = "Notch";
+"settings.width_notch_help" = "The outlined center is the screen notch. Pacer content sits on either side.";
+"settings.width_notch_floating_help" = "The screen notch is marked above the floating bar. The bar keeps its full content width.";
 "settings.width_narrow" = "Narrow";
 "settings.width_medium" = "Medium";
 "settings.width_wide" = "Wide";
@@ -407,8 +411,6 @@
 "layout.title" = "Collapsed bar layout";
 "layout.collapsed" = "Collapsed bar";
 "layout.help" = "Drag to reorder or switch sides. Click × to hide.";
-"layout.customize" = "Customize collapsed bar…";
-"layout.settings_hint" = "Hide components to shorten adaptive width. The expanded panel keeps its existing layout.";
 "layout.preview" = "Live collapsed bar preview";
 "layout.shown" = "Shown";
 "layout.hidden" = "Hidden";
@@ -420,7 +422,8 @@
 "layout.component.taskCount" = "Task count";
 "layout.component.tps" = "Total TPS";
 "layout.component.firstOutput" = "Latest TTFT";
-"layout.component.quotaMetric" = "Quota / pace %";
+"layout.component.codexQuota" = "Codex quota";
+"layout.component.claudeQuota" = "Claude quota";
 "layout.component.quotaLabel" = "Quota / pace label";
 "layout.component.timeRemaining" = "Time remaining %";
 "layout.component.lowQuotaWarning" = "Low quota warning";
@@ -429,6 +432,9 @@
 "layout.earlier" = "Move earlier";
 "layout.later" = "Move later";
 "layout.single_save" = "Applies when you save";
+"layout.providers_hint" = "Quota components follow enabled services. Tasks and performance stay combined.";
+"layout.disabled_provider_hint" = "Disabled services keep their quota positions and return when enabled.";
+"layout.no_quota_providers" = "Enable Codex or Claude to add quota components.";
 "layout.move_left" = "Move to left";
 "layout.move_right" = "Move to right";
 "layout.hide_component" = "Hide %@";
@@ -446,7 +452,8 @@
 "layout.short.taskCount" = "Count";
 "layout.short.tps" = "TPS";
 "layout.short.firstOutput" = "TTFT";
-"layout.short.quotaMetric" = "Percent";
+"layout.short.codexQuota" = "Codex quota";
+"layout.short.claudeQuota" = "Claude quota";
 "layout.short.quotaLabel" = "Label";
 "layout.short.timeRemaining" = "Time left";
 "layout.short.lowQuotaWarning" = "Low quota";

@@ -2,6 +2,10 @@
 
 ## 3.0.0 (development candidate)
 
+- Mark the physical screen notch in Settings previews, keeping its scaled center footprint distinct from content and placing it above floating bars. Preview drafts use hardware geometry from Pacer's current screen.
+
+- Embed collapsed-bar customization in sidebar Settings with one draft/save flow. Split only Codex and Claude quota components, follow enabled modules, and preserve existing positions and hidden choices through layout migration.
+
 - Reject previous-turn request/display measurements, preserve tool endings when results contain display fields, invalidate missing Claude sources without false SSH warnings, and immediately recheck them after setup or manual refresh. Keep unknown quota/time rings visibly distinct from measured zero.
 
 - Add independently enabled Codex and Claude modules, installation-based defaults and persistent manual overrides.

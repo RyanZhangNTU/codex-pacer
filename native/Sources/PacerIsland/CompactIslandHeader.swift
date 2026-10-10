@@ -1,6 +1,13 @@
 import SwiftUI
 import PacerCore
 
+/// Unsaved Settings choices affect the preview without changing live collectors or preferences.
+struct CompactQuotaPreview {
+    let providers: [AgentProvider]
+    let metric: String
+    let windowIDs: [AgentProvider: String]
+}
+
 /// Both display modes have only left and right content. A real camera needs
 /// equal wings; floating headers use each side's natural width.
 struct CompactRowLayout: Layout {
@@ -36,6 +43,7 @@ struct CompactIslandHeader: View {
     let baseHeight: CGFloat
     let notchWidth: CGFloat
     var measuresLayout = true
+    var quotaPreview: CompactQuotaPreview? = nil
 
     var body: some View {
         rowView
@@ -69,8 +77,8 @@ struct CompactIslandHeader: View {
     private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment) -> some View {
         HStack(spacing: model.isAttached ? 6 : 8) {
             ForEach(components.filter { CompactIslandComponent.isVisible($0, model: model,
-                showsStatus: layout.components.contains(.status)) }) { component in
-                CompactIslandComponent(model: model, component: component)
+                showsStatus: layout.components.contains(.status), quotaPreview: quotaPreview) }) { component in
+                CompactIslandComponent(model: model, component: component, quotaPreview: quotaPreview)
             }
         }.fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: alignment).clipped()
@@ -80,32 +88,35 @@ struct CompactIslandHeader: View {
 struct CompactIslandComponent: View {
     @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
+    var quotaPreview: CompactQuotaPreview? = nil
+    private var providers: [AgentProvider] { quotaPreview?.providers ?? model.enabledProviders }
 
-    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
+    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true,
+                          quotaPreview: CompactQuotaPreview? = nil) -> Bool {
+        guard component.isAvailable(for: Set(quotaPreview?.providers ?? model.enabledProviders)) else { return false }
         switch component {
         case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .lowQuotaWarning: return !lowQuotaProviders(model).isEmpty
-        case .quotaDelayWarning: return !delayedQuotaProviders(model).isEmpty
+        case .lowQuotaWarning: return !lowQuotaProviders(model, quotaPreview: quotaPreview).isEmpty
+        case .quotaDelayWarning: return !delayedQuotaProviders(model, quotaPreview: quotaPreview).isEmpty
         case .sshWarning: return model.hasSSHConnectionIssue
-        case .quotaMetric, .quotaLabel, .timeRemaining: return !model.enabledProviders.isEmpty
         default: return true
         }
     }
-    private static func lowQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
-        model.enabledProviders.filter { provider in
+    private static func lowQuotaProviders(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [AgentProvider] {
+        (quotaPreview?.providers ?? model.enabledProviders).filter { provider in
             guard model.providerQuotaError(provider) == nil,
                   let snapshot = model.providerQuota(provider), !snapshot.isStale(at: model.now),
-                  let window = model.providerSelectedWindow(provider),
+                  let window = model.providerSelectedWindow(provider, selection: quotaPreview?.windowIDs[provider]),
                   window.resetsAt.map({ $0 > model.now }) ?? true,
                   let remaining = window.remainingPercent else { return false }
             return remaining <= 15
         }
     }
-    private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
-        model.enabledProviders.filter { provider in
+    private static func delayedQuotaProviders(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [AgentProvider] {
+        (quotaPreview?.providers ?? model.enabledProviders).filter { provider in
             model.providerQuotaError(provider) != nil ||
                 model.providerQuota(provider)?.isStale(at: model.now) == true ||
-                model.providerSelectedWindow(provider)?.resetsAt.map({ $0 <= model.now }) == true
+                model.providerSelectedWindow(provider, selection: quotaPreview?.windowIDs[provider])?.resetsAt.map({ $0 <= model.now }) == true
         }
     }
     var body: some View {
@@ -142,19 +153,20 @@ struct CompactIslandComponent: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
         case .lowQuotaWarning:
-            let exhausted = Self.lowQuotaProviders(model).contains { (model.providerSelectedWindow($0)?.remainingPercent ?? 100) <= 0 }
+            let exhausted = Self.lowQuotaProviders(model, quotaPreview: quotaPreview).contains {
+                (model.providerSelectedWindow($0, selection: quotaPreview?.windowIDs[$0])?.remainingPercent ?? 100) <= 0
+            }
             Image(systemName: exhausted ? StatusSymbols.empty : StatusSymbols.low).font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(exhausted ? PacerPalette.danger : PacerPalette.attention)
                 .accessibilityLabel(L10n.text(exhausted ? "quota.exhausted" : "notice.low_quota"))
-        case .quotaMetric:
-            providerValues(spacing: 7) { provider in
-                Text(quotaText(provider)).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(L10n.text("provider.compact_quota", provider.displayName, quotaText(provider)))
-            }
-            .monospacedDigit().fixedSize(horizontal: true, vertical: false)
+        case .codexQuota, .claudeQuota:
+            let provider = component.provider ?? .codex
+            Text(quotaText(provider)).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
+                .monospacedDigit().fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(L10n.text("provider.compact_quota", provider.displayName, quotaText(provider)))
         case .quotaLabel:
-            Text(model.compactMetricLabel).font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+            Text(quotaPreview.map { L10n.text($0.metric == "pace" ? "quota.pace" : "layout.quota_label") } ?? model.compactMetricLabel)
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
         case .timeRemaining:
             HStack(spacing: 4) {
                 Image(systemName: "hourglass").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
@@ -175,7 +187,7 @@ struct CompactIslandComponent: View {
     /// Provider values stay color-coded without names; a hairline separates them.
     private func providerValues<Value: View>(spacing: CGFloat, @ViewBuilder value: @escaping (AgentProvider) -> Value) -> some View {
         HStack(spacing: spacing) {
-            ForEach(Array(model.enabledProviders.enumerated()), id: \.element.rawValue) { index, provider in
+            ForEach(Array(providers.enumerated()), id: \.element.rawValue) { index, provider in
                 if index > 0 { Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 10).accessibilityHidden(true) }
                 value(provider)
             }
@@ -187,20 +199,24 @@ struct CompactIslandComponent: View {
             return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open", model.headerStatus)
         case .tps: return model.rateHelp
         case .firstOutput: return L10n.text("layout.latest_ttft_help")
-        case .lowQuotaWarning: return Self.lowQuotaProviders(model).map(\.displayName).joined(separator: " · ") + " · " + component.label
-        case .quotaDelayWarning: return Self.delayedQuotaProviders(model).map(\.displayName).joined(separator: " · ") + " · " + component.label
+        case .lowQuotaWarning: return Self.lowQuotaProviders(model, quotaPreview: quotaPreview).map(\.displayName).joined(separator: " · ") + " · " + component.label
+        case .quotaDelayWarning: return Self.delayedQuotaProviders(model, quotaPreview: quotaPreview).map(\.displayName).joined(separator: " · ") + " · " + component.label
         case .timeRemaining:
-            return model.enabledProviders.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
+            return providers.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
                 .joined(separator: " · ") + "\n" + L10n.text("layout.time_remaining_help")
-        case .quotaMetric, .quotaLabel:
-            return model.enabledProviders.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }
+        case .codexQuota, .claudeQuota, .quotaLabel:
+            return (component.provider.map { [$0] } ?? providers).map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }
                 .joined(separator: " · ") + "\n" + L10n.text("layout.metric_help")
         case .sshWarning: return L10n.text("source.ssh_retrying")
         default: return component.label
         }
     }
-    private func quotaText(_ provider: AgentProvider) -> String { model.compactQuotaText(provider) }
-    private func timeText(_ provider: AgentProvider) -> String { model.compactTimeRemainingText(provider) }
+    private func quotaText(_ provider: AgentProvider) -> String {
+        model.compactQuotaText(provider, metric: quotaPreview?.metric, selection: quotaPreview?.windowIDs[provider])
+    }
+    private func timeText(_ provider: AgentProvider) -> String {
+        model.compactTimeRemainingText(provider, selection: quotaPreview?.windowIDs[provider])
+    }
     private func action() {
         switch component {
         case .statusIcon, .status: model.openCompletionOrPin()

@@ -100,9 +100,11 @@ final class PanelController: NSObject {
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             hardwareNotchWidth = max(0, right.minX - left.maxX)
         } else { hardwareNotchWidth = 0 }
+        let screenNotchSize = CGSize(width: demoNotch ? 180 : hardwareNotchWidth,
+            height: demoNotch ? 36 : screen.safeAreaInsets.top)
+        if model.screenNotchSize != screenNotchSize { model.screenNotchSize = screenNotchSize }
         let mode: IslandDisplayMode = demoNotch ? .notch : model.displayMode
-        let layout = mode.layout(safeAreaTop: demoNotch ? 36 : screen.safeAreaInsets.top,
-            hardwareNotchWidth: demoNotch ? 180 : hardwareNotchWidth)
+        let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width)
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
         if model.baseHeaderHeight != layout.topHeight { model.baseHeaderHeight = layout.topHeight }

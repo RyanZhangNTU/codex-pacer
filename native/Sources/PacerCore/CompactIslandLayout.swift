@@ -4,11 +4,26 @@ import Foundation
 public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
         case statusIcon, status, taskCount, tps, firstOutput
-        case quotaMetric, quotaLabel, timeRemaining
+        case codexQuota, claudeQuota, quotaLabel, timeRemaining
         case lowQuotaWarning, quotaDelayWarning, sshWarning
         public var id: String { rawValue }
         public var label: String { L10n.text("layout.component." + rawValue) }
         public var shortLabel: String { L10n.text("layout.short." + rawValue) }
+        public var provider: AgentProvider? {
+            switch self {
+            case .codexQuota: .codex
+            case .claudeQuota: .claude
+            default: nil
+            }
+        }
+        /// Availability only affects presentation; disabled providers keep their saved positions.
+        public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
+            if let provider { return providers.contains(provider) }
+            switch self {
+            case .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning: return !providers.isEmpty
+            default: return true
+            }
+        }
         public var preferredLane: Lane {
             switch self {
             case .statusIcon, .status, .taskCount, .tps, .firstOutput: .leading
@@ -22,7 +37,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .taskCount: "number.circle"
             case .tps: "speedometer"
             case .firstOutput: "timer"
-            case .quotaMetric: "chart.pie"
+            case .codexQuota, .claudeQuota: "chart.pie"
             case .quotaLabel: "tag"
             case .timeRemaining: "hourglass"
             case .lowQuotaWarning: "gauge.with.dots.needle.33percent"
@@ -30,13 +45,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .sshWarning: "network.slash"
             }
         }
-        fileprivate static func saved(_ value: String) -> Self? {
+        fileprivate static func saved(_ value: String) -> [Self] {
             switch value {
-            case "quotaWindow": .quotaLabel
-            case "resetCountdown": .timeRemaining
-            case "quotaWarning": .lowQuotaWarning
-            case "freshness": .quotaDelayWarning
-            default: Self(rawValue: value)
+            case "quotaMetric": [.codexQuota, .claudeQuota]
+            case "quotaWindow": [.quotaLabel]
+            case "resetCountdown": [.timeRemaining]
+            case "quotaWarning": [.lowQuotaWarning]
+            case "freshness": [.quotaDelayWarning]
+            default: Self(rawValue: value).map { [$0] } ?? []
             }
         }
     }
@@ -47,7 +63,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             switch self {
             case .tasks: [.statusIcon, .status, .taskCount]
             case .performance: [.tps, .firstOutput]
-            case .quota: [.quotaMetric, .quotaLabel, .timeRemaining]
+            case .quota: [.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining]
             case .warnings: [.lowQuotaWarning, .quotaDelayWarning, .sshWarning]
             }
         }
@@ -57,19 +73,22 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 3
+    public let version = 4
     public var leading: [Component]
     public var trailing: [Component]
     public init(leading: [Component] = [], trailing: [Component] = []) {
         self.leading = leading; self.trailing = trailing
     }
     public static let standard = Self(leading: [.statusIcon, .status, .taskCount, .tps],
-        trailing: [.lowQuotaWarning, .quotaMetric, .quotaLabel, .quotaDelayWarning, .sshWarning])
+        trailing: [.lowQuotaWarning, .codexQuota, .claudeQuota, .quotaLabel, .quotaDelayWarning, .sshWarning])
     public subscript(_ lane: Lane) -> [Component] {
         get { lane == .leading ? leading : trailing }
         set { if lane == .leading { leading = newValue } else { trailing = newValue } }
     }
     public var components: Set<Component> { Set(leading + trailing) }
+    public func visibleComponents(in lane: Lane, providers: Set<AgentProvider>) -> [Component] {
+        self[lane].filter { $0.isAvailable(for: providers) }
+    }
     public var normalized: Self {
         var seen: Set<Component> = []
         var result = Self()
@@ -93,10 +112,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         let index = before.flatMap { self[lane].firstIndex(of: $0) } ?? self[lane].count
         self[lane].insert(component, at: index)
     }
-    public mutating func shift(_ component: Component, by offset: Int) {
+    public mutating func shift(_ component: Component, by offset: Int, providers: Set<AgentProvider>? = nil) {
         guard let lane = Lane.allCases.first(where: { self[$0].contains(component) }),
               let index = self[lane].firstIndex(of: component) else { return }
-        let target = min(self[lane].count - 1, max(0, index + offset))
+        let positions = self[lane].indices.filter { index in
+            providers.map { self[lane][index].isAvailable(for: $0) } ?? true
+        }
+        guard let position = positions.firstIndex(of: index) else { return }
+        let target = positions[min(positions.count - 1, max(0, position + offset))]
         guard target != index else { return }
         self[lane].remove(at: index); self[lane].insert(component, at: target)
     }
@@ -104,16 +127,16 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...3).contains(schema) else {
+        guard (1...4).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
-        leading = try values.decode([String].self, forKey: .leading).compactMap(Component.saved)
+        leading = try values.decode([String].self, forKey: .leading).flatMap(Component.saved)
         if schema == 1 {
-            leading += try values.decodeIfPresent([String].self, forKey: .center)?.compactMap(Component.saved) ?? []
+            leading += try values.decodeIfPresent([String].self, forKey: .center)?.flatMap(Component.saved) ?? []
         }
-        trailing = try values.decode([String].self, forKey: .trailing).compactMap(Component.saved)
+        trailing = try values.decode([String].self, forKey: .trailing).flatMap(Component.saved)
         if schema < 3, leading == [.statusIcon, .status, .tps],
-           trailing == [.lowQuotaWarning, .quotaMetric, .quotaLabel, .quotaDelayWarning] {
+           trailing == [.lowQuotaWarning, .codexQuota, .claudeQuota, .quotaLabel, .quotaDelayWarning] {
             leading.insert(.taskCount, at: 2)
             trailing.append(.sshWarning)
         }
