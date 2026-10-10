@@ -190,14 +190,8 @@ struct CompactIslandComponent: View {
         default: return component.label
         }
     }
-    private func quotaText(_ provider: AgentProvider) -> String {
-        let value = UserDefaults.standard.string(forKey: "compactMetric") == "pace"
-            ? model.providerPace(provider) : model.providerSelectedWindow(provider)?.remainingPercent
-        return value.map { "\(Int($0.rounded()))%" } ?? "—"
-    }
-    private func timeText(_ provider: AgentProvider) -> String {
-        model.providerSelectedWindow(provider)?.elapsedTimePercent(at: model.now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
-    }
+    private func quotaText(_ provider: AgentProvider) -> String { model.compactQuotaText(provider) }
+    private func timeText(_ provider: AgentProvider) -> String { model.compactTimeRemainingText(provider) }
     private func action() {
         switch component {
         case .statusIcon, .status: model.openCompletionOrPin()

@@ -70,17 +70,17 @@ final class CompactComponentDisplayTests: XCTestCase {
         let model = IslandModel(), now = Date(); model.now = now
         model.quota = try snapshot(used: 57, at: now)
         defaults.set("remaining", forKey: "compactMetric")
-        XCTAssertEqual(model.quotaSummary, "43%")
+        XCTAssertEqual(model.compactQuotaText(.codex), "43%")
         XCTAssertEqual(model.compactMetricLabel, L10n.text("layout.quota_label"))
-        XCTAssertEqual(try XCTUnwrap(model.remainingTimePercent), 50, accuracy: 0.000001)
+        XCTAssertEqual(model.compactTimeRemainingText(.codex), "50%")
         defaults.set("pace", forKey: "compactMetric")
-        XCTAssertEqual(model.quotaSummary, "86%")
+        XCTAssertEqual(model.compactQuotaText(.codex), "86%")
         XCTAssertEqual(model.compactMetricLabel, L10n.text("quota.pace"))
         model.now = now.addingTimeInterval(3600)
-        XCTAssertEqual(model.remainingTimePercent, 0)
+        XCTAssertEqual(model.compactTimeRemainingText(.codex), "0%")
         model.quota = nil
-        XCTAssertNil(model.remainingTimePercent)
-        XCTAssertEqual(model.quotaSummary, "—")
+        XCTAssertEqual(model.compactTimeRemainingText(.codex), "—")
+        XCTAssertEqual(model.compactQuotaText(.codex), "—")
     }
     private func snapshot(used: Double, at date: Date) throws -> QuotaSnapshot {
         let bytes = try JSONSerialization.data(withJSONObject: ["rateLimits": ["primary": ["usedPercent": used,

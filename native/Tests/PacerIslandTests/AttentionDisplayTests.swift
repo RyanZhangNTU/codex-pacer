@@ -51,10 +51,13 @@ final class AttentionDisplayTests: XCTestCase {
         let old = UserDefaults.standard.object(forKey: "completionReminder")
         defer { if let old { UserDefaults.standard.set(old, forKey: "completionReminder") } else { UserDefaults.standard.removeObject(forKey: "completionReminder") } }
         UserDefaults.standard.set(true, forKey: "completionReminder")
+        let oldSSH = UserDefaults.standard.object(forKey: "monitorSSH")
+        defer { if let oldSSH { UserDefaults.standard.set(oldSSH, forKey: "monitorSSH") } else { UserDefaults.standard.removeObject(forKey: "monitorSSH") } }
+        UserDefaults.standard.set(true, forKey: "monitorSSH")
         let model = IslandModel(demo: true)
         model.setDemoStage(.completed)
         model.unavailableSSH = ["Synthetic unavailable source"]
-        XCTAssertTrue(model.hasConnectionIssue)
+        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model))
         XCTAssertEqual(model.headerStatus, model.completionSummary)
         model.isAttached = true
         XCTAssertEqual(model.headerDisplayStatus, model.completionSummary)
@@ -89,7 +92,7 @@ final class AttentionDisplayTests: XCTestCase {
         model.errorMessage = "Synthetic quota failure"
         XCTAssertEqual(model.headerSymbol, StatusSymbols.thinking)
         XCTAssertEqual(model.headerTint, tint)
-        XCTAssertNil(model.quotaWarningSymbol, "An invalid quota does not produce a live low-quota warning")
+        XCTAssertFalse(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "An invalid quota does not produce a live low-quota warning")
         model.setDemoStage(.tool)
         XCTAssertEqual(model.headerSymbol, StatusSymbols.tool)
         for (stage, key) in [(DemoTaskStage.thinking, "activity.thinking"), (.tool, "activity.tool_compact"), (.responding, "activity.responding_compact")] {

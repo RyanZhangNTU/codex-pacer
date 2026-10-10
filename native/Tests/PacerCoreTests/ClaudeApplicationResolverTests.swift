@@ -39,7 +39,7 @@ final class ClaudeApplicationResolverTests: XCTestCase {
         XCTAssertNil(ClaudeApplicationResolver.findExecutable(userHome: root, environment: ["PATH": "relative/bin"], applicationURLs: [], systemBinDirectories: []))
     }
 
-    func testDesktopSessionMapUsesActiveAccountAndOnlyValidatedIdentifiers() throws {
+    func testLocalDesktopMappingUsesActiveAccountAndOnlyValidatedIdentifiers() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let account = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", org = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -55,10 +55,12 @@ final class ClaudeApplicationResolverTests: XCTestCase {
         try FileManager.default.createDirectory(at: oldAccount, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: ["sessionId": "local_ffffffff-ffff-ffff-ffff-ffffffffffff", "cliSessionId": cli])
             .write(to: oldAccount.appendingPathComponent("local_ffffffff-ffff-ffff-ffff-ffffffffffff.json"))
-        XCTAssertEqual(ClaudeApplicationResolver.desktopSessionMap(userHome: root), [cli: local])
+        let mapped = await ClaudeApplicationResolver.desktopSessionID(for: cli, sourceHostID: nil, userHome: root)
+        XCTAssertEqual(mapped, local)
         try JSONSerialization.data(withJSONObject: ["sessionId": "local_wrong", "cliSessionId": cli])
             .write(to: metadataRoot.appendingPathComponent(local + ".json"))
-        XCTAssertTrue(ClaudeApplicationResolver.desktopSessionMap(userHome: root).isEmpty)
+        let invalid = await ClaudeApplicationResolver.desktopSessionID(for: cli, sourceHostID: nil, userHome: root)
+        XCTAssertNil(invalid)
     }
 
     func testRemoteDesktopMappingRequiresMatchingCanonicalHostUserAndPort() async throws {
@@ -73,7 +75,8 @@ final class ClaudeApplicationResolverTests: XCTestCase {
         let record: [String: Any] = ["sessionId": local, "cliSessionId": cli,
                                     "sshConfig": ["sshHost": "fixture-user@fixture.example", "sshPort": 2222, "name": "A100"]]
         try JSONSerialization.data(withJSONObject: record).write(to: metadata.appendingPathComponent(local + ".json"))
-        XCTAssertTrue(ClaudeApplicationResolver.desktopSessionMap(userHome: root).isEmpty)
+        let localOnly = await ClaudeApplicationResolver.desktopSessionID(for: cli, sourceHostID: nil, userHome: root)
+        XCTAssertNil(localOnly, "An SSH context is never a local Desktop mapping")
         let route = ClaudeSSHRoute(hostname: "fixture.example", user: "fixture-user", port: 2222)
         let matched = await ClaudeApplicationResolver.desktopSessionID(for: cli, sourceHostID: "remote-ssh-discovered:A100", userHome: root) { host, port in
             host == "A100" || (host == "fixture-user@fixture.example" && port == 2222) ? route : nil

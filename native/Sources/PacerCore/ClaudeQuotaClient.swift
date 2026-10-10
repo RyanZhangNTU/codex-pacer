@@ -61,31 +61,6 @@ public enum ClaudeQuotaDecoder {
         return QuotaSnapshot(buckets: buckets, capturedAt: capturedAt, accountScope: accountScope, resetCredits: nil)
     }
 
-    /// The Desktop history stores percentages and sample time, never reset dates.
-    /// Only version 2 samples matching the active organization are usable.
-    public static func decodeDesktopHistory(_ data: Data, organizationID: String,
-                                            accountScope: String, now: Date = Date()) throws -> QuotaSnapshot {
-        let object = try dictionary(data)
-        guard number(object["version"]) == 2, let samples = object["samples"] as? [[String: Any]],
-              samples.count <= 20_000 else { throw ClaudeQuotaError.unavailable }
-        let matching = samples.compactMap { sample -> (Date, [String: Any])? in
-            guard sample["org"] as? String == organizationID,
-                  let milliseconds = number(sample["t"]), milliseconds > 0,
-                  let usage = sample["u"] as? [String: Any] else { return nil }
-            let timestamp = Date(timeIntervalSince1970: milliseconds / 1000)
-            guard timestamp <= now.addingTimeInterval(5) else { return nil }
-            return (timestamp, usage)
-        }.max { $0.0 < $1.0 }
-        guard let (timestamp, usage) = matching else { throw ClaudeQuotaError.unavailable }
-        var fields: [String: Any] = [:]
-        for (name, short) in [("five_hour", "fh"), ("seven_day", "sd"),
-                              ("seven_day_sonnet", "sn"), ("seven_day_opus", "so")] {
-            if let value = number(usage[short]), value >= 0 { fields[name] = ["utilization": value] }
-        }
-        return try decodeUsage(JSONSerialization.data(withJSONObject: fields), capturedAt: timestamp,
-                               accountScope: accountScope)
-    }
-
     private static func buckets(from fields: [String: Any], percentageKey: String, plan: String?) -> [QuotaBucket] {
         func window(_ field: String, id: String, minutes: Int) -> QuotaWindow? {
             guard let value = fields[field] as? [String: Any] else { return nil }
@@ -549,12 +524,6 @@ enum ClaudeCredentialStore {
               let size = attrs[.size] as? NSNumber, size.intValue <= 2 * 1024 * 1024,
               let data = try? Data(contentsOf: url), data.count <= 2 * 1024 * 1024 else { return nil }
         return data
-    }
-
-    static func serviceName(userHome: URL, home: URL) -> String {
-        let base = "Claude Code-credentials"
-        guard home.standardizedFileURL != userHome.appendingPathComponent(".claude").standardizedFileURL else { return base }
-        return base + "-" + String(ClaudeQuotaDecoder.digest(home.standardizedFileURL.path.precomposedStringWithCanonicalMapping).prefix(8))
     }
 
     static func authenticationContext(allowInteraction: Bool = false) -> LAContext {

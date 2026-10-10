@@ -12,7 +12,7 @@ The measurements do not establish identical energy consumption. Single-task syst
 
 The previous sampler used raw Darwin CPU times as nanoseconds. On this host they are Mach time units with a `125/3` timebase. An independent process burned one CPU-second, measured with `CLOCK_PROCESS_CPUTIME_ID`, while remaining alive for both counter reads. The old interpretation returned 0.024000455 seconds; the converted sampler returned 1.000021625 seconds. `process-energy.c` now converts with `mach_timebase_info`, records that scale, and retains unscaled nJ energy counters.
 
-The historical [build 35 report](performance-2.3.0.md) has its CPU column corrected from the preserved raw samples. Its energy figures are unchanged. It is not the baseline for this comparison.
+The historical [build 35 report](https://github.com/RyanZhangNTU/codex-pacer/blob/v2.3.1/docs/performance-2.3.0.md), retained in tagged source, has its CPU column corrected from the preserved raw samples. Its energy figures are unchanged. It is not the baseline for this comparison.
 
 Apple's [XNU recount documentation](https://github.com/apple-oss-distributions/xnu/blob/main/doc/observability/recount.md) describes per-task CPU and energy accounting, including energy estimates in nanojoules on ARM64. `ri_energy_nj` is a process CPU-energy estimate; it does not include all display, GPU, network, remote-host or battery costs. Per-process energy can vary with core scheduling even when measured CPU seconds are similar. New raw samples also retain P-core CPU and energy counters for attribution.
 

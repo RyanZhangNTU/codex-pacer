@@ -481,19 +481,11 @@ final class IslandModel: ObservableObject {
     var hidesHeaderRate: Bool {
         isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
     }
-    var quotaWarningSymbol: String? {
-        guard !stale, errorMessage == nil, let remaining, remaining <= 15 else { return nil }
-        return remaining <= 0 ? StatusSymbols.empty : StatusSymbols.low
-    }
     var headerRateText: String? {
         guard let rate else { return nil }
         if isAttached && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
         if isAttached && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
         return String(format: "%.0f", rate)
-    }
-    var hasConnectionIssue: Bool {
-        !unavailableSSH.isEmpty || (isModuleEnabled(.codex) && streamStatuses["local"].map { !$0.connected } == true) ||
-            (isModuleEnabled(.claude) && claudeStreamStatuses["local"].map { !$0.connected } == true)
     }
     var hasSSHConnectionIssue: Bool {
         monitorsSSH && (!unavailableSSH.isEmpty || (Array(streamStatuses) + Array(claudeStreamStatuses)).contains {
@@ -512,26 +504,18 @@ final class IslandModel: ObservableObject {
         else { togglePin() }
     }
     var selectedWindow: QuotaWindow? { providerSelectedWindow(selectedProvider) }
-    var weeklyWindow: QuotaWindow? { providerWeeklyWindow(selectedProvider) }
-    var currentCycle: QuotaCycle? { history.currentCycle(for: weeklyWindow, at: now) }
     var stale: Bool { (quota?.isStale(at: now) ?? false) || (selectedWindow?.resetsAt.map { $0 <= now } ?? false) }
-    var remaining: Double? { selectedWindow?.remainingPercent }
-    var pace: Double? { stale || errorMessage != nil ? nil : selectedWindow?.pacePercent(at: now) }
-    var quotaSummary: String {
-        if defaults.string(forKey: "compactMetric") == "pace" {
-            return pace.map { "\(Int($0.rounded()))%" } ?? "—"
-        }
-        return remaining.map { "\(Int($0.rounded()))%" } ?? "—"
-    }
-    var compactWindow: String {
-        defaults.string(forKey: "compactMetric") == "pace" ? L10n.text("quota.pace") :
-        (selectedWindow?.compactLabel ?? "")
-    }
     var compactMetricLabel: String {
         L10n.text(defaults.string(forKey: "compactMetric") == "pace" ? "quota.pace" : "layout.quota_label")
     }
-    var remainingTimePercent: Double? { selectedWindow?.elapsedTimePercent(at: now).map { 100 - $0 } }
-    var statusTitle: String { overview.title }
+    func compactQuotaText(_ provider: AgentProvider) -> String {
+        let value = defaults.string(forKey: "compactMetric") == "pace"
+            ? providerPace(provider) : providerSelectedWindow(provider)?.remainingPercent
+        return value.map { "\(Int($0.rounded()))%" } ?? "—"
+    }
+    func compactTimeRemainingText(_ provider: AgentProvider) -> String {
+        providerSelectedWindow(provider)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
+    }
     var compactStatus: String {
         if let notice, ![.completed, .interrupted].contains(notice.kind) { return notice.title }
         return overview.compactTitle
@@ -540,7 +524,6 @@ final class IslandModel: ObservableObject {
     var rateIsFresh: Bool { overview.rateIsFresh }
     var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
     var showsRate: Bool { !running.isEmpty }
-    var rateText: String { rate.map { String(format: "%.1f", $0) } ?? (showsRate ? L10n.text("performance.awaiting_usage") : "—") }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.object(forKey: "monitorRemoteControl") == nil || defaults.bool(forKey: "monitorRemoteControl") }
     var accent: Color {

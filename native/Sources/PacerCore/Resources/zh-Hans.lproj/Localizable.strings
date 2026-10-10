@@ -20,9 +20,6 @@
 "claude.quota.connect" = "登录 Claude";
 "claude.quota.choose_workspace" = "选择工作区";
 "claude.quota.choose_workspace_help" = "选择需要在 Pacer 中查看额度的工作区。若要切换账号，请使用设置中的「登录 Claude」。";
-"claude.quota.connecting" = "正在读取额度…";
-"claude.quota.connection_remembered" = "连接已记住。";
-"claude.quota.connection_not_remembered" = "额度已连接，但连接未能保存；本次运行仍可使用。";
 "claude.quota.connect_help" = "在 Pacer 的专用窗口打开 claude.ai，登录或切换账号。WebKit 会保存会话，过期后需重新登录。Pacer 不读取 Claude 的钥匙串，也不把凭据写入设置或日志。";
 "provider.remove_monitoring" = "移除";
 "provider.removing" = "正在移除…";
@@ -33,7 +30,6 @@
 "provider.automatic" = "自动";
 "provider.module_help" = "默认根据已安装应用启用模块；手动选择优先。保存后生效。";
 "provider.restore_automatic" = "恢复自动检测";
-"provider.quota_tab" = "%@ 额度";
 "provider.selected" = "已选择";
 "provider.not_selected" = "未选择";
 "provider.none_enabled" = "在设置中启用模块，即可查看任务和额度。";
@@ -95,7 +91,6 @@
 "account.non_expiring_count" = "%ld 次重置不过期";
 "account.unknown_expiry_count" = "%ld 次重置的到期时间未知";
 "account.expiry_timezone" = "本地时间（%@）";
-"activity.finished_count" = "%ld 轮结束";
 "activity.header_open" = "%@。点击打开会话";
 "activity.header_pin" = "%@。点击固定展开";
 "activity.hidden_local_name" = "本地任务";
@@ -108,17 +103,14 @@
 "activity.next_page" = "下一页任务";
 "activity.no_link" = "此来源没有可用的会话链接";
 "activity.no_tasks" = "暂无运行任务";
-"activity.open_help" = "打开会话 · %@";
 "activity.page_number" = "第 %1$ld 页，共 %2$ld 页";
 "activity.page_region" = "任务分页区域";
 "activity.previous_page" = "上一页任务";
-"activity.quota_pin" = "%1$@%2$@。点击固定展开";
 "activity.responding" = "输出回复";
 "activity.row_accessibility" = "%1$@，%2$@，%3$@。打开会话";
 "activity.running" = "运行中";
 "activity.running_count" = "%ld 个任务运行中";
 "activity.running_long" = "正在处理任务";
-"activity.sampling" = "采样中";
 "activity.starting" = "正在处理";
 "activity.task_count" = "%ld 个任务";
 "activity.task_count_singular" = "%ld 个任务";
@@ -126,7 +118,6 @@
 "activity.thinking" = "思考中";
 "activity.tool" = "正在执行工具";
 "activity.turn_finished" = "本轮结束";
-"activity.turn_interrupted" = "本轮中断";
 "activity.unknown" = "状态未确认";
 "activity.waiting" = "等待回复";
 "activity.waiting_long" = "等待你的回复";
@@ -157,7 +148,6 @@
 "cli.exit_code" = "（退出码 %@）";
 "cli.exited" = "Codex CLI 已退出";
 "cli.expired_auth" = "登录凭据可能已过期。请重新登录当前 Codex 账户后重试。";
-"cli.home" = "Codex 目录：%@";
 "cli.invalid_reply" = "%1$@返回的数据无法识别（%2$@）。\n%3$@\n请更新 Codex CLI 后重试。";
 "cli.invalid_response" = "Codex 返回的数据无法识别，请检查 CLI 版本。";
 "cli.launch_failed" = "无法启动 Codex CLI。\n路径：%1$@\n系统原因：%2$@\n请检查文件的执行权限、安装是否完整及 Mac 芯片兼容性。";
@@ -174,7 +164,6 @@
 "cli.not_json" = "CLI 输出了非 JSON 协议数据，未能建立有效的 app-server 连接。";
 "cli.not_runnable" = "所选位置没有可运行的 Codex CLI：%1$@\n请选择 Codex.app、codex 可执行文件或包含 codex 的目录。";
 "cli.not_signed_in" = "此 Codex 数据目录中没有已登录的账户（account/read 返回 account: null）。\n请使用 ChatGPT 账户登录 Codex，或在设置中选择已登录的数据目录。";
-"cli.path" = "CLI：%@";
 "cli.path_missing" = "指定的 CLI 路径不存在：%1$@\n文件可能已移动或随升级被移除，请重新选择或切回自动查找。";
 "cli.process_exited" = "%1$@%2$@。\n%3$@\n%4$@";
 "cli.relative_path" = "指定的 CLI 路径不是绝对路径：%1$@\n请使用 / 开头的路径或 ~/ 路径，也可以直接选择 Codex.app。";
@@ -250,11 +239,9 @@
 "notice.low_quota" = "额度偏低";
 "notice.quota_remaining" = "%1$@剩余 %2$ld%%";
 "quota.age" = "%ld 分钟前的额度";
-"quota.cached" = "下方为上次成功读取的额度：%@";
 "quota.chart_warning" = "曲线记录异常";
 "quota.compact_days" = "%ld 天";
 "quota.compact_hours" = "%ld 小时";
-"quota.compact_minutes" = "%ld 分钟";
 "quota.days" = "%ld 天额度";
 "quota.expired" = "窗口已到期，等待更新";
 "quota.generic_window" = "额度窗口";
@@ -282,11 +269,8 @@
 "quota.reset_unknown" = "重置时间未知";
 "quota.seconds_ago" = "%ld 秒前更新";
 "quota.track_help" = "实色为剩余额度，刻度为按时间均匀使用时应剩的额度";
-"quota.unavailable" = "额度暂不可用";
 "quota.waiting_sample" = "等待采样";
 "quota.waiting_update" = "等待更新";
-"rate.partial" = "已测得任务合计：%.1f token/s；其余任务等待用量数据";
-"rate.total" = "合计输出速度：%.1f token/s";
 "redaction.account" = "[账户已隐藏]";
 "redaction.bearer" = "Bearer [已隐藏]";
 "redaction.email" = "[邮箱已隐藏]";
@@ -353,7 +337,6 @@
 "settings.other_locations" = "其他位置";
 "settings.pace_percentage" = "配速百分比";
 "settings.privacy" = "隐私";
-"settings.quota_window" = "额度窗口";
 "settings.remaining_quota" = "剩余额度";
 "settings.reminders" = "提醒";
 "settings.rescan" = "重新检测";
@@ -371,8 +354,6 @@
 "settings.use_automatic" = "使用自动查找";
 "settings.waiting_reminder" = "等待回复提醒";
 "source.ssh_unavailable" = "SSH 未连接";
-"source.ssh_unavailable_named" = "SSH %@ 未连接";
-"source.ssh_unavailable_count" = "%ld 个 SSH 未连接";
 "source.ssh_retrying" = "将自动重试这些 SSH 连接。";
 "settings.saved_quota_window" = "已保存的额度窗口（数据暂不可用）";
 "activity.app_missing" = "未找到 Codex，请确认已安装 Codex 应用。";
@@ -380,10 +361,6 @@
 "activity.open_failed_detail" = "无法打开会话：%@";
 "attention.approval" = "待你审批";
 "attention.input" = "待你回复";
-"attention.count" = "%d 项待处理";
-"attention.connection_issue" = "连接异常";
-"attention.open" = "%@ 需要你处理，打开会话";
-"attention.local_connection_issue" = "本机实时连接不可用，状态更新可能延迟。";
 "updates.automatic" = "自动检查更新";
 "updates.available" = "发现新版本 %@，可在更新窗口中安装。";
 "updates.cancelled" = "已取消更新。";
@@ -479,7 +456,6 @@
 "settings.quota_history" = "%@ 额度历史";
 "settings.quota_details" = "额度详情";
 "quota.source_codex" = "Codex 服务";
-"dashboard.remaining" = "剩余额度";
 "dashboard.time_remaining" = "剩余时间 %@";
 "dashboard.rings_help" = "外环显示剩余额度，内环显示剩余时间。";
 "dashboard.rings_accessibility" = "%1$@，%2$@。剩余额度：%3$@。剩余时间：%4$@。%5$@";
@@ -488,7 +464,6 @@
 "dashboard.pro_help" = "目前仅返回每周额度限制，没有五小时限制。";
 "dashboard.provider_unavailable" = "%@ 额度不可用";
 "dashboard.period_unavailable" = "未返回 %@ 额度限制";
-"dashboard.weekly_only" = "仅每周限制";
 "dashboard.countdown_days" = "%d天 %d小时";
 "dashboard.countdown_hours" = "%d小时 %d分";
 "dashboard.countdown_minutes" = "%d分";

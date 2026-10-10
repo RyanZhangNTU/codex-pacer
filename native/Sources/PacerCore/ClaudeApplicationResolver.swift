@@ -62,21 +62,6 @@ public enum ClaudeApplicationResolver {
         find(userHome: userHome) != nil || findExecutable(userHome: userHome) != nil
     }
 
-    /// Navigation metadata only. A stored mapping never creates a running task.
-    /// Read only the active Desktop account's bounded session metadata and decode
-    /// only routing identifiers and connection fields, ignoring titles, summaries
-    /// and conversation data.
-    public static func desktopSessionMap(userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String: String] {
-        var result: [String: String] = [:], ambiguous = Set<String>()
-        for metadata in desktopMetadata(userHome: userHome) where metadata.sshConfig == nil && metadata.wslConfig == nil {
-            guard let id = metadata.canonicalCLI, !ambiguous.contains(id) else { continue }
-            if let existing = result[id], existing != metadata.sessionId {
-                result.removeValue(forKey: id); ambiguous.insert(id)
-            } else { result[id] = metadata.sessionId }
-        }
-        return result
-    }
-
     /// Desktop mirrors SSH/WSL transcripts into its default local Claude home.
     /// Exclude only a unique active-profile remote context; never infer a host
     /// from a UUID shared by independently observed local/SSH sessions.

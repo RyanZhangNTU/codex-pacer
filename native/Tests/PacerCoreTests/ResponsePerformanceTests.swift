@@ -14,7 +14,7 @@ final class ResponsePerformanceTests: XCTestCase {
         meter.modelOutput(at: start.addingTimeInterval(10), textDelta: false)
         consume(&meter)
         XCTAssertEqual(meter.latest?.tokensPerSecond, 60)
-        XCTAssertEqual(meter.latest?.visibleOutputTokens, 400)
+        XCTAssertEqual(meter.latest?.reasoningTokens, 200)
         XCTAssertEqual(meter.firstTokenLatency, 2)
         consume(&meter, output: 900, at: 11)
         XCTAssertEqual(meter.latest?.outputTokens, 600)

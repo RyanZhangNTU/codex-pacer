@@ -12,7 +12,6 @@ public struct ResponsePerformance: Equatable, Sendable {
     public let source: Source
     public var duration: TimeInterval { completedAt.timeIntervalSince(startedAt) }
     public var tokensPerSecond: Double { Double(outputTokens) / duration }
-    public var visibleOutputTokens: Int? { reasoningTokens.map { max(0, outputTokens - $0) } }
 
     func supersedes(_ other: Self) -> Bool {
         if turnID == other.turnID, source != other.source,

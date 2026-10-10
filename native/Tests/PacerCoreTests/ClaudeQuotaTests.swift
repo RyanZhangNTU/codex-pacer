@@ -47,16 +47,6 @@ final class ClaudeQuotaTests: XCTestCase {
         XCTAssertEqual(value.buckets[1].windows[0].durationMinutes, 10080)
     }
 
-    func testDesktopHistorySelectsLatestMatchingOrganizationWithoutResetGuess() throws {
-        let data = Data(#"{"version":2,"samples":[{"t":1799999700000,"org":"active","u":{"fh":15,"sd":25}},{"t":1800000000000,"org":"other","u":{"fh":99}},{"t":1799999800000,"org":"active","u":{"fh":20,"sd":30}},{"t":1800001000000,"org":"active","u":{"fh":80}}]}"#.utf8)
-        let value = try ClaudeQuotaDecoder.decodeDesktopHistory(data, organizationID: "active", accountScope: "verified", now: date)
-        XCTAssertEqual(value.capturedAt, date.addingTimeInterval(-200))
-        XCTAssertEqual(value.windows.map(\.usedPercent), [20, 30])
-        XCTAssertTrue(value.windows.allSatisfy { $0.resetsAt == nil && $0.pacePercent(at: date) == nil })
-        XCTAssertThrowsError(try ClaudeQuotaDecoder.decodeDesktopHistory(data, organizationID: "absent", accountScope: "verified", now: date))
-        XCTAssertThrowsError(try ClaudeQuotaDecoder.decodeDesktopHistory(Data(#"{"version":1,"samples":[{"t":1800000000000,"fh":50}]}"#.utf8), organizationID: "active", accountScope: "verified", now: date))
-    }
-
     func testUsageMalformedAndOversizedBodiesProduceSanitizedErrors() {
         for data in [Data(#"{"error":"private-fixture-message"}"#.utf8), Data("[]".utf8), Data(repeating: 32, count: 2 * 1024 * 1024 + 1)] {
             XCTAssertThrowsError(try ClaudeQuotaDecoder.decodeUsage(data)) {
@@ -66,7 +56,7 @@ final class ClaudeQuotaTests: XCTestCase {
         }
     }
 
-    func testCustomHomeDoesNotReadDefaultCredentialServiceOrIdentity() throws {
+    func testCustomHomeDoesNotReadDefaultIdentity() throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let custom = root.appendingPathComponent("custom")
@@ -75,8 +65,6 @@ final class ClaudeQuotaTests: XCTestCase {
             .write(to: root.appendingPathComponent(".claude.json"))
         try Data(#"{"claudeAiOauth":{"accessToken":"test-custom-token","expiresAt":1800000100000,"subscriptionType":"pro"}}"#.utf8)
             .write(to: custom.appendingPathComponent(".credentials.json"))
-        XCTAssertEqual(ClaudeCredentialStore.serviceName(userHome: root, home: root.appendingPathComponent(".claude")), "Claude Code-credentials")
-        XCTAssertNotEqual(ClaudeCredentialStore.serviceName(userHome: root, home: custom), "Claude Code-credentials")
         XCTAssertNil(ClaudeCredentialStore.identity(userHome: root, home: custom))
         let credential = try XCTUnwrap(ClaudeCredentialStore.read(userHome: root, home: custom, environment: [:]))
         XCTAssertEqual(credential.token, "test-custom-token")

@@ -211,10 +211,6 @@ def attributes(rows):
         if isinstance(key,str) and key in OTEL_ATTRS and 'value' in item:out[key]=item['value']
     return out
 
-def otlp(raw):
-    try:return otlp_records(raw)
-    except (OTLPFailure,ValueError,UnicodeError,RecursionError):return []
-
 def otlp_records(raw):
     import decimal
     if len(raw)>MAX_FRAME:raise OTLPFailure(413)

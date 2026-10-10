@@ -20,9 +20,6 @@
 "claude.quota.connect" = "Sign in to Claude";
 "claude.quota.choose_workspace" = "Choose workspace";
 "claude.quota.choose_workspace_help" = "Choose the workspace whose quota Pacer should display. To switch accounts, use Sign in to Claude in Settings.";
-"claude.quota.connecting" = "Reading quota…";
-"claude.quota.connection_remembered" = "Connection remembered.";
-"claude.quota.connection_not_remembered" = "Quota is connected, but the connection could not be saved. This run can continue to use it.";
 "claude.quota.connect_help" = "Open claude.ai in Pacer's own window to sign in or switch accounts. WebKit keeps the session; sign in again if it expires. Pacer does not read Claude's Keychain or copy credentials into settings or logs.";
 "provider.remove_monitoring" = "Remove";
 "provider.removing" = "Removing…";
@@ -33,7 +30,6 @@
 "provider.automatic" = "Automatic";
 "provider.module_help" = "Modules follow installed apps until you choose a setting. Changes apply on Save.";
 "provider.restore_automatic" = "Use Automatic";
-"provider.quota_tab" = "%@ quota";
 "provider.selected" = "Selected";
 "provider.not_selected" = "Not selected";
 "provider.none_enabled" = "Enable a module in Settings to see tasks and quota.";
@@ -95,7 +91,6 @@
 "account.non_expiring_count" = "Non-expiring resets: %ld";
 "account.unknown_expiry_count" = "Resets with unknown expiry: %ld";
 "account.expiry_timezone" = "Local time (%@)";
-"activity.finished_count" = "%ld turns finished";
 "activity.header_open" = "%@. Click to open chat";
 "activity.header_pin" = "%@. Click to keep expanded";
 "activity.hidden_local_name" = "Local task";
@@ -108,17 +103,14 @@
 "activity.next_page" = "Next Task Page";
 "activity.no_link" = "No chat link is available for this source";
 "activity.no_tasks" = "No running tasks";
-"activity.open_help" = "Open chat · %@";
 "activity.page_number" = "Page %1$ld of %2$ld";
 "activity.page_region" = "Task pages";
 "activity.previous_page" = "Previous Task Page";
-"activity.quota_pin" = "%1$@ %2$@. Click to keep expanded";
 "activity.responding" = "Writing a reply";
 "activity.row_accessibility" = "%1$@, %2$@, %3$@. Open chat";
 "activity.running" = "Running";
 "activity.running_count" = "%ld tasks running";
 "activity.running_long" = "Working on a task";
-"activity.sampling" = "Sampling";
 "activity.starting" = "Starting";
 "activity.task_count" = "%ld tasks";
 "activity.task_count_singular" = "%ld task";
@@ -126,7 +118,6 @@
 "activity.thinking" = "Thinking";
 "activity.tool" = "Running a tool";
 "activity.turn_finished" = "Turn finished";
-"activity.turn_interrupted" = "Turn interrupted";
 "activity.unknown" = "Status unconfirmed";
 "activity.waiting" = "Waiting for reply";
 "activity.waiting_long" = "Waiting for your reply";
@@ -157,7 +148,6 @@
 "cli.exit_code" = " (exit code %@)";
 "cli.exited" = "Codex CLI exited";
 "cli.expired_auth" = "The sign-in credentials may have expired. Sign in to the current Codex account again and retry.";
-"cli.home" = "Codex data folder: %@";
 "cli.invalid_reply" = "%1$@ returned an unrecognized response (%2$@).\n%3$@\nUpdate Codex CLI and retry.";
 "cli.invalid_response" = "The Codex response could not be recognized. Check the CLI version.";
 "cli.launch_failed" = "Could not start Codex CLI.\nPath: %1$@\nSystem error: %2$@\nCheck execution permissions, installation integrity and compatibility with this Mac.";
@@ -174,7 +164,6 @@
 "cli.not_json" = "The CLI returned non-JSON protocol data, so a valid app-server connection could not be established.";
 "cli.not_runnable" = "No runnable Codex CLI was found at: %1$@\nChoose Codex.app, the codex executable, or a folder containing codex.";
 "cli.not_signed_in" = "This Codex data folder has no signed-in account (account/read returned account: null).\nSign in to Codex with a ChatGPT account, or choose a signed-in data folder in Settings.";
-"cli.path" = "CLI: %@";
 "cli.path_missing" = "The CLI path does not exist: %1$@\nIt may have moved or been removed during an update. Select it again or use automatic discovery.";
 "cli.process_exited" = "%1$@%2$@.\n%3$@\n%4$@";
 "cli.relative_path" = "The CLI path is not absolute: %1$@\nUse a path starting with / or ~/, or select Codex.app.";
@@ -250,11 +239,9 @@
 "notice.low_quota" = "Quota is low";
 "notice.quota_remaining" = "%1$@: %2$ld%% remaining";
 "quota.age" = "Quota from %ld min ago";
-"quota.cached" = "The quota below was last read successfully at %@";
 "quota.chart_warning" = "Chart history unavailable";
 "quota.compact_days" = "%ldd";
 "quota.compact_hours" = "%ldh";
-"quota.compact_minutes" = "%ldmin";
 "quota.days" = "%ld-day quota";
 "quota.expired" = "Window expired; waiting for an update";
 "quota.generic_window" = "Quota window";
@@ -282,11 +269,8 @@
 "quota.reset_unknown" = "Reset time unknown";
 "quota.seconds_ago" = "Updated %ld s ago";
 "quota.track_help" = "The fill shows remaining quota. The marker shows the amount expected when usage is spread evenly over time.";
-"quota.unavailable" = "Quota unavailable";
 "quota.waiting_sample" = "Waiting for samples";
 "quota.waiting_update" = "Waiting for an update";
-"rate.partial" = "Measured tasks: %.1f token/s; other tasks are awaiting usage data";
-"rate.total" = "Total output rate: %.1f token/s";
 "redaction.account" = "[redacted]";
 "redaction.bearer" = "Bearer [redacted]";
 "redaction.email" = "[redacted]";
@@ -353,7 +337,6 @@
 "settings.other_locations" = "Other Locations";
 "settings.pace_percentage" = "Pace Percentage";
 "settings.privacy" = "Privacy";
-"settings.quota_window" = "Quota Window";
 "settings.remaining_quota" = "Remaining Quota";
 "settings.reminders" = "Reminders";
 "settings.rescan" = "Rescan";
@@ -371,8 +354,6 @@
 "settings.use_automatic" = "Use Automatic Discovery";
 "settings.waiting_reminder" = "Waiting for Reply";
 "source.ssh_unavailable" = "SSH disconnected";
-"source.ssh_unavailable_named" = "SSH %@ is disconnected";
-"source.ssh_unavailable_count" = "%ld SSH connections disconnected";
 "source.ssh_retrying" = "Pacer will retry these connections automatically.";
 "settings.saved_quota_window" = "Saved quota window (data unavailable)";
 "activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
@@ -380,10 +361,6 @@
 "activity.open_failed_detail" = "The conversation could not be opened: %@";
 "attention.approval" = "Approval needed";
 "attention.input" = "Reply needed";
-"attention.count" = "%d pending";
-"attention.connection_issue" = "Link issue";
-"attention.open" = "%@ needs your input. Open chat";
-"attention.local_connection_issue" = "Local live connection unavailable. Status updates may be delayed.";
 "updates.automatic" = "Automatically Check for Updates";
 "updates.available" = "Version %@ is available to install in the update window.";
 "updates.cancelled" = "Update cancelled.";
@@ -479,7 +456,6 @@
 "settings.quota_history" = "%@ quota history";
 "settings.quota_details" = "Quota details";
 "quota.source_codex" = "Codex service";
-"dashboard.remaining" = "Remaining";
 "dashboard.time_remaining" = "Time left %@";
 "dashboard.rings_help" = "Outer ring: remaining quota. Inner ring: remaining time.";
 "dashboard.rings_accessibility" = "%1$@, %2$@. Remaining quota: %3$@. Remaining time: %4$@. %5$@";
@@ -488,7 +464,6 @@
 "dashboard.pro_help" = "Only a weekly quota limit is reported; no five-hour limit is present.";
 "dashboard.provider_unavailable" = "%@ quota unavailable";
 "dashboard.period_unavailable" = "%@ limit not reported";
-"dashboard.weekly_only" = "Weekly limit only";
 "dashboard.countdown_days" = "%dd %dh";
 "dashboard.countdown_hours" = "%dh %dm";
 "dashboard.countdown_minutes" = "%dm";
