@@ -59,7 +59,9 @@ final class IslandWidthSettingsTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(wing, 180, "Quantizing cannot clip the wider header wing")
             XCTAssertEqual(frame.midX, screen.midX)
         }
-        XCTAssertEqual(adaptive.desiredWidth(expanded: true, notchWidth: 0, leading: 40, trailing: 35), 440)
+        XCTAssertEqual(adaptive.desiredWidth(expanded: true, notchWidth: 0, leading: 40, trailing: 35), 404)
+        XCTAssertEqual(adaptive.desiredWidth(expanded: true, notchWidth: 0, leading: 40, trailing: 35,
+            contentWidth: 420), 420, "Rows between the bounds set the expanded width")
         XCTAssertEqual(adaptive.desiredWidth(expanded: true, notchWidth: 0, leading: 40, trailing: 35,
             contentWidth: 580), 580)
         XCTAssertEqual(adaptive.desiredWidth(expanded: true, notchWidth: 0, leading: 40, trailing: 35,

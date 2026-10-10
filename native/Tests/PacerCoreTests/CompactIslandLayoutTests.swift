@@ -69,7 +69,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertEqual(compact, 114)
         XCTAssertLessThan(compact, full, "Hidden content must not retain a previously measured wide header")
         XCTAssertEqual(widths.desiredWidth(expanded: false, notchWidth: 180, leading: 0, trailing: 0, headerWidth: 218), 240)
-        XCTAssertGreaterThanOrEqual(widths.desiredWidth(expanded: true, notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 440)
+        XCTAssertGreaterThanOrEqual(widths.desiredWidth(expanded: true, notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 404)
         XCTAssertEqual(IslandWidthSettings(mode: .fixed, width: 600).desiredWidth(expanded: false,
             notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 600)
     }

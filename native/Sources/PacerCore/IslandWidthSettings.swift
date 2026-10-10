@@ -7,6 +7,10 @@ public struct IslandWidthSettings: Equatable, Sendable {
     }
 
     public static let range: ClosedRange<Double> = 360...900
+    /// Adaptive expanded bounds. The 404-point minimum keeps the content width
+    /// of the earlier 440-point panel now that content aligns 15 points from the
+    /// edge, so expanding from a narrower bar widens it less.
+    public static let expandedRange: ClosedRange<CGFloat> = 404...680
     public var mode: Mode
     public var width: Double
 
@@ -47,7 +51,7 @@ public struct IslandWidthSettings: Equatable, Sendable {
         let collapsed = max(hardwareMinimum, ceil(measured > 0 ? measured : natural) + 2)
         guard expanded else { return collapsed }
         let content = contentWidth.isFinite ? max(0, contentWidth) : 0
-        let panel = min(680, max(440, content))
+        let panel = min(Self.expandedRange.upperBound, max(Self.expandedRange.lowerBound, content))
         return max(collapsed, panel)
     }
 
