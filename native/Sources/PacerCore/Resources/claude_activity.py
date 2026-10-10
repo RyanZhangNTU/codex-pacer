@@ -132,7 +132,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
 
-ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','engineInterrupt','typedInterruptMarker','unownedTurn'}
+ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request'}
 
 def sanitized(raw):
@@ -150,10 +150,11 @@ def sanitized(raw):
             if isinstance(out[key], str): out[key] = out[key][:256]
             else: out.pop(key)
     if 'agentTool' in out and out['agentTool'] is not True:out.pop('agentTool')
+    if 'promptOwned' in out and out['promptOwned'] is not True:out.pop('promptOwned')
     if 'agentStatus' in out and out['agentStatus'] not in ('completed','async_launched','failed','killed'):out.pop('agentStatus')
     return [out]
 
-OTEL_ATTRS = {'session.id','prompt.id','agent_id','parent_agent_id','request_id','gen_ai.response.id','output_tokens','duration_ms','ttft_ms','first_content_ms','model','gen_ai.request.model','success'}
+OTEL_ATTRS = {'session.id','prompt.id','llm_request.context','agent_id','parent_agent_id','request_id','gen_ai.response.id','output_tokens','duration_ms','ttft_ms','first_content_ms','model','gen_ai.request.model','success'}
 OTEL_VALUE_FIELDS = {'stringValue','intValue','doubleValue','boolValue','arrayValue','kvlistValue','bytesValue'}
 OTEL_DECIMAL = re.compile(r'^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z')
 
@@ -261,12 +262,17 @@ def otlp_records(raw):
                     elif kind!='boolValue' or not isinstance(success,bool):continue
                     if success is not True:continue
                 session,prompt=otel_identifier(a.get('session.id')),otel_identifier(a.get('prompt.id'))
+                if 'prompt.id' in a and not prompt:continue
+                # Current Claude Code omits prompt.id on request spans. Only a
+                # main-conversation request may bind to the session's current turn.
+                if not prompt and otel_string(a.get('llm_request.context'))!='interaction':continue
                 request=otel_identifier(a.get('request_id') if 'request_id' in a else a.get('gen_ai.response.id'))
                 start=otel_integer(span.get('startTimeUnixNano'),1,18446744073709551615)
                 end=otel_integer(span.get('endTimeUnixNano'),1,18446744073709551615)
                 output=otel_number(a.get('output_tokens'));duration=otel_number(a.get('duration_ms'))
-                if not session or not prompt or not request or start is None or end is None or end<=start or duration is None or not 10<=duration<=3600000 or output is None or not 0<output<=1000000000000 or output!=int(output):continue
-                row = {'kind':'request','sessionId':session,'promptId':prompt,'requestId':request,'at':end/1e9,'startedAt':start/1e9,'outputTokens':int(output),'durationMs':duration}
+                if not session or not request or start is None or end is None or end<=start or duration is None or not 10<=duration<=3600000 or output is None or not 0<output<=1000000000000 or output!=int(output):continue
+                row = {'kind':'request','sessionId':session,'requestId':request,'at':end/1e9,'startedAt':start/1e9,'outputTokens':int(output),'durationMs':duration}
+                if prompt:row['promptId']=prompt
                 for key, target in (('agent_id','agentId'),('parent_agent_id','parentAgentId')):
                     agent=otel_identifier(a.get(key))
                     if agent:row[target]=agent
@@ -517,7 +523,7 @@ def main():
             now=time.monotonic();loops+=1
             if pending_due is not None and now>=pending_due:publish(pending);pending=[];pending_due=None
             if now>=heartbeat:
-                heartbeat=now+15;emit({'kind':'status','connected':home.is_dir(),'watchingLogs':bool(tailer.cursors),'scans':tailer.scans,'cpuSeconds':time.process_time(),'loopIterations':loops,'telemetry':listener is not None})
+                heartbeat=now+15;emit({'kind':'status','connected':True,'claudeHome':home.is_dir(),'watchingLogs':bool(tailer.cursors),'scans':tailer.scans,'cpuSeconds':time.process_time(),'loopIterations':loops,'telemetry':listener is not None})
             if now>=next_scan:tailer.discover();next_scan=now+60
             if now>=next_poll:tailer.poll();next_poll=now+(30 if tailer.fd>=0 else 2)
             if tailer.dirty:queue_rows(tailer.read())

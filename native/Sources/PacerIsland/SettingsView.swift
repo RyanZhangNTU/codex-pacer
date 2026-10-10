@@ -495,6 +495,10 @@ struct SettingsView: View {
                     .font(.system(size: 11)).foregroundStyle(status.telemetryConflict ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if claudeSetupStatus?.updateAvailable == true {
+                Text(L10n.text("provider.monitoring_update")).font(.system(size: 11)).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let claudeSetupMessage { caption(claudeSetupMessage) }
         }
         Section(L10n.text("claude.section.ssh")) {
@@ -536,6 +540,10 @@ struct SettingsView: View {
                     monitorSSH != model.monitorsSSH || !model.isModuleEnabled(.claude))
                 .accessibilityLabel(L10n.text("provider.remote_setup_action", target.alias))
             }
+            if model.providerStreamStatuses(.claude)[target.id]?.sourceAvailable == false {
+                Text(L10n.text("provider.remote_source_missing")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let status = model.claudeRemoteSetupStatus[target.id] {
                 Text(L10n.text(status.hooksConfigured ? "provider.monitoring_configured" : "provider.monitoring_needed"))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -567,7 +575,7 @@ struct SettingsView: View {
 
     private var claudeSSHFailures: [String] {
         let prefix = "remote-ssh-discovered:"
-        return model.providerStreamStatuses(.claude).filter { $0.key.hasPrefix(prefix) && !$0.value.connected }
+        return model.providerStreamStatuses(.claude).filter { $0.key.hasPrefix(prefix) && $0.value.hasConnectionFailure }
             .map { String($0.key.dropFirst(prefix.count)) }.sorted()
     }
 

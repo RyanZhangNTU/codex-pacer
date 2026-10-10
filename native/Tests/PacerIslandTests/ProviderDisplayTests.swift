@@ -495,6 +495,10 @@ final class ProviderDisplayTests: XCTestCase {
         model.receiveRemoteUpdate([], statuses: ["local": connected, host: connected], unavailable: [], requests: [], names: [])
         model.receiveClaudeUpdate([], statuses: ["local": connected, host: RuntimeStreamStatus()], requests: [])
         XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model), "Healthy Codex SSH cannot conceal disconnected Claude SSH")
+        var missing = RuntimeStreamStatus(); missing.sourceAvailable = false
+        model.receiveClaudeUpdate([], statuses: ["local": connected, host: missing], requests: [])
+        XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model), "A paused missing Claude source is not an SSH failure")
+        model.receiveClaudeUpdate([], statuses: ["local": connected, host: RuntimeStreamStatus()], requests: [])
         fixture.defaults.set(false, forKey: "monitorSSH")
         XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model))
         fixture.defaults.set(true, forKey: "monitorSSH")

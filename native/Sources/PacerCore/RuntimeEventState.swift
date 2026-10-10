@@ -2,6 +2,10 @@ import Foundation
 
 public struct RuntimeStreamStatus: Equatable, Sendable {
     public var connected = false
+    /// Nil means no source-availability evidence. False distinguishes a
+    /// reachable host with a missing provider home from a transport failure.
+    public var sourceAvailable: Bool?
+    public var hasConnectionFailure: Bool { !connected && sourceAvailable != false }
     public var attachedThreads = 0
     public var notifications = 0
     public var fallbackScans = 0

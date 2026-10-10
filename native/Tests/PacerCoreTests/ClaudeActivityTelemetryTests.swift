@@ -82,11 +82,13 @@ final class ClaudeActivityTelemetryTests: XCTestCase {
             ["key": "user_prompt", "value": ["stringValue": "PRIVATE synthetic content"]]
         ]
         alias["attributes"] = base
-        func changing(_ key: String, to value: [String: Any]) -> [String: Any] {
+        func replacing(_ key: String, with extra: [[String: Any]]) -> [String: Any] {
             var result = alias
-            result["attributes"] = base.filter { $0["key"] as? String != key } + [["key": key, "value": value]]
+            result["attributes"] = base.filter { $0["key"] as? String != key } + extra
             return result
         }
+        func changing(_ key: String, to value: [String: Any]) -> [String: Any] { replacing(key, with: [["key": key, "value": value]]) }
+        func context(_ value: String) -> [[String: Any]] { [["key": "llm_request.context", "value": ["stringValue": value]]] }
         var statusError = alias; statusError["status"] = ["code": 2]
         var invalidStatus = alias; invalidStatus["status"] = false
         var invalidOwner = alias
@@ -109,7 +111,11 @@ final class ClaudeActivityTelemetryTests: XCTestCase {
             (try payload([statusError, fractionalTime]), 200, 0),
             (Data(nonfinite.utf8), 400, 0),
             (try payload([invalidStatus]), 200, 0),
-            (try payload([invalidOwner], resource: ["session.id": "resource-owner"]), 200, 0)
+            (try payload([invalidOwner], resource: ["session.id": "resource-owner"]), 200, 0),
+            (try payload([replacing("prompt.id", with: context("interaction"))]), 200, 1),
+            (try payload([replacing("prompt.id", with: context("interaction") + [["key": "prompt.id", "value": ["stringValue": "invalid prompt"]]])]), 200, 0),
+            (try payload([replacing("prompt.id", with: [])]), 200, 0),
+            (try payload([replacing("prompt.id", with: context("standalone"))]), 200, 0)
         ]
         let input = try JSONSerialization.data(withJSONObject: cases.map { $0.0.base64EncodedString() })
         let script = """
@@ -133,6 +139,7 @@ final class ClaudeActivityTelemetryTests: XCTestCase {
             XCTAssertEqual(native.count, sample.2, "case \(index)")
             XCTAssertTrue((native as NSArray).isEqual(to: observed), "case \(index)")
             XCTAssertFalse(String(decoding: try JSONSerialization.data(withJSONObject: native), as: UTF8.self).contains("PRIVATE"))
+            if index == cases.count - 3 { XCTAssertNil(native.first?["promptId"], "Context correlation never invents a prompt ID") }
             if index == 0 {
                 XCTAssertEqual(native.first?["sessionId"] as? String, session.lowercased())
                 XCTAssertEqual(native.first?["outputTokens"] as? Int, 160)

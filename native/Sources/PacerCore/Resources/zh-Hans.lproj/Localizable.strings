@@ -16,6 +16,7 @@
 "provider.remote_configure_failed" = "无法在此主机上配置 Claude Code，请检查 SSH 连接后重试。";
 "provider.remote_setup_success" = "主机监测配置已保存。";
 "provider.remote_setup_restart" = "请在此主机上启动新的 Claude Code 会话以生效。";
+"provider.remote_source_missing" = "未发现 Claude 配置，监测已暂停。";
 "provider.remote_metrics_configured" = "请求指标采集已配置；此主机上完成新的请求后显示测量值。";
 "claude.quota.connect" = "登录 Claude";
 "claude.quota.choose_workspace" = "选择工作区";
@@ -479,3 +480,4 @@
 "claude.section.web_session" = "网页登录";
 "claude.section.monitoring" = "任务监控";
 "claude.section.ssh" = "SSH 主机";
+"provider.monitoring_update" = "有更快的 Pacer 监控配置可用，点击“配置”即可应用。";

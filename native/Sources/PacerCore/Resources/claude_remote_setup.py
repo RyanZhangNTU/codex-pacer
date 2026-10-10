@@ -13,10 +13,13 @@ import sys
 import uuid
 
 LIMIT = 2 * 1024 * 1024
-EVENTS = ('SessionStart', 'UserPromptSubmit', 'MessageDisplay', 'PreToolUse', 'PostToolUse',
+EVENTS = ('SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
           'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Stop',
           'StopFailure', 'SessionEnd', 'Notification', 'SubagentStart',
           'SubagentStop', 'Elicitation', 'ElicitationResult')
+# Claude holds each displayed batch until its hooks return; numeric telemetry
+# already reports TTFT, so this observer runs only without it, in background.
+DISPLAY_EVENT = 'MessageDisplay'
 ENVIRONMENT = {
     'CLAUDE_CODE_ENABLE_TELEMETRY': '1',
     'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA': '1',
@@ -132,6 +135,41 @@ def telemetry_conflict(env):
     return False
 
 
+def ensure_owned(groups, owned, entry):
+    placed = False
+    result = []
+    for group in groups:
+        entries = group['hooks']
+        if not any(owned(item) for item in entries):
+            result.append(group)
+            continue
+        kept = []
+        for item in entries:
+            if not owned(item):
+                kept.append(item)
+            elif not placed:
+                kept.append(dict(entry))
+                placed = True
+        if kept:
+            group = dict(group)
+            group['hooks'] = kept
+            result.append(group)
+    if not placed:
+        result.append({'hooks': [dict(entry)]})
+    return result
+
+
+def removing_owned(groups, owned):
+    result = []
+    for group in groups:
+        kept = [item for item in group['hooks'] if not owned(item)]
+        if kept:
+            group = dict(group)
+            group['hooks'] = kept
+            result.append(group)
+    return result
+
+
 def install(payload):
     path = payload.get('home')
     emitter = payload.get('hook')
@@ -161,17 +199,23 @@ def install(payload):
     env = value.get('env', {})
     if not isinstance(hooks, dict) or not isinstance(env, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in env.items()):
         raise Failure('invalidSettings')
-    command = 'python3 ' + quote(str(script_path)) + ' hook ' + quote(str(home))
-    line_command = 'python3 ' + quote(str(script_path)) + ' statusline ' + quote(str(home))
-    for event in EVENTS:
+    # The adapter uses only the standard library, so -S skips site-packages
+    # startup on every hook call.
+    command = 'python3 -S ' + quote(str(script_path)) + ' hook ' + quote(str(home))
+    legacy_command = 'python3 ' + quote(str(script_path)) + ' hook ' + quote(str(home))
+    line_command = 'python3 -S ' + quote(str(script_path)) + ' statusline ' + quote(str(home))
+    legacy_line_command = 'python3 ' + quote(str(script_path)) + ' statusline ' + quote(str(home))
+
+    def owned(entry):
+        return entry.get('type') == 'command' and entry.get('command') in (command, legacy_command)
+    entry = {'type': 'command', 'command': command, 'timeout': 5}
+    for event in EVENTS + (DISPLAY_EVENT,):
         groups = hooks.get(event, [])
         if not isinstance(groups, list) or any(not isinstance(group, dict) or not isinstance(group.get('hooks'), list) or
-                any(not isinstance(entry, dict) for entry in group['hooks']) for group in groups):
+                any(not isinstance(item, dict) for item in group['hooks']) for group in groups):
             raise Failure('invalidSettings')
-        if not any(entry.get('type') == 'command' and entry.get('command') == command for group in groups for entry in group['hooks']):
-            groups.append({'hooks': [{'type': 'command', 'command': command, 'timeout': 5}]})
-        hooks[event] = groups
-    value['hooks'] = hooks
+        if event != DISPLAY_EVENT:
+            hooks[event] = ensure_owned(groups, owned, entry)
     conflict = telemetry_conflict(env)
     added = manifest.get('addedEnvironment', {})
     if not isinstance(added, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in added.items()):
@@ -183,10 +227,22 @@ def install(payload):
                 added[key] = setting
         value['env'] = env
     manifest['addedEnvironment'] = added
+    display = hooks.get(DISPLAY_EVENT, [])
+    if all(env.get(key) == setting for key, setting in ENVIRONMENT.items()) and not conflict:
+        display = removing_owned(display, owned)
+    else:
+        display = ensure_owned(display, owned, dict(entry, **{'async': True}))
+    if display:
+        hooks[DISPLAY_EVENT] = display
+    else:
+        hooks.pop(DISPLAY_EVENT, None)
+    value['hooks'] = hooks
     previous_line = value.get('statusLine')
     if 'statusLine' in value and (not isinstance(previous_line, dict) or previous_line.get('type') != 'command' or not isinstance(previous_line.get('command'), str)):
         raise Failure('invalidSettings')
-    if previous_line is None or previous_line.get('command') != line_command:
+    if previous_line is not None and previous_line.get('command') == legacy_line_command:
+        value['statusLine'] = dict(previous_line, command=line_command)
+    elif previous_line is None or previous_line.get('command') != line_command:
         manifest['previousStatusLine'] = previous_line
         wrapper = dict(previous_line or {})
         wrapper.update(type='command', command=line_command)

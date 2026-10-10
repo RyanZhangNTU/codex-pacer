@@ -62,9 +62,26 @@ public actor ClaudeActivityMonitor {
         wanted = Dictionary(remoteTargets.prefix(8).filter { target in
             target.alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
         for id in Array(disconnected.keys) where wanted[id] == nil { disconnected.removeValue(forKey: id); retry.removeValue(forKey: id) }
-        await connectWanted(); await publish()
+        let started = await connectWanted()
+        // Periodic reconciliation is common; publish only an actual change.
+        if started || before != Set(connections.keys).union(disconnected.keys) { await publish() }
+    }
+    /// Explicit refresh/setup bypasses backoff only for wanted inactive hosts;
+    /// healthy helpers and retained completions keep their state.
+    public func refresh(remoteTargetID: String? = nil) async {
+        guard home != nil else { return }
+        if let id = remoteTargetID {
+            guard let target = wanted[id] else { return }
+            if connections[id] == nil { retry.removeValue(forKey: id); connect(target) }
+        } else {
+            await readLocal(discover: true)
+            for id in wanted.keys where connections[id] == nil { retry.removeValue(forKey: id) }
+            await connectWanted()
+        }
+        await publish()
     }
     public func activities() -> [SessionActivity] { local.activities + connections.values.flatMap { $0.state.activities } + disconnected.values.flatMap { $0.activities } }
     /// Cached source-scoped exclusions; reading these never scans metadata.
@@ -148,8 +165,10 @@ public actor ClaudeActivityMonitor {
         guard localGeneration == generation, home != nil else { return }
         local.consume(bytes); await schedulePublish(immediate: false)
     }
-    private func connectWanted() async {
-        for target in wanted.values where connections[target.id] == nil && Date() >= (retry[target.id] ?? .distantPast) { connect(target) }
+    @discardableResult private func connectWanted() async -> Bool {
+        let due = wanted.values.filter { connections[$0.id] == nil && Date() >= (retry[$0.id] ?? .distantPast) }
+        for target in due { connect(target) }
+        return !due.isEmpty
     }
     private func connect(_ target: RemoteActivityTarget) {
         let process = Process(), input = Pipe(), output = Pipe()
@@ -190,15 +209,26 @@ public actor ClaudeActivityMonitor {
         }
         connection.buffer.append(bytes)
         guard connection.buffer.count <= 2 * 1024 * 1024 else { closed(id, process: process); await publish(); return }
-        var urgent = false, received = false
+        var urgent = false, received = false, missingHome = false
         while let end = connection.buffer.firstIndex(of: 10) {
             let frame = Data(connection.buffer.prefix(upTo: end)); connection.buffer.removeSubrange(...end)
             guard let value = try? JSONSerialization.jsonObject(with: frame) as? [String: Any] else { continue }
             connection.state.consume(frame); connection.lastFrame = Date(); received = true
             urgent = urgent || Self.urgent(value)
+            if value["kind"] as? String == "status" { missingHome = value["claudeHome"] as? Bool == false }
         }
         connections[id] = connection
+        if missingHome { park(id, process: process); await publish(); return }
         if received { await schedulePublish(immediate: urgent) }
+    }
+    /// SSH works but the host has no Claude home. That is not a connection
+    /// failure: release the helper and look again much later.
+    private func park(_ id: String, process: Process) {
+        guard var connection = connections[id], connection.process === process else { return }
+        // Invalidate at the final park boundary too: lifecycle records may
+        // have followed the missing-home status in the same pipe chunk.
+        connection.state.sourceMissing()
+        disconnected[id] = connection.state; retry[id] = Date().addingTimeInterval(1800); stopRemote(id)
     }
     private func remoteEOF(_ id: String, process: Process) async { closed(id, process: process); await publish() }
     private func closed(_ id: String, process: Process) {

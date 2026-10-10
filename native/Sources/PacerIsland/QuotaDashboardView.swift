@@ -113,7 +113,7 @@ private struct LegacyCodexQuotaView: View {
     }
 }
 
-private struct QuotaDashboardRingView: View {
+struct QuotaDashboardRingView: View {
     let quota: QuotaDashboardQuota
     let title: String
     let identifiesProvider: Bool
@@ -177,7 +177,8 @@ private struct QuotaDashboardRingView: View {
     private func ring(percent: Double?, lineWidth: CGFloat, color: Color) -> some View {
         let fraction = percent.flatMap { $0.isFinite ? min(1, max(0, $0 / 100)) : nil }
         return ZStack {
-            Circle().stroke(PacerPalette.track, lineWidth: lineWidth)
+            Circle().stroke(PacerPalette.track,
+                style: StrokeStyle(lineWidth: lineWidth, dash: fraction == nil ? [2, 5] : []))
             if let fraction, fraction > 0 {
                 Circle().trim(from: 0, to: CGFloat(fraction))
                     .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))

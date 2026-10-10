@@ -69,12 +69,33 @@ public enum L10n {
         return ($0, bundle)
     })
 
+    /// Views resolve the same keys on every render; bundle lookups and locale
+    /// construction are cached per language for the life of the process.
+    private final class Resolved: @unchecked Sendable {
+        let lock = NSLock()
+        var formats: [String: String] = [:]
+        var locales: [AppLanguage: Locale] = [:]
+    }
+    private static let resolved = Resolved()
+
     public static func text(_ key: String, _ arguments: CVarArg..., language selected: AppLanguage? = nil) -> String {
         let selected = selected ?? language
-        let fallback = bundles[.english]?.localizedString(forKey: key, value: key, table: nil) ?? key
-        let format = bundles[selected]?.localizedString(forKey: key, value: fallback, table: nil) ?? fallback
+        let cacheKey = selected.rawValue + "\u{1}" + key
+        resolved.lock.lock()
+        let cached = resolved.formats[cacheKey]
+        resolved.lock.unlock()
+        let format: String
+        if let cached { format = cached } else {
+            let fallback = bundles[.english]?.localizedString(forKey: key, value: key, table: nil) ?? key
+            format = bundles[selected]?.localizedString(forKey: key, value: fallback, table: nil) ?? fallback
+            resolved.lock.lock(); resolved.formats[cacheKey] = format; resolved.lock.unlock()
+        }
         guard !arguments.isEmpty else { return format }
-        return String(format: format, locale: selected.locale, arguments: arguments)
+        resolved.lock.lock()
+        let locale = resolved.locales[selected] ?? selected.locale
+        resolved.locales[selected] = locale
+        resolved.lock.unlock()
+        return String(format: format, locale: locale, arguments: arguments)
     }
 
     public static func date(_ value: Date, date dateStyle: Date.FormatStyle.DateStyle = .abbreviated,

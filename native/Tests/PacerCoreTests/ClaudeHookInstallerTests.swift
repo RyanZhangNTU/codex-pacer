@@ -2,7 +2,7 @@ import XCTest
 @testable import PacerCore
 
 final class ClaudeHookInstallerTests: XCTestCase {
-    private let eventNames = ["SessionStart", "UserPromptSubmit", "MessageDisplay", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+    private let eventNames = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
                               "PermissionRequest", "PermissionDenied", "Stop", "StopFailure", "SessionEnd", "Notification", "SubagentStart",
                               "SubagentStop", "Elicitation", "ElicitationResult"]
 
@@ -51,6 +51,8 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertFalse(status.telemetryConflict)
         let installed = try read(file), command = try installedCommand(installed)
         for event in eventNames { XCTAssertEqual(commandEntries(installed, event: event, command: command).count, 1, event) }
+        XCTAssertTrue(command.hasPrefix("python3 -S "), "The standard-library adapter skips site-packages startup")
+        XCTAssertNil((installed["hooks"] as? [String: Any])?["MessageDisplay"], "Numeric telemetry reports TTFT; Claude must not wait on display batches")
         let preTool = try XCTUnwrap((installed["hooks"] as? [String: [[String: Any]]])?["PreToolUse"]?.first)
         XCTAssertTrue(NSDictionary(dictionary: preTool).isEqual(to: originalGroup))
         let line = try XCTUnwrap(installed["statusLine"] as? [String: Any])
@@ -111,11 +113,69 @@ final class ClaudeHookInstallerTests: XCTestCase {
             XCTAssertFalse(status.telemetryConfigured)
             XCTAssertTrue(status.telemetryConflict)
             XCTAssertEqual(try read(file)["env"] as? [String: String], conflict)
+            let display = commandEntries(try read(file), event: "MessageDisplay", command: try installedCommand(read(file)))
+            XCTAssertEqual(display.count, 1); XCTAssertEqual(display.first?["async"] as? Bool, true)
             try ClaudeHookInstaller.uninstall(home: fixture.home)
             XCTAssertEqual(try read(file)["env"] as? [String: String], conflict)
         }
     }
 
+    func testMigrationRewritesOnlyOwnedLegacyEntriesAndRefreshesAdapter() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = fixture.home.appendingPathComponent("settings.json"), script = fixture.home.appendingPathComponent("pacer/hook.py")
+        func quoted(_ value: String) -> String { "'" + value + "'" }
+        let legacy = "python3 " + quoted(script.path) + " hook " + quoted(fixture.home.path)
+        let legacyLine = "python3 " + quoted(script.path) + " statusline " + quoted(fixture.home.path)
+        let userGroup: [String: Any] = ["matcher": "Bash", "hooks": [["type": "command", "command": "printf user-hook"]]]
+        var hooks: [String: Any] = [:]
+        for event in eventNames + ["MessageDisplay"] where event != "Stop" {
+            hooks[event] = (event == "PreToolUse" ? [userGroup] : []) + [["hooks": [["type": "command", "command": legacy, "timeout": 5]]]]
+        }
+        let env = ["CLAUDE_CODE_ENABLE_TELEMETRY": "1", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1", "OTEL_TRACES_EXPORTER": "otlp",
+                   "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/json", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:4319/v1/traces",
+                   "OTEL_TRACES_EXPORT_INTERVAL": "1000"]
+        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try write(["hooks": hooks, "env": env, "statusLine": ["type": "command", "command": legacyLine, "padding": 2]], to: file)
+        try write(["version": 1, "addedEnvironment": env, "previousStatusLine": NSNull()], to: fixture.home.appendingPathComponent("pacer/installation.json"))
+        try Data("old adapter".utf8).write(to: script)
+        XCTAssertFalse(ClaudeHookInstaller.details(home: fixture.home).hooksConfigured, "A removed required event stays missing")
+        XCTAssertTrue(ClaudeHookInstaller.migrate(home: fixture.home))
+        let migrated = try read(file), command = try installedCommand(migrated)
+        XCTAssertTrue(command.hasPrefix("python3 -S "))
+        for event in eventNames where event != "Stop" {
+            XCTAssertEqual(commandEntries(migrated, event: event, command: command).count, 1, event)
+            XCTAssertTrue(commandEntries(migrated, event: event, command: legacy).isEmpty, event)
+        }
+        let migratedHooks = try XCTUnwrap(migrated["hooks"] as? [String: [[String: Any]]])
+        XCTAssertNil(migratedHooks["Stop"], "Migration never re-adds an event the user removed")
+        XCTAssertNil(migratedHooks["MessageDisplay"])
+        XCTAssertTrue(NSDictionary(dictionary: try XCTUnwrap(migratedHooks["PreToolUse"]?.first)).isEqual(to: userGroup))
+        let line = try XCTUnwrap(migrated["statusLine"] as? [String: Any])
+        XCTAssertEqual(line["padding"] as? Int, 2); XCTAssertTrue((line["command"] as? String)?.hasPrefix("python3 -S ") == true)
+        XCTAssertEqual(migrated["env"] as? [String: String], env)
+        XCTAssertNotEqual(try Data(contentsOf: script), Data("old adapter".utf8))
+        XCTAssertFalse(ClaudeHookInstaller.migrate(home: fixture.home), "A current installation is left untouched")
+        try ClaudeHookInstaller.uninstall(home: fixture.home)
+        let removed = try read(file)
+        XCTAssertEqual(commandEntries(removed, event: "PreToolUse", command: command).count, 0)
+        XCTAssertTrue(NSDictionary(dictionary: try XCTUnwrap((removed["hooks"] as? [String: [[String: Any]]])?["PreToolUse"]?.first)).isEqual(to: userGroup))
+        XCTAssertNil(removed["statusLine"]); XCTAssertNil(removed["env"])
+    }
+    func testInstallReportsAvailableUpdateUntilLegacyEntriesAreReplaced() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = fixture.home.appendingPathComponent("settings.json")
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        XCTAssertFalse(ClaudeHookInstaller.details(home: fixture.home).updateAvailable)
+        var settings = try read(file), hooks = try XCTUnwrap(settings["hooks"] as? [String: [[String: Any]]])
+        let command = try installedCommand(settings), legacy = command.replacingOccurrences(of: "python3 -S ", with: "python3 ")
+        hooks["Stop"] = [["hooks": [["type": "command", "command": legacy, "timeout": 5]]]]; settings["hooks"] = hooks
+        try write(settings, to: file)
+        let outdated = ClaudeHookInstaller.details(home: fixture.home)
+        XCTAssertTrue(outdated.hooksConfigured); XCTAssertTrue(outdated.updateAvailable)
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        XCTAssertFalse(ClaudeHookInstaller.details(home: fixture.home).updateAvailable)
+        XCTAssertEqual(commandEntries(try read(file), event: "Stop", command: command).count, 1)
+    }
     func testUninstallKeepsSettingsChangedAfterInstallation() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let file = fixture.home.appendingPathComponent("settings.json")
@@ -277,6 +337,7 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertEqual(rows.first { $0["kind"] as? String == "prompt" }?["typedInterruptMarker"] as? Bool, true)
         let partials = rows.filter { $0["kind"] as? String == "responseDelta" }; XCTAssertEqual(partials.count, 1)
         XCTAssertEqual(partials.first?["hasText"] as? Bool, true); XCTAssertEqual(partials.first?["index"] as? Int, 0)
+        XCTAssertEqual(partials.first?["promptOwned"] as? Bool, true)
     }
     func testIneligibleDisplayBatchesExitBeforeFilesystemLockAndCannotAlterOwnership() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -313,14 +374,14 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.home.appendingPathComponent("pacer/events.jsonl").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.home.appendingPathComponent("pacer/hook-state.json").path))
     }
-    func testEligibleFirstDisplayKeepsStoredPromptAndChildParentAttribution() throws {
+    func testEligibleFirstDisplayRequiresOwnedPromptAndKeepsChildParentAttribution() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         _ = try ClaudeHookInstaller.install(home: fixture.home)
         let common: [String: Any] = ["session_id": "fixture-session", "cwd": "/PRIVATE/fixture-project"]
         _ = try runScript(home: fixture.home, mode: "hook", input: common.merging(["hook_event_name": "UserPromptSubmit", "prompt_id": "owned-prompt"]) { _, new in new })
         _ = try runScript(home: fixture.home, mode: "hook", input: common.merging(["hook_event_name": "SubagentStart", "agent_id": "fixture-child"]) { _, new in new })
         for agent in [String?.none, "fixture-child"] {
-            var display = common.merging(["hook_event_name": "MessageDisplay", "message_id": "message-1", "turn_id": "display-turn-1", "index": 0, "final": false, "delta": "PRIVATE displayed text"]) { _, new in new }
+            var display = common.merging(["hook_event_name": "MessageDisplay", "prompt_id": "owned-prompt", "message_id": "message-1", "turn_id": "display-turn-1", "index": 0, "final": false, "delta": "PRIVATE displayed text"]) { _, new in new }
             if let agent { display["agent_id"] = agent }
             let result = try runScript(home: fixture.home, mode: "hook", input: display)
             XCTAssertTrue(result.stdout.isEmpty); XCTAssertTrue(result.stderr.isEmpty)
@@ -330,6 +391,56 @@ final class ClaudeHookInstallerTests: XCTestCase {
         let displays = rows.filter { $0["kind"] as? String == "responseDelta" }; XCTAssertEqual(displays.count, 2)
         XCTAssertTrue(displays.allSatisfy { $0["promptId"] as? String == "owned-prompt" && $0["hasText"] as? Bool == true })
         XCTAssertEqual(displays.first { $0["sessionId"] as? String == "fixture-child" }?["parentId"] as? String, "fixture-session")
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
+    }
+    func testDelayedDisplayWithoutOwnedPromptCannotSeedTheNextTurn() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        let common: [String: Any] = ["session_id": "fixture-session"]
+        for prompt in ["old-prompt", "next-prompt"] {
+            _ = try runScript(home: fixture.home, mode: "hook", input: common.merging(
+                ["hook_event_name": "UserPromptSubmit", "prompt_id": prompt]) { _, new in new })
+        }
+        let spool = fixture.home.appendingPathComponent("pacer/events.jsonl")
+        let stateFile = fixture.home.appendingPathComponent("pacer/hook-state.json")
+        let before = try Data(contentsOf: spool), beforeState = try Data(contentsOf: stateFile)
+        let oldDisplay = common.merging(["hook_event_name": "MessageDisplay", "turn_id": "old-display-turn",
+            "message_id": "old-message", "index": 0, "final": false, "delta": "PRIVATE old output"]) { _, new in new }
+        for input in [oldDisplay, oldDisplay.merging(["prompt_id": "old-prompt"]) { _, new in new }] {
+            _ = try runScript(home: fixture.home, mode: "hook", input: input)
+            XCTAssertEqual(try Data(contentsOf: spool), before)
+            XCTAssertEqual(try Data(contentsOf: stateFile), beforeState, "A delayed callback must not rewrite current ownership")
+        }
+        var state = ClaudeActivityState()
+        for row in before.split(separator: 10) { state.consume(Data(row)) }
+        XCTAssertEqual(state.activities.first?.turnID, "next-prompt")
+        XCTAssertNil(state.activities.first?.firstTokenLatency)
+        let current = oldDisplay.merging(["prompt_id": "next-prompt", "turn_id": "next-display-turn", "message_id": "next-message"]) { _, new in new }
+        _ = try runScript(home: fixture.home, mode: "hook", input: current)
+        for row in try Data(contentsOf: spool).dropFirst(before.count).split(separator: 10) { state.consume(Data(row)) }
+        XCTAssertNotNil(state.activities.first?.firstTokenLatency, "A proven current partial callback remains usable")
+    }
+    func testNestedDisplayFieldsCannotDropToolEndOrOwnedAgentCompletion() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        let common: [String: Any] = ["session_id": "fixture-session", "prompt_id": "owned-prompt"]
+        let events: [[String: Any]] = [
+            ["hook_event_name": "UserPromptSubmit"],
+            ["hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_use_id": "agent-tool",
+                "tool_input": ["kind": "MessageDisplay", "final": true]],
+            ["hook_event_name": "SubagentStart", "agent_id": "fixture-child"],
+            ["hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_use_id": "agent-tool",
+                "tool_response": ["kind": "MessageDisplay", "final": true, "status": "completed", "agentId": "fixture-child", "content": "PRIVATE"]]
+        ]
+        for event in events { _ = try runScript(home: fixture.home, mode: "hook", input: common.merging(event) { _, new in new }) }
+        let bytes = try Data(contentsOf: fixture.home.appendingPathComponent("pacer/events.jsonl"))
+        let rows = try bytes.split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
+        XCTAssertEqual(rows.filter { $0["kind"] as? String == "toolStart" }.count, 1)
+        XCTAssertEqual(rows.filter { $0["kind"] as? String == "toolEnd" }.count, 1)
+        XCTAssertEqual(rows.filter { $0["kind"] as? String == "agentResult" }.count, 1)
+        var state = ClaudeActivityState()
+        for row in bytes.split(separator: 10) { state.consume(Data(row)) }
+        XCTAssertEqual(state.activities.first { $0.threadID == "fixture-child" }?.phase, .completed)
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
     }
     func testAgentResultsKeepOnlyTypedOwnershipAndUnstartedInternalHooksDoNotWrite() throws {

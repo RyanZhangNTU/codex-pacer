@@ -53,6 +53,110 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         _ = Darwin.kill(pid, SIGKILL)
     }
 
+    func testHostWithoutClaudeHomeIsPausedWithoutSSHFailureAndReleasesItsHelper() async throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let pidFile = fixture.root.appendingPathComponent("helper.pid")
+        let script = """
+        import json,os,sys
+        open(\(String(reflecting: pidFile.path)),'a').write(str(os.getpid())+'\\n')
+        sys.stdout.write(json.dumps({'kind':'status','connected':True,'claudeHome':False,'watchingLogs':False})+'\\n');sys.stdout.flush()
+        sys.stdin.read()
+        """
+        final class Seen: @unchecked Sendable {
+            let lock = NSLock(); var done = false
+            func once(_ value: Bool, _ expectation: XCTestExpectation) { lock.lock(); defer { lock.unlock() }; if value && !done { done = true; expectation.fulfill() } }
+        }
+        let monitor = ClaudeActivityMonitor(sshExecutable: try executable(in: fixture.root, script: script))
+        let host = target("no-claude-home"), parked = expectation(description: "reachable without Claude"), seen = Seen()
+        await monitor.start(home: fixture.home, remoteTargets: [host]) { _, statuses, _, _ in
+            seen.once(statuses[host.id]?.sourceAvailable == false && statuses[host.id]?.watchingLogs == false, parked)
+        }
+        await fulfillment(of: [parked], timeout: 10)
+        let pid = try XCTUnwrap(Int32(String(decoding: Data(contentsOf: pidFile), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        try await assertExited(pid)
+        let statuses = await monitor.statuses()
+        XCTAssertEqual(statuses[host.id]?.connected, false, "A released helper cannot remain a live connection")
+        XCTAssertEqual(statuses[host.id]?.hasConnectionFailure, false, "A missing Claude home is not an SSH failure")
+        for _ in 0..<3 { await monitor.updateRemoteTargets([host]); try await Task.sleep(nanoseconds: 50_000_000) }
+        let launches = try String(contentsOf: pidFile).split(separator: "\n")
+        XCTAssertEqual(launches.count, 1, "Count actual helper starts rather than checking a file the helper never creates")
+        await monitor.shutdown()
+    }
+
+    func testMissingRemoteHomeInvalidatesRunningAndAttentionButKeepsCompletedTasks() async throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let script = """
+        import json,sys,time
+        now=time.time()
+        rows=[{'kind':'prompt','origin':'hook','sessionId':'running-session','promptId':'running-turn','at':now-2},
+              {'kind':'approval','origin':'hook','sessionId':'running-session','promptId':'running-turn','itemId':'permission','at':now-1},
+              {'kind':'prompt','origin':'hook','sessionId':'ended-session','promptId':'ended-turn','at':now-2},
+              {'kind':'stopVerified','origin':'hook','sessionId':'ended-session','promptId':'ended-turn','at':now-1},
+              {'kind':'status','connected':True,'claudeHome':False,'watchingLogs':False},
+              {'kind':'prompt','origin':'hook','sessionId':'late-session','promptId':'late-turn','at':now}]
+        for row in rows:sys.stdout.write(json.dumps(row)+'\\n')
+        sys.stdout.flush();sys.stdin.read()
+        """
+        let monitor = ClaudeActivityMonitor(sshExecutable: try executable(in: fixture.root, script: script))
+        let host = target("missing-after-running"), parked = expectation(description: "source disappearance delivered")
+        parked.assertForOverFulfill = false
+        await monitor.start(home: fixture.home, remoteTargets: [host]) { _, statuses, requests, _ in
+            if statuses[host.id]?.sourceAvailable == false { XCTAssertTrue(requests.isEmpty); parked.fulfill() }
+        }
+        await fulfillment(of: [parked], timeout: 5)
+        let values = await monitor.activities(), statuses = await monitor.statuses()
+        XCTAssertEqual(values.first { $0.threadID == "running-session" }?.phase, .unknown)
+        XCTAssertEqual(values.first { $0.threadID == "late-session" }?.phase, .unknown, "A later record in the parked batch cannot leave a running task")
+        XCTAssertEqual(values.first { $0.threadID == "ended-session" }?.phase, .completed)
+        XCTAssertEqual(statuses[host.id]?.attachedThreads, 0)
+        XCTAssertEqual(statuses[host.id]?.hasConnectionFailure, false)
+        await monitor.shutdown()
+    }
+
+    func testExplicitRefreshReconnectsReadyParkedHostWithoutRestartingHealthyHelpers() async throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let script = """
+        import json,os,pathlib,sys
+        root=pathlib.Path(\(String(reflecting: fixture.root.path)))
+        alias=sys.argv[sys.argv.index('--')+1]
+        with (root/(alias+'.pids')).open('a') as file:file.write(str(os.getpid())+'\\n')
+        available=alias=='healthy' or (root/'ready').exists()
+        sys.stdout.write(json.dumps({'kind':'status','connected':True,'claudeHome':available,'watchingLogs':False})+'\\n')
+        sys.stdout.flush();sys.stdin.read()
+        """
+        let monitor = ClaudeActivityMonitor(sshExecutable: try executable(in: fixture.root, script: script))
+        let healthy = target("healthy"), missing = target("missing")
+        let parked = expectation(description: "missing source parked"), recovered = expectation(description: "explicit source refresh recovered")
+        final class Seen: @unchecked Sendable {
+            let lock = NSLock(); var parked = false; var recovered = false
+            func update(_ status: RuntimeStreamStatus?, parked expectation: XCTestExpectation, recovered recovery: XCTestExpectation) {
+                lock.lock(); defer { lock.unlock() }
+                if status?.sourceAvailable == false && !parked { parked = true; expectation.fulfill() }
+                if status?.sourceAvailable == true && status?.connected == true && !recovered { recovered = true; recovery.fulfill() }
+            }
+        }
+        let seen = Seen()
+        await monitor.start(home: fixture.home, remoteTargets: [healthy, missing]) { _, statuses, _, _ in
+            seen.update(statuses[missing.id], parked: parked, recovered: recovered)
+        }
+        await fulfillment(of: [parked], timeout: 5)
+        func pids(_ alias: String) throws -> [Int32] { try String(contentsOf: fixture.root.appendingPathComponent(alias + ".pids")).split(separator: "\n").compactMap { Int32($0) } }
+        let old = try XCTUnwrap(pids("missing").first); try await assertExited(old)
+        try Data().write(to: fixture.root.appendingPathComponent("ready"))
+        await monitor.updateRemoteTargets([healthy, missing])
+        await monitor.refresh(remoteTargetID: "not-wanted")
+        XCTAssertEqual(try pids("missing").count, 1, "Routine discovery retains the pause")
+        await monitor.refresh(remoteTargetID: missing.id)
+        await fulfillment(of: [recovered], timeout: 5)
+        await monitor.refresh()
+        XCTAssertEqual(try pids("missing").count, 2)
+        XCTAssertEqual(try pids("healthy").count, 1, "Explicit refresh must preserve healthy source ownership")
+        let activeHealthy = try XCTUnwrap(pids("healthy").first), activeMissing = try XCTUnwrap(pids("missing").last)
+        XCTAssertEqual(Darwin.kill(activeHealthy, 0), 0)
+        XCTAssertEqual(Darwin.kill(activeMissing, 0), 0)
+        await monitor.shutdown(); try await assertExited(activeHealthy); try await assertExited(activeMissing)
+    }
+
     func testQuietFragmentedSSHHeartbeatsPublishWithoutTasksAndShutdownClosesOnlyOwnedHelpers() async throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let root = Data(fixture.root.path.utf8).base64EncodedString()

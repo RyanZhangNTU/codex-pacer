@@ -16,6 +16,7 @@
 "provider.remote_configure_failed" = "Could not set up Claude Code on this host. Check SSH access and try again.";
 "provider.remote_setup_success" = "Host monitoring settings saved.";
 "provider.remote_setup_restart" = "Start a new Claude Code session on this host to apply.";
+"provider.remote_source_missing" = "Claude configuration was not found. Monitoring is paused.";
 "provider.remote_metrics_configured" = "Request metrics configured; measurements appear after new requests on this host.";
 "claude.quota.connect" = "Sign in to Claude";
 "claude.quota.choose_workspace" = "Choose workspace";
@@ -479,3 +480,4 @@
 "claude.section.web_session" = "Web Sign-In";
 "claude.section.monitoring" = "Task Monitoring";
 "claude.section.ssh" = "SSH Hosts";
+"provider.monitoring_update" = "A faster Pacer hook configuration is available. Choose Configure to apply it.";

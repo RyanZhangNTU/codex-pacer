@@ -457,9 +457,14 @@ private final class ClaudeQuotaSessionDelegate: NSObject, URLSessionTaskDelegate
 }
 
 enum ClaudeCredentialStore {
+    private static let identities = FileSignatureCache<ClaudeAccountIdentity?>()
+    /// Claude's profile file is large and is consulted on every quota refresh.
     static func identity(userHome: URL, home: URL) -> ClaudeAccountIdentity? {
         let config = home.lastPathComponent == ".claude" && home.deletingLastPathComponent() == userHome
             ? userHome.appendingPathComponent(".claude.json") : home.appendingPathComponent(".claude.json")
+        return identities.value(for: config) { parseIdentity(config) }
+    }
+    private static func parseIdentity(_ config: URL) -> ClaudeAccountIdentity? {
         guard let data = boundedData(at: config), let object = try? ClaudeQuotaDecoder.dictionary(data),
               let account = object["oauthAccount"] as? [String: Any],
               let accountID = account["accountUuid"] as? String, !accountID.isEmpty, accountID.count <= 256,

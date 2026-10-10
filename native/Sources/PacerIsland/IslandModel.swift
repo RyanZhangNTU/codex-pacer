@@ -252,8 +252,8 @@ final class IslandModel: ObservableObject {
     func canOpen(_ activity: SessionActivity) -> Bool {
         if activity.provider == .claude {
             guard let target = conversationTarget(for: activity) else { return false }
-            return demo || (target.threadURL != nil && ClaudeApplicationResolver.find() != nil) ||
-                (target.threadID.flatMap(UUID.init(uuidString:)) != nil && (target.sourceHostID != nil || ClaudeApplicationResolver.findExecutable() != nil))
+            return demo || (target.threadURL != nil && ClaudeApplicationResolver.cachedApplication() != nil) ||
+                (target.threadID.flatMap(UUID.init(uuidString:)) != nil && (target.sourceHostID != nil || ClaudeApplicationResolver.cachedExecutable() != nil))
         }
         return (demo || activity.threadURL != nil) && (demo || activity.sourceHostID != nil ||
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
@@ -303,17 +303,21 @@ final class IslandModel: ObservableObject {
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
     private let claudeHistoryStore: QuotaHistoryStore
-    private let claudeMonitor = ClaudeActivityMonitor()
-    private let claudeRemoteSetup = ClaudeRemoteSetup()
+    private let claudeMonitor: ClaudeActivityMonitor
+    private let claudeRemoteSetup: ClaudeRemoteSetup
     @Published private(set) var claudeRemoteTargets: [RemoteActivityTarget] = []
     @Published private(set) var configuringClaudeHosts: Set<String> = []
     @Published private(set) var claudeRemoteSetupStatus: [String: ClaudeHookInstaller.Status] = [:]
     func configureClaudeRemote(targetID: String) async -> String? {
         guard let target = claudeRemoteTargets.first(where: { $0.id == targetID }), configuringClaudeHosts.insert(targetID).inserted else { return nil }
         defer { configuringClaudeHosts.remove(targetID) }
+        let generation = claudeGeneration
         do {
             let status = try await claudeRemoteSetup.install(target: target)
+            guard generation == claudeGeneration, isModuleEnabled(.claude), !sleeping, !stopped,
+                  claudeRemoteTargets.contains(target) else { return nil }
             claudeRemoteSetupStatus[targetID] = status
+            await claudeMonitor.refresh(remoteTargetID: targetID)
             return nil
         } catch { return L10n.text("provider.remote_configure_failed") }
     }
@@ -489,7 +493,7 @@ final class IslandModel: ObservableObject {
     }
     var hasSSHConnectionIssue: Bool {
         monitorsSSH && (!unavailableSSH.isEmpty || (Array(streamStatuses) + Array(claudeStreamStatuses)).contains {
-            $0.key.contains("remote-ssh-discovered:") && !$0.value.connected
+            $0.key.contains("remote-ssh-discovered:") && $0.value.hasConnectionFailure
         })
     }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
@@ -544,8 +548,12 @@ final class IslandModel: ObservableObject {
     init(demo: Bool = false, initiallyExpanded: Bool = false, demoClock: @escaping () -> Date = { Date() },
          defaults: UserDefaults = .standard, installation: ProviderInstallationDetection? = nil,
          claudeQuotaReads: ClaudeQuotaReadDependencies? = nil,
-         completionDismissalStore: CompletionDismissalStore? = nil) {
+         completionDismissalStore: CompletionDismissalStore? = nil,
+         claudeMonitor: ClaudeActivityMonitor = ClaudeActivityMonitor(),
+         claudeRemoteSetup: ClaudeRemoteSetup = ClaudeRemoteSetup()) {
         self.defaults = defaults
+        self.claudeMonitor = claudeMonitor
+        self.claudeRemoteSetup = claudeRemoteSetup
         self.claudeQuotaReads = claudeQuotaReads ?? ClaudeQuotaReadDependencies()
         self.installationOverride = installation
         self.installation = installation ?? .detect()
@@ -966,6 +974,12 @@ final class IslandModel: ObservableObject {
         claudeActivityTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.claudeGeneration { self.claudeActivityTask = nil } }
+            // Bring an earlier Pacer hook installation current before reading
+            // its spool; only Pacer-owned entries and its adapter change.
+            if await Task.detached(priority: .utility, operation: { ClaudeHookInstaller.migrate(home: sourceHome) }).value {
+                self.settingsRevision += 1
+            }
+            guard generation == self.claudeGeneration, !self.stopped else { return }
             await self.claudeMonitor.start(home: sourceHome, remoteTargets: targets, refreshPolicy: self.activityRefreshPolicy) { [weak self] values, statuses, requests, performance in
                 guard let model = self else { return }
                 let excluded = await model.claudeMonitor.excludedLocalActivityIDs()
@@ -1001,6 +1015,15 @@ final class IslandModel: ObservableObject {
             }
         }
         return result
+    }
+    func refreshTaskSources() {
+        refreshActivity(); refreshRemote()
+        guard isModuleEnabled(.claude), !sleeping, !stopped, !demo else { return }
+        let generation = claudeGeneration
+        Task { [weak self] in
+            guard let self, generation == self.claudeGeneration, !self.sleeping, !self.stopped else { return }
+            await self.claudeMonitor.refresh()
+        }
     }
     func refreshActivity(metricsOnly: Bool = false) {
         guard isModuleEnabled(.codex), !sleeping, !stopped, !demo else { return }

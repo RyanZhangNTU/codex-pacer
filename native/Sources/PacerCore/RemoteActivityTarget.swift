@@ -19,8 +19,13 @@ public struct RemoteActivityTarget: Equatable, Sendable {
                 name: configuredTargets.first(where: { $0.alias == alias })?.name ?? alias, alias: alias, home: "~/.claude")
         }.prefix(8).map { $0 }
     }
+    private static let configurations = FileSignatureCache<[RemoteActivityTarget]?>()
+    /// Codex's global state can exceed a megabyte; reparse it only when it changes.
     static func readConfiguration(home: URL) -> [RemoteActivityTarget]? {
         let file = home.appendingPathComponent(".codex-global-state.json")
+        return configurations.value(for: file) { parseConfiguration(file) }
+    }
+    private static func parseConfiguration(_ file: URL) -> [RemoteActivityTarget]? {
         guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,
               let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let connections = value["codex-managed-remote-connections"] as? [[String: Any]] else { return nil }

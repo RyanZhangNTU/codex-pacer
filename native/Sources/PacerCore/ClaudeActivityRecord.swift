@@ -219,18 +219,26 @@ struct ClaudeActivityState: Sendable {
         historicalRunning.removeAll()
     }
     mutating func unavailable() {
-        status.connected = false; requests.removeAll()
+        status.connected = false; status.sourceAvailable = nil; status.watchingLogs = false
+        status.attachedThreads = 0; requests.removeAll()
         for id in Array(sessions.keys) where ![.completed, .interrupted].contains(sessions[id]!.phase) { sessions[id]?.markSourceUnavailable() }
+    }
+    /// A missing Claude home is a source issue, not proof of SSH failure.
+    /// Parking the helper also ends its live connection evidence.
+    mutating func sourceMissing() {
+        unavailable(); status.sourceAvailable = false
     }
     mutating func consume(_ bytes: Data, now: Date = Date(), attaching: Bool = false) {
         guard bytes.count <= 1024 * 1024, let frame = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return }
         if frame["kind"] as? String == "status" {
             status.connected = frame["connected"] as? Bool == true
+            status.sourceAvailable = frame["claudeHome"] as? Bool
             status.watchingLogs = frame["watchingLogs"] as? Bool == true
             status.fallbackScans = max(0, frame["scans"] as? Int ?? status.fallbackScans)
             status.helperLoopIterations = max(0, frame["loopIterations"] as? Int ?? status.helperLoopIterations)
             status.helperCpuSeconds = max(0, frame["cpuSeconds"] as? Double ?? status.helperCpuSeconds)
             if !status.connected { unavailable() }
+            else if status.sourceAvailable == false { sourceMissing() }
             return
         }
         if frame["kind"] as? String == "claudeBatch", let rows = frame["records"] as? [[String: Any]], rows.count <= 512 {
@@ -311,7 +319,14 @@ struct ClaudeActivityState: Sendable {
         if kind == "request" {
             // Completed spans only enrich an observed matching turn. They
             // cannot create running activity, a completion or a notification.
-            guard sessions[key] != nil, let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String), value.turnID == turn else {
+            // Both clocks originate on the same host. A tolerance before the
+            // turn can misattribute a short previous request after a fast switch.
+            let explicit = ClaudeActivityRecord.identifier(record["promptId"] as? String)
+            guard sessions[key] != nil, let turn = explicit ?? value.turnID, value.turnID == turn,
+                  record["promptId"] == nil || explicit != nil,
+                  explicit != nil || (record["startedAt"] as? Double).map({ start in
+                      value.turnStartedAt.map { start >= $0.timeIntervalSince1970 } ?? false
+                  }) == true else {
                 if unmatchedRequests < Int.max { unmatchedRequests += 1 }; return
             }
             guard
@@ -418,7 +433,11 @@ struct ClaudeActivityState: Sendable {
         case "thinking", "response":
             value.applyRuntime(event("item/started", ["itemId": item, "itemType": kind == "thinking" ? "reasoning" : "agentMessage", "hasText": false]))
         case "responseDelta":
-            guard record["partial"] as? Bool == true, record["index"] as? Int == 0,
+            // Old adapters could copy the *current* prompt into a delayed
+            // callback. Require the new adapter's verified input provenance.
+            guard record["promptOwned"] as? Bool == true,
+                  ClaudeActivityRecord.identifier(record["promptId"] as? String) != nil,
+                  record["partial"] as? Bool == true, record["index"] as? Int == 0,
                   ClaudeActivityRecord.identifier(record["displayTurnId"] as? String) != nil, record["hasText"] as? Bool == true else { return }
             value.applyRuntime(event("item/agentMessage/delta", ["itemId": item, "hasText": true]))
         case "approval", "input":

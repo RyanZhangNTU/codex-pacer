@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Reject previous-turn request/display measurements, preserve tool endings when results contain display fields, invalidate missing Claude sources without false SSH warnings, and immediately recheck them after setup or manual refresh. Keep unknown quota/time rings visibly distinct from measured zero.
+
 - Add independently enabled Codex and Claude modules, installation-based defaults and persistent manual overrides.
 - Include Codex Remote Control task stages, available performance data, attention and agent grouping through the connected Desktop owner's stream, with a Codex-specific setting independent of SSH. Codex must remain open and connected with the conversation loaded by a stream owner; this source has no independent remote-host discovery or log fallback. See [upstream PR #77](https://github.com/RyanZhangNTU/codex-pacer/pull/77) and [data semantics](docs/development.md#codex-accounting-and-lifecycle).
 - Keep cached Remote Control counters as baselines rather than new measurements. Unseen first output remains unknown, and the inherited mid-request counter fallback is approximate and can still inflate TPS; it has no independent request-log correction. See the [merged rate implementation](https://github.com/RyanZhangNTU/codex-pacer/blob/6d76642ead54c3c721f1f5fc5b64c834b220f89f/native/Sources/PacerCore/GenerationRate.swift) and [documented limits](docs/development.md#codex-accounting-and-lifecycle).
@@ -14,6 +16,9 @@
 - Keep successfully opened completion cards dismissed across normal relaunch using bounded, source-scoped hashes. A verified parent open acknowledges only captured, matching already-terminal descendants; running children, late endings, new turns, changed sources and Terminal/failure outcomes remain protected.
 - Reduce repeated directory scans, transcript parses, unchanged-EOF reads and noneligible display-hook writes; reuse task grouping without reusing stale freshness clocks.
 - Release Settings hosting content on save, cancellation and window close, while retaining its native window geometry for reopening.
+- Show Claude request speed and first-output time from current Claude Code telemetry, whose request spans no longer carry a prompt ID; only main-conversation requests that started within the current turn are counted.
+- Cut Claude hook overhead: run the adapter with `python3 -S`, stop registering the display observer when telemetry already reports TTFT (Claude waited on it for every rendered batch), halve routine spool writes and migrate existing installations automatically.
+- Treat a reachable SSH host without Claude as connected rather than disconnected, release its helper and recheck it later; avoid repeated Claude app/CLI lookups and profile/global-state parsing.
 - Redesign the island and Settings: one outline status icon family in tinted tiles, two-line task rows with right-aligned TPS/TTFT, cleaner quota rings with the period switch in the quota header, and a sidebar Settings window with per-provider pages that remembers the last pane.
 - Route the sign-in window's Command-Return action before focused web content, while preserving ordinary Return and native window-close behavior.
 - Confirm foreground and background Agent endings from owned result/engine-notification evidence, exclude unstarted internal agents, and preserve genuinely running background tasks.

@@ -59,7 +59,7 @@ final class ClaudeRemoteSetupTests: XCTestCase {
         XCTAssertEqual((first["env"] as? [String: String])?["USER_SETTING"], "PRIVATE fixture value")
         XCTAssertEqual((first["statusLine"] as? [String: Any])?["padding"] as? Int, 4)
         let hooks = try XCTUnwrap(first["hooks"] as? [String: [[String: Any]]])
-        XCTAssertNotNil(hooks["MessageDisplay"], "Interactive first-output events must have an installed owned hook")
+        XCTAssertNil(hooks["MessageDisplay"], "Numeric telemetry reports TTFT, so Claude never waits on a display observer")
         XCTAssertTrue(NSDictionary(dictionary: try XCTUnwrap(hooks["PreToolUse"]?.first)).isEqual(to: originalGroup))
         for (event, groups) in hooks where event != "FutureEvent" {
             let owned = groups.flatMap { $0["hooks"] as? [[String: Any]] ?? [] }.filter {
@@ -95,6 +95,8 @@ final class ClaudeRemoteSetupTests: XCTestCase {
             XCTAssertTrue(status.hooksConfigured); XCTAssertTrue(status.statusLineConfigured)
             XCTAssertTrue(status.telemetryConflict); XCTAssertFalse(status.telemetryConfigured)
             XCTAssertEqual(try read(file)["env"] as? [String: String], env)
+            let display = ((try read(file)["hooks"] as? [String: [[String: Any]]])?["MessageDisplay"] ?? []).flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
+            XCTAssertEqual(display.count, 1); XCTAssertEqual(display.first?["async"] as? Bool, true, "Without Pacer telemetry the display observer must not block rendering")
         }
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let result = try runInstaller(home: fixture.home, environment: ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://private-fixture.invalid"])

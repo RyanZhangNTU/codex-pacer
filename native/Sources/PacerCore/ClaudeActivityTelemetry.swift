@@ -310,7 +310,7 @@ final class ClaudeActivityTelemetry: @unchecked Sendable {
     }
 
     private static let allowedAttributes: Set<String> = [
-        "session.id", "prompt.id", "agent_id", "parent_agent_id", "request_id", "gen_ai.response.id",
+        "session.id", "prompt.id", "llm_request.context", "agent_id", "parent_agent_id", "request_id", "gen_ai.response.id",
         "duration_ms", "output_tokens", "ttft_ms", "first_content_ms", "model", "gen_ai.request.model", "success"
     ]
 
@@ -365,8 +365,13 @@ final class ClaudeActivityTelemetry: @unchecked Sendable {
         let fields = try span.fields(["name", "startTimeUnixNano", "endTimeUnixNano", "attributes", "status"])
         guard fields["name"]?.string(limit: 64) == "claude_code.llm_request" else { return nil }
         let values = common.merging(try attributes(fields["attributes"])) { _, selected in selected }
-        guard let session = try identifier(values["session.id"]), let prompt = try identifier(values["prompt.id"]),
-              let request = try identifier(values["request_id"] ?? values["gen_ai.response.id"]) else { missing += 1; return nil }
+        let prompt = try identifier(values["prompt.id"])
+        // Current Claude Code omits prompt.id on request spans. Only a
+        // main-conversation request may bind to the session's current turn.
+        guard let session = try identifier(values["session.id"]),
+              let request = try identifier(values["request_id"] ?? values["gen_ai.response.id"]),
+              values["prompt.id"] == nil || prompt != nil,
+              try prompt != nil || string(values["llm_request.context"], limit: 32) == "interaction" else { missing += 1; return nil }
         if let status = fields["status"], !status.isNull {
             guard status.isObject else { rejected += 1; return nil }
             let code = try status.fields(["code"])["code"]
@@ -386,8 +391,9 @@ final class ClaudeActivityTelemetry: @unchecked Sendable {
         guard let start = timestamp(fields["startTimeUnixNano"]), let end = timestamp(fields["endTimeUnixNano"]), end > start,
               let duration = try number(values["duration_ms"]), duration >= 10, duration <= 3_600_000,
               let output = try number(values["output_tokens"]), output > 0, output <= 1_000_000_000_000, output.rounded(.towardZero) == output else { rejected += 1; return nil }
-        var record: [String: Any] = ["kind": "request", "sessionId": session, "promptId": prompt, "requestId": request,
+        var record: [String: Any] = ["kind": "request", "sessionId": session, "requestId": request,
                                    "at": end, "startedAt": start, "durationMs": duration, "outputTokens": Int(output)]
+        if let prompt { record["promptId"] = prompt }
         if let agent = try identifier(values["agent_id"]) { record["agentId"] = agent }
         if let parent = try identifier(values["parent_agent_id"]) { record["parentAgentId"] = parent }
         for (input, key) in [("ttft_ms", "ttftMs"), ("first_content_ms", "firstContentMs")] {

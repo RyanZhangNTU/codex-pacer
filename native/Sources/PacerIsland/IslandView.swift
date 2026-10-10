@@ -154,7 +154,7 @@ private struct IslandExpandedContent: View {
                 title: model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"), active: model.pinned) { model.togglePin() }
             IslandIconButton(symbol: "arrow.clockwise", title: L10n.text("common.refresh"),
                 help: L10n.text("quota.refresh_help", model.enabledProviders.map { $0.displayName + ": " + model.providerFreshnessText($0) }.joined(separator: "\n"))) {
-                model.refreshQuota(); model.refreshActivity()
+                model.refreshQuota(); model.refreshTaskSources()
             }
             .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
             IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings")) { model.onSettings?() }

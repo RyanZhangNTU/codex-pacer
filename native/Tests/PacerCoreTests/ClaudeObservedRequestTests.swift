@@ -73,21 +73,22 @@ final class ClaudeObservedRequestTests: XCTestCase {
         XCTAssertEqual(inbox.unreadActivities.count, 1); XCTAssertEqual(attention.activityNotices(state.activities, at: at(4)).count, 1)
     }
     func testMessageDisplayPartialOnlyProvesObservedOutputWhenPromptWasSeen() {
-        for (partial, observed) in [(true, true), (false, true), (true, false)] {
+        for (partial, observed, owned) in [(true, true, true), (false, true, true), (true, false, true), (true, true, false)] {
             var state = ClaudeActivityState()
             let common: [String: Any] = ["origin": "hook", "sessionId": "session-1", "promptId": "prompt-1"]
             let prompt = common.merging(["kind": "prompt", "at": start.timeIntervalSince1970]) { _, new in new }
             state.consume(ClaudeActivityRecord.encode(prompt)!, now: start, attaching: !observed)
-            let output = common.merging(["kind": "responseDelta", "itemId": "message-1", "displayTurnId": "display-turn-1", "partial": partial, "index": 0, "hasText": true, "at": at(1).timeIntervalSince1970]) { _, new in new }
+            var output = common.merging(["kind": "responseDelta", "itemId": "message-1", "displayTurnId": "display-turn-1", "partial": partial, "index": 0, "hasText": true, "at": at(1).timeIntervalSince1970]) { _, new in new }
+            if owned { output["promptOwned"] = true }
             state.consume(ClaudeActivityRecord.encode(output)!, now: at(2), attaching: !observed)
-            XCTAssertEqual(state.activities.first?.firstTokenLatency, partial && observed ? 1 : nil)
+            XCTAssertEqual(state.activities.first?.firstTokenLatency, partial && observed && owned ? 1 : nil)
         }
     }
     func testFirstDisplayReplayAndOtherPromptCannotMoveLatencyOrReopenCompletedTurn() throws {
         var state = ClaudeActivityState()
         let common: [String: Any] = ["origin": "hook", "sessionId": "session-1", "promptId": "prompt-1"]
         state.consume(ClaudeActivityRecord.encode(common.merging(["kind": "prompt", "at": start.timeIntervalSince1970]) { _, new in new })!, now: start)
-        let display = common.merging(["kind": "responseDelta", "itemId": "message-1", "displayTurnId": "display-turn-1", "partial": true, "index": 0, "hasText": true]) { _, new in new }
+        let display = common.merging(["kind": "responseDelta", "itemId": "message-1", "displayTurnId": "display-turn-1", "partial": true, "index": 0, "hasText": true, "promptOwned": true]) { _, new in new }
         for (seconds, turn) in [(1.0, "prompt-1"), (2.0, "prompt-1"), (3.0, "old-prompt")] {
             state.consume(ClaudeActivityRecord.encode(display.merging(["at": at(seconds).timeIntervalSince1970, "promptId": turn]) { _, new in new })!, now: at(6))
         }
@@ -97,6 +98,38 @@ final class ClaudeObservedRequestTests: XCTestCase {
         state.consume(ClaudeActivityRecord.encode(display.merging(["at": at(5).timeIntervalSince1970]) { _, new in new })!, now: at(6))
         let ended = try XCTUnwrap(state.activities.first)
         XCTAssertEqual(ended.phase, .completed); XCTAssertEqual(ended.firstTokenLatency, 1); XCTAssertEqual(ended.firstTokenReportedAt, at(1))
+    }
+    func testSSHDisplayOwnershipRoundTripRejectsLegacyAndUntypedClaims() throws {
+        let common: [String: Any] = ["origin": "hook", "sessionId": "session-1", "promptId": "prompt-1"]
+        var rows: [[String: Any]] = []
+        for flag in [Any?.none, true, false, 1, "true"] {
+            var row = common.merging(["kind": "responseDelta", "itemId": "message-1", "displayTurnId": "display-turn-1",
+                "partial": true, "index": 0, "hasText": true, "at": at(1).timeIntervalSince1970]) { _, new in new }
+            if let flag { row["promptOwned"] = flag }
+            rows.append(row)
+        }
+        let program = """
+        import base64,json,sys
+        scope={'__name__':'fixture'}
+        exec(base64.b64decode(sys.argv[1]).decode(),scope)
+        print(json.dumps([scope['sanitized'](json.dumps(row).encode())[0] for row in json.load(sys.stdin)]))
+        """
+        let process = Process(), input = Pipe(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-c", program, Data(ClaudeActivityProbe.script.utf8).base64EncodedString()]
+        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        try process.run(); try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: rows))
+        try input.fileHandleForWriting.close()
+        let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let projected = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]])
+        XCTAssertEqual(projected.count, rows.count)
+        for (index, row) in projected.enumerated() {
+            var state = ClaudeActivityState(sourceID: "remote-ssh-discovered:fixture", sourceName: "Fixture")
+            state.consume(ClaudeActivityRecord.encode(common.merging(["kind": "prompt", "at": start.timeIntervalSince1970]) { _, new in new })!, now: start)
+            state.consume(ClaudeActivityRecord.encode(row)!, now: at(2))
+            XCTAssertEqual(state.activities.first?.firstTokenLatency, index == 1 ? 1 : nil)
+        }
     }
     func testParentChainKeepsLatePriorResponseOutOfNewPromptAccounting() throws {
         var context = ClaudeTranscriptContext(), state = ClaudeActivityState()

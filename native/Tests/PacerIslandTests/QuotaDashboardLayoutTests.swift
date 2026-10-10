@@ -1,8 +1,42 @@
 import XCTest
+import AppKit
+import SwiftUI
 import PacerCore
 @testable import PacerIsland
 
 final class QuotaDashboardLayoutTests: XCTestCase {
+    @MainActor
+    func testUnknownTimeRingRendersDifferentlyFromMeasuredZeroWithoutChangingKnownQuota() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func render(_ time: Double?, name: String) async throws -> Data {
+            let quota = QuotaDashboardQuota(provider: .codex, period: .fiveHour, window: nil, availability: .available,
+                remainingQuotaPercent: 75, remainingTimePercent: time, capturedAt: now,
+                freshnessText: "Synthetic", sourceText: nil, bucketName: nil)
+            let view = QuotaDashboardRingView(quota: quota, title: "Codex", identifiesProvider: true, providerHelp: "Synthetic", now: now)
+            let host = NSHostingView(rootView: view.frame(width: 180, height: 180).background(Color.black).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 180, height: 180),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.title = "Pacer synthetic ring check"; window.contentView = host
+            host.frame = NSRect(x: 0, y: 0, width: 180, height: 180); window.orderFront(nil)
+            defer { window.orderOut(nil); window.close() }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            if let path = ProcessInfo.processInfo.environment["PACER_UI_QA_OUTPUT"] {
+                let directory = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try png.write(to: directory.appendingPathComponent(name + ".png"))
+            }
+            return png
+        }
+        let unknown = try await render(nil, name: "unknown-time"), zero = try await render(0, name: "zero-time")
+        let half = try await render(50, name: "half-time")
+        XCTAssertNotEqual(unknown, zero, "Unknown time must have its own visual state, independent of the known quota value")
+        XCTAssertNotEqual(half, zero)
+        XCTAssertNotEqual(unknown, half)
+    }
     private func snapshot(primary: [String: Any]?, secondary: [String: Any]? = nil,
                           extraBucket: [String: Any]? = nil) throws -> QuotaSnapshot {
         var codex: [String: Any] = [:]

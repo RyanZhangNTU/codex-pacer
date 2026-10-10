@@ -116,6 +116,25 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertEqual(activity.firstTokenLatency, 0.2)
         XCTAssertEqual(activity.firstTokenReportedAt, now.addingTimeInterval(1.2))
     }
+    func testRequestWithoutPromptIDBindsOnlyToTheCurrentTurnThatStartedFirst() throws {
+        var state = ClaudeActivityState()
+        func request(_ id: String, start: Double, end: Double) -> Data {
+            ClaudeActivityRecord.encode(["kind": "request", "sessionId": session, "requestId": id, "startedAt": now.timeIntervalSince1970 + start,
+                "at": now.timeIntervalSince1970 + end, "outputTokens": 120, "durationMs": (end - start) * 1000, "ttftMs": 300.0])!
+        }
+        consume("prompt", state: &state, offset: 0)
+        state.consume(request("req-early", start: -5, end: -1), now: now.addingTimeInterval(10))
+        XCTAssertNil(state.activities.first?.firstTokenLatency, "A request that began before the turn cannot be attributed to it")
+        XCTAssertEqual(state.unmatchedRequests, 1)
+        state.consume(request("req-1", start: 1, end: 4), now: now.addingTimeInterval(10))
+        let activity = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(activity.displayedOutputEstimate(at: now.addingTimeInterval(5))?.value, 40)
+        XCTAssertEqual(activity.firstTokenLatency, 0.3)
+        state.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": "next-turn",
+            "at": now.timeIntervalSince1970 + 10])!, now: now.addingTimeInterval(20))
+        state.consume(request("req-late", start: 6, end: 9), now: now.addingTimeInterval(20))
+        XCTAssertEqual(state.unmatchedRequests, 2, "A late span from the previous turn cannot enrich the next turn")
+    }
     func testChildSpanNeverOverwritesRootMetric() throws {
         var state = ClaudeActivityState()
         consume("prompt", state: &state, offset: 0)
@@ -126,6 +145,33 @@ final class ClaudeActivityTests: XCTestCase {
         state.consume(child, now: now.addingTimeInterval(10)); state.consume(span, now: now.addingTimeInterval(10))
         XCTAssertNil(state.activities.first(where: { $0.threadID == session })?.responsePerformance)
         XCTAssertEqual(state.activities.first(where: { $0.threadID == "child-1" })?.responsePerformance?.tokensPerSecond, 25)
+    }
+    func testFastTurnSwitchRejectsEndedAndOverlappingOldSpansButAcceptsCurrentLateUsage() throws {
+        var state = ClaudeActivityState()
+        consume("prompt", state: &state, offset: 0)
+        let next = "next-fast-turn"
+        state.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session,
+            "promptId": next, "at": now.timeIntervalSince1970 + 0.7])!, now: now.addingTimeInterval(10))
+        func request(_ id: String, start: Double, end: Double) -> Data {
+            ClaudeActivityRecord.encode(["kind": "request", "sessionId": session, "requestId": id,
+                "startedAt": now.timeIntervalSince1970 + start, "at": now.timeIntervalSince1970 + end,
+                "outputTokens": 30, "durationMs": (end - start) * 1000, "ttftMs": 50.0])!
+        }
+        for (id, start, end) in [("old-ended", 0.1, 0.4), ("old-overlap", 0.6, 1.4)] {
+            state.consume(request(id, start: start, end: end), now: now.addingTimeInterval(10))
+        }
+        XCTAssertEqual(state.activities.first?.turnID, next)
+        XCTAssertNil(state.activities.first?.responsePerformance)
+        XCTAssertNil(state.activities.first?.firstTokenLatency)
+        XCTAssertTrue(state.performanceUpdates.isEmpty)
+        XCTAssertEqual(state.unmatchedRequests, 2)
+        state.consume(ClaudeActivityRecord.encode(["kind": "stopVerified", "origin": "hook", "sessionId": session,
+            "promptId": next, "at": now.timeIntervalSince1970 + 2])!, now: now.addingTimeInterval(10))
+        state.consume(request("current", start: 0.7, end: 1.7), now: now.addingTimeInterval(10))
+        XCTAssertEqual(state.activities.first?.phase, .completed)
+        XCTAssertEqual(state.activities.first?.responsePerformance?.tokensPerSecond, 30)
+        XCTAssertEqual(state.activities.first?.firstTokenLatency, 0.05)
+        XCTAssertEqual(state.activities.first?.phaseChangedAt, now.addingTimeInterval(2), "Late metrics cannot extend retention")
     }
     func testStartupBatchStaysQuietAndDoesNotInventInterruptionFromSilence() {
         var state = ClaudeActivityState(), policy = AttentionPolicy()
