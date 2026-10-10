@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.0.0 (development candidate)
+
+- Add independently enabled Codex and Claude modules, installation-based defaults and persistent manual overrides.
+- Include Codex Remote Control task stages, available performance data, attention and agent grouping through the connected Desktop owner's stream, with a Codex-specific setting independent of SSH. Codex must remain open and connected with the conversation loaded by a stream owner; this source has no independent remote-host discovery or log fallback. See [upstream PR #77](https://github.com/RyanZhangNTU/codex-pacer/pull/77) and [data semantics](docs/development.md#codex-accounting-and-lifecycle).
+- Keep cached Remote Control counters as baselines rather than new measurements. Unseen first output remains unknown, and the inherited mid-request counter fallback is approximate and can still inflate TPS; it has no independent request-log correction. See the [merged rate implementation](https://github.com/RyanZhangNTU/codex-pacer/blob/6d76642ead54c3c721f1f5fc5b64c834b220f89f/native/Sources/PacerCore/GenerationRate.swift) and [documented limits](docs/development.md#codex-accounting-and-lifecycle).
+- Combine local and SSH tasks in one provider-colored list. Show Codex/Claude quota and remaining time together in nested rings with tiny 5h/7d controls; a single provider's ring layout shows both periods, with a confirmed weekly-only PRO placeholder. When only Codex is enabled and its primary account reports limits without a 5h window, restore the original quota bars for all actual windows, including nonstandard or unspecified durations. Keep quota history and full details in Settings. Keep collapsed quota values separate while aggregating tasks and available throughput.
+- Use lighter ring strokes around the central quota value and compact reset countdown. Disclose normal source/update details in hover help and Settings while retaining stale/error indicators. Show compact percentages with provider color alone, keeping full names in accessibility and help.
+- Isolate task identity, parent/agent grouping, attention, completion retention, quota history and module shutdown by provider; preserve existing Codex identity and caches.
+- Add bounded native Claude transcript, hook and numeric OTLP collection, owned Python 3.6+ SSH helpers, and additive monitoring setup that preserves existing configuration.
+- Prefer fresh account-matched status-line quota and a Pacer-owned WebKit sign-in session, with explicit organization selection and read-only Web quota GETs. Production performs no foreign Keychain/Safe Storage reads; legacy own-cache/environment/file sources remain quiet compatibility fallbacks.
+- Use matching Claude numeric request measurements, or observed throughput estimates after a verified stop; only actual partial display callbacks or reported TTFT establish first-output timing. Open Claude through mapped Desktop sessions or validated CLI resume paths; observed child tasks can route to a validated parent session without guessing its path.
+- Keep successfully opened completion cards dismissed across normal relaunch using bounded, source-scoped hashes. A verified parent open acknowledges only captured, matching already-terminal descendants; running children, late endings, new turns, changed sources and Terminal/failure outcomes remain protected.
+- Reduce repeated directory scans, transcript parses, unchanged-EOF reads and noneligible display-hook writes; reuse task grouping without reusing stale freshness clocks.
+- Release Settings hosting content on save, cancellation and window close, while retaining its native window geometry for reopening.
+- Route the sign-in window's Command-Return action before focused web content, while preserving ordinary Return and native window-close behavior.
+- Confirm foreground and background Agent endings from owned result/engine-notification evidence, exclude unstarted internal agents, and preserve genuinely running background tasks.
+- Read the owned SSH hook spool before transcripts during cold replay and concurrent appends, preserving exact terminal evidence without a timeout heuristic.
+
 ## 2.4.0
 
 - Customize the single-line collapsed bar with task/performance/quota/warning categories, drag ordering, left/right placement and a live preview; apply with one Save action, cancel changes or restore defaults.

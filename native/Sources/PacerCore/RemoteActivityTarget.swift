@@ -7,6 +7,18 @@ public struct RemoteActivityTarget: Equatable, Sendable {
     public let home: String
 
     public static func configured(home: URL) -> [RemoteActivityTarget] { readConfiguration(home: home) ?? [] }
+    /// Reuse explicitly enabled discovered hosts and support Claude-only SSH installations.
+    public static func claudeConfigured(codexHome: URL, additionalAliases: String) -> [RemoteActivityTarget] {
+        var seen = Set<String>()
+        let configuredTargets = configured(home: codexHome)
+        let aliases = configuredTargets.map(\.alias) + additionalAliases.components(separatedBy: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ",")))
+        return aliases.compactMap { alias in
+            guard alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil,
+                  seen.insert(alias).inserted else { return nil }
+            return RemoteActivityTarget(id: "remote-ssh-discovered:" + alias,
+                name: configuredTargets.first(where: { $0.alias == alias })?.name ?? alias, alias: alias, home: "~/.claude")
+        }.prefix(8).map { $0 }
+    }
     static func readConfiguration(home: URL) -> [RemoteActivityTarget]? {
         let file = home.appendingPathComponent(".codex-global-state.json")
         guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,

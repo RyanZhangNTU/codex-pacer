@@ -22,7 +22,7 @@ struct TaskRowView: View {
             base = phase == .running ? prompt + " · " + base : prompt
         }
         let count = group?.runningSubagentCount ?? 0
-        return count > 0 ? base + " · " + L10n.text("activity.subagents_running", count) : base
+        return count > 0 ? base + " · " + L10n.text(count == 1 ? "activity.subagent_running" : "activity.subagents_running", count) : base
     }
     private var performanceText: String {
         let rate = group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now)
@@ -31,6 +31,10 @@ struct TaskRowView: View {
         return speed + "  ·  " + L10n.text("performance.first_output", latency)
     }
     private var performanceHelp: String {
+        if activity.provider == .claude {
+            let definition = L10n.text("claude.performance.rate_help") + "\n" + L10n.text("claude.performance.ttft_help")
+            return group.map { $0.members.count > 1 ? L10n.text("performance.group_help") + "\n" + definition : definition } ?? definition
+        }
         let latency = L10n.text("performance.latency_help")
         if let group, group.members.count > 1 { return L10n.text("performance.group_help") + "\n" + latency }
         if activity.displayedRateIsEstimated(at: now) { return L10n.text("performance.retained_help") + "\n" + latency }
@@ -42,8 +46,7 @@ struct TaskRowView: View {
         if activity.turnFailed { return .red }
         switch phase {
         case .waitingForInput, .interrupted: return Color(red: 0.91, green: 0.75, blue: 0.48)
-        case .running: return accent
-        case .completed: return Color(red: 0.56, green: 0.84, blue: 0.79)
+        case .running, .completed: return activity.provider.tint
         default: return .secondary
         }
     }
@@ -68,8 +71,9 @@ struct TaskRowView: View {
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-        .help(enabled ? [L10n.text("common.open_chat"), activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
-        .accessibilityLabel(L10n.text("activity.row_accessibility", name, detail, activity.sourceHost ?? L10n.text("common.local")) + ", " + performanceText)
+        .help(enabled ? [L10n.text(activity.provider == .claude && activity.sourceHostID != nil ? "claude.open_remote_help" : "common.open_chat"),
+            activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
+        .accessibilityLabel(activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name, detail, activity.sourceHost ?? L10n.text("common.local")) + ", " + performanceText)
     }
 
     private var rowContent: some View {
@@ -80,6 +84,13 @@ struct TaskRowView: View {
                 HStack(spacing: 6) {
                     Text(name).font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
                     if unread { Circle().fill(color).frame(width: 5, height: 5).accessibilityLabel(L10n.text("common.not_viewed")) }
+                    Spacer(minLength: 4)
+                    Text(activity.provider.displayName)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(activity.provider.tint)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(activity.provider.tint.opacity(0.09), in: Capsule())
+                        .fixedSize()
                 }
                 HStack(spacing: 8) {
                     Text(detail).foregroundStyle(color).lineLimit(1)
@@ -96,6 +107,12 @@ struct TaskRowView: View {
                 .foregroundStyle(.white.opacity(hovered && enabled ? 0.8 : 0))
         }
         .padding(.horizontal, 8).padding(.vertical, 9)
+    }
+}
+
+extension AgentProvider {
+    var tint: Color {
+        self == .codex ? Color(red: 0.56, green: 0.84, blue: 0.79) : Color(red: 0.93, green: 0.62, blue: 0.43)
     }
 }
 

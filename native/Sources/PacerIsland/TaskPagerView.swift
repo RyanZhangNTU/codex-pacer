@@ -22,7 +22,7 @@ struct TaskPagerView: View {
         VStack(alignment: .leading, spacing: 6) {
             if pagination.isPaginated {
                 HStack(spacing: 8) {
-                    Text(L10n.text("activity.task_count", tasks.count))
+                    Text(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                     Spacer()
                     pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))

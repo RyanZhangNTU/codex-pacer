@@ -85,10 +85,28 @@ struct CompactIslandComponent: View {
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
         switch component {
         case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .lowQuotaWarning: return model.quotaWarningSymbol != nil
-        case .quotaDelayWarning: return model.stale || model.errorMessage != nil
+        case .lowQuotaWarning: return !lowQuotaProviders(model).isEmpty
+        case .quotaDelayWarning: return !delayedQuotaProviders(model).isEmpty
         case .sshWarning: return model.hasSSHConnectionIssue
+        case .quotaMetric, .quotaLabel, .timeRemaining: return !model.enabledProviders.isEmpty
         default: return true
+        }
+    }
+    private static func lowQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
+        model.enabledProviders.filter { provider in
+            guard model.providerQuotaError(provider) == nil,
+                  let snapshot = model.providerQuota(provider), !snapshot.isStale(at: model.now),
+                  let window = model.providerSelectedWindow(provider),
+                  window.resetsAt.map({ $0 > model.now }) ?? true,
+                  let remaining = window.remainingPercent else { return false }
+            return remaining <= 15
+        }
+    }
+    private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
+        model.enabledProviders.filter { provider in
+            model.providerQuotaError(provider) != nil ||
+                model.providerQuota(provider)?.isStale(at: model.now) == true ||
+                model.providerSelectedWindow(provider)?.resetsAt.map({ $0 <= model.now }) == true
         }
     }
     var body: some View {
@@ -118,24 +136,34 @@ struct CompactIslandComponent: View {
                 .background(Color.white.opacity(0.08), in: Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.6))
                 .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(L10n.text("activity.task_count_compact", String(count)))
+                .accessibilityLabel(L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact", String(count)))
         case .firstOutput:
             Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—").monospacedDigit()
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
         case .lowQuotaWarning:
-            Image(systemName: model.quotaWarningSymbol ?? "exclamationmark.triangle")
-                .foregroundStyle((model.remaining ?? 100) <= 0 ? Color.red : Color.orange)
-                .accessibilityLabel(L10n.text((model.remaining ?? 100) <= 0 ? "quota.exhausted" : "notice.low_quota"))
+            let exhausted = Self.lowQuotaProviders(model).contains { (model.providerSelectedWindow($0)?.remainingPercent ?? 100) <= 0 }
+            Image(systemName: exhausted ? StatusSymbols.empty : StatusSymbols.low)
+                .foregroundStyle(exhausted ? Color.red : Color.orange)
+                .accessibilityLabel(L10n.text(exhausted ? "quota.exhausted" : "notice.low_quota"))
         case .quotaMetric:
-            Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
-                .fixedSize(horizontal: true, vertical: false)
+            HStack(spacing: 8) {
+                ForEach(model.enabledProviders, id: \.rawValue) { provider in
+                    Text(quotaText(provider)).foregroundStyle(provider.tint)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(L10n.text("provider.compact_quota", provider.displayName, quotaText(provider)))
+                }
+            }.font(.system(size: 12, weight: .medium)).monospacedDigit().fixedSize(horizontal: true, vertical: false)
         case .quotaLabel:
             Text(model.compactMetricLabel).font(.system(size: 10)).foregroundStyle(secondary)
         case .timeRemaining:
-            HStack(spacing: 3) {
+            HStack(spacing: model.enabledProviders.count > 1 ? 8 : 3) {
                 Image(systemName: "hourglass").font(.system(size: 9))
-                Text(model.remainingTimePercent.map { "\(Int($0.rounded()))%" } ?? "—").monospacedDigit()
+                ForEach(model.enabledProviders, id: \.rawValue) { provider in
+                    Text(timeText(provider)).monospacedDigit().foregroundStyle(provider.tint)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
+                }
             }.foregroundStyle(secondary).fixedSize(horizontal: true, vertical: false)
         case .quotaDelayWarning:
             Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
@@ -150,12 +178,25 @@ struct CompactIslandComponent: View {
             return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open", model.headerStatus)
         case .tps: return model.rateHelp
         case .firstOutput: return L10n.text("layout.latest_ttft_help")
-        case .quotaDelayWarning: return L10n.text("layout.component.quotaDelayWarning") + " · " + model.freshnessText
-        case .timeRemaining: return L10n.text("layout.time_remaining_help")
-        case .quotaMetric, .quotaLabel: return L10n.text("layout.metric_help")
+        case .lowQuotaWarning: return Self.lowQuotaProviders(model).map(\.displayName).joined(separator: " · ") + " · " + component.label
+        case .quotaDelayWarning: return Self.delayedQuotaProviders(model).map(\.displayName).joined(separator: " · ") + " · " + component.label
+        case .timeRemaining:
+            return model.enabledProviders.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
+                .joined(separator: " · ") + "\n" + L10n.text("layout.time_remaining_help")
+        case .quotaMetric, .quotaLabel:
+            return model.enabledProviders.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }
+                .joined(separator: " · ") + "\n" + L10n.text("layout.metric_help")
         case .sshWarning: return L10n.text("source.ssh_retrying")
         default: return component.label
         }
+    }
+    private func quotaText(_ provider: AgentProvider) -> String {
+        let value = UserDefaults.standard.string(forKey: "compactMetric") == "pace"
+            ? model.providerPace(provider) : model.providerSelectedWindow(provider)?.remainingPercent
+        return value.map { "\(Int($0.rounded()))%" } ?? "—"
+    }
+    private func timeText(_ provider: AgentProvider) -> String {
+        model.providerSelectedWindow(provider)?.elapsedTimePercent(at: model.now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
     }
     private func action() {
         switch component {

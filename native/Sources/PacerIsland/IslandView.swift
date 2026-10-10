@@ -40,8 +40,6 @@ struct IslandView: View {
 
 private struct IslandExpandedContent: View {
     @ObservedObject var model: IslandModel
-    // Both ViewThatFits candidates share disclosure state when height changes.
-    @State private var showsResetExpiryDetails = false
     private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
 
     var body: some View {
@@ -110,52 +108,48 @@ private struct IslandExpandedContent: View {
     }
 
     @ViewBuilder private var quotaContent: some View {
-        if let message = model.errorMessage {
-            QuotaErrorView(message: message, cliPath: model.quotaCLI?.url.path, homePath: model.home.path,
-                cachedAt: model.quota.flatMap { $0.windows.isEmpty ? nil : $0.capturedAt },
-                refreshing: model.refreshing, onRetry: { model.retryQuotaConnection() },
-                onSettings: { model.onSettings?() })
-                .padding(.bottom, 12)
-        }
-        if let quota = model.quota, !quota.buckets.isEmpty || quota.resetCredits != nil {
-            VStack(alignment: .leading, spacing: 20) {
-                ForEach(quota.buckets) { bucket in
-                    VStack(alignment: .leading, spacing: 18) {
-                        if quota.buckets.count > 1 {
-                            Text(bucket.name ?? bucket.id).font(.system(size: 13, weight: .medium)).foregroundStyle(secondary)
-                        }
-                        ForEach(bucket.windows) { window in
-                            QuotaWindowView(window: window, now: model.now,
-                                allowPace: !model.stale && model.errorMessage == nil, accent: model.accent, secondary: secondary)
-                        }
-                    }
-                }
-            }
-            if let cycle = model.currentCycle {
-                QuotaCycleChart(data: QuotaChartData(cycle: cycle, resetCredits: quota.resetCredits, now: model.now),
-                    accent: model.accent).equatable().padding(.top, 22)
-            } else if model.weeklyWindow != nil {
-                Text(L10n.text("quota.waiting_sample")).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 18)
-            }
-            AccountUsageView(snapshot: quota, now: model.now, showsExpiryDetails: $showsResetExpiryDetails).padding(.top, 20)
-            if let warning = model.historyWarning {
-                Label(L10n.text("quota.chart_warning"), systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(secondary).help(warning).padding(.top, 10)
-            }
-        } else if model.errorMessage == nil {
-            Text(model.refreshing ? L10n.text("quota.loading") : L10n.text("quota.not_connected")).font(.system(size: 13))
+        if model.enabledProviders.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L10n.text("provider.none_enabled")).font(.system(size: 13)).foregroundStyle(secondary)
+                Button(L10n.text("common.open_settings")) { model.onSettings?() }
+                    .font(.system(size: 12)).buttonStyle(.borderless)
+            }.padding(.vertical, 12)
+        } else {
+            QuotaDashboardView(model: model)
         }
     }
 
     private var footer: some View {
+        footerControls
+    }
+
+    private var footerControls: some View {
         HStack(spacing: 12) {
-            if model.stale || model.errorMessage != nil {
-                Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness).font(.system(size: 12)).help(model.freshnessText)
+            if model.enabledProviders.count > 1 {
+                HStack(spacing: 2) {
+                    ForEach(QuotaDashboardPeriod.allCases) { period in
+                        let selected = model.dashboardPeriod == period
+                        Button { model.selectDashboardPeriod(period) } label: {
+                            Text(period.rawValue).font(.system(size: 11, weight: selected ? .semibold : .medium))
+                                .frame(width: 32, height: 26)
+                                .foregroundStyle(selected ? Color.primary : secondary)
+                                .background(selected ? Color.white.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white.opacity(0.12) : Color.clear, lineWidth: 0.5))
+                        }
+                        .accessibilityLabel(period.accessibilityLabel)
+                        .accessibilityValue(L10n.text(selected ? "provider.selected" : "provider.not_selected"))
+                        .help(period.accessibilityLabel + "\n" + L10n.text("dashboard.period_help"))
+                        .accessibilityHint(L10n.text("dashboard.period_help"))
+                    }
+                }
             }
             Spacer(minLength: 4)
             Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").frame(width: 24, height: 26) }
                 .help(model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin")).accessibilityLabel(model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"))
             Button { model.refreshQuota(); model.refreshActivity() } label: { Image(systemName: "arrow.clockwise").frame(width: 24, height: 26) }
-                .disabled(model.refreshing).help(L10n.text("quota.refresh_help", model.freshnessText)).accessibilityLabel(L10n.text("common.refresh"))
+                .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
+                .help(L10n.text("quota.refresh_help", model.enabledProviders.map { $0.displayName + ": " + model.providerFreshnessText($0) }.joined(separator: "\n")))
+                .accessibilityLabel(L10n.text("common.refresh"))
             Button { model.onSettings?() } label: { Image(systemName: "gearshape").frame(width: 24, height: 26) }
                 .help(L10n.text("common.settings")).accessibilityLabel(L10n.text("common.settings"))
             Button { model.onQuit?() } label: { Image(systemName: "power").frame(width: 24, height: 26) }

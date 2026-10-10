@@ -2,7 +2,7 @@ import Foundation
 
 /// Settled output throughput for one model response, not a decoder benchmark.
 public struct ResponsePerformance: Equatable, Sendable {
-    public enum Source: String, Sendable { case requestUsage, runtimeUsage }
+    public enum Source: String, Sendable { case requestUsage, runtimeUsage, observedRequest }
     public let responseID: String?
     public let turnID: String
     public let outputTokens: Int
@@ -15,6 +15,18 @@ public struct ResponsePerformance: Equatable, Sendable {
     public var visibleOutputTokens: Int? { reasoningTokens.map { max(0, outputTokens - $0) } }
 
     func supersedes(_ other: Self) -> Bool {
+        if turnID == other.turnID, source != other.source,
+           source == .observedRequest || other.source == .observedRequest {
+            // The same response's authoritative request span outranks a
+            // transcript-timed estimate even when delivered much later.
+            if let responseID, responseID == other.responseID,
+               source == .requestUsage || other.source == .requestUsage {
+                return source == .requestUsage
+            }
+            // Separate requests keep their own chronology; a nearby older
+            // exact request cannot suppress a newer observed response.
+            return completedAt > other.completedAt
+        }
         if turnID == other.turnID, source != other.source,
            abs(completedAt.timeIntervalSince(other.completedAt)) < 2 {
             return source == .requestUsage

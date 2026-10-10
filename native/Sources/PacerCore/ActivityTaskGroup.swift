@@ -27,9 +27,9 @@ public struct ActivityTaskGroup: Sendable {
         let reviews = Set(activities.filter(\.isInternalReview).map { $0.canonicalized().id })
         for parent in Array(nodes.values) {
             for (child, evidence) in parent.subagentStates {
-                let id = (parent.sourceHostID ?? "local") + ":" + child
+                let id = parent.provider.activityID(sessionID: child, sourceHostID: parent.sourceHostID)
                 guard !reviews.contains(id) else { continue }
-                var value = nodes[id] ?? SessionActivity(id: id, sourceHost: parent.sourceHost, sourceHostID: parent.sourceHostID, phaseAwareRate: true)
+                var value = nodes[id] ?? SessionActivity(id: id, sourceHost: parent.sourceHost, sourceHostID: parent.sourceHostID, phaseAwareRate: true, provider: parent.provider, sessionID: child)
                 value.applySubagentEvidence(evidence)
                 nodes[id] = value
             }
@@ -39,7 +39,7 @@ public struct ActivityTaskGroup: Sendable {
             for _ in 0..<64 {
                 guard seen.insert(current.id).inserted else { return seen.min()! }
                 guard let parent = current.parentThreadID,
-                      let next = nodes[(current.sourceHostID ?? "local") + ":" + parent] else { return current.id }
+                      let next = nodes[current.provider.activityID(sessionID: parent, sourceHostID: current.sourceHostID)] else { return current.id }
                 current = next
             }
             return seen.min()!

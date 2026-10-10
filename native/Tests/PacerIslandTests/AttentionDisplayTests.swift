@@ -27,7 +27,7 @@ final class AttentionDisplayTests: XCTestCase {
         let opened = expectation(description: "pending request destination opened")
         model.onOpenActivity = { activity in
             XCTAssertEqual(activity.threadID, request.threadID)
-            opened.fulfill(); return nil
+            opened.fulfill(); return .openedConversation
         }
         model.openCompletionOrPin()
         await fulfillment(of: [opened], timeout: 2)

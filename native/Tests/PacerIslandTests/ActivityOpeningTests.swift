@@ -84,7 +84,7 @@ final class ActivityOpeningTests: XCTestCase {
     func testFailedOpenPreservesCardAndUnreadReminder() async throws {
         let (model, activity, _) = try completion()
         let finished = expectation(description: "open attempted")
-        model.onOpenActivity = { _ in finished.fulfill(); return "Synthetic open failure" }
+        model.onOpenActivity = { _ in finished.fulfill(); return .failed("Synthetic open failure") }
         model.open(activity)
         await fulfillment(of: [finished], timeout: 2)
         await Task.yield()
@@ -93,10 +93,20 @@ final class ActivityOpeningTests: XCTestCase {
         XCTAssertEqual(model.navigationError, "Synthetic open failure")
     }
 
+    func testQueuedOpenDoesNotLaunchAfterShutdown() async throws {
+        let (model, activity, _) = try completion()
+        var launches = 0
+        model.onOpenActivity = { _ in launches += 1; return .openedConversation }
+        model.open(activity)
+        await model.shutdown()
+        await Task.yield()
+        XCTAssertEqual(launches, 0)
+    }
+
     func testSuccessfulOpenDismissesOnlyRequestedCompletion() async throws {
         let (model, activity, _) = try completion()
         let finished = expectation(description: "open succeeded")
-        model.onOpenActivity = { _ in finished.fulfill(); return nil }
+        model.onOpenActivity = { _ in finished.fulfill(); return .openedConversation }
         model.open(activity)
         await fulfillment(of: [finished], timeout: 2)
         await Task.yield()
@@ -114,7 +124,7 @@ final class ActivityOpeningTests: XCTestCase {
             started.fulfill()
             try? await Task.sleep(nanoseconds: 40_000_000)
             finish.fulfill()
-            return nil
+            return .openedConversation
         }
         model.open(old)
         await fulfillment(of: [started], timeout: 2)
@@ -136,7 +146,7 @@ final class ActivityOpeningTests: XCTestCase {
         model.onOpenActivity = { _ in
             launches += 1
             try? await Task.sleep(nanoseconds: 20_000_000)
-            finish.fulfill(); return nil
+            finish.fulfill(); return .openedConversation
         }
         model.open(activity); model.open(activity)
         await fulfillment(of: [finish], timeout: 2)
@@ -149,7 +159,7 @@ final class ActivityOpeningTests: XCTestCase {
         model.notice = IslandNotice(id: activity.id + ":demo-turn:completed:old", kind: .completed, title: "Old", detail: "Synthetic")
         model.onOpenActivity = { _ in
             started.fulfill(); try? await Task.sleep(nanoseconds: 20_000_000)
-            finished.fulfill(); return nil
+            finished.fulfill(); return .openedConversation
         }
         model.open(activity)
         await fulfillment(of: [started], timeout: 2)

@@ -27,13 +27,23 @@ public enum ActivityStage: String, Sendable {
 
 public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var id: String
+    public let provider: AgentProvider
     public let sourceHost: String?
     public let sourceHostID: String?
     public private(set) var title: String?
     private(set) var titleWasExplicitlyCleared = false
     public var project: String
     public private(set) var threadID: String?
+    public private(set) var navigationDirectory: URL?
+    public private(set) var desktopSessionID: String?
     public var threadURL: URL? {
+        if provider == .claude {
+            guard sourceHostID == nil, let desktopSessionID else { return nil }
+            var url = URLComponents()
+            url.scheme = "claude"; url.host = "code"; url.path = "/continue"
+            url.queryItems = [URLQueryItem(name: "session", value: desktopSessionID)]
+            return url.url
+        }
         guard let threadID else { return nil }
         var url = URLComponents()
         url.scheme = "codex"; url.host = "threads"; url.path = "/" + threadID
@@ -55,6 +65,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var phaseChangedAt: Date?
     public private(set) var stage: ActivityStage = .starting
     public private(set) var turnFailed = false
+    public private(set) var isHistoricalCompletion = false
     public private(set) var waitingForApproval = false
     public private(set) var modelName: String?
     public private(set) var isInternalReview = false
@@ -92,15 +103,15 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var logTurnStart: Date?
     private var ignoringInheritedHistory = false
     mutating func updateParent(_ value: String?) {
-        guard let value, let id = UUID(uuidString: value)?.uuidString.lowercased(), id != threadID else { return }
+        guard let value, let id = provider.validatedSessionID(value), id != threadID else { return }
         parentThreadID = id
     }
-    static func parentID(in metadata: [String: Any]) -> String? {
+    static func parentID(in metadata: [String: Any], provider: AgentProvider = .codex) -> String? {
         let source = metadata["source"] as? [String: Any]
         let sub = (source?["subAgent"] ?? source?["subagent"]) as? [String: Any]
         let spawn = (sub?["thread_spawn"] ?? sub?["threadSpawn"]) as? [String: Any]
         let raw = (metadata["parentThreadId"] ?? metadata["parent_thread_id"] ?? spawn?["parent_thread_id"] ?? spawn?["parentThreadId"]) as? String
-        return raw.flatMap { UUID(uuidString: $0)?.uuidString.lowercased() }
+        return raw.flatMap { provider.validatedSessionID($0) }
     }
     private mutating func rememberRate() {
         if retainedLatency == nil, let latency = performanceMeter.firstTokenLatency, let turnID {
@@ -109,9 +120,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         if let sample = responsePerformance {
             let rate = OutputEstimate(value: sample.tokensPerSecond, reportedAt: sample.completedAt, isFresh: true)
-            if shouldRemember(rate, turn: sample.turnID, performance: sample, exact: true) {
+            let exact = sample.source != .observedRequest
+            if shouldRemember(rate, turn: sample.turnID, performance: sample, exact: exact) {
                 lastMeasuredRate = rate; lastMeasuredPerformance = sample
-                lastMeasuredTurnID = sample.turnID; lastMeasuredExact = true
+                lastMeasuredTurnID = sample.turnID; lastMeasuredExact = exact
             }
         } else if let at = lastObserved,
                   let sample = (phaseAwareRate ? generationRate.estimate(at: at) : outputRate.estimate(at: at)),
@@ -122,6 +134,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     private func shouldRemember(_ sample: OutputEstimate, turn: String?, performance: ResponsePerformance?, exact: Bool) -> Bool {
         guard let previous = lastMeasuredRate else { return true }
+        if turn == lastMeasuredTurnID, let performance, let retained = lastMeasuredPerformance,
+           performance.source == .observedRequest || retained.source == .observedRequest {
+            return performance.supersedes(retained)
+        }
         if turn == lastMeasuredTurnID, abs(sample.reportedAt.timeIntervalSince(previous.reportedAt)) < 2 {
             let incoming = performance?.source == .requestUsage, retained = lastMeasuredPerformance?.source == .requestUsage
             if incoming != retained { return incoming }
@@ -141,6 +157,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public mutating func mergeDisplayMetadata(from other: SessionActivity) {
         guard canonicalized().id == other.canonicalized().id else { return }
         if parentThreadID == nil { parentThreadID = other.parentThreadID }
+        if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
+        if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
         if let key = other.latencyTurnID, key == turnID || (turnID == nil && !liveStatusOnly) {
             if retainedLatency == nil { retainedLatency = other.retainedLatency; latencyTurnID = key }
             if latencyStart == nil { latencyStart = other.latencyStart; latencyTurnID = key }
@@ -219,20 +237,22 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public func canonicalized() -> SessionActivity {
         guard let threadID else { return self }
         var value = self
-        value.id = (sourceHostID ?? "local") + ":" + threadID
+        value.id = provider.activityID(sessionID: threadID, sourceHostID: sourceHostID)
         return value
     }
 
-    public init(id: String, project: String = L10n.text("activity.local_task"), sourceHost: String? = nil, sourceHostID: String? = nil, phaseAwareRate: Bool = false) {
+    public init(id: String, project: String = L10n.text("activity.local_task"), sourceHost: String? = nil, sourceHostID: String? = nil, phaseAwareRate: Bool = false,
+                provider: AgentProvider = .codex, sessionID: String? = nil) {
         self.id = id
+        self.provider = provider
         self.phaseAwareRate = phaseAwareRate
         self.sourceHost = sourceHost
         self.sourceHostID = sourceHostID
         self.project = project
         // Canonical host IDs may contain dots (SSH aliases/IP addresses). Do
         // not strip a supposed file extension before checking their UUID tail.
-        threadID = (UUID(uuidString: String(id.suffix(36))) ??
-            UUID(uuidString: String((id as NSString).deletingPathExtension.suffix(36))))?.uuidString.lowercased()
+        if let sessionID { threadID = provider.validatedSessionID(sessionID) }
+        else { threadID = provider.sessionID(in: id) }
     }
 
     mutating func updateTitle(_ value: String?) {
@@ -244,6 +264,25 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     mutating func updateName(_ value: String?) {
         updateTitle(value)
         titleWasExplicitlyCleared = title == nil
+    }
+
+    /// A transcript UUID alone cannot establish a Desktop conversation route.
+    /// Directories are local navigation metadata and never enter SSH frames.
+    public mutating func setClaudeNavigation(directory: URL? = nil, desktopSessionID: String? = nil) {
+        guard provider == .claude else { return }
+        if let directory, sourceHostID == nil, directory.isFileURL,
+           directory.path.hasPrefix("/"), directory.absoluteString.utf8.count <= 4096,
+           directory.host == nil || directory.host == "" || directory.host == "localhost",
+           directory.query == nil, directory.fragment == nil,
+           !directory.path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+            navigationDirectory = directory.standardizedFileURL
+        }
+        if let desktopSessionID, sourceHostID == nil, desktopSessionID.utf8.count <= 256 {
+            let suffix = String(desktopSessionID.dropFirst(6))
+            if desktopSessionID.hasPrefix("local_"), suffix.utf8.count == 36, UUID(uuidString: suffix) != nil {
+                self.desktopSessionID = desktopSessionID
+            }
+        }
     }
 
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
@@ -280,7 +319,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     public mutating func consume(_ line: Data) {
-        guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+        guard provider == .codex,
+              let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let payload = value["payload"] as? [String: Any] else { return }
         defer { rememberRate() }
         if value["type"] as? String == "session_meta" {
@@ -406,6 +446,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     private mutating func beginTurn(_ id: String?, at date: Date, observed: Bool = true) {
         rememberRate()
+        isHistoricalCompletion = false
         logTurnStart = nil
         if (id != nil && id != latencyTurnID) || (id == nil && [.completed, .interrupted].contains(phase)) {
             latencyTurnID = id; latencyStart = nil; retainedLatency = nil
@@ -540,7 +581,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                   let parent = threadID else { return }
             var next: [String: SubagentEvidence] = [:]
             for (raw, state) in states {
-                guard let id = UUID(uuidString: raw)?.uuidString.lowercased(), id != parent,
+                guard let id = provider.validatedSessionID(raw), id != parent,
                       ["running", "completed"].contains(state) else { continue }
                 next[id] = subagentStates[id].flatMap { $0.state == state ? $0 : nil } ?? SubagentEvidence(parentThreadID: parent, state: state, observedAt: date)
             }
@@ -553,15 +594,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             return
         }
         if method == "metadata" {
-            updateParent(Self.parentID(in: event))
+            updateParent(Self.parentID(in: event, provider: provider))
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
             }
             modelName = event["model"] as? String ?? modelName
             if let cwd = event["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
-            isInternalReview = isInternalReview || ["guardianreview", "autoreview", "subagentreview"].contains(source) ||
-                modelName?.lowercased().hasPrefix("codex-auto-review") == true
+            if provider == .codex {
+                isInternalReview = isInternalReview || ["guardianreview", "autoreview", "subagentreview"].contains(source) ||
+                    modelName?.lowercased().hasPrefix("codex-auto-review") == true
+            }
             return
         }
         if method == "thread/observed" {
@@ -606,6 +649,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
             guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            isHistoricalCompletion = false
             identifyTurn(eventTurn); liveStatusOnly = false
             retireTurn(eventTurn)
             phase = event["status"] as? String == "completed" ? .completed : .interrupted
@@ -689,6 +733,34 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             performanceMeter.observeRuntime(total: total, last: event["lastOutputTokens"] as? Int,
                 reasoning: event["lastReasoningTokens"] as? Int, at: date, cached: event["cachedUsage"] as? Bool == true)
         }
+    }
+
+    /// Adapters supply lifecycle, text-presence and numeric fields only. Text bodies are never retained.
+    public mutating func applyRuntime(_ event: [String: Any]) {
+        guard let session = event["threadId"] as? String, let normalized = provider.validatedSessionID(session), normalized == threadID,
+              (event["turnId"] as? String).map({ !$0.isEmpty && $0.utf8.count <= 256 }) ?? true,
+              (event["itemId"] as? String).map({ !$0.isEmpty && $0.utf8.count <= 256 }) ?? true else { return }
+        var normalizedEvent = event
+        normalizedEvent["threadId"] = normalized
+        consumeLive(normalizedEvent)
+    }
+
+    /// Late authoritative usage enriches the matching observed request without changing lifecycle.
+    public mutating func applyRequestUsage(responseID: String, turnID: String, outputTokens: Int,
+                                          reasoningTokens: Int? = nil, at date: Date) {
+        guard self.turnID == turnID, outputTokens > 0, date.timeIntervalSince1970.isFinite,
+              reasoningTokens.map({ $0 >= 0 && $0 <= outputTokens }) ?? true else { return }
+        performanceMeter.observeRequest(id: responseID, turn: turnID, output: outputTokens, reasoning: reasoningTokens, at: date)
+        rememberRate()
+    }
+
+    public mutating func markSourceUnavailable() { markUnconfirmed() }
+
+    /// An initial log/spool baseline is historical even when it contains live-shaped events.
+    public mutating func suppressHistoricalCompletionNotifications() {
+        guard provider == .claude else { return }
+        liveTurnStarted = false
+        isHistoricalCompletion = [.completed, .interrupted].contains(phase)
     }
 
     private static let dates = LogDateParser()

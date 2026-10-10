@@ -7,6 +7,7 @@ struct QuotaWindowView: View {
     let allowPace: Bool
     let accent: Color
     let secondary: Color
+    var referenceColor: Color = .white
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -31,13 +32,13 @@ struct QuotaWindowView: View {
     }
     private var quotaTrack: some View {
         GeometryReader { geometry in
-            Capsule().fill(.white.opacity(0.09)).overlay(alignment: .leading) {
+            Capsule().fill(referenceColor.opacity(0.09)).overlay(alignment: .leading) {
                 if let percent = window.remainingPercent {
                     Capsule().fill(accent).frame(width: geometry.size.width * percent / 100)
                 }
             }.overlay(alignment: .leading) {
                 if allowPace, let expected = window.remainingTimePercent(at: now) {
-                    Capsule().fill(.white.opacity(0.65)).frame(width: 2, height: 11)
+                    Capsule().fill(referenceColor.opacity(0.65)).frame(width: 2, height: 11)
                         .offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * expected / 100 - 1)))
                 }
             }

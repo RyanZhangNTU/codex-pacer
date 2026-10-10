@@ -70,6 +70,7 @@ public struct AttentionPolicy: Sendable {
                 guard previous != nil, old?.phase != activity.phase else { return nil }
                 kind = .waitingForInput
             case .completed, .interrupted:
+                guard !activity.isHistoricalCompletion else { return nil }
                 let transition = old.map { [.running, .waitingForInput].contains($0.phase) && $0.turnID == activity.turnID } ?? false
                 let observedStart = activity.hasLiveEvidence && activity.liveTurnStarted
                 guard transition || observedStart else { return nil } // startup logs stay quiet

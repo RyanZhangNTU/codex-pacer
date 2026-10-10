@@ -11,7 +11,12 @@ public struct ActivityOverview: Sendable {
     public let rateIsFresh: Bool
 
     public init(activities: [SessionActivity], at now: Date) {
-        let groups = ActivityTaskGroup.make(activities)
+        self.init(groups: ActivityTaskGroup.make(activities), at: now)
+    }
+
+    /// Group ownership is independent of the UI clock. Reuse it while applying
+    /// the exact current date to rates, freshness and observed phases.
+    public init(groups: [ActivityTaskGroup], at now: Date) {
         self.activities = groups.flatMap(\.members)
         running = groups.filter(\.isRunning).map(\.primary)
         waiting = groups.filter(\.isWaiting).map(\.primary)

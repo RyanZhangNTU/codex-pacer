@@ -8,6 +8,17 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 @main
 enum PacerMain {
     @MainActor static func main() {
+        if let index = CommandLine.arguments.firstIndex(of: "--diagnose-claude-cache") {
+            let action = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : ""
+            let result = ClaudeQuotaClient.credentialCacheDiagnostics(action: action)
+            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+            return
+        }
+        if CommandLine.arguments.contains("--diagnose-claude") {
+            Task.detached { await diagnoseClaude(); exit(0) }
+            dispatchMain()
+        }
         if CommandLine.arguments.contains("--diagnose-task") {
             Task.detached { await diagnoseTask(); exit(0) }
             dispatchMain()
@@ -43,6 +54,50 @@ enum PacerMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         withExtendedLifetime((delegate, instance)) { app.run() }
+    }
+
+    /// Read-only protocol/counter checks; no identities, titles or transcripts.
+    private static func diagnoseClaude() async {
+        let defaults = UserDefaults.standard
+        let configured = defaults.string(forKey: "claudeHome") ?? ""
+        let home = URL(fileURLWithPath: CodexExecutableResolver.normalize(configured.isEmpty
+            ? (ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? NSHomeDirectory() + "/.claude") : configured))
+        let args = CommandLine.arguments
+        let index = args.firstIndex(of: "--observe-seconds")
+        let seconds = index.flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }.map { min(60, max(5, $0)) } ?? 20
+        print("Claude Desktop installed: \(ClaudeApplicationResolver.find() != nil)")
+        print("Claude CLI available: \(ClaudeApplicationResolver.findExecutable() != nil)")
+        let setup = ClaudeHookInstaller.details(home: home)
+        print("Task hooks configured: \(setup.hooksConfigured); request telemetry configured: \(setup.telemetryConfigured)")
+        if !args.contains("--skip-quota") {
+            let client = ClaudeQuotaClient(home: home)
+            do {
+                let snapshot = try await client.readQuota()
+                print("Claude quota connected: \(snapshot.windows.count) windows; reset timestamps: \(snapshot.windows.filter { $0.resetsAt != nil }.count); account scope verified: \(snapshot.accountScope != nil)")
+                print("Quota source: \(await client.currentSource()?.rawValue ?? "unavailable")")
+            } catch { print((error as? LocalizedError)?.errorDescription ?? "Claude quota unavailable") }
+            await client.shutdown()
+        }
+        let monitor = ClaudeActivityMonitor()
+        let codexHome = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
+        let targets = args.contains("--desktop-only") ? [] : RemoteActivityTarget.claudeConfigured(codexHome: codexHome,
+            additionalAliases: defaults.string(forKey: "claudeSSHHosts") ?? "")
+        await monitor.start(home: home, remoteTargets: targets) { values, statuses, requests, performance in
+            let groups = ActivityTaskGroup.make(values), now = Date()
+            let summary: [String: Any] = ["connectedSources": statuses.values.filter(\.connected).count,
+                "runningTasks": groups.filter(\.isRunning).count, "waitingTasks": groups.filter(\.isWaiting).count,
+                "completedTasks": values.filter { [.completed, .interrupted].contains($0.phase) }.count,
+                "subagents": groups.reduce(0) { $0 + $1.runningSubagentCount }, "pendingRequests": requests.count,
+                "availableRates": values.filter { $0.displayedOutputEstimate(at: now) != nil }.count,
+                "availableFirstOutput": values.filter { $0.firstTokenLatency != nil }.count,
+                "numericUpdates": performance.count]
+            if let data = try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+        }
+        try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+        if let bytes = try? JSONSerialization.data(withJSONObject: await monitor.diagnostics(), options: [.sortedKeys]),
+           let text = String(data: bytes, encoding: .utf8) { print(text) }
+        await monitor.shutdown()
     }
 
     /// Read-only numeric summary; never prints task names, text or account data.
@@ -145,7 +200,7 @@ enum PacerMain {
 }
 
 @MainActor
-private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuItemValidation {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate, NSMenuItemValidation {
     private var model: IslandModel!
     private var updater: AppUpdater!
     private var panel: PanelController!
@@ -174,8 +229,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         model.onSettings = { [weak self] in self?.showSettings() }
         model.onQuit = { [weak self] in self?.quit() }
         model.onRelaunch = { [weak self] in self?.relaunchForLanguage() }
+        model.onClaudeLogin = { [weak self] in
+            self?.model.close()
+            ClaudeWebLogin.open { [weak self] in self?.model.retryClaudeWebConnection(afterSignIn: true) }
+        }
+        model.onClaudeOrganizationSelection = { [weak self] organizations in
+            self?.model.close()
+            ClaudeWebLogin.chooseOrganization(organizations) { [weak self] organization in
+                self?.model.retryClaudeWebConnection(organizationID: organization)
+            }
+        }
+        ClaudeWebLogin.onVisibilityChange = { [weak self] visible in
+            self?.model.setInteractionSuspended(visible)
+        }
         model.onOpenActivity = { [weak self] activity in
-            guard let self else { return L10n.text("activity.open_failed") }
+            guard let self else { return .failed(L10n.text("activity.open_failed")) }
             return await self.openActivity(activity)
         }
         model.onStatusChange = { [weak self] in self?.updateStatusItem() }
@@ -201,6 +269,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         applicationMenu.addItem(quitItem)
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
+        let fileItem = NSMenuItem(title: L10n.text("common.file_menu"), action: nil, keyEquivalent: "")
+        let fileMenu = NSMenu(title: L10n.text("common.file_menu"))
+        let closeItem = NSMenuItem(title: L10n.text("common.close_window"),
+            action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        // Resolve through the focused window, including WebKit/SSO and
+        // Settings. A borderless island is not an auxiliary close target.
+        closeItem.target = nil
+        fileMenu.addItem(closeItem)
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
         NSApp.mainMenu = mainMenu
         updateStatusItem()
         model.start()
@@ -228,7 +306,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             // Keep left-click independent from the right-click context menu.
             statusItem = item
         }
-        statusItem?.button?.title = " " + model.quotaSummary
+        statusItem?.button?.title = " " + model.enabledProviders.map { provider in
+            let value = UserDefaults.standard.string(forKey: "compactMetric") == "pace"
+                ? model.providerPace(provider) : model.providerSelectedWindow(provider)?.remainingPercent
+            return provider.displayName + " " + (value.map { "\(Int($0.rounded()))%" } ?? "—")
+        }.joined(separator: " · ")
         statusItem?.button?.toolTip = "Codex Pacer · \(model.compactStatus) · \(model.freshnessText)"
     }
 
@@ -244,6 +326,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
             item.target = self
             menu.addItem(item)
+        }
+        if model.isModuleEnabled(.claude) {
+            let item = NSMenuItem(title: L10n.text("menu.open_claude"), action: #selector(openClaude), keyEquivalent: "")
+            item.target = self; menu.insertItem(item, at: 2)
         }
         if let button = statusItem?.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button) }
     }
@@ -280,10 +366,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             Task { @MainActor in self?.model.navigationError = message; self?.panel.show() }
         }
     }
+    @objc private func openClaude() {
+        guard let url = ClaudeApplicationResolver.find() else {
+            model.navigationError = L10n.text("activity.open_failed"); panel.show(); return
+        }
+        model.close()
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            guard error != nil else { return }
+            Task { @MainActor in self?.model.navigationError = L10n.text("activity.open_failed"); self?.panel.show() }
+        }
+    }
     @objc private func demoStageChanged(_ sender: NSMenuItem) {
         if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
     }
-    private func openActivity(_ activity: SessionActivity) async -> String? {
+    private func openActivity(_ activity: SessionActivity) async -> ActivityOpenOutcome {
         if model.isDemo {
             let window = demoConversationWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 320),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -292,15 +388,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
                 self?.demoConversationWindow?.orderOut(nil); self?.panel.show()
             })
             window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-            demoConversationWindow = window; model.close(); return nil
+            demoConversationWindow = window; model.close(); return .openedConversation
         }
-        guard model.canOpen(activity), let threadURL = activity.threadURL else { return L10n.text("activity.open_failed") }
-        guard let appURL = CodexApplicationResolver.find() else { return L10n.text("activity.app_missing") }
+        if activity.provider == .claude {
+            guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }
+            model.close()
+            return await ClaudeConversationOpener.open(activity, home: model.claudeHome)
+        }
+        guard model.canOpen(activity), let threadURL = activity.threadURL else { return .failed(L10n.text("activity.open_failed")) }
+        guard let appURL = CodexApplicationResolver.find() else { return .failed(L10n.text("activity.app_missing")) }
         model.close()
         return await withCheckedContinuation { continuation in
             NSWorkspace.shared.open([threadURL], withApplicationAt: appURL,
                 configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                    continuation.resume(returning: error.map { L10n.text("activity.open_failed_detail", CodexDiagnosticText.description(of: $0)) })
+                continuation.resume(returning: error.map { .failed(L10n.text("activity.open_failed_detail", CodexDiagnosticText.description(of: $0))) } ?? .openedConversation)
                 }
         }
     }
@@ -321,17 +422,29 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = L10n.text("menu.settings_title")
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             settingsWindow = window
         }
         settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater) { [weak self] in
-            self?.settingsWindow?.orderOut(nil)
+            self?.closeSettings()
         })
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func closeSettings() {
+        settingsWindow?.orderOut(nil)
+        settingsWindow?.contentView = nil
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === settingsWindow else { return }
+        closing.contentView = nil
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        ClaudeWebLogin.close()
         if let reopenObserver { DistributedNotificationCenter.default().removeObserver(reopenObserver) }
         panel.stop()
         Task {

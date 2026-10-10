@@ -6,7 +6,7 @@ public struct SessionNameUpdate: Equatable, Sendable {
     public let id: String
     public let title: String?
 
-    init?(_ activity: SessionActivity) {
+    public init?(_ activity: SessionActivity) {
         guard !activity.isInternalReview,
               activity.title != nil || activity.titleWasExplicitlyCleared else { return nil }
         id = activity.canonicalized().id
