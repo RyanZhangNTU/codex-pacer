@@ -6,7 +6,7 @@
 
 ![Codex Pacer 2.0](docs/assets/pacer-2.0.png)
 
-- 查看本机与已启用 SSH 来源的运行、等待和本轮结束状态，点击任务打开对应会话。
+- 查看本机、Remote Control 与已启用 SSH 来源的运行、等待和本轮结束状态，点击任务打开对应会话。
 - 显示运行任务的合计 TPS 与首输出延迟；子代理归入主任务，显示运行数量并累加 TPS。工具执行或等待新测量时保留上次速率，15 秒内更新的数值显示白色，超过 15 秒显示灰色。
 - 查看短期与七天额度、重置倒计时、配速和当前周期曲线。周期内即将到期的 banked reset 在曲线上标注。
 - 查看账户 Credit 余额与可用重置券，点击重置次数查看具体到期时间，也可点击曲线上的到期标记。
@@ -18,7 +18,7 @@
 - 支持简体中文与英文，默认跟随 Mac 语言，也可在设置中选择。
 - 支持应用内更新，默认每天检查，点击安装后自动完成下载、验证、替换和重启。
 
-**系统要求：** macOS 14 或更新，Apple Silicon 或 Intel。Liquid Glass 需要 macOS 26 或更新。已登录的 Codex 与 Python 3 用于读取账户和任务状态；SSH 来源需要现有的免交互 OpenSSH 连接。
+**系统要求：** macOS 14 或更新，Apple Silicon 或 Intel。Liquid Glass 需要 macOS 26 或更新。已登录的 Codex 与 Python 3 用于读取账户和任务状态。Remote Control 需要 Codex 桌面端保持开启并连接远程主机；SSH 来源需要现有的免交互 OpenSSH 连接。
 
 ## 安装未签名版
 

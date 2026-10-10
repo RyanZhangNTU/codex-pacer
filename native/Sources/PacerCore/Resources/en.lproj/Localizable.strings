@@ -267,6 +267,8 @@
 "settings.menu_bar" = "Show in Menu Bar";
 "settings.menu_bar_help" = "You can still open Settings using the island’s gear button.";
 "settings.monitor_ssh" = "Include Codex SSH Tasks";
+"settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
+"settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";
 "settings.notch" = "Notch";
 "settings.notification_denied" = "Other settings were saved. System notifications are not authorized; island reminders are still available.";
 "settings.one_hour" = "1 hour";

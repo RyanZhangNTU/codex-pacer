@@ -38,9 +38,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         var url = URLComponents()
         url.scheme = "codex"; url.host = "threads"; url.path = "/" + threadID
         if let sourceHostID {
-            let prefix = "remote-ssh-discovered:"
-            guard sourceHostID.hasPrefix(prefix),
-                  String(sourceHostID.dropFirst(prefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { return nil }
+            let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
+            let validSSH = sourceHostID.hasPrefix(sshPrefix) &&
+                String(sourceHostID.dropFirst(sshPrefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
+            let validControl = sourceHostID.hasPrefix(controlPrefix) &&
+                String(sourceHostID.dropFirst(controlPrefix.count)).range(of: #"^[A-Za-z0-9_-]{1,128}\z"#, options: .regularExpression) != nil
+            guard validSSH || validControl else { return nil }
             url.queryItems = [URLQueryItem(name: "hostId", value: sourceHostID)]
         }
         return url.url
@@ -156,6 +159,16 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var generationRate = GenerationRate()
     private var performanceMeter = ResponsePerformanceMeter()
     public var responsePerformance: ResponsePerformance? { performanceMeter.latest }
+    /// A released turn can receive numeric accounting without new activity.
+    mutating func enrichCompletedUsage(_ event: [String: Any]) {
+        guard [.completed, .interrupted].contains(phase), event["threadId"] as? String == threadID,
+              event["turnId"] as? String == turnID, event["cachedUsage"] as? Bool != true,
+              let seconds = event["at"] as? Double, seconds.isFinite,
+              let total = event["outputTokens"] as? Int else { return }
+        performanceMeter.observeRuntime(total: total, last: event["lastOutputTokens"] as? Int,
+            reasoning: event["lastReasoningTokens"] as? Int, at: Date(timeIntervalSince1970: seconds), allowAfterFinish: true)
+        rememberRate()
+    }
     public var firstTokenLatency: TimeInterval? {
         if latencyTurnID == turnID || turnID == nil, let retainedLatency { return retainedLatency }
         return performanceMeter.firstTokenLatency
@@ -672,7 +685,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             generationRate.setWaiting(false, at: date); phase = .running
             stage = method.contains("reasoning") ? .thinking : .responding
         } else if method == "thread/tokenUsage/updated", let total = event["outputTokens"] as? Int {
-            generationRate.observe(total: total, at: date)
+            generationRate.observe(total: total, at: date, cached: event["cachedUsage"] as? Bool == true)
             performanceMeter.observeRuntime(total: total, last: event["lastOutputTokens"] as? Int,
                 reasoning: event["lastReasoningTokens"] as? Int, at: date, cached: event["cachedUsage"] as? Bool == true)
         }

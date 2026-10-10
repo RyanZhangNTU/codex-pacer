@@ -53,6 +53,11 @@ enum PacerMain {
             print("A valid --thread-id is required."); return
         }
         let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
+        let hostIndex = args.firstIndex(of: "--host-id")
+        let host = hostIndex.flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "local"
+        guard host == "local" || host.range(of: #"^remote-control:[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else {
+            print("A valid local or Remote Control --host-id is required."); return
+        }
         let monitor = RealtimeActivityMonitor()
         await monitor.start(home: home, includeSSH: false, useSSHFallback: false) { _, _, _ in }
         try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -62,7 +67,7 @@ enum PacerMain {
         let reader = LocalActivityReader()
         let logged = await reader.read(home: home, phaseAwareRate: true, includeCoveredMetrics: true, subagentStates: evidence)
         let merged = ActivitySourceMerger.merge(logged: logged.activities, streamed: streamed)
-        let group = ActivityTaskGroup.make(merged).first { $0.primary.threadID == thread && $0.primary.sourceHostID == nil }
+        let group = ActivityTaskGroup.make(merged).first { $0.primary.threadID == thread && ($0.primary.sourceHostID ?? "local") == host }
         let now = Date()
         let summary: [String: Any] = ["observed": group != nil,
             "liveParentObserved": group?.primary.hasLiveEvidence ?? false,

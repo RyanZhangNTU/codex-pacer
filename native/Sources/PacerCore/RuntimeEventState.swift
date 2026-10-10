@@ -18,6 +18,7 @@ struct RuntimeEventState: Sendable {
     private var live: [String: SessionActivity] = [:]
     private var metricLogs: [String: SessionActivity] = [:]
     private var metricUpdates: [String: SessionPerformanceUpdate] = [:]
+    private var terminalMetrics: [String: SessionActivity] = [:]
     private var names: [String: SessionNameUpdate] = [:]
     private var invalidated: Set<String> = []
     private var released: Set<String> = []
@@ -63,6 +64,8 @@ struct RuntimeEventState: Sendable {
     mutating func releasePublishedState() {
         metricUpdates.removeAll()
         for id in released {
+            if sourceID?.hasPrefix("remote-control:") == true, let value = live[id],
+               [.completed, .interrupted].contains(value.phase) { retainTerminalMetrics(value) }
             if let value = live[id], let logged = fallback[id],
                let merged = ActivitySourceMerger.merge(logged: [logged], streamed: [value]).first {
                 fallback[id] = merged
@@ -73,6 +76,14 @@ struct RuntimeEventState: Sendable {
             idleOrder.removeValue(forKey: id)
         }
         released.removeAll()
+    }
+    private mutating func retainTerminalMetrics(_ value: SessionActivity) {
+        terminalMetrics[value.id] = value
+        if terminalMetrics.count > 64 {
+            for id in terminalMetrics.keys.sorted(by: {
+                (terminalMetrics[$0]?.phaseChangedAt ?? .distantPast) > (terminalMetrics[$1]?.phaseChangedAt ?? .distantPast)
+            }).dropFirst(64) { terminalMetrics.removeValue(forKey: id) }
+        }
     }
     mutating func consume(_ frame: [String: Any]) {
         if frame["kind"] as? String == "performance", let rows = frame["sessions"] as? [[String: Any]], rows.count <= 32 {
@@ -121,6 +132,18 @@ struct RuntimeEventState: Sendable {
         } else if frame["kind"] as? String == "runtime", let event = frame["event"] as? [String: Any],
                   let thread = event["threadId"] as? String, UUID(uuidString: thread) != nil {
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
+            if event["method"] as? String == "thread/tokenUsage/updated", event["terminalUsage"] as? Bool == true {
+                guard sourceID?.hasPrefix("remote-control:") == true,
+                      var value = live[id].flatMap({ [.completed, .interrupted].contains($0.phase) ? $0 : nil }) ?? terminalMetrics[id],
+                      value.turnID == event["turnId"] as? String else { return }
+                let before = SessionPerformanceUpdate(value)
+                value.enrichCompletedUsage(event)
+                if live[id]?.turnID == value.turnID { live[id] = value }
+                retainTerminalMetrics(value)
+                if let update = SessionPerformanceUpdate(value), update != before { metricUpdates[id] = update }
+                return
+            }
+            if ["turn/started", "turn/attached"].contains(event["method"] as? String ?? "") { terminalMetrics.removeValue(forKey: id) }
             if event["method"] as? String == "thread/status/changed",
                ["notLoaded", "systemError"].contains(event["status"] as? String ?? ""), isConfirmedIdle(thread: thread) {
                 // Terminal state may already have been published and reclaimed.

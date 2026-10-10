@@ -6,7 +6,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 
 ![Codex Pacer 2.0](docs/assets/pacer-2.0.png)
 
-- See local and enabled SSH tasks, their current stage, and ended turns; click a task to open its conversation.
+- See local, Remote Control and enabled SSH tasks, their current stage, and ended turns; click a task to open its conversation.
 - See the aggregate output-rate estimate for running tasks, with tool waits handled separately from generation.
 - Track short and seven-day quota, reset countdowns, pacing and the current cycle. Banked resets expiring within the current cycle appear on the curve.
 - View account Credit balance and available reset credits; click the reset count to see exact expiry times, or select an expiry marker on the curve.
@@ -19,7 +19,7 @@ A native macOS island for Codex tasks, output rate and account quota. Hover to e
 - Use English or Simplified Chinese, following your Mac's language by default or selecting a language in Settings.
 - Update inside the app: daily checks by default, with download and installation after you choose to install.
 
-**Requirements:** macOS 14 or later, Apple Silicon or Intel. Liquid Glass requires macOS 26 or later. An authenticated Codex installation and Python 3 provide account/task data; remote sources require existing non-interactive OpenSSH access.
+**Requirements:** macOS 14 or later, Apple Silicon or Intel. Liquid Glass requires macOS 26 or later. An authenticated Codex installation and Python 3 provide account/task data. Remote Control requires the Codex desktop app to remain open and connected to the remote host; SSH requires existing non-interactive OpenSSH access.
 
 ## Install the unsigned release
 

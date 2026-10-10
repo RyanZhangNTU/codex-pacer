@@ -267,6 +267,8 @@
 "settings.menu_bar" = "在菜单栏显示";
 "settings.menu_bar_help" = "关闭后仍可从灵动岛的齿轮按钮打开设置。";
 "settings.monitor_ssh" = "统计 Codex SSH 任务";
+"settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
+"settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";
 "settings.notch" = "刘海";
 "settings.notification_denied" = "其他设置已保存。系统通知未授权，状态岛提醒仍可使用。";
 "settings.one_hour" = "1 小时";

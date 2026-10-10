@@ -96,11 +96,18 @@ struct ResponsePerformanceMeter: Equatable, Sendable {
         guard waiting || generatedEnd == nil else { return } // A background tool finishing mid-response is not a new model request.
         responseStart = date; generatedEnd = nil; waiting = false
     }
-    mutating func observeRuntime(total: Int, last: Int?, reasoning: Int?, at date: Date, cached: Bool = false) {
+    mutating func observeRuntime(total: Int, last: Int?, reasoning: Int?, at date: Date, cached: Bool = false, allowAfterFinish: Bool = false) {
         guard total >= 0 else { return }
         let previous = cumulative
         cumulative = total
-        guard !hasRequestUsage, !cached, previous != total, !finished, let last, last > 0, let turnID else { return }
+        if cached {
+            if previous != nil, previous != total {
+                responseStart = nil; generatedEnd = nil; pendingWindow = nil; ambiguousWindow = false
+                if latest?.source == .runtimeUsage { latest = nil }
+            }
+            return
+        }
+        guard !hasRequestUsage, previous != total, !finished || allowAfterFinish, let last, last > 0, let turnID else { return }
         if ambiguousWindow {
             ambiguousWindow = false; pendingWindow = nil; responseStart = nil; generatedEnd = nil
             return // Multiple unsettled requests cannot be paired with one `last` counter.
