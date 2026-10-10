@@ -291,7 +291,7 @@
 "settings.cli_candidate" = "%1$@：%2$@";
 "settings.cli_path" = "CLI 路径";
 "settings.codex_home" = "Codex 目录";
-"settings.compact_metric" = "额度数值";
+"settings.compact_metric" = "显示为";
 "settings.completion_reminder" = "本轮结束或中断提醒";
 "settings.connection_succeeded" = "连接成功：已读取 %ld 个额度窗口。";
 "settings.connections" = "连接 %1$ld 个来源，订阅 %2$ld 个运行会话";
@@ -303,7 +303,6 @@
 "settings.width_preview" = "灵动岛宽度预览";
 "settings.width_preview_notch" = "灵动岛宽度预览，已标注屏幕刘海位置";
 "settings.width_notch_marker" = "刘海";
-"settings.width_notch_help" = "中间的虚线区域为屏幕刘海，Pacer 内容排列在两侧。";
 "settings.width_notch_floating_help" = "屏幕刘海标在悬浮栏上方，栏内空间均可用于显示内容。";
 "settings.width_narrow" = "窄";
 "settings.width_medium" = "适中";
@@ -311,8 +310,8 @@
 "settings.width_mode" = "宽度";
 "settings.width_adaptive" = "自适应";
 "settings.width_fixed" = "指定宽度";
-"settings.width_adaptive_help" = "随当前状态、速率、额度和任务行调整。保存后立即应用。";
-"settings.width_fixed_help" = "拖动滑块预览宽度。灵动岛与展开面板共用一个宽度，并为刘海和屏幕边界保留空间。保存后立即应用。";
+"settings.width_adaptive_help" = "随当前状态、速率、额度和任务行自动调整。";
+"settings.width_fixed_help" = "灵动岛与展开面板共用一个宽度，并为刘海和屏幕边界保留空间。";
 "settings.display_mode_help" = "自动跟随显示器；刘海贴顶显示，悬浮位于菜单栏下方。所有显示器均可选择。";
 "settings.display_picker" = "显示器";
 "settings.empty_quota" = "CLI 可以运行，但账户服务没有返回可显示的额度窗口。请检查当前账户或工作区的订阅额度。";
@@ -411,10 +410,8 @@
 // Collapsed bar component layout
 "layout.title" = "折叠栏布局";
 "layout.collapsed" = "折叠栏";
-"layout.help" = "拖动组件排序或换边，点 × 隐藏。";
-"layout.preview" = "折叠栏实时预览";
-"layout.shown" = "已显示";
-"layout.hidden" = "已隐藏";
+"layout.help" = "拖动调整顺序或换边，点 × 隐藏。";
+"layout.preview" = "预览";
 "layout.drop_here" = "拖到这里";
 "layout.lane.leading" = "左侧";
 "layout.lane.trailing" = "右侧";
@@ -431,14 +428,22 @@
 "layout.short.quota" = "额度";
 "layout.component.quotaGauge" = "额度双环";
 "layout.short.quotaGauge" = "双环";
-"layout.quota_alternates" = "两个模块都启用时，额度数值每 4 秒在 Codex 与 Claude 之间交替；双环同时显示两者。";
 "layout.gauge_help" = "外环为 Codex，内环为 Claude，弧长为剩余额度。";
 "quota.five_hour_low" = "%@ 5 小时额度低于 20%%（剩余 %@）";
 "quota.five_hour_exhausted" = "%@ 5 小时额度已耗尽";
+"layout.detail.activity" = "任务数量与阶段，运行时光弧环绕";
+"layout.detail.status" = "以文字显示当前阶段或待你处理的事项";
+"layout.detail.tps" = "所有运行中任务的输出速度之和";
+"layout.detail.firstOutput" = "最近一次首输出时间";
+"layout.detail.quota" = "两个模块时每 4 秒交替显示";
+"layout.detail.quotaGauge" = "外环 Codex，内环 Claude";
+"layout.detail.quotaLabel" = "标注数值是额度还是配速";
+"layout.detail.timeRemaining" = "各额度窗口剩余时间占比";
+"layout.detail.lowQuotaWarning" = "5 小时额度低于 20% 或已耗尽";
+"layout.detail.quotaDelayWarning" = "额度数据未及时更新";
+"layout.detail.sshWarning" = "远程主机连接中断";
 "layout.earlier" = "向前移动";
 "layout.later" = "向后移动";
-"layout.single_save" = "保存后立即生效";
-"layout.providers_hint" = "额度组件汇总已启用的模块；只启用一个模块时显示该模块的百分比。";
 "layout.no_quota_providers" = "启用 Codex 或 Claude 后即可添加额度组件。";
 "layout.move_left" = "移至左侧";
 "layout.move_right" = "移至右侧";
@@ -450,7 +455,7 @@
 "layout.single_task" = "单个任务时徽标显示";
 "layout.single_task.stage" = "当前阶段";
 "layout.single_task.count" = "任务数量";
-"layout.warnings_hint" = "仅发生问题时显示";
+"layout.warnings_hint" = "仅在出现问题时显示。";
 "layout.quota_label" = "额度";
 "layout.metric_help" = "跟随设置中“收起时的百分比”选择额度或配速。";
 "layout.time_remaining_help" = "距重置的剩余时间占整个额度窗口的百分比。";

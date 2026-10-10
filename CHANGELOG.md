@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Redesign the Collapsed Bar settings page: one preview card with a bar-shaped, wrapping lane strip and the width controls, then grouped switch rows with descriptions whose options appear beneath them; redundant help text is removed and the preview stage adapts to light and dark appearance.
+
 - Align expanded island content with the header's 15-point edges and tighten section spacing. The adaptive expanded minimum drops from 440 to 404 points, keeping the earlier content width while halving the widening from a narrow bar; specified widths are unchanged; the more-actions menu keeps only refresh and quit.
 
 - Replace the separate collapsed Codex and Claude quota values with one quota value that alternates between enabled modules every 4 seconds (remaining or pace) and optional quota rings showing both at once; both are on by default. A 5h warning shows an outlined capsule below 20% and a solid one when exhausted, tinted by provider. Layout schema 6 migrates saved layouts, and the Settings quota options follow the components that use them.

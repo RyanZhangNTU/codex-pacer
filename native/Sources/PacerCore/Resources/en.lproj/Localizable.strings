@@ -291,7 +291,7 @@
 "settings.cli_candidate" = "%1$@: %2$@";
 "settings.cli_path" = "CLI Path";
 "settings.codex_home" = "Codex Data Folder";
-"settings.compact_metric" = "Quota Value";
+"settings.compact_metric" = "Show As";
 "settings.completion_reminder" = "Turn Finished or Interrupted";
 "settings.connection_succeeded" = "Connected. Quota windows read: %ld.";
 "settings.connections" = "Connected sources: %1$ld · Active chats: %2$ld";
@@ -303,7 +303,6 @@
 "settings.width_preview" = "Island width preview";
 "settings.width_preview_notch" = "Island width preview with the screen notch marked";
 "settings.width_notch_marker" = "Notch";
-"settings.width_notch_help" = "The outlined center is the screen notch. Pacer content sits on either side.";
 "settings.width_notch_floating_help" = "The screen notch is marked above the floating bar. The bar keeps its full content width.";
 "settings.width_narrow" = "Narrow";
 "settings.width_medium" = "Medium";
@@ -311,8 +310,8 @@
 "settings.width_mode" = "Width";
 "settings.width_adaptive" = "Adaptive";
 "settings.width_fixed" = "Specified Width";
-"settings.width_adaptive_help" = "Fits the current status, rate, quota and task rows. Applied when you save.";
-"settings.width_fixed_help" = "Drag the slider to preview the width. One width applies to the island and expanded panel, with room for the camera and display edges. Applied when you save.";
+"settings.width_adaptive_help" = "Fits the current status, rate, quota and task rows.";
+"settings.width_fixed_help" = "One width for the island and expanded panel, with room for the camera and display edges.";
 "settings.display_mode_help" = "Automatic follows the display. Notch attaches to the top edge; Floating sits below the menu bar. All modes work on every display.";
 "settings.display_picker" = "Display";
 "settings.empty_quota" = "The CLI runs, but the account service returned no quota windows. Check the subscription quota for the current account or workspace.";
@@ -411,10 +410,8 @@
 // Collapsed bar component layout
 "layout.title" = "Collapsed bar layout";
 "layout.collapsed" = "Collapsed bar";
-"layout.help" = "Drag to reorder or switch sides. Click × to hide.";
-"layout.preview" = "Live collapsed bar preview";
-"layout.shown" = "Shown";
-"layout.hidden" = "Hidden";
+"layout.help" = "Drag to reorder or switch sides; click × to hide.";
+"layout.preview" = "Preview";
 "layout.drop_here" = "Drop here";
 "layout.lane.leading" = "Left";
 "layout.lane.trailing" = "Right";
@@ -431,14 +428,22 @@
 "layout.short.quota" = "Quota";
 "layout.component.quotaGauge" = "Quota rings";
 "layout.short.quotaGauge" = "Rings";
-"layout.quota_alternates" = "With both modules on, the quota value alternates between Codex and Claude every 4 seconds; the rings show both at once.";
 "layout.gauge_help" = "Outer ring: Codex. Inner ring: Claude. Each arc is the remaining quota.";
 "quota.five_hour_low" = "%@ 5-hour quota below 20%% (%@ left)";
 "quota.five_hour_exhausted" = "%@ 5-hour quota exhausted";
+"layout.detail.activity" = "Task count and stage; an orbit circles while tasks run";
+"layout.detail.status" = "Current stage or what needs you, in words";
+"layout.detail.tps" = "Combined output speed of running tasks";
+"layout.detail.firstOutput" = "Latest time to first output";
+"layout.detail.quota" = "Alternates between modules every 4 seconds";
+"layout.detail.quotaGauge" = "Codex outside, Claude inside";
+"layout.detail.quotaLabel" = "Names the value as quota or pace";
+"layout.detail.timeRemaining" = "Time left in each quota window";
+"layout.detail.lowQuotaWarning" = "5-hour quota below 20% or exhausted";
+"layout.detail.quotaDelayWarning" = "Quota has not refreshed recently";
+"layout.detail.sshWarning" = "A remote host is disconnected";
 "layout.earlier" = "Move earlier";
 "layout.later" = "Move later";
-"layout.single_save" = "Applies when you save";
-"layout.providers_hint" = "Quota components combine enabled modules; with one module they show its own percentage.";
 "layout.no_quota_providers" = "Enable Codex or Claude to add quota components.";
 "layout.move_left" = "Move to left";
 "layout.move_right" = "Move to right";
@@ -450,7 +455,7 @@
 "layout.single_task" = "Single Task Badge";
 "layout.single_task.stage" = "Current Stage";
 "layout.single_task.count" = "Task Count";
-"layout.warnings_hint" = "Shown only when there is an issue";
+"layout.warnings_hint" = "Shown only when something needs attention.";
 "layout.quota_label" = "Quota";
 "layout.metric_help" = "Follows the Quota or Pace choice in Settings.";
 "layout.time_remaining_help" = "Time until reset as a percentage of the full quota window.";

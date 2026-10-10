@@ -14,11 +14,6 @@ struct IslandWidthControl: View {
             model.screenNotchSize.width > 0 && model.screenNotchSize.height > 0
     }
 
-    private var fraction: Double {
-        let range = IslandWidthSettings.range
-        return (settings.normalized.width - range.lowerBound) / (range.upperBound - range.lowerBound)
-    }
-
     var body: some View {
         VStack(spacing: 12) {
             GeometryReader { geometry in
@@ -49,27 +44,17 @@ struct IslandWidthControl: View {
                 .allowsHitTesting(false)
                 .onPreferenceChange(CompactHeaderIdealWidth.self) { naturalWidth = $0 + 2 }
             }
-            .frame(height: hasNotch && !attached ? 104 : 72)
-            .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.04)))
+            .frame(height: hasNotch && !attached ? 104 : 76)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.07)))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(L10n.text(hasNotch ? "settings.width_preview_notch" : "settings.width_preview"))
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: settings.width)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: settings.mode)
 
-            if hasNotch {
-                Text(L10n.text(attached ? "settings.width_notch_help" : "settings.width_notch_floating_help"))
+            if hasNotch && !attached {
+                Text(L10n.text("settings.width_notch_floating_help"))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if settings.mode == .fixed {
-                HStack(spacing: 12) {
-                    Text(L10n.text("settings.width_narrow"))
-                    Slider(value: $settings.width, in: IslandWidthSettings.range)
-                        .accessibilityLabel(L10n.text("settings.width_mode"))
-                        .accessibilityValue(L10n.text(fraction < 0.33 ? "settings.width_narrow" :
-                            fraction > 0.66 ? "settings.width_wide" : "settings.width_medium"))
-                    Text(L10n.text("settings.width_wide"))
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
     }

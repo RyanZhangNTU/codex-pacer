@@ -9,6 +9,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var id: String { rawValue }
         public var label: String { L10n.text("layout.component." + rawValue) }
         public var shortLabel: String { L10n.text("layout.short." + rawValue) }
+        public var detail: String { L10n.text("layout.detail." + rawValue) }
         /// Quota components combine every enabled provider, so they need at least one.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
             switch self {

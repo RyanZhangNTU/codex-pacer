@@ -212,37 +212,11 @@ struct SettingsView: View {
                     quotaPreview: CompactQuotaPreview(providers: AgentProvider.allCases.filter { moduleEnabled($0) },
                         metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID], singleTask: singleTask))
             }
-            if compactLayout.components.contains(.activity) {
-                Section(L10n.text("layout.group.tasks")) {
-                    Picker(L10n.text("layout.single_task"), selection: $singleTask) {
-                        ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
-                    }
-                }
-            }
-            // Options follow the components that use them: the value choice
-            // applies to the quota value and its label, the windows to every quota component.
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
-            let showsValue = compactLayout.components.contains(.quota) || compactLayout.components.contains(.quotaLabel)
-            let showsWindow = showsValue || compactLayout.components.contains(.quotaGauge) ||
-                compactLayout.components.contains(.timeRemaining)
-            if !enabled.isEmpty, showsWindow {
-                Section {
-                    if showsValue {
-                        Picker(L10n.text("settings.compact_metric"), selection: $metric) {
-                            Text(L10n.text("settings.remaining_quota")).tag("remaining")
-                            Text(L10n.text("settings.pace_percentage")).tag("pace")
-                        }
-                    }
-                    if enabled.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
-                    if enabled.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
-                } header: {
-                    Text(L10n.text("layout.group.quota"))
-                } footer: {
-                    if enabled.count > 1, compactLayout.components.contains(.quota) {
-                        Text(L10n.text("layout.quota_alternates")).font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-            }
+            componentSection(.tasks, enabled: enabled)
+            componentSection(.performance, enabled: enabled)
+            componentSection(.quota, enabled: enabled)
+            componentSection(.warnings, enabled: enabled)
         case .reminders:
             Section {
                 Toggle(L10n.text("settings.low_quota"), isOn: $lowReminder)
@@ -384,6 +358,52 @@ struct SettingsView: View {
             caption(L10n.text("source.ssh_retrying"))
         }
         .padding(.vertical, 2)
+    }
+
+    /// One grouped section per component category. Each component is a single
+    /// row (a stable row count keeps the table-backed Form valid); options that
+    /// only matter while it is shown sit inside that row, under its title.
+    private func componentSection(_ group: CompactIslandLayout.Group, enabled: [AgentProvider]) -> some View {
+        Section {
+            ForEach(group.components.filter { $0.isAvailable(for: Set(enabled)) }) { component in
+                VStack(alignment: .leading, spacing: 8) {
+                    CompactComponentToggle(component: component, layout: $compactLayout)
+                    componentOptions(component)
+                }
+            }
+            if group == .quota {
+                if enabled.isEmpty {
+                    caption(L10n.text("layout.no_quota_providers"))
+                } else if compactLayout.components.contains(where: { group.components.contains($0) }) {
+                    if enabled.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
+                    if enabled.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
+                }
+            }
+        } header: {
+            Text(group.label)
+        } footer: {
+            switch group {
+            case .warnings: caption(L10n.text("layout.warnings_hint"))
+            default: EmptyView()
+            }
+        }
+    }
+    /// The value choice follows the quota value, or its label when the value is hidden.
+    @ViewBuilder private func componentOptions(_ component: CompactIslandLayout.Component) -> some View {
+        let shown = compactLayout.components
+        if component == .activity, shown.contains(.activity) {
+            Picker(L10n.text("layout.single_task"), selection: $singleTask) {
+                ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .padding(.leading, CompactComponentToggle.optionInset)
+        } else if (component == .quota && shown.contains(.quota)) ||
+                    (component == .quotaLabel && shown.contains(.quotaLabel) && !shown.contains(.quota)) {
+            Picker(L10n.text("settings.compact_metric"), selection: $metric) {
+                Text(L10n.text("settings.remaining_quota")).tag("remaining")
+                Text(L10n.text("settings.pace_percentage")).tag("pace")
+            }
+            .padding(.leading, CompactComponentToggle.optionInset)
+        }
     }
 
     private func caption(_ text: String) -> some View {
