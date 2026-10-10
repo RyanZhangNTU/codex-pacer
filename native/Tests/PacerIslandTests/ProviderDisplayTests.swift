@@ -469,7 +469,7 @@ final class ProviderDisplayTests: XCTestCase {
         let before = model.selectedProvider
         model.selectProvider(.claude)
         XCTAssertEqual(model.selectedProvider, before)
-        for component in [CompactIslandLayout.Component.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning] {
+        for component in [CompactIslandLayout.Component.quota, .quotaGauge, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning] {
             XCTAssertFalse(CompactIslandComponent.isVisible(component, model: model))
         }
         await model.shutdown()
@@ -490,6 +490,19 @@ final class ProviderDisplayTests: XCTestCase {
         model.quota = try quota(.codex, used: 95, at: now)
         XCTAssertTrue(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model))
         XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model), "Warnings from different providers remain additive")
+        for (used, alert) in [(80.0, nil), (81.0, FiveHourQuotaAlert.low(19)), (100.0, .exhausted)] as [(Double, FiveHourQuotaAlert?)] {
+            model.quota = try quota(.codex, used: used, at: now)
+            XCTAssertEqual(model.fiveHourAlert(.codex), alert, "Below 20% is low and zero is exhausted at \(used)% used")
+        }
+        model.selectProvider(.claude); model.errorMessage = nil; model.quota = try quota(.claude, used: 90, at: now)
+        XCTAssertEqual(CompactIslandComponent.fiveHourAlerts(model).map(\.provider), [.codex, .claude],
+            "Each provider keeps its own tinted 5h marker in provider order")
+        XCTAssertEqual(CompactIslandComponent.alternatingProviders(model), [.codex, .claude])
+        model.quota = nil
+        XCTAssertEqual(CompactIslandComponent.alternatingProviders(model), [.codex], "An unknown value leaves the alternation")
+        model.selectProvider(.codex); model.quota = nil; model.selectProvider(.claude)
+        XCTAssertEqual(CompactIslandComponent.alternatingProviders(model), [.codex], "With nothing known, one dash remains")
+        model.selectProvider(.codex)
 
         let host = "remote-ssh-discovered:synthetic"
         model.receiveRemoteUpdate([], statuses: ["local": connected, host: connected], unavailable: [], requests: [], names: [])

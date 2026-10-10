@@ -219,13 +219,29 @@ struct SettingsView: View {
                     }
                 }
             }
-            Section(L10n.text("layout.group.quota")) {
-                Picker(L10n.text("settings.compact_metric"), selection: $metric) {
-                    Text(L10n.text("settings.remaining_quota")).tag("remaining")
-                    Text(L10n.text("settings.pace_percentage")).tag("pace")
+            // Options follow the components that use them: the value choice
+            // applies to the quota value and its label, the windows to every quota component.
+            let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
+            let showsValue = compactLayout.components.contains(.quota) || compactLayout.components.contains(.quotaLabel)
+            let showsWindow = showsValue || compactLayout.components.contains(.quotaGauge) ||
+                compactLayout.components.contains(.timeRemaining)
+            if !enabled.isEmpty, showsWindow {
+                Section {
+                    if showsValue {
+                        Picker(L10n.text("settings.compact_metric"), selection: $metric) {
+                            Text(L10n.text("settings.remaining_quota")).tag("remaining")
+                            Text(L10n.text("settings.pace_percentage")).tag("pace")
+                        }
+                    }
+                    if enabled.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
+                    if enabled.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
+                } header: {
+                    Text(L10n.text("layout.group.quota"))
+                } footer: {
+                    if enabled.count > 1, compactLayout.components.contains(.quota) {
+                        Text(L10n.text("layout.quota_alternates")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
-                if moduleEnabled(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
-                if moduleEnabled(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
             }
         case .reminders:
             Section {

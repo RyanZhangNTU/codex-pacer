@@ -49,6 +49,7 @@ struct HeaderActivity: Equatable {
 struct ActivityBadge: View {
     let activity: HeaderActivity
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandLayoutProbe) private var layoutProbe
     @State private var ripples = 0
     @State private var blooms = 0
     private static let attentionInk = Color(red: 0.26, green: 0.15, blue: 0.02)
@@ -65,7 +66,7 @@ struct ActivityBadge: View {
                 if !activity.orbit.isEmpty {
                     ActivityOrbit(segments: AgentProvider.allCases.compactMap { provider in
                         activity.orbit[provider].map { ActivityOrbit.Segment(color: NSColor(provider.tint), weight: $0) }
-                    }, animates: !reduceMotion)
+                    }, animates: !reduceMotion && !layoutProbe)
                     .transition(.opacity)
                 }
             }

@@ -35,10 +35,6 @@ struct CompactLayoutEditor: View {
                 laneEditor(.leading)
                 laneEditor(.trailing)
             }
-            if layout.components.contains(where: { $0.provider != nil && !$0.isAvailable(for: providers) }) {
-                Text(L10n.text("layout.disabled_provider_hint")).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             Divider().padding(.vertical, 2)
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)],
                       alignment: .leading, spacing: 16) {

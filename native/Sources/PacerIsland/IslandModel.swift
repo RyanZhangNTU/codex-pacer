@@ -9,6 +9,10 @@ enum QuotaDashboardPeriod: String, CaseIterable, Identifiable, Sendable {
     var label: String { self == .fiveHour ? L10n.text("quota.compact_hours", 5) : L10n.text("quota.compact_days", 7) }
 }
 
+enum FiveHourQuotaAlert: Equatable, Sendable {
+    case low(Double), exhausted
+}
+
 struct QuotaDashboardQuota: Equatable, Sendable {
     enum Availability: Equatable, Sendable { case available, stale, unavailable, missingPeriod, proOnly }
     let provider: AgentProvider
@@ -174,6 +178,15 @@ final class IslandModel: ObservableObject {
            let weekly = bucket.windows.first(where: { $0.durationMinutes == 10080 }) { return weekly }
         return snapshot?.buckets.first(where: { $0.id == provider.rawValue })?.windows.first(where: { $0.durationMinutes == 10080 }) ??
             snapshot?.windows.first(where: { $0.durationMinutes == 10080 })
+    }
+    /// The collapsed value usually shows a longer window, so the warning watches
+    /// each provider's 5h window: below 20% is low and zero is exhausted. Stale,
+    /// expired or failed quota never produces a live alert.
+    func fiveHourAlert(_ provider: AgentProvider) -> FiveHourQuotaAlert? {
+        guard providerQuotaError(provider) == nil, let snapshot = providerQuota(provider), !snapshot.isStale(at: now),
+              let window = providerWindow(provider, period: .fiveHour), window.resetsAt.map({ $0 > now }) ?? true,
+              let remaining = window.remainingPercent, remaining.isFinite else { return nil }
+        return remaining <= 0 ? .exhausted : remaining < 20 ? .low(remaining) : nil
     }
     func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
         guard let snapshot = providerQuota(provider), !snapshot.isStale(at: now), providerQuotaError(provider) == nil else { return nil }
@@ -520,10 +533,12 @@ final class IslandModel: ObservableObject {
     var compactMetricLabel: String {
         L10n.text(defaults.string(forKey: "compactMetric") == "pace" ? "quota.pace" : "layout.quota_label")
     }
-    func compactQuotaText(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String {
-        let value = (metric ?? defaults.string(forKey: "compactMetric")) == "pace"
+    func compactQuotaValue(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> Double? {
+        (metric ?? defaults.string(forKey: "compactMetric")) == "pace"
             ? providerPace(provider, selection: selection) : providerSelectedWindow(provider, selection: selection)?.remainingPercent
-        return value.map { "\(Int($0.rounded()))%" } ?? "—"
+    }
+    func compactQuotaText(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String {
+        compactQuotaValue(provider, metric: metric, selection: selection).map { "\(Int($0.rounded()))%" } ?? "—"
     }
     func compactTimeRemainingText(_ provider: AgentProvider, selection: String? = nil) -> String {
         providerSelectedWindow(provider, selection: selection)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"

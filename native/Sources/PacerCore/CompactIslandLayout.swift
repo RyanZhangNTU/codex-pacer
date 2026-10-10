@@ -4,23 +4,15 @@ import Foundation
 public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
         case activity, status, tps, firstOutput
-        case codexQuota, claudeQuota, quotaLabel, timeRemaining
+        case quota, quotaGauge, quotaLabel, timeRemaining
         case lowQuotaWarning, quotaDelayWarning, sshWarning
         public var id: String { rawValue }
         public var label: String { L10n.text("layout.component." + rawValue) }
         public var shortLabel: String { L10n.text("layout.short." + rawValue) }
-        public var provider: AgentProvider? {
-            switch self {
-            case .codexQuota: .codex
-            case .claudeQuota: .claude
-            default: nil
-            }
-        }
-        /// Availability only affects presentation; disabled providers keep their saved positions.
+        /// Quota components combine every enabled provider, so they need at least one.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
-            if let provider { return providers.contains(provider) }
             switch self {
-            case .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning: return !providers.isEmpty
+            case .quota, .quotaGauge, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning: return !providers.isEmpty
             default: return true
             }
         }
@@ -36,7 +28,8 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .status: "text.alignleft"
             case .tps: "speedometer"
             case .firstOutput: "timer"
-            case .codexQuota, .claudeQuota: "chart.pie"
+            case .quota: "percent"
+            case .quotaGauge: "circle.circle"
             case .quotaLabel: "tag"
             case .timeRemaining: "hourglass"
             case .lowQuotaWarning: "gauge.with.dots.needle.33percent"
@@ -47,12 +40,18 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         fileprivate static func saved(_ value: String) -> [Self] {
             switch value {
             case "statusIcon", "taskCount": [.activity]
-            case "quotaMetric": [.codexQuota, .claudeQuota]
-            case "quotaWindow": [.quotaLabel]
-            case "resetCountdown": [.timeRemaining]
-            case "quotaWarning": [.lowQuotaWarning]
-            case "freshness": [.quotaDelayWarning]
             default: Self(rawValue: value).map { [$0] } ?? []
+            }
+        }
+        /// Earlier names expand before schema rules compare whole lanes.
+        fileprivate static func legacyNames(_ value: String) -> [String] {
+            switch value {
+            case "quotaMetric": ["codexQuota", "claudeQuota"]
+            case "quotaWindow": ["quotaLabel"]
+            case "resetCountdown": ["timeRemaining"]
+            case "quotaWarning": ["lowQuotaWarning"]
+            case "freshness": ["quotaDelayWarning"]
+            default: [value]
             }
         }
     }
@@ -63,7 +62,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             switch self {
             case .tasks: [.activity, .status]
             case .performance: [.tps, .firstOutput]
-            case .quota: [.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining]
+            case .quota: [.quota, .quotaGauge, .quotaLabel, .timeRemaining]
             case .warnings: [.lowQuotaWarning, .quotaDelayWarning, .sshWarning]
             }
         }
@@ -73,14 +72,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 5
+    public let version = 6
     public var leading: [Component]
     public var trailing: [Component]
     public init(leading: [Component] = [], trailing: [Component] = []) {
         self.leading = leading; self.trailing = trailing
     }
     public static let standard = Self(leading: [.activity, .tps],
-        trailing: [.lowQuotaWarning, .codexQuota, .claudeQuota, .quotaLabel, .quotaDelayWarning, .sshWarning])
+        trailing: [.lowQuotaWarning, .quotaGauge, .quota, .quotaDelayWarning, .sshWarning])
     public subscript(_ lane: Lane) -> [Component] {
         get { lane == .leading ? leading : trailing }
         set { if lane == .leading { leading = newValue } else { trailing = newValue } }
@@ -127,25 +126,49 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...5).contains(schema) else {
+        guard (1...6).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
         var leadingNames = try values.decode([String].self, forKey: .leading)
         if schema == 1 {
             leadingNames += try values.decodeIfPresent([String].self, forKey: .center) ?? []
         }
-        trailing = try values.decode([String].self, forKey: .trailing).flatMap(Component.saved)
+        var trailingNames = try values.decode([String].self, forKey: .trailing).flatMap(Component.legacyNames)
+        leadingNames = leadingNames.flatMap(Component.legacyNames)
         if schema < 3, leadingNames == ["statusIcon", "status", "tps"],
-           trailing == [.lowQuotaWarning, .codexQuota, .claudeQuota, .quotaLabel, .quotaDelayWarning] {
+           trailingNames == ["lowQuotaWarning", "codexQuota", "claudeQuota", "quotaLabel", "quotaDelayWarning"] {
             leadingNames.insert("taskCount", at: 2)
-            trailing.append(.sshWarning)
+            trailingNames.append("sshWarning")
         }
         // Schema 5 merges the status icon and task count. An untouched former
         // default lane also drops status text, which stays an optional component.
         if schema < 5, leadingNames == ["statusIcon", "status", "taskCount", "tps"] {
             leadingNames = ["activity", "tps"]
         }
-        leading = leadingNames.flatMap(Component.saved)
+        if schema < 6 { Self.mergeProviderQuotas(&leadingNames, &trailingNames) }
+        let decoded = Self(leading: leadingNames.flatMap(Component.saved), trailing: trailingNames.flatMap(Component.saved)).normalized
+        leading = decoded.leading; trailing = decoded.trailing
+    }
+    /// Schema 6 shows one quota value that alternates between providers. Lanes
+    /// that showed both provider values keep both visible as the rings plus
+    /// that value at the first one's position; a single provider value becomes
+    /// the value alone. The untouched former default lane adopts the new default.
+    private static func mergeProviderQuotas(_ leading: inout [String], _ trailing: inout [String]) {
+        if trailing == ["lowQuotaWarning", "codexQuota", "claudeQuota", "quotaLabel", "quotaDelayWarning", "sshWarning"] {
+            trailing = standard.trailing.map(\.rawValue)
+            return
+        }
+        let providerValues: Set<String> = ["codexQuota", "claudeQuota"]
+        let replacement = Set(leading + trailing).isSuperset(of: providerValues) ? ["quotaGauge", "quota"] : ["quota"]
+        var replaced = false
+        func merge(_ names: [String]) -> [String] {
+            names.flatMap { name -> [String] in
+                guard providerValues.contains(name) else { return [name] }
+                defer { replaced = true }
+                return replaced ? [] : replacement
+            }
+        }
+        leading = merge(leading); trailing = merge(trailing)
     }
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
