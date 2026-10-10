@@ -67,7 +67,7 @@ struct CompactIslandHeader: View {
         }
     }
     private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment) -> some View {
-        HStack(spacing: model.isAttached ? 4 : 6) {
+        HStack(spacing: model.isAttached ? 6 : 8) {
             ForEach(components.filter { CompactIslandComponent.isVisible($0, model: model,
                 showsStatus: layout.components.contains(.status)) }) { component in
                 CompactIslandComponent(model: model, component: component)
@@ -80,7 +80,6 @@ struct CompactIslandHeader: View {
 struct CompactIslandComponent: View {
     @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
-    private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
 
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
         switch component {
@@ -112,64 +111,74 @@ struct CompactIslandComponent: View {
     var body: some View {
         Button(action: action) { content.padding(.vertical, 4).contentShape(Rectangle()) }
             .buttonStyle(.plain)
-            .font(.system(size: 11))
             .lineLimit(1)
             .help(help)
     }
     @ViewBuilder private var content: some View {
         switch component {
         case .statusIcon:
-            Image(systemName: model.headerSymbol).font(.system(size: 12)).foregroundStyle(model.headerTint)
+            Image(systemName: model.headerSymbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(model.headerTint)
+                .frame(minWidth: 16)
                 .accessibilityLabel(component.label)
         case .status:
-            Text(model.headerDisplayStatus).fontWeight(.medium)
+            Text(model.headerDisplayStatus).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.primary)
         case .tps:
-            HStack(spacing: 4) {
-                Text(model.headerRateText ?? "—").monospacedDigit()
-                    .foregroundStyle(model.rateIsFresh ? Color.white : secondary)
-                Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
-            }.font(.system(size: 10)).fixedSize(horizontal: true, vertical: false)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(model.headerRateText ?? "—").font(.system(size: 12, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(model.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
+                Text("t/s").font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+            }.fixedSize(horizontal: true, vertical: false)
         case .taskCount:
             let count = model.running.count + model.waiting.count
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                .frame(minWidth: 16, minHeight: 16).padding(.horizontal, count < 10 ? 0 : 2)
-                .background(Color.white.opacity(0.08), in: Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.6))
+            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(PacerPalette.primary)
+                .frame(minWidth: 17, minHeight: 17).padding(.horizontal, count < 10 ? 0 : 3)
+                .background(Color.white.opacity(0.16), in: Capsule())
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact", String(count)))
         case .firstOutput:
-            Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—").monospacedDigit()
+            Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—")
+                .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
         case .lowQuotaWarning:
             let exhausted = Self.lowQuotaProviders(model).contains { (model.providerSelectedWindow($0)?.remainingPercent ?? 100) <= 0 }
-            Image(systemName: exhausted ? StatusSymbols.empty : StatusSymbols.low)
-                .foregroundStyle(exhausted ? Color.red : Color.orange)
+            Image(systemName: exhausted ? StatusSymbols.empty : StatusSymbols.low).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(exhausted ? PacerPalette.danger : PacerPalette.attention)
                 .accessibilityLabel(L10n.text(exhausted ? "quota.exhausted" : "notice.low_quota"))
         case .quotaMetric:
-            HStack(spacing: 8) {
-                ForEach(model.enabledProviders, id: \.rawValue) { provider in
-                    Text(quotaText(provider)).foregroundStyle(provider.tint)
+            providerValues(spacing: 7) { provider in
+                Text(quotaText(provider)).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(L10n.text("provider.compact_quota", provider.displayName, quotaText(provider)))
-                }
-            }.font(.system(size: 12, weight: .medium)).monospacedDigit().fixedSize(horizontal: true, vertical: false)
+            }
+            .monospacedDigit().fixedSize(horizontal: true, vertical: false)
         case .quotaLabel:
-            Text(model.compactMetricLabel).font(.system(size: 10)).foregroundStyle(secondary)
+            Text(model.compactMetricLabel).font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
         case .timeRemaining:
-            HStack(spacing: model.enabledProviders.count > 1 ? 8 : 3) {
-                Image(systemName: "hourglass").font(.system(size: 9))
-                ForEach(model.enabledProviders, id: \.rawValue) { provider in
-                    Text(timeText(provider)).monospacedDigit().foregroundStyle(provider.tint)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
+            HStack(spacing: 4) {
+                Image(systemName: "hourglass").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+                providerValues(spacing: 7) { provider in
+                    Text(timeText(provider)).font(.system(size: 11, weight: .medium)).foregroundStyle(provider.tint.opacity(0.85))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
                 }
-            }.foregroundStyle(secondary).fixedSize(horizontal: true, vertical: false)
+            }.monospacedDigit().fixedSize(horizontal: true, vertical: false)
         case .quotaDelayWarning:
-            Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+            Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
                 .accessibilityLabel(component.label)
         case .sshWarning:
-            Image(systemName: "wifi.slash").foregroundStyle(.orange).accessibilityLabel(component.label)
+            Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+                .accessibilityLabel(component.label)
+        }
+    }
+    /// Provider values stay color-coded without names; a hairline separates them.
+    private func providerValues<Value: View>(spacing: CGFloat, @ViewBuilder value: @escaping (AgentProvider) -> Value) -> some View {
+        HStack(spacing: spacing) {
+            ForEach(Array(model.enabledProviders.enumerated()), id: \.element.rawValue) { index, provider in
+                if index > 0 { Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 10).accessibilityHidden(true) }
+                value(provider)
+            }
         }
     }
     private var help: String {

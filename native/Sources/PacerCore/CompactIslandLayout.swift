@@ -17,7 +17,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         }
         public var symbol: String {
             switch self {
-            case .statusIcon: "brain.head.profile"
+            case .statusIcon: "sparkle"
             case .status: "text.alignleft"
             case .taskCount: "number.circle"
             case .tps: "speedometer"
@@ -25,9 +25,9 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .quotaMetric: "chart.pie"
             case .quotaLabel: "tag"
             case .timeRemaining: "hourglass"
-            case .lowQuotaWarning: "exclamationmark.triangle"
-            case .quotaDelayWarning: "clock.badge.exclamationmark"
-            case .sshWarning: "wifi.slash"
+            case .lowQuotaWarning: "gauge.with.dots.needle.33percent"
+            case .quotaDelayWarning: "clock.arrow.circlepath"
+            case .sshWarning: "network.slash"
             }
         }
         fileprivate static func saved(_ value: String) -> Self? {

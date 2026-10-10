@@ -297,7 +297,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if statusItem == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             if let button = item.button {
-                button.image = NSImage(systemSymbolName: "circle.hexagongrid", accessibilityDescription: "Codex Pacer")
+                button.image = NSImage(systemSymbolName: "gauge.with.needle", accessibilityDescription: "Codex Pacer")
                 button.imagePosition = .imageLeading
                 button.target = self
                 button.action = #selector(statusClicked)
@@ -307,9 +307,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             statusItem = item
         }
         statusItem?.button?.title = " " + model.enabledProviders.map { provider in
-            let value = UserDefaults.standard.string(forKey: "compactMetric") == "pace"
-                ? model.providerPace(provider) : model.providerSelectedWindow(provider)?.remainingPercent
-            return provider.displayName + " " + (value.map { "\(Int($0.rounded()))%" } ?? "—")
+            provider.displayName + " " + model.compactQuotaText(provider)
         }.joined(separator: " · ")
         statusItem?.button?.toolTip = "Codex Pacer · \(model.compactStatus) · \(model.freshnessText)"
     }
@@ -418,7 +416,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     @objc private func showSettings() {
         model.close()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 670),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = L10n.text("menu.settings_title")
             window.isReleasedWhenClosed = false

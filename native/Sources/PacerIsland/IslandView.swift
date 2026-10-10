@@ -28,7 +28,7 @@ struct IslandView: View {
                     .accessibilityHidden(!model.expanded || presentation.contentVisibility < 0.95)
             }
         }
-        .foregroundStyle(Color(red: 0.95, green: 0.96, blue: 0.97))
+        .foregroundStyle(PacerPalette.primary)
         .modifier(IslandSurface(appearance: model.appearance, attached: attached, expanded: model.expanded,
             progress: presentation.expansion))
         .onHover { model.hover($0) }
@@ -40,7 +40,6 @@ struct IslandView: View {
 
 private struct IslandExpandedContent: View {
     @ObservedObject var model: IslandModel
-    private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -72,22 +71,23 @@ private struct IslandExpandedContent: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.isDemo {
-                Text(L10n.text("demo.label")).font(.system(size: 12)).foregroundStyle(secondary).padding(.top, 10)
-            }
-
-            VStack(alignment: .leading, spacing: 0) {
-                if let notice = model.notice, !notice.id.hasPrefix("request:") {
-                    Label(L10n.text("notice.body", notice.title, notice.detail), systemImage: "bell")
-                        .font(.system(size: 12)).foregroundStyle(model.accent).padding(.bottom, 8)
+            if let notice = model.notice, !notice.id.hasPrefix("request:") {
+                HStack(spacing: 8) {
+                    Image(systemName: "bell.fill").font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
+                    Text(L10n.text("notice.body", notice.title, notice.detail))
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.primary).lineLimit(2)
                 }
-                taskContent
-                Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.vertical, 16)
-                quotaContent
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PacerPalette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.bottom, 8)
             }
-            .padding(.top, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            taskContent
+            Hairline().padding(.horizontal, 10).padding(.vertical, 12)
+            quotaContent
         }
+        .padding(.top, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { geometry in
             Color.clear.preference(key: ExpandedContentHeight.self,
@@ -97,68 +97,71 @@ private struct IslandExpandedContent: View {
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
-            Text(L10n.text("activity.no_tasks")).font(.system(size: 13)).foregroundStyle(secondary).padding(.vertical, 12)
+            VStack(alignment: .leading, spacing: 4) {
+                IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0")
+                HStack(spacing: 12) {
+                    StatusTile(symbol: StatusSymbols.idle, tint: PacerPalette.secondary)
+                    Text(L10n.text("activity.no_tasks")).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.secondary)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 8)
+            }
         } else {
             TaskPagerView(model: model)
         }
         if let error = model.navigationError {
-            Text(error).font(.system(size: 12)).foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+            Label(error, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10).padding(.top, 6)
         }
     }
 
-    @ViewBuilder private var quotaContent: some View {
-        if model.enabledProviders.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(L10n.text("provider.none_enabled")).font(.system(size: 13)).foregroundStyle(secondary)
-                Button(L10n.text("common.open_settings")) { model.onSettings?() }
-                    .font(.system(size: 12)).buttonStyle(.borderless)
-            }.padding(.vertical, 12)
-        } else {
-            QuotaDashboardView(model: model)
+    private var quotaContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
+            IslandSectionHeader(title: L10n.text("layout.group.quota"), detail: single?.displayName,
+                detailColor: single?.tint ?? PacerPalette.tertiary) {
+                if model.enabledProviders.count > 1 {
+                    IslandSegmentedControl(options: QuotaDashboardPeriod.allCases, selection: model.dashboardPeriod,
+                        label: \.rawValue, accessibilityLabel: \.accessibilityLabel) { model.selectDashboardPeriod($0) }
+                        .help(L10n.text("dashboard.period_help"))
+                }
+            }
+            if model.enabledProviders.isEmpty {
+                HStack(spacing: 12) {
+                    Text(L10n.text("provider.none_enabled")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
+                    Spacer(minLength: 8)
+                    Button(L10n.text("common.open_settings")) { model.onSettings?() }
+                        .font(.system(size: 12, weight: .medium)).buttonStyle(.plain).foregroundStyle(PacerPalette.primary)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 8)
+            } else {
+                QuotaDashboardView(model: model)
+            }
         }
     }
 
     private var footer: some View {
-        footerControls
-    }
-
-    private var footerControls: some View {
-        HStack(spacing: 12) {
-            if model.enabledProviders.count > 1 {
-                HStack(spacing: 2) {
-                    ForEach(QuotaDashboardPeriod.allCases) { period in
-                        let selected = model.dashboardPeriod == period
-                        Button { model.selectDashboardPeriod(period) } label: {
-                            Text(period.rawValue).font(.system(size: 11, weight: selected ? .semibold : .medium))
-                                .frame(width: 32, height: 26)
-                                .foregroundStyle(selected ? Color.primary : secondary)
-                                .background(selected ? Color.white.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white.opacity(0.12) : Color.clear, lineWidth: 0.5))
-                        }
-                        .accessibilityLabel(period.accessibilityLabel)
-                        .accessibilityValue(L10n.text(selected ? "provider.selected" : "provider.not_selected"))
-                        .help(period.accessibilityLabel + "\n" + L10n.text("dashboard.period_help"))
-                        .accessibilityHint(L10n.text("dashboard.period_help"))
-                    }
-                }
+        HStack(spacing: 2) {
+            if model.isDemo {
+                Text(L10n.text("demo.label")).font(.system(size: 10, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(PacerPalette.fill, in: Capsule())
+                    .padding(.leading, 6)
             }
             Spacer(minLength: 4)
-            Button { model.togglePin() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").frame(width: 24, height: 26) }
-                .help(model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin")).accessibilityLabel(model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"))
-            Button { model.refreshQuota(); model.refreshActivity() } label: { Image(systemName: "arrow.clockwise").frame(width: 24, height: 26) }
-                .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
-                .help(L10n.text("quota.refresh_help", model.enabledProviders.map { $0.displayName + ": " + model.providerFreshnessText($0) }.joined(separator: "\n")))
-                .accessibilityLabel(L10n.text("common.refresh"))
-            Button { model.onSettings?() } label: { Image(systemName: "gearshape").frame(width: 24, height: 26) }
-                .help(L10n.text("common.settings")).accessibilityLabel(L10n.text("common.settings"))
-            Button { model.onQuit?() } label: { Image(systemName: "power").frame(width: 24, height: 26) }
-                .help(L10n.text("common.quit")).accessibilityLabel(L10n.text("common.quit"))
-            Button { model.close() } label: { Image(systemName: "chevron.up").frame(width: 24, height: 26) }
-                .help(L10n.text("common.collapse")).accessibilityLabel(L10n.text("common.collapse"))
+            IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin",
+                title: model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"), active: model.pinned) { model.togglePin() }
+            IslandIconButton(symbol: "arrow.clockwise", title: L10n.text("common.refresh"),
+                help: L10n.text("quota.refresh_help", model.enabledProviders.map { $0.displayName + ": " + model.providerFreshnessText($0) }.joined(separator: "\n"))) {
+                model.refreshQuota(); model.refreshActivity()
+            }
+            .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
+            IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings")) { model.onSettings?() }
+            IslandIconButton(symbol: "power", title: L10n.text("common.quit")) { model.onQuit?() }
+            IslandIconButton(symbol: "chevron.up", title: L10n.text("common.collapse")) { model.close() }
         }
-        .font(.system(size: 13)).buttonStyle(.plain).foregroundStyle(secondary)
-        .padding(.top, 8).padding(.bottom, 12)
+        .padding(.top, 6).padding(.bottom, 10)
     }
 }
 

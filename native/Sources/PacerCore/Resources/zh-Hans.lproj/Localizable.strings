@@ -469,3 +469,13 @@
 "dashboard.countdown_minutes" = "%d分";
 "dashboard.countdown_soon" = "<1分";
 "dashboard.countdown_waiting" = "更新中";
+"settings.pane.general" = "通用";
+"settings.pane.appearance" = "外观";
+"settings.pane.collapsed" = "折叠栏";
+"settings.pane.connections" = "连接";
+"settings.module_off" = "已关闭";
+"settings.section.cli" = "命令行与数据目录";
+"claude.section.account" = "账户与额度";
+"claude.section.web_session" = "网页登录";
+"claude.section.monitoring" = "任务监控";
+"claude.section.ssh" = "SSH 主机";

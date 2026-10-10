@@ -53,14 +53,12 @@ struct QuotaDashboardView: View {
 
     private var rings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if model.enabledProviders.count == 1, let provider = model.enabledProviders.first {
-                Text(provider.displayName).font(.system(size: 12, weight: .medium)).foregroundStyle(provider.tint)
-            }
-            HStack(alignment: .top, spacing: 20) {
+            HStack(alignment: .top, spacing: 16) {
                 ForEach(slots) { slot in
-                    VStack(spacing: 10) {
+                    VStack(spacing: 8) {
                         QuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: slot.period),
-                            title: slot.title, providerHelp: providerHelp(slot.provider, period: slot.period), now: model.now)
+                            title: slot.title, identifiesProvider: slot.identifiesProvider,
+                            providerHelp: providerHelp(slot.provider, period: slot.period), now: model.now)
                         if slot.identifiesProvider {
                             QuotaProviderStatusView(model: model, provider: slot.provider, period: slot.period)
                         }
@@ -71,7 +69,7 @@ struct QuotaDashboardView: View {
                 QuotaProviderStatusView(model: model, provider: provider, period: nil)
                     .frame(maxWidth: .infinity)
             }
-        }.padding(.bottom, 6)
+        }.padding(.bottom, 4)
     }
 
     private func providerHelp(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> String {
@@ -86,96 +84,100 @@ struct QuotaDashboardView: View {
 private struct LegacyCodexQuotaView: View {
     @ObservedObject var model: IslandModel
     let snapshot: QuotaSnapshot
-    private let secondary = Color(red: 0.66, green: 0.68, blue: 0.71)
     private var fresh: Bool { !model.providerQuotaIsStale(.codex) && model.providerQuotaError(.codex) == nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 5) {
-                Text(AgentProvider.codex.displayName).font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(AgentProvider.codex.tint)
-                if !fresh {
-                    Image(systemName: StatusSymbols.freshness).font(.system(size: 9)).foregroundStyle(.orange)
-                        .accessibilityLabel(L10n.text("common.not_updated"))
-                }
-            }.help([model.providerSourceText(.codex), model.providerFreshnessText(.codex)].compactMap { $0 }.joined(separator: "\n"))
+        VStack(alignment: .leading, spacing: 16) {
+            if !fresh {
+                Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness)
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.attention)
+                    .help([model.providerSourceText(.codex), model.providerFreshnessText(.codex)].compactMap { $0 }.joined(separator: "\n"))
+            }
             ForEach(snapshot.buckets) { bucket in
                 if !bucket.windows.isEmpty {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 14) {
                         if snapshot.buckets.count > 1 {
-                            Text(bucket.name ?? bucket.id).font(.system(size: 12, weight: .medium)).foregroundStyle(secondary)
+                            Text(bucket.name ?? bucket.id).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
                         }
                         ForEach(bucket.windows) { window in
-                            QuotaWindowView(window: window, now: model.now,
-                                allowPace: fresh, accent: fresh ? AgentProvider.codex.tint : secondary, secondary: secondary)
+                            QuotaWindowView(window: window, now: model.now, allowPace: fresh,
+                                accent: fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary)
                         }
                     }
                 }
             }
             QuotaProviderStatusView(model: model, provider: .codex, period: nil).frame(maxWidth: .infinity)
-        }.padding(.bottom, 6)
+        }
+        .padding(.horizontal, 10).padding(.bottom, 4)
+        .help([model.providerSourceText(.codex), model.providerFreshnessText(.codex)].compactMap { $0 }.joined(separator: "\n"))
     }
 }
 
 private struct QuotaDashboardRingView: View {
     let quota: QuotaDashboardQuota
     let title: String
+    let identifiesProvider: Bool
     let providerHelp: String
     let now: Date
-    private let secondary = Color(red: 0.66, green: 0.68, blue: 0.71)
     private var stale: Bool { quota.availability == .stale }
     private var proOnly: Bool { quota.availability == .proOnly }
+    private var known: Bool { quota.remainingQuotaPercent.map(\.isFinite) ?? false }
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 5) {
-                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(quota.provider.tint)
-                if stale {
-                    Image(systemName: StatusSymbols.freshness).font(.system(size: 9)).foregroundStyle(.orange)
-                        .accessibilityLabel(L10n.text("common.not_updated"))
-                }
-            }.frame(height: 16).help(detailsHelp)
+        VStack(spacing: 10) {
             ZStack {
                 if proOnly {
                     let platinum = Color(red: 0.86, green: 0.88, blue: 0.91)
-                    Circle().stroke(platinum.opacity(0.28), lineWidth: 0.7)
+                    Circle().stroke(platinum.opacity(0.3), lineWidth: 1)
+                    Circle().stroke(platinum.opacity(0.12), lineWidth: 1).padding(12)
                     Text(L10n.text("dashboard.pro"))
-                        .font(.system(size: 17, weight: .medium)).tracking(1.5).foregroundStyle(platinum)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded)).tracking(2.5).foregroundStyle(platinum)
                 } else {
-                    ring(percent: quota.remainingQuotaPercent, lineWidth: 4, color: quota.provider.tint)
-                    ring(percent: quota.remainingTimePercent, lineWidth: 1.5, color: secondary.opacity(0.85))
-                        .padding(11)
-                    VStack(spacing: 5) {
+                    ring(percent: quota.remainingQuotaPercent, lineWidth: 7, color: quota.provider.tint)
+                    ring(percent: quota.remainingTimePercent, lineWidth: 2.5, color: Color.white.opacity(0.55))
+                        .padding(13)
+                    VStack(spacing: 3) {
                         HStack(alignment: .firstTextBaseline, spacing: 1) {
                             Text(percentText(quota.remainingQuotaPercent).replacingOccurrences(of: "%", with: ""))
-                                .font(.system(size: 30, weight: .medium)).tracking(-0.7)
-                            if let percent = quota.remainingQuotaPercent, percent.isFinite {
-                                Text("%").font(.system(size: 14, weight: .regular)).foregroundStyle(secondary)
+                                .font(.system(size: 26, weight: .semibold, design: .rounded))
+                                .foregroundStyle(known ? PacerPalette.primary : PacerPalette.tertiary)
+                            if known {
+                                Text("%").font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(PacerPalette.secondary)
                             }
-                        }.monospacedDigit().foregroundStyle(.primary)
-                        HStack(spacing: 3) {
-                            Image(systemName: "clock").font(.system(size: 8))
+                        }.monospacedDigit()
+                        if quota.window?.resetsAt != nil {
                             Text(countdown).font(.system(size: 10, weight: .medium)).monospacedDigit()
-                                .lineLimit(1).minimumScaleFactor(0.8)
-                        }.foregroundStyle(secondary).help(resetDate)
+                                .foregroundStyle(PacerPalette.tertiary)
+                                .lineLimit(1).minimumScaleFactor(0.8).help(resetDate)
+                        }
                     }
-                    .frame(maxWidth: 80)
+                    .frame(maxWidth: 72)
                 }
             }
-            .frame(width: 116, height: 116)
-            .opacity(stale ? 0.5 : 1)
-            .help(detailsHelp)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityHint(detailsHelp)
-        }.frame(maxWidth: .infinity)
+            .frame(width: 108, height: 108)
+            .opacity(stale ? 0.55 : 1)
+            HStack(spacing: 5) {
+                if identifiesProvider { Circle().fill(quota.provider.tint).frame(width: 6, height: 6) }
+                Text(title).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(identifiesProvider ? PacerPalette.primary : PacerPalette.secondary)
+                if stale {
+                    Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(PacerPalette.attention)
+                        .accessibilityLabel(L10n.text("common.not_updated"))
+                }
+            }.frame(height: 14)
+        }
+        .frame(maxWidth: .infinity)
+        .help(detailsHelp)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(detailsHelp)
     }
 
     private func ring(percent: Double?, lineWidth: CGFloat, color: Color) -> some View {
         let fraction = percent.flatMap { $0.isFinite ? min(1, max(0, $0 / 100)) : nil }
         return ZStack {
-            Circle().stroke(Color.white.opacity(fraction == nil ? 0.16 : 0.07),
-                style: StrokeStyle(lineWidth: lineWidth, dash: fraction == nil ? [2, 5] : []))
+            Circle().stroke(PacerPalette.track, lineWidth: lineWidth)
             if let fraction, fraction > 0 {
                 Circle().trim(from: 0, to: CGFloat(fraction))
                     .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
@@ -230,35 +232,52 @@ private struct QuotaProviderStatusView: View {
     @ObservedObject var model: IslandModel
     let provider: AgentProvider
     let period: QuotaDashboardPeriod?
-    private let secondary = Color(red: 0.66, green: 0.68, blue: 0.71)
 
     var body: some View {
         VStack(spacing: 6) {
             if let error = model.providerQuotaError(provider) {
-                Text(error).font(.system(size: 11)).foregroundStyle(.orange)
+                Text(error).font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 connectionActions
             } else if model.providerQuota(provider)?.windows.isEmpty != false {
                 Text(model.providerRefreshing(provider) ? L10n.text("quota.loading") : L10n.text("dashboard.provider_unavailable", provider.displayName))
-                    .font(.system(size: 11)).foregroundStyle(secondary).fixedSize(horizontal: false, vertical: true)
-                Button(L10n.text("common.open_settings")) { model.onSettings?() }
-                    .font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(provider.tint)
+                    .font(.system(size: 11)).foregroundStyle(PacerPalette.secondary).fixedSize(horizontal: false, vertical: true)
+                QuotaLinkButton(title: L10n.text("common.open_settings")) { model.onSettings?() }
             }
         }.multilineTextAlignment(.center)
     }
 
     private var connectionActions: some View {
-        VStack(spacing: 7) {
+        HStack(spacing: 6) {
             if provider == .claude, model.claudeConnectionNeeded {
-                Button(L10n.text(model.claudeConnectionActionTitleKey)) { model.connectClaudeQuota() }
+                QuotaLinkButton(title: L10n.text(model.claudeConnectionActionTitleKey), prominent: true) { model.connectClaudeQuota() }
                     .help(L10n.text(model.claudeConnectionActionHelpKey)).disabled(model.providerRefreshing(provider))
             }
-            HStack(spacing: 12) {
-                Button(L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.retry")) {
-                    model.retryQuotaConnection(for: provider)
-                }.disabled(model.providerRefreshing(provider))
-                Button(L10n.text("common.settings")) { model.onSettings?() }
-            }
-        }.font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(provider.tint)
+            QuotaLinkButton(title: L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.retry")) {
+                model.retryQuotaConnection(for: provider)
+            }.disabled(model.providerRefreshing(provider))
+            QuotaLinkButton(title: L10n.text("common.settings")) { model.onSettings?() }
+        }
+    }
+}
+
+/// Small capsule actions keep recovery visible without competing with the rings.
+private struct QuotaLinkButton: View {
+    let title: String
+    var prominent = false
+    let action: () -> Void
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                .foregroundStyle(prominent ? Color.black.opacity(0.85) : PacerPalette.primary)
+                .padding(.horizontal, 9).frame(height: 22)
+                .background(prominent ? PacerPalette.primary : (hovered ? PacerPalette.hover : PacerPalette.fill), in: Capsule())
+                .contentShape(Capsule())
+                .opacity(enabled ? 1 : 0.45)
+        }
+        .buttonStyle(.plain).onHover { hovered = $0 }
     }
 }

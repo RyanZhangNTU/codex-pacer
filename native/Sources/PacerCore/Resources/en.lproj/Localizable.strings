@@ -469,3 +469,13 @@
 "dashboard.countdown_minutes" = "%dm";
 "dashboard.countdown_soon" = "<1m";
 "dashboard.countdown_waiting" = "Updating";
+"settings.pane.general" = "General";
+"settings.pane.appearance" = "Appearance";
+"settings.pane.collapsed" = "Collapsed Bar";
+"settings.pane.connections" = "Connections";
+"settings.module_off" = "Off";
+"settings.section.cli" = "CLI & Data Folder";
+"claude.section.account" = "Account & Quota";
+"claude.section.web_session" = "Web Sign-In";
+"claude.section.monitoring" = "Task Monitoring";
+"claude.section.ssh" = "SSH Hosts";

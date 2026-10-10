@@ -14,6 +14,7 @@
 - Keep successfully opened completion cards dismissed across normal relaunch using bounded, source-scoped hashes. A verified parent open acknowledges only captured, matching already-terminal descendants; running children, late endings, new turns, changed sources and Terminal/failure outcomes remain protected.
 - Reduce repeated directory scans, transcript parses, unchanged-EOF reads and noneligible display-hook writes; reuse task grouping without reusing stale freshness clocks.
 - Release Settings hosting content on save, cancellation and window close, while retaining its native window geometry for reopening.
+- Redesign the island and Settings: one outline status icon family in tinted tiles, two-line task rows with right-aligned TPS/TTFT, cleaner quota rings with the period switch in the quota header, and a sidebar Settings window with per-provider pages that remembers the last pane.
 - Route the sign-in window's Command-Return action before focused web content, while preserving ordinary Return and native window-close behavior.
 - Confirm foreground and background Agent endings from owned result/engine-notification evidence, exclude unstarted internal agents, and preserve genuinely running background tasks.
 - Read the owned SSH hook spool before transcripts during cold replay and concurrent appends, preserving exact terminal evidence without a timeout heuristic.

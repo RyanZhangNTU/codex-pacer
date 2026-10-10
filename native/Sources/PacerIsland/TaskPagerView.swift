@@ -7,7 +7,7 @@ struct TaskPagerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
     @State private var direction: CGFloat = 1
-    private let rowHeight: CGFloat = 74
+    private let rowHeight: CGFloat = 54
     private let rowSpacing: CGFloat = 2
 
     private var tasks: [SessionActivity] { model.visibleActivities }
@@ -19,21 +19,21 @@ struct TaskPagerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if pagination.isPaginated {
-                HStack(spacing: 8) {
-                    Text(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    Spacer()
-                    pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
-                    Text("\(currentPage + 1) / \(pagination.pageCount)")
-                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
-                        .frame(minWidth: 32)
-                        .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
-                    pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
+        VStack(alignment: .leading, spacing: 4) {
+            IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: String(tasks.count)) {
+                if pagination.isPaginated {
+                    HStack(spacing: 2) {
+                        pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
+                        Text("\(currentPage + 1) / \(pagination.pageCount)")
+                            .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
+                            .frame(minWidth: 30)
+                            .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
+                        pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
+                    }
                 }
-                .padding(.horizontal, 8)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
 
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
@@ -72,10 +72,10 @@ struct TaskPagerView: View {
         let enabled = delta < 0 ? currentPage > 0 : currentPage + 1 < pagination.pageCount
         return Button { changePage(delta) } label: {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(enabled ? 0.78 : 0.22))
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(.white.opacity(enabled ? 0.045 : 0)))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(enabled ? PacerPalette.primary : PacerPalette.tertiary.opacity(0.6))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(enabled ? PacerPalette.fill : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(!enabled)

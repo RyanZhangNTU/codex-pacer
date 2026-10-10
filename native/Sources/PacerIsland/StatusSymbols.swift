@@ -1,20 +1,23 @@
 import PacerCore
 
-/// Native symbols selected in the local design review.
+/// One outline family for every state. Shapes stay distinct without color:
+/// work states are open glyphs, attention uses a bubble or hand, endings a
+/// circled mark, and quota uses a gauge rather than a battery.
 enum StatusSymbols {
-    static let thinking = "brain.head.profile"
-    static let tool = "hammer.fill"
-    static let replying = "text.bubble.fill"
-    static let starting = "play.circle"
-    static let idle = "moon.zzz"
-    static let input = "questionmark.bubble.fill"
-    static let approval = "lock.shield"
-    static let complete = "checkmark.seal.fill"
-    static let interrupted = "pause.circle.fill"
-    static let failed = "xmark.circle.fill"
-    static let low = "battery.25percent"
-    static let empty = "battery.0percent"
-    static let freshness = "clock.badge.exclamationmark"
+    static let thinking = "sparkle"
+    static let tool = "terminal"
+    static let replying = "text.bubble"
+    static let starting = "circle.dotted"
+    static let idle = "moon"
+    static let input = "ellipsis.bubble"
+    static let approval = "hand.raised"
+    static let complete = "checkmark.circle"
+    static let interrupted = "pause.circle"
+    static let failed = "xmark.circle"
+    static let low = "gauge.with.dots.needle.33percent"
+    static let empty = "gauge.with.dots.needle.0percent"
+    static let freshness = "clock.arrow.circlepath"
+    static let sshWarning = "network.slash"
 
     static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil) -> String {
         if let attention { return attention == .approval ? approval : input }

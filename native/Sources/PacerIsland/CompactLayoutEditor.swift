@@ -14,7 +14,7 @@ struct CompactLayoutEditor: View {
     @State private var dragLocation = CGPoint.zero
     @State private var dropRegions: [CompactEditorDropRegion] = []
     @FocusState private var focusedComponent: CompactIslandLayout.Component?
-    private let accent = Color(red: 0.56, green: 0.84, blue: 0.79)
+    private let accent = AgentProvider.codex.tint
 
     init(model: IslandModel, layout: CompactIslandLayout, attached: Bool,
          saving: Bool, validation: String?, onSave: @escaping (CompactIslandLayout) -> Void) {
@@ -64,7 +64,7 @@ struct CompactLayoutEditor: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24).frame(width: 820, height: 500)
+        .padding(24).frame(width: 740, height: 500)
         .background(Color(nsColor: .windowBackgroundColor))
         .disabled(saving)
         .coordinateSpace(name: "compact-editor")

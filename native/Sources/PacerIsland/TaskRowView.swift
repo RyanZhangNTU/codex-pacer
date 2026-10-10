@@ -24,11 +24,12 @@ struct TaskRowView: View {
         let count = group?.runningSubagentCount ?? 0
         return count > 0 ? base + " · " + L10n.text(count == 1 ? "activity.subagent_running" : "activity.subagents_running", count) : base
     }
+    private var rate: OutputEstimate? { group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now) }
+    private var latencyText: String {
+        L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.2f s", $0) } ?? "—")
+    }
     private var performanceText: String {
-        let rate = group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now)
-        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
-        let latency = activity.firstTokenLatency.map { String(format: "%.2f s", $0) } ?? "—"
-        return speed + "  ·  " + L10n.text("performance.first_output", latency)
+        (rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")) + "  ·  " + latencyText
     }
     private var performanceHelp: String {
         if activity.provider == .claude {
@@ -42,13 +43,18 @@ struct TaskRowView: View {
         return L10n.text("performance.response_help", sample.outputTokens, sample.duration) + "\n" + latency
     }
     private var color: Color {
-        if attention != nil { return .orange }
-        if activity.turnFailed { return .red }
+        if attention != nil { return PacerPalette.attention }
+        if activity.turnFailed { return PacerPalette.danger }
         switch phase {
-        case .waitingForInput, .interrupted: return Color(red: 0.91, green: 0.75, blue: 0.48)
+        case .waitingForInput: return PacerPalette.attention
+        case .interrupted: return PacerPalette.paused
         case .running, .completed: return activity.provider.tint
-        default: return .secondary
+        default: return PacerPalette.secondary
         }
+    }
+    private var detailColor: Color {
+        if attention != nil || phase == .waitingForInput { return PacerPalette.attention }
+        return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
     private var symbol: String {
         if attention == nil, group?.isRunning == true, activity.phase != .running { return StatusSymbols.thinking }
@@ -58,8 +64,8 @@ struct TaskRowView: View {
     var body: some View {
         Button(action: action) {
             rowContent
-            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(hovered && enabled ? 0.055 : 0)))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(hovered && enabled ? PacerPalette.hover : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .background {
             rowContent.fixedSize(horizontal: true, vertical: false)
@@ -78,41 +84,51 @@ struct TaskRowView: View {
 
     private var rowContent: some View {
         HStack(spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 16, weight: .medium)).foregroundStyle(color)
-                .frame(width: 24, height: 30)
-            VStack(alignment: .leading, spacing: 4) {
+            StatusTile(symbol: symbol, tint: color)
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(name).font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
-                    if unread { Circle().fill(color).frame(width: 5, height: 5).accessibilityLabel(L10n.text("common.not_viewed")) }
-                    Spacer(minLength: 4)
-                    Text(activity.provider.displayName)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(activity.provider.tint)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(activity.provider.tint.opacity(0.09), in: Capsule())
-                        .fixedSize()
-                }
-                HStack(spacing: 8) {
-                    Text(detail).foregroundStyle(color).lineLimit(1)
-                    Spacer(minLength: 4)
-                    if let host = activity.sourceHost {
-                        Text(host).foregroundStyle(.secondary).lineLimit(1)
+                    Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(PacerPalette.primary).lineLimit(1)
+                    if unread {
+                        Circle().fill(color).frame(width: 6, height: 6).accessibilityLabel(L10n.text("common.not_viewed"))
                     }
-                }.font(.system(size: 12))
-                Text(performanceText).font(.system(size: 11)).monospacedDigit()
-                    .foregroundStyle((group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now))?.isFresh == true ? Color.white : Color.secondary)
-                    .lineLimit(1).help(performanceHelp)
+                }
+                HStack(spacing: 5) {
+                    Text(detail).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
+                    separator
+                    Text(activity.provider.displayName).foregroundStyle(activity.provider.tint).fixedSize()
+                    if let host = activity.sourceHost {
+                        separator
+                        Text(host).foregroundStyle(PacerPalette.secondary).lineLimit(1)
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
             }
-            Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(hovered && enabled ? 0.8 : 0))
+            Spacer(minLength: 12)
+            metrics
         }
-        .padding(.horizontal, 8).padding(.vertical, 9)
+        .padding(.horizontal, 10).padding(.vertical, 8)
     }
-}
 
-extension AgentProvider {
-    var tint: Color {
-        self == .codex ? Color(red: 0.56, green: 0.84, blue: 0.79) : Color(red: 0.93, green: 0.62, blue: 0.43)
+    private var separator: some View {
+        Text("·").foregroundStyle(PacerPalette.tertiary).accessibilityHidden(true)
+    }
+
+    private var metrics: some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            if let rate {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(String(format: "%.1f", rate.value)).font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(rate.isFresh ? PacerPalette.primary : PacerPalette.secondary)
+                    Text("t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+                }
+            } else {
+                Text(L10n.text("performance.awaiting_usage")).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(PacerPalette.tertiary)
+            }
+            Text(latencyText).font(.system(size: 10)).foregroundStyle(PacerPalette.tertiary)
+        }
+        .monospacedDigit().lineLimit(1).fixedSize()
+        .help(performanceHelp)
     }
 }
 

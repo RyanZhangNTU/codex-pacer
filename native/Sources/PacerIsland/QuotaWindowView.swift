@@ -12,13 +12,17 @@ struct QuotaWindowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(window.label).font(.system(size: 14, weight: .medium))
+                Text(window.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(secondary)
                 Spacer()
                 if let remaining = window.remainingPercent {
-                    Text("\(Int(remaining.rounded()))%")
-                        .font(.system(size: 28, weight: .medium)).monospacedDigit()
-                        .accessibilityLabel(L10n.text("quota.remaining", Int(remaining.rounded())))
-                } else { Text("—").font(.system(size: 28)).foregroundStyle(secondary) }
+                    HStack(alignment: .firstTextBaseline, spacing: 1) {
+                        Text("\(Int(remaining.rounded()))").font(.system(size: 24, weight: .semibold, design: .rounded))
+                        Text("%").font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(secondary)
+                    }
+                    .monospacedDigit()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(L10n.text("quota.remaining", Int(remaining.rounded())))
+                } else { Text("—").font(.system(size: 24, weight: .semibold, design: .rounded)).foregroundStyle(secondary) }
             }
             quotaTrack
             HStack(spacing: 8) {
@@ -27,12 +31,12 @@ struct QuotaWindowView: View {
                 if allowPace, let pace = window.pacePercent(at: now) {
                     Text(L10n.text("quota.pace_value", Int(pace.rounded()))).foregroundStyle(pace < 85 ? Color.orange : pace > 115 ? accent : secondary)
                 } else { Text(L10n.text("quota.pace_unknown")) }
-            }.font(.system(size: 12)).foregroundStyle(secondary).monospacedDigit()
+            }.font(.system(size: 11)).foregroundStyle(secondary).monospacedDigit()
         }.accessibilityElement(children: .combine)
     }
     private var quotaTrack: some View {
         GeometryReader { geometry in
-            Capsule().fill(referenceColor.opacity(0.09)).overlay(alignment: .leading) {
+            Capsule().fill(referenceColor.opacity(0.08)).overlay(alignment: .leading) {
                 if let percent = window.remainingPercent {
                     Capsule().fill(accent).frame(width: geometry.size.width * percent / 100)
                 }
@@ -42,7 +46,7 @@ struct QuotaWindowView: View {
                         .offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * expected / 100 - 1)))
                 }
             }
-        }.frame(height: 5).padding(.vertical, 3)
+        }.frame(height: 6).padding(.vertical, 3)
         .help(L10n.text("quota.track_help"))
         .accessibilityHidden(true)
     }
