@@ -6,6 +6,7 @@ struct CompactQuotaPreview {
     let providers: [AgentProvider]
     let metric: String
     let windowIDs: [AgentProvider: String]
+    var singleTask: ActivityBadgeSingleTask? = nil
 }
 
 /// Both display modes have only left and right content. A real camera needs
@@ -127,10 +128,10 @@ struct CompactIslandComponent: View {
     }
     @ViewBuilder private var content: some View {
         switch component {
-        case .statusIcon:
-            Image(systemName: model.headerSymbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(model.headerTint)
-                .frame(minWidth: 16)
-                .accessibilityLabel(component.label)
+        case .activity:
+            ActivityBadge(activity: model.headerActivity(singleTask: quotaPreview?.singleTask))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(activitySummary)
         case .status:
             Text(model.headerDisplayStatus).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.primary)
         case .tps:
@@ -139,14 +140,6 @@ struct CompactIslandComponent: View {
                     .foregroundStyle(model.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
                 Text("t/s").font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
             }.fixedSize(horizontal: true, vertical: false)
-        case .taskCount:
-            let count = model.running.count + model.waiting.count
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
-                .foregroundStyle(PacerPalette.primary)
-                .frame(minWidth: 17, minHeight: 17).padding(.horizontal, count < 10 ? 0 : 3)
-                .background(Color.white.opacity(0.16), in: Capsule())
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact", String(count)))
         case .firstOutput:
             Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—")
                 .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
@@ -193,10 +186,20 @@ struct CompactIslandComponent: View {
             }
         }
     }
+    /// The count and the most urgent state, without repeating a count-only status.
+    private var activitySummary: String {
+        let count = model.running.count + model.waiting.count
+        let tasks = count == 0 ? nil : L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact",
+            count > 99 ? "99+" : String(count))
+        return [tasks, model.headerStatus].compactMap { $0 }.reduce(into: [String]()) { parts, part in
+            if !parts.contains(part) { parts.append(part) }
+        }.joined(separator: " · ")
+    }
     private var help: String {
         switch component {
-        case .statusIcon, .status:
-            return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open", model.headerStatus)
+        case .activity, .status:
+            return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open",
+                component == .activity ? activitySummary : model.headerStatus)
         case .tps: return model.rateHelp
         case .firstOutput: return L10n.text("layout.latest_ttft_help")
         case .lowQuotaWarning: return Self.lowQuotaProviders(model, quotaPreview: quotaPreview).map(\.displayName).joined(separator: " · ") + " · " + component.label
@@ -208,7 +211,6 @@ struct CompactIslandComponent: View {
             return (component.provider.map { [$0] } ?? providers).map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }
                 .joined(separator: " · ") + "\n" + L10n.text("layout.metric_help")
         case .sshWarning: return L10n.text("source.ssh_retrying")
-        default: return component.label
         }
     }
     private func quotaText(_ provider: AgentProvider) -> String {
@@ -219,7 +221,7 @@ struct CompactIslandComponent: View {
     }
     private func action() {
         switch component {
-        case .statusIcon, .status: model.openCompletionOrPin()
+        case .activity, .status: model.openCompletionOrPin()
         default: model.togglePin()
         }
     }

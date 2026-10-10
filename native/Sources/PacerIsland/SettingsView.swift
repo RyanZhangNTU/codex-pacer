@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var showInMenuBar = UserDefaults.standard.bool(forKey: "showInMenuBar")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
+    @State private var singleTask = ActivityBadgeSingleTask()
     @State private var windowID = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
     @State private var claudeWindowID = UserDefaults.standard.string(forKey: "claudeQuotaWindowID") ?? "auto"
     @State private var lowReminder = UserDefaults.standard.bool(forKey: "lowQuotaReminder")
@@ -209,7 +210,14 @@ struct SettingsView: View {
                     attached: displayMode.layout(safeAreaTop: model.screenNotchSize.height,
                         hardwareNotchWidth: model.screenNotchSize.width).attached,
                     quotaPreview: CompactQuotaPreview(providers: AgentProvider.allCases.filter { moduleEnabled($0) },
-                        metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID]))
+                        metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID], singleTask: singleTask))
+            }
+            if compactLayout.components.contains(.activity) {
+                Section(L10n.text("layout.group.tasks")) {
+                    Picker(L10n.text("layout.single_task"), selection: $singleTask) {
+                        ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                }
             }
             Section(L10n.text("layout.group.quota")) {
                 Picker(L10n.text("settings.compact_metric"), selection: $metric) {
@@ -768,6 +776,7 @@ struct SettingsView: View {
             defaults.set(showInMenuBar, forKey: "showInMenuBar")
             defaults.set(displayID, forKey: "displayID")
             defaults.set(metric, forKey: "compactMetric")
+            defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)
             defaults.set(windowID, forKey: "quotaWindowID")
             defaults.set(claudeWindowID, forKey: "claudeQuotaWindowID")
             defaults.set(lowReminder, forKey: "lowQuotaReminder")

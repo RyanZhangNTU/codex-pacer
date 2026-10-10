@@ -252,7 +252,7 @@ final class ProviderDisplayTests: XCTestCase {
         let grouped = model.taskGroupingComputations
         XCTAssertEqual(grouped, before + 1)
         for _ in 0..<10 {
-            _ = model.headerStatus; _ = model.headerTint; _ = model.visibleActivities
+            _ = model.headerStatus; _ = model.headerActivity(); _ = model.visibleActivities
             _ = model.rate; _ = model.rateIsFresh; _ = model.taskGroup(for: running)
         }
         XCTAssertEqual(model.taskGroupingComputations, grouped,

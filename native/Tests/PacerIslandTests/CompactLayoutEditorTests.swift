@@ -23,7 +23,7 @@ final class CompactLayoutEditorTests: XCTestCase {
     func testQuotaComponentsFollowLiveAndUnsavedProviderChoicesWithoutDiscardingLayout() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
-        let layout = CompactIslandLayout(leading: [.claudeQuota, .tps], trailing: [.codexQuota, .taskCount])
+        let layout = CompactIslandLayout(leading: [.claudeQuota, .tps], trailing: [.codexQuota, .activity])
         layout.save(to: defaults)
         let configurations: [Set<AgentProvider>] = [[], [.codex], [.claude], [.codex, .claude]]
         for enabled in configurations {
@@ -34,7 +34,7 @@ final class CompactLayoutEditorTests: XCTestCase {
             for component in [CompactIslandLayout.Component.codexQuota, .claudeQuota] {
                 XCTAssertEqual(CompactIslandComponent.isVisible(component, model: model), enabled.contains(try XCTUnwrap(component.provider)))
             }
-            XCTAssertTrue(CompactIslandComponent.isVisible(.taskCount, model: model), "Tasks remain one global component")
+            XCTAssertTrue(CompactIslandComponent.isVisible(.activity, model: model), "Tasks remain one global component")
             let preview = CompactQuotaPreview(providers: [.claude], metric: "remaining", windowIDs: [:])
             XCTAssertTrue(CompactIslandComponent.isVisible(.claudeQuota, model: model, quotaPreview: preview))
             XCTAssertFalse(CompactIslandComponent.isVisible(.codexQuota, model: model, quotaPreview: preview))
@@ -68,7 +68,7 @@ final class CompactLayoutEditorTests: XCTestCase {
     func testInlineEditorFitsSettingsPaneAndRendersProviderChangesWithoutSaving() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
-        var draft = CompactIslandLayout(leading: [.taskCount], trailing: [.codexQuota, .claudeQuota])
+        var draft = CompactIslandLayout(leading: [.activity], trailing: [.codexQuota, .claudeQuota])
         let binding = Binding(get: { draft }, set: { draft = $0 })
         func render(_ providers: [AgentProvider], name: String) async throws -> Data {
             let view = CompactLayoutEditor(model: model, layout: binding, widthSettings: .constant(.init()), attached: false,
@@ -99,7 +99,7 @@ final class CompactLayoutEditorTests: XCTestCase {
         let codex = try await render([.codex], name: "compact-editor-codex")
         let none = try await render([], name: "compact-editor-none")
         XCTAssertNotEqual(both, codex); XCTAssertNotEqual(codex, none)
-        XCTAssertEqual(draft, CompactIslandLayout(leading: [.taskCount], trailing: [.codexQuota, .claudeQuota]))
+        XCTAssertEqual(draft, CompactIslandLayout(leading: [.activity], trailing: [.codexQuota, .claudeQuota]))
         XCTAssertEqual(defaults.persistentDomain(forName: name) as NSDictionary?, before, "Rendering drafts must not save Settings")
         await model.shutdown()
     }

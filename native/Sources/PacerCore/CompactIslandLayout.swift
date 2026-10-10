@@ -3,7 +3,7 @@ import Foundation
 /// Presentation only. Hiding a component never stops its underlying collector.
 public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
-        case statusIcon, status, taskCount, tps, firstOutput
+        case activity, status, tps, firstOutput
         case codexQuota, claudeQuota, quotaLabel, timeRemaining
         case lowQuotaWarning, quotaDelayWarning, sshWarning
         public var id: String { rawValue }
@@ -26,15 +26,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         }
         public var preferredLane: Lane {
             switch self {
-            case .statusIcon, .status, .taskCount, .tps, .firstOutput: .leading
+            case .activity, .status, .tps, .firstOutput: .leading
             default: .trailing
             }
         }
         public var symbol: String {
             switch self {
-            case .statusIcon: "sparkle"
+            case .activity: "smallcircle.filled.circle"
             case .status: "text.alignleft"
-            case .taskCount: "number.circle"
             case .tps: "speedometer"
             case .firstOutput: "timer"
             case .codexQuota, .claudeQuota: "chart.pie"
@@ -47,6 +46,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         }
         fileprivate static func saved(_ value: String) -> [Self] {
             switch value {
+            case "statusIcon", "taskCount": [.activity]
             case "quotaMetric": [.codexQuota, .claudeQuota]
             case "quotaWindow": [.quotaLabel]
             case "resetCountdown": [.timeRemaining]
@@ -61,7 +61,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.group." + rawValue) }
         public var components: [Component] {
             switch self {
-            case .tasks: [.statusIcon, .status, .taskCount]
+            case .tasks: [.activity, .status]
             case .performance: [.tps, .firstOutput]
             case .quota: [.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining]
             case .warnings: [.lowQuotaWarning, .quotaDelayWarning, .sshWarning]
@@ -73,13 +73,13 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 4
+    public let version = 5
     public var leading: [Component]
     public var trailing: [Component]
     public init(leading: [Component] = [], trailing: [Component] = []) {
         self.leading = leading; self.trailing = trailing
     }
-    public static let standard = Self(leading: [.statusIcon, .status, .taskCount, .tps],
+    public static let standard = Self(leading: [.activity, .tps],
         trailing: [.lowQuotaWarning, .codexQuota, .claudeQuota, .quotaLabel, .quotaDelayWarning, .sshWarning])
     public subscript(_ lane: Lane) -> [Component] {
         get { lane == .leading ? leading : trailing }
@@ -127,19 +127,25 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...4).contains(schema) else {
+        guard (1...5).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
-        leading = try values.decode([String].self, forKey: .leading).flatMap(Component.saved)
+        var leadingNames = try values.decode([String].self, forKey: .leading)
         if schema == 1 {
-            leading += try values.decodeIfPresent([String].self, forKey: .center)?.flatMap(Component.saved) ?? []
+            leadingNames += try values.decodeIfPresent([String].self, forKey: .center) ?? []
         }
         trailing = try values.decode([String].self, forKey: .trailing).flatMap(Component.saved)
-        if schema < 3, leading == [.statusIcon, .status, .tps],
+        if schema < 3, leadingNames == ["statusIcon", "status", "tps"],
            trailing == [.lowQuotaWarning, .codexQuota, .claudeQuota, .quotaLabel, .quotaDelayWarning] {
-            leading.insert(.taskCount, at: 2)
+            leadingNames.insert("taskCount", at: 2)
             trailing.append(.sshWarning)
         }
+        // Schema 5 merges the status icon and task count. An untouched former
+        // default lane also drops status text, which stays an optional component.
+        if schema < 5, leadingNames == ["statusIcon", "status", "taskCount", "tps"] {
+            leadingNames = ["activity", "tps"]
+        }
+        leading = leadingNames.flatMap(Component.saved)
     }
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)

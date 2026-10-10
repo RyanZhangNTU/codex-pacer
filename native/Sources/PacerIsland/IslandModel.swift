@@ -462,19 +462,31 @@ final class IslandModel: ObservableObject {
             return left == right ? $0.id < $1.id : left < right
         }
     }
-    var headerSymbol: String {
-        if let request = pendingInputRequests.first { return request.kind == .approval ? StatusSymbols.approval : StatusSymbols.input }
-        if let completed = pendingCompletions.first { return StatusSymbols.symbol(for: completed) }
-        if let first = waiting.first { return StatusSymbols.symbol(for: first) }
-        let latest = latestRunningTask
-        return latest.map { taskGroup(for: $0)?.isRunning == true && $0.phase != .running ? StatusSymbols.thinking : StatusSymbols.symbol(for: $0) } ?? StatusSymbols.idle
+    /// The number always counts active tasks; attention and unread endings
+    /// change the badge's fill or mark rather than what the number means.
+    func headerActivity(singleTask: ActivityBadgeSingleTask? = nil) -> HeaderActivity {
+        let active = running.count + waiting.count
+        let attention = pendingInputRequests.first?.kind ?? waiting.first.map { $0.waitingForApproval ? .approval : .input }
+        let ending = pendingCompletions.first.map { completed -> HeaderActivity.Ending in
+            completed.turnFailed ? .failed : completed.phase == .interrupted ? .interrupted : .completed(completed.provider)
+        }
+        var orbit: [AgentProvider: Int] = [:]
+        for task in running { orbit[task.provider, default: 0] += 1 }
+        let attentionSymbol = attention.map { $0 == .approval ? StatusSymbols.approval : StatusSymbols.input }
+        let core: HeaderActivity.Core
+        if active == 0 {
+            core = (attentionSymbol ?? ending.map(\.symbol)).map(HeaderActivity.Core.symbol) ?? .idle
+        } else if active == 1, (singleTask ?? ActivityBadgeSingleTask(defaults: defaults)) == .stage,
+                  let symbol = attentionSymbol ?? latestRunningTask.map({
+                      taskGroup(for: $0)?.isRunning == true && $0.phase != .running ? StatusSymbols.thinking : StatusSymbols.symbol(for: $0)
+                  }) {
+            core = .symbol(symbol)
+        } else {
+            core = .count(active)
+        }
+        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending)
     }
     var taskAccent: Color { Color(red: 0.56, green: 0.84, blue: 0.79) }
-    var headerTint: Color {
-        if !pendingInputRequests.isEmpty || !waiting.isEmpty { return .orange }
-        if let first = pendingCompletions.first { return first.turnFailed ? .red : first.phase == .interrupted ? .orange : first.provider.tint }
-        return latestRunningTask?.provider.tint ?? .secondary
-    }
     func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? {
         let group = taskGroup(for: activity)
         let ids = Set(group?.members.map(\.id) ?? [activity.id])

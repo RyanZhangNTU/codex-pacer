@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Merge the collapsed status icon and task count into one activity badge. A provider-colored comet orbits while tasks run, a solid amber fill asks for input or approval, and unread endings fill the core or show as a corner mark. The number always counts active tasks; a single task can show its stage or its count. Status text leaves the default layout but stays optional. The orbit runs in Core Animation, pauses while occluded and stays static with Reduce Motion.
+
 - Mark the physical screen notch in Settings previews, keeping its scaled center footprint distinct from content and placing it above floating bars. Preview drafts use hardware geometry from Pacer's current screen.
 
 - Embed collapsed-bar customization in sidebar Settings with one draft/save flow. Split only Codex and Claude quota components, follow enabled modules, and preserve existing positions and hidden choices through layout migration.
