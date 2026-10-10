@@ -60,6 +60,16 @@ enum QuotaPaceVerdict: String {
     }
 }
 
+struct QuotaVerdictChip: View {
+    let verdict: QuotaPaceVerdict
+
+    var body: some View {
+        Text(verdict.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(verdict.tint)
+            .padding(.horizontal, 5).frame(height: 15)
+            .background(verdict.tint.opacity(0.14), in: Capsule())
+    }
+}
+
 /// One status language for rows and the collapsed bar: a tinted tile carries
 /// color and shape, so the text beside it can stay quiet.
 struct StatusTile: View {

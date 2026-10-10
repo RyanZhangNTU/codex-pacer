@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Add a concise Help pane at the bottom of the Settings sidebar: a legend drawn with the real island components, the main interactions, and links to the user guide and issue tracker.
+
 - Redesign the Collapsed Bar settings page: one preview card with a bar-shaped, wrapping lane strip and the width controls, then grouped switch rows with descriptions whose options appear beneath them; redundant help text is removed and the preview stage adapts to light and dark appearance.
 
 - Align expanded island content with the header's 15-point edges and tighten section spacing. The adaptive expanded minimum drops from 440 to 404 points, keeping the earlier content width while halving the widening from a narrow bar; specified widths are unchanged; the more-actions menu keeps only refresh and quit.

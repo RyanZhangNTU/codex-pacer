@@ -177,12 +177,7 @@ struct QuotaDashboardRingView: View {
                     // Without a period switch, the ring names its own window.
                     Text(quota.period.rawValue).font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
                 }
-                if let verdict {
-                    let tint = verdict.tint
-                    Text(verdict.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(tint)
-                        .padding(.horizontal, 5).frame(height: 15)
-                        .background(tint.opacity(0.14), in: Capsule())
-                }
+                if let verdict { QuotaVerdictChip(verdict: verdict) }
                 if stale {
                     Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(PacerPalette.attention)

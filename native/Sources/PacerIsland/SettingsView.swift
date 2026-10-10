@@ -120,6 +120,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
             ForEach([SettingsPane.codex, .claude, .connections]) { sidebarRow($0) }
             Spacer(minLength: 0)
+            sidebarRow(.help).padding(.bottom, 12)
         }
         .padding(.horizontal, 10)
         .frame(width: 210)
@@ -236,6 +237,8 @@ struct SettingsView: View {
             }
         case .codex, .claude:
             if let provider = pane.provider { providerPane(provider) }
+        case .help:
+            SettingsHelpPane()
         case .connections:
             Section(L10n.text("settings.data_source")) {
                 Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
@@ -841,7 +844,7 @@ struct SettingsView: View {
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, appearance, collapsedBar, reminders, codex, claude, connections
+    case general, appearance, collapsedBar, reminders, codex, claude, connections, help
     static let defaultsKey = "settingsPane"
     var id: String { rawValue }
     var provider: AgentProvider? { self == .codex ? .codex : self == .claude ? .claude : nil }
@@ -854,6 +857,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .codex: return AgentProvider.codex.displayName
         case .claude: return AgentProvider.claude.displayName
         case .connections: return L10n.text("settings.pane.connections")
+        case .help: return L10n.text("settings.pane.help")
         }
     }
     var symbol: String {
@@ -865,6 +869,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .codex: return AgentProvider.codex.glyph
         case .claude: return AgentProvider.claude.glyph
         case .connections: return "point.3.connected.trianglepath.dotted"
+        case .help: return "questionmark"
         }
     }
     var tint: Color {
@@ -876,6 +881,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .codex: return AgentProvider.codex.tint
         case .claude: return AgentProvider.claude.tint
         case .connections: return Color(red: 0.16, green: 0.5, blue: 1)
+        case .help: return Color(white: 0.52)
         }
     }
     var glyphColor: Color { provider == nil ? .white : Color.black.opacity(0.72) }
