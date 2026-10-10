@@ -104,6 +104,22 @@ final class QuotaDashboardModelTests: XCTestCase {
         XCTAssertEqual(data.freshnessText, L10n.text("quota.expired"))
     }
 
+    func testPaceVerdictUsesExistingThresholdsAndDurationsShareCountdownWording() throws {
+        for (pace, verdict) in [(84.9, QuotaPaceVerdict.fast), (85, .steady), (115, .steady), (115.1, .spare), (1000, .spare)] {
+            XCTAssertEqual(QuotaPaceVerdict(pace: pace), verdict, "Pace \(pace)")
+        }
+        let (model, _) = try fixture()
+        // 80% quota left with 50% of the window left is spare; the tick sits at the time fraction.
+        publish(snapshot([bucket("codex", [window("codex/five", minutes: 300, reset: now.addingTimeInterval(9000))])]), for: .codex, to: model)
+        let data = model.dashboardQuota(provider: .codex, period: .fiveHour)
+        XCTAssertEqual(data.window?.pacePercent(at: now).map(QuotaPaceVerdict.init(pace:)), .spare)
+        XCTAssertEqual(data.remainingTimePercent, 50)
+        XCTAssertEqual(CompactDuration.text(59), L10n.text("dashboard.countdown_soon"))
+        XCTAssertEqual(CompactDuration.text(60), L10n.text("dashboard.countdown_minutes", 1))
+        XCTAssertEqual(CompactDuration.text(7740), L10n.text("dashboard.countdown_hours", 2, 9))
+        XCTAssertEqual(CompactDuration.text(277_200), L10n.text("dashboard.countdown_days", 3, 5))
+    }
+
     func testSharedPeriodPersistsOnlyExactChoicesWithoutChangingCollapsedWindowOrProvider() throws {
         let (model, defaults) = try fixture("unrecognized")
         XCTAssertEqual(model.dashboardPeriod, .weekly)

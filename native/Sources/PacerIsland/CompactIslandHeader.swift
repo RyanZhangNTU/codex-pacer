@@ -90,7 +90,14 @@ struct CompactIslandComponent: View {
     @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
     var quotaPreview: CompactQuotaPreview? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var providers: [AgentProvider] { quotaPreview?.providers ?? model.enabledProviders }
+    /// Expanded rings repeat these values in more detail, so the header quiets
+    /// them instead of moving the row; Settings previews keep them at full strength.
+    static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
+        [.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining].contains(component)
+    }
+    private var dimmed: Bool { quotaPreview == nil && model.expanded && Self.dimsWhenExpanded(component) }
 
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true,
                           quotaPreview: CompactQuotaPreview? = nil) -> Bool {
@@ -125,6 +132,8 @@ struct CompactIslandComponent: View {
             .buttonStyle(.plain)
             .lineLimit(1)
             .help(help)
+            .opacity(dimmed ? 0.3 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: dimmed)
     }
     @ViewBuilder private var content: some View {
         switch component {

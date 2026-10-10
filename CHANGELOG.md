@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Refine the everyday expanded island: quota rings mark an even pace with a white tick and an ahead/on-pace/fast verdict instead of an inner time ring, the other period sits one line below each ring, running rows show their turn's elapsed time, and panel actions move from the footer into the task header with refresh, collapse and quit in one menu. The expanded header quiets repeated quota values; starting tasks use an hourglass.
+
 - Merge the collapsed status icon and task count into one activity badge. A provider-colored comet orbits while tasks run, a solid amber fill asks for input or approval, and unread endings fill the core or show as a corner mark. The number always counts active tasks; a single task can show its stage or its count. Status text leaves the default layout but stays optional. The orbit runs in Core Animation, pauses while occluded and stays static with Reduce Motion.
 
 - Mark the physical screen notch in Settings previews, keeping its scaled center footprint distinct from content and placing it above floating bars. Preview drafts use hardware geometry from Pacer's current screen.

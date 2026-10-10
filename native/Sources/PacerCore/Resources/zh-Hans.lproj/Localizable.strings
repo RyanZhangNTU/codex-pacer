@@ -189,6 +189,7 @@
 "common.not_viewed" = "未查看";
 "common.open_chat" = "打开会话";
 "common.open_settings" = "打开设置";
+"common.more" = "更多";
 "common.pin" = "固定展开";
 "common.quit" = "退出 Codex Pacer";
 "common.refresh" = "刷新";
@@ -256,6 +257,9 @@
 "quota.no_windows" = "已连接 Codex，但账户服务没有返回可显示的额度窗口（primary / secondary 为空）。\n请检查当前账户或工作区是否提供订阅额度，或稍后重试。";
 "quota.not_connected" = "尚未连接 Codex";
 "quota.not_read" = "尚未读取额度";
+"quota.verdict.spare" = "充裕";
+"quota.verdict.steady" = "正常";
+"quota.verdict.fast" = "偏快";
 "quota.pace" = "配速";
 "quota.pace_unknown" = "配速 —";
 "quota.pace_value" = "配速 %ld%%";
@@ -466,7 +470,7 @@
 "settings.quota_details" = "额度详情";
 "quota.source_codex" = "Codex 服务";
 "dashboard.time_remaining" = "剩余时间 %@";
-"dashboard.rings_help" = "外环显示剩余额度，内环显示剩余时间。";
+"dashboard.rings_help" = "圆环显示剩余额度，白色刻度标出按时间均匀使用时应剩的位置。";
 "dashboard.rings_accessibility" = "%1$@，%2$@。剩余额度：%3$@。剩余时间：%4$@。%5$@";
 "dashboard.period_help" = "选择两个服务共同显示的额度周期。";
 "dashboard.pro" = "PRO";

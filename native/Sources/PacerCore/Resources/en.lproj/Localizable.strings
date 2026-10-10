@@ -189,6 +189,7 @@
 "common.not_viewed" = "Unread";
 "common.open_chat" = "Open Chat";
 "common.open_settings" = "Open Settings";
+"common.more" = "More";
 "common.pin" = "Keep Expanded";
 "common.quit" = "Quit Codex Pacer";
 "common.refresh" = "Refresh";
@@ -256,6 +257,9 @@
 "quota.no_windows" = "Connected to Codex, but the account service returned no quota windows (primary / secondary are empty).\nCheck whether the current account or workspace provides subscription quota, or try again later.";
 "quota.not_connected" = "Not connected to Codex";
 "quota.not_read" = "Quota has not been read";
+"quota.verdict.spare" = "Ahead";
+"quota.verdict.steady" = "On pace";
+"quota.verdict.fast" = "Fast";
 "quota.pace" = "Pace";
 "quota.pace_unknown" = "Pace —";
 "quota.pace_value" = "Pace %ld%%";
@@ -466,7 +470,7 @@
 "settings.quota_details" = "Quota details";
 "quota.source_codex" = "Codex service";
 "dashboard.time_remaining" = "Time left %@";
-"dashboard.rings_help" = "Outer ring: remaining quota. Inner ring: remaining time.";
+"dashboard.rings_help" = "Ring: remaining quota. White tick: where it would be at an even pace.";
 "dashboard.rings_accessibility" = "%1$@, %2$@. Remaining quota: %3$@. Remaining time: %4$@. %5$@";
 "dashboard.period_help" = "Choose the quota period for both providers.";
 "dashboard.pro" = "PRO";

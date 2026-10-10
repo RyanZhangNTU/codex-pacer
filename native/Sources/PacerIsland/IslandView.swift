@@ -41,28 +41,21 @@ struct IslandView: View {
 private struct IslandExpandedContent: View {
     @ObservedObject var model: IslandModel
 
+    /// Room below the last section now that panel actions sit in the task header.
+    private static let bottomInset: CGFloat = 14
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ViewThatFits(in: .vertical) {
-                content
-                ScrollView(.vertical) {
-                    content.background(CompactScrollbarStyle())
-                }
-                .scrollIndicators(.visible)
+        ViewThatFits(in: .vertical) {
+            content
+            ScrollView(.vertical) {
+                content.background(CompactScrollbarStyle())
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            footer
-                .fixedSize(horizontal: false, vertical: true)
-                .background(GeometryReader { geometry in
-                    Color.clear.preference(key: ExpandedContentHeight.self,
-                        value: .init(footer: geometry.size.height))
-                })
+            .scrollIndicators(.visible)
         }
-        .onPreferenceChange(ExpandedContentHeight.self) { measurement in
-            guard measurement.content > 0, measurement.footer > 0 else { return }
-            DispatchQueue.main.async {
-                model.updateMeasuredContentHeight(measurement.content + measurement.footer)
-            }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onPreferenceChange(ExpandedContentHeight.self) { height in
+            guard height > 0 else { return }
+            DispatchQueue.main.async { model.updateMeasuredContentHeight(height + Self.bottomInset) }
         }
         .onPreferenceChange(TaskRowIdealWidth.self) { width in
             DispatchQueue.main.async { model.updateMeasuredContentWidth(width > 0 ? width + 46 : 0) }
@@ -90,15 +83,14 @@ private struct IslandExpandedContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { geometry in
-            Color.clear.preference(key: ExpandedContentHeight.self,
-                value: .init(content: geometry.size.height))
+            Color.clear.preference(key: ExpandedContentHeight.self, value: geometry.size.height)
         })
     }
 
     @ViewBuilder private var taskContent: some View {
         if model.visibleActivities.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0")
+                IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0") { IslandPanelControls(model: model) }
                 HStack(spacing: 12) {
                     StatusTile(symbol: StatusSymbols.idle, tint: PacerPalette.secondary)
                     Text(L10n.text("activity.no_tasks")).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.secondary)
@@ -140,41 +132,47 @@ private struct IslandExpandedContent: View {
             }
         }
     }
+}
 
-    private var footer: some View {
-        HStack(spacing: 2) {
+/// Panel actions sit at the right of the task header. Pin and Settings stay
+/// one click away; refresh, collapse and quit are rare and share one menu.
+struct IslandPanelControls: View {
+    @ObservedObject var model: IslandModel
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 0) {
             if model.isDemo {
                 Text(L10n.text("demo.label")).font(.system(size: 10, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(PacerPalette.fill, in: Capsule())
-                    .padding(.leading, 6)
+                    .fixedSize().padding(.trailing, 4)
             }
-            Spacer(minLength: 4)
             IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin",
                 title: model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"), active: model.pinned) { model.togglePin() }
-            IslandIconButton(symbol: "arrow.clockwise", title: L10n.text("common.refresh"),
-                help: L10n.text("quota.refresh_help", model.enabledProviders.map { $0.displayName + ": " + model.providerFreshnessText($0) }.joined(separator: "\n"))) {
-                model.refreshQuota(); model.refreshTaskSources()
-            }
-            .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
             IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings")) { model.onSettings?() }
-            IslandIconButton(symbol: "power", title: L10n.text("common.quit")) { model.onQuit?() }
-            IslandIconButton(symbol: "chevron.up", title: L10n.text("common.collapse")) { model.close() }
+            Menu {
+                Button(L10n.text("common.refresh")) { model.refreshQuota(); model.refreshTaskSources() }
+                    .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
+                Button(L10n.text("common.collapse")) { model.close() }
+                Divider()
+                Button(L10n.text("common.quit")) { model.onQuit?() }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(hovered ? PacerPalette.primary : PacerPalette.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(hovered ? PacerPalette.hover : .clear))
+                    .contentShape(Circle())
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            .onHover { hovered = $0 }
+            .help(L10n.text("common.more")).accessibilityLabel(L10n.text("common.more"))
         }
-        .padding(.top, 6).padding(.bottom, 10)
     }
-}
-
-private struct ExpandedContentMeasurement: Equatable {
-    var content: CGFloat = 0
-    var footer: CGFloat = 0
 }
 
 private struct ExpandedContentHeight: PreferenceKey {
-    static var defaultValue = ExpandedContentMeasurement()
-    static func reduce(value: inout ExpandedContentMeasurement, nextValue: () -> ExpandedContentMeasurement) {
-        let next = nextValue()
-        value.content = max(value.content, next.content)
-        value.footer = max(value.footer, next.footer)
-    }
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

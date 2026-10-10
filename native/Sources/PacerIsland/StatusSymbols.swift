@@ -2,12 +2,13 @@ import PacerCore
 
 /// One outline family for every state. Shapes stay distinct without color:
 /// work states are open glyphs, attention uses a bubble or hand, endings a
-/// circled mark, and quota uses a gauge rather than a battery.
+/// circled mark, and quota uses a gauge rather than a battery. Starting avoids
+/// a bare circle, which reads as an empty control inside tiles and the badge ring.
 enum StatusSymbols {
     static let thinking = "sparkle"
     static let tool = "terminal"
     static let replying = "text.bubble"
-    static let starting = "circle.dotted"
+    static let starting = "hourglass"
     static let idle = "moon"
     static let input = "ellipsis.bubble"
     static let approval = "hand.raised"

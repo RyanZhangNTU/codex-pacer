@@ -30,7 +30,9 @@ struct TaskPagerView: View {
                             .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
                         pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
                     }
+                    Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
                 }
+                IslandPanelControls(model: model)
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))

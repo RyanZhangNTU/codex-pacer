@@ -23,6 +23,34 @@ extension AgentProvider {
     var glyph: String { self == .codex ? "chevron.left.forwardslash.chevron.right" : "asterisk" }
 }
 
+/// Countdowns and elapsed turns share one coarse wording, e.g. 3天 4小时,
+/// 2小时 9分 or <1分, so a two-second clock never makes text flicker.
+enum CompactDuration {
+    static func text(_ seconds: TimeInterval) -> String {
+        guard seconds >= 60 else { return L10n.text("dashboard.countdown_soon") }
+        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
+        if days > 0 { return L10n.text("dashboard.countdown_days", days, hours) }
+        if hours > 0 { return L10n.text("dashboard.countdown_hours", hours, minutes) }
+        return L10n.text("dashboard.countdown_minutes", minutes)
+    }
+}
+
+/// The existing pace thresholds: below 85% spends faster than time passes,
+/// above 115% leaves spare quota for the rest of the window. Only a fast pace
+/// is colored: Claude's orange would otherwise resemble the attention amber.
+enum QuotaPaceVerdict: String {
+    case spare, steady, fast
+    init(pace: Double) { self = pace < 85 ? .fast : pace > 115 ? .spare : .steady }
+    var label: String { L10n.text("quota.verdict." + rawValue) }
+    var tint: Color {
+        switch self {
+        case .spare: PacerPalette.primary
+        case .steady: PacerPalette.secondary
+        case .fast: PacerPalette.attention
+        }
+    }
+}
+
 /// One status language for rows and the collapsed bar: a tinted tile carries
 /// color and shape, so the text beside it can stay quiet.
 struct StatusTile: View {

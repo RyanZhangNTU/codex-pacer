@@ -13,6 +13,19 @@ final class CompactComponentDisplayTests: XCTestCase {
         }
         return value
     }
+    func testExpandedHeaderQuietsOnlyQuotaValuesAndRowsShowElapsedRunningTurns() {
+        let quieted = CompactIslandLayout.Component.allCases.filter(CompactIslandComponent.dimsWhenExpanded)
+        XCTAssertEqual(Set(quieted), [.codexQuota, .claudeQuota, .quotaLabel, .timeRemaining],
+            "Status, rate and warnings stay at full strength while the rings repeat quota below")
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let running = activity("019a0000-0000-7000-8000-00000000e1a9", start: start, first: start.addingTimeInterval(2))
+        XCTAssertEqual(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(95)),
+            L10n.text("dashboard.countdown_minutes", 1))
+        XCTAssertEqual(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(30)),
+            L10n.text("dashboard.countdown_soon"))
+        XCTAssertNil(TaskRowView.elapsedText(running, phase: .completed, now: start.addingTimeInterval(95)), "Only running turns count up")
+        XCTAssertNil(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(-5)), "A future start is never shown")
+    }
     func testLatestTTFTUsesMeasurementTimeAndSurvivesToolsNewTurnsAndRemovedCards() async throws {
         let model = IslandModel(), now = Date()
         model.now = now

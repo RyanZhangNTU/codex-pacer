@@ -25,8 +25,14 @@ struct TaskRowView: View {
         return count > 0 ? base + " · " + L10n.text(count == 1 ? "activity.subagent_running" : "activity.subagents_running", count) : base
     }
     private var rate: OutputEstimate? { group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now) }
+    private var elapsed: String? { Self.elapsedText(activity, phase: phase, now: now) }
+    /// How long the current turn has run answers "is it stuck?" at a glance.
+    static func elapsedText(_ activity: SessionActivity, phase: ActivityPhase, now: Date) -> String? {
+        guard phase == .running, let start = activity.turnStartedAt, start <= now else { return nil }
+        return CompactDuration.text(now.timeIntervalSince(start))
+    }
     private var latencyText: String {
-        L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.2f s", $0) } ?? "—")
+        L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.1f s", $0) } ?? "—")
     }
     private var performanceText: String {
         (rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")) + "  ·  " + latencyText
@@ -79,7 +85,8 @@ struct TaskRowView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
         .help(enabled ? [L10n.text(activity.provider == .claude && activity.sourceHostID != nil ? "claude.open_remote_help" : "common.open_chat"),
             activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
-        .accessibilityLabel(activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name, detail, activity.sourceHost ?? L10n.text("common.local")) + ", " + performanceText)
+        .accessibilityLabel(activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
+            [detail, elapsed].compactMap { $0 }.joined(separator: ", "), activity.sourceHost ?? L10n.text("common.local")) + ", " + performanceText)
     }
 
     private var rowContent: some View {
@@ -94,6 +101,10 @@ struct TaskRowView: View {
                 }
                 HStack(spacing: 5) {
                     Text(detail).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
+                    if let elapsed {
+                        separator
+                        Text(elapsed).foregroundStyle(PacerPalette.primary.opacity(0.78)).monospacedDigit().fixedSize()
+                    }
                     separator
                     Text(activity.provider.displayName).foregroundStyle(activity.provider.tint).fixedSize()
                     if let host = activity.sourceHost {

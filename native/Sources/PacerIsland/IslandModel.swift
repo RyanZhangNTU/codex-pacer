@@ -287,9 +287,10 @@ final class IslandModel: ObservableObject {
         if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: enabledProviders, snapshot: providerQuota(.codex)),
            let snapshot = providerQuota(.codex) {
             let headers = snapshot.buckets.count > 1 ? snapshot.buckets.count : 0
-            quotaHeight = 286 + CGFloat(snapshot.windows.count) * 92 + CGFloat(headers) * 20
-        } else { quotaHeight = 348 }
-        return min(640, max(424, quotaHeight + taskHeight))
+            quotaHeight = 256 + CGFloat(snapshot.windows.count) * 92 + CGFloat(headers) * 20
+        } else { quotaHeight = 318 }
+        // Estimates before the first measurement; actions live in the task header, not a footer.
+        return min(640, max(394, quotaHeight + taskHeight))
     }
     func updateMeasuredContentHeight(_ height: CGFloat) {
         guard height.isFinite, height > 0 else { return }

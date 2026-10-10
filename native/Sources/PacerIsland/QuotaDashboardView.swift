@@ -55,11 +55,13 @@ struct QuotaDashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 16) {
                 ForEach(slots) { slot in
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         QuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: slot.period),
                             title: slot.title, identifiesProvider: slot.identifiesProvider,
                             providerHelp: providerHelp(slot.provider, period: slot.period), now: model.now)
                         if slot.identifiesProvider {
+                            QuotaOtherPeriodView(quota: model.dashboardQuota(provider: slot.provider,
+                                period: slot.period == .fiveHour ? .weekly : .fiveHour), now: model.now)
                             QuotaProviderStatusView(model: model, provider: slot.provider, period: slot.period)
                         }
                     }.frame(maxWidth: .infinity, alignment: .top)
@@ -123,26 +125,35 @@ struct QuotaDashboardRingView: View {
     private var proOnly: Bool { quota.availability == .proOnly }
     private var known: Bool { quota.remainingQuotaPercent.map(\.isFinite) ?? false }
 
+    private static let diameter: CGFloat = 88
+    private static let stroke: CGFloat = 6
+    /// Pace needs fresh quota; a stale value against the live clock would mislead.
+    private var verdict: QuotaPaceVerdict? {
+        guard quota.availability == .available, let pace = quota.window?.pacePercent(at: now) else { return nil }
+        return QuotaPaceVerdict(pace: pace)
+    }
+
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             ZStack {
                 if proOnly {
                     let platinum = Color(red: 0.86, green: 0.88, blue: 0.91)
                     Circle().stroke(platinum.opacity(0.3), lineWidth: 1)
-                    Circle().stroke(platinum.opacity(0.12), lineWidth: 1).padding(12)
+                    Circle().stroke(platinum.opacity(0.12), lineWidth: 1).padding(10)
                     Text(L10n.text("dashboard.pro"))
-                        .font(.system(size: 15, weight: .semibold, design: .rounded)).tracking(2.5).foregroundStyle(platinum)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded)).tracking(2.5).foregroundStyle(platinum)
                 } else {
-                    ring(percent: quota.remainingQuotaPercent, lineWidth: 7, color: quota.provider.tint)
-                    ring(percent: quota.remainingTimePercent, lineWidth: 2.5, color: Color.white.opacity(0.55))
-                        .padding(13)
-                    VStack(spacing: 3) {
+                    ring(percent: quota.remainingQuotaPercent, lineWidth: Self.stroke, color: quota.provider.tint)
+                    if let time = quota.remainingTimePercent.flatMap({ $0.isFinite ? min(100, max(0, $0)) : nil }) {
+                        paceTick(at: time / 100)
+                    }
+                    VStack(spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 1) {
                             Text(percentText(quota.remainingQuotaPercent).replacingOccurrences(of: "%", with: ""))
-                                .font(.system(size: 26, weight: .semibold, design: .rounded))
+                                .font(.system(size: 24, weight: .semibold, design: .rounded))
                                 .foregroundStyle(known ? PacerPalette.primary : PacerPalette.tertiary)
                             if known {
-                                Text("%").font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(PacerPalette.secondary)
+                                Text("%").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(PacerPalette.secondary)
                             }
                         }.monospacedDigit()
                         if quota.window?.resetsAt != nil {
@@ -151,21 +162,27 @@ struct QuotaDashboardRingView: View {
                                 .lineLimit(1).minimumScaleFactor(0.8).help(resetDate)
                         }
                     }
-                    .frame(maxWidth: 72)
+                    .frame(maxWidth: 66)
                 }
             }
-            .frame(width: 108, height: 108)
+            .frame(width: Self.diameter, height: Self.diameter)
             .opacity(stale ? 0.55 : 1)
             HStack(spacing: 5) {
                 if identifiesProvider { Circle().fill(quota.provider.tint).frame(width: 6, height: 6) }
                 Text(title).font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(identifiesProvider ? PacerPalette.primary : PacerPalette.secondary)
+                if let verdict {
+                    let tint = verdict.tint
+                    Text(verdict.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(tint)
+                        .padding(.horizontal, 5).frame(height: 15)
+                        .background(tint.opacity(0.14), in: Capsule())
+                }
                 if stale {
                     Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(PacerPalette.attention)
                         .accessibilityLabel(L10n.text("common.not_updated"))
                 }
-            }.frame(height: 14)
+            }.frame(height: 15)
         }
         .frame(maxWidth: .infinity)
         .help(detailsHelp)
@@ -187,6 +204,17 @@ struct QuotaDashboardRingView: View {
         }.accessibilityHidden(true)
     }
 
+    /// Where the arc would end at an even pace: an arc past the tick is ahead
+    /// of the clock, one short of it is spending faster than time passes.
+    private func paceTick(at fraction: Double) -> some View {
+        Capsule().fill(Color.white)
+            .overlay(Capsule().stroke(Color.black.opacity(0.45), lineWidth: 0.5))
+            .frame(width: 2.5, height: Self.stroke + 6)
+            .offset(y: -Self.diameter / 2)
+            .rotationEffect(.degrees(fraction * 360))
+            .accessibilityHidden(true)
+    }
+
     private func percentText(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
         return "\(Int(min(100, max(0, value)).rounded()))%"
@@ -198,7 +226,7 @@ struct QuotaDashboardRingView: View {
         let quotaText = quota.remainingQuotaPercent == nil ? L10n.text("common.unknown") : percentText(quota.remainingQuotaPercent)
         let timeText = quota.remainingTimePercent == nil ? L10n.text("common.unknown") : percentText(quota.remainingTimePercent)
         return L10n.text("dashboard.rings_accessibility", provider, quota.period.accessibilityLabel,
-            quotaText, timeText, resetDate + ". " + quota.freshnessText)
+            quotaText, timeText, [resetDate, verdict?.label, quota.freshnessText].compactMap { $0 }.joined(separator: ". "))
     }
 
     private var detailsHelp: String {
@@ -217,15 +245,33 @@ struct QuotaDashboardRingView: View {
 
     private var countdown: String {
         guard let seconds = quota.window?.remainingSeconds(at: now) else { return "—" }
-        if seconds <= 0 { return L10n.text("dashboard.countdown_waiting") }
-        if seconds < 60 { return L10n.text("dashboard.countdown_soon") }
-        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
-        if days > 0 { return L10n.text("dashboard.countdown_days", days, hours) }
-        if hours > 0 { return L10n.text("dashboard.countdown_hours", hours, minutes) }
-        return L10n.text("dashboard.countdown_minutes", minutes)
+        return seconds <= 0 ? L10n.text("dashboard.countdown_waiting") : CompactDuration.text(seconds)
     }
     private var resetDate: String {
         quota.window?.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? L10n.text("quota.reset_unknown")
+    }
+}
+
+/// The period not shown in the ring stays one line away instead of behind
+/// the 5h/7d switch; it turns amber when low or spending faster than time.
+private struct QuotaOtherPeriodView: View {
+    let quota: QuotaDashboardQuota
+    let now: Date
+
+    var body: some View {
+        if [.available, .stale].contains(quota.availability), let remaining = quota.remainingQuotaPercent, remaining.isFinite {
+            let percent = "\(Int(min(100, max(0, remaining)).rounded()))%"
+            let countdown = quota.window?.remainingSeconds(at: now).map {
+                $0 <= 0 ? L10n.text("dashboard.countdown_waiting") : CompactDuration.text($0)
+            }
+            let pressing = quota.availability == .available && (remaining <= 15 ||
+                quota.window?.pacePercent(at: now).map { QuotaPaceVerdict(pace: $0) == .fast } == true)
+            Text([quota.period.rawValue + " " + percent, countdown].compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 10, weight: .medium)).monospacedDigit().lineLimit(1)
+                .foregroundStyle(pressing ? PacerPalette.attention : PacerPalette.tertiary)
+                .accessibilityLabel([quota.provider.displayName, quota.period.accessibilityLabel, percent, countdown]
+                    .compactMap { $0 }.joined(separator: ", "))
+        }
     }
 }
 
