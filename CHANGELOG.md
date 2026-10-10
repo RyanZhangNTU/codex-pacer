@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Show a getting-started welcome once on a fresh 3.0 install or the first launch after upgrading from 2.x: quick links to Claude setup and the collapsed bar, then the Help legend. It stays available in Settings → Help.
+
 - Turn the Connections pane into a diagnostics page: a status summary, every task source with problems first and a retry action, quota freshness per provider, and the SSH and Codex Remote Control switches together. Paused hosts without the provider are distinguished from disconnected ones.
 
 - Add a concise Help pane at the bottom of the Settings sidebar: the Codex/Claude and alert colors, a legend drawn with the real island components, the main interactions, and links to the user guide and issue tracker.

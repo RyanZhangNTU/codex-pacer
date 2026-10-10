@@ -206,6 +206,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var panel: PanelController!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var welcomeWindow: NSWindow?
     private var demoConversationWindow: NSWindow?
     private var reopenObserver: NSObjectProtocol?
 
@@ -284,6 +285,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         model.start()
         updater.start()
         if CommandLine.arguments.contains("--settings") { showSettings() }
+        // Once per major line, after the island appears; --welcome forces it for checks.
+        if CommandLine.arguments.contains("--welcome") ||
+            (!model.isDemo && !CommandLine.arguments.contains("--settings") && WelcomeGuide.shouldShow()) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.showWelcome() }
+        }
     }
 
     private func updateStatusItem() {
@@ -431,13 +437,44 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func showSettingsPane(_ pane: SettingsPane) {
+        UserDefaults.standard.set(pane.rawValue, forKey: SettingsPane.defaultsKey)
+        showSettings()
+    }
+
+    private func showWelcome() {
+        if welcomeWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = L10n.text("welcome.window_title")
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            welcomeWindow = window
+        }
+        welcomeWindow?.contentView = NSHostingView(rootView: WelcomeView(model: model, onOpenSettings: { [weak self] pane in
+            self?.closeWelcome(); self?.showSettingsPane(pane)
+        }, onDone: { [weak self] in self?.closeWelcome() }))
+        welcomeWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Demo runs never record the guide, so checks leave preferences untouched.
+    private func closeWelcome() {
+        if !model.isDemo { WelcomeGuide.markShown() }
+        welcomeWindow?.orderOut(nil)
+        welcomeWindow?.contentView = nil
+    }
+
     private func closeSettings() {
         settingsWindow?.orderOut(nil)
         settingsWindow?.contentView = nil
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard let closing = notification.object as? NSWindow, closing === settingsWindow else { return }
+        guard let closing = notification.object as? NSWindow else { return }
+        if closing === welcomeWindow, !model.isDemo { WelcomeGuide.markShown() }
+        guard closing === settingsWindow || closing === welcomeWindow else { return }
         closing.contentView = nil
     }
 

@@ -541,3 +541,14 @@
 "help.claude.detail" = "暖橙色代表 Claude，用法与 Codex 的青绿色相同。";
 "help.alert.title" = "提醒与异常";
 "help.alert.detail" = "琥珀色只用于等待你处理的任务和警告，红色表示失败，灰色表示空闲、暂停或数据过期。";
+"welcome.window_title" = "欢迎使用 Codex Pacer";
+"welcome.title" = "欢迎使用 Codex Pacer 3.0";
+"welcome.subtitle" = "现在同时支持 Codex 与 Claude Code。先了解几个常用标识，随后即可开始使用。";
+"welcome.section.start" = "快速开始";
+"welcome.claude.title" = "连接 Claude";
+"welcome.claude.detail" = "在设置中配置任务监测并登录，即可显示 Claude 的任务与额度。";
+"welcome.layout.title" = "自定义折叠栏";
+"welcome.layout.detail" = "选择折叠时显示哪些内容以及它们的位置。";
+"welcome.go" = "前往";
+"welcome.footer" = "随时可在 设置 → 帮助 中再次查看。";
+"welcome.done" = "开始使用";

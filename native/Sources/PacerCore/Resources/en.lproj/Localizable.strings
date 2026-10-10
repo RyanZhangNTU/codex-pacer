@@ -541,3 +541,14 @@
 "help.claude.detail" = "Warm orange stands for Claude, used the same way as Codex’s teal.";
 "help.alert.title" = "Alerts and problems";
 "help.alert.detail" = "Amber is reserved for tasks that need you and for warnings, red means failed, and gray means idle, paused or out of date.";
+"welcome.window_title" = "Welcome to Codex Pacer";
+"welcome.title" = "Welcome to Codex Pacer 3.0";
+"welcome.subtitle" = "Codex Pacer now follows both Codex and Claude Code. Here is what the common marks mean.";
+"welcome.section.start" = "Quick Start";
+"welcome.claude.title" = "Connect Claude";
+"welcome.claude.detail" = "Set up task monitoring and sign in to see Claude tasks and quota.";
+"welcome.layout.title" = "Customize the Collapsed Bar";
+"welcome.layout.detail" = "Choose what the collapsed bar shows and where.";
+"welcome.go" = "Open";
+"welcome.footer" = "You can reopen this anytime in Settings → Help.";
+"welcome.done" = "Start Using Pacer";
