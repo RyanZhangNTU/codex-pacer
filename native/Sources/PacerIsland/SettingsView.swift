@@ -770,6 +770,7 @@ struct SettingsView: View {
             widthSettings.save(to: defaults)
             compactLayout.save(to: defaults)
             defaults.removeObject(forKey: "performanceRefreshMode")
+            defaults.removeObject(forKey: "quotaDashboardPeriod")
             defaults.set(appearance.rawValue, forKey: "islandAppearance")
             glass.save()
             defaults.set(fullscreen, forKey: "showInFullscreen")

@@ -120,20 +120,14 @@ final class QuotaDashboardModelTests: XCTestCase {
         XCTAssertEqual(CompactDuration.text(277_200), L10n.text("dashboard.countdown_days", 3, 5))
     }
 
-    func testSharedPeriodPersistsOnlyExactChoicesWithoutChangingCollapsedWindowOrProvider() throws {
-        let (model, defaults) = try fixture("unrecognized")
-        XCTAssertEqual(model.dashboardPeriod, .weekly)
-        XCTAssertEqual(defaults.string(forKey: "quotaDashboardPeriod"), "unrecognized", "Loading a malformed preference is read-only")
+    func testEarlierSavedPeriodIsIgnoredWithoutChangingCollapsedWindowOrProvider() throws {
+        let (model, defaults) = try fixture("5h")
         defaults.set("codex/custom", forKey: "quotaWindowID")
         defaults.set("claude/custom", forKey: "claudeQuotaWindowID")
         let provider = model.selectedProvider
-        model.selectDashboardPeriod(.fiveHour)
-        XCTAssertEqual(defaults.string(forKey: "quotaDashboardPeriod"), "5h")
-        let rebuilt = IslandModel(demo: true, defaults: defaults,
-            installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
-        XCTAssertEqual(rebuilt.dashboardPeriod, .fiveHour)
-        rebuilt.selectDashboardPeriod(.weekly)
-        XCTAssertEqual(defaults.string(forKey: "quotaDashboardPeriod"), "7d")
+        XCTAssertEqual(QuotaDashboardLayout.slots(providers: model.enabledProviders).map(\.period), [.weekly, .weekly],
+            "A 5h choice from the removed switch cannot hide the weekly rings")
+        XCTAssertEqual(defaults.string(forKey: "quotaDashboardPeriod"), "5h", "Loading leaves removal to the next Settings save")
         XCTAssertEqual(model.selectedProvider, provider)
         XCTAssertEqual(defaults.string(forKey: "quotaWindowID"), "codex/custom")
         XCTAssertEqual(defaults.string(forKey: "claudeQuotaWindowID"), "claude/custom")

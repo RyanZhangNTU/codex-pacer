@@ -70,31 +70,27 @@ final class QuotaDashboardLayoutTests: XCTestCase {
         XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: unspecified))
     }
 
-    func testBothProvidersSharePeriodWithoutDependingOnProviderSelectionOrder() {
-        for period in QuotaDashboardPeriod.allCases {
-            let slots = QuotaDashboardLayout.slots(providers: [.claude, .codex], selectedPeriod: period)
-            XCTAssertEqual(slots.map(\.provider), [.codex, .claude])
-            XCTAssertEqual(slots.map(\.period), [period, period])
-            XCTAssertTrue(slots.allSatisfy(\.identifiesProvider))
-            XCTAssertEqual(Set(slots.map(\.id)).count, 2)
-        }
+    func testBothProvidersShareTheWeeklyRingWithoutDependingOnProviderSelectionOrder() {
+        let slots = QuotaDashboardLayout.slots(providers: [.claude, .codex])
+        XCTAssertEqual(slots.map(\.provider), [.codex, .claude])
+        XCTAssertEqual(slots.map(\.period), [.weekly, .weekly], "5h appears one line below each ring instead of behind a switch")
+        XCTAssertTrue(slots.allSatisfy(\.identifiesProvider))
+        XCTAssertEqual(Set(slots.map(\.id)).count, 2)
     }
 
     func testSingleProviderAlwaysShowsBothPeriodsWhenOtherModuleIsDisabled() {
         for provider in AgentProvider.allCases {
-            for selected in QuotaDashboardPeriod.allCases {
-                let slots = QuotaDashboardLayout.slots(providers: [provider], selectedPeriod: selected)
-                XCTAssertEqual(slots.map(\.provider), [provider, provider])
-                XCTAssertEqual(slots.map(\.period), [.fiveHour, .weekly])
-                XCTAssertFalse(slots.contains(where: \.identifiesProvider))
-                XCTAssertEqual(Set(slots.map(\.id)).count, 2)
-            }
+            let slots = QuotaDashboardLayout.slots(providers: [provider])
+            XCTAssertEqual(slots.map(\.provider), [provider, provider])
+            XCTAssertEqual(slots.map(\.period), [.fiveHour, .weekly])
+            XCTAssertFalse(slots.contains(where: \.identifiesProvider))
+            XCTAssertEqual(Set(slots.map(\.id)).count, 2)
         }
     }
 
     func testNoEnabledModuleProducesNoQuotaSlotAndRepeatedIdentityCannotDuplicateRings() {
-        XCTAssertTrue(QuotaDashboardLayout.slots(providers: [], selectedPeriod: .weekly).isEmpty)
-        let slots = QuotaDashboardLayout.slots(providers: [.claude, .claude], selectedPeriod: .fiveHour)
+        XCTAssertTrue(QuotaDashboardLayout.slots(providers: []).isEmpty)
+        let slots = QuotaDashboardLayout.slots(providers: [.claude, .claude])
         XCTAssertEqual(slots.map(\.provider), [.claude, .claude])
         XCTAssertEqual(slots.map(\.period), [.fiveHour, .weekly])
     }

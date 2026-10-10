@@ -127,37 +127,6 @@ struct IslandIconButton: View {
     }
 }
 
-/// Compact segmented control matching the island's quiet surfaces.
-struct IslandSegmentedControl<Value: Hashable>: View {
-    let options: [Value]
-    let selection: Value
-    let label: (Value) -> String
-    let accessibilityLabel: (Value) -> String
-    let onSelect: (Value) -> Void
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options, id: \.self) { option in
-                let selected = option == selection
-                Button { onSelect(option) } label: {
-                    Text(label(option))
-                        .font(.system(size: 11, weight: selected ? .semibold : .medium))
-                        .foregroundStyle(selected ? PacerPalette.primary : PacerPalette.secondary)
-                        .frame(minWidth: 30).padding(.horizontal, 4).frame(height: 20)
-                        .background(selected ? Color.white.opacity(0.12) : .clear,
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(accessibilityLabel(option))
-                .accessibilityValue(L10n.text(selected ? "provider.selected" : "provider.not_selected"))
-            }
-        }
-        .padding(2)
-        .background(PacerPalette.fill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
 struct Hairline: View {
     var body: some View { Rectangle().fill(PacerPalette.hairline).frame(height: 1) }
 }

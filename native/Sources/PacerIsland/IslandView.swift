@@ -112,13 +112,7 @@ private struct IslandExpandedContent: View {
         VStack(alignment: .leading, spacing: 10) {
             let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
             IslandSectionHeader(title: L10n.text("layout.group.quota"), detail: single?.displayName,
-                detailColor: single?.tint ?? PacerPalette.tertiary) {
-                if model.enabledProviders.count > 1 {
-                    IslandSegmentedControl(options: QuotaDashboardPeriod.allCases, selection: model.dashboardPeriod,
-                        label: \.rawValue, accessibilityLabel: \.accessibilityLabel) { model.selectDashboardPeriod($0) }
-                        .help(L10n.text("dashboard.period_help"))
-                }
-            }
+                detailColor: single?.tint ?? PacerPalette.tertiary)
             if model.enabledProviders.isEmpty {
                 HStack(spacing: 12) {
                     Text(L10n.text("provider.none_enabled")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)

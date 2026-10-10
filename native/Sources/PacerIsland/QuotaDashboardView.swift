@@ -18,7 +18,9 @@ enum QuotaDashboardLayout {
         }
     }
 
-    static func slots(providers: [AgentProvider], selectedPeriod: QuotaDashboardPeriod) -> [QuotaDashboardSlot] {
+    /// Two providers share the weekly ring with 5h one line below each; one
+    /// provider shows both periods as rings. There is no period switch.
+    static func slots(providers: [AgentProvider]) -> [QuotaDashboardSlot] {
         let enabled = Set(providers)
         let ordered = AgentProvider.allCases.filter { enabled.contains($0) }
         if let provider = ordered.first, ordered.count == 1 {
@@ -26,7 +28,7 @@ enum QuotaDashboardLayout {
                 QuotaDashboardSlot(provider: provider, period: $0, identifiesProvider: false)
             }
         }
-        return ordered.map { QuotaDashboardSlot(provider: $0, period: selectedPeriod, identifiesProvider: true) }
+        return ordered.map { QuotaDashboardSlot(provider: $0, period: .weekly, identifiesProvider: true) }
     }
 }
 
@@ -39,7 +41,7 @@ extension QuotaDashboardPeriod {
 struct QuotaDashboardView: View {
     @ObservedObject var model: IslandModel
     private var slots: [QuotaDashboardSlot] {
-        QuotaDashboardLayout.slots(providers: model.enabledProviders, selectedPeriod: model.dashboardPeriod)
+        QuotaDashboardLayout.slots(providers: model.enabledProviders)
     }
 
     var body: some View {
@@ -171,6 +173,10 @@ struct QuotaDashboardRingView: View {
                 if identifiesProvider { Circle().fill(quota.provider.tint).frame(width: 6, height: 6) }
                 Text(title).font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(identifiesProvider ? PacerPalette.primary : PacerPalette.secondary)
+                if identifiesProvider {
+                    // Without a period switch, the ring names its own window.
+                    Text(quota.period.rawValue).font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+                }
                 if let verdict {
                     let tint = verdict.tint
                     Text(verdict.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(tint)

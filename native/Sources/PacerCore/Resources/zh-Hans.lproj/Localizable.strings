@@ -31,8 +31,6 @@
 "provider.automatic" = "自动";
 "provider.module_help" = "默认根据已安装应用启用模块；手动选择优先。保存后生效。";
 "provider.restore_automatic" = "恢复自动检测";
-"provider.selected" = "已选择";
-"provider.not_selected" = "未选择";
 "provider.none_enabled" = "在设置中启用模块，即可查看任务和额度。";
 "provider.compact_quota" = "%1$@：%2$@";
 "provider.compact_time" = "%1$@ 额度窗口剩余时间：%2$@";
@@ -472,7 +470,6 @@
 "dashboard.time_remaining" = "剩余时间 %@";
 "dashboard.rings_help" = "圆环显示剩余额度，白色刻度标出按时间均匀使用时应剩的位置。";
 "dashboard.rings_accessibility" = "%1$@，%2$@。剩余额度：%3$@。剩余时间：%4$@。%5$@";
-"dashboard.period_help" = "选择两个服务共同显示的额度周期。";
 "dashboard.pro" = "PRO";
 "dashboard.pro_help" = "目前仅返回每周额度限制，没有五小时限制。";
 "dashboard.provider_unavailable" = "%@ 额度不可用";

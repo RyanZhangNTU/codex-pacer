@@ -31,8 +31,6 @@
 "provider.automatic" = "Automatic";
 "provider.module_help" = "Modules follow installed apps until you choose a setting. Changes apply on Save.";
 "provider.restore_automatic" = "Use Automatic";
-"provider.selected" = "Selected";
-"provider.not_selected" = "Not selected";
 "provider.none_enabled" = "Enable a module in Settings to see tasks and quota.";
 "provider.compact_quota" = "%1$@: %2$@";
 "provider.compact_time" = "%1$@ window time remaining: %2$@";
@@ -472,7 +470,6 @@
 "dashboard.time_remaining" = "Time left %@";
 "dashboard.rings_help" = "Ring: remaining quota. White tick: where it would be at an even pace.";
 "dashboard.rings_accessibility" = "%1$@, %2$@. Remaining quota: %3$@. Remaining time: %4$@. %5$@";
-"dashboard.period_help" = "Choose the quota period for both providers.";
 "dashboard.pro" = "PRO";
 "dashboard.pro_help" = "Only a weekly quota limit is reported; no five-hour limit is present.";
 "dashboard.provider_unavailable" = "%@ quota unavailable";

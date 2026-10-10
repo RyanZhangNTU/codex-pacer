@@ -70,7 +70,6 @@ final class IslandModel: ObservableObject {
     @Published private(set) var claudeQuotaSource: ClaudeQuotaSource?
     @Published private(set) var selectedProvider: AgentProvider = .codex
     @Published private(set) var enabledProviders: [AgentProvider] = []
-    @Published private(set) var dashboardPeriod: QuotaDashboardPeriod = .weekly
     private var installation: ProviderInstallationDetection
     private let installationOverride: ProviderInstallationDetection?
     private let defaults: UserDefaults
@@ -102,12 +101,6 @@ final class IslandModel: ObservableObject {
     }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? { provider == .codex ? codexQuota : claudeQuota }
     func providerQuotaError(_ provider: AgentProvider) -> String? { provider == .codex ? codexErrorMessage : claudeErrorMessage }
-    func selectDashboardPeriod(_ period: QuotaDashboardPeriod) {
-        guard dashboardPeriod != period else { return }
-        dashboardPeriod = period
-        defaults.set(period.rawValue, forKey: "quotaDashboardPeriod")
-        onStatusChange?()
-    }
     private func providerDashboardBucket(_ provider: AgentProvider) -> QuotaBucket? {
         guard let snapshot = providerQuota(provider) else { return nil }
         let selected = defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
@@ -576,7 +569,6 @@ final class IslandModel: ObservableObject {
         self.modules = .load(from: defaults)
         self.demo = demo
         self.demoClock = demoClock
-        dashboardPeriod = defaults.string(forKey: "quotaDashboardPeriod").flatMap(QuotaDashboardPeriod.init(rawValue:)) ?? .weekly
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
