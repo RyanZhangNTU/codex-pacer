@@ -35,7 +35,6 @@
 "provider.compact_quota" = "%1$@: %2$@";
 "provider.compact_time" = "%1$@ window time remaining: %2$@";
 "provider.window_selection" = "%@ quota window";
-"provider.codex_source" = "Codex Sources";
 "provider.claude_source" = "Claude Sources";
 "provider.claude_home" = "Claude home";
 "provider.choose_claude_home" = "Choose the Claude configuration folder";
@@ -294,7 +293,6 @@
 "settings.compact_metric" = "Show As";
 "settings.completion_reminder" = "Turn Finished or Interrupted";
 "settings.connection_succeeded" = "Connected. Quota windows read: %ld.";
-"settings.connections" = "Connected sources: %1$ld · Active chats: %2$ld";
 "settings.corner_radius" = "Corner Radius";
 "settings.data_source" = "Sources";
 "settings.detected_cli" = "Executable found · %@";
@@ -347,7 +345,6 @@
 "settings.rescan" = "Rescan";
 "settings.retention" = "Keep Finished Tasks";
 "settings.ssh_unavailable" = "Disconnected SSH Sources";
-"settings.subscriptions" = "Live Subscriptions";
 "settings.system_notifications" = "Also Use System Notifications";
 "settings.test_connection" = "Test Connection";
 "settings.testing" = "Testing…";
@@ -522,3 +519,18 @@
 "help.action.menu" = "Right-click the bar for Settings or Quit; the expanded ⋯ menu refreshes or quits.";
 "help.link.guide" = "User Guide";
 "help.link.issues" = "Report an Issue";
+"connections.section.tasks" = "Task Sources";
+"connections.kind.ssh" = "SSH";
+"connections.kind.remote_control" = "Remote Control";
+"connections.state.connected" = "Connected";
+"connections.state.retrying" = "Disconnected, retrying";
+"connections.state.paused" = "%@ not installed, paused";
+"connections.sessions" = "%ld sessions";
+"connections.sessions_one" = "%ld session";
+"connections.retry" = "Retry";
+"connections.summary.ok" = "All sources connected";
+"connections.summary.checking" = "Checking sources";
+"connections.summary.retrying" = "%ld sources retrying";
+"connections.summary.retrying_one" = "%ld source retrying";
+"connections.summary.detail" = "%ld sources · %ld running sessions";
+"connections.footer" = "The island shows no connection alerts; when tasks are missing, check here which source has a problem.";

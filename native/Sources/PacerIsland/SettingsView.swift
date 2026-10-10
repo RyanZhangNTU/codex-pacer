@@ -240,16 +240,8 @@ struct SettingsView: View {
         case .help:
             SettingsHelpPane()
         case .connections:
-            Section(L10n.text("settings.data_source")) {
-                Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
-                    .disabled(!moduleEnabled(.codex) && !moduleEnabled(.claude))
-            }
-            Section(L10n.text("settings.subscriptions")) {
-                let statuses = model.enabledProviders.flatMap { Array(model.providerStreamStatuses($0).values) }
-                let connected = statuses.filter(\.connected).count
-                let attached = statuses.reduce(0) { $0 + $1.attachedThreads }
-                Text(L10n.text("settings.connections", connected, attached)).monospacedDigit()
-            }
+            SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
+                codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         }
     }
 
@@ -324,15 +316,6 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var codexSourceSections: some View {
-        Section(L10n.text("provider.codex_source")) {
-            Toggle(isOn: $monitorRemoteControl) {
-                Text(L10n.text("settings.monitor_remote_control"))
-                Text(L10n.text("settings.remote_control_help"))
-            }
-            if monitorSSH, !model.unavailableSSH.isEmpty {
-                sshFailures(model.unavailableSSH)
-            }
-        }
         Section(L10n.text("settings.section.cli")) {
             HStack {
                 TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))

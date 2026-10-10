@@ -454,6 +454,23 @@ final class ProviderDisplayTests: XCTestCase {
         }
     }
 
+    func testConnectionSourcesListProblemsFirstWithoutInventingSessionsOrDuplicates() {
+        func status(_ connected: Bool, threads: Int = 0, available: Bool? = nil) -> RuntimeStreamStatus {
+            var value = RuntimeStreamStatus(); value.connected = connected; value.attachedThreads = threads; value.sourceAvailable = available
+            return value
+        }
+        let sources = ConnectionSource.sources(statuses: [
+            .codex: ["local": status(true, threads: 2), "remote-ssh-discovered:build-box": status(false, threads: 3),
+                     "remote-control:abc": status(true, threads: 1)],
+            .claude: ["local": status(true, threads: 1), "remote-ssh-discovered:gpu": status(false, available: false)]],
+            unavailableSSH: ["lab", "build-box"], names: ["remote-control:abc": "Studio"])
+        XCTAssertEqual(sources.map(\.name), ["build-box", "lab", "gpu", L10n.text("common.local"), "Studio", L10n.text("common.local")])
+        XCTAssertEqual(sources.map(\.state), [.retrying, .retrying, .paused, .connected, .connected, .connected])
+        XCTAssertEqual(sources.map(\.provider), [.codex, .codex, .claude, .codex, .codex, .claude])
+        XCTAssertEqual(sources.map(\.sessions), [0, 0, 0, 2, 1, 1], "Only connected sources report subscribed sessions")
+        XCTAssertEqual(Set(sources.map(\.id)).count, sources.count, "A failed Codex host listed twice appears once")
+    }
+
     func testDisablingBothModulesLeavesNoQuotaOrTaskComponentsAndRejectsTabSelection() async throws {
         let fixture = try fixture(), model = fixture.model
         defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }

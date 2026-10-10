@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Turn the Connections pane into a diagnostics page: a status summary, every task source with problems first and a retry action, quota freshness per provider, and the SSH and Codex Remote Control switches together. Paused hosts without the provider are distinguished from disconnected ones.
+
 - Add a concise Help pane at the bottom of the Settings sidebar: a legend drawn with the real island components, the main interactions, and links to the user guide and issue tracker.
 
 - Redesign the Collapsed Bar settings page: one preview card with a bar-shaped, wrapping lane strip and the width controls, then grouped switch rows with descriptions whose options appear beneath them; redundant help text is removed and the preview stage adapts to light and dark appearance.

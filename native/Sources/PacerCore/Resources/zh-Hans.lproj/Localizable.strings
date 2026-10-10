@@ -35,7 +35,6 @@
 "provider.compact_quota" = "%1$@：%2$@";
 "provider.compact_time" = "%1$@ 额度窗口剩余时间：%2$@";
 "provider.window_selection" = "%@ 额度窗口";
-"provider.codex_source" = "Codex 数据来源";
 "provider.claude_source" = "Claude 数据来源";
 "provider.claude_home" = "Claude 配置目录";
 "provider.choose_claude_home" = "选择 Claude 配置目录";
@@ -294,7 +293,6 @@
 "settings.compact_metric" = "显示为";
 "settings.completion_reminder" = "本轮结束或中断提醒";
 "settings.connection_succeeded" = "连接成功：已读取 %ld 个额度窗口。";
-"settings.connections" = "连接 %1$ld 个来源，订阅 %2$ld 个运行会话";
 "settings.corner_radius" = "圆角";
 "settings.data_source" = "数据来源";
 "settings.detected_cli" = "检测到可执行文件 · %@";
@@ -347,7 +345,6 @@
 "settings.rescan" = "重新检测";
 "settings.retention" = "结束任务保留";
 "settings.ssh_unavailable" = "未连接的 SSH 来源";
-"settings.subscriptions" = "实时订阅";
 "settings.system_notifications" = "同时使用系统通知";
 "settings.test_connection" = "测试连接";
 "settings.testing" = "正在测试…";
@@ -522,3 +519,18 @@
 "help.action.menu" = "右键折叠栏可打开设置或退出；展开后的 ⋯ 菜单可刷新或退出。";
 "help.link.guide" = "使用说明";
 "help.link.issues" = "反馈问题";
+"connections.section.tasks" = "任务来源";
+"connections.kind.ssh" = "SSH";
+"connections.kind.remote_control" = "Remote Control";
+"connections.state.connected" = "已连接";
+"connections.state.retrying" = "未连接，正在重试";
+"connections.state.paused" = "未安装 %@，已暂停";
+"connections.sessions" = "%ld 个会话";
+"connections.sessions_one" = "%ld 个会话";
+"connections.retry" = "重试";
+"connections.summary.ok" = "全部来源已连接";
+"connections.summary.checking" = "正在检查来源";
+"connections.summary.retrying" = "%ld 个来源正在重试";
+"connections.summary.retrying_one" = "%ld 个来源正在重试";
+"connections.summary.detail" = "%ld 个来源 · %ld 个运行会话";
+"connections.footer" = "折叠栏不显示连接提醒；任务没有出现时，在这里查看是哪个来源出了问题。";
