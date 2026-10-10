@@ -181,7 +181,6 @@
 "cli.unsupported_server" = "当前 CLI 可能不支持 app-server，请更新 Codex 或重新选择 CLI。";
 "common.cancel" = "取消";
 "common.choose" = "选择…";
-"common.collapse" = "收起";
 "common.local" = "本机";
 "common.not_updated" = "未更新";
 "common.not_viewed" = "未查看";

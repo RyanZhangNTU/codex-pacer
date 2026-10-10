@@ -112,7 +112,7 @@ private struct LegacyCodexQuotaView: View {
             }
             QuotaProviderStatusView(model: model, provider: .codex, period: nil).frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 10).padding(.bottom, 4)
+        .padding(.horizontal, IslandMetrics.rowInset).padding(.bottom, 4)
         .help([model.providerSourceText(.codex), model.providerFreshnessText(.codex)].compactMap { $0 }.joined(separator: "\n"))
     }
 }

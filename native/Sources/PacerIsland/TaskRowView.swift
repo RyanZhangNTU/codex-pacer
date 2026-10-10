@@ -117,7 +117,7 @@ struct TaskRowView: View {
             Spacer(minLength: 12)
             metrics
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
+        .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
     private var separator: some View {

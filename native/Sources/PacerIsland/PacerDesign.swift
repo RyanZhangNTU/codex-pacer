@@ -23,6 +23,15 @@ extension AgentProvider {
     var glyph: String { self == .codex ? "chevron.left.forwardslash.chevron.right" : "asterisk" }
 }
 
+/// Expanded content aligns with the collapsed header: sections sit `edgeInset`
+/// from the island and pad by `rowInset`, so icons, titles and values start on
+/// the header's 15-point line while row highlights reach close to the edge.
+enum IslandMetrics {
+    static let headerInset: CGFloat = 15
+    static let edgeInset: CGFloat = 6
+    static let rowInset: CGFloat = headerInset - edgeInset
+}
+
 /// Countdowns and elapsed turns share one coarse wording, e.g. 3天 4小时,
 /// 2小时 9分 or <1分, so a two-second clock never makes text flicker.
 enum CompactDuration {
@@ -91,8 +100,8 @@ struct IslandSectionHeader<Trailing: View>: View {
             Spacer(minLength: 8)
             trailing()
         }
-        .frame(height: 26)
-        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .padding(.horizontal, IslandMetrics.rowInset)
     }
 }
 

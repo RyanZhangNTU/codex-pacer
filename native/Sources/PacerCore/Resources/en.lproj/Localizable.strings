@@ -181,7 +181,6 @@
 "cli.unsupported_server" = "This CLI may not support app-server. Update Codex or select another CLI.";
 "common.cancel" = "Cancel";
 "common.choose" = "Choose…";
-"common.collapse" = "Collapse";
 "common.local" = "Local";
 "common.not_updated" = "Not updated";
 "common.not_viewed" = "Unread";

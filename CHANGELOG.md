@@ -2,9 +2,11 @@
 
 ## 3.0.0 (development candidate)
 
+- Align expanded island content with the header's 15-point edges and tighten section spacing, without changing the adaptive or specified panel width rules; the more-actions menu keeps only refresh and quit.
+
 - Replace the separate collapsed Codex and Claude quota values with one quota value that alternates between enabled modules every 4 seconds (remaining or pace) and optional quota rings showing both at once; both are on by default. A 5h warning shows an outlined capsule below 20% and a solid one when exhausted, tinted by provider. Layout schema 6 migrates saved layouts, and the Settings quota options follow the components that use them.
 
-- Refine the everyday expanded island: quota rings mark an even pace with a white tick and an ahead/on-pace/fast verdict instead of an inner time ring, rings show 7d with 5h one line below each ring in place of the period switch, running rows show their turn's elapsed time, and panel actions move from the footer into the task header with refresh, collapse and quit in one menu. The expanded header quiets repeated quota values; starting tasks use an hourglass.
+- Refine the everyday expanded island: quota rings mark an even pace with a white tick and an ahead/on-pace/fast verdict instead of an inner time ring, rings show 7d with 5h one line below each ring in place of the period switch, running rows show their turn's elapsed time, and panel actions move from the footer into the task header with refresh and quit in one menu. The expanded header quiets repeated quota values; starting tasks use an hourglass.
 
 - Merge the collapsed status icon and task count into one activity badge. A provider-colored comet orbits while tasks run, a solid amber fill asks for input or approval, and unread endings fill the core or show as a corner mark. The number always counts active tasks; a single task can show its stage or its count. Status text leaves the default layout but stays optional. The orbit runs in Core Animation, pauses while occluded and stays static with Reduce Motion.
 

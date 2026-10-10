@@ -19,9 +19,9 @@ struct IslandView: View {
             // capsule frame only stops motion rather than changing its subtree.
             if model.expanded || presentation.contentVisibility > 0 {
                 IslandExpandedContent(model: model)
-                    .frame(width: max(0, presentation.canvas.width - 46),
+                    .frame(width: max(0, presentation.canvas.width - 2 * IslandMetrics.edgeInset),
                            height: max(0, presentation.canvas.height - model.topHeight), alignment: .top)
-                    .padding(.horizontal, 23)
+                    .padding(.horizontal, IslandMetrics.edgeInset)
                     .opacity(presentation.contentVisibility)
                     .offset(y: model.topHeight + (1 - presentation.contentVisibility) * 8)
                     .allowsHitTesting(model.expanded && presentation.contentVisibility > 0.95)
@@ -58,7 +58,7 @@ private struct IslandExpandedContent: View {
             DispatchQueue.main.async { model.updateMeasuredContentHeight(height + Self.bottomInset) }
         }
         .onPreferenceChange(TaskRowIdealWidth.self) { width in
-            DispatchQueue.main.async { model.updateMeasuredContentWidth(width > 0 ? width + 46 : 0) }
+            DispatchQueue.main.async { model.updateMeasuredContentWidth(width > 0 ? width + 2 * IslandMetrics.edgeInset : 0) }
         }
     }
 
@@ -70,16 +70,16 @@ private struct IslandExpandedContent: View {
                     Text(L10n.text("notice.body", notice.title, notice.detail))
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.primary).lineLimit(2)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(PacerPalette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .padding(.bottom, 8)
             }
             taskContent
-            Hairline().padding(.horizontal, 10).padding(.vertical, 12)
+            Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
             quotaContent
         }
-        .padding(.top, 6)
+        .padding(.top, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { geometry in
@@ -95,7 +95,7 @@ private struct IslandExpandedContent: View {
                     StatusTile(symbol: StatusSymbols.idle, tint: PacerPalette.secondary)
                     Text(L10n.text("activity.no_tasks")).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.secondary)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 8)
+                .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
             }
         } else {
             TaskPagerView(model: model)
@@ -104,12 +104,12 @@ private struct IslandExpandedContent: View {
             Label(error, systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 10).padding(.top, 6)
+                .padding(.horizontal, IslandMetrics.rowInset).padding(.top, 6)
         }
     }
 
     private var quotaContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
             IslandSectionHeader(title: L10n.text("layout.group.quota"), detail: single?.displayName,
                 detailColor: single?.tint ?? PacerPalette.tertiary)
@@ -120,7 +120,7 @@ private struct IslandExpandedContent: View {
                     Button(L10n.text("common.open_settings")) { model.onSettings?() }
                         .font(.system(size: 12, weight: .medium)).buttonStyle(.plain).foregroundStyle(PacerPalette.primary)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 8)
+                .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
             } else {
                 QuotaDashboardView(model: model)
             }
@@ -129,7 +129,8 @@ private struct IslandExpandedContent: View {
 }
 
 /// Panel actions sit at the right of the task header. Pin and Settings stay
-/// one click away; refresh, collapse and quit are rare and share one menu.
+/// one click away; refresh and quit are rare and share one menu. Collapsing
+/// needs no control: moving away, Escape or unpinning closes the panel.
 struct IslandPanelControls: View {
     @ObservedObject var model: IslandModel
     @State private var hovered = false
@@ -148,7 +149,6 @@ struct IslandPanelControls: View {
             Menu {
                 Button(L10n.text("common.refresh")) { model.refreshQuota(); model.refreshTaskSources() }
                     .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
-                Button(L10n.text("common.collapse")) { model.close() }
                 Divider()
                 Button(L10n.text("common.quit")) { model.onQuit?() }
             } label: {

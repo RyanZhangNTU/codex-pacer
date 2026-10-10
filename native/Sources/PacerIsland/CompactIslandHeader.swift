@@ -48,11 +48,11 @@ struct CompactIslandHeader: View {
 
     var body: some View {
         rowView
-            .padding(.horizontal, 15)
+            .padding(.horizontal, IslandMetrics.headerInset)
             .frame(height: baseHeight)
             .background {
                 rowView.fixedSize().background(GeometryReader { geometry in
-                    Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 30)
+                    Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 2 * IslandMetrics.headerInset)
                 }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
         .onPreferenceChange(CompactHeaderIdealWidth.self) { width in
