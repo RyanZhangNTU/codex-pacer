@@ -8,6 +8,15 @@ struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
 
     var body: some View {
+        Section(L10n.text("help.section.colors")) {
+            row("help.codex") { ProviderColorSample(provider: .codex) }
+            row("help.claude") { ProviderColorSample(provider: .claude) }
+            row("help.alert") {
+                ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [:], attention: .input))
+                StatusTile(symbol: StatusSymbols.failed, tint: PacerPalette.danger, size: 20)
+                Circle().fill(PacerPalette.tertiary).frame(width: 6, height: 6)
+            }
+        }
         Section(L10n.text("help.section.collapsed")) {
             row("help.tasks") {
                 ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
@@ -74,6 +83,19 @@ struct SettingsHelpPane: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A provider's color as the island uses it: its tile and a quota value.
+private struct ProviderColorSample: View {
+    let provider: AgentProvider
+
+    var body: some View {
+        Image(systemName: provider.glyph).font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Color.black.opacity(0.72))
+            .frame(width: 18, height: 18)
+            .background(provider.tint, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        Text("58%").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(provider.tint)
     }
 }
 

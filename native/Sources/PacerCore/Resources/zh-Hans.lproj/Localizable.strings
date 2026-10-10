@@ -534,3 +534,10 @@
 "connections.summary.retrying_one" = "%ld 个来源正在重试";
 "connections.summary.detail" = "%ld 个来源 · %ld 个运行会话";
 "connections.footer" = "折叠栏不显示连接提醒；任务没有出现时，在这里查看是哪个来源出了问题。";
+"help.section.colors" = "颜色";
+"help.codex.title" = "Codex";
+"help.codex.detail" = "青绿色代表 Codex：它的任务行、额度环、额度数值和 5h 警告都使用这一颜色。";
+"help.claude.title" = "Claude";
+"help.claude.detail" = "暖橙色代表 Claude，用法与 Codex 的青绿色相同。";
+"help.alert.title" = "提醒与异常";
+"help.alert.detail" = "琥珀色只用于等待你处理的任务和警告，红色表示失败，灰色表示空闲、暂停或数据过期。";

@@ -534,3 +534,10 @@
 "connections.summary.retrying_one" = "%ld source retrying";
 "connections.summary.detail" = "%ld sources · %ld running sessions";
 "connections.footer" = "The island shows no connection alerts; when tasks are missing, check here which source has a problem.";
+"help.section.colors" = "Colors";
+"help.codex.title" = "Codex";
+"help.codex.detail" = "Teal stands for Codex: its task rows, quota rings, quota values and 5h warnings use it.";
+"help.claude.title" = "Claude";
+"help.claude.detail" = "Warm orange stands for Claude, used the same way as Codex’s teal.";
+"help.alert.title" = "Alerts and problems";
+"help.alert.detail" = "Amber is reserved for tasks that need you and for warnings, red means failed, and gray means idle, paused or out of date.";
