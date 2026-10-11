@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var updater: AppUpdater
     @ObservedObject var notificationPreference: SystemNotificationPreference
     let onClose: () -> Void
+    var onShowWelcome: () -> Void = {}
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var modules = ProviderModules.load()
@@ -212,7 +213,7 @@ struct SettingsView: View {
         case .codex, .claude:
             if let provider = pane.provider { providerPane(provider) }
         case .help:
-            SettingsHelpPane()
+            SettingsHelpPane(onShowWelcome: onShowWelcome)
         case .connections:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
@@ -707,7 +708,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 }
 
 /// System Settings style navigation tile.
-private struct SettingsIconTile: View {
+struct SettingsIconTile: View {
     let symbol: String
     let tint: Color
     var glyph: Color = .white

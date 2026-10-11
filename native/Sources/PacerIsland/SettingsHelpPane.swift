@@ -6,6 +6,7 @@ import SwiftUI
 /// and reads in both light and dark Settings.
 struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
+    var onShowWelcome: (() -> Void)?
 
     var body: some View {
         Section(L10n.text("help.section.colors")) {
@@ -59,6 +60,10 @@ struct SettingsHelpPane: View {
             Label(L10n.text("help.action.menu"), systemImage: "contextualmenu.and.cursorarrow")
         }
         Section(L10n.text("help.section.more")) {
+            if let onShowWelcome {
+                Button(action: onShowWelcome) { Label(L10n.text("help.show_welcome"), systemImage: "hand.wave") }
+                    .buttonStyle(.link)
+            }
             Link(destination: URL(string: Self.repository + (L10n.language == .simplifiedChinese ? "/blob/main/README.zh-CN.md" : "#readme"))!) {
                 Label(L10n.text("help.link.guide"), systemImage: "book")
             }

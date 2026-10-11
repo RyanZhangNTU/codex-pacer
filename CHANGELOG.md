@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Rework the welcome guide into two short steps without scrolling. Step 1 introduces the island with the real collapsed bar on a desktop: callouts for tasks, speed, quota and warnings, the three badge states, and a small island that opens and closes with the real spring as the pointer hovers and leaves. Step 2 lets people choose what to follow: Codex and Claude cards with their own switches and status (ready, not found, or sign in), plus shortcuts to customize the collapsed bar and turn on system notifications. The full legend stays in Settings → Help, which can also show the guide again.
+
 - Simplify Reminders to the collapsed-bar warnings, one System Notifications switch and ended-task retention. Replies, approvals, endings and quota already show in the collapsed bar, so the expanded island no longer repeats them as a banner and the separate On the Island switches are gone; those states always show on the bar. System Notifications, when on, covers new reply or approval requests, turn endings and quota reaching 15%. The retired switches are cleared on the next settings change.
 
 - Choose each provider's collapsed quota window as 5 hours or 7 days instead of from every reported service window. Both come from the provider's own account bucket; a weekly-only account such as Codex Pro shows 7 days without a choice, and a saved 5-hour choice falls back to 7 days; the expanded rings use the same bucket. Earlier saved windows read as the matching period until a new choice.

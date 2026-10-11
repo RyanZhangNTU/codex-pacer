@@ -366,10 +366,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.center()
             settingsWindow = window
         }
+        // The guide's module switches would race Settings' own copy, so
+        // Settings closes (and applies pending changes) before it opens.
         settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater,
-            notificationPreference: notificationPreference) { [weak self] in
-            self?.closeSettings()
-        })
+            notificationPreference: notificationPreference,
+            onClose: { [weak self] in self?.closeSettings() },
+            onShowWelcome: { [weak self] in self?.closeSettings(); self?.showWelcome() }))
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -381,7 +383,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func showWelcome() {
         if welcomeWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: WelcomeView.size),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = L10n.text("welcome.window_title")
             window.isReleasedWhenClosed = false
@@ -389,9 +391,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.center()
             welcomeWindow = window
         }
-        welcomeWindow?.contentView = NSHostingView(rootView: WelcomeView(model: model, onOpenSettings: { [weak self] pane in
-            self?.closeWelcome(); self?.showSettingsPane(pane)
-        }, onDone: { [weak self] in self?.closeWelcome() }))
+        welcomeWindow?.contentView = NSHostingView(rootView: WelcomeView(model: model, notificationPreference: notificationPreference,
+            onOpenSettings: { [weak self] pane in self?.closeWelcome(); self?.showSettingsPane(pane) },
+            onDone: { [weak self] in self?.closeWelcome() }))
         welcomeWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

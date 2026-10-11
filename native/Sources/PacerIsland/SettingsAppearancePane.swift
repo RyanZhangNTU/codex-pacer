@@ -102,7 +102,7 @@ struct SettingsAppearancePane: View {
 }
 
 /// A soft desktop so translucency has something to show through.
-private struct Wallpaper: View {
+struct Wallpaper: View {
     var body: some View {
         ZStack {
             LinearGradient(colors: [Color(red: 0.24, green: 0.3, blue: 0.47), Color(red: 0.45, green: 0.38, blue: 0.56),
