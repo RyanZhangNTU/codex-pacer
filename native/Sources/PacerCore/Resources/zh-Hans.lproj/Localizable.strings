@@ -189,8 +189,6 @@
 "common.restore_defaults" = "恢复默认";
 "common.retry" = "重新检测并重试";
 "common.retrying" = "正在重试…";
-"common.save" = "保存";
-"common.saving" = "正在保存";
 "common.settings" = "设置";
 "common.settings_menu" = "设置…";
 "common.unknown" = "未知";
@@ -219,9 +217,9 @@
 "glass.warm" = "暖色";
 "language.label" = "界面语言";
 "language.missing_helper" = "重启组件缺失。";
-"language.restart_failed" = "设置已保存，但无法自动重启 Codex Pacer。请退出并重新打开应用。\n%1$@";
-"language.restart_hint" = "保存后将重启 Codex Pacer，以应用所选语言。";
-"language.save_restart" = "保存并重启";
+"language.restart_failed" = "无法自动重启 Codex Pacer，请退出后重新打开。\n%1$@";
+"language.restart_hint" = "重启 Codex Pacer 后切换为所选语言。";
+"language.restart_now" = "立即重启";
 "language.system" = "跟随 macOS";
 "language.update_busy" = "正在检查或安装更新，请结束后再切换语言。";
 "menu.open_codex" = "打开 Codex";
@@ -274,7 +272,6 @@
 "redaction.hidden" = "[已隐藏]";
 "redaction.key" = "[密钥已隐藏]";
 "redaction.token" = "[令牌已隐藏]";
-"settings.applies_on_save" = "保存后立即应用";
 "settings.auto_discovery" = "自动查找";
 "settings.auto_weekly" = "自动，优先 7 天窗口";
 "settings.automatic" = "自动";
@@ -335,7 +332,7 @@
 "settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
 "settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";
 "settings.notch" = "刘海";
-"settings.notification_denied" = "其他设置已保存。系统通知未授权，状态岛提醒仍可使用。";
+"settings.notification_denied" = "系统通知未获授权，岛上提醒照常显示。";
 "settings.one_hour" = "1 小时";
 "settings.other_locations" = "其他位置";
 "settings.pace_percentage" = "配速百分比";

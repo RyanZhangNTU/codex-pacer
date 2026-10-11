@@ -17,7 +17,7 @@ enum IslandAppearance: String, CaseIterable {
     }
 }
 
-struct IslandGlassSettings {
+struct IslandGlassSettings: Equatable {
     enum Style: String, CaseIterable {
         case regular, clear
         var label: String { self == .regular ? L10n.text("glass.regular") : L10n.text("glass.clear") }

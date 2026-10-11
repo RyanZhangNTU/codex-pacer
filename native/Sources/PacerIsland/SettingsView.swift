@@ -32,9 +32,14 @@ struct SettingsView: View {
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var monitorRemoteControl = UserDefaults.standard.object(forKey: "monitorRemoteControl") == nil || UserDefaults.standard.bool(forKey: "monitorRemoteControl")
-    @State private var validation: String?
-    @State private var saving = false
     @State private var language = LanguagePreference.load()
+    @State private var languageError: String?
+    @State private var notificationDenied = false
+    /// Text settings commit on Return, focus loss, a chooser or window close;
+    /// an invalid value keeps the last valid one and explains why here.
+    @State private var textIssues: [TextSetting: String] = [:]
+    @FocusState private var focusedText: TextSetting?
+    @State private var applyTask: Task<Void, Never>?
     @State private var automaticUpdateChecks = true
     @State private var cliReport: CodexExecutableResolver.Report?
     @State private var cliScanRevision = 0
@@ -48,9 +53,6 @@ struct SettingsView: View {
     }()
     @State private var pane = UserDefaults.standard.string(forKey: SettingsPane.defaultsKey).flatMap(SettingsPane.init(rawValue:)) ?? .general
     private var languageChanges: Bool { language.resolved() != L10n.language }
-    private var claudeSSHHostsChanged: Bool {
-        claudeSSHHosts != (UserDefaults.standard.string(forKey: "claudeSSHHosts") ?? "")
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,13 +64,10 @@ struct SettingsView: View {
                         .padding(.horizontal, 28).padding(.top, 20)
                     Form { paneContent }
                         .formStyle(.grouped)
-                        .disabled(saving)
                         .id(pane)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            Divider()
-            footer
         }
         .frame(width: 780, height: 600)
         .environment(\.locale, L10n.locale)
@@ -93,6 +92,17 @@ struct SettingsView: View {
             cliReport = report
         }
         .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
+        // Settings apply as they change, like System Settings; there is no Save.
+        .onChange(of: liveSettings) { _, _ in scheduleApply() }
+        .onChange(of: focusedText) { previous, _ in if let previous { commit(previous) } }
+        .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
+        .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }
+        .onChange(of: systemNotifications) { _, value in setSystemNotifications(value) }
+        .onExitCommand { onClose() }
+        .onDisappear {
+            if let focusedText { commit(focusedText) }
+            if applyTask != nil { applyNow() }
+        }
     }
 
     private var sidebar: some View {
@@ -111,7 +121,12 @@ struct SettingsView: View {
                 .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
             ForEach([SettingsPane.codex, .claude, .connections]) { sidebarRow($0) }
             Spacer(minLength: 0)
-            sidebarRow(.help).padding(.bottom, 12)
+            sidebarRow(.help)
+            Button { model.onQuit?() } label: {
+                Label(L10n.text("common.quit"), systemImage: "power").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 8).frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).padding(.bottom, 10)
         }
         .padding(.horizontal, 10)
         .frame(width: 210)
@@ -140,22 +155,6 @@ struct SettingsView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Button(L10n.text("common.quit")) { model.onQuit?() }
-            if let validation {
-                Label(validation, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12)).foregroundStyle(.orange).lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            Button(L10n.text("common.cancel"), action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
-            Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: { save() })
-                .keyboardShortcut(.defaultAction).disabled(saving)
-        }
-        .padding(.horizontal, 20).padding(.vertical, 12)
-    }
-
     @ViewBuilder private var paneContent: some View {
         switch pane {
         case .general:
@@ -166,7 +165,14 @@ struct SettingsView: View {
                         Text(preference.label).tag(preference)
                     }
                 }
-                if languageChanges { caption(L10n.text("language.restart_hint")) }
+                if languageChanges {
+                    HStack(spacing: 8) {
+                        caption(L10n.text("language.restart_hint"))
+                        Spacer(minLength: 8)
+                        Button(L10n.text("language.restart_now")) { relaunchForLanguage() }
+                    }
+                }
+                if let languageError { caption(languageError).foregroundStyle(.orange) }
             }
             Section {
                 Toggle(isOn: $hideProjects) {
@@ -208,8 +214,14 @@ struct SettingsView: View {
                 reminderRow("reminders.completion", isOn: $completionReminder) {
                     ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
                 }
-                reminderRow("settings.system_notifications", isOn: $systemNotifications) {
-                    Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                VStack(alignment: .leading, spacing: 6) {
+                    reminderRow("settings.system_notifications", isOn: $systemNotifications) {
+                        Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                    }
+                    if notificationDenied {
+                        caption(L10n.text("settings.notification_denied")).foregroundStyle(.orange)
+                            .padding(.leading, IslandSampleSwatch<EmptyView>.compactWidth + 12)
+                    }
                 }
             }
             Section {
@@ -229,7 +241,7 @@ struct SettingsView: View {
         case .connections:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
                 additionalSSHHosts: $claudeSSHHosts, codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude),
-                sshPending: claudeSSHHostsChanged || monitorSSH != model.monitorsSSH)
+                hostsIssue: textIssues[.sshHosts], focusedText: $focusedText)
         }
     }
 
@@ -356,31 +368,34 @@ struct SettingsView: View {
     @ViewBuilder private var codexLocations: some View {
         HStack {
             TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))
+                .focused($focusedText, equals: .cli).onSubmit { commit(.cli) }
             if let report = cliReport, report.candidates.count > 1 {
                 Menu(L10n.text("settings.other_locations")) {
                     ForEach(report.candidates) { candidate in
-                        Button(L10n.text("settings.cli_candidate", candidate.source, candidate.url.path)) { executable = candidate.url.path }
+                        Button(L10n.text("settings.cli_candidate", candidate.source, candidate.url.path)) {
+                            executable = candidate.url.path; commit(.cli)
+                        }
                     }
                 }.fixedSize()
             }
             Button(L10n.text("common.choose")) { choose(directory: false) }
         }
+        if let issue = textIssues[.cli] { caption(issue).foregroundStyle(.orange) }
         HStack {
             TextField(L10n.text("settings.codex_home"), text: $home, prompt: Text(L10n.text("settings.home_placeholder")))
+                .focused($focusedText, equals: .codexHome).onSubmit { commit(.codexHome) }
             Button(L10n.text("common.choose")) { choose(directory: true) }
         }
-        if executable != (UserDefaults.standard.string(forKey: "codexExecutable") ?? "") ||
-            home != (UserDefaults.standard.string(forKey: "codexHome") ?? "") {
-            caption(L10n.text("settings.applies_on_save"))
-        }
+        if let issue = textIssues[.codexHome] { caption(issue).foregroundStyle(.orange) }
     }
 
     @ViewBuilder private var claudeLocations: some View {
         HStack {
             TextField(L10n.text("provider.claude_home"), text: $claudeHome, prompt: Text("~/.claude"))
+                .focused($focusedText, equals: .claudeHome).onSubmit { commit(.claudeHome) }
             Button(L10n.text("common.choose")) { chooseClaudeHome() }
         }
-        if resolvedClaudeHome != model.claudeHome.path { caption(L10n.text("settings.applies_on_save")) }
+        if let issue = textIssues[.claudeHome] { caption(issue).foregroundStyle(.orange) }
     }
 
     /// One grouped section per component category. Each component is a single
@@ -565,7 +580,7 @@ struct SettingsView: View {
         panel.canChooseFiles = false; panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false; panel.showsHiddenFiles = true
         panel.message = L10n.text("provider.choose_claude_home")
-        if panel.runModal() == .OK, let path = panel.url?.path { claudeHome = path }
+        if panel.runModal() == .OK, let path = panel.url?.path { claudeHome = path; commit(.claudeHome) }
     }
     private func choose(directory: Bool) {
         let panel = NSOpenPanel()
@@ -575,90 +590,145 @@ struct SettingsView: View {
         panel.showsHiddenFiles = true
         panel.message = directory ? L10n.text("settings.choose_home") : L10n.text("settings.choose_cli")
         if panel.runModal() == .OK, let path = panel.url?.path {
-            if directory { home = path } else { executable = path }
+            if directory { home = path; commit(.codexHome) } else { executable = path; commit(.cli) }
         }
     }
-    private func save() {
-        if languageChanges && updater.sessionInProgress {
-            validation = L10n.text("language.update_busy"); return
+    /// Every non-text setting; any change is written and applied shortly
+    /// after, so a slider drag or quick toggling restarts sources at most once.
+    private var liveSettings: LiveSettings {
+        LiveSettings(modules: modules, displayMode: displayMode, width: widthSettings, layout: compactLayout, appearance: appearance,
+            glass: glass, fullscreen: fullscreen, menuBar: showInMenuBar, displayID: displayID, metric: metric, singleTask: singleTask,
+            windowID: windowID, claudeWindowID: claudeWindowID, lowReminder: lowReminder, inputReminder: inputReminder,
+            completionReminder: completionReminder, retention: completedRetention, hideProjects: hideProjects,
+            monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl)
+    }
+
+    private func scheduleApply() {
+        applyTask?.cancel()
+        applyTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            applyNow()
         }
-        let shouldRelaunch = languageChanges
-        let cli = CodexExecutableResolver.normalize(executable)
-        let directory = home.trimmingCharacters(in: .whitespacesAndNewlines)
-        let claudeDirectory = claudeHome.trimmingCharacters(in: .whitespacesAndNewlines)
-        let aliases = claudeSSHHosts.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
-        if moduleEnabled(.codex), !cli.isEmpty {
-            if let issue = CodexExecutableResolver.discover(customPath: cli).issue {
-                validation = issue; return
-            }
-        }
-        if moduleEnabled(.codex), !directory.isEmpty {
-            let expanded = (directory as NSString).expandingTildeInPath
+    }
+
+    private func applyNow() {
+        applyTask?.cancel(); applyTask = nil
+        let defaults = UserDefaults.standard
+        defaults.set(monitorSSH, forKey: "monitorSSH")
+        defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
+        modules.save(to: defaults)
+        displayMode.save(to: defaults)
+        widthSettings.normalized.save(to: defaults)
+        compactLayout.save(to: defaults)
+        defaults.removeObject(forKey: "performanceRefreshMode")
+        defaults.removeObject(forKey: "quotaDashboardPeriod")
+        defaults.set(appearance.rawValue, forKey: "islandAppearance")
+        glass.save()
+        defaults.set(fullscreen, forKey: "showInFullscreen")
+        defaults.set(showInMenuBar, forKey: "showInMenuBar")
+        defaults.set(displayID, forKey: "displayID")
+        defaults.set(metric, forKey: "compactMetric")
+        defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)
+        defaults.set(windowID, forKey: "quotaWindowID")
+        defaults.set(claudeWindowID, forKey: "claudeQuotaWindowID")
+        defaults.set(lowReminder, forKey: "lowQuotaReminder")
+        defaults.set(inputReminder, forKey: "inputReminder")
+        defaults.set(completionReminder, forKey: "completionReminder")
+        defaults.set(completedRetention, forKey: "completedRetentionMinutes")
+        defaults.set(hideProjects, forKey: "hideProjects")
+        model.applySettings(sourceChanged: false)
+    }
+
+    /// Validates one text setting; a valid change is written and applied at once.
+    private func commit(_ field: TextSetting) {
+        let defaults = UserDefaults.standard
+        func directoryExists(_ path: String) -> Bool {
             var isDirectory: ObjCBool = false
-            guard expanded.hasPrefix("/"), FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue else {
-                validation = L10n.text("settings.invalid_home"); return
-            }
+            return path.hasPrefix("/") && FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
         }
-        if moduleEnabled(.claude), !claudeDirectory.isEmpty {
-            var isDirectory: ObjCBool = false
-            guard resolvedClaudeHome.hasPrefix("/"),
-                  FileManager.default.fileExists(atPath: resolvedClaudeHome, isDirectory: &isDirectory), isDirectory.boolValue else {
-                validation = L10n.text("provider.invalid_claude_home"); return
-            }
-        }
-        guard !moduleEnabled(.claude) || !monitorSSH || aliases.allSatisfy({ $0.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil }) else {
-            validation = L10n.text("provider.invalid_ssh_hosts"); return
-        }
-        widthSettings = widthSettings.normalized
-        saving = true
-        Task { @MainActor in
-            let allowed = systemNotifications ? await NotificationDelivery.requestPermission() : false
-            let requestedSystem = systemNotifications
-            let defaults = UserDefaults.standard
-            let sourceChanged = cli != (defaults.string(forKey: "codexExecutable") ?? "") || directory != (defaults.string(forKey: "codexHome") ?? "") || monitorSSH != model.monitorsSSH || monitorRemoteControl != model.monitorsRemoteControl
-            defaults.set(monitorSSH, forKey: "monitorSSH")
-            defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
+        switch field {
+        case .cli:
+            let cli = CodexExecutableResolver.normalize(executable)
+            guard cli != (defaults.string(forKey: "codexExecutable") ?? "") else { textIssues[field] = nil; return }
+            if !cli.isEmpty, let issue = CodexExecutableResolver.discover(customPath: cli).issue { textIssues[field] = issue; return }
             defaults.set(cli, forKey: "codexExecutable")
+        case .codexHome:
+            let directory = home.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard directory != (defaults.string(forKey: "codexHome") ?? "") else { textIssues[field] = nil; return }
+            guard directory.isEmpty || directoryExists((directory as NSString).expandingTildeInPath) else {
+                textIssues[field] = L10n.text("settings.invalid_home"); return
+            }
             defaults.set(directory, forKey: "codexHome")
-            modules.save(to: defaults)
-            defaults.set(claudeDirectory, forKey: "claudeHome")
+        case .claudeHome:
+            let directory = claudeHome.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard directory != (defaults.string(forKey: "claudeHome") ?? "") else { textIssues[field] = nil; return }
+            guard directory.isEmpty || directoryExists(resolvedClaudeHome) else {
+                textIssues[field] = L10n.text("provider.invalid_claude_home"); return
+            }
+            defaults.set(directory, forKey: "claudeHome")
+        case .sshHosts:
+            let aliases = claudeSSHHosts.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+            guard aliases.joined(separator: "\n") != (defaults.string(forKey: "claudeSSHHosts") ?? "") else { textIssues[field] = nil; return }
+            guard aliases.allSatisfy({ $0.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil }) else {
+                textIssues[field] = L10n.text("provider.invalid_ssh_hosts"); return
+            }
             defaults.set(aliases.joined(separator: "\n"), forKey: "claudeSSHHosts")
-            displayMode.save(to: defaults)
-            widthSettings.save(to: defaults)
-            compactLayout.save(to: defaults)
-            defaults.removeObject(forKey: "performanceRefreshMode")
-            defaults.removeObject(forKey: "quotaDashboardPeriod")
-            defaults.set(appearance.rawValue, forKey: "islandAppearance")
-            glass.save()
-            defaults.set(fullscreen, forKey: "showInFullscreen")
-            defaults.set(showInMenuBar, forKey: "showInMenuBar")
-            defaults.set(displayID, forKey: "displayID")
-            defaults.set(metric, forKey: "compactMetric")
-            defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)
-            defaults.set(windowID, forKey: "quotaWindowID")
-            defaults.set(claudeWindowID, forKey: "claudeQuotaWindowID")
-            defaults.set(lowReminder, forKey: "lowQuotaReminder")
-            defaults.set(inputReminder, forKey: "inputReminder")
-            defaults.set(completionReminder, forKey: "completionReminder")
-            defaults.set(completedRetention, forKey: "completedRetentionMinutes")
-            defaults.set(allowed, forKey: "systemNotifications")
-            defaults.set(hideProjects, forKey: "hideProjects")
-            language.save(to: defaults)
-            updater.setAutomaticallyChecks(automaticUpdateChecks)
-            model.applySettings(sourceChanged: sourceChanged)
-            saving = false
-            systemNotifications = allowed
-            if requestedSystem && !allowed {
-                validation = L10n.text("settings.notification_denied")
-            } else if shouldRelaunch {
-                if let relaunch = model.onRelaunch {
-                    if let reason = relaunch() { validation = L10n.text("language.restart_failed", reason) }
-                } else {
-                    validation = L10n.text("language.restart_failed", L10n.text("language.missing_helper"))
-                }
-            } else { onClose() }
+        }
+        textIssues[field] = nil
+        applyNow()
+    }
+
+    /// Asking happens on the switch itself; a refusal turns it back off.
+    private func setSystemNotifications(_ requested: Bool) {
+        guard requested else {
+            UserDefaults.standard.set(false, forKey: "systemNotifications"); notificationDenied = false; return
+        }
+        guard !UserDefaults.standard.bool(forKey: "systemNotifications") else { return }
+        Task { @MainActor in
+            let allowed = await NotificationDelivery.requestPermission()
+            UserDefaults.standard.set(allowed, forKey: "systemNotifications")
+            notificationDenied = !allowed
+            if !allowed { systemNotifications = false }
         }
     }
+
+    private func relaunchForLanguage() {
+        guard !updater.sessionInProgress else { languageError = L10n.text("language.update_busy"); return }
+        if let focusedText { commit(focusedText) }
+        applyNow()
+        language.save(to: .standard)
+        if let relaunch = model.onRelaunch {
+            if let reason = relaunch() { languageError = L10n.text("language.restart_failed", reason) }
+        } else {
+            languageError = L10n.text("language.restart_failed", L10n.text("language.missing_helper"))
+        }
+    }
+}
+
+enum TextSetting: Hashable { case cli, codexHome, claudeHome, sshHosts }
+
+private struct LiveSettings: Equatable {
+    var modules: ProviderModules
+    var displayMode: IslandDisplayMode
+    var width: IslandWidthSettings
+    var layout: CompactIslandLayout
+    var appearance: IslandAppearance
+    var glass: IslandGlassSettings
+    var fullscreen: Bool
+    var menuBar: Bool
+    var displayID: Int
+    var metric: String
+    var singleTask: ActivityBadgeSingleTask
+    var windowID: String
+    var claudeWindowID: String
+    var lowReminder: Bool
+    var inputReminder: Bool
+    var completionReminder: Bool
+    var retention: Int
+    var hideProjects: Bool
+    var monitorSSH: Bool
+    var monitorRemoteControl: Bool
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {

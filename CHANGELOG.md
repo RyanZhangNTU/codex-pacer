@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Apply settings as they change, like System Settings: the Save and Cancel bar is gone. Controls apply after a short coalescing delay; text fields commit on Return, focus loss, a chooser or close and keep the last valid value with an inline message; language offers Restart Now; system notifications ask for permission when switched on. Quit moves to the bottom of the sidebar and Esc closes the window.
+
 - Configure every warning and reminder in one place. The collapsed bar keeps a single warnings slot (layout schema 7 merges the former 5h, delayed-update and SSH components at the first one's position and keeps the kinds that were shown); the Reminders page chooses which warnings it shows, then the one-time reminders with system notifications, and the ended-task retention as its own row.
 
 - Redesign the Appearance, Reminders and General pages. Appearance opens with a live preview of the real collapsed bar on a desktop backdrop; style (solid black or Liquid Glass) and position (automatic, notch, floating) are picture tiles that update it at once, and Liquid Glass adjustments use a segmented style, tint swatches and appear only for Liquid Glass. Each reminder shows the mark it puts on the island, with "keep afterwards" under turn endings. General shows one version row with its update status and Check for Updates, and the language hint only after a change. On the island, an unconnected quota shows a quiet outline with the provider's mark instead of an empty dashed gauge, and its Settings action opens that module's page.

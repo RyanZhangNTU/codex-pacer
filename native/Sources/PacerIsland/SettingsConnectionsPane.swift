@@ -124,8 +124,9 @@ struct SettingsConnectionsPane: View {
     @Binding var additionalSSHHosts: String
     let codexEnabled: Bool
     let claudeEnabled: Bool
-    /// SSH drafts that take effect on Save.
-    let sshPending: Bool
+    /// Why the added hosts were not applied; the field keeps the last valid list.
+    let hostsIssue: String?
+    var focusedText: FocusState<TextSetting?>.Binding
 
     private var sources: [ConnectionSource] {
         let names = Dictionary(model.activities.compactMap { activity in
@@ -164,9 +165,11 @@ struct SettingsConnectionsPane: View {
             ForEach(hosts) { host in hostRow(host) }
             TextField(L10n.text("connections.ssh_add"), text: $additionalSSHHosts,
                 prompt: Text(L10n.text("connections.ssh_add_placeholder")))
+                .focused(focusedText, equals: .sshHosts)
+                .onSubmit { focusedText.wrappedValue = nil }
                 .disabled(!monitorSSH || !claudeEnabled)
-            if sshPending {
-                Text(L10n.text("settings.applies_on_save")).font(.system(size: 11)).foregroundStyle(.secondary)
+            if let hostsIssue {
+                Text(hostsIssue).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
         }
         if !model.enabledProviders.isEmpty {
@@ -210,7 +213,6 @@ struct SettingsConnectionsPane: View {
         for host in hosts where host.claudeSetupFailed { retrySetup(host) }
     }
     private func retrySetup(_ host: SSHHost) {
-        guard !sshPending else { return }
         Task { _ = await model.configureClaudeRemote(targetID: ConnectionSource.sshPrefix + host.alias) }
     }
 
@@ -254,7 +256,6 @@ struct SettingsConnectionsPane: View {
             Spacer(minLength: 8)
             if host.claudeSetupFailed {
                 Button(L10n.text("connections.retry")) { retrySetup(host) }
-                    .disabled(sshPending)
                     .help(model.claudeRemoteSetupFailures[ConnectionSource.sshPrefix + host.alias] ?? "")
             }
         }

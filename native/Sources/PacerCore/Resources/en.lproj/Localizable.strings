@@ -189,8 +189,6 @@
 "common.restore_defaults" = "Restore Defaults";
 "common.retry" = "Rescan and Retry";
 "common.retrying" = "Retrying…";
-"common.save" = "Save";
-"common.saving" = "Saving…";
 "common.settings" = "Settings";
 "common.settings_menu" = "Settings…";
 "common.unknown" = "Unknown";
@@ -219,9 +217,9 @@
 "glass.warm" = "Warm";
 "language.label" = "App Language";
 "language.missing_helper" = "The relaunch helper is missing.";
-"language.restart_failed" = "Settings were saved, but Codex Pacer could not relaunch automatically. Quit and reopen the app.\n%1$@";
-"language.restart_hint" = "Saving will relaunch Codex Pacer in the selected language.";
-"language.save_restart" = "Save & Relaunch";
+"language.restart_failed" = "Codex Pacer couldn’t restart automatically. Quit and open it again.\n%1$@";
+"language.restart_hint" = "Restart Codex Pacer to switch to this language.";
+"language.restart_now" = "Restart Now";
 "language.system" = "Follow macOS";
 "language.update_busy" = "An update check or installation is in progress. Finish it before changing the language.";
 "menu.open_codex" = "Open Codex";
@@ -274,7 +272,6 @@
 "redaction.hidden" = "[redacted]";
 "redaction.key" = "[redacted]";
 "redaction.token" = "[redacted]";
-"settings.applies_on_save" = "Applied when you save";
 "settings.auto_discovery" = "Find automatically";
 "settings.auto_weekly" = "Automatic, prefer 7 days";
 "settings.automatic" = "Automatic";
@@ -335,7 +332,7 @@
 "settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
 "settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";
 "settings.notch" = "Notch";
-"settings.notification_denied" = "Other settings were saved. System notifications are not authorized; island reminders are still available.";
+"settings.notification_denied" = "System notifications aren’t allowed; island reminders still appear.";
 "settings.one_hour" = "1 hour";
 "settings.other_locations" = "Other Locations";
 "settings.pace_percentage" = "Pace Percentage";
