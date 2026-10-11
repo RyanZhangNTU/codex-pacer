@@ -1,50 +1,108 @@
-# Codex Pacer 2.1
+<p align="center">
+  <img src="native/Resources/Pacer.png" width="128" height="128" alt="Codex Pacer 应用图标">
+</p>
 
-[English](README.md) · [下载最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
+<h1 align="center">Codex Pacer</h1>
 
-原生 macOS 灵动岛，集中显示 Codex 任务、输出速度和账户额度。悬停展开，离开收起；需要时固定在桌面。
+<p align="center">
+  Mac 上的灵动岛，帮你盯着 <b>Codex</b> 和 <b>Claude Code</b>：<br>
+  正在运行的任务、输出速度和额度配速，抬眼就能看到。
+</p>
 
-![Codex Pacer 2.0](docs/assets/pacer-2.0.png)
+<p align="center">
+  <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?label=release&color=2f9e8f"></a>
+  <img alt="macOS 14 及以上" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple">
+  <img alt="通用应用，支持 Apple 芯片与 Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555555">
+  <a href="LICENSE"><img alt="MIT 许可证" src="https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?color=555555"></a>
+</p>
 
-- 查看本机与已启用 SSH 来源的运行、等待和本轮结束状态，点击任务打开对应会话。
-- 显示运行任务的合计 TPS 与首输出延迟；子代理归入主任务，显示运行数量并累加 TPS。工具执行或等待新测量时保留上次速率，15 秒内更新的数值显示白色，超过 15 秒显示灰色。
-- 查看短期与七天额度、重置倒计时、配速和当前周期曲线。周期内即将到期的 banked reset 在曲线上标注。
-- 查看账户 Credit 余额与可用重置券，点击重置次数查看具体到期时间，也可点击曲线上的到期标记。
-- 本轮结束提示可在折叠状态显示；完成卡片保留到点击、状态变化或设定时间。
-- 支持液态玻璃、显示器、提醒和隐私设置；菜单栏显示可选。灵动岛与设置中均可退出。
-- 所有显示器均可选择自动、刘海或悬浮模式；任务按每页三个切换，额度始终可见。
-- 默认使用自适应宽度，也可在设置中通过预览和滑块调整一个统一宽度。
-- 自定义单行折叠栏：按任务、性能、额度、警告分类选择组件，拖动调整顺序及左、右位置，预览即时更新，一次保存即可生效。
-- 支持简体中文与英文，默认跟随 Mac 语言，也可在设置中选择。
-- 支持应用内更新，默认每天检查，点击安装后自动完成下载、验证、替换和重启。
+<p align="center">
+  <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><b>下载</b></a>
+  &nbsp;·&nbsp; <a href="docs/guide.zh-CN.md">使用指南</a>
+  &nbsp;·&nbsp; <a href="README.md">English</a>
+</p>
 
-**系统要求：** macOS 14 或更新，Apple Silicon 或 Intel。Liquid Glass 需要 macOS 26 或更新。已登录的 Codex 与 Python 3 用于读取账户和任务状态；SSH 来源需要现有的免交互 OpenSSH 连接。
+![Codex Pacer 在刘海下方展开：上方是两个运行中的任务及速度，下方是 Codex 与 Claude 的额度圆环](docs/assets/hero.zh-CN.png)
 
-## 安装未签名版
+## 一眼看清
 
-未签名版首次打开 DMG 时可能被 macOS 拦截。手动替换前先退出旧版。若当前版本已有“检查更新”，可直接使用它完成下载、验证、安装和重启。
+折叠时，Pacer 是摄像头两侧的一条细栏，不用展开就知道代理们进展如何。
 
-1. [从最新 Release 下载 DMG 安装包](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)并双击，出现系统拦截提示后关闭提示。
-2. 前往 **系统设置 → 隐私与安全**，**滚动到页面最下方的“安全性”**，找到刚被拦截的安装包，点击 **“打开”或“仍要打开”**，按提示确认。
-3. **再次双击 DMG**，将 **Codex Pacer** 拖入右侧的 **Applications（应用程序）**，再从应用程序启动。
+![折叠栏：摄像头左侧是任务徽标和输出速度，右侧是额度圆环和数值](docs/assets/collapsed-bar.zh-CN.png)
 
-若启动应用时再次被拦截，按第 2 步放行 Codex Pacer，再双击启动。
+| | 含义 |
+| --- | --- |
+| **任务徽标** | 正在运行的任务数。任务进行时有光弧环绕，青绿色是 Codex，暖橙色是 Claude。变成实心琥珀色表示有任务等你回复或审批；出现对勾表示有任务刚刚结束。 |
+| **速度** | 所有运行中任务的合计输出速度，单位为 token/秒。 |
+| **额度** | Codex 与 Claude 的剩余额度。双环同时显示两者，数值在两者之间交替。 |
+| **警告** | 有问题时才出现：5 小时额度不足、SSH 主机未连接，或额度没有按时更新。 |
 
-![在隐私与安全页面最下方的安全性中点击仍要打开](docs/assets/macos-open-anyway.png)
+**悬停**展开，**移开**收起，点击顶部可以固定展开。
 
-[首次打开帮助（Apple 官方）](https://support.apple.com/zh-cn/102445) · [使用指南](docs/usage.zh-CN.md)
+## 一个面板看全部
 
-## 开发
+- **所有任务一个列表。** 本机、SSH 主机以及 Codex Remote Control 上的 Codex 与 Claude Code 任务，都显示当前阶段、已运行时长、输出速度和首输出时间。任务派生的子代理归在它下面。
+- **一点就回到对话。** 点击任务打开对应会话。任务结束后会保留一张卡片，直到你打开它或保留时间到期，不会错过任何一次结束。
+- **额度带配速。** 每个圆环显示 7 天窗口的剩余额度；白色刻度标出按时间均匀使用时应剩的位置，旁边标注“充裕”“正常”或“偏快”，下方是 5 小时窗口和重置倒计时。
+- **需要时再看历史。** 设置里保留每个服务当前周期的额度曲线；服务提供时，还能看到 Credit 和重置券。
 
-需要 Xcode 26 或更新。应用没有 npm 或 Rust 依赖。
+## 按你的习惯来
+
+![“折叠栏”设置：在摄像头左右两侧拖动组件，逐项开关](docs/assets/settings-collapsed-bar.zh-CN.png)
+
+- **自定义折叠栏。** 在摄像头左右两侧拖动组件、隐藏不需要的组件，并为每个服务选择显示 5 小时还是 7 天额度。
+- **纯黑或液态玻璃。** macOS 26 及以上可使用液态玻璃，通透程度跟随系统设置。
+- **刘海或悬浮。** 可选自动、刘海或悬浮，任意显示器都能用，也可以在全屏空间中显示。
+- **只开需要的模块。** Codex 和 Claude 模块可以分别开启或关闭。
+- **通知随你。** 可选择在任务需要你处理、任务结束或额度不足时发送 macOS 通知。
+- **支持中英文。** 简体中文与英文。
+
+## 开始使用
+
+![入门引导：用标注讲解折叠栏、徽标的三种状态以及悬停展开](docs/assets/welcome.zh-CN.png)
+
+1. [下载最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)，按下方步骤安装。
+2. 打开 Codex Pacer。两步入门引导会介绍灵动岛，并让你选择要追踪的服务。之后可以在“设置 → 帮助”中再次打开。
+3. 想看 Claude 额度，只需在 Pacer 自带的 Claude 窗口中登录一次。Claude Code 和 SSH 主机上的任务追踪会自动配置好。
+
+## 安装
+
+Codex Pacer 以未签名的通用 DMG 发布，首次打开时需要在系统中确认一次。
+
+1. 双击下载的 DMG，关闭系统弹出的提示。
+2. 打开“系统设置 → 隐私与安全性”，滚动到“安全性”，为安装包点击“仍要打开”。
+3. 再次打开 DMG，把 **Codex Pacer** 拖入“应用程序”。如果系统也拦截了应用本身，对它重复第 2 步。
+
+![“隐私与安全性”中的“安全性”部分和“仍要打开”按钮](docs/assets/macos-open-anyway.png)
+
+之后 Pacer 会自行更新：每天检查一次，由你决定何时安装。在“设置 → 通用 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
+
+## 系统要求
+
+- macOS 14 Sonoma 及以上，Apple 芯片或 Intel。液态玻璃需要 macOS 26。
+- 已安装并登录 Codex（应用或 CLI）、Claude Code，或两者都有。
+- 配置工具和 SSH helper 需要 Python 3；SSH 主机需要 Python 3.6 及以上，并能免交互地通过 OpenSSH 连接。
+- 追踪 Codex Remote Control 任务时，需要保持 Codex 应用开启并连接到远程主机。
+
+## 隐私
+
+- **本地优先。** Pacer 没有账号，也不做任何统计上报。它读取 Codex 和 Claude Code 本来就会写下的会话日志，只保留灵动岛需要显示的内容：任务标题、阶段、时间和 token 数，从不保存你的提示词或回复内容。
+- **用你自己的登录。** Codex 额度通过你的 Codex CLI 读取；Claude 额度来自 Claude Code 的状态栏数据，或 Pacer 专用窗口中的 claude.ai 会话。Pacer 不读取其他应用的钥匙串条目或浏览器 Cookie。
+- **配置可以撤回。** 对于 Claude Code，Pacer 会在你现有设置旁追加自己的 hooks 和仅限本机的遥测端点；关闭 Claude 模块时会移除这些内容。
+- **很少的网络请求。** Pacer 只连接你的 SSH 主机、各服务自己的额度接口，以及用于检查更新的 GitHub。
+- **共享屏幕时。** 设置中的“隐藏项目名称”会替换屏幕上的任务标题。
+
+## 从源码构建
+
+需要 Xcode 26 及以上。Swift Package Manager 会拉取唯一的依赖 Sparkle。
 
 ```sh
-make test TEST_FILTER='CompletionInboxTests|SessionNameTests' # 开发时只跑相关测试
-make build # 需要应用做界面验证时使用
+make build                                  # 构建应用并输出路径
+make test TEST_FILTER='CompletionInboxTests' # 运行指定的测试套件
 ```
 
-发布候选只执行一次全量 `make test`。构建在本机临时目录中完成并复用固定依赖缓存，终端会打印 `.app` 路径。`make release-unsigned` 生成本次未签名通用 DMG，发布无需额外构建同源预览版；需要 Developer ID 签名和 Apple 公证时使用独立的 `make release` 流程。参见[开发与数据说明](docs/development.md)和[发布流程](docs/releasing.md)。
+参与开发请先阅读[贡献指南](CONTRIBUTING.md)，架构和数据语义见[开发说明](docs/development.md)，打包发布见[发布流程](docs/releasing.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
-当前代码库仅维护 Swift 原生 macOS 实现。React/Tauri 与 Windows 1.x 可从 [Git 历史及旧版 Release](https://github.com/RyanZhangNTU/codex-pacer/releases)找回。
+## 许可证
 
-[贡献](CONTRIBUTING.md) · [安全问题](SECURITY.md) · [MIT License](LICENSE)
+[MIT](LICENSE)。Codex Pacer 是独立项目，与 OpenAI 和 Anthropic 无关。Codex 和 Claude 是其各自所有者的商标。

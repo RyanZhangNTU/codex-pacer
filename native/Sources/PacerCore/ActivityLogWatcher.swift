@@ -10,15 +10,16 @@ public final class ActivityLogWatcher: @unchecked Sendable {
     private var pendingSince: TimeInterval?
     private var needsDiscovery = false
     private var interval: TimeInterval
+    private let maximumDirectoryWatches: Int
     private let changed: @Sendable (Bool) -> Void
-    public init(interval: TimeInterval = 5, changed: @escaping @Sendable (Bool) -> Void) {
-        self.interval = interval; self.changed = changed
+    public init(interval: TimeInterval = 5, maximumDirectoryWatches: Int = 4, changed: @escaping @Sendable (Bool) -> Void) {
+        self.interval = interval; self.maximumDirectoryWatches = min(99, max(1, maximumDirectoryWatches)); self.changed = changed
     }
     public func update(_ urls: [URL], interval: TimeInterval, flushPending: Bool = false) {
         queue.async { [self] in
             let previous = self.interval
             self.interval = min(5, max(0.1, interval))
-            let directories = urls.filter { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.type] as? FileAttributeType) == .typeDirectory }.prefix(4)
+            let directories = urls.filter { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.type] as? FileAttributeType) == .typeDirectory }.prefix(maximumDirectoryWatches)
             let desired = Set(urls.filter { $0.pathExtension == "jsonl" }.prefix(32)).union(directories)
             for (url, source) in sources where !desired.contains(url) { source.cancel(); sources.removeValue(forKey: url) }
             for url in desired where sources[url] == nil {
@@ -59,6 +60,12 @@ public final class ActivityLogWatcher: @unchecked Sendable {
         queue.async { [self] in
             pending?.cancel(); pending = nil; pendingSince = nil; needsDiscovery = false
             for source in sources.values { source.cancel() }; sources.removeAll()
+        }
+    }
+    /// Queue synchronization and a numeric FD bound, with no path disclosure.
+    func activeWatchCount() async -> Int {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in continuation.resume(returning: sources.count) }
         }
     }
     deinit { pending?.cancel(); for source in sources.values { source.cancel() } }

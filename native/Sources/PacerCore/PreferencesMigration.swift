@@ -5,10 +5,9 @@ public enum PreferencesMigration {
     private static let marker = "migratedNativePreviewPreferences"
     private static let keys = [
         "codexExecutable", "codexHome", "monitorSSH", "floatingIsland", "islandDisplayMode",
-        "islandAppearance", "showInFullscreen", "showInMenuBar", "displayID",
-        "compactMetric", "quotaWindowID", "lowQuotaReminder", "inputReminder",
-        "completionReminder", "completedRetentionMinutes", "systemNotifications",
-        "hideProjects", "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius"
+        "islandAppearance", "showInFullscreen", "displayID",
+        "compactMetric", "quotaWindowID", "completedRetentionMinutes", "systemNotifications",
+        "hideProjects"
     ]
 
     public static func migrate(to defaults: UserDefaults, from legacy: [String: Any]) {

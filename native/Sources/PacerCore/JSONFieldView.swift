@@ -22,6 +22,11 @@ struct JSONFieldView {
     var isArray: Bool { data[range.lowerBound] == 91 }
     var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
     var hasNonemptyString: Bool { data[range.lowerBound] == 34 && range.count > 2 }
+    /// Compare a reserved protocol literal without decoding a user's text.
+    func matchesStringLiteral(_ value: String) -> Bool {
+        guard data[range.lowerBound] == 34, let literal = try? JSONEncoder().encode(value), literal.count == range.count else { return false }
+        return data.subdata(in: range) == literal
+    }
 
     /// Detect generated-text presence without decoding or retaining its text.
     func containsTextMetadata(depth: Int = 0) throws -> Bool {
@@ -121,6 +126,51 @@ struct JSONFieldView {
         guard range.count <= 24, let text = String(data: data.subdata(in: range), encoding: .utf8),
               !text.contains(".") && !text.contains("e") && !text.contains("E") else { return nil }
         return Int(text)
+    }
+    /// ProtoJSON accepts decimal/exponent integer values, quoted or unquoted.
+    /// Normalize at most 128 characters without rounding through Double.
+    func signedInteger() -> Int64? { protobufIntegerText().flatMap(Int64.init) }
+    func unsignedInteger() -> UInt64? { protobufIntegerText().flatMap(UInt64.init) }
+    private func protobufIntegerText() -> String? {
+        let text: String?
+        if data[range.lowerBound] == 34 { text = string(limit: 129) }
+        else { text = range.count <= 128 ? String(data: data.subdata(in: range), encoding: .utf8) : nil }
+        guard let text, text.utf8.count <= 128 else { return nil }
+        let bytes = Array(text.utf8)
+        var index = 0, negative = false, digits: [UInt8] = [], fraction = 0
+        if index < bytes.count, bytes[index] == 45 || bytes[index] == 43 { negative = bytes[index] == 45; index += 1 }
+        while index < bytes.count, (48...57).contains(bytes[index]) { digits.append(bytes[index]); index += 1 }
+        if index < bytes.count, bytes[index] == 46 {
+            index += 1
+            while index < bytes.count, (48...57).contains(bytes[index]) { digits.append(bytes[index]); fraction += 1; index += 1 }
+        }
+        guard !digits.isEmpty else { return nil }
+        var exponent = 0, exponentNegative = false, exponentTooLarge = false
+        if index < bytes.count, bytes[index] == 101 || bytes[index] == 69 {
+            index += 1
+            if index < bytes.count, bytes[index] == 45 || bytes[index] == 43 { exponentNegative = bytes[index] == 45; index += 1 }
+            let start = index
+            while index < bytes.count, (48...57).contains(bytes[index]) {
+                if exponent <= 512 { exponent = exponent * 10 + Int(bytes[index] - 48) }
+                else { exponentTooLarge = true }
+                index += 1
+            }
+            guard index > start else { return nil }
+        }
+        guard index == bytes.count else { return nil }
+        digits = Array(digits.drop(while: { $0 == 48 }))
+        if digits.isEmpty { return "0" }
+        guard !exponentTooLarge, exponent <= 512 else { return nil }
+        let shift = (exponentNegative ? -exponent : exponent) - fraction
+        if shift >= 0 {
+            guard digits.count + shift <= 20 else { return nil }
+            digits.append(contentsOf: repeatElement(UInt8(48), count: shift))
+        } else {
+            guard -shift <= digits.count, digits.suffix(-shift).allSatisfy({ $0 == 48 }) else { return nil }
+            digits.removeLast(-shift)
+        }
+        guard let normalized = String(bytes: digits, encoding: .utf8), !normalized.isEmpty else { return nil }
+        return (negative ? "-" : "") + normalized
     }
     func number() -> Double? {
         guard range.count <= 64, let text = String(data: data.subdata(in: range), encoding: .utf8),

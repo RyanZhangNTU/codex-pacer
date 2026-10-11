@@ -1,170 +1,113 @@
 import SwiftUI
 import PacerCore
 
+/// The Collapsed Bar page's first card: a lane strip shaped like the bar (left
+/// wing, camera, right wing) for arranging components. Edits reach the real bar
+/// at once, so the card has no preview of its own, and its width follows the
+/// content. Turning components on or off lives in the grouped rows below.
 struct CompactLayoutEditor: View {
     @ObservedObject var model: IslandModel
-    let attached: Bool
-    let saving: Bool
-    let validation: String?
-    let onSave: (CompactIslandLayout) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var draft: CompactIslandLayout
-    @State private var previewWidth: CGFloat = 320
+    @Binding var layout: CompactIslandLayout
+    let providers: Set<AgentProvider>
     @State private var dragged: CompactIslandLayout.Component?
     @State private var dragLocation = CGPoint.zero
     @State private var dropRegions: [CompactEditorDropRegion] = []
     @FocusState private var focusedComponent: CompactIslandLayout.Component?
-    private let accent = Color(red: 0.56, green: 0.84, blue: 0.79)
+    private let accent = Color.accentColor
+    private var hasNotch: Bool { model.screenNotchSize.width > 0 && model.screenNotchSize.height > 0 }
 
-    init(model: IslandModel, layout: CompactIslandLayout, attached: Bool,
-         saving: Bool, validation: String?, onSave: @escaping (CompactIslandLayout) -> Void) {
-        self.model = model; self.attached = attached; self.saving = saving
-        self.validation = validation; self.onSave = onSave
-        _draft = State(initialValue: layout.normalized)
-    }
-    private var camera: CGFloat { attached ? model.notchWidth : 0 }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text(L10n.text("layout.title")).font(.system(size: 20, weight: .semibold))
+                Text(L10n.text("layout.arrangement")).font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Button(L10n.text("common.restore_defaults")) { draft = .standard }
-                    .buttonStyle(.borderless).font(.system(size: 12)).foregroundStyle(.secondary)
+                Button(L10n.text("common.restore_defaults")) { layout = .standard }
+                    .buttonStyle(.link).font(.system(size: 12))
             }
-            Text(L10n.text("layout.help")).font(.system(size: 12)).foregroundStyle(.secondary)
-            preview
-            HStack(alignment: .top, spacing: 16) {
-                laneEditor(.leading)
-                laneEditor(.trailing)
-            }.frame(height: 84)
-            Divider().padding(.vertical, 2)
-            HStack(alignment: .top, spacing: 16) {
-                ForEach(CompactIslandLayout.Group.allCases, id: \.rawValue) { group in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(group.label).font(.system(size: 13, weight: .semibold)).padding(.leading, 6)
-                        if group == .warnings {
-                            Text(L10n.text("layout.warnings_hint")).font(.system(size: 10)).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true).padding(.leading, 6)
-                        }
-                        VStack(spacing: 3) {
-                            ForEach(group.components) { component in componentChoice(component) }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            }.frame(maxHeight: .infinity, alignment: .top)
-            if let validation {
-                Text(validation).font(.system(size: 11)).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Text(L10n.text("layout.single_save")).font(.system(size: 11)).foregroundStyle(.secondary)
-                Spacer()
-                Button(L10n.text("common.cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(L10n.text(saving ? "common.saving" : "common.save")) { onSave(draft.normalized) }
-                    .keyboardShortcut(.defaultAction)
-            }
+            laneStrip
+            Text(L10n.text("layout.help")).font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .padding(24).frame(width: 820, height: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .disabled(saving)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
         .coordinateSpace(name: "compact-editor")
         .onPreferenceChange(CompactEditorDropRegions.self) { dropRegions = $0 }
         .overlay(alignment: .topLeading) {
             if let dragged {
-                Text(dragged.label).font(.system(size: 11, weight: .medium)).padding(8)
+                Label(dragged.shortLabel, systemImage: dragged.symbol).font(.system(size: 11, weight: .medium)).padding(8)
                     .background(accent, in: Capsule()).foregroundStyle(.black)
                     .position(dragLocation).allowsHitTesting(false).accessibilityHidden(true)
             }
         }
         .environment(\.locale, L10n.locale)
     }
-    private var preview: some View {
-        GeometryReader { geometry in
-            let scale = min(1, (geometry.size.width - 32) / max(80, previewWidth))
-            CompactIslandHeader(model: model, layout: draft, baseHeight: 38, notchWidth: camera, measuresLayout: false)
-                .frame(width: max(80, previewWidth), height: 38)
-                .foregroundStyle(.white)
-                .background(.black, in: UnevenRoundedRectangle(topLeadingRadius: attached ? 0 : 18,
-                    bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: attached ? 0 : 18))
-                .scaleEffect(scale)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .allowsHitTesting(false).accessibilityHidden(true)
-                .onPreferenceChange(CompactHeaderIdealWidth.self) { previewWidth = max(camera > 0 ? camera + 60 : 80, $0 + 2) }
-        }
-        .frame(height: 74)
-        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityLabel(L10n.text("layout.preview"))
-    }
-    private func laneEditor(_ lane: CompactIslandLayout.Lane) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(lane.label).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
-                        ForEach(draft[lane]) { component in chip(component).id(component) }
-                        if draft[lane].isEmpty {
-                            Text(L10n.text("layout.drop_here")).font(.system(size: 11)).foregroundStyle(.tertiary)
-                                .padding(.vertical, 7)
-                        }
-                    }.padding(.bottom, 3)
+
+    /// Mirrors the bar: the left lane hugs the left edge, the right lane the
+    /// right edge, and the middle marks the camera when this screen has one.
+    private var laneStrip: some View {
+        HStack(alignment: .top, spacing: 0) {
+            laneEditor(.leading)
+            VStack(spacing: 4) {
+                if hasNotch {
+                    Image(systemName: "camera.fill").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
-                .onChange(of: draft[lane]) { previous, current in
-                    if let added = current.first(where: { !previous.contains($0) }) { proxy.scrollTo(added, anchor: .trailing) }
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1)
+            }
+            .frame(width: 28).padding(.vertical, 2)
+            .accessibilityHidden(true)
+            laneEditor(.trailing)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(accent.opacity(dragged == nil ? 0 : 0.55), lineWidth: 1))
+    }
+
+    private func laneEditor(_ lane: CompactIslandLayout.Lane) -> some View {
+        let alignment: HorizontalAlignment = lane == .leading ? .leading : .trailing
+        let components = layout.visibleComponents(in: lane, providers: providers)
+        return VStack(alignment: alignment, spacing: 8) {
+            Text(lane.label).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            if components.isEmpty {
+                Text(L10n.text("layout.drop_here")).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.vertical, 5)
+            } else {
+                CompactChipFlow(alignment: alignment, spacing: 6) {
+                    ForEach(components) { component in chip(component) }
                 }
             }
         }
-        .padding(10).frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(dragged == nil ? 0 : 0.55), lineWidth: 1))
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: Alignment(horizontal: alignment, vertical: .top))
         .contentShape(Rectangle()).background(dropRegion(lane, before: nil))
         .accessibilityElement(children: .contain).accessibilityLabel(lane.label)
     }
+
     private func chip(_ component: CompactIslandLayout.Component) -> some View {
-        HStack(spacing: 5) {
-            Text(component.shortLabel).font(.system(size: 11, weight: .medium)).fixedSize()
+        HStack(spacing: 4) {
+            Label(component.shortLabel, systemImage: component.symbol)
+                .labelStyle(CompactChipLabelStyle())
                 .contentShape(Rectangle()).gesture(rearrangeGesture(component))
                 .focusable().focusEffectDisabled().focused($focusedComponent, equals: component)
-                .onKeyPress(.leftArrow) { draft.shift(component, by: -1); return .handled }
-                .onKeyPress(.rightArrow) { draft.shift(component, by: 1); return .handled }
+                .onKeyPress(.leftArrow) { layout.shift(component, by: -1, providers: providers); return .handled }
+                .onKeyPress(.rightArrow) { layout.shift(component, by: 1, providers: providers); return .handled }
                 .accessibilityLabel(component.label)
-                .accessibilityAction(named: Text(L10n.text("layout.move_left"))) { draft.move(component, to: .leading) }
-                .accessibilityAction(named: Text(L10n.text("layout.move_right"))) { draft.move(component, to: .trailing) }
-            Button { draft.hide(component) } label: {
+                .accessibilityAction(named: Text(L10n.text("layout.move_left"))) { layout.move(component, to: .leading) }
+                .accessibilityAction(named: Text(L10n.text("layout.move_right"))) { layout.move(component, to: .trailing) }
+            Button { layout.hide(component) } label: {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.secondary).frame(width: 15, height: 20).contentShape(Rectangle())
+                    .foregroundStyle(.secondary).frame(width: 14, height: 18).contentShape(Rectangle())
             }.buttonStyle(.plain).help(L10n.text("layout.hide_component", component.label))
                 .accessibilityLabel(L10n.text("layout.hide_component", component.label))
         }
-        .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 5)
+        .padding(.leading, 8).padding(.trailing, 4).padding(.vertical, 4)
         .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-        .overlay(Capsule().stroke(focusedComponent == component ? accent : Color.primary.opacity(0.08), lineWidth: 1))
-        .background(dropRegion(draft.leading.contains(component) ? .leading : .trailing, before: component))
+        .overlay(Capsule().stroke(focusedComponent == component ? accent : Color.primary.opacity(0.1), lineWidth: 1))
+        .opacity(dragged == component ? 0.4 : 1)
+        .background(dropRegion(layout.leading.contains(component) ? .leading : .trailing, before: component))
         .contextMenu {
-            Button(L10n.text("layout.move_left")) { draft.move(component, to: .leading) }
-            Button(L10n.text("layout.move_right")) { draft.move(component, to: .trailing) }
-            Button(L10n.text("layout.earlier")) { draft.shift(component, by: -1) }
-            Button(L10n.text("layout.later")) { draft.shift(component, by: 1) }
+            Button(L10n.text("layout.move_left")) { layout.move(component, to: .leading) }
+            Button(L10n.text("layout.move_right")) { layout.move(component, to: .trailing) }
+            Button(L10n.text("layout.earlier")) { layout.shift(component, by: -1, providers: providers) }
+            Button(L10n.text("layout.later")) { layout.shift(component, by: 1, providers: providers) }
         }
-    }
-    private func componentChoice(_ component: CompactIslandLayout.Component) -> some View {
-        let shown = draft.components.contains(component)
-        return Button {
-            if shown { draft.hide(component) }
-            else { draft.move(component, to: component.preferredLane) }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: component.symbol).font(.system(size: 12)).frame(width: 16)
-                    .foregroundStyle(shown ? Color.primary : Color.secondary)
-                Text(component.label).font(.system(size: 11)).lineLimit(1)
-                    .foregroundStyle(shown ? Color.primary : Color.secondary)
-                Spacer(minLength: 2)
-                Image(systemName: shown ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 12)).foregroundStyle(shown ? accent : Color.secondary.opacity(0.35))
-            }.padding(.horizontal, 6).padding(.vertical, 7).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).help(component.label)
-        .accessibilityLabel(component.label)
-        .accessibilityValue(L10n.text(shown ? "layout.shown" : "layout.hidden"))
     }
     private func dropRegion(_ lane: CompactIslandLayout.Lane, before: CompactIslandLayout.Component?) -> some View {
         GeometryReader { geometry in
@@ -172,19 +115,103 @@ struct CompactLayoutEditor: View {
                 value: [.init(lane: lane, before: before, frame: geometry.frame(in: .named("compact-editor")))])
         }
     }
+    /// Chips wrap onto rows, so a drop lands before the first chip to its right
+    /// on the same row, or before the next row's first chip, or at the end.
     private func rearrangeGesture(_ component: CompactIslandLayout.Component) -> some Gesture {
         DragGesture(minimumDistance: 5, coordinateSpace: .named("compact-editor"))
             .onChanged { value in dragged = component; dragLocation = value.location }
             .onEnded { value in
                 defer { dragged = nil }
-                guard let lane = dropRegions.first(where: { $0.before == nil && $0.frame.contains(value.location) })?.lane else { return }
-                let before = dropRegions.filter { $0.lane == lane && $0.before != nil }
-                    .sorted { $0.frame.midX < $1.frame.midX }
-                    .first { value.location.x < $0.frame.midX }?.before
-                draft.move(component, to: lane, before: before)
+                let point = value.location
+                guard let lane = dropRegions.first(where: { $0.before == nil && $0.frame.contains(point) })?.lane else { return }
+                let chips = dropRegions.filter { $0.lane == lane && $0.before != nil }
+                let row = chips.filter { abs($0.frame.midY - point.y) <= $0.frame.height / 2 + 3 }
+                let before = row.sorted { $0.frame.midX < $1.frame.midX }.first { point.x < $0.frame.midX }?.before ??
+                    chips.filter { $0.frame.minY > point.y }
+                        .min { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }?.before
+                layout.move(component, to: lane, before: before)
             }
     }
 }
+
+/// One switch row per component, with its description; options that only
+/// matter while it is shown appear directly beneath it.
+struct CompactComponentToggle: View {
+    let component: CompactIslandLayout.Component
+    @Binding var layout: CompactIslandLayout
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { layout.components.contains(component) }, set: { shown in
+            if shown { layout.move(component, to: component.preferredLane) } else { layout.hide(component) }
+        })) {
+            HStack(spacing: 10) {
+                Image(systemName: component.symbol)
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(component.label)
+                    Text(component.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+    }
+    /// Leading space that lines an option up with the row's title text.
+    static let optionInset: CGFloat = 36
+}
+
+private struct CompactChipLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon.font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+            configuration.title.font(.system(size: 11, weight: .medium)).fixedSize()
+        }
+    }
+}
+
+/// Wraps chips onto rows aligned to the lane's own edge, so long lanes never clip.
+private struct CompactChipFlow: Layout {
+    var alignment: HorizontalAlignment
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(subviews, width: proposal.width ?? .infinity)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: proposal.width.map { min($0, width) } ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(subviews, width: bounds.width) {
+            var x = alignment == .trailing ? bounds.maxX - row.width : bounds.minX
+            for (index, size) in row.items {
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private func rows(_ subviews: Subviews, width: CGFloat) -> [(items: [(Int, CGSize)], width: CGFloat, height: CGFloat)] {
+        var rows: [(items: [(Int, CGSize)], width: CGFloat, height: CGFloat)] = []
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if let last = rows.last, last.width + spacing + size.width <= width {
+                rows[rows.count - 1].items.append((index, size))
+                rows[rows.count - 1].width += spacing + size.width
+                rows[rows.count - 1].height = max(last.height, size.height)
+            } else {
+                rows.append(([(index, size)], size.width, size.height))
+            }
+        }
+        return rows
+    }
+}
+
 private struct CompactEditorDropRegion: Equatable {
     let lane: CompactIslandLayout.Lane
     let before: CompactIslandLayout.Component?

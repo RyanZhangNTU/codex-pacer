@@ -31,7 +31,7 @@ For an application release, update:
 - `native/Info.plist`: marketing version matching `vVERSION`, and an integer build above every build in the latest public appcast.
 - `native/Sources/PacerCore/RealtimeProbe.swift`: matching event-client version.
 - `CHANGELOG.md` and `docs/release-notes-VERSION.en.md` / `.zh-CN.md`: shipped changes and installation guidance. Keep both current note files; do not add a deferred-issue appendix unless requested.
-- README/usage/development docs only when their behavior or instructions change. Older notes may be removed after publication; tags, Releases and the changelog retain history.
+- README, user guide and development docs only when their behavior or instructions change. Older notes may be removed after publication; tags, Releases and the changelog retain history.
 
 Run the applicable validation above. Do not repeat a passing suite, live reproduction or packaging check without a relevant source/configuration/artifact change.
 

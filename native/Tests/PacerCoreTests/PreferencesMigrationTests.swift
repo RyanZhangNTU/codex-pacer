@@ -7,13 +7,13 @@ final class PreferencesMigrationTests: XCTestCase {
         let name = "pacer-migration-test-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        defaults.set(false, forKey: "showInMenuBar")
+        defaults.set(false, forKey: "showInFullscreen")
         PreferencesMigration.migrate(to: defaults, from: [
-            "showInMenuBar": true, "glassCornerRadius": 31.0, "islandDisplayMode": "notch",
+            "showInFullscreen": true, "compactMetric": "pace", "islandDisplayMode": "notch",
             "completedRetentionMinutes": 0, "codexHome": "/fixture/.codex", "unrelated": "private"
         ])
-        XCTAssertFalse(defaults.bool(forKey: "showInMenuBar"))
-        XCTAssertEqual(defaults.double(forKey: "glassCornerRadius"), 31)
+        XCTAssertFalse(defaults.bool(forKey: "showInFullscreen"))
+        XCTAssertEqual(defaults.string(forKey: "compactMetric"), "pace")
         XCTAssertEqual(defaults.string(forKey: "islandDisplayMode"), "notch")
         XCTAssertEqual(defaults.integer(forKey: "completedRetentionMinutes"), 0)
         XCTAssertEqual(defaults.string(forKey: "codexHome"), "/fixture/.codex")

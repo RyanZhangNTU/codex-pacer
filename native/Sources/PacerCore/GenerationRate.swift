@@ -32,13 +32,14 @@ struct GenerationRate: Equatable, Sendable {
             waitStart = nil; retained = nil
         }
     }
-    mutating func observe(total: Int, at date: Date) {
+    mutating func observe(total: Int, at date: Date, cached: Bool = false) {
         guard total >= 0, date >= (latest?.date ?? .distantPast) else { return }
         let previousCount = latest?.tokens
         latest = (total, date)
         // Cached repeats must not refresh the displayed age or shorten the
         // denominator before the next actual counter increase.
         guard previousCount != total else { return }
+        if cached { seed(total, at: date); return }
         guard let previous = baseline, total >= (previousCount ?? total) else {
             seed(total, at: date); return
         }

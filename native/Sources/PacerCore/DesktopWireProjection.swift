@@ -107,10 +107,16 @@ struct DesktopWireProjection {
     private(set) var isTerminal = false
     let threadID: String
     let attentionOnly: Bool
+    private let requiresResumedRuntime: Bool
+    private(set) var runtimeAvailable: Bool
     private static let models: Set<String> = ["reasoning", "agentMessage", "plan"]
     private static let terminal: Set<String> = ["completed", "failed", "interrupted"]
 
-    init(threadID: String, attentionOnly: Bool = false) { self.threadID = threadID; self.attentionOnly = attentionOnly }
+    init(threadID: String, attentionOnly: Bool = false, requiresResumedRuntime: Bool = false) {
+        self.threadID = threadID; self.attentionOnly = attentionOnly; self.requiresResumedRuntime = requiresResumedRuntime
+        runtimeAvailable = !requiresResumedRuntime
+    }
+    func isOwned(by client: String) -> Bool { owner == client }
     var currentTurnID: String? { previousTurn?["turnId"]?.text }
     var retainedItemCount: Int {
         func count(_ value: DesktopValue) -> Int {
@@ -295,7 +301,7 @@ struct DesktopWireProjection {
     }
     private mutating func snapshot(_ view: JSONFieldView) throws {
         selectionResolved = false
-        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "parentThreadId", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "turns", "turnHistory", "requests"])
+        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "parentThreadId", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "resumeState", "turns", "turnHistory", "requests"])
         guard fields["ephemeral"]?.boolean() != true else { throw DesktopProjectionFailure.ephemeral }
         guard !(try Self.review(fields)) else { throw DesktopProjectionFailure.review }
         var values = fields.filter { ["title", "cwd", "latestModel", "threadSource"].contains($0.key) }
@@ -304,6 +310,7 @@ struct DesktopWireProjection {
         values["parentThreadId"] = try Self.relationship(fields["parentThreadId"])
         values["latestTokenUsageInfo"] = try Self.usage(fields["latestTokenUsageInfo"])
         values["threadRuntimeStatus"] = try Self.runtime(fields["threadRuntimeStatus"])
+        values["resumeState"] = Self.string(fields["resumeState"], limit: 32) ?? .null
         values["requests"] = try Self.requests(fields["requests"])
         var views: [String: JSONFieldView] = [:], turns: [DesktopValue] = []
         if let legacy = fields["turns"], !legacy.isNull {
@@ -368,6 +375,7 @@ struct DesktopWireProjection {
     private func projectedValue(path: [DesktopPath], view: JSONFieldView?, op: String) throws -> DesktopValue? {
         guard case .key(let root)? = path.first else { return nil }
         let keys = path.compactMap { if case .key(let key) = $0 { return key }; return nil }
+        if root == "resumeState", path.count == 1 { return op == "remove" ? .null : Self.string(view, limit: 32) ?? .null }
         if root == "ephemeral", path.count == 1 {
             guard op == "remove" || view?.boolean() != true else { throw DesktopProjectionFailure.ephemeral }
             return nil
@@ -567,6 +575,18 @@ struct DesktopWireProjection {
         if changedSelection { staged.selection = staged.findCurrentPath(); staged.selectionResolved = true }
         let selected = staged.currentPath()
         var current = selected.flatMap { staged.tree.at($0[...]) }
+        let reconnecting = requiresResumedRuntime && !runtimeAvailable
+        let runtimeType = staged.tree["threadRuntimeStatus"]?["type"]?.text
+        // Idle can precede final item/usage/turn patches. It cannot end a turn
+        // that this owner already established, or erase its pending accounting.
+        let observedTurn = !snapshot && runtimeAvailable && previousTurn?["status"]?.text == "inProgress" &&
+            previousTurn?["turnId"]?.text == current?["turnId"]?.text
+        staged.runtimeAvailable = !requiresResumedRuntime || (staged.tree["resumeState"]?.text == "resumed" &&
+            !["systemError", "notLoaded"].contains(runtimeType ?? "") &&
+            (current?["status"]?.text != "inProgress" || runtimeType == "active" || (runtimeType == "idle" && observedTurn)))
+        if !staged.runtimeAvailable {
+            staged.previousTurn = nil; staged.previousUsage = nil; staged.previousItems = [:]; staged.firstTextSeen = false
+        }
         // Completed turns intentionally keep only item counts. Bookkeeping
         // patches after completion do not require those discarded item bodies.
         // Only an active turn needs a hydrated current-item projection.
@@ -580,8 +600,8 @@ struct DesktopWireProjection {
         func event(_ method: String, _ values: [String: Any] = [:]) -> [String: Any] {
             ["method": method, "threadId": threadID, "at": now.timeIntervalSince1970].merging(values) { _, new in new }
         }
-        if !attentionOnly {
-            if snapshot || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("threadSource"), .key("source"), .key("parentThreadId")].contains($0.first ?? .key("")) }) {
+        if !attentionOnly && staged.runtimeAvailable {
+            if snapshot || reconnecting || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("threadSource"), .key("source"), .key("parentThreadId")].contains($0.first ?? .key("")) }) {
                 var meta: [String: Any] = [:]
                 for (source, target) in [("title", "name"), ("cwd", "cwd"), ("latestModel", "model"), ("threadSource", "source")] { meta[target] = staged.tree[source]?.text }
                 let source = staged.tree["source"]
@@ -597,7 +617,7 @@ struct DesktopWireProjection {
                     if status == "inProgress" {
                         let milliseconds = current["turnStartedAtMs"]?.number ?? 0
                         let started = milliseconds > 0 && milliseconds <= now.timeIntervalSince1970 * 1000 + 5000 ? milliseconds / 1000 : now.timeIntervalSince1970
-                        events.append(event(snapshot ? "turn/attached" : "turn/started", ["turnId": turn, "startedAt": started]))
+                        events.append(event(snapshot || reconnecting ? "turn/attached" : "turn/started", ["turnId": turn, "startedAt": started]))
                     }
                 }
                 let ending = previousTurn?["status"]?.text == "inProgress" && Self.terminal.contains(status)
@@ -618,7 +638,7 @@ struct DesktopWireProjection {
                     // Snapshots and whole-container replacements have no
                     // per-item text path. Restore the latest work stage from
                     // ordered metadata instead of waiting for a later delta.
-                    let replacedItems = snapshot || rawPaths.contains { path in
+                    let replacedItems = snapshot || reconnecting || rawPaths.contains { path in
                         guard let selected else { return false }
                         return selected.starts(with: path) || path == selected + [.key("items")]
                     }
@@ -626,13 +646,13 @@ struct DesktopWireProjection {
                         Self.models.contains($0["type"]?.text ?? "") || RuntimeItemKind.isTool($0["type"]?.text ?? "")
                     }), let kind = latest["type"]?.text, Self.models.contains(kind), let id = latest["id"]?.text {
                         var marker: [String: Any] = ["turnId": turn, "itemId": id, "itemType": kind]
-                        if !snapshot, latest["hasGeneratedText"] == .boolean(true) {
+                        if !snapshot && !reconnecting, latest["hasGeneratedText"] == .boolean(true) {
                             marker["hasText"] = true
                             if !staged.firstTextSeen { marker["firstTextDelta"] = true; staged.firstTextSeen = true }
                         }
                         events.append(event("item/started", marker))
                     }
-                    if !snapshot {
+                    if !snapshot && !reconnecting {
                         for path in rawPaths {
                             guard let offset = path.firstIndex(of: .key("items")), Array(path.prefix(offset)) == selected,
                                   path.count > offset + 1, let item = staged.tree.at(path.prefix(offset + 2)),
@@ -655,29 +675,38 @@ struct DesktopWireProjection {
                 }
                 // Settle final usage before releasing the turn, even when one
                 // atomic patch contains both the count and the completion.
+                let lateUsage = requiresResumedRuntime && !snapshot && Self.terminal.contains(status) &&
+                    previousTurn?["turnId"]?.text == turn && Self.terminal.contains(previousTurn?["status"]?.text ?? "")
                 if let count = staged.tree["latestTokenUsageInfo"]?["total"]?["outputTokens"]?.integer, count != staged.previousUsage,
-                   status == "inProgress" || ending {
+                   status == "inProgress" || ending || lateUsage {
                     var usage: [String: Any] = ["turnId": turn, "outputTokens": count]
                     usage["lastOutputTokens"] = staged.tree["latestTokenUsageInfo"]?["last"]?["outputTokens"]?.integer
                     usage["lastReasoningTokens"] = staged.tree["latestTokenUsageInfo"]?["last"]?["reasoningOutputTokens"]?.integer
-                    usage["cachedUsage"] = snapshot || (changed && !rawPaths.contains { $0.first == .key("latestTokenUsageInfo") })
+                    func touchesUsage(_ field: String) -> Bool {
+                        rawPaths.contains { $0.first == .key("latestTokenUsageInfo") && ($0.count == 1 || $0.dropFirst().first == .key(field)) }
+                    }
+                    // A total-only patch can still contain the previous request's
+                    // last count. Treat split accounting as a baseline, not TPS.
+                    let partial = usage["lastOutputTokens"] != nil && !(touchesUsage("total") && touchesUsage("last"))
+                    usage["cachedUsage"] = snapshot || reconnecting || partial || (changed && !rawPaths.contains { $0.first == .key("latestTokenUsageInfo") })
+                    if lateUsage { usage["terminalUsage"] = true }
                     events.append(event("thread/tokenUsage/updated", usage)); staged.previousUsage = count
                 }
                 if ending { events.append(event("turn/completed", ["turnId": turn, "status": status])) }
                 staged.previousItems = items
             }
         }
-        if let current {
+        if let current, staged.runtimeAvailable {
             staged.previousTurn = .object(["turnId", "status", "turnStartedAtMs"].reduce(into: [:]) { $0[$1] = current[$1] })
         } else { staged.previousTurn = nil }
         let childStates = staged.subagentStates
         staged.collaborationThreadIDs = staged.projectedCollaborationThreadIDs
-        if !attentionOnly, childStates != previousAgentStates || (snapshot && !childStates.isEmpty), let turn = staged.currentTurnID {
+        if !attentionOnly && staged.runtimeAvailable, childStates != previousAgentStates || ((snapshot || reconnecting) && !childStates.isEmpty), let turn = staged.currentTurnID {
             events.append(event("subagents/updated", ["turnId": turn, "states": childStates]))
         }
         staged.previousAgentStates = childStates
-        staged.isActive = current?["status"]?.text == "inProgress"
-        staged.isTerminal = Self.terminal.contains(current?["status"]?.text ?? "")
+        staged.isActive = staged.runtimeAvailable && current?["status"]?.text == "inProgress"
+        staged.isTerminal = staged.runtimeAvailable && Self.terminal.contains(current?["status"]?.text ?? "")
         if staged.isTerminal, let selected, case .items(let count, _, _)? = current?["items"] {
             try staged.tree.patch((selected + [.key("items")])[...], op: "replace", value: .items(count: count, values: [:], hydrated: false))
             staged.previousItems.removeAll()

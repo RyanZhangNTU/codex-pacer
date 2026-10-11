@@ -17,66 +17,24 @@ enum IslandAppearance: String, CaseIterable {
     }
 }
 
-struct IslandGlassSettings {
-    enum Style: String, CaseIterable {
-        case regular, clear
-        var label: String { self == .regular ? L10n.text("glass.regular") : L10n.text("glass.clear") }
-    }
-    enum Tint: String, CaseIterable {
-        case neutral, cool, warm
-        var label: String {
-            switch self { case .neutral: return L10n.text("glass.neutral"); case .cool: return L10n.text("glass.cool"); case .warm: return L10n.text("glass.warm") }
-        }
-        var color: Color {
-            switch self {
-            case .neutral: return .black
-            case .cool: return Color(red: 0.08, green: 0.16, blue: 0.22)
-            case .warm: return Color(red: 0.22, green: 0.13, blue: 0.08)
-            }
-        }
-    }
-
-    var style: Style = .regular
-    var transparency: Double = 0.5
-    var tint: Tint = .neutral
-    var cornerRadius: Double = 27
-
-    static var stored: Self {
-        let defaults = UserDefaults.standard
-        var settings = Self()
-        settings.style = defaults.string(forKey: "glassStyle").flatMap(Style.init(rawValue:)) ?? .regular
-        settings.tint = defaults.string(forKey: "glassTint").flatMap(Tint.init(rawValue:)) ?? .neutral
-        settings.transparency = bounded(defaults.object(forKey: "glassTransparency") as? Double, in: 0...1, fallback: 0.5)
-        settings.cornerRadius = bounded(defaults.object(forKey: "glassCornerRadius") as? Double, in: 12...36, fallback: 27)
-        return settings
-    }
-
-    func save() {
-        let defaults = UserDefaults.standard
-        defaults.set(style.rawValue, forKey: "glassStyle")
-        defaults.set(tint.rawValue, forKey: "glassTint")
-        defaults.set(Self.bounded(transparency, in: 0...1, fallback: 0.5), forKey: "glassTransparency")
-        defaults.set(Self.bounded(cornerRadius, in: 12...36, fallback: 27), forKey: "glassCornerRadius")
-    }
-
-    private static func bounded(_ value: Double?, in range: ClosedRange<Double>, fallback: Double) -> Double {
-        guard let value, value.isFinite else { return fallback }
-        return min(range.upperBound, max(range.lowerBound, value))
-    }
-}
-
+/// Liquid Glass uses the regular variant, which Apple recommends for text-heavy
+/// components over changing backgrounds, without a tint so color keeps its
+/// provider and alert meanings. Its clarity follows the system's Liquid Glass
+/// look (System Settings → Appearance). Over bright content the glass turns
+/// light, so a fixed dark wash keeps the island's light text legible: about
+/// 3:1 for secondary text over a white page, more with Increase Contrast.
+/// Reduce Transparency shows the solid surface.
 struct IslandSurface: ViewModifier {
     let appearance: IslandAppearance
     let attached: Bool
     let expanded: Bool
-    var settings: IslandGlassSettings = .stored
     var progress: Double?
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var shape: UnevenRoundedRectangle {
-        let radius = appearance == .liquidGlass ? settings.cornerRadius : 27
         let fraction = progress ?? (expanded ? 1 : 0)
-        let bottom = min(radius, 19) + (radius - min(radius, 19)) * fraction
+        let bottom = 19 + 8 * fraction
         let top = attached ? 0 : bottom
         return UnevenRoundedRectangle(topLeadingRadius: top,
             bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top)
@@ -91,9 +49,8 @@ struct IslandSurface: ViewModifier {
     @ViewBuilder private var material: some View {
         if appearance == .liquidGlass, !reduceTransparency {
             if #available(macOS 26.0, *) {
-                shape.fill(.black.opacity(0.9 - settings.transparency * 0.4))
-                    .glassEffect((settings.style == .regular ? Glass.regular : Glass.clear)
-                        .tint(settings.tint.color.opacity(0.12)), in: shape)
+                shape.fill(.black.opacity(contrast == .increased ? 0.75 : 0.55))
+                    .glassEffect(.regular, in: shape)
             } else { solid }
         } else { solid }
     }

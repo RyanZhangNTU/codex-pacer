@@ -2,7 +2,7 @@ import Foundation
 
 /// Settled output throughput for one model response, not a decoder benchmark.
 public struct ResponsePerformance: Equatable, Sendable {
-    public enum Source: String, Sendable { case requestUsage, runtimeUsage }
+    public enum Source: String, Sendable { case requestUsage, runtimeUsage, observedRequest }
     public let responseID: String?
     public let turnID: String
     public let outputTokens: Int
@@ -12,9 +12,20 @@ public struct ResponsePerformance: Equatable, Sendable {
     public let source: Source
     public var duration: TimeInterval { completedAt.timeIntervalSince(startedAt) }
     public var tokensPerSecond: Double { Double(outputTokens) / duration }
-    public var visibleOutputTokens: Int? { reasoningTokens.map { max(0, outputTokens - $0) } }
 
     func supersedes(_ other: Self) -> Bool {
+        if turnID == other.turnID, source != other.source,
+           source == .observedRequest || other.source == .observedRequest {
+            // The same response's authoritative request span outranks a
+            // transcript-timed estimate even when delivered much later.
+            if let responseID, responseID == other.responseID,
+               source == .requestUsage || other.source == .requestUsage {
+                return source == .requestUsage
+            }
+            // Separate requests keep their own chronology; a nearby older
+            // exact request cannot suppress a newer observed response.
+            return completedAt > other.completedAt
+        }
         if turnID == other.turnID, source != other.source,
            abs(completedAt.timeIntervalSince(other.completedAt)) < 2 {
             return source == .requestUsage
@@ -96,11 +107,18 @@ struct ResponsePerformanceMeter: Equatable, Sendable {
         guard waiting || generatedEnd == nil else { return } // A background tool finishing mid-response is not a new model request.
         responseStart = date; generatedEnd = nil; waiting = false
     }
-    mutating func observeRuntime(total: Int, last: Int?, reasoning: Int?, at date: Date, cached: Bool = false) {
+    mutating func observeRuntime(total: Int, last: Int?, reasoning: Int?, at date: Date, cached: Bool = false, allowAfterFinish: Bool = false) {
         guard total >= 0 else { return }
         let previous = cumulative
         cumulative = total
-        guard !hasRequestUsage, !cached, previous != total, !finished, let last, last > 0, let turnID else { return }
+        if cached {
+            if previous != nil, previous != total {
+                responseStart = nil; generatedEnd = nil; pendingWindow = nil; ambiguousWindow = false
+                if latest?.source == .runtimeUsage { latest = nil }
+            }
+            return
+        }
+        guard !hasRequestUsage, previous != total, !finished || allowAfterFinish, let last, last > 0, let turnID else { return }
         if ambiguousWindow {
             ambiguousWindow = false; pendingWindow = nil; responseStart = nil; generatedEnd = nil
             return // Multiple unsettled requests cannot be paired with one `last` counter.

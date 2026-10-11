@@ -13,20 +13,23 @@ final class ThreadLinkTests: XCTestCase {
         XCTAssertEqual(activity.threadURL?.absoluteString, "codex://threads/" + uuid)
     }
 
-    func testSshConversationLinkTargetsItsConfiguredHost() throws {
-        let host = "remote-ssh-discovered:example-host"
-        let activity = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "example-host", sourceHostID: host)
-        let url = try XCTUnwrap(activity.threadURL)
-        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-        XCTAssertEqual(components.scheme, "codex")
-        XCTAssertEqual(components.host, "threads")
-        XCTAssertEqual(components.path, "/" + uuid)
-        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "hostId", value: host)])
+    func testRemoteConversationLinkTargetsItsConfiguredHost() throws {
+        for host in ["remote-ssh-discovered:example-host", "remote-control:env_fixture"] {
+            let activity = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "example-host", sourceHostID: host)
+            let url = try XCTUnwrap(activity.threadURL)
+            let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            XCTAssertEqual(components.scheme, "codex")
+            XCTAssertEqual(components.host, "threads")
+            XCTAssertEqual(components.path, "/" + uuid)
+            XCTAssertEqual(components.queryItems, [URLQueryItem(name: "hostId", value: host)])
+        }
     }
     func testHostCannotInjectPromptOrSelectAnUnsupportedSource() {
         let unsafe = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "bad", sourceHostID: "remote-ssh-discovered:host&prompt=send")
         XCTAssertNil(unsafe.threadURL)
-        let unsupported = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "other", sourceHostID: "remote-control:anything")
+        let control = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHostID: "remote-control:env_fixture&prompt=send")
+        XCTAssertNil(control.threadURL)
+        let unsupported = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "other", sourceHostID: "unsupported:anything")
         XCTAssertNil(unsupported.threadURL)
     }
 }

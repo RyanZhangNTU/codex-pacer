@@ -5,11 +5,12 @@ import PacerCore
 struct QuotaCycleChart: View, Equatable {
     let data: QuotaChartData
     let accent: Color
+    var referenceColor: Color = .white
     @State private var selectedDate: Date?
     @State private var selectedExpiryID: Date?
     private let expiryColor = Color(red: 0.91, green: 0.75, blue: 0.48)
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.data == rhs.data && lhs.accent == rhs.accent
+        lhs.data == rhs.data && lhs.accent == rhs.accent && lhs.referenceColor == rhs.referenceColor
     }
     private var points: [QuotaPoint] { data.points }
     private var selected: QuotaPoint? {
@@ -49,7 +50,7 @@ struct QuotaCycleChart: View, Equatable {
             ForEach([data.startedAt, data.resetsAt], id: \.self) { date in
                 LineMark(x: .value(L10n.text("chart.time"), date), y: .value(L10n.text("chart.remaining_axis"), date == data.startedAt ? 100 : 0),
                     series: .value(L10n.text("chart.series"), L10n.text("chart.pace_reference")))
-                    .foregroundStyle(Color.white.opacity(0.23))
+                    .foregroundStyle(referenceColor.opacity(0.23))
                     .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, dash: [3, 5]))
             }
             ForEach(points) { point in
@@ -60,7 +61,7 @@ struct QuotaCycleChart: View, Equatable {
             }
             if let selected {
                 RuleMark(x: .value(L10n.text("chart.time"), selected.timestamp))
-                    .foregroundStyle(Color.white.opacity(0.24)).lineStyle(StrokeStyle(lineWidth: 1))
+                    .foregroundStyle(referenceColor.opacity(0.24)).lineStyle(StrokeStyle(lineWidth: 1))
             }
             if let highlighted = selected ?? points.last {
                 PointMark(x: .value(L10n.text("chart.time"), highlighted.timestamp), y: .value(L10n.text("chart.remaining_axis"), highlighted.remaining))
@@ -77,7 +78,7 @@ struct QuotaCycleChart: View, Equatable {
         .chartXAxis(.hidden)
         .chartYAxis {
             AxisMarks(position: .trailing, values: [0, 50, 100]) { value in
-                AxisGridLine().foregroundStyle(Color.white.opacity(0.065))
+                AxisGridLine().foregroundStyle(referenceColor.opacity(0.065))
                 AxisValueLabel {
                     if let number = value.as(Int.self) {
                         Text("\(number)%").font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
@@ -134,7 +135,7 @@ struct QuotaCycleChart: View, Equatable {
                         }
                         .monospacedDigit().padding(.horizontal, 10).padding(.vertical, 7)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.1), lineWidth: 0.5))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(referenceColor.opacity(0.1), lineWidth: 0.5))
                         .fixedSize()
                         .position(x: max(88, min(plot.maxX - 88, plot.minX + x)), y: plot.minY + 14)
                         .allowsHitTesting(false)
