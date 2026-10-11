@@ -9,12 +9,16 @@ final class SelectionAndApplicationTests: XCTestCase {
         return try QuotaSnapshot.decode(JSONSerialization.data(withJSONObject: response))
     }
 
-    func testUnavailableQuotaPreservesChoiceAndAvailableQuotaValidatesIt() throws {
-        XCTAssertEqual(QuotaWindowSelection.validated("custom/primary", snapshot: nil), "custom/primary")
-        XCTAssertEqual(QuotaWindowSelection.validated("custom/primary", snapshot: try quota(nil)), "custom/primary")
-        XCTAssertEqual(QuotaWindowSelection.validated("custom/primary", snapshot: try quota("custom")), "custom/primary")
-        XCTAssertEqual(QuotaWindowSelection.validated("custom/primary", snapshot: try quota("codex")), "auto")
-        XCTAssertEqual(QuotaWindowSelection.validated("auto", snapshot: try quota("custom")), "auto")
+    func testSavedChoiceReadsAsFiveHoursOrSevenDays() throws {
+        XCTAssertEqual(QuotaWindowSelection(saved: nil, snapshot: nil), .weekly)
+        XCTAssertEqual(QuotaWindowSelection(saved: "5h", snapshot: nil), .fiveHour)
+        XCTAssertEqual(QuotaWindowSelection(saved: "7d", snapshot: try quota("codex")), .weekly)
+        XCTAssertEqual(QuotaWindowSelection(saved: "auto", snapshot: try quota("codex")), .weekly, "The former automatic choice preferred 7 days")
+        XCTAssertEqual(QuotaWindowSelection(saved: "custom/primary", snapshot: try quota("custom")), .fiveHour,
+            "An earlier saved 300-minute window reads as 5 hours")
+        XCTAssertEqual(QuotaWindowSelection(saved: "custom/primary", snapshot: try quota("codex")), .weekly)
+        XCTAssertEqual(QuotaWindowSelection(saved: "custom/primary", snapshot: try quota(nil)), .weekly)
+        XCTAssertEqual(QuotaWindowSelection(saved: "custom/primary", snapshot: nil), .weekly, "Unavailable quota cannot resolve an old window id")
     }
 
     func testRelocatedApplicationIsFoundAndUnrelatedBundleIsRejected() throws {

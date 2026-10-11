@@ -69,14 +69,6 @@ struct SettingsView: View {
         .environment(\.locale, L10n.locale)
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
-            windowID = QuotaWindowSelection.validated(windowID, snapshot: model.providerQuota(.codex))
-            claudeWindowID = QuotaWindowSelection.validated(claudeWindowID, snapshot: model.providerQuota(.claude))
-        }
-        .onChange(of: model.providerQuota(.codex)?.windows.map(\.id)) { _, _ in
-            windowID = QuotaWindowSelection.validated(windowID, snapshot: model.providerQuota(.codex))
-        }
-        .onChange(of: model.providerQuota(.claude)?.windows.map(\.id)) { _, _ in
-            claudeWindowID = QuotaWindowSelection.validated(claudeWindowID, snapshot: model.providerQuota(.claude))
         }
         .task(id: "\(cliScanRevision):\(executable)") {
             cliReport = nil
@@ -523,18 +515,12 @@ struct SettingsView: View {
         }
     }
 
+    /// An earlier saved window id shows as its period and is kept until a new choice.
     private func quotaWindowPicker(_ provider: AgentProvider, selection: Binding<String>) -> some View {
-        let snapshot = model.providerQuota(provider)
-        return Picker(L10n.text("provider.window_selection", provider.displayName), selection: selection) {
-            Text(L10n.text("settings.auto_weekly")).tag("auto")
-            if selection.wrappedValue != "auto", !(snapshot?.windows ?? []).contains(where: { $0.id == selection.wrappedValue }) {
-                Text(L10n.text("settings.saved_quota_window")).tag(selection.wrappedValue)
-            }
-            ForEach(snapshot?.buckets ?? []) { bucket in
-                ForEach(bucket.windows) { window in
-                    Text(window.label + ((snapshot?.buckets.count ?? 0) > 1 ? " · " + (bucket.name ?? bucket.id) : "")).tag(window.id)
-                }
-            }
+        let choice = Binding(get: { QuotaWindowSelection(saved: selection.wrappedValue, snapshot: model.providerQuota(provider)) },
+                             set: { selection.wrappedValue = $0.rawValue })
+        return Picker(L10n.text("provider.window_selection", provider.displayName), selection: choice) {
+            ForEach(QuotaWindowSelection.allCases, id: \.self) { Text($0.label).tag($0) }
         }
     }
 

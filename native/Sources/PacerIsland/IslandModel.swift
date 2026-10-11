@@ -9,6 +9,10 @@ enum QuotaDashboardPeriod: String, CaseIterable, Identifiable, Sendable {
     var label: String { self == .fiveHour ? L10n.text("quota.compact_hours", 5) : L10n.text("quota.compact_days", 7) }
 }
 
+extension QuotaWindowSelection {
+    var label: String { L10n.text(self == .fiveHour ? "settings.window_five_hour" : "settings.window_weekly") }
+}
+
 enum FiveHourQuotaAlert: Equatable, Sendable {
     case low(Double), exhausted
 }
@@ -105,10 +109,9 @@ final class IslandModel: ObservableObject {
     }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? { provider == .codex ? codexQuota : claudeQuota }
     func providerQuotaError(_ provider: AgentProvider) -> String? { provider == .codex ? codexErrorMessage : claudeErrorMessage }
+    /// The provider's own service bucket; model-scoped buckets stay in Settings details.
     private func providerDashboardBucket(_ provider: AgentProvider) -> QuotaBucket? {
         guard let snapshot = providerQuota(provider) else { return nil }
-        let selected = defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
-        if let bucket = snapshot.buckets.first(where: { $0.windows.contains(where: { $0.id == selected }) }) { return bucket }
         return snapshot.buckets.first(where: { $0.id == provider.rawValue }) ?? snapshot.buckets.first
     }
     func providerWindow(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaWindow? {
@@ -165,19 +168,15 @@ final class IslandModel: ObservableObject {
         defaults.set(provider.rawValue, forKey: "selectedQuotaProvider")
         onLayoutChange?(); onStatusChange?()
     }
+    /// The collapsed window: 5 hours when chosen and reported, otherwise 7 days,
+    /// both from the provider's own bucket.
     func providerSelectedWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
-        let selected = selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
-        let snapshot = providerQuota(provider)
-        if let window = snapshot?.windows.first(where: { $0.id == selected }) { return window }
-        return providerWeeklyWindow(provider, selection: selected) ?? snapshot?.limitingWindow
-    }
-    private func providerWeeklyWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
-        let selected = selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID") ?? "auto"
-        let snapshot = providerQuota(provider)
-        if let bucket = snapshot?.buckets.first(where: { $0.windows.contains(where: { $0.id == selected }) }),
-           let weekly = bucket.windows.first(where: { $0.durationMinutes == 10080 }) { return weekly }
-        return snapshot?.buckets.first(where: { $0.id == provider.rawValue })?.windows.first(where: { $0.durationMinutes == 10080 }) ??
-            snapshot?.windows.first(where: { $0.durationMinutes == 10080 })
+        guard let snapshot = providerQuota(provider) else { return nil }
+        let choice = QuotaWindowSelection(saved: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"),
+            snapshot: snapshot)
+        if choice == .fiveHour, let window = providerWindow(provider, period: .fiveHour) { return window }
+        return providerWindow(provider, period: .weekly) ?? snapshot.windows.first(where: { $0.durationMinutes == 10080 }) ??
+            snapshot.limitingWindow
     }
     /// The collapsed value usually shows a longer window, so the warning watches
     /// each provider's 5h window: below 20% is low and zero is exhausted. Stale,

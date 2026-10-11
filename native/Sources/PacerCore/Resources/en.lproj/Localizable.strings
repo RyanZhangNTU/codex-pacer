@@ -264,7 +264,8 @@
 "redaction.key" = "[redacted]";
 "redaction.token" = "[redacted]";
 "settings.auto_discovery" = "Find automatically";
-"settings.auto_weekly" = "Automatic, prefer 7 days";
+"settings.window_five_hour" = "5 hours (if available)";
+"settings.window_weekly" = "7 days";
 "settings.automatic" = "Automatic";
 "settings.choose_cli" = "Choose Codex.app, the Codex executable, or its folder";
 "settings.choose_home" = "Choose the Codex data folder";
@@ -323,7 +324,6 @@
 "settings.thirty_minutes" = "30 minutes";
 "settings.until_clicked" = "Until Clicked";
 "source.ssh_retrying" = "Pacer will retry these connections automatically.";
-"settings.saved_quota_window" = "Saved quota window (data unavailable)";
 "activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
 "activity.open_failed" = "The conversation could not be opened.";
 "activity.open_failed_detail" = "The conversation could not be opened: %@";

@@ -32,27 +32,31 @@ final class QuotaDashboardModelTests: XCTestCase {
         QuotaSnapshot(buckets: buckets, capturedAt: at ?? now, accountScope: "synthetic-scope", resetCredits: nil)
     }
 
-    func testExactPeriodsUseOneSelectedServiceBucketAndIndependentProviderValues() throws {
+    func testExactPeriodsUseTheProviderBucketAndIndependentProviderValues() throws {
         let (model, defaults) = try fixture()
         publish(snapshot([bucket("codex", [window("codex/five", minutes: 300), window("codex/week", minutes: 10080)]),
                           bucket("codex-review", [window("codex-review/week", minutes: 10080, used: 65), window("codex-review/eight", minutes: 480)])]), for: .codex, to: model)
         publish(snapshot([bucket("claude", [window("claude/five", minutes: 300, used: 40), window("claude/week", minutes: 10080)]),
                           bucket("claude/opus", [window("claude/opus/week", minutes: 10080)])]), for: .claude, to: model)
         defaults.set("codex-review/week", forKey: "quotaWindowID")
-        XCTAssertNil(model.providerWindow(.codex, period: .fiveHour), "A selected service bucket cannot borrow another bucket's five-hour window")
-        XCTAssertEqual(model.providerWindow(.codex, period: .weekly)?.id, "codex-review/week")
-        XCTAssertEqual(model.dashboardQuota(provider: .codex, period: .fiveHour).availability, .missingPeriod)
-        XCTAssertEqual(model.dashboardQuota(provider: .codex, period: .weekly).bucketName, "codex-review")
+        XCTAssertEqual(model.providerWindow(.codex, period: .fiveHour)?.id, "codex/five",
+            "An earlier saved model-scoped window cannot move the dashboard off the account bucket")
+        XCTAssertEqual(model.providerWindow(.codex, period: .weekly)?.id, "codex/week")
+        XCTAssertNil(model.dashboardQuota(provider: .codex, period: .weekly).bucketName)
+        XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/week", "An earlier saved weekly window reads as 7 days")
         XCTAssertEqual(model.providerWindow(.claude, period: .fiveHour)?.id, "claude/five")
         XCTAssertEqual(model.dashboardQuota(provider: .claude, period: .fiveHour).remainingQuotaPercent, 60)
         defaults.set("claude/opus/week", forKey: "claudeQuotaWindowID")
-        XCTAssertEqual(model.dashboardQuota(provider: .claude, period: .fiveHour).availability, .missingPeriod, "Model-scoped weekly limits never imply an account plan")
-        XCTAssertEqual(model.providerWindow(.claude, period: .weekly)?.id, "claude/opus/week")
-        defaults.set("auto", forKey: "quotaWindowID")
-        XCTAssertEqual(model.providerWindow(.codex, period: .fiveHour)?.id, "codex/five")
+        XCTAssertEqual(model.providerWindow(.claude, period: .weekly)?.id, "claude/week")
+        defaults.set("5h", forKey: "claudeQuotaWindowID")
+        XCTAssertEqual(model.providerSelectedWindow(.claude)?.id, "claude/five")
+        defaults.set("7d", forKey: "quotaWindowID")
+        XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/week")
         XCTAssertEqual(model.dashboardQuota(provider: .codex, period: .fiveHour).remainingQuotaPercent, 80)
-        XCTAssertNil(model.dashboardQuota(provider: .codex, period: .fiveHour).bucketName)
         XCTAssertEqual(model.selectedProvider, .claude, "Provider presentation reads do not change quota selection")
+        defaults.set("5h", forKey: "quotaWindowID")
+        publish(snapshot([bucket("codex", [window("codex/week", minutes: 10080)])]), for: .codex, to: model)
+        XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/week", "Without a 5-hour window the choice falls back to 7 days")
     }
 
     func testWeeklyOnlyProRequiresActualPrimaryBucketFreshUsageAndKnownFutureReset() throws {
@@ -165,7 +169,7 @@ final class QuotaDashboardModelTests: XCTestCase {
             model.history = history; model.historyWarning = warning
         }
         defaults.set("codex/review/week", forKey: "quotaWindowID")
-        XCTAssertEqual(model.providerCurrentCycle(.codex)?.id, "codex/review/week")
+        XCTAssertEqual(model.providerCurrentCycle(.codex)?.id, "codex/week", "History follows the account bucket, not an earlier saved window")
         XCTAssertEqual(model.providerCurrentCycle(.claude)?.id, "claude/week")
         XCTAssertEqual(model.providerHistoryWarning(.codex), "Synthetic Codex warning")
         XCTAssertEqual(model.providerHistoryWarning(.claude), "Synthetic Claude warning")

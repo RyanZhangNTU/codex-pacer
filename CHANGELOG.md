@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Choose each provider's collapsed quota window as 5 hours (if available) or 7 days instead of from every reported service window. Both come from the provider's own account bucket, and 5 hours falls back to 7 days when the service has no 5-hour limit; the expanded rings use the same bucket. Earlier saved windows read as the matching period until a new choice.
+
 - Call the single-task badge choice Task Status or Task Count instead of Current Stage, and use "status" in the activity badge description and the Help legend.
 
 - Remove the Specified Width option; the island always fits its content. On a notched display the collapsed bar keeps equal sides around the camera sized by its components, so it no longer covers menus or the status items beside the notch; on other displays and when floating it is a capsule that fits them. The expanded panel fits its task rows between 404 and 680 points. A saved specified width is ignored and cleared on the next settings change.
