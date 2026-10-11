@@ -52,14 +52,17 @@ else
 fi
 # Keep the current update feed live until both new assets are uploaded and checked.
 task_verify="$(mktemp -d /private/tmp/codex-pacer-published.XXXXXX)"
-python3 - "$task_notes_en" "$task_notes" "$task_verify/release-notes.md" "$task_version" <<'PY'
+python3 - "$task_notes_en" "$task_notes" "$task_verify/release-notes.md" "$task_version" "$task_mode" <<'PY'
 from pathlib import Path
 import sys
 english, chinese, combined = map(Path, sys.argv[1:4])
-version = sys.argv[4]
-combined.write_text('## English\n\n' + english.read_text() + '\n## 简体中文\n\n' + chinese.read_text()
-    + '\n[First-launch help / 首次打开帮助 (Apple)](https://support.apple.com/102445)\n\n'
-    + f'![Privacy & Security / 隐私与安全](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/v{version}/docs/assets/macos-open-anyway.png)\n')
+version, mode = sys.argv[4:6]
+body = '## English\n\n' + english.read_text() + '\n## 简体中文\n\n' + chinese.read_text()
+if mode == 'unsigned':
+    # Notarized builds open normally; only ad-hoc builds need the Open Anyway walkthrough.
+    body += ('\n[First-launch help / 首次打开帮助 (Apple)](https://support.apple.com/102445)\n\n'
+        + f'![Privacy & Security / 隐私与安全](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/v{version}/docs/assets/macos-open-anyway.png)\n')
+combined.write_text(body)
 PY
 gh release create "$task_tag" "$task_dmg" "$task_output/appcast.xml" --verify-tag --draft \
     --title "$task_title" --notes-file "$task_verify/release-notes.md"

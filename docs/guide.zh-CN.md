@@ -127,7 +127,7 @@ Codex Remote Control 任务通过 Codex 桌面端获取。请保持 Codex 开启
 
 ## 常见问题
 
-- **macOS 不让打开应用。** 按 [安装步骤](../README.zh-CN.md#安装) 在“隐私与安全性”中选择“仍要打开”。
+- **macOS 不让打开应用。** Pacer 已通过 Apple 公证，请从[最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)重新下载，以防下载不完整。3.0.1 之前的版本未签名，需要在“系统设置 → 隐私与安全性”中选择“仍要打开”。
 - **某个服务没有任务。** 确认对应模块已开启，并且“设置 → Codex / Claude → 本机”能找到它。Claude 首次配置后，需要重启 Claude Code 会话。
 - **Claude 额度要求登录。** claude.ai 会话已过期，在 Pacer 的窗口中重新登录即可。网络错误和限流会自动重试。
 - **SSH 主机未连接。** 确认 `ssh <主机>` 不需要输入密码即可连接，然后在“设置 → 连接”中点击“重试”。

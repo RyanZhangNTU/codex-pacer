@@ -67,13 +67,10 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 ## Install
 
-Codex Pacer is distributed as an unsigned universal DMG, so macOS asks you to confirm it the first time.
+Codex Pacer is distributed as a universal DMG signed with Developer ID and notarized by Apple.
 
-1. Double-click the downloaded DMG and dismiss the warning.
-2. Open **System Settings → Privacy & Security**, scroll to **Security** and click **Open Anyway** for the installer.
-3. Open the DMG again and drag **Codex Pacer** into **Applications**. If macOS also stops the app, repeat step 2 for it.
-
-![Privacy & Security, the Security section and the Open Anyway button](docs/assets/macos-open-anyway.png)
+1. Double-click the downloaded DMG and drag **Codex Pacer** into **Applications**.
+2. Open Codex Pacer from Applications. macOS asks once to confirm an app downloaded from the internet; click **Open**.
 
 After that, Pacer updates itself: it checks daily and installs when you choose to. **Settings → General → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
 

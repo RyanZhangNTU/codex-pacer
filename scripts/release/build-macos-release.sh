@@ -11,6 +11,7 @@ esac
 [[ $# -le 1 ]] || { echo 'Too many arguments.' >&2; exit 2; }
 if [[ "$task_mode" == signed ]]; then
     : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to a Developer ID Application identity}"
+    : "${APPLE_NOTARY_PROFILE:?Set APPLE_NOTARY_PROFILE to a notarytool Keychain profile}"
     task_identity="$APPLE_SIGNING_IDENTITY"
 else
     # Apple Silicon still needs a local code signature. This is not Developer ID.
