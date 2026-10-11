@@ -64,7 +64,7 @@ struct SettingsHelpPane: View {
                 Button(action: onShowWelcome) { Label(L10n.text("help.show_welcome"), systemImage: "hand.wave") }
                     .buttonStyle(.link)
             }
-            Link(destination: URL(string: Self.repository + (L10n.language == .simplifiedChinese ? "/blob/main/README.zh-CN.md" : "#readme"))!) {
+            Link(destination: URL(string: Self.repository + (L10n.language == .simplifiedChinese ? "/blob/main/docs/guide.zh-CN.md" : "/blob/main/docs/guide.md"))!) {
                 Label(L10n.text("help.link.guide"), systemImage: "book")
             }
             Link(destination: URL(string: Self.repository + "/issues")!) {

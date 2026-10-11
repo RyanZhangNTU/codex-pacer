@@ -685,7 +685,8 @@ final class IslandModel: ObservableObject {
         completionInbox = CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault))
         bindCompletionSources(.codex)
         bindCompletionSources(.claude)
-        expanded = demo || initiallyExpanded
+        // Demo opens pinned so its content is visible; --demo-collapsed keeps the bar.
+        expanded = (demo && !CommandLine.arguments.contains("--demo-collapsed")) || initiallyExpanded
         pinned = expanded
         if demo { makeDemo() }
     }
@@ -1425,8 +1426,10 @@ final class IslandModel: ObservableObject {
         guard !demo, let newest = notices.last else { return }
         notifications.deliver(newest)
     }
+    /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {
-        for snapshot in DemoScenario.quota(at: now) { history.record(snapshot); quota = snapshot }
+        for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
+        for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         setDemoStage(.thinking)
         if CommandLine.arguments.contains("--demo-completion") { setDemoStage(.completed) }
     }

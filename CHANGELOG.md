@@ -2,79 +2,48 @@
 
 ## 3.0.0 (development candidate)
 
-- Rework the welcome guide into two short steps without scrolling. Step 1 introduces the island with the real collapsed bar on a desktop: callouts for tasks, speed, quota and warnings, the three badge states, and a small island that opens and closes with the real spring as the pointer hovers and leaves. Step 2 lets people choose what to follow: Codex and Claude cards with their own switches and status (ready, not found, or sign in), plus shortcuts to customize the collapsed bar and turn on system notifications. The full legend stays in Settings → Help, which can also show the guide again.
+Codex Pacer now follows Claude Code as well as Codex.
 
-- Simplify Reminders to the collapsed-bar warnings, one System Notifications switch and ended-task retention. Replies, approvals, endings and quota already show in the collapsed bar, so the expanded island no longer repeats them as a banner and the separate On the Island switches are gone; those states always show on the bar. System Notifications, when on, covers new reply or approval requests, turn endings and quota reaching 15%. The retired switches are cleared on the next settings change.
+### Claude Code and modules
 
-- Choose each provider's collapsed quota window as 5 hours or 7 days instead of from every reported service window. Both come from the provider's own account bucket; a weekly-only account such as Codex Pro shows 7 days without a choice, and a saved 5-hour choice falls back to 7 days; the expanded rings use the same bucket. Earlier saved windows read as the matching period until a new choice.
+- Show Claude Code tasks from this Mac and SSH hosts next to Codex tasks, with stages, replies and approvals that need you, endings, spawned agents, output speed and time to first output from Claude Code's own telemetry.
+- Show Claude quota for its 5-hour and 7-day windows, from Claude Code's status line or a claude.ai session in Pacer's own sign-in window, with an explicit choice when an account has several organizations. Pacer never reads other apps' Keychain items or browser cookies.
+- Make Codex and Claude independent modules. Each turns on automatically when its app or CLI is installed; an explicit choice sticks until you restore automatic detection.
+- Set up Claude Code monitoring automatically: Pacer adds its own hooks and a local-only telemetry endpoint next to existing settings, on this Mac and on connected SSH hosts that have Claude Code, and removes the local entries when the module is turned off by hand.
+- Follow the SSH hosts managed in Codex and Claude, including Claude Desktop's saved connections and their ports and identity files, so hosts no longer need to be added in Pacer.
+- Add Codex Remote Control tasks through the connected Codex app ([#77](https://github.com/RyanZhangNTU/codex-pacer/pull/77)). An idle Remote Control connection shows as waiting for a session.
+- Open Claude tasks in their Claude Desktop session, or resume them in Terminal.
 
-- Call the single-task badge choice Task Status or Task Count instead of Current Stage, and use "status" in the activity badge description and the Help legend.
+### The island
 
-- Remove the Specified Width option; the island always fits its content. On a notched display the collapsed bar keeps equal sides around the camera sized by its components, so it no longer covers menus or the status items beside the notch; on other displays and when floating it is a capsule that fits them. The expanded panel fits its task rows between 404 and 680 points. A saved specified width is ignored and cleared on the next settings change.
+- Merge the status icon and task count into one activity badge: an orbit in each provider's color while tasks run, solid amber when a task needs you, and marks for unread endings.
+- Show both services' quota in rings with a white pace tick and an Ahead, On pace or Fast verdict, the 5-hour window below each ring and a compact reset countdown. The collapsed bar alternates one quota value beside rings that show both.
+- Collect the 5-hour, SSH and quota-delay warnings into one warnings slot that appears only while a warning applies.
+- Show each running turn's elapsed time, and right-align speed and time to first output in two-line task rows.
+- Fit the island to its content at all times: around a notch the collapsed bar keeps equal sides sized by its components, and the expanded panel fits its task rows. The Specified Width option is gone.
+- Use Liquid Glass that follows the system's glass setting on macOS 26 and later, with a dark wash for legibility. Around the notch the collapsed bar stays black to blend with the camera.
+- Keep an ended task's card dismissed after a normal relaunch once you have opened its conversation.
+- Remove the menu bar item and the in-island reminder banner; everything shows on the island.
 
-- Follow Apple's Liquid Glass guidance: the island uses regular, untinted glass whose clarity follows the system-wide Liquid Glass setting (System Settings → Appearance on macOS 27), so the app's own glass style, transparency, tint and corner-radius controls are gone. A fixed dark wash keeps text legible over bright windows, deepening with Increase Contrast; Reduce Transparency still shows solid black. Appearance shows this as one Transparency row with an Adjust button, and in Notch mode a second row states that the collapsed bar stays black and the expanded island shows glass, so the page has no footnotes.
+### Settings
 
-- Remove the optional menu bar item and its Show in Menu Bar setting: Pacer lives in the island. Settings, refresh and Quit stay on the island, Check for Updates stays in Settings → General, and task cards still open their conversations. The stored preference is cleared on the next settings change.
+- Move Settings into a sidebar window that applies changes as you make them, without Save or Cancel.
+- Customize the collapsed bar with a lane strip shaped like the bar: drag components between the sides of the camera, toggle each one, and choose 5 hours or 7 days for each service's quota.
+- Simplify Reminders to the collapsed-bar warnings, one System Notifications switch and how long ended tasks stay.
+- Add a Connections page that lists every task source with problems first, quota freshness, and the SSH and Remote Control switches.
+- Add a Help page with a legend drawn from the real island components, and a two-step welcome guide on first launch that can be reopened from Help.
+- Give Pacer its own icon.
 
-- Drop the Collapsed Bar preview as well: layout and width edits already reach the real bar at once. The first card keeps the bar-shaped lane strip and width controls under a Layout heading.
+### Fixes and performance
 
-- Give Pacer its own icon in place of the inherited Tauri logo, which macOS 26 and later shrank into a gray tile: a white P on charcoal whose bowl is the quota ring, crossed by a teal pace tick. The SVG source and `scripts/native/render-app-icon.swift` regenerate the bundled icon.
+- Reduce Claude hook overhead, repeated directory scans, transcript parses and unchanged reads.
+- Reject measurements from a previous turn, keep tool endings when results contain display fields, and keep unknown quota visibly distinct from zero.
+- Treat a reachable SSH host without Claude as connected, and stop reporting missing Claude sources as SSH problems.
+- Fix the demo mode showing Codex quota as unavailable when Claude was last selected in Settings.
 
-- Drop the Appearance preview now that changes apply to the real island at once. With Liquid Glass around the notch, the page explains that the collapsed bar stays black to blend with the camera and shows glass once expanded, with Floating as the way to a glass collapsed bar. Style and position tiles share one desktop backdrop. Hide Project Names now says what it replaces and when it helps instead of showing an example.
+### Upgrading
 
-- Let Esc cancel an input method's in-progress composition in Settings text fields instead of closing the window.
-
-- Apply settings as they change, like System Settings: the Save and Cancel bar is gone. Controls apply after a short coalescing delay; text fields commit on Return, focus loss, a chooser or close and keep the last valid value with an inline message; language offers Restart Now; system notifications ask for permission when switched on. Quit moves to the bottom of the sidebar and Esc closes the window.
-
-- Configure every warning and reminder in one place. The collapsed bar keeps a single warnings slot (layout schema 7 merges the former 5h, delayed-update and SSH components at the first one's position and keeps the kinds that were shown); the Reminders page chooses which warnings it shows, then the one-time reminders with system notifications, and the ended-task retention as its own row.
-
-- Redesign the Appearance, Reminders and General pages. Appearance opens with a live preview of the real collapsed bar on a desktop backdrop; style (solid black or Liquid Glass) and position (automatic, notch, floating) are picture tiles that update it at once, and Liquid Glass adjustments use a segmented style, tint swatches and appear only for Liquid Glass. Each reminder shows the mark it puts on the island, with "keep afterwards" under turn endings. General shows one version row with its update status and Check for Updates, and the language hint only after a change. On the island, an unconnected quota shows a quiet outline with the provider's mark instead of an empty dashed gauge, and its Settings action opens that module's page.
-
-- Make Codex and Claude settings read the same and set themselves up. Pacer installs and refreshes its local Claude hooks while the Claude module is on (never creating a Claude home, writing nothing when current) and removes them when the module is turned off by hand, so the Configure/Remove buttons are gone. Each module pane now shows a "This Mac" section with one status row per item, a button only when something needs attention, and path overrides folded into Custom Locations. Claude sign-in reads as a status (signed in, not signed in, workspace needed); Switch Account sits in the row's menu once signed in. The Codex CLI test button and explanatory captions about telemetry, modules and SSH are removed or moved into tooltips; Claude's quota placeholder no longer says "Codex".
-
-- Set up Claude monitoring on SSH hosts automatically, like Codex SSH detection needs no setup: connected hosts that already have Claude Code get Pacer's additive hooks once per shipped adapter version, current hosts see no writes, hosts without Claude are skipped and failures retry after 30 minutes. SSH now lives in one place: Settings → Connections lists each SSH host once with its Codex and Claude status side by side, a single switch covers both modules, and added aliases sit beside them. The Claude pane's SSH section, its Configure buttons and the separate automatic-setup switch are gone; turning off SSH monitoring stops remote setup too.
-
-- Show a getting-started welcome once on a fresh 3.0 install or the first launch after upgrading from 2.x: quick links to Claude setup and the collapsed bar, then the Help legend. It stays available in Settings → Help.
-
-- Turn the Connections pane into a diagnostics page: a status summary, every task source with problems first and a retry action, quota freshness per provider, and the SSH and Codex Remote Control switches together. Paused hosts without the provider are distinguished from disconnected ones.
-
-- Add a concise Help pane at the bottom of the Settings sidebar: the Codex/Claude and alert colors, a legend drawn with the real island components, the main interactions, and links to the user guide and issue tracker.
-
-- Redesign the Collapsed Bar settings page: one preview card with a bar-shaped, wrapping lane strip and the width controls, then grouped switch rows with descriptions whose options appear beneath them; redundant help text is removed and the preview stage adapts to light and dark appearance.
-
-- Align expanded island content with the header's 15-point edges and tighten section spacing. The adaptive expanded minimum drops from 440 to 404 points, keeping the earlier content width while halving the widening from a narrow bar; specified widths are unchanged; the more-actions menu keeps only refresh and quit.
-
-- Replace the separate collapsed Codex and Claude quota values with one quota value that alternates between enabled modules every 4 seconds (remaining or pace) and optional quota rings showing both at once; both are on by default. A 5h warning shows an outlined capsule below 20% and a solid one when exhausted, tinted by provider. Layout schema 6 migrates saved layouts, and the Settings quota options follow the components that use them.
-
-- Refine the everyday expanded island: quota rings mark an even pace with a white tick and an ahead/on-pace/fast verdict instead of an inner time ring, rings show 7d with 5h one line below each ring in place of the period switch, running rows show their turn's elapsed time, and panel actions move from the footer into the task header with refresh and quit in one menu. The expanded header quiets repeated quota values; starting tasks use an hourglass.
-
-- Merge the collapsed status icon and task count into one activity badge. A provider-colored comet orbits while tasks run, a solid amber fill asks for input or approval, and unread endings fill the core or show as a corner mark. The number always counts active tasks; a single task can show its stage or its count. Status text leaves the default layout but stays optional. The orbit runs in Core Animation, pauses while occluded and stays static with Reduce Motion.
-
-- Mark the physical screen notch in Settings previews, keeping its scaled center footprint distinct from content and placing it above floating bars. Preview drafts use hardware geometry from Pacer's current screen.
-
-- Embed collapsed-bar customization in sidebar Settings with one draft/save flow. Split only Codex and Claude quota components, follow enabled modules, and preserve existing positions and hidden choices through layout migration.
-
-- Reject previous-turn request/display measurements, preserve tool endings when results contain display fields, invalidate missing Claude sources without false SSH warnings, and immediately recheck them after setup or manual refresh. Keep unknown quota/time rings visibly distinct from measured zero.
-
-- Add independently enabled Codex and Claude modules, installation-based defaults and persistent manual overrides.
-- Include Codex Remote Control task stages, available performance data, attention and agent grouping through the connected Desktop owner's stream, with a Codex-specific setting independent of SSH. Codex must remain open and connected with the conversation loaded by a stream owner; this source has no independent remote-host discovery or log fallback. See [upstream PR #77](https://github.com/RyanZhangNTU/codex-pacer/pull/77) and [data semantics](docs/development.md#codex-accounting-and-lifecycle).
-- Keep cached Remote Control counters as baselines rather than new measurements. Unseen first output remains unknown, and the inherited mid-request counter fallback is approximate and can still inflate TPS; it has no independent request-log correction. See the [merged rate implementation](https://github.com/RyanZhangNTU/codex-pacer/blob/6d76642ead54c3c721f1f5fc5b64c834b220f89f/native/Sources/PacerCore/GenerationRate.swift) and [documented limits](docs/development.md#codex-accounting-and-lifecycle).
-- Combine local and SSH tasks in one provider-colored list. Show Codex/Claude quota and remaining time together in rings; a single provider's ring layout shows both periods, with a confirmed weekly-only PRO placeholder. When only Codex is enabled and its primary account reports limits without a 5h window, restore the original quota bars for all actual windows, including nonstandard or unspecified durations. Keep quota history and full details in Settings. Keep collapsed quota values separate while aggregating tasks and available throughput.
-- Use lighter ring strokes around the central quota value and compact reset countdown. Disclose normal source/update details in hover help and Settings while retaining stale/error indicators. Show compact percentages with provider color alone, keeping full names in accessibility and help.
-- Isolate task identity, parent/agent grouping, attention, completion retention, quota history and module shutdown by provider; preserve existing Codex identity and caches.
-- Add bounded native Claude transcript, hook and numeric OTLP collection, owned Python 3.6+ SSH helpers, and additive monitoring setup that preserves existing configuration.
-- Prefer fresh account-matched status-line quota and a Pacer-owned WebKit sign-in session, with explicit organization selection and read-only Web quota GETs. Production performs no foreign Keychain/Safe Storage reads; legacy own-cache/environment/file sources remain quiet compatibility fallbacks.
-- Use matching Claude numeric request measurements, or observed throughput estimates after a verified stop; only actual partial display callbacks or reported TTFT establish first-output timing. Open Claude through mapped Desktop sessions or validated CLI resume paths; observed child tasks can route to a validated parent session without guessing its path.
-- Keep successfully opened completion cards dismissed across normal relaunch using bounded, source-scoped hashes. A verified parent open acknowledges only captured, matching already-terminal descendants; running children, late endings, new turns, changed sources and Terminal/failure outcomes remain protected.
-- Reduce repeated directory scans, transcript parses, unchanged-EOF reads and noneligible display-hook writes; reuse task grouping without reusing stale freshness clocks.
-- Release Settings hosting content on save, cancellation and window close, while retaining its native window geometry for reopening.
-- Show Claude request speed and first-output time from current Claude Code telemetry, whose request spans no longer carry a prompt ID; only main-conversation requests that started within the current turn are counted.
-- Cut Claude hook overhead: run the adapter with `python3 -S`, stop registering the display observer when telemetry already reports TTFT (Claude waited on it for every rendered batch), halve routine spool writes and migrate existing installations automatically.
-- Treat a reachable SSH host without Claude as connected rather than disconnected, release its helper and recheck it later; avoid repeated Claude app/CLI lookups and profile/global-state parsing.
-- Redesign the island and Settings: one outline status icon family in tinted tiles, two-line task rows with right-aligned TPS/TTFT, cleaner quota rings, and a sidebar Settings window with per-provider pages that remembers the last pane.
-- Route the sign-in window's Command-Return action before focused web content, while preserving ordinary Return and native window-close behavior.
-- Confirm foreground and background Agent endings from owned result/engine-notification evidence, exclude unstarted internal agents, and preserve genuinely running background tasks.
-- Read the owned SSH hook spool before transcripts during cold replay and concurrent appends, preserving exact terminal evidence without a timeout heuristic.
+Preferences from 2.x carry over. Saved layouts, quota windows and warnings are migrated, and retired options (menu bar, glass style and tint, specified width, per-kind reminders) are cleared on the next settings change.
 
 ## 2.4.0
 
