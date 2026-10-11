@@ -5,7 +5,8 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
         case activity, status, tps, firstOutput
         case quota, quotaGauge, quotaLabel, timeRemaining
-        case lowQuotaWarning, quotaDelayWarning, sshWarning
+        /// One slot for every enabled warning; Reminders chooses which kinds it shows.
+        case warnings
         public var id: String { rawValue }
         public var label: String { L10n.text("layout.component." + rawValue) }
         public var shortLabel: String { L10n.text("layout.short." + rawValue) }
@@ -13,7 +14,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         /// Quota components combine every enabled provider, so they need at least one.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
             switch self {
-            case .quota, .quotaGauge, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning: return !providers.isEmpty
+            case .quota, .quotaGauge, .quotaLabel, .timeRemaining: return !providers.isEmpty
             default: return true
             }
         }
@@ -33,14 +34,13 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .quotaGauge: "circle.circle"
             case .quotaLabel: "tag"
             case .timeRemaining: "hourglass"
-            case .lowQuotaWarning: "gauge.with.dots.needle.33percent"
-            case .quotaDelayWarning: "clock.arrow.circlepath"
-            case .sshWarning: "network.slash"
+            case .warnings: "exclamationmark.triangle"
             }
         }
         fileprivate static func saved(_ value: String) -> [Self] {
             switch value {
             case "statusIcon", "taskCount": [.activity]
+            case _ where Warning(legacyComponent: value) != nil: [.warnings]
             default: Self(rawValue: value).map { [$0] } ?? []
             }
         }
@@ -64,7 +64,21 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .tasks: [.activity, .status]
             case .performance: [.tps, .firstOutput]
             case .quota: [.quota, .quotaGauge, .quotaLabel, .timeRemaining]
-            case .warnings: [.lowQuotaWarning, .quotaDelayWarning, .sshWarning]
+            case .warnings: [.warnings]
+            }
+        }
+    }
+    /// What the warnings component can show, in display order.
+    public enum Warning: String, CaseIterable, Codable, Sendable {
+        case fiveHour, ssh, quotaDelay
+        public var label: String { L10n.text("warning." + rawValue) }
+        /// Schemas before 7 had one component per warning.
+        fileprivate init?(legacyComponent name: String) {
+            switch name {
+            case "lowQuotaWarning": self = .fiveHour
+            case "sshWarning": self = .ssh
+            case "quotaDelayWarning": self = .quotaDelay
+            default: return nil
             }
         }
     }
@@ -73,14 +87,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 6
+    public let version = 7
     public var leading: [Component]
     public var trailing: [Component]
-    public init(leading: [Component] = [], trailing: [Component] = []) {
-        self.leading = leading; self.trailing = trailing
+    public var warnings: Set<Warning>
+    public init(leading: [Component] = [], trailing: [Component] = [], warnings: Set<Warning> = Set(Warning.allCases)) {
+        self.leading = leading; self.trailing = trailing; self.warnings = warnings
     }
-    public static let standard = Self(leading: [.activity, .tps],
-        trailing: [.lowQuotaWarning, .quotaGauge, .quota, .quotaDelayWarning, .sshWarning])
+    public static let standard = Self(leading: [.activity, .tps], trailing: [.warnings, .quotaGauge, .quota])
     public subscript(_ lane: Lane) -> [Component] {
         get { lane == .leading ? leading : trailing }
         set { if lane == .leading { leading = newValue } else { trailing = newValue } }
@@ -91,7 +105,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     }
     public var normalized: Self {
         var seen: Set<Component> = []
-        var result = Self()
+        var result = Self(warnings: warnings)
         for lane in Lane.allCases { result[lane] = self[lane].filter { seen.insert($0).inserted } }
         return result
     }
@@ -123,11 +137,11 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         guard target != index else { return }
         self[lane].remove(at: index); self[lane].insert(component, at: target)
     }
-    private enum CodingKeys: String, CodingKey { case version, leading, trailing, center }
+    private enum CodingKeys: String, CodingKey { case version, leading, trailing, center, warnings }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...6).contains(schema) else {
+        guard (1...7).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
         var leadingNames = try values.decode([String].self, forKey: .leading)
@@ -147,8 +161,19 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             leadingNames = ["activity", "tps"]
         }
         if schema < 6 { Self.mergeProviderQuotas(&leadingNames, &trailingNames) }
-        let decoded = Self(leading: leadingNames.flatMap(Component.saved), trailing: trailingNames.flatMap(Component.saved)).normalized
-        leading = decoded.leading; trailing = decoded.trailing
+        // Schema 7 merges the separate warnings into one slot at the first
+        // one's position; the kinds that were shown stay enabled.
+        let enabled: Set<Warning>
+        if schema < 7 {
+            let shown = Set((leadingNames + trailingNames).compactMap(Warning.init(legacyComponent:)))
+            enabled = shown.isEmpty ? Set(Warning.allCases) : shown
+        } else {
+            enabled = try values.decodeIfPresent([String].self, forKey: .warnings).map { Set($0.compactMap(Warning.init(rawValue:))) }
+                ?? Set(Warning.allCases)
+        }
+        let decoded = Self(leading: leadingNames.flatMap(Component.saved), trailing: trailingNames.flatMap(Component.saved),
+            warnings: enabled).normalized
+        leading = decoded.leading; trailing = decoded.trailing; warnings = decoded.warnings
     }
     /// Schema 6 shows one quota value that alternates between providers. Lanes
     /// that showed both provider values keep both visible as the rings plus
@@ -176,5 +201,6 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         try values.encode(version, forKey: .version)
         try values.encode(leading.map(\.rawValue), forKey: .leading)
         try values.encode(trailing.map(\.rawValue), forKey: .trailing)
+        try values.encode(Warning.allCases.filter(warnings.contains).map(\.rawValue), forKey: .warnings)
     }
 }

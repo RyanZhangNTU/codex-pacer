@@ -7,6 +7,8 @@ struct CompactQuotaPreview {
     let metric: String
     let windowIDs: [AgentProvider: String]
     var singleTask: ActivityBadgeSingleTask? = nil
+    /// The Reminders draft, so Settings previews follow it before Save.
+    var warnings: Set<CompactIslandLayout.Warning>? = nil
 }
 
 /// Both display modes have only left and right content. A real camera needs
@@ -105,9 +107,7 @@ struct CompactIslandComponent: View {
         guard component.isAvailable(for: Set(quotaPreview?.providers ?? model.enabledProviders)) else { return false }
         switch component {
         case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .lowQuotaWarning: return !fiveHourAlerts(model, quotaPreview: quotaPreview).isEmpty
-        case .quotaDelayWarning: return !delayedQuotaProviders(model, quotaPreview: quotaPreview).isEmpty
-        case .sshWarning: return model.hasSSHConnectionIssue
+        case .warnings: return !activeWarnings(model, quotaPreview: quotaPreview).isEmpty
         default: return true
         }
     }
@@ -119,6 +119,18 @@ struct CompactIslandComponent: View {
             model.compactQuotaValue($0, metric: quotaPreview?.metric, selection: quotaPreview?.windowIDs[$0]) != nil
         }
         return known.isEmpty ? Array(providers.prefix(1)) : known
+    }
+    /// Enabled warnings whose condition holds now, in display order.
+    static func activeWarnings(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [CompactIslandLayout.Warning] {
+        let enabled = quotaPreview?.warnings ?? model.compactLayout.warnings
+        return CompactIslandLayout.Warning.allCases.filter { warning in
+            guard enabled.contains(warning) else { return false }
+            switch warning {
+            case .fiveHour: return !fiveHourAlerts(model, quotaPreview: quotaPreview).isEmpty
+            case .ssh: return model.hasSSHConnectionIssue
+            case .quotaDelay: return !delayedQuotaProviders(model, quotaPreview: quotaPreview).isEmpty
+            }
+        }
     }
     static func fiveHourAlerts(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [(provider: AgentProvider, alert: FiveHourQuotaAlert)] {
         (quotaPreview?.providers ?? model.enabledProviders).compactMap { provider in
@@ -159,13 +171,22 @@ struct CompactIslandComponent: View {
                 .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
-        case .lowQuotaWarning:
-            HStack(spacing: 3) {
-                ForEach(Self.fiveHourAlerts(model, quotaPreview: quotaPreview), id: \.provider) { item in
-                    FiveHourAlertGlyph(alert: item.alert, tint: item.provider.tint)
+        case .warnings:
+            HStack(spacing: 4) {
+                ForEach(Self.activeWarnings(model, quotaPreview: quotaPreview), id: \.self) { warning in
+                    switch warning {
+                    case .fiveHour:
+                        ForEach(Self.fiveHourAlerts(model, quotaPreview: quotaPreview), id: \.provider) { item in
+                            FiveHourAlertGlyph(alert: item.alert, tint: item.provider.tint)
+                        }
+                    case .ssh:
+                        Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+                    case .quotaDelay:
+                        Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+                    }
                 }
             }
-            .accessibilityElement(children: .ignore).accessibilityLabel(fiveHourSummary)
+            .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
         case .quota:
             let shown = Self.alternatingProviders(model, quotaPreview: quotaPreview)
             Group {
@@ -199,12 +220,6 @@ struct CompactIslandComponent: View {
                         .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
                 }
             }.monospacedDigit().fixedSize(horizontal: true, vertical: false)
-        case .quotaDelayWarning:
-            Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
-                .accessibilityLabel(component.label)
-        case .sshWarning:
-            Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
-                .accessibilityLabel(component.label)
         }
     }
     /// Provider values stay color-coded without names; a hairline separates them.
@@ -223,6 +238,16 @@ struct CompactIslandComponent: View {
             case .exhausted: L10n.text("quota.five_hour_exhausted", item.provider.displayName)
             }
         }.joined(separator: " · ")
+    }
+    private var warningSummary: String {
+        Self.activeWarnings(model, quotaPreview: quotaPreview).map { warning in
+            switch warning {
+            case .fiveHour: fiveHourSummary
+            case .ssh: L10n.text("source.ssh_retrying")
+            case .quotaDelay: Self.delayedQuotaProviders(model, quotaPreview: quotaPreview).map(\.displayName).joined(separator: " · ")
+                + " · " + warning.label
+            }
+        }.joined(separator: "\n")
     }
     private var gaugeSummary: String {
         providers.map { provider in
@@ -246,16 +271,14 @@ struct CompactIslandComponent: View {
                 component == .activity ? activitySummary : model.headerStatus)
         case .tps: return model.rateHelp
         case .firstOutput: return L10n.text("layout.latest_ttft_help")
-        case .lowQuotaWarning: return fiveHourSummary
+        case .warnings: return warningSummary
         case .quotaGauge: return gaugeSummary + "\n" + L10n.text("layout.gauge_help")
-        case .quotaDelayWarning: return Self.delayedQuotaProviders(model, quotaPreview: quotaPreview).map(\.displayName).joined(separator: " · ") + " · " + component.label
         case .timeRemaining:
             return providers.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
                 .joined(separator: " · ") + "\n" + L10n.text("layout.time_remaining_help")
         case .quota, .quotaLabel:
             return providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }
                 .joined(separator: " · ") + "\n" + L10n.text("layout.metric_help")
-        case .sshWarning: return L10n.text("source.ssh_retrying")
         }
     }
     private func quotaText(_ provider: AgentProvider) -> String {

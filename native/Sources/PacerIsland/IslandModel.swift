@@ -229,6 +229,11 @@ final class IslandModel: ObservableObject {
     var onLayoutChange: (() -> Void)?
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
+    /// Opens Settings on a module's own page, where its sign-in and locations live.
+    func openSettings(for provider: AgentProvider) {
+        UserDefaults.standard.set((provider == .codex ? SettingsPane.codex : .claude).rawValue, forKey: SettingsPane.defaultsKey)
+        onSettings?()
+    }
     var onQuit: (() -> Void)?
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?

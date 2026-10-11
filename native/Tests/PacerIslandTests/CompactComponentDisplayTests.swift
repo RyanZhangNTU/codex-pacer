@@ -60,24 +60,28 @@ final class CompactComponentDisplayTests: XCTestCase {
         model.quota = try snapshot(used: 50, at: now, minutes: 300)
         var status = RuntimeStreamStatus(); status.connected = true
         model.streamStatuses = ["local": RuntimeStreamStatus(), "remote-ssh-discovered:fixture": status]
-        for component in [CompactIslandLayout.Component.lowQuotaWarning, .quotaDelayWarning, .sshWarning] {
-            XCTAssertFalse(CompactIslandComponent.isVisible(component, model: model))
-        }
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).isEmpty)
+        XCTAssertFalse(CompactIslandComponent.isVisible(.warnings, model: model), "The slot shows only while a warning holds")
         model.quota = try snapshot(used: 90, at: now, minutes: 300)
-        XCTAssertTrue(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.fiveHour))
         model.quota = try snapshot(used: 90, at: now, minutes: 100)
-        XCTAssertFalse(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "Only the 5h window drives the warning")
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Only the 5h window drives the warning")
         model.quota = try snapshot(used: 90, at: now.addingTimeInterval(-301), minutes: 300)
-        XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model))
-        XCTAssertFalse(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "Stale quota cannot produce a live low-quota warning")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay))
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Stale quota cannot produce a live low-quota warning")
         model.quota = nil; model.errorMessage = "Synthetic read failure"
-        XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay))
         status.connected = false; model.streamStatuses["remote-ssh-discovered:fixture"] = status
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
         model.streamStatuses = [:]; model.unavailableSSH = ["Synthetic unavailable"]
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
+        let chosen = CompactQuotaPreview(providers: [.codex], metric: "remaining", windowIDs: [:], warnings: [.quotaDelay])
+        XCTAssertEqual(CompactIslandComponent.activeWarnings(model, quotaPreview: chosen), [.quotaDelay],
+            "A warning turned off in Reminders stays hidden while its condition holds")
+        XCTAssertFalse(CompactIslandComponent.isVisible(.warnings, model: model,
+            quotaPreview: CompactQuotaPreview(providers: [.codex], metric: "remaining", windowIDs: [:], warnings: [])))
         defaults.set(false, forKey: "monitorSSH")
-        XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.ssh))
     }
     func testQuotaLabelFollowsPercentageChoiceAndTimeRemainingIsClamped() throws {
         let defaults = UserDefaults.standard, old = defaults.object(forKey: "compactMetric")

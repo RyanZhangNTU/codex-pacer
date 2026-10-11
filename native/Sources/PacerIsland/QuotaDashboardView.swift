@@ -144,6 +144,11 @@ struct QuotaDashboardRingView: View {
                     Circle().stroke(platinum.opacity(0.12), lineWidth: 1).padding(10)
                     Text(L10n.text("dashboard.pro"))
                         .font(.system(size: 14, weight: .semibold, design: .rounded)).tracking(2.5).foregroundStyle(platinum)
+                } else if quota.availability == .unavailable {
+                    // Not connected: a quiet outline and the provider's mark, not an empty gauge.
+                    Circle().stroke(PacerPalette.track, lineWidth: 1.5)
+                    Image(systemName: quota.provider.glyph).font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(PacerPalette.tertiary)
                 } else {
                     ring(percent: quota.remainingQuotaPercent, lineWidth: Self.stroke, color: quota.provider.tint)
                     if let time = quota.remainingTimePercent.flatMap({ $0.isFinite ? min(100, max(0, $0)) : nil }) {
@@ -290,7 +295,7 @@ private struct QuotaProviderStatusView: View {
             } else if model.providerQuota(provider)?.windows.isEmpty != false {
                 Text(model.providerRefreshing(provider) ? L10n.text("quota.loading") : L10n.text("dashboard.provider_unavailable", provider.displayName))
                     .font(.system(size: 11)).foregroundStyle(PacerPalette.secondary).fixedSize(horizontal: false, vertical: true)
-                QuotaLinkButton(title: L10n.text("common.open_settings")) { model.onSettings?() }
+                QuotaLinkButton(title: L10n.text("common.open_settings")) { model.openSettings(for: provider) }
             }
         }.multilineTextAlignment(.center)
     }
@@ -304,7 +309,7 @@ private struct QuotaProviderStatusView: View {
             QuotaLinkButton(title: L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.retry")) {
                 model.retryQuotaConnection(for: provider)
             }.disabled(model.providerRefreshing(provider))
-            QuotaLinkButton(title: L10n.text("common.settings")) { model.onSettings?() }
+            QuotaLinkButton(title: L10n.text("common.settings")) { model.openSettings(for: provider) }
         }
     }
 }

@@ -70,12 +70,7 @@ struct SettingsHelpPane: View {
 
     private func row<Sample: View>(_ key: String, @ViewBuilder sample: () -> Sample) -> some View {
         HStack(spacing: 14) {
-            HStack(spacing: 6) { sample() }
-                .foregroundStyle(PacerPalette.attention)
-                .frame(width: 84, height: 32)
-                .background(Color.black, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .environment(\.colorScheme, .dark)
-                .accessibilityHidden(true)
+            IslandSampleSwatch(content: sample)
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.text(key + ".title"))
                 Text(L10n.text(key + ".detail")).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -83,6 +78,27 @@ struct SettingsHelpPane: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A black swatch shaped like the bar, so island marks read as they do on
+/// screen in both light and dark Settings. Help and Reminders share it.
+struct IslandSampleSwatch<Content: View>: View {
+    static var compactWidth: CGFloat { 44 }
+    let width: CGFloat
+    let content: Content
+
+    init(width: CGFloat = 84, @ViewBuilder content: () -> Content) {
+        self.width = width; self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 6) { content }
+            .foregroundStyle(PacerPalette.attention)
+            .frame(width: width, height: width < 84 ? 28 : 32)
+            .background(Color.black, in: RoundedRectangle(cornerRadius: width < 84 ? 8 : 9, style: .continuous))
+            .environment(\.colorScheme, .dark)
+            .accessibilityHidden(true)
     }
 }
 

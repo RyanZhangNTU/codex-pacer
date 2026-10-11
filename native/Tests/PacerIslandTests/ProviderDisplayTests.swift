@@ -517,7 +517,7 @@ final class ProviderDisplayTests: XCTestCase {
         let before = model.selectedProvider
         model.selectProvider(.claude)
         XCTAssertEqual(model.selectedProvider, before)
-        for component in [CompactIslandLayout.Component.quota, .quotaGauge, .quotaLabel, .timeRemaining, .lowQuotaWarning, .quotaDelayWarning] {
+        for component in [CompactIslandLayout.Component.quota, .quotaGauge, .quotaLabel, .timeRemaining, .warnings] {
             XCTAssertFalse(CompactIslandComponent.isVisible(component, model: model))
         }
         await model.shutdown()
@@ -530,14 +530,14 @@ final class ProviderDisplayTests: XCTestCase {
         model.quota = try quota(.codex, used: 30, at: now)
         model.selectProvider(.claude); model.quota = try quota(.claude, used: 90, at: now)
         model.selectProvider(.codex)
-        XCTAssertTrue(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "Claude's low quota is visible while Codex is selected")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Claude's low quota is visible while Codex is selected")
         model.selectProvider(.claude); model.errorMessage = "Synthetic unavailable usage"
         model.selectProvider(.codex)
-        XCTAssertFalse(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "Unavailable usage cannot create a live low-quota warning")
-        XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model))
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Unavailable usage cannot create a live low-quota warning")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay))
         model.quota = try quota(.codex, used: 95, at: now)
-        XCTAssertTrue(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model))
-        XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model), "Warnings from different providers remain additive")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.fiveHour))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay), "Warnings from different providers remain additive")
         for (used, alert) in [(80.0, nil), (81.0, FiveHourQuotaAlert.low(19)), (100.0, .exhausted)] as [(Double, FiveHourQuotaAlert?)] {
             model.quota = try quota(.codex, used: used, at: now)
             XCTAssertEqual(model.fiveHourAlert(.codex), alert, "Below 20% is low and zero is exhausted at \(used)% used")
@@ -555,19 +555,19 @@ final class ProviderDisplayTests: XCTestCase {
         let host = "remote-ssh-discovered:synthetic"
         model.receiveRemoteUpdate([], statuses: ["local": connected, host: connected], unavailable: [], requests: [], names: [])
         model.receiveClaudeUpdate([], statuses: ["local": connected, host: RuntimeStreamStatus()], requests: [])
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model), "Healthy Codex SSH cannot conceal disconnected Claude SSH")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh), "Healthy Codex SSH cannot conceal disconnected Claude SSH")
         var missing = RuntimeStreamStatus(); missing.sourceAvailable = false
         model.receiveClaudeUpdate([], statuses: ["local": connected, host: missing], requests: [])
-        XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model), "A paused missing Claude source is not an SSH failure")
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.ssh), "A paused missing Claude source is not an SSH failure")
         model.receiveClaudeUpdate([], statuses: ["local": connected, host: RuntimeStreamStatus()], requests: [])
         fixture.defaults.set(false, forKey: "monitorSSH")
-        XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.ssh))
         fixture.defaults.set(true, forKey: "monitorSSH")
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model), "Disabling the preference does not erase the diagnostic state")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh), "Disabling the preference does not erase the diagnostic state")
         var modules = ProviderModules.load(from: fixture.defaults)
         modules.claudeMode = .disabled; modules.save(to: fixture.defaults)
         model.applySettings(sourceChanged: false)
-        XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model), "A disabled module cannot leave a connection warning")
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.ssh), "A disabled module cannot leave a connection warning")
         await model.shutdown()
     }
 }

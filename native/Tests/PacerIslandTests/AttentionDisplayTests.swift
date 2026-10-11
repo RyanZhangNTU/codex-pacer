@@ -75,7 +75,7 @@ final class AttentionDisplayTests: XCTestCase {
         XCTAssertEqual(ended.core, .symbol(ending.symbol), "With nothing active the unread ending fills the core")
         XCTAssertTrue(ended.orbit.isEmpty)
         model.unavailableSSH = ["Synthetic unavailable source"]
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
         XCTAssertEqual(model.headerStatus, model.completionSummary)
         model.isAttached = true
         XCTAssertEqual(model.headerDisplayStatus, model.completionSummary)
@@ -111,7 +111,7 @@ final class AttentionDisplayTests: XCTestCase {
         model.unavailableSSH = ["Synthetic"]
         model.errorMessage = "Synthetic quota failure"
         XCTAssertEqual(model.headerActivity(singleTask: .stage), badge, "Quota and connection warnings stay in their own components")
-        XCTAssertFalse(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "An invalid quota does not produce a live low-quota warning")
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "An invalid quota does not produce a live low-quota warning")
         model.setDemoStage(.tool)
         for (stage, key) in [(DemoTaskStage.thinking, "activity.thinking"), (.tool, "activity.tool_compact"), (.responding, "activity.responding_compact")] {
             model.setDemoStage(stage)

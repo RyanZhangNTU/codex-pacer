@@ -159,50 +159,31 @@ struct SettingsView: View {
     @ViewBuilder private var paneContent: some View {
         switch pane {
         case .general:
-            Section(L10n.text("language.section")) {
+            UpdateSettingsView(updater: updater, automaticallyChecks: $automaticUpdateChecks)
+            Section {
                 Picker(L10n.text("language.label"), selection: $language) {
                     ForEach(LanguagePreference.allCases, id: \.rawValue) { preference in
                         Text(preference.label).tag(preference)
                     }
                 }
-                caption(L10n.text(languageChanges ? "language.restart_hint" : "language.hint"))
+                if languageChanges { caption(L10n.text("language.restart_hint")) }
             }
-            UpdateSettingsView(updater: updater, automaticallyChecks: $automaticUpdateChecks)
-            Section(L10n.text("settings.privacy")) {
-                Toggle(L10n.text("settings.hide_projects"), isOn: $hideProjects)
+            Section {
+                Toggle(isOn: $hideProjects) {
+                    Text(L10n.text("settings.hide_projects"))
+                    Text(L10n.text("settings.hide_projects_sample") + "  →  " + L10n.text("activity.hidden_name"))
+                }
             }
         case .appearance:
-            Section(L10n.text("settings.display")) {
-                Picker(L10n.text("settings.appearance"), selection: $appearance) {
-                    Text(L10n.text("settings.classic")).tag(IslandAppearance.classic)
-                    Text(L10n.text("settings.liquid_glass")).tag(IslandAppearance.liquidGlass)
-                }
-                .disabled(!IslandAppearance.supportsLiquidGlass)
-                .help(IslandAppearance.supportsLiquidGlass ? L10n.text("settings.applies_on_save") : L10n.text("settings.glass_requirement"))
-                Picker(L10n.text("settings.display_mode"), selection: $displayMode) {
-                    Text(L10n.text("settings.automatic")).tag(IslandDisplayMode.automatic)
-                    Text(L10n.text("settings.notch")).tag(IslandDisplayMode.notch)
-                    Text(L10n.text("settings.floating")).tag(IslandDisplayMode.floating)
-                }
-                .help(L10n.text("settings.display_mode_help"))
-                Picker(L10n.text("settings.display_picker"), selection: $displayID) {
-                    Text(L10n.text("settings.main_display")).tag(0)
-                    ForEach(Array(NSScreen.screens.enumerated()), id: \.offset) { _, screen in
-                        Text(screen.localizedName).tag((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0)
-                    }
-                }
-                Toggle(L10n.text("settings.fullscreen"), isOn: $fullscreen)
-                Toggle(L10n.text("settings.menu_bar"), isOn: $showInMenuBar)
-                    .help(L10n.text("settings.menu_bar_help"))
-            }
-            if appearance == .liquidGlass, IslandAppearance.supportsLiquidGlass { glassSection }
+            SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, displayID: $displayID,
+                fullscreen: $fullscreen, showInMenuBar: $showInMenuBar, glass: $glass, layout: compactLayout,
+                quotaPreview: compactQuotaPreview)
         case .collapsedBar:
             Section {
                 CompactLayoutEditor(model: model, layout: $compactLayout, widthSettings: $widthSettings,
                     attached: displayMode.layout(safeAreaTop: model.screenNotchSize.height,
                         hardwareNotchWidth: model.screenNotchSize.width).attached,
-                    quotaPreview: CompactQuotaPreview(providers: AgentProvider.allCases.filter { moduleEnabled($0) },
-                        metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID], singleTask: singleTask))
+                    quotaPreview: compactQuotaPreview)
             }
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             componentSection(.tasks, enabled: enabled)
@@ -210,11 +191,29 @@ struct SettingsView: View {
             componentSection(.quota, enabled: enabled)
             componentSection(.warnings, enabled: enabled)
         case .reminders:
+            // Warnings stay in the collapsed bar while their condition lasts;
+            // reminders mark a moment. Both are chosen here and nowhere else.
+            Section(L10n.text("reminders.section.warnings")) {
+                warningRow(.fiveHour) { FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint) }
+                warningRow(.ssh) { Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)) }
+                warningRow(.quotaDelay) { Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)) }
+            }
+            Section(L10n.text("reminders.section.island")) {
+                reminderRow("reminders.low_quota", isOn: $lowReminder) {
+                    Text("12%").font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
+                }
+                reminderRow("reminders.waiting", isOn: $inputReminder) {
+                    ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [:], attention: .input))
+                }
+                reminderRow("reminders.completion", isOn: $completionReminder) {
+                    ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
+                }
+                reminderRow("settings.system_notifications", isOn: $systemNotifications) {
+                    Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                }
+            }
             Section {
-                Toggle(L10n.text("settings.low_quota"), isOn: $lowReminder)
-                Toggle(L10n.text("settings.waiting_reminder"), isOn: $inputReminder)
-                Toggle(L10n.text("settings.completion_reminder"), isOn: $completionReminder)
-                Picker(L10n.text("settings.retention"), selection: $completedRetention) {
+                Picker(L10n.text("reminders.retention"), selection: $completedRetention) {
                     Text(L10n.text("settings.five_minutes")).tag(5)
                     Text(L10n.text("settings.fifteen_minutes")).tag(15)
                     Text(L10n.text("settings.thirty_minutes")).tag(30)
@@ -222,9 +221,6 @@ struct SettingsView: View {
                     Text(L10n.text("settings.four_hours")).tag(240)
                     Text(L10n.text("settings.until_clicked")).tag(0)
                 }
-            }
-            Section {
-                Toggle(L10n.text("settings.system_notifications"), isOn: $systemNotifications)
             }
         case .codex, .claude:
             if let provider = pane.provider { providerPane(provider) }
@@ -264,44 +260,6 @@ struct SettingsView: View {
         if moduleEnabled(provider) {
             localSection(provider)
             if model.enabledProviders.contains(provider) { quotaHistorySection(provider) }
-        }
-    }
-
-    private var glassSection: some View {
-        Section(L10n.text("settings.liquid_glass")) {
-            HStack(spacing: 8) {
-                Circle().fill(AgentProvider.codex.tint).frame(width: 6, height: 6)
-                Text("Codex Pacer").font(.system(size: 13, weight: .medium))
-                Spacer()
-                Image(systemName: "gearshape").font(.system(size: 12))
-            }
-            .foregroundStyle(.white).padding(.horizontal, 18).frame(height: 58)
-            .modifier(IslandSurface(appearance: .liquidGlass, attached: false, expanded: true, settings: glass))
-            .preferredColorScheme(.dark)
-            .accessibilityLabel(L10n.text("settings.glass_preview"))
-            Picker(L10n.text("settings.glass_style"), selection: $glass.style) {
-                ForEach(IslandGlassSettings.Style.allCases, id: \.rawValue) { Text($0.label).tag($0) }
-            }
-            LabeledContent(L10n.text("settings.transparency")) {
-                HStack(spacing: 10) {
-                    Slider(value: Binding(get: { glass.transparency }, set: { glass.transparency = ($0 * 20).rounded() / 20 }), in: 0...1)
-                        .accessibilityLabel(L10n.text("settings.transparency"))
-                    Text("\(Int((glass.transparency * 100).rounded()))%")
-                        .monospacedDigit().frame(width: 40, alignment: .trailing)
-                }
-            }
-            Picker(L10n.text("settings.tint"), selection: $glass.tint) {
-                ForEach(IslandGlassSettings.Tint.allCases, id: \.rawValue) { Text($0.label).tag($0) }
-            }
-            LabeledContent(L10n.text("settings.corner_radius")) {
-                HStack(spacing: 10) {
-                    Slider(value: Binding(get: { glass.cornerRadius }, set: { glass.cornerRadius = $0.rounded() }), in: 12...36)
-                        .accessibilityLabel(L10n.text("settings.corner_radius"))
-                    Text("\(Int(glass.cornerRadius))").monospacedDigit().frame(width: 40, alignment: .trailing)
-                }
-            }
-            Button(L10n.text("common.restore_defaults")) { glass = IslandGlassSettings() }
-                .buttonStyle(.link)
         }
     }
 
@@ -446,17 +404,16 @@ struct SettingsView: View {
             }
         } header: {
             Text(group.label)
-        } footer: {
-            switch group {
-            case .warnings: caption(L10n.text("layout.warnings_hint"))
-            default: EmptyView()
-            }
         }
     }
     /// The value choice follows the quota value, or its label when the value is hidden.
     @ViewBuilder private func componentOptions(_ component: CompactIslandLayout.Component) -> some View {
         let shown = compactLayout.components
-        if component == .activity, shown.contains(.activity) {
+        if component == .warnings, shown.contains(.warnings) {
+            Button(L10n.text("layout.warnings_choose")) { pane = .reminders }
+                .buttonStyle(.link).font(.system(size: 12))
+                .padding(.leading, CompactComponentToggle.optionInset)
+        } else if component == .activity, shown.contains(.activity) {
             Picker(L10n.text("layout.single_task"), selection: $singleTask) {
                 ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
             }
@@ -468,6 +425,37 @@ struct SettingsView: View {
                 Text(L10n.text("settings.pace_percentage")).tag("pace")
             }
             .padding(.leading, CompactComponentToggle.optionInset)
+        }
+    }
+
+    private var compactQuotaPreview: CompactQuotaPreview {
+        CompactQuotaPreview(providers: AgentProvider.allCases.filter { moduleEnabled($0) },
+            metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID], singleTask: singleTask,
+            warnings: compactLayout.warnings)
+    }
+
+    /// Each reminder shows the mark it puts on the island.
+    private func reminderRow<Sample: View>(_ key: String, isOn: Binding<Bool>, @ViewBuilder sample: () -> Sample) -> some View {
+        HStack(spacing: 12) {
+            IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth, content: sample)
+            Toggle(L10n.text(key), isOn: isOn)
+        }
+    }
+
+    /// Turning a warning on also brings the warnings slot back if it was removed
+    /// from the bar, so this switch alone decides what shows.
+    private func warningRow<Sample: View>(_ warning: CompactIslandLayout.Warning, @ViewBuilder sample: () -> Sample) -> some View {
+        HStack(spacing: 12) {
+            IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth, content: sample)
+            Toggle(warning.label, isOn: Binding(get: { compactLayout.warnings.contains(warning) && compactLayout.components.contains(.warnings) },
+                set: { on in
+                    if on, !compactLayout.components.contains(.warnings) {
+                        // A removed slot comes back with only the warning just chosen.
+                        compactLayout.warnings = [warning]
+                        compactLayout.move(.warnings, to: .trailing, before: compactLayout.trailing.first)
+                    } else if on { compactLayout.warnings.insert(warning) }
+                    else { compactLayout.warnings.remove(warning) }
+                }))
         }
     }
 
