@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Drop the Appearance preview now that changes apply to the real island at once. With Liquid Glass around the notch, the page explains that the collapsed bar stays black to blend with the camera and shows glass once expanded, with Floating as the way to a glass collapsed bar. Style and position tiles share one desktop backdrop. Hide Project Names now says what it replaces and when it helps instead of showing an example.
+
 - Let Esc cancel an input method's in-progress composition in Settings text fields instead of closing the window.
 
 - Apply settings as they change, like System Settings: the Save and Cancel bar is gone. Controls apply after a short coalescing delay; text fields commit on Return, focus loss, a chooser or close and keep the last valid value with an inline message; language offers Restart Now; system notifications ask for permission when switched on. Quit moves to the bottom of the sidebar and Esc closes the window.

@@ -302,13 +302,13 @@
 "settings.floating" = "Floating";
 "settings.four_hours" = "4 hours";
 "settings.fullscreen" = "Show in Full Screen";
-"settings.glass_preview" = "Liquid Glass preview";
 "settings.glass_requirement" = "Liquid Glass requires macOS 26 or later";
 "settings.glass_style" = "Glass Style";
 "settings.hide_projects" = "Hide Project Names";
 "appearance.style" = "Style";
 "appearance.position" = "Position";
-"settings.hide_projects_sample" = "Polish the app UI";
+"appearance.notch_black" = "Attached to the notch, the collapsed bar stays black to blend with it, and Liquid Glass shows once it expands. Choose Floating for a glass collapsed bar.";
+"settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
 "reminders.section.island" = "On the island";
 "warning.fiveHour" = "5h quota low";
 "warning.ssh" = "SSH host disconnected";

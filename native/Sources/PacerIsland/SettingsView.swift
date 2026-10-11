@@ -174,13 +174,12 @@ struct SettingsView: View {
             Section {
                 Toggle(isOn: $hideProjects) {
                     Text(L10n.text("settings.hide_projects"))
-                    Text(L10n.text("settings.hide_projects_sample") + "  →  " + L10n.text("activity.hidden_name"))
+                    Text(L10n.text("settings.hide_projects_help"))
                 }
             }
         case .appearance:
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, displayID: $displayID,
-                fullscreen: $fullscreen, showInMenuBar: $showInMenuBar, glass: $glass, layout: compactLayout,
-                quotaPreview: compactQuotaPreview)
+                fullscreen: $fullscreen, showInMenuBar: $showInMenuBar, glass: $glass)
         case .collapsedBar:
             Section {
                 CompactLayoutEditor(model: model, layout: $compactLayout, widthSettings: $widthSettings,

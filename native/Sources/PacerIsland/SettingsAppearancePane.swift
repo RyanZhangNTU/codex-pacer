@@ -2,9 +2,9 @@ import AppKit
 import PacerCore
 import SwiftUI
 
-/// Appearance reads as a picture: the real collapsed bar on a desktop-like
-/// backdrop, with style and position chosen from tiles that update it at once.
-/// Liquid Glass adjustments appear only while Liquid Glass is chosen.
+/// Style and position are picture tiles; changes apply to the real island at
+/// once, so the page needs no preview of its own. Liquid Glass adjustments
+/// appear only while Liquid Glass is chosen.
 struct SettingsAppearancePane: View {
     @ObservedObject var model: IslandModel
     @Binding var appearance: IslandAppearance
@@ -13,20 +13,17 @@ struct SettingsAppearancePane: View {
     @Binding var fullscreen: Bool
     @Binding var showInMenuBar: Bool
     @Binding var glass: IslandGlassSettings
-    let layout: CompactIslandLayout
-    let quotaPreview: CompactQuotaPreview
-    @State private var naturalWidth: CGFloat = 320
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var hasNotch: Bool {
-        let size = model.screenNotchSize
-        return size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
-    }
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
+    /// Around the camera the collapsed bar keeps a black backing so it reads as
+    /// one shape with the hardware notch; glass shows once it expands.
+    private var collapsedStaysBlack: Bool {
+        appearance == .liquidGlass && glassAvailable &&
+            displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width).attached
+    }
 
     var body: some View {
-        Section { preview }
-        Section(L10n.text("appearance.style")) {
+        Section {
             HStack(spacing: 10) {
                 tile(L10n.text("settings.classic"), selected: appearance == .classic) { appearance = .classic } art: {
                     StyleSwatch(glass: false)
@@ -37,17 +34,25 @@ struct SettingsAppearancePane: View {
                 .disabled(!glassAvailable)
                 .help(glassAvailable ? "" : L10n.text("settings.glass_requirement"))
             }
+        } header: {
+            Text(L10n.text("appearance.style"))
+        } footer: {
+            if collapsedStaysBlack {
+                Text(L10n.text("appearance.notch_black")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         Section(L10n.text("appearance.position")) {
             HStack(spacing: 10) {
                 tile(L10n.text("settings.automatic"), selected: displayMode == .automatic) { displayMode = .automatic } art: {
-                    Image(systemName: "wand.and.stars").font(.system(size: 17, weight: .medium)).foregroundStyle(.secondary)
+                    PositionSwatch(kind: .automatic)
                 }
                 tile(L10n.text("settings.notch"), selected: displayMode == .notch) { displayMode = .notch } art: {
-                    PositionSwatch(attached: true)
+                    PositionSwatch(kind: .attached)
                 }
                 tile(L10n.text("settings.floating"), selected: displayMode == .floating) { displayMode = .floating } art: {
-                    PositionSwatch(attached: false)
+                    PositionSwatch(kind: .floating)
                 }
             }
             Picker(L10n.text("settings.display_picker"), selection: $displayID) {
@@ -61,64 +66,6 @@ struct SettingsAppearancePane: View {
                 .help(L10n.text("settings.menu_bar_help"))
         }
         if appearance == .liquidGlass, glassAvailable { glassSection }
-    }
-
-    // MARK: Preview
-
-    /// The bar sits where it would on this screen: around the camera when
-    /// attached, below the menu bar when floating.
-    private var preview: some View {
-        let placement = displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width)
-        let menuBar: CGFloat = hasNotch ? model.screenNotchSize.height : 24
-        let width = max(placement.notchWidth + 60, naturalWidth)
-        return GeometryReader { geometry in
-            let scale = min(1, max(1, geometry.size.width - 32) / max(width, hasNotch ? model.screenNotchSize.width : 0))
-            ZStack(alignment: .top) {
-                Wallpaper()
-                HStack(spacing: 14) {
-                    // Menu items stay at the far edges, clear of the bar.
-                    Image(systemName: "applelogo").font(.system(size: 12, weight: .medium))
-                    Capsule().fill(.white.opacity(0.55)).frame(width: 30, height: 5)
-                    Spacer()
-                    Capsule().fill(.white.opacity(0.55)).frame(width: 38, height: 5)
-                }
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 14)
-                .frame(height: menuBar)
-                .background(.black.opacity(0.18))
-                VStack(spacing: 0) {
-                    if hasNotch, !placement.attached {
-                        UnevenRoundedRectangle(bottomLeadingRadius: 9, bottomTrailingRadius: 9)
-                            .fill(.black).frame(width: model.screenNotchSize.width, height: menuBar)
-                    }
-                    CompactIslandHeader(model: model, layout: layout, baseHeight: placement.topHeight, notchWidth: placement.notchWidth,
-                        measuresLayout: false, quotaPreview: quotaPreview)
-                        .foregroundStyle(.white.opacity(0.95))
-                        .frame(width: width, height: placement.topHeight)
-                        .modifier(IslandSurface(appearance: appearance, attached: placement.attached, expanded: false, settings: glass))
-                        .overlay(alignment: .top) {
-                            // The camera housing the attached bar wraps around.
-                            if placement.notchWidth > 0 {
-                                UnevenRoundedRectangle(bottomLeadingRadius: 9, bottomTrailingRadius: 9)
-                                    .fill(.black).frame(width: placement.notchWidth, height: model.screenNotchSize.height)
-                            }
-                        }
-                        .padding(.top, placement.attached ? 0 : (hasNotch ? 6 : menuBar + 6))
-                }
-                .scaleEffect(scale, anchor: .top)
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .onPreferenceChange(CompactHeaderIdealWidth.self) { naturalWidth = $0 + 2 }
-        }
-        .frame(height: 100)
-        .allowsHitTesting(false)
-        .padding(.vertical, 4)
-        .environment(\.colorScheme, .dark)
-        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.15), value: displayMode)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: appearance)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.text("settings.glass_preview"))
     }
 
     // MARK: Liquid Glass
@@ -231,16 +178,21 @@ private struct StyleSwatch: View {
 /// A screen's top edge: the bar hangs from it when attached and floats
 /// below the menu bar otherwise.
 private struct PositionSwatch: View {
-    let attached: Bool
+    enum Kind { case automatic, attached, floating }
+    let kind: Kind
     var body: some View {
         ZStack(alignment: .top) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.08))
-            Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 9)
-            if attached {
+            Wallpaper()
+            Rectangle().fill(Color.black.opacity(0.22)).frame(height: 9)
+            switch kind {
+            case .attached:
                 UnevenRoundedRectangle(bottomLeadingRadius: 6, bottomTrailingRadius: 6).fill(Color.black)
                     .frame(width: 52, height: 12)
-            } else {
+            case .floating:
                 Capsule().fill(Color.black).frame(width: 52, height: 11).padding(.top, 14)
+            case .automatic:
+                Image(systemName: "wand.and.stars").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.92))
+                    .frame(maxHeight: .infinity).padding(.top, 9)
             }
         }
         .frame(width: 112, height: 40)
