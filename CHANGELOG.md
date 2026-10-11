@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.0.0
+
+Codex Pacer now follows Claude Code as well as Codex.
+
+### Claude Code and modules
+
+- Show Claude Code tasks from this Mac and SSH hosts next to Codex tasks, with stages, replies and approvals that need you, endings, spawned agents, output speed and time to first output from Claude Code's own telemetry.
+- Show Claude quota for its 5-hour and 7-day windows, from Claude Code's status line or a claude.ai session in Pacer's own sign-in window, with an explicit choice when an account has several organizations. Pacer never reads other apps' Keychain items or browser cookies.
+- Make Codex and Claude independent modules. Each turns on automatically when its app or CLI is installed; an explicit choice sticks until you restore automatic detection.
+- Set up Claude Code monitoring automatically: Pacer adds its own hooks and a local-only telemetry endpoint next to existing settings, on this Mac and on connected SSH hosts that have Claude Code, and removes the local entries when the module is turned off by hand.
+- Follow the SSH hosts managed in Codex and Claude, including Claude Desktop's saved connections and their ports and identity files, so hosts no longer need to be added in Pacer.
+- Add Codex Remote Control tasks through the connected Codex app ([#77](https://github.com/RyanZhangNTU/codex-pacer/pull/77)). An idle Remote Control connection shows as waiting for a session.
+- Open Claude tasks in their Claude Desktop session, or resume them in Terminal.
+
+### The island
+
+- Merge the status icon and task count into one activity badge: an orbit in each provider's color while tasks run, solid amber when a task needs you, and marks for unread endings.
+- Show both services' quota in rings with a white pace tick and an Ahead, On pace or Fast verdict, the 5-hour window below each ring and a compact reset countdown. The collapsed bar alternates one quota value beside rings that show both.
+- Collect the 5-hour, SSH and quota-delay warnings into one warnings slot that appears only while a warning applies.
+- Show each running turn's elapsed time, and right-align speed and time to first output in two-line task rows.
+- Fit the island to its content at all times: around a notch the collapsed bar keeps equal sides sized by its components, and the expanded panel fits its task rows. The Specified Width option is gone.
+- Use Liquid Glass that follows the system's glass setting on macOS 26 and later, with a dark wash for legibility. Around the notch the collapsed bar stays black to blend with the camera.
+- Keep an ended task's card dismissed after a normal relaunch once you have opened its conversation.
+- Remove the menu bar item and the in-island reminder banner; everything shows on the island.
+
+### Settings
+
+- Move Settings into a sidebar window that applies changes as you make them, without Save or Cancel.
+- Customize the collapsed bar with a lane strip shaped like the bar: drag components between the sides of the camera, toggle each one, and choose 5 hours or 7 days for each service's quota.
+- Simplify Reminders to the collapsed-bar warnings, one System Notifications switch and how long ended tasks stay.
+- Add a Connections page that lists every task source with problems first, quota freshness, and the SSH and Remote Control switches.
+- Add a Help page with a legend drawn from the real island components, and a two-step welcome guide on first launch that can be reopened from Help.
+- Give Pacer its own icon.
+
+### Fixes and performance
+
+- Reduce Claude hook overhead, repeated directory scans, transcript parses and unchanged reads.
+- Reject measurements from a previous turn, keep tool endings when results contain display fields, and keep unknown quota visibly distinct from zero.
+- Treat a reachable SSH host without Claude as connected, and stop reporting missing Claude sources as SSH problems.
+- Fix the demo mode showing Codex quota as unavailable when Claude was last selected in Settings.
+
+### Upgrading
+
+Preferences from 2.x carry over. Saved layouts, quota windows and warnings are migrated, and retired options (menu bar, glass style and tint, specified width, per-kind reminders) are cleared on the next settings change.
+
 ## 2.4.0
 
 - Customize the single-line collapsed bar with task/performance/quota/warning categories, drag ordering, left/right placement and a live preview; apply with one Save action, cancel changes or restore defaults.

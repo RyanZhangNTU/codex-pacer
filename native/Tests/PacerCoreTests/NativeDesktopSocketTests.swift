@@ -113,6 +113,146 @@ final class NativeDesktopSocketTests: XCTestCase {
             try await verifyMonitorEnding(host: "remote-control:env_fixture", atomic: atomic, routing: true)
         }
     }
+    func testRemoteControlOwnerRecoveryPreservesAttentionAndRequiresLiveUsageBeforeCompletion() async throws {
+        final class Recovery: @unchecked Sendable {
+            struct Snapshot {
+                let activity: SessionActivity
+                let requests: [PendingAttentionRequest]
+                let at: Date
+            }
+            let lock = NSLock()
+            var stage = "initial", snapshots: [String: Snapshot] = [:]
+            var inbox = CompletionInbox(), attention = AttentionPolicy()
+            var requestNotices = 0, completionNotices = 0, prematureEnding = false
+            func arm(_ next: String) { lock.lock(); defer { lock.unlock() }; stage = next }
+            func record(_ activities: [SessionActivity], requests: [PendingAttentionRequest]) -> String? {
+                lock.lock(); defer { lock.unlock() }
+                let now = Date()
+                inbox.observe(activities, at: now, retention: 1800)
+                requestNotices += attention.requestNotices(requests).count
+                completionNotices += attention.activityNotices(activities, at: now).filter { [.completed, .interrupted].contains($0.kind) }.count
+                if stage != "completed", activities.contains(where: { [.completed, .interrupted].contains($0.phase) }) {
+                    prematureEnding = true
+                }
+                guard let activity = activities.first, snapshots[stage] == nil else { return nil }
+                let rate = activity.tokensPerSecond(at: now)
+                let matches: Bool
+                switch stage {
+                case "initial": matches = activity.phase == .running && requests.count == 1 && rate == nil
+                case "measured", "after-resume": matches = activity.phase == .running && (rate ?? 0) > 0
+                case "disconnected": matches = activity.phase == .unknown && !activity.hasLiveEvidence
+                case "resumed": matches = activity.phase == .running && activity.title == "Reconnected fixture" && rate == nil
+                default: matches = activity.phase == .completed && requests.isEmpty
+                }
+                guard matches else { return nil }
+                snapshots[stage] = Snapshot(activity: activity, requests: requests, at: now)
+                return stage
+            }
+            func snapshot(_ step: String) -> Snapshot? { lock.lock(); defer { lock.unlock() }; return snapshots[step] }
+            func summary() -> (premature: Bool, requestNotices: Int, completionNotices: Int, unread: Int) {
+                lock.lock(); defer { lock.unlock() }
+                return (prematureEnding, requestNotices, completionNotices, inbox.unreadActivities.count)
+            }
+        }
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-native-recovery-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let host = "remote-control:env_fixture"
+        try JSONSerialization.data(withJSONObject: ["remote-projects": [["hostId": host]]])
+            .write(to: home.appendingPathComponent(".codex-global-state.json"))
+        let prefix = try XCTUnwrap(Self.server.range(of: "change({'type':'snapshot'"))
+        // Reuse the real socket handshake/framing fixture; stdin gates every
+        // owner transition on an observed monitor callback, not a timing guess.
+        var script = String(Self.server[..<prefix.lowerBound]).replacingOccurrences(of: "'hostId':'local'", with: "'hostId':'\(host)'")
+        script += #"""
+        def proceed(expected):assert sys.stdin.readline().strip()==expected
+        request={'id':'async','method':'item/tool/requestUserInput','params':{'isBlocking':False,'questions':[{'question':'PRIVATE'}]}}
+        def snapshot(title,total,last):
+            change({'type':'snapshot','revision':0,'conversationState':{'title':title,'resumeState':'resumed',
+                'threadRuntimeStatus':{'type':'active','activeFlags':[]},'requests':[request],
+                'latestTokenUsageInfo':{'total':{'outputTokens':total},'last':{'outputTokens':last}},
+                'turns':[{'turnId':'turn','status':'inProgress','items':[{'id':'reply','type':'agentMessage','status':'inProgress','text':'PRIVATE'}]}]}})
+        def usage(base,total,last):
+            change({'type':'patches','baseRevision':base,'revision':base+1,'patches':[
+                {'op':'replace','path':['turns',0,'items',0,'text'],'value':'PRIVATE output'},
+                {'op':'replace','path':['latestTokenUsageInfo'],'value':{'total':{'outputTokens':total},'last':{'outputTokens':last}}}]})
+        snapshot('Initial fixture',100,80)
+        proceed('measure');time.sleep(.4);usage(0,140,40)
+        proceed('disconnect')
+        send({'type':'broadcast','method':'client-status-changed','version':0,'sourceClientId':owner,'params':{'clientId':owner,'status':'disconnected'}})
+        renewed=read();assert renewed['params']['following'] is True
+        proceed('reconnect');owner='019a0000-0000-7000-8000-000000000021'
+        send({'type':'broadcast','method':'thread-stream-following-status-requested','version':1,'sourceClientId':owner,'params':{'hostId':'remote-control:env_fixture','conversationId':tid}})
+        renewed=read();assert renewed['params']['following'] is True
+        snapshot('Reconnected fixture',50000,49000)
+        proceed('after-resume');time.sleep(.4);usage(0,50040,40)
+        proceed('complete')
+        change({'type':'patches','baseRevision':1,'revision':2,'patches':[
+            {'op':'replace','path':['requests'],'value':[]},
+            {'op':'replace','path':['turns',0,'items',0,'status'],'value':'completed'},
+            {'op':'replace','path':['turns',0,'status'],'value':'completed'},
+            {'op':'replace','path':['threadRuntimeStatus','type'],'value':'idle'}]})
+        try:
+            while True:read()
+        except (EOFError,ConnectionResetError):pass
+        print(json.dumps({'onlyMonitoringRequests':all(v.get('method') in ('initialize','thread-stream-following-changed') for v in messages)}))
+        connection.close();server.close()
+        """#
+        let child = Process(), commands = Pipe(), stdout = Pipe(), stderr = Pipe()
+        let childEnded = expectation(description: "owner recovery fixture exited")
+        child.terminationHandler = { _ in childEnded.fulfill() }
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", script, home.path]
+        child.standardInput = commands; child.standardOutput = stdout; child.standardError = stderr
+        try child.run()
+        defer { try? commands.fileHandleForWriting.close(); if child.isRunning { child.terminate() } }
+        let socket = home.appendingPathComponent("ipc/ipc.sock")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: socket.path))
+        let stages = ["initial", "measured", "disconnected", "resumed", "after-resume", "completed"]
+        let observed = Dictionary(uniqueKeysWithValues: stages.map { ($0, expectation(description: "owner recovery " + $0)) })
+        let recovery = Recovery(), monitor = RealtimeActivityMonitor()
+        addTeardownBlock { await monitor.shutdown() }
+        await monitor.start(home: home, includeSSH: false, useSSHFallback: false, refreshPolicy: .expanded) { activities, _, _, requests, _, _ in
+            XCTAssertTrue(activities.allSatisfy { $0.sourceHostID == host })
+            XCTAssertTrue(requests.allSatisfy { $0.sourceHostID == host })
+            if let stage = recovery.record(activities, requests: requests) { observed[stage]?.fulfill() }
+        }
+        await fulfillment(of: [try XCTUnwrap(observed["initial"])], timeout: 3)
+        for (step, command) in [("measured", "measure"), ("disconnected", "disconnect"), ("resumed", "reconnect"),
+                                ("after-resume", "after-resume"), ("completed", "complete")] {
+            recovery.arm(step)
+            try commands.fileHandleForWriting.write(contentsOf: Data((command + "\n").utf8))
+            await fulfillment(of: [try XCTUnwrap(observed[step])], timeout: 4)
+        }
+        let initial = try XCTUnwrap(recovery.snapshot("initial")), measured = try XCTUnwrap(recovery.snapshot("measured"))
+        let disconnected = try XCTUnwrap(recovery.snapshot("disconnected")), resumed = try XCTUnwrap(recovery.snapshot("resumed"))
+        let afterResume = try XCTUnwrap(recovery.snapshot("after-resume")), completed = try XCTUnwrap(recovery.snapshot("completed"))
+        XCTAssertNil(initial.activity.firstTokenLatency)
+        XCTAssertNotNil(measured.activity.tokensPerSecond(at: measured.at))
+        XCTAssertNil(disconnected.activity.tokensPerSecond(at: disconnected.at))
+        XCTAssertEqual(disconnected.requests, initial.requests, "Owner disconnection cannot resolve the pending input")
+        XCTAssertEqual(resumed.requests, initial.requests, "Reattachment retains request identity and its original detection time")
+        XCTAssertTrue(resumed.activity.hasLiveEvidence)
+        XCTAssertEqual(resumed.activity.turnID, initial.activity.turnID)
+        XCTAssertNil(resumed.activity.tokensPerSecond(at: resumed.at), "A large cached counter must not create a current rate")
+        XCTAssertNil(resumed.activity.firstTokenLatency, "Cached text cannot establish unseen first output")
+        XCTAssertEqual(resumed.activity.displayedOutputEstimate(at: resumed.at)?.reportedAt,
+            measured.activity.displayedOutputEstimate(at: measured.at)?.reportedAt, "Cached accounting cannot refresh the previous display timestamp")
+        XCTAssertNotNil(afterResume.activity.tokensPerSecond(at: afterResume.at))
+        XCTAssertEqual(completed.activity.phase, .completed)
+        await monitor.shutdown()
+        await fulfillment(of: [childEnded], timeout: 5)
+        guard !child.isRunning else { XCTFail("Owner recovery fixture did not exit"); return }
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        let summary = recovery.summary()
+        XCTAssertFalse(summary.premature)
+        XCTAssertEqual(summary.requestNotices, 1, "Owner replacement must not duplicate the unresolved request notice")
+        XCTAssertEqual(summary.completionNotices, 1)
+        XCTAssertEqual(summary.unread, 1, "Only the explicit ending creates a retained completion")
+        let report = try JSONSerialization.jsonObject(with: stdout.fileHandleForReading.readDataToEndOfFile()) as! [String: Any]
+        XCTAssertTrue(report["onlyMonitoringRequests"] as? Bool == true)
+    }
     private func verifyMonitorEnding(host: String, atomic: Bool, routing: Bool) async throws {
         final class Ending: @unchecked Sendable {
             let lock = NSLock()

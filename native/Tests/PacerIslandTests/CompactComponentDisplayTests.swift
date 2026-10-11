@@ -13,6 +13,19 @@ final class CompactComponentDisplayTests: XCTestCase {
         }
         return value
     }
+    func testExpandedHeaderQuietsOnlyQuotaValuesAndRowsShowElapsedRunningTurns() {
+        let quieted = CompactIslandLayout.Component.allCases.filter(CompactIslandComponent.dimsWhenExpanded)
+        XCTAssertEqual(Set(quieted), [.quota, .quotaGauge, .quotaLabel, .timeRemaining],
+            "Status, rate and warnings stay at full strength while the rings repeat quota below")
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let running = activity("019a0000-0000-7000-8000-00000000e1a9", start: start, first: start.addingTimeInterval(2))
+        XCTAssertEqual(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(95)),
+            L10n.text("dashboard.countdown_minutes", 1))
+        XCTAssertEqual(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(30)),
+            L10n.text("dashboard.countdown_soon"))
+        XCTAssertNil(TaskRowView.elapsedText(running, phase: .completed, now: start.addingTimeInterval(95)), "Only running turns count up")
+        XCTAssertNil(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(-5)), "A future start is never shown")
+    }
     func testLatestTTFTUsesMeasurementTimeAndSurvivesToolsNewTurnsAndRemovedCards() async throws {
         let model = IslandModel(), now = Date()
         model.now = now
@@ -41,28 +54,41 @@ final class CompactComponentDisplayTests: XCTestCase {
     }
     func testWarningsAreConditionalAndSSHWarningRespectsDisabledMonitoring() throws {
         let defaults = UserDefaults.standard, old = defaults.object(forKey: "monitorSSH")
-        defer { if let old { defaults.set(old, forKey: "monitorSSH") } else { defaults.removeObject(forKey: "monitorSSH") } }
+        let oldLayout = defaults.object(forKey: CompactIslandLayout.defaultsKey)
+        defer {
+            if let old { defaults.set(old, forKey: "monitorSSH") } else { defaults.removeObject(forKey: "monitorSSH") }
+            if let oldLayout { defaults.set(oldLayout, forKey: CompactIslandLayout.defaultsKey) }
+            else { defaults.removeObject(forKey: CompactIslandLayout.defaultsKey) }
+        }
         defaults.set(true, forKey: "monitorSSH")
         let model = IslandModel(), now = Date(); model.now = now
-        model.quota = try snapshot(used: 50, at: now)
+        model.quota = try snapshot(used: 50, at: now, minutes: 300)
         var status = RuntimeStreamStatus(); status.connected = true
         model.streamStatuses = ["local": RuntimeStreamStatus(), "remote-ssh-discovered:fixture": status]
-        for component in [CompactIslandLayout.Component.lowQuotaWarning, .quotaDelayWarning, .sshWarning] {
-            XCTAssertFalse(CompactIslandComponent.isVisible(component, model: model))
-        }
-        model.quota = try snapshot(used: 90, at: now)
-        XCTAssertTrue(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model))
-        model.quota = try snapshot(used: 90, at: now.addingTimeInterval(-301))
-        XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model))
-        XCTAssertFalse(CompactIslandComponent.isVisible(.lowQuotaWarning, model: model), "Stale quota cannot produce a live low-quota warning")
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).isEmpty)
+        XCTAssertFalse(CompactIslandComponent.isVisible(.warnings, model: model), "The slot shows only while a warning holds")
+        model.quota = try snapshot(used: 90, at: now, minutes: 300)
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.fiveHour))
+        model.quota = try snapshot(used: 90, at: now, minutes: 100)
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Only the 5h window drives the warning")
+        model.quota = try snapshot(used: 90, at: now.addingTimeInterval(-301), minutes: 300)
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay))
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Stale quota cannot produce a live low-quota warning")
         model.quota = nil; model.errorMessage = "Synthetic read failure"
-        XCTAssertTrue(CompactIslandComponent.isVisible(.quotaDelayWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay))
         status.connected = false; model.streamStatuses["remote-ssh-discovered:fixture"] = status
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
         model.streamStatuses = [:]; model.unavailableSSH = ["Synthetic unavailable"]
-        XCTAssertTrue(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
+        var layout = CompactIslandLayout.standard
+        layout.warnings = [.quotaDelay]; layout.save(to: defaults); model.applySettings(sourceChanged: false)
+        XCTAssertEqual(CompactIslandComponent.activeWarnings(model), [.quotaDelay],
+            "A warning turned off in Reminders stays hidden while its condition holds")
+        layout.warnings = []; layout.save(to: defaults); model.applySettings(sourceChanged: false)
+        XCTAssertFalse(CompactIslandComponent.isVisible(.warnings, model: model))
+        CompactIslandLayout.standard.save(to: defaults); model.applySettings(sourceChanged: false)
         defaults.set(false, forKey: "monitorSSH")
-        XCTAssertFalse(CompactIslandComponent.isVisible(.sshWarning, model: model))
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.ssh))
     }
     func testQuotaLabelFollowsPercentageChoiceAndTimeRemainingIsClamped() throws {
         let defaults = UserDefaults.standard, old = defaults.object(forKey: "compactMetric")
@@ -70,21 +96,21 @@ final class CompactComponentDisplayTests: XCTestCase {
         let model = IslandModel(), now = Date(); model.now = now
         model.quota = try snapshot(used: 57, at: now)
         defaults.set("remaining", forKey: "compactMetric")
-        XCTAssertEqual(model.quotaSummary, "43%")
+        XCTAssertEqual(model.compactQuotaText(.codex), "43%")
         XCTAssertEqual(model.compactMetricLabel, L10n.text("layout.quota_label"))
-        XCTAssertEqual(try XCTUnwrap(model.remainingTimePercent), 50, accuracy: 0.000001)
+        XCTAssertEqual(model.compactTimeRemainingText(.codex), "50%")
         defaults.set("pace", forKey: "compactMetric")
-        XCTAssertEqual(model.quotaSummary, "86%")
+        XCTAssertEqual(model.compactQuotaText(.codex), "86%")
         XCTAssertEqual(model.compactMetricLabel, L10n.text("quota.pace"))
         model.now = now.addingTimeInterval(3600)
-        XCTAssertEqual(model.remainingTimePercent, 0)
+        XCTAssertEqual(model.compactTimeRemainingText(.codex), "0%")
         model.quota = nil
-        XCTAssertNil(model.remainingTimePercent)
-        XCTAssertEqual(model.quotaSummary, "—")
+        XCTAssertEqual(model.compactTimeRemainingText(.codex), "—")
+        XCTAssertEqual(model.compactQuotaText(.codex), "—")
     }
-    private func snapshot(used: Double, at date: Date) throws -> QuotaSnapshot {
+    private func snapshot(used: Double, at date: Date, minutes: Int = 100) throws -> QuotaSnapshot {
         let bytes = try JSONSerialization.data(withJSONObject: ["rateLimits": ["primary": ["usedPercent": used,
-            "windowDurationMins": 100, "resetsAt": date.addingTimeInterval(3000).timeIntervalSince1970]]])
+            "windowDurationMins": minutes, "resetsAt": date.addingTimeInterval(3000).timeIntervalSince1970]]])
         return try QuotaSnapshot.decode(bytes, capturedAt: date)
     }
 }

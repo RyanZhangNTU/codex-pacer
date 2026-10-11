@@ -100,19 +100,20 @@ final class PanelController: NSObject {
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             hardwareNotchWidth = max(0, right.minX - left.maxX)
         } else { hardwareNotchWidth = 0 }
+        let screenNotchSize = CGSize(width: demoNotch ? 180 : hardwareNotchWidth,
+            height: demoNotch ? 36 : screen.safeAreaInsets.top)
+        if model.screenNotchSize != screenNotchSize { model.screenNotchSize = screenNotchSize }
         let mode: IslandDisplayMode = demoNotch ? .notch : model.displayMode
-        let layout = mode.layout(safeAreaTop: demoNotch ? 36 : screen.safeAreaInsets.top,
-            hardwareNotchWidth: demoNotch ? 180 : hardwareNotchWidth)
+        let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width)
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
         if model.baseHeaderHeight != layout.topHeight { model.baseHeaderHeight = layout.topHeight }
         let headerHeight = layout.topHeight
         if model.topHeight != headerHeight { model.topHeight = headerHeight }
-        let widths = model.widthSettings
-        let collapsedWidth = widths.desiredWidth(expanded: false, notchWidth: layout.notchWidth,
+        let collapsedWidth = IslandWidth.desired(expanded: false, notchWidth: layout.notchWidth,
             leading: 80, trailing: 65,
             headerWidth: model.measuredCompactWidth)
-        let expandedWidth = widths.desiredWidth(expanded: true, notchWidth: layout.notchWidth,
+        let expandedWidth = IslandWidth.desired(expanded: true, notchWidth: layout.notchWidth,
             leading: 80, trailing: 65,
             contentWidth: model.measuredContentWidth, headerWidth: model.measuredCompactWidth)
         let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,

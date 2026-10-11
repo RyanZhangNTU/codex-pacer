@@ -2,9 +2,7 @@
 
 ## Supported versions
 
-Security fixes are currently provided for the following release line:
-
-- `2.0.x` (native macOS)
+Security fixes are provided for the latest release line only. Update to the newest release before reporting.
 
 ## Reporting a vulnerability
 

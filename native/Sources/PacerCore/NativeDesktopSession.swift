@@ -8,6 +8,9 @@ struct NativeDesktopSession {
     private var waiting: [Key] = []
     private var excluded: Set<Key> = []
     private var streams: [Key: DesktopWireProjection] = [:]
+    /// Saved routes alone are idle. Losing an observed runtime remains a
+    /// failure until a usable stream returns, even after snapshot retries end.
+    private var invalidatedRemoteHosts: Set<String> = []
     private var dormant: [Key: UInt64] = [:]
     private var retirementSequence: UInt64 = 0
     private struct SnapshotWait { var retry: Int; var next: Date }
@@ -139,6 +142,9 @@ struct NativeDesktopSession {
                fields["sourceClientId"]?.string() == owner {
                 try publishEvents()
                 for (key, projection) in Array(streams) where projection.isOwned(by: owner) {
+                    if key.host.hasPrefix("remote-control:"), projection.runtimeAvailable, !projection.isTerminal {
+                        invalidatedRemoteHosts.insert(key.host)
+                    }
                     if suppliesRuntime(key.host) { try frame(["kind": "streamInvalidated", "hostId": key.host, "threadId": key.thread]) }
                     streams.removeValue(forKey: key); dormant.removeValue(forKey: key)
                     awaitingSnapshot[key] = SnapshotWait(retry: 0, next: now.addingTimeInterval(Self.snapshotDelays[0]))
@@ -190,7 +196,9 @@ struct NativeDesktopSession {
         do {
             let output = try projection.consume(change, owner: owner, at: now)
             streams[key] = projection
+            if projection.runtimeAvailable { invalidatedRemoteHosts.remove(host) }
             if !projection.runtimeAvailable, old?.runtimeAvailable == true, suppliesRuntime(host) {
+                if host.hasPrefix("remote-control:") { invalidatedRemoteHosts.insert(host) }
                 try publishEvents()
                 try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread])
             }
@@ -222,6 +230,7 @@ struct NativeDesktopSession {
                 try frame(["kind": "attention", "hostId": host, "threadId": thread, "requests": []])
                 try follow(key, value: false); waiting.removeAll { $0 == key }; try drain()
             default:
+                if host.hasPrefix("remote-control:") { invalidatedRemoteHosts.insert(host) }
                 if awaitingSnapshot[key] == nil { try follow(key, value: true) }
             }
         }
@@ -239,7 +248,9 @@ struct NativeDesktopSession {
     mutating func status(loopIterations: Int) throws {
         for host in hosts.sorted() where suppliesRuntime(host) {
             let current = streams.filter { $0.key.host == host }
-            try frame(["kind": "status", "hostId": host, "connected": ready && (host == "local" || !current.isEmpty),
+            let connected = ready && (host == "local" || current.values.contains { $0.runtimeAvailable })
+            let waitingForSession = ready && host.hasPrefix("remote-control:") && !connected && !invalidatedRemoteHosts.contains(host)
+            try frame(["kind": "status", "hostId": host, "connected": connected, "waitingForSession": waitingForSession,
                 "attached": current.filter { $0.value.isActive }.count,
                 "notifications": notifications, "fallbackScans": 0, "watchingLogs": false,
                 "helperLoopIterations": loopIterations])
@@ -248,6 +259,6 @@ struct NativeDesktopSession {
     mutating func takeFrames() -> [Data] { let result = frames; frames.removeAll(keepingCapacity: true); return result }
     mutating func close() {
         for key in followed { try? follow(key, value: false) }
-        followed.removeAll(); streams.removeAll(); dormant.removeAll(); awaitingSnapshot.removeAll(); waiting.removeAll(); events.removeAll(); frames.removeAll()
+        followed.removeAll(); streams.removeAll(); invalidatedRemoteHosts.removeAll(); dormant.removeAll(); awaitingSnapshot.removeAll(); waiting.removeAll(); events.removeAll(); frames.removeAll()
     }
 }

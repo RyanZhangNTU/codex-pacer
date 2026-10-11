@@ -35,19 +35,17 @@ struct CompactIslandHeader: View {
     let layout: CompactIslandLayout
     let baseHeight: CGFloat
     let notchWidth: CGFloat
-    var measuresLayout = true
 
     var body: some View {
         rowView
-            .padding(.horizontal, 15)
+            .padding(.horizontal, IslandMetrics.headerInset)
             .frame(height: baseHeight)
             .background {
                 rowView.fixedSize().background(GeometryReader { geometry in
-                    Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 30)
-                }).hidden().allowsHitTesting(false).accessibilityHidden(true)
+                    Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 2 * IslandMetrics.headerInset)
+                }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
         .onPreferenceChange(CompactHeaderIdealWidth.self) { width in
-            guard measuresLayout else { return }
             DispatchQueue.main.async { model.updateMeasuredCompactWidth(width) }
         }
         .contentShape(Rectangle())
@@ -67,7 +65,7 @@ struct CompactIslandHeader: View {
         }
     }
     private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment) -> some View {
-        HStack(spacing: model.isAttached ? 4 : 6) {
+        HStack(spacing: model.isAttached ? 6 : 8) {
             ForEach(components.filter { CompactIslandComponent.isVisible($0, model: model,
                 showsStatus: layout.components.contains(.status)) }) { component in
                 CompactIslandComponent(model: model, component: component)
@@ -80,86 +78,203 @@ struct CompactIslandHeader: View {
 struct CompactIslandComponent: View {
     @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
-    private let secondary = Color(red: 0.67, green: 0.69, blue: 0.73)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandLayoutProbe) private var layoutProbe
+    private var providers: [AgentProvider] { model.enabledProviders }
+    /// Expanded rings repeat these values in more detail, so the header quiets
+    /// them instead of moving the row.
+    static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
+        [.quota, .quotaGauge, .quotaLabel, .timeRemaining].contains(component)
+    }
+    private var dimmed: Bool { model.expanded && Self.dimsWhenExpanded(component) }
 
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
+        guard component.isAvailable(for: Set(model.enabledProviders)) else { return false }
         switch component {
         case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .lowQuotaWarning: return model.quotaWarningSymbol != nil
-        case .quotaDelayWarning: return model.stale || model.errorMessage != nil
-        case .sshWarning: return model.hasSSHConnectionIssue
+        case .warnings: return !activeWarnings(model).isEmpty
         default: return true
+        }
+    }
+    /// Alternation skips providers without a value, so an unavailable service
+    /// never spends half the time as a dash; with none known, the first shows one.
+    static func alternatingProviders(_ model: IslandModel) -> [AgentProvider] {
+        let providers = model.enabledProviders
+        let known = providers.filter {
+            model.compactQuotaValue($0) != nil
+        }
+        return known.isEmpty ? Array(providers.prefix(1)) : known
+    }
+    /// Enabled warnings whose condition holds now, in display order.
+    static func activeWarnings(_ model: IslandModel) -> [CompactIslandLayout.Warning] {
+        let enabled = model.compactLayout.warnings
+        return CompactIslandLayout.Warning.allCases.filter { warning in
+            guard enabled.contains(warning) else { return false }
+            switch warning {
+            case .fiveHour: return !fiveHourAlerts(model).isEmpty
+            case .ssh: return model.hasSSHConnectionIssue
+            case .quotaDelay: return !delayedQuotaProviders(model).isEmpty
+            }
+        }
+    }
+    static func fiveHourAlerts(_ model: IslandModel) -> [(provider: AgentProvider, alert: FiveHourQuotaAlert)] {
+        model.enabledProviders.compactMap { provider in
+            model.fiveHourAlert(provider).map { (provider, $0) }
+        }
+    }
+    private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
+        model.enabledProviders.filter { provider in
+            model.providerQuotaError(provider) != nil ||
+                model.providerQuota(provider)?.isStale(at: model.now) == true ||
+                model.providerSelectedWindow(provider)?.resetsAt.map({ $0 <= model.now }) == true
         }
     }
     var body: some View {
         Button(action: action) { content.padding(.vertical, 4).contentShape(Rectangle()) }
             .buttonStyle(.plain)
-            .font(.system(size: 11))
             .lineLimit(1)
             .help(help)
+            .opacity(dimmed ? 0.3 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: dimmed)
     }
     @ViewBuilder private var content: some View {
         switch component {
-        case .statusIcon:
-            Image(systemName: model.headerSymbol).font(.system(size: 12)).foregroundStyle(model.headerTint)
-                .accessibilityLabel(component.label)
+        case .activity:
+            ActivityBadge(activity: model.headerActivity())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(activitySummary)
         case .status:
-            Text(model.headerDisplayStatus).fontWeight(.medium)
+            Text(model.headerDisplayStatus).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.primary)
         case .tps:
-            HStack(spacing: 4) {
-                Text(model.headerRateText ?? "—").monospacedDigit()
-                    .foregroundStyle(model.rateIsFresh ? Color.white : secondary)
-                Text("t/s").font(.system(size: 9)).foregroundStyle(secondary)
-            }.font(.system(size: 10)).fixedSize(horizontal: true, vertical: false)
-        case .taskCount:
-            let count = model.running.count + model.waiting.count
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                .frame(minWidth: 16, minHeight: 16).padding(.horizontal, count < 10 ? 0 : 2)
-                .background(Color.white.opacity(0.08), in: Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.6))
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(L10n.text("activity.task_count_compact", String(count)))
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(model.headerRateText ?? "—").font(.system(size: 12, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(model.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
+                Text("t/s").font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+            }.fixedSize(horizontal: true, vertical: false)
         case .firstOutput:
-            Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—").monospacedDigit()
+            Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—")
+                .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
-        case .lowQuotaWarning:
-            Image(systemName: model.quotaWarningSymbol ?? "exclamationmark.triangle")
-                .foregroundStyle((model.remaining ?? 100) <= 0 ? Color.red : Color.orange)
-                .accessibilityLabel(L10n.text((model.remaining ?? 100) <= 0 ? "quota.exhausted" : "notice.low_quota"))
-        case .quotaMetric:
-            Text(model.quotaSummary).font(.system(size: 12, weight: .medium)).monospacedDigit()
-                .fixedSize(horizontal: true, vertical: false)
+        case .warnings:
+            HStack(spacing: 4) {
+                ForEach(Self.activeWarnings(model), id: \.self) { warning in
+                    switch warning {
+                    case .fiveHour:
+                        ForEach(Self.fiveHourAlerts(model), id: \.provider) { item in
+                            FiveHourAlertGlyph(alert: item.alert, tint: item.provider.tint)
+                        }
+                    case .ssh:
+                        Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+                    case .quotaDelay:
+                        Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+                    }
+                }
+            }
+            .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
+        case .quota:
+            let shown = Self.alternatingProviders(model)
+            Group {
+                if shown.count > 1 {
+                    AlternatingQuotaText(entries: shown.map { .init(text: quotaText($0), color: NSColor($0.tint)) },
+                        animates: !layoutProbe)
+                } else if let provider = shown.first {
+                    Text(quotaText(provider)).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
+                        .monospacedDigit().fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
+        case .quotaGauge:
+            QuotaRingsGlyph(rings: providers.map { provider in
+                let window = model.providerSelectedWindow(provider)
+                return .init(tint: provider.tint, remaining: model.providerQuotaError(provider) == nil ? window?.remainingPercent : nil,
+                    stale: model.providerQuotaIsStale(provider))
+            })
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(gaugeSummary)
         case .quotaLabel:
-            Text(model.compactMetricLabel).font(.system(size: 10)).foregroundStyle(secondary)
+            Text(model.compactMetricLabel)
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
         case .timeRemaining:
-            HStack(spacing: 3) {
-                Image(systemName: "hourglass").font(.system(size: 9))
-                Text(model.remainingTimePercent.map { "\(Int($0.rounded()))%" } ?? "—").monospacedDigit()
-            }.foregroundStyle(secondary).fixedSize(horizontal: true, vertical: false)
-        case .quotaDelayWarning:
-            Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
-                .accessibilityLabel(component.label)
-        case .sshWarning:
-            Image(systemName: "wifi.slash").foregroundStyle(.orange).accessibilityLabel(component.label)
+            HStack(spacing: 4) {
+                Image(systemName: "hourglass").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+                providerValues(spacing: 7) { provider in
+                    Text(timeText(provider)).font(.system(size: 11, weight: .medium)).foregroundStyle(provider.tint.opacity(0.85))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
+                }
+            }.monospacedDigit().fixedSize(horizontal: true, vertical: false)
         }
+    }
+    /// Provider values stay color-coded without names; a hairline separates them.
+    private func providerValues<Value: View>(spacing: CGFloat, @ViewBuilder value: @escaping (AgentProvider) -> Value) -> some View {
+        HStack(spacing: spacing) {
+            ForEach(Array(providers.enumerated()), id: \.element.rawValue) { index, provider in
+                if index > 0 { Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 10).accessibilityHidden(true) }
+                value(provider)
+            }
+        }
+    }
+    private var fiveHourSummary: String {
+        Self.fiveHourAlerts(model).map { item in
+            switch item.alert {
+            case .low(let remaining): L10n.text("quota.five_hour_low", item.provider.displayName, "\(Int(remaining.rounded()))%")
+            case .exhausted: L10n.text("quota.five_hour_exhausted", item.provider.displayName)
+            }
+        }.joined(separator: " · ")
+    }
+    private var warningSummary: String {
+        Self.activeWarnings(model).map { warning in
+            switch warning {
+            case .fiveHour: fiveHourSummary
+            case .ssh: L10n.text("source.ssh_retrying")
+            case .quotaDelay: Self.delayedQuotaProviders(model).map(\.displayName).joined(separator: " · ")
+                + " · " + warning.label
+            }
+        }.joined(separator: "\n")
+    }
+    private var gaugeSummary: String {
+        providers.map { provider in
+            let remaining = model.providerSelectedWindow(provider)?.remainingPercent
+            return L10n.text("provider.compact_quota", provider.displayName, remaining.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—")
+        }.joined(separator: " · ")
+    }
+    /// The count and the most urgent state, without repeating a count-only status.
+    private var activitySummary: String {
+        let count = model.running.count + model.waiting.count
+        let tasks = count == 0 ? nil : L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact",
+            count > 99 ? "99+" : String(count))
+        return [tasks, model.headerStatus].compactMap { $0 }.reduce(into: [String]()) { parts, part in
+            if !parts.contains(part) { parts.append(part) }
+        }.joined(separator: " · ")
     }
     private var help: String {
         switch component {
-        case .statusIcon, .status:
-            return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open", model.headerStatus)
+        case .activity, .status:
+            return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open",
+                component == .activity ? activitySummary : model.headerStatus)
         case .tps: return model.rateHelp
         case .firstOutput: return L10n.text("layout.latest_ttft_help")
-        case .quotaDelayWarning: return L10n.text("layout.component.quotaDelayWarning") + " · " + model.freshnessText
-        case .timeRemaining: return L10n.text("layout.time_remaining_help")
-        case .quotaMetric, .quotaLabel: return L10n.text("layout.metric_help")
-        case .sshWarning: return L10n.text("source.ssh_retrying")
-        default: return component.label
+        case .warnings: return warningSummary
+        case .quotaGauge: return gaugeSummary + "\n" + L10n.text("layout.gauge_help")
+        case .timeRemaining:
+            return providers.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
+                .joined(separator: " · ") + "\n" + L10n.text("layout.time_remaining_help")
+        case .quota, .quotaLabel:
+            return providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }
+                .joined(separator: " · ") + "\n" + L10n.text("layout.metric_help")
         }
+    }
+    private func quotaText(_ provider: AgentProvider) -> String {
+        model.compactQuotaText(provider)
+    }
+    private func timeText(_ provider: AgentProvider) -> String {
+        model.compactTimeRemainingText(provider)
     }
     private func action() {
         switch component {
-        case .statusIcon, .status: model.openCompletionOrPin()
+        case .activity, .status: model.openCompletionOrPin()
         default: model.togglePin()
         }
     }

@@ -11,7 +11,12 @@ public struct ActivityOverview: Sendable {
     public let rateIsFresh: Bool
 
     public init(activities: [SessionActivity], at now: Date) {
-        let groups = ActivityTaskGroup.make(activities)
+        self.init(groups: ActivityTaskGroup.make(activities), at: now)
+    }
+
+    /// Group ownership is independent of the UI clock. Reuse it while applying
+    /// the exact current date to rates, freshness and observed phases.
+    public init(groups: [ActivityTaskGroup], at now: Date) {
         self.activities = groups.flatMap(\.members)
         running = groups.filter(\.isRunning).map(\.primary)
         waiting = groups.filter(\.isWaiting).map(\.primary)
@@ -35,8 +40,5 @@ public struct ActivityOverview: Sendable {
         case .unknown: return L10n.text("activity.unknown")
         default: return L10n.text("activity.idle")
         }
-    }
-    public var compactTitle: String {
-        phase == .running && running.count > 1 ? L10n.text("activity.task_count", running.count) : title
     }
 }

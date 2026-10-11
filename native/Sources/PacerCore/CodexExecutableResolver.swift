@@ -127,7 +127,7 @@ public enum CodexExecutableResolver {
         value.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
     }
 
-    private static func managerBinDirectories(environment: [String: String], userHome: URL) -> [String] {
+    static func managerBinDirectories(environment: [String: String], userHome: URL) -> [String] {
         func home(_ relative: String) -> String { userHome.appendingPathComponent(relative).path }
         var paths = [
             home(".npm-global/bin"), home(".npm/bin"), home(".volta/bin"), home(".asdf/shims"),

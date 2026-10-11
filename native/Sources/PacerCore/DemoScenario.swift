@@ -14,7 +14,9 @@ public enum DemoTaskStage: Int, CaseIterable {
 }
 
 public enum DemoScenario {
-    public static func quota(at now: Date) -> [QuotaSnapshot] {
+    /// Codex is a weekly-only Pro sample with banked resets; Claude reports
+    /// both its 5-hour and 7-day windows.
+    public static func quota(_ provider: AgentProvider = .codex, at now: Date) -> [QuotaSnapshot] {
         let reset = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0,
             of: now.addingTimeInterval(2 * 86400))!
         let start = reset.addingTimeInterval(-7 * 86400)
@@ -28,14 +30,22 @@ public enum DemoScenario {
         ]
         return trace.map { fraction, remaining in
             let capture = start.addingTimeInterval(now.timeIntervalSince(start) * fraction)
-            let wire: [String: Any] = [
-                "rateLimitResetCredits": ["availableCount": 2, "credits": [
+            let weekly = provider == .codex ? remaining : min(100, remaining + 21)
+            var limits: [String: Any] = ["limitId": provider.rawValue, "planType": provider == .codex ? "pro" : "max",
+                "secondary": ["usedPercent": 100 - weekly, "windowDurationMins": 10080, "resetsAt": reset.timeIntervalSince1970]]
+            var wire: [String: Any] = [:]
+            if provider == .codex {
+                limits["credits"] = ["hasCredits": true, "unlimited": false, "balance": "12500"]
+                wire["rateLimitResetCredits"] = ["availableCount": 2, "credits": [
                     ["id": "demo-reset-1", "status": "available", "grantedAt": now.addingTimeInterval(-86400).timeIntervalSince1970,
                      "expiresAt": now.addingTimeInterval(12 * 3600).timeIntervalSince1970],
                     ["id": "demo-reset-2", "status": "available", "grantedAt": now.addingTimeInterval(-43200).timeIntervalSince1970,
-                     "expiresAt": now.addingTimeInterval(36 * 3600).timeIntervalSince1970]]],
-                "rateLimits": ["limitId": "codex", "planType": "pro", "credits": ["hasCredits": true, "unlimited": false, "balance": "12500"],
-                    "secondary": ["usedPercent": 100 - remaining, "windowDurationMins": 10080, "resetsAt": reset.timeIntervalSince1970]]]
+                     "expiresAt": now.addingTimeInterval(36 * 3600).timeIntervalSince1970]]]
+            } else {
+                limits["primary"] = ["usedPercent": 19, "windowDurationMins": 300,
+                                     "resetsAt": now.addingTimeInterval(2 * 3600 + 40 * 60).timeIntervalSince1970]
+            }
+            wire["rateLimits"] = limits
             var value = try! QuotaSnapshot.decode(JSONSerialization.data(withJSONObject: wire), capturedAt: capture)
             value.accountScope = "demo"
             return value
