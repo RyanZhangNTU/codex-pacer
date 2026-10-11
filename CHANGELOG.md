@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1
+
+- Sign Codex Pacer with Developer ID and notarize it with Apple, so a new install opens after the standard macOS confirmation without **Open Anyway** in System Settings. Installed 3.0.0 copies update in place as before.
+- Notarize releases through a `notarytool` Keychain profile only, so the release scripts never handle the Apple password.
+
 ## 3.0.0
 
 Codex Pacer now follows Claude Code as well as Codex.

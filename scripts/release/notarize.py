@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Submit with a Keychain profile or credentials kept only in process memory."""
-import getpass
+"""Submit with a notarytool Keychain profile; passwords never reach this process."""
 import json
 import os
 from pathlib import Path
@@ -10,16 +9,12 @@ import sys
 
 def main():
     artifact = Path(sys.argv[1]).resolve(strict=True)
-    args = ["xcrun", "notarytool", "submit", str(artifact), "--wait", "--output-format", "json"]
     profile = os.environ.get("APPLE_NOTARY_PROFILE")
-    if profile:
-        args += ["--keychain-profile", profile]
-    else:
-        apple_id = os.environ.get("APPLE_ID") or input("Apple ID: ").strip()
-        team = os.environ.get("APPLE_TEAM_ID") or input("Apple team ID: ").strip()
-        password = os.environ.get("APPLE_PASSWORD") or getpass.getpass("App-specific password (hidden): ")
-        args += ["--apple-id", apple_id, "--team-id", team, "--password", password]
-    # Do not print args or raise CalledProcessError: either would expose credentials.
+    if not profile:
+        print("Set APPLE_NOTARY_PROFILE to a profile created with `xcrun notarytool store-credentials`.", file=sys.stderr)
+        return 2
+    args = ["xcrun", "notarytool", "submit", str(artifact), "--wait", "--output-format", "json",
+            "--keychain-profile", profile]
     result = subprocess.run(args, capture_output=True, text=True)
     try:
         receipt = json.loads(result.stdout)
@@ -30,7 +25,16 @@ def main():
     request_id = receipt.get("id", "unavailable")
     print(f"Notarization: {status}; submission ID: {request_id}")
     Path(str(artifact) + ".notary.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    return 0 if result.returncode == 0 and status == "Accepted" else 1
+    if result.returncode == 0 and status == "Accepted":
+        return 0
+    if "id" in receipt:
+        # Apple's log names each rejected file and the signing rule it failed.
+        log = Path(str(artifact) + ".notary-log.json")
+        subprocess.run(["xcrun", "notarytool", "log", request_id, "--keychain-profile", profile, str(log)],
+                       capture_output=True, text=True)
+        if log.exists():
+            print(f"Notarization log: {log}", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

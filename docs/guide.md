@@ -127,7 +127,7 @@ Everything that needs attention already shows on the collapsed bar. Turn on **Se
 
 ## Troubleshooting
 
-- **macOS will not open the app.** Follow the [install steps](../README.md#install) and choose **Open Anyway** in Privacy & Security.
+- **macOS will not open the app.** Pacer is notarized by Apple, so download it again from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest) in case your copy is incomplete. Versions before 3.0.1 were unsigned and need **Open Anyway** in **System Settings → Privacy & Security**.
 - **A service shows no tasks.** Check that its module is on and that **Settings → Codex/Claude → This Mac** found it. For Claude, restart Claude Code sessions after the first setup.
 - **Claude quota asks you to sign in.** The claude.ai session ended; sign in again in Pacer's window. Network errors and rate limits retry on their own.
 - **An SSH host is disconnected.** Make sure `ssh <host>` works without a password prompt, then use **Retry** in Settings → Connections.

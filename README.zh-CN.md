@@ -67,13 +67,10 @@
 
 ## 安装
 
-Codex Pacer 以未签名的通用 DMG 发布，首次打开时需要在系统中确认一次。
+Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 公证。
 
-1. 双击下载的 DMG，关闭系统弹出的提示。
-2. 打开“系统设置 → 隐私与安全性”，滚动到“安全性”，为安装包点击“仍要打开”。
-3. 再次打开 DMG，把 **Codex Pacer** 拖入“应用程序”。如果系统也拦截了应用本身，对它重复第 2 步。
-
-![“隐私与安全性”中的“安全性”部分和“仍要打开”按钮](docs/assets/macos-open-anyway.png)
+1. 双击下载的 DMG，把 **Codex Pacer** 拖入“应用程序”。
+2. 从“应用程序”中打开 Codex Pacer。macOS 会询问一次是否打开从互联网下载的应用，点击“打开”即可。
 
 之后 Pacer 会自行更新：每天检查一次，由你决定何时安装。在“设置 → 通用 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
 
