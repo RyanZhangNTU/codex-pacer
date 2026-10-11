@@ -5,6 +5,7 @@ import PacerCore
 struct SettingsView: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var updater: AppUpdater
+    @ObservedObject var notificationPreference: SystemNotificationPreference
     let onClose: () -> Void
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
@@ -28,13 +29,11 @@ struct SettingsView: View {
     @State private var inputReminder = UserDefaults.standard.bool(forKey: "inputReminder")
     @State private var completionReminder = UserDefaults.standard.bool(forKey: "completionReminder")
     @State private var completedRetention = UserDefaults.standard.object(forKey: "completedRetentionMinutes") as? Int ?? 30
-    @State private var systemNotifications = UserDefaults.standard.bool(forKey: "systemNotifications")
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var monitorRemoteControl = UserDefaults.standard.object(forKey: "monitorRemoteControl") == nil || UserDefaults.standard.bool(forKey: "monitorRemoteControl")
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
-    @State private var notificationDenied = false
     /// Text settings commit on Return, focus loss, a chooser or window close;
     /// an invalid value keeps the last valid one and explains why here.
     @State private var textIssues: [TextSetting: String] = [:]
@@ -97,7 +96,6 @@ struct SettingsView: View {
         .onChange(of: focusedText) { previous, _ in if let previous { commit(previous) } }
         .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
         .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }
-        .onChange(of: systemNotifications) { _, value in setSystemNotifications(value) }
         .onExitCommand { onClose() }
         .onDisappear {
             if let focusedText { commit(focusedText) }
@@ -215,10 +213,11 @@ struct SettingsView: View {
                     ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    reminderRow("settings.system_notifications", isOn: $systemNotifications) {
+                    reminderRow("settings.system_notifications", isOn: Binding(get: { notificationPreference.enabled },
+                        set: { notificationPreference.setEnabled($0) })) {
                         Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
                     }
-                    if notificationDenied {
+                    if notificationPreference.denied {
                         caption(L10n.text("settings.notification_denied")).foregroundStyle(.orange)
                             .padding(.leading, IslandSampleSwatch<EmptyView>.compactWidth + 12)
                     }
@@ -677,20 +676,6 @@ struct SettingsView: View {
         }
         textIssues[field] = nil
         applyNow()
-    }
-
-    /// Asking happens on the switch itself; a refusal turns it back off.
-    private func setSystemNotifications(_ requested: Bool) {
-        guard requested else {
-            UserDefaults.standard.set(false, forKey: "systemNotifications"); notificationDenied = false; return
-        }
-        guard !UserDefaults.standard.bool(forKey: "systemNotifications") else { return }
-        Task { @MainActor in
-            let allowed = await NotificationDelivery.requestPermission()
-            UserDefaults.standard.set(allowed, forKey: "systemNotifications")
-            notificationDenied = !allowed
-            if !allowed { systemNotifications = false }
-        }
     }
 
     private func relaunchForLanguage() {

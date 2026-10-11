@@ -114,6 +114,51 @@ struct SSHHost: Equatable, Identifiable {
     }
 }
 
+/// The summary uses the same effective SSH module states as the host rows,
+/// including configured targets whose collector has not published yet.
+struct ConnectionSummary: Equatable {
+    enum State: Equatable {
+        case disabled, checking, retrying(Int), connecting(Int), paused(Int), connected
+    }
+    let state: State
+    let sources: Int
+    let sessions: Int
+
+    init(enabledProviders: [AgentProvider], sources: [ConnectionSource], hosts: [SSHHost]) {
+        let enabled = Set(enabledProviders)
+        var entries: [String: (state: SSHHost.State, sessions: Int)] = [:]
+        for source in sources where enabled.contains(source.provider) {
+            let state: SSHHost.State = switch source.state {
+            case .retrying: .retrying
+            case .paused: .paused
+            case .connected: .connected
+            }
+            entries[source.id] = (state, source.sessions)
+        }
+        for host in hosts {
+            for module in host.modules where enabled.contains(module.provider) {
+                let id = module.provider.rawValue + ":" + ConnectionSource.sshPrefix + host.alias
+                entries[id] = (module.state, module.sessions)
+            }
+        }
+        let checking = entries.isEmpty
+        // Every enabled module has a local source. One module publishing first
+        // must not imply that another module is already connected.
+        for provider in enabled {
+            let id = provider.rawValue + ":local"
+            if entries[id] == nil { entries[id] = (.waiting, 0) }
+        }
+        self.sources = entries.count
+        sessions = entries.values.reduce(0) { $0 + $1.sessions }
+        let retrying = entries.values.filter { $0.state.isProblem }.count
+        let connecting = entries.values.filter { $0.state == .waiting || $0.state == .configuring }.count
+        let paused = entries.values.filter { $0.state == .paused }.count
+        state = enabled.isEmpty ? .disabled : checking ? .checking :
+            retrying > 0 ? .retrying(retrying) : connecting > 0 ? .connecting(connecting) :
+            paused > 0 ? .paused(paused) : .connected
+    }
+}
+
 /// Connection diagnostics live here because the island shows no connection
 /// banners: a summary, every task source with problems first, quota freshness
 /// and the data-source switches.
@@ -152,7 +197,7 @@ struct SettingsConnectionsPane: View {
 
     var body: some View {
         let sources = sources, hosts = hosts
-        Section { summary(sources, setupFailures: hosts.filter(\.claudeSetupFailed).count) }
+        Section { summary(ConnectionSummary(enabledProviders: model.enabledProviders, sources: sources, hosts: hosts)) }
         Section(L10n.text("connections.section.tasks")) {
             ForEach(sources.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) }) { source in sourceRow(source) }
             Toggle(L10n.text("settings.monitor_remote_control"), isOn: $monitorRemoteControl)
@@ -179,28 +224,31 @@ struct SettingsConnectionsPane: View {
         }
     }
 
-    /// Hosts whose Claude setup failed are retried automatically, so they count with retrying sources.
-    private func summary(_ sources: [ConnectionSource], setupFailures: Int) -> some View {
-        let retrying = sources.filter { $0.state == .retrying }.count + setupFailures
-        let sessions = sources.reduce(0) { $0 + $1.sessions }
-        let (symbol, tint, title): (String, Color, String) =
-            model.enabledProviders.isEmpty ? ("power", .secondary, L10n.text("provider.none_enabled")) :
-            sources.isEmpty ? ("ellipsis", .secondary, L10n.text("connections.summary.checking")) :
-            retrying > 0 ? ("arrow.clockwise", .orange, L10n.text(retrying == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", retrying)) :
-            ("checkmark", .green, L10n.text("connections.summary.ok"))
+    private func summary(_ summary: ConnectionSummary) -> some View {
+        let (symbol, tint, title): (String, Color, String) = switch summary.state {
+        case .disabled: ("power", .secondary, L10n.text("provider.none_enabled"))
+        case .checking: ("ellipsis", .secondary, L10n.text("connections.summary.checking"))
+        case .retrying(let count): ("arrow.clockwise", .orange,
+            L10n.text(count == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", count))
+        case .connecting(let count): ("ellipsis", .secondary,
+            L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count))
+        case .paused(let count): ("pause", .secondary,
+            L10n.text(count == 1 ? "connections.summary.paused_one" : "connections.summary.paused", count))
+        case .connected: ("checkmark", .green, L10n.text("connections.summary.ok"))
+        }
         return HStack(spacing: 12) {
             Image(systemName: symbol).font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
                 .frame(width: 32, height: 32).background(tint.opacity(0.16), in: Circle())
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 14, weight: .semibold))
-                if !sources.isEmpty {
-                    Text(L10n.text("connections.summary.detail", sources.count, sessions))
+                if summary.sources > 0 {
+                    Text(L10n.text("connections.summary.detail", summary.sources, summary.sessions))
                         .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
             Spacer(minLength: 8)
-            if retrying > 0 {
+            if case .retrying = summary.state {
                 Button(L10n.text("connections.retry")) { retryAll() }
             }
         }

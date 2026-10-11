@@ -503,6 +503,10 @@
 "connections.summary.checking" = "正在检查来源";
 "connections.summary.retrying" = "%ld 个来源正在重试";
 "connections.summary.retrying_one" = "%ld 个来源正在重试";
+"connections.summary.connecting" = "%ld 个来源正在连接";
+"connections.summary.connecting_one" = "%ld 个来源正在连接";
+"connections.summary.paused" = "%ld 个来源已暂停";
+"connections.summary.paused_one" = "%ld 个来源已暂停";
 "connections.summary.detail" = "%ld 个来源 · %ld 个运行会话";
 "connections.section.ssh" = "SSH 主机";
 "connections.ssh_add" = "添加主机";

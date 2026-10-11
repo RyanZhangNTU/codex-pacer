@@ -1,8 +1,10 @@
 Codex Pacer 3.0.0 build 48 是支持 Codex 与 Claude Code 的开发候选版。展开后上方统一展示任务，以颜色区分服务；并排圆环同时显示两个模块的 7d 剩余额度，以白色刻度和充裕 / 正常 / 偏快标注配速，5h 显示在环下一行，无需切换周期。圆环布局下，单模块同时显示两个周期，确认账户仅有每周限制时使用 PRO 占位。仅启用 Codex，且主账户已返回额度限制但没有 5h 窗口时，恢复原来的额度条形展示，保留全部实际窗口，包括非标准或未知时长的限制。历史曲线与完整额度详情仍在设置中。圆环使用更细的线条，环内只突出额度数字与简短倒计时，正常来源和更新时间移到悬停提示及设置，过期和错误状态仍明确显示。折叠时以一个动态活动徽标合并状态与任务数，并显示可用 TPS，额度数值按服务交替显示并配双环，5h 额度偏低或耗尽时出现提示。成功打开的完成卡在正常重启后仍保持已读。Claude 任务可根据当前 Claude Code 遥测显示请求速度与首输出时间；Pacer 的 hook 启动更快，不再拖慢流式输出。界面采用统一的状态图标、两行式任务行（速度与首输出指标右对齐）和侧边栏式设置窗口。
 
-设置可独立启用或关闭模块。自动模式检测已安装的应用与 CLI，手动选择会保留。Claude 支持本机来源与配置的 SSH 别名；经 Desktop 元数据确认的 SSH/WSL 日志镜像会从默认本机来源排除，SSH 状态通过有界传输即时更新。可选监测配置以追加方式加入 hooks 和数值遥测，保留已有设置。匹配的 OTLP 请求证据提供准确的请求时间；确认停止后的 transcript 窗口可提供吞吐率估算。首输出时间需要有明确轮次归属的流式显示回调或服务报告的 TTFT；Desktop SDK / `-p` 仅发送最终消息时不能据此推算。Claude 通过已验证 Desktop 映射或真实 Terminal resume 会话打开；只有成功打开已验证 Desktop 目标才清除对应完成卡。
+设置可独立启用或关闭模块。自动模式检测已安装的应用与 CLI，手动选择会保留。Claude 支持本机来源与配置的 SSH 别名；经 Desktop 元数据确认的 SSH/WSL 日志镜像会从默认本机来源排除，SSH 状态通过有界传输即时更新。启用 Claude 后，Pacer 会自动更新已有本机 Claude 目录中的 hooks 和数值遥测，保留已有设置。同时启用 SSH 监测时，也会更新可连接且已有 Claude 目录的已配置主机。关闭 Claude 或 SSH 监测、替换来源、休眠和退出会取消正在进行的远端配置。新启动的 Claude Code 会话会加载更新后的设置。匹配的 OTLP 请求证据提供准确的请求时间；确认停止后的 transcript 窗口可提供吞吐率估算。首输出时间需要有明确轮次归属的流式显示回调或服务报告的 TTFT；Desktop SDK / `-p` 仅发送最终消息时不能据此推算。Claude 通过已验证 Desktop 映射或真实 Terminal resume 会话打开；只有成功打开已验证 Desktop 目标才清除对应完成卡。
 
-Codex Remote Control 通过已连接的 Desktop owner stream 加入统一任务列表，在 Codex 数据来源中有独立开关。Codex 桌面端必须保持开启、连接远程主机，并由 stream owner 加载对应会话；Pacer 不为此新增独立远端发现或日志兜底。缓存计数不会建立新测量，也不能补出未观测到的首输出时间。继承的请求中途接入 TPS 兜底仍是近似值，可能出现偏高估算。参见[上游 PR #77](https://github.com/RyanZhangNTU/codex-pacer/pull/77)与[来源及计量边界](development.md#codex-accounting-and-lifecycle)。
+Codex Remote Control 通过已连接的 Desktop owner stream 加入统一任务列表，在“连接”设置中有独立开关。Codex 桌面端必须保持开启、连接远程主机，并由 stream owner 加载对应会话；Pacer 不为此新增独立远端发现或日志兜底。缓存计数不会建立新测量，也不能补出未观测到的首输出时间。继承的请求中途接入 TPS 兜底仍是近似值，可能出现偏高估算。参见[上游 PR #77](https://github.com/RyanZhangNTU/codex-pacer/pull/77)与[来源及计量边界](development.md#codex-accounting-and-lifecycle)。
+
+设置修改即时应用，文本字段在回车、失去焦点或关闭窗口时校验。Esc 通过原生窗口关闭流程保存有效修改，无效输入保留上次有效值。通知权限返回尊重开关的最新选择，被拒后仍显示说明。连接汇总会计入等待、配置中和暂停的来源，全部就绪后才显示连接成功。
 
 Claude 额度优先使用同账户新鲜 status-line 样本或 Pacer 独立 WebKit 会话。“登录 Claude”打开专用网页窗口，由用户完成登录和验证；多组织需要明确选择。生产环境不会读取其他应用的 Keychain 或 Safe Storage，cookie 仅由 WebKit 管理。自有 OAuth 缓存、环境变量与文件来源仅作安静的兼容回退。网页会话过期后需重新登录，缺少重置日期及服务未提供的 Credit / banked reset 详情保持不可用。
 

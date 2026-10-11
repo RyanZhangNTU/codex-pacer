@@ -213,6 +213,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var updater: AppUpdater!
     private var panel: PanelController!
     private var statusItem: NSStatusItem?
+    private lazy var notificationPreference = SystemNotificationPreference()
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
     private var demoConversationWindow: NSWindow?
@@ -430,7 +431,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     @objc private func showSettings() {
         model.close()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
+            let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = L10n.text("menu.settings_title")
             window.isReleasedWhenClosed = false
@@ -438,7 +439,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.center()
             settingsWindow = window
         }
-        settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater) { [weak self] in
+        settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater,
+            notificationPreference: notificationPreference) { [weak self] in
             self?.closeSettings()
         })
         settingsWindow?.makeKeyAndOrderFront(nil)

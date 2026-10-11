@@ -1,5 +1,6 @@
 import XCTest
 import Darwin
+import AppKit
 @testable import PacerCore
 @testable import PacerIsland
 
@@ -10,6 +11,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         let home: URL
         let model: IslandModel
         let monitor: ClaudeActivityMonitor
+        let defaults: UserDefaults
         func launches(_ alias: String) throws -> [Int32] {
             try String(contentsOf: root.appendingPathComponent(alias + ".pids")).split(separator: "\n").compactMap { Int32($0) }
         }
@@ -20,7 +22,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
         return file
     }
-    private func fixture(failingSetup: Bool = false) throws -> Fixture {
+    private func fixture(failingSetup: Bool = false, blockingSetup: Bool = false) throws -> Fixture {
         let root = URL(fileURLWithPath: "/private/tmp/pacer-source-recovery-" + UUID().uuidString)
         let home = root.appendingPathComponent(".claude")
         let codexHome = root.appendingPathComponent(".codex")
@@ -36,10 +38,14 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         sys.stdout.flush();sys.stdin.read()
         """)
         let installer = try executable("fixture-installer", root: root, script: """
-        import json,pathlib,sys
+        import json,os,pathlib,sys,time
         if \(failingSetup ? "True" : "False"):sys.exit(1)
         root=pathlib.Path(\(String(reflecting: root.path)))
         alias=sys.argv[sys.argv.index('--')+1]
+        if \(blockingSetup ? "True" : "False"):
+            (root/(alias+'.installer-pid')).write_text(str(os.getpid()))
+            while not (root/(alias+'.install-continue')).exists():time.sleep(.01)
+            (root/(alias+'.settings-mutated')).write_text('simulated remote write')
         (root/(alias+'.ready')).write_text('ready')
         print(json.dumps({'hooksConfigured':True,'telemetryConfigured':True,'statusLineConfigured':True,'telemetryConflict':False}))
         """)
@@ -53,13 +59,13 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         let monitor = ClaudeActivityMonitor(sshExecutable: collector)
         let model = IslandModel(demo: true, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
-            claudeMonitor: monitor, claudeRemoteSetup: ClaudeRemoteSetup(executable: installer, timeout: 2))
+            claudeMonitor: monitor, claudeRemoteSetup: ClaudeRemoteSetup(executable: installer, timeout: blockingSetup ? 5 : 2))
         addTeardownBlock {
             await model.shutdown()
             UserDefaults(suiteName: domain)?.removePersistentDomain(forName: domain)
             try? FileManager.default.removeItem(at: root)
         }
-        return Fixture(root: root, home: home, model: model, monitor: monitor)
+        return Fixture(root: root, home: home, model: model, monitor: monitor, defaults: defaults)
     }
     private func start(_ fixture: Fixture, recovered: XCTestExpectation? = nil) async throws {
         let parked = expectation(description: "both unconfigured sources parked")
@@ -112,5 +118,92 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         XCTAssertNil(fixture.model.claudeRemoteSetupStatus["remote-ssh-discovered:fixture"])
         XCTAssertNotNil(fixture.model.claudeRemoteSetupFailures["remote-ssh-discovered:fixture"], "Settings shows the failure with a retry")
         XCTAssertFalse(fixture.model.claudeRemoteTargets.contains { fixture.model.claudeRemoteConfigured($0) })
+    }
+
+    private func installerPID(_ fixture: Fixture, differentFrom previous: Int32? = nil) async throws -> Int32 {
+        let file = fixture.root.appendingPathComponent("fixture.installer-pid")
+        for _ in 0..<300 {
+            if let text = try? String(contentsOf: file), let pid = Int32(text), pid != previous { return pid }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return try XCTUnwrap(nil as Int32?, "Fixture installer did not start")
+    }
+
+    private func assertInstallerExited(_ pid: Int32) async throws {
+        for _ in 0..<200 {
+            if kill(pid, 0) == -1, errno == ESRCH { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Cancellation must stop the owned installer process")
+    }
+
+    func testRemoteSetupCancellationStopsWritesAndDoesNotReportSetupFailure() async throws {
+        enum Change: CaseIterable { case module, ssh, home, aliases, sleep, shutdown, caller }
+        let targetID = "remote-ssh-discovered:fixture"
+        for change in Change.allCases {
+            let fixture = try fixture(blockingSetup: true), model = fixture.model
+            if change == .sleep { model.start() }
+            let operation = Task { await model.configureClaudeRemote(targetID: targetID) }
+            let pid = try await installerPID(fixture)
+            XCTAssertTrue(model.configuringClaudeHosts.contains(targetID))
+            switch change {
+            case .module:
+                ProviderModules(codexMode: .disabled, claudeMode: .disabled).save(to: fixture.defaults)
+                model.applySettings(sourceChanged: false)
+            case .ssh:
+                fixture.defaults.set(false, forKey: "monitorSSH"); model.applySettings(sourceChanged: false)
+            case .home:
+                fixture.defaults.set(fixture.root.path, forKey: "claudeHome"); model.applySettings(sourceChanged: false)
+            case .aliases:
+                fixture.defaults.set("other", forKey: "claudeSSHHosts"); model.applySettings(sourceChanged: false)
+            case .sleep:
+                NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
+            case .shutdown: await model.shutdown()
+            case .caller: operation.cancel()
+            }
+            // Check exit before awaiting the operation: simply waiting for its
+            // five-second timeout must not count as successful cancellation.
+            try await assertInstallerExited(pid)
+            let result = await operation.value
+            XCTAssertNil(result, "A discarded setup is not a user-facing failure: \(change)")
+            try Data().write(to: fixture.root.appendingPathComponent("fixture.install-continue"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("fixture.settings-mutated").path),
+                "The cancelled installer must not write remote settings: \(change)")
+            XCTAssertTrue(model.configuringClaudeHosts.isEmpty)
+            XCTAssertTrue(model.claudeRemoteSetupFailures.isEmpty)
+            XCTAssertTrue(model.claudeRemoteSetupStatus.isEmpty)
+            XCTAssertFalse(model.claudeRemoteTargets.contains { model.claudeRemoteConfigured($0) })
+            if [.module, .ssh, .sleep, .shutdown].contains(change) {
+                let blocked = await model.configureClaudeRemote(targetID: targetID)
+                XCTAssertNil(blocked)
+                XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("fixture.installer-pid")), String(pid),
+                    "Disabled, sleeping or stopped monitoring must not start an installer")
+            }
+            await model.shutdown()
+        }
+    }
+
+    func testSourceResetAllowsReplacementSetupWithoutOldRequestClearingOrCancellingIt() async throws {
+        let fixture = try fixture(blockingSetup: true), model = fixture.model
+        let targetID = "remote-ssh-discovered:fixture"
+        let previous = Task { await model.configureClaudeRemote(targetID: targetID) }
+        let previousPID = try await installerPID(fixture)
+        fixture.defaults.set(fixture.root.path, forKey: "claudeHome")
+        model.applySettings(sourceChanged: false)
+        let replacement = Task { await model.configureClaudeRemote(targetID: targetID) }
+        let replacementPID = try await installerPID(fixture, differentFrom: previousPID)
+        let previousResult = await previous.value
+        XCTAssertNil(previousResult)
+        try await assertInstallerExited(previousPID)
+        XCTAssertTrue(model.configuringClaudeHosts.contains(targetID), "Old cleanup must not clear the replacement's in-flight state")
+        XCTAssertEqual(kill(replacementPID, 0), 0, "Source reset must not cancel a newly started installer")
+        try Data().write(to: fixture.root.appendingPathComponent("fixture.install-continue"))
+        let replacementResult = await replacement.value
+        XCTAssertNil(replacementResult)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("fixture.settings-mutated").path))
+        XCTAssertEqual(model.claudeRemoteSetupStatus[targetID]?.hooksConfigured, true)
+        XCTAssertTrue(model.configuringClaudeHosts.isEmpty)
+        XCTAssertTrue(model.claudeRemoteSetupFailures.isEmpty)
+        XCTAssertTrue(model.claudeRemoteTargets.first { $0.id == targetID }.map { model.claudeRemoteConfigured($0) } ?? false)
     }
 }

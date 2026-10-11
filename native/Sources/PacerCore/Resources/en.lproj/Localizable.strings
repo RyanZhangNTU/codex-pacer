@@ -503,6 +503,10 @@
 "connections.summary.checking" = "Checking sources";
 "connections.summary.retrying" = "%ld sources retrying";
 "connections.summary.retrying_one" = "%ld source retrying";
+"connections.summary.connecting" = "%ld sources connecting";
+"connections.summary.connecting_one" = "%ld source connecting";
+"connections.summary.paused" = "%ld sources paused";
+"connections.summary.paused_one" = "%ld source paused";
 "connections.summary.detail" = "%ld sources · %ld running sessions";
 "connections.section.ssh" = "SSH Hosts";
 "connections.ssh_add" = "Add hosts";
