@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Call the single-task badge choice Task Status or Task Count instead of Current Stage, and use "status" in the activity badge description and the Help legend.
+
 - Remove the Specified Width option; the island always fits its content. On a notched display the collapsed bar keeps equal sides around the camera sized by its components, so it no longer covers menus or the status items beside the notch; on other displays and when floating it is a capsule that fits them. The expanded panel fits its task rows between 404 and 680 points. A saved specified width is ignored and cleared on the next settings change.
 
 - Follow Apple's Liquid Glass guidance: the island uses regular, untinted glass whose clarity follows the system-wide Liquid Glass setting (System Settings → Appearance on macOS 27), so the app's own glass style, transparency, tint and corner-radius controls are gone. A fixed dark wash keeps text legible over bright windows, deepening with Increase Contrast; Reduce Transparency still shows solid black. Appearance shows this as one Transparency row with an Adjust button, and in Notch mode a second row states that the collapsed bar stays black and the expanded island shows glass, so the page has no footnotes.

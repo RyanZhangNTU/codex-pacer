@@ -390,7 +390,7 @@
 "layout.gauge_help" = "外环为 Codex，内环为 Claude，弧长为剩余额度。";
 "quota.five_hour_low" = "%@ 5 小时额度低于 20%%（剩余 %@）";
 "quota.five_hour_exhausted" = "%@ 5 小时额度已耗尽";
-"layout.detail.activity" = "任务数量与阶段，运行时光弧环绕";
+"layout.detail.activity" = "任务数量与状态，运行时光弧环绕";
 "layout.detail.status" = "以文字显示当前阶段或待你处理的事项";
 "layout.detail.tps" = "所有运行中任务的输出速度之和";
 "layout.detail.firstOutput" = "最近一次首输出时间";
@@ -409,7 +409,7 @@
 "layout.group.quota" = "额度";
 "layout.group.warnings" = "警告";
 "layout.single_task" = "单个任务时徽标显示";
-"layout.single_task.stage" = "当前阶段";
+"layout.single_task.stage" = "任务状态";
 "layout.single_task.count" = "任务数量";
 "layout.quota_label" = "额度";
 "layout.metric_help" = "跟随设置中“收起时的百分比”选择额度或配速。";
@@ -449,7 +449,7 @@
 "help.section.actions" = "操作";
 "help.section.more" = "更多";
 "help.tasks.title" = "任务数";
-"help.tasks.detail" = "光弧转动表示任务正在运行；只有一个任务时显示当前阶段。";
+"help.tasks.detail" = "光弧转动表示任务正在运行；只有一个任务时显示任务状态。";
 "help.attention.title" = "等待你处理";
 "help.attention.detail" = "实心琥珀色表示有任务需要你回复或审批，点击即可打开。";
 "help.endings.title" = "任务结束";

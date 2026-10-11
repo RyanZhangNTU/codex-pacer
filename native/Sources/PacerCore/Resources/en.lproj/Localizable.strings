@@ -390,7 +390,7 @@
 "layout.gauge_help" = "Outer ring: Codex. Inner ring: Claude. Each arc is the remaining quota.";
 "quota.five_hour_low" = "%@ 5-hour quota below 20%% (%@ left)";
 "quota.five_hour_exhausted" = "%@ 5-hour quota exhausted";
-"layout.detail.activity" = "Task count and stage; an orbit circles while tasks run";
+"layout.detail.activity" = "Task count and status; an orbit circles while tasks run";
 "layout.detail.status" = "Current stage or what needs you, in words";
 "layout.detail.tps" = "Combined output speed of running tasks";
 "layout.detail.firstOutput" = "Latest time to first output";
@@ -409,7 +409,7 @@
 "layout.group.quota" = "Quota";
 "layout.group.warnings" = "Warnings";
 "layout.single_task" = "Single Task Badge";
-"layout.single_task.stage" = "Current Stage";
+"layout.single_task.stage" = "Task Status";
 "layout.single_task.count" = "Task Count";
 "layout.quota_label" = "Quota";
 "layout.metric_help" = "Follows the Quota or Pace choice in Settings.";
@@ -449,7 +449,7 @@
 "help.section.actions" = "Actions";
 "help.section.more" = "More";
 "help.tasks.title" = "Task count";
-"help.tasks.detail" = "The orbit turns while tasks run; one task shows its current stage.";
+"help.tasks.detail" = "The orbit turns while tasks run; one task shows its status.";
 "help.attention.title" = "Needs you";
 "help.attention.detail" = "Solid amber means a task is waiting for your reply or approval; click to open it.";
 "help.endings.title" = "Endings";
