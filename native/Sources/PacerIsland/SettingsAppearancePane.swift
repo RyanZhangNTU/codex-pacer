@@ -3,16 +3,16 @@ import PacerCore
 import SwiftUI
 
 /// Style and position are picture tiles; changes apply to the real island at
-/// once, so the page needs no preview of its own. Liquid Glass adjustments
-/// appear only while Liquid Glass is chosen.
+/// once, so the page needs no preview of its own. Liquid Glass has no settings
+/// of its own: like system glass it follows the look chosen in System Settings.
 struct SettingsAppearancePane: View {
     @ObservedObject var model: IslandModel
     @Binding var appearance: IslandAppearance
     @Binding var displayMode: IslandDisplayMode
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
-    @Binding var glass: IslandGlassSettings
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
     /// Around the camera the collapsed bar keeps a black backing so it reads as
     /// one shape with the hardware notch; glass shows once it expands.
@@ -36,10 +36,20 @@ struct SettingsAppearancePane: View {
         } header: {
             Text(L10n.text("appearance.style"))
         } footer: {
-            if collapsedStaysBlack {
-                Text(L10n.text("appearance.notch_black")).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if appearance == .liquidGlass, glassAvailable {
+                VStack(alignment: .leading, spacing: 6) {
+                    if collapsedStaysBlack { note(L10n.text("appearance.notch_black")) }
+                    if reduceTransparency {
+                        note(L10n.text("appearance.glass_reduced"))
+                    } else {
+                        note(L10n.text("appearance.glass_system"))
+                        Button(L10n.text("appearance.glass_open_settings")) {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Appearance-Settings.extension")!)
+                        }
+                        .buttonStyle(.link).font(.system(size: 11))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         Section(L10n.text("appearance.position")) {
@@ -62,64 +72,11 @@ struct SettingsAppearancePane: View {
             }
             Toggle(L10n.text("settings.fullscreen"), isOn: $fullscreen)
         }
-        if appearance == .liquidGlass, glassAvailable { glassSection }
     }
 
-    // MARK: Liquid Glass
-
-    private var glassSection: some View {
-        Section {
-            Picker(L10n.text("settings.glass_style"), selection: $glass.style) {
-                ForEach(IslandGlassSettings.Style.allCases, id: \.rawValue) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            LabeledContent(L10n.text("settings.transparency")) {
-                HStack(spacing: 10) {
-                    Slider(value: Binding(get: { glass.transparency }, set: { glass.transparency = ($0 * 20).rounded() / 20 }), in: 0...1)
-                        .accessibilityLabel(L10n.text("settings.transparency"))
-                    Text("\(Int((glass.transparency * 100).rounded()))%").monospacedDigit().foregroundStyle(.secondary)
-                        .frame(width: 40, alignment: .trailing)
-                }
-            }
-            LabeledContent(L10n.text("settings.tint")) {
-                HStack(spacing: 12) {
-                    ForEach(IslandGlassSettings.Tint.allCases, id: \.rawValue) { tint in
-                        Button { glass.tint = tint } label: {
-                            Circle().fill(Self.swatch(tint)).frame(width: 18, height: 18)
-                                .overlay(Circle().stroke(Color.primary.opacity(0.15), lineWidth: 0.5))
-                                .padding(3)
-                                .overlay(Circle().stroke(glass.tint == tint ? Color.accentColor : .clear, lineWidth: 2))
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain).help(tint.label).accessibilityLabel(tint.label)
-                        .accessibilityAddTraits(glass.tint == tint ? .isSelected : [])
-                    }
-                }
-            }
-            LabeledContent(L10n.text("settings.corner_radius")) {
-                HStack(spacing: 10) {
-                    Slider(value: Binding(get: { glass.cornerRadius }, set: { glass.cornerRadius = $0.rounded() }), in: 12...36)
-                        .accessibilityLabel(L10n.text("settings.corner_radius"))
-                    Text("\(Int(glass.cornerRadius))").monospacedDigit().foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
-                }
-            }
-        } header: {
-            HStack {
-                Text(L10n.text("settings.liquid_glass"))
-                Spacer()
-                Button(L10n.text("common.restore_defaults")) { glass = IslandGlassSettings() }
-                    .buttonStyle(.link).font(.system(size: 12))
-            }
-        }
-    }
-
-    /// The tint itself is a dark wash; the swatch shows its hue at a readable lightness.
-    private static func swatch(_ tint: IslandGlassSettings.Tint) -> Color {
-        switch tint {
-        case .neutral: Color(white: 0.55)
-        case .cool: Color(red: 0.42, green: 0.57, blue: 0.78)
-        case .warm: Color(red: 0.8, green: 0.6, blue: 0.42)
-        }
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: Tiles

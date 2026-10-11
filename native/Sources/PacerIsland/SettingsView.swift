@@ -17,7 +17,6 @@ struct SettingsView: View {
     @State private var widthSettings = IslandWidthSettings.load()
     @State private var compactLayout = CompactIslandLayout.load()
     @State private var appearance = IslandAppearance.stored
-    @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
@@ -178,7 +177,7 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, displayID: $displayID,
-                fullscreen: $fullscreen, glass: $glass)
+                fullscreen: $fullscreen)
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             Section {
@@ -584,7 +583,7 @@ struct SettingsView: View {
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, width: widthSettings, layout: compactLayout, appearance: appearance,
-            glass: glass, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
+            fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, lowReminder: lowReminder, inputReminder: inputReminder,
             completionReminder: completionReminder, retention: completedRetention, hideProjects: hideProjects,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl)
@@ -608,11 +607,12 @@ struct SettingsView: View {
         displayMode.save(to: defaults)
         widthSettings.normalized.save(to: defaults)
         compactLayout.save(to: defaults)
-        defaults.removeObject(forKey: "performanceRefreshMode")
-        defaults.removeObject(forKey: "quotaDashboardPeriod")
-        defaults.removeObject(forKey: "showInMenuBar")
+        // Retired preferences.
+        for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
+                    "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius"] {
+            defaults.removeObject(forKey: key)
+        }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
-        glass.save()
         defaults.set(fullscreen, forKey: "showInFullscreen")
         defaults.set(displayID, forKey: "displayID")
         defaults.set(metric, forKey: "compactMetric")
@@ -687,7 +687,6 @@ private struct LiveSettings: Equatable {
     var width: IslandWidthSettings
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
-    var glass: IslandGlassSettings
     var fullscreen: Bool
     var displayID: Int
     var metric: String

@@ -11,7 +11,7 @@ final class IslandWidthSettingsTests: XCTestCase {
         // Existing releases have display/appearance choices, but no width mode.
         defaults.set("notch", forKey: "islandDisplayMode")
         defaults.set(false, forKey: "floatingIsland")
-        defaults.set(31.0, forKey: "glassCornerRadius")
+        defaults.set("liquidGlass", forKey: "islandAppearance")
         XCTAssertEqual(IslandWidthSettings.load(from: defaults).mode, .adaptive,
                        "An upgrade must start in Adaptive regardless of the old display mode")
         defaults.set("fixed", forKey: "islandWidthMode")
@@ -25,7 +25,7 @@ final class IslandWidthSettingsTests: XCTestCase {
         let reopened = try XCTUnwrap(UserDefaults(suiteName: name))
         XCTAssertEqual(IslandWidthSettings.load(from: reopened), fixed)
         XCTAssertEqual(defaults.string(forKey: "islandDisplayMode"), "notch")
-        XCTAssertEqual(defaults.double(forKey: "glassCornerRadius"), 31)
+        XCTAssertEqual(defaults.string(forKey: "islandAppearance"), "liquidGlass")
         var adaptive = fixed
         adaptive.mode = .adaptive
         adaptive.save(to: defaults)

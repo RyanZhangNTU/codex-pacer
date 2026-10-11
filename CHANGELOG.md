@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Follow Apple's Liquid Glass guidance: the island uses regular, untinted glass whose clarity follows the system-wide Liquid Glass setting (System Settings → Appearance on macOS 27), so the app's own glass style, transparency, tint and corner-radius controls are gone. A fixed dark wash keeps text legible over bright windows, deepening with Increase Contrast; Reduce Transparency still shows solid black. Appearance links to the system setting.
+
 - Remove the optional menu bar item and its Show in Menu Bar setting: Pacer lives in the island. Settings, refresh and Quit stay on the island, Check for Updates stays in Settings → General, and task cards still open their conversations. The stored preference is cleared on the next settings change.
 
 - Drop the Collapsed Bar preview as well: layout and width edits already reach the real bar at once. The first card keeps the bar-shaped lane strip and width controls under a Layout heading.

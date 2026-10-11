@@ -209,11 +209,6 @@
 "diagnostic.quota" = "读取账户额度";
 "diagnostic.system_error" = "%1$@（%2$@ %3$@）";
 "diagnostic.truncated" = "%@\n（错误信息过长，后续内容已省略）";
-"glass.clear" = "清透";
-"glass.cool" = "冷色";
-"glass.neutral" = "中性";
-"glass.regular" = "标准";
-"glass.warm" = "暖色";
 "language.label" = "界面语言";
 "language.missing_helper" = "重启组件缺失。";
 "language.restart_failed" = "无法自动重启 Codex Pacer，请退出后重新打开。\n%1$@";
@@ -278,7 +273,6 @@
 "settings.cli_path" = "CLI 路径";
 "settings.codex_home" = "Codex 目录";
 "settings.compact_metric" = "显示为";
-"settings.corner_radius" = "圆角";
 "settings.data_source" = "数据来源";
 "settings.width_narrow" = "窄";
 "settings.width_medium" = "适中";
@@ -295,11 +289,13 @@
 "settings.four_hours" = "4 小时";
 "settings.fullscreen" = "在全屏空间显示";
 "settings.glass_requirement" = "液态玻璃需要 macOS 26 或更新版本";
-"settings.glass_style" = "玻璃风格";
 "settings.hide_projects" = "隐藏项目名称";
 "appearance.style" = "样式";
 "appearance.position" = "位置";
 "appearance.notch_black" = "贴合刘海时，折叠栏保持纯黑以融入刘海，展开后才显示液态玻璃；选择「悬浮」可让折叠栏也呈现玻璃效果。";
+"appearance.glass_system" = "液态玻璃的通透程度跟随系统，可在“系统设置 → 外观”中统一调整。";
+"appearance.glass_reduced" = "已开启“降低透明度”，灵动岛显示为纯黑。";
+"appearance.glass_open_settings" = "打开“外观”设置…";
 "settings.hide_projects_help" = "灵动岛和通知里的任务名统一显示为「任务」，适合录屏或共享屏幕时使用。";
 "reminders.section.island" = "在岛上提醒";
 "warning.fiveHour" = "5h 额度不足";
@@ -331,8 +327,6 @@
 "settings.rescan" = "重新检测";
 "settings.system_notifications" = "同时使用系统通知";
 "settings.thirty_minutes" = "30 分钟";
-"settings.tint" = "色调";
-"settings.transparency" = "通透度";
 "settings.until_clicked" = "直到点击";
 "source.ssh_retrying" = "将自动重试这些 SSH 连接。";
 "settings.saved_quota_window" = "已保存的额度窗口（数据暂不可用）";

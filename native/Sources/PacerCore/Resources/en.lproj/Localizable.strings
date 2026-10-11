@@ -209,11 +209,6 @@
 "diagnostic.quota" = "Read account quota";
 "diagnostic.system_error" = "%1$@ (%2$@ %3$@)";
 "diagnostic.truncated" = "%@\n(The remaining error details were omitted because the message is too long)";
-"glass.clear" = "Clear";
-"glass.cool" = "Cool";
-"glass.neutral" = "Neutral";
-"glass.regular" = "Regular";
-"glass.warm" = "Warm";
 "language.label" = "App Language";
 "language.missing_helper" = "The relaunch helper is missing.";
 "language.restart_failed" = "Codex Pacer couldn’t restart automatically. Quit and open it again.\n%1$@";
@@ -278,7 +273,6 @@
 "settings.cli_path" = "CLI Path";
 "settings.codex_home" = "Codex Data Folder";
 "settings.compact_metric" = "Show As";
-"settings.corner_radius" = "Corner Radius";
 "settings.data_source" = "Sources";
 "settings.width_narrow" = "Narrow";
 "settings.width_medium" = "Medium";
@@ -295,11 +289,13 @@
 "settings.four_hours" = "4 hours";
 "settings.fullscreen" = "Show in Full Screen";
 "settings.glass_requirement" = "Liquid Glass requires macOS 26 or later";
-"settings.glass_style" = "Glass Style";
 "settings.hide_projects" = "Hide Project Names";
 "appearance.style" = "Style";
 "appearance.position" = "Position";
 "appearance.notch_black" = "Attached to the notch, the collapsed bar stays black to blend with it, and Liquid Glass shows once it expands. Choose Floating for a glass collapsed bar.";
+"appearance.glass_system" = "Liquid Glass follows the look you choose for the whole system in System Settings → Appearance.";
+"appearance.glass_reduced" = "Reduce Transparency is on, so the island stays solid black.";
+"appearance.glass_open_settings" = "Open Appearance Settings…";
 "settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
 "reminders.section.island" = "On the island";
 "warning.fiveHour" = "5h quota low";
@@ -331,8 +327,6 @@
 "settings.rescan" = "Rescan";
 "settings.system_notifications" = "Also Use System Notifications";
 "settings.thirty_minutes" = "30 minutes";
-"settings.tint" = "Tint";
-"settings.transparency" = "Transparency";
 "settings.until_clicked" = "Until Clicked";
 "source.ssh_retrying" = "Pacer will retry these connections automatically.";
 "settings.saved_quota_window" = "Saved quota window (data unavailable)";

@@ -8,7 +8,7 @@ public enum PreferencesMigration {
         "islandAppearance", "showInFullscreen", "displayID",
         "compactMetric", "quotaWindowID", "lowQuotaReminder", "inputReminder",
         "completionReminder", "completedRetentionMinutes", "systemNotifications",
-        "hideProjects", "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius"
+        "hideProjects"
     ]
 
     public static func migrate(to defaults: UserDefaults, from legacy: [String: Any]) {

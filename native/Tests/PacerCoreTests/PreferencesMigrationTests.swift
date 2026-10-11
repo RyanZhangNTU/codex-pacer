@@ -9,11 +9,11 @@ final class PreferencesMigrationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         defaults.set(false, forKey: "showInFullscreen")
         PreferencesMigration.migrate(to: defaults, from: [
-            "showInFullscreen": true, "glassCornerRadius": 31.0, "islandDisplayMode": "notch",
+            "showInFullscreen": true, "compactMetric": "pace", "islandDisplayMode": "notch",
             "completedRetentionMinutes": 0, "codexHome": "/fixture/.codex", "unrelated": "private"
         ])
         XCTAssertFalse(defaults.bool(forKey: "showInFullscreen"))
-        XCTAssertEqual(defaults.double(forKey: "glassCornerRadius"), 31)
+        XCTAssertEqual(defaults.string(forKey: "compactMetric"), "pace")
         XCTAssertEqual(defaults.string(forKey: "islandDisplayMode"), "notch")
         XCTAssertEqual(defaults.integer(forKey: "completedRetentionMinutes"), 0)
         XCTAssertEqual(defaults.string(forKey: "codexHome"), "/fixture/.codex")
