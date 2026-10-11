@@ -52,7 +52,7 @@ enum ClaudeSSHRouteResolver {
         return ClaudeSSHRoute(hostname: hostname, user: user, port: port)
     }
 
-    private static func validDestination(_ value: String) -> Bool {
+    static func validDestination(_ value: String) -> Bool {
         guard !value.isEmpty, value.utf8.count <= 512 else { return false }
         let parts = value.split(separator: "@", omittingEmptySubsequences: false)
         if parts.count == 2 { return validUser(String(parts[0])) && validHostname(String(parts[1])) }

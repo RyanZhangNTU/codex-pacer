@@ -5,10 +5,10 @@ import PacerCore
 enum ClaudeConversationOpener {
     typealias DesktopLookup = @Sendable (String, String?) async -> String?
 
-    @MainActor static func open(_ activity: SessionActivity, home: URL) async -> ActivityOpenOutcome {
+    @MainActor static func open(_ activity: SessionActivity, home: URL, sourceTarget: RemoteActivityTarget? = nil) async -> ActivityOpenOutcome {
         guard activity.provider == .claude, let session = activity.threadID,
               AgentProvider.claude.validatedSessionID(session) != nil else { return .failed(L10n.text("activity.open_failed")) }
-        let desktopDestination = await desktopDestination(for: activity, home: home)
+        let desktopDestination = await desktopDestination(for: activity, home: home, sourceTarget: sourceTarget)
         if let destination = desktopDestination, let app = ClaudeApplicationResolver.find() {
             return await withCheckedContinuation { continuation in
                 NSWorkspace.shared.open([destination], withApplicationAt: app,
@@ -26,8 +26,9 @@ enum ClaudeConversationOpener {
             guard source.hasPrefix(prefix) else { return .failed(L10n.text("activity.open_failed")) }
             let alias = String(source.dropFirst(prefix.count))
             guard alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { return .failed(L10n.text("activity.open_failed")) }
-            guard let remoteCommand = ClaudeRemoteResume.command(sessionID: session) else { return .failed(L10n.text("activity.open_failed")) }
-            command = "/usr/bin/ssh -t -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ClearAllForwardings=yes -- " + quote(alias) + " " + quote(remoteCommand)
+            let target = sourceTarget ?? RemoteActivityTarget(id: source, name: alias, alias: alias, home: "~/.claude")
+            guard target.id == source, let resume = remoteResumeCommand(target: target, session: session) else { return .failed(L10n.text("activity.open_failed")) }
+            command = resume
         } else {
             guard let executable = ClaudeApplicationResolver.findExecutable(),
                   let localCommand = localResumeCommand(executable: executable, session: session,
@@ -53,6 +54,12 @@ enum ClaudeConversationOpener {
 
     private static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
+    static func remoteResumeCommand(target: RemoteActivityTarget, session: String) -> String? {
+        guard let arguments = target.sshArguments(terminal: true),
+              let command = ClaudeRemoteResume.command(sessionID: session) else { return nil }
+        return "/usr/bin/ssh " + (arguments + [command]).map(quote).joined(separator: " ")
+    }
+
     static func localResumeCommand(executable: URL, session: String, directory: URL?, desktop: Bool,
                                    home: URL = defaultHome(), userHome: URL = URL(fileURLWithPath: NSHomeDirectory())) -> String? {
         guard executable.isFileURL, executable.path.hasPrefix("/"), let id = UUID(uuidString: session),
@@ -69,14 +76,17 @@ enum ClaudeConversationOpener {
     /// host/user/port mapping; their config directory lives on that host.
     static func desktopDestination(for activity: SessionActivity, home: URL,
                                    userHome: URL = URL(fileURLWithPath: NSHomeDirectory()),
-                                   lookup: @escaping DesktopLookup = { session, host in
-                                       await ClaudeApplicationResolver.desktopSessionID(for: session, sourceHostID: host)
-                                   }) async -> URL? {
+                                   sourceTarget: RemoteActivityTarget? = nil,
+                                   lookup: DesktopLookup? = nil) async -> URL? {
         guard activity.provider == .claude, let session = activity.threadID,
               AgentProvider.claude.validatedSessionID(session) != nil,
               home.isFileURL, home.path.hasPrefix("/"),
-              activity.sourceHostID != nil || home.standardizedFileURL == defaultHome(userHome: userHome).standardizedFileURL,
-              let desktopID = await lookup(session, activity.sourceHostID) else { return nil }
+              activity.sourceHostID != nil || home.standardizedFileURL == defaultHome(userHome: userHome).standardizedFileURL else { return nil }
+        let desktopID: String?
+        if let lookup { desktopID = await lookup(session, activity.sourceHostID) }
+        else { desktopID = await ClaudeApplicationResolver.desktopSessionID(for: session, sourceHostID: activity.sourceHostID,
+            userHome: userHome, sourceTarget: sourceTarget) }
+        guard let desktopID else { return nil }
         var components = URLComponents()
         components.scheme = "claude"; components.host = "code"; components.path = "/continue"
         components.queryItems = [URLQueryItem(name: "session", value: desktopID)]

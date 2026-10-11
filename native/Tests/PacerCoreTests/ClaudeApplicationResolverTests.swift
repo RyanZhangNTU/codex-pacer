@@ -82,6 +82,12 @@ final class ClaudeApplicationResolverTests: XCTestCase {
             host == "A100" || (host == "fixture-user@fixture.example" && port == 2222) ? route : nil
         }
         XCTAssertEqual(matched, local)
+        let managed = RemoteActivityTarget(id: "remote-ssh-discovered:claude-fixture", name: "Fixture", alias: "claude-fixture",
+            home: "~/.claude", sshDestination: "fixture-user@fixture.example", sshPort: 2222)
+        let direct = await ClaudeApplicationResolver.desktopSessionID(for: cli, sourceHostID: managed.id, userHome: root, sourceTarget: managed) { host, port in
+            host == managed.effectiveSSHHost && port == 2222 ? route : nil
+        }
+        XCTAssertEqual(direct, local, "A discovered direct destination uses its stored host and port, not the opaque source key")
         for mismatch in [ClaudeSSHRoute(hostname: "other.example", user: route.user, port: route.port),
                          ClaudeSSHRoute(hostname: route.hostname, user: "other-user", port: route.port),
                          ClaudeSSHRoute(hostname: route.hostname, user: route.user, port: 22)] {

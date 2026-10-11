@@ -53,7 +53,10 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(codexHome.path, forKey: "codexHome")
         defaults.set(home.path, forKey: "claudeHome")
-        defaults.set("fixture other", forKey: "claudeSSHHosts")
+        let connections = ["fixture", "other"].map { ["source": "discovered", "hostId": "remote-ssh-discovered:" + $0, "alias": $0] }
+        try JSONSerialization.data(withJSONObject: ["codex-managed-remote-connections": connections,
+            "remote-connection-auto-connect-by-host-id": ["remote-ssh-discovered:fixture": true, "remote-ssh-discovered:other": true]])
+            .write(to: codexHome.appendingPathComponent(".codex-global-state.json"))
         defaults.set(true, forKey: "monitorSSH")
         ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
         let monitor = ClaudeActivityMonitor(sshExecutable: collector)
@@ -155,7 +158,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             case .home:
                 fixture.defaults.set(fixture.root.path, forKey: "claudeHome"); model.applySettings(sourceChanged: false)
             case .aliases:
-                fixture.defaults.set("other", forKey: "claudeSSHHosts"); model.applySettings(sourceChanged: false)
+                model.reconcileClaudeRemoteTargets(model.claudeRemoteTargets.filter { $0.alias == "other" })
             case .sleep:
                 NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
             case .shutdown: await model.shutdown()

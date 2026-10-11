@@ -52,6 +52,18 @@ final class ClaudeConversationOpenerTests: XCTestCase {
             directory: nil, desktop: true, home: URL(string: "https://example.com/profile")!))
     }
 
+    func testManagedRemoteResumeKeepsDestinationPortAndLiteralIdentityPath() throws {
+        let identity = "/fixture/key '$(printf injected) `literal`"
+        let target = RemoteActivityTarget(id: "remote-ssh-discovered:claude-fixture", name: "Fixture", alias: "claude-fixture",
+            home: "~/.claude", sshDestination: "fixture@example.test", sshPort: 2222, sshIdentityFile: identity)
+        let command = try XCTUnwrap(ClaudeConversationOpener.remoteResumeCommand(target: target, session: session))
+        XCTAssertTrue(command.contains("'2222'"))
+        XCTAssertTrue(command.contains("'fixture@example.test'"))
+        XCTAssertTrue(command.contains("'" + identity.replacingOccurrences(of: "'", with: "'\\''") + "'"))
+        XCTAssertTrue(command.contains("'StrictHostKeyChecking=yes'"))
+        XCTAssertNil(ClaudeConversationOpener.remoteResumeCommand(target: target, session: session + ";bad"))
+    }
+
     func testDesktopMappingHonorsLocalProfileAndIndependentSSHRoute() async throws {
         let userHome = URL(fileURLWithPath: "/private/tmp/pacer-synthetic-user")
         let defaultHome = userHome.appendingPathComponent(".claude")

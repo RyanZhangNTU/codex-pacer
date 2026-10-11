@@ -11,7 +11,6 @@ struct SettingsView: View {
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var modules = ProviderModules.load()
     @State private var claudeHome = UserDefaults.standard.string(forKey: "claudeHome") ?? ""
-    @State private var claudeSSHHosts = UserDefaults.standard.string(forKey: "claudeSSHHosts") ?? ""
     @State private var showsResetExpiryDetails: Set<AgentProvider> = []
     @State private var displayMode = IslandDisplayMode.load()
     @State private var compactLayout = CompactIslandLayout.load()
@@ -216,8 +215,7 @@ struct SettingsView: View {
             SettingsHelpPane()
         case .connections:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
-                additionalSSHHosts: $claudeSSHHosts, codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude),
-                hostsIssue: textIssues[.sshHosts], focusedText: $focusedText)
+                codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         }
     }
 
@@ -585,7 +583,7 @@ struct SettingsView: View {
         for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
                     "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius",
                     "islandWidthMode", "specifiedIslandWidth", "collapsedIslandWidth", "expandedIslandWidth",
-                    "lowQuotaReminder", "inputReminder", "completionReminder"] {
+                    "lowQuotaReminder", "inputReminder", "completionReminder", "claudeSSHHosts"] {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
@@ -627,13 +625,6 @@ struct SettingsView: View {
                 textIssues[field] = L10n.text("provider.invalid_claude_home"); return
             }
             defaults.set(directory, forKey: "claudeHome")
-        case .sshHosts:
-            let aliases = claudeSSHHosts.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
-            guard aliases.joined(separator: "\n") != (defaults.string(forKey: "claudeSSHHosts") ?? "") else { textIssues[field] = nil; return }
-            guard aliases.allSatisfy({ $0.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil }) else {
-                textIssues[field] = L10n.text("provider.invalid_ssh_hosts"); return
-            }
-            defaults.set(aliases.joined(separator: "\n"), forKey: "claudeSSHHosts")
         }
         textIssues[field] = nil
         applyNow()
@@ -652,7 +643,7 @@ struct SettingsView: View {
     }
 }
 
-enum TextSetting: Hashable { case cli, codexHome, claudeHome, sshHosts }
+enum TextSetting: Hashable { case cli, codexHome, claudeHome }
 
 private struct LiveSettings: Equatable {
     var modules: ProviderModules

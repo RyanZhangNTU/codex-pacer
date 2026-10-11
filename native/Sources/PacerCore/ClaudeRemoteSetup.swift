@@ -79,7 +79,7 @@ public actor ClaudeRemoteSetup {
     }
 
     static func arguments(target: RemoteActivityTarget, requireHome: Bool = false) throws -> [String] {
-        guard target.alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { throw Failure.invalidTarget }
+        guard let arguments = target.sshArguments() else { throw Failure.invalidTarget }
         let (installer, hook) = try resources()
         // Remote collectors use the default Claude home. Never reuse a Codex
         // target's home field or put a local/remote private path into this command.
@@ -87,8 +87,7 @@ public actor ClaudeRemoteSetup {
         if requireHome { request["requireHome"] = true }
         let payload = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
         let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(installer.base64EncodedString())\").decode())' \(payload.base64EncodedString())"
-        return ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes",
-                "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", target.alias, command]
+        return arguments + [command]
     }
 
     /// Identifies the shipped installer and hook. A host configured with an

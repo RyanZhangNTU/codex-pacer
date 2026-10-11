@@ -48,7 +48,6 @@
 "provider.claude_home" = "Claude 配置目录";
 "provider.choose_claude_home" = "选择 Claude 配置目录";
 "provider.invalid_claude_home" = "请选择已存在的 Claude 配置目录。";
-"provider.invalid_ssh_hosts" = "SSH 别名只能包含字母、数字、英文句点、连字符或下划线。";
 "claude.quota.source_statusline" = "Claude Code 状态栏";
 "claude.quota.source_oauth" = "Claude 额度服务";
 "claude.quota.source_history" = "Claude Desktop 缓存";
@@ -470,12 +469,14 @@
 "connections.kind.remote_control" = "Remote Control";
 "connections.state.connected" = "已连接";
 "connections.state.retrying" = "未连接，正在重试";
+"connections.state.idle" = "等待会话";
 "connections.state.paused" = "未安装 %@，已暂停";
 "connections.sessions" = "%ld 个会话";
 "connections.sessions_one" = "%ld 个会话";
 "connections.retry" = "重试";
 "connections.summary.ok" = "全部来源已连接";
 "connections.summary.checking" = "正在检查来源";
+"connections.summary.idle" = "等待 Remote Control 会话";
 "connections.summary.retrying" = "%ld 个来源正在重试";
 "connections.summary.retrying_one" = "%ld 个来源正在重试";
 "connections.summary.connecting" = "%ld 个来源正在连接";
@@ -484,8 +485,6 @@
 "connections.summary.paused_one" = "%ld 个来源已暂停";
 "connections.summary.detail" = "%ld 个来源 · %ld 个运行会话";
 "connections.section.ssh" = "SSH 主机";
-"connections.ssh_add" = "添加主机";
-"connections.ssh_add_placeholder" = "SSH 别名，用逗号或空格分隔";
 "connections.host.connected" = "已连接";
 "connections.host.configuring" = "正在配置";
 "connections.host.waiting" = "连接中";

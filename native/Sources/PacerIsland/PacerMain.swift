@@ -80,8 +80,7 @@ enum PacerMain {
         }
         let monitor = ClaudeActivityMonitor()
         let codexHome = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
-        let targets = args.contains("--desktop-only") ? [] : RemoteActivityTarget.claudeConfigured(codexHome: codexHome,
-            additionalAliases: defaults.string(forKey: "claudeSSHHosts") ?? "")
+        let targets = args.contains("--desktop-only") ? [] : await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: home)
         await monitor.start(home: home, remoteTargets: targets) { values, statuses, requests, performance in
             let groups = ActivityTaskGroup.make(values), now = Date()
             let summary: [String: Any] = ["connectedSources": statuses.values.filter(\.connected).count,
@@ -333,7 +332,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if activity.provider == .claude {
             guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }
             model.close()
-            return await ClaudeConversationOpener.open(activity, home: model.claudeHome)
+            return await ClaudeConversationOpener.open(activity, home: model.claudeHome,
+                sourceTarget: model.claudeRemoteTargets.first { $0.id == activity.sourceHostID })
         }
         guard model.canOpen(activity), let threadURL = activity.threadURL else { return .failed(L10n.text("activity.open_failed")) }
         guard let appURL = CodexApplicationResolver.find() else { return .failed(L10n.text("activity.app_missing")) }

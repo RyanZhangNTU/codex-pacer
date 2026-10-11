@@ -5,7 +5,10 @@ public struct RuntimeStreamStatus: Equatable, Sendable {
     /// Nil means no source-availability evidence. False distinguishes a
     /// reachable host with a missing provider home from a transport failure.
     public var sourceAvailable: Bool?
-    public var hasConnectionFailure: Bool { !connected && sourceAvailable != false }
+    /// The Desktop observer is ready, but this Remote Control host has no
+    /// loaded runtime session. This is idle, not a failed connection.
+    public var waitingForSession = false
+    public var hasConnectionFailure: Bool { !connected && !waitingForSession && sourceAvailable != false }
     public var attachedThreads = 0
     public var notifications = 0
     public var fallbackScans = 0
@@ -119,6 +122,8 @@ struct RuntimeEventState: Sendable {
             for event in events { consume(["kind": "runtime", "event": event]) }
         } else if frame["kind"] as? String == "status" {
             status.connected = frame["connected"] as? Bool == true
+            status.waitingForSession = !status.connected && sourceID?.hasPrefix("remote-control:") == true &&
+                frame["waitingForSession"] as? Bool == true
             status.attachedThreads = frame["attached"] as? Int ?? 0
             status.notifications = frame["notifications"] as? Int ?? 0
             status.fallbackScans = frame["fallbackScans"] as? Int ?? 0

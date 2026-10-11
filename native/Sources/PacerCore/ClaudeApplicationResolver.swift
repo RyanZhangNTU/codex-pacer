@@ -101,13 +101,14 @@ public enum ClaudeApplicationResolver {
     /// with the source that supplied the observed CLI session. An SSH activity
     /// never borrows a local session's UUID or a connection's display name.
     public static func desktopSessionID(for sessionID: String, sourceHostID: String?,
-                                        userHome: URL = FileManager.default.homeDirectoryForCurrentUser) async -> String? {
-        await desktopSessionID(for: sessionID, sourceHostID: sourceHostID, userHome: userHome) { host, port in
+                                        userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
+                                        sourceTarget: RemoteActivityTarget? = nil) async -> String? {
+        await desktopSessionID(for: sessionID, sourceHostID: sourceHostID, userHome: userHome, sourceTarget: sourceTarget) { host, port in
             await ClaudeSSHRouteResolver.resolve(host: host, port: port)
         }
     }
 
-    static func desktopSessionID(for sessionID: String, sourceHostID: String?, userHome: URL,
+    static func desktopSessionID(for sessionID: String, sourceHostID: String?, userHome: URL, sourceTarget: RemoteActivityTarget? = nil,
                                 resolve: @escaping @Sendable (String, Int?) async -> ClaudeSSHRoute?) async -> String? {
         guard sessionID.count == 36, let session = UUID(uuidString: sessionID) else { return nil }
         let records = await Task.detached(priority: .utility) { desktopMetadata(userHome: userHome) }.value
@@ -121,7 +122,8 @@ public enum ClaudeApplicationResolver {
         guard let sourceHostID, sourceHostID.hasPrefix(prefix) else { return nil }
         let alias = String(sourceHostID.dropFirst(prefix.count))
         guard alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil,
-              let target = await resolve(alias, nil) else { return nil }
+              sourceTarget.map({ $0.id == sourceHostID && $0.sshArguments() != nil }) ?? true,
+              let target = await resolve(sourceTarget?.effectiveSSHHost ?? alias, sourceTarget?.sshPort) else { return nil }
         let remote = candidates.filter { $0.sshConfig != nil && $0.wslConfig == nil }
         guard remote.count <= 4 else { return nil }
         var matches = Set<String>()

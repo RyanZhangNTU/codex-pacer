@@ -8,6 +8,59 @@ final class RemoteControlTests: XCTestCase {
     private let owner = "019a0000-0000-7000-8000-000000000020"
     private let epoch = Date(timeIntervalSince1970: 1000)
 
+    private func streamStatus(_ session: inout NativeDesktopSession, host: String) throws -> RuntimeStreamStatus {
+        try session.publishEvents()
+        try session.status(loopIterations: 0)
+        var runtime = RuntimeEventState(sourceID: host == "local" ? nil : host, sourceName: nil)
+        for bytes in session.takeFrames() {
+            let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            if frame["hostId"] as? String == host { runtime.consume(frame) }
+        }
+        return runtime.status
+    }
+
+    func testReadyObserverWithoutRemoteRuntimeWaitsWithoutInventingConnectionFailure() throws {
+        var session = try NativeDesktopSession(hosts: ["local", host]) { _ in }
+        XCTAssertTrue(try streamStatus(&session, host: host).hasConnectionFailure, "Not initialized is not ready")
+        try initialize(&session)
+        let idle = try streamStatus(&session, host: host)
+        XCTAssertFalse(idle.connected)
+        XCTAssertTrue(idle.waitingForSession)
+        XCTAssertFalse(idle.hasConnectionFailure)
+        XCTAssertEqual(idle.attachedThreads, 0)
+        let local = try streamStatus(&session, host: "local")
+        XCTAssertTrue(local.connected)
+        XCTAssertFalse(local.waitingForSession)
+
+        try session.discover([.init(host: host, thread: thread)])
+        XCTAssertTrue(try streamStatus(&session, host: host).waitingForSession, "Saved hints do not establish a failed runtime")
+        for seconds in [100.0, 200, 300, 400] { try session.service(at: Date().addingTimeInterval(seconds)) }
+        XCTAssertTrue(try streamStatus(&session, host: host).waitingForSession, "An expired orphan hint remains idle")
+
+        try send(&session, method: "thread-stream-following-status-requested", version: 1, params: ["hostId": host, "conversationId": thread])
+        var raw = state(); raw["resumeState"] = "needs_resume"
+        try send(&session, method: "thread-stream-state-changed", version: 11, params: ["hostId": host, "conversationId": thread,
+            "change": ["type": "snapshot", "revision": 0, "conversationState": raw]])
+        let stale = try streamStatus(&session, host: host)
+        XCTAssertFalse(stale.connected, "An unresumed historical snapshot cannot prove a runtime connection")
+        XCTAssertTrue(stale.waitingForSession)
+        try send(&session, method: "thread-stream-state-changed", version: 11, params: ["hostId": host, "conversationId": thread,
+            "change": patch(base: 0, changes: [["op": "replace", "path": ["resumeState"], "value": "resumed"]])])
+        let active = try streamStatus(&session, host: host)
+        XCTAssertTrue(active.connected)
+        XCTAssertFalse(active.waitingForSession)
+        XCTAssertEqual(active.attachedThreads, 1)
+
+        var runtime = RuntimeEventState(sourceID: host, sourceName: nil)
+        runtime.consume(["kind": "status", "connected": false, "waitingForSession": true])
+        runtime.consume(["kind": "status", "connected": false])
+        XCTAssertFalse(runtime.status.waitingForSession, "A later failure must clear the idle flag")
+        XCTAssertTrue(runtime.status.hasConnectionFailure)
+        var localRuntime = RuntimeEventState(sourceID: nil, sourceName: nil)
+        localRuntime.consume(["kind": "status", "connected": false, "waitingForSession": true])
+        XCTAssertTrue(localRuntime.status.hasConnectionFailure, "Only Remote Control can wait for a session")
+    }
+
     func testDiscoveryUnionsSavedRoutesWithoutReadingEnrollmentOrProjectContent() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -145,15 +198,18 @@ final class RemoteControlTests: XCTestCase {
     }
 
     func testDisconnectAndRevisionGapInvalidateRemoteActivityWithoutCompletingIt() throws {
-        for ownerDisconnect in [false, true] {
+        for failure in ["revision", "owner", "resume"] {
             var session = try NativeDesktopSession(hosts: [host]) { _ in }
             try initialize(&session)
             try send(&session, method: "thread-stream-following-status-requested", version: 1, params: ["hostId": host, "conversationId": thread])
             try send(&session, method: "thread-stream-state-changed", version: 11, params: ["hostId": host, "conversationId": thread,
                 "change": ["type": "snapshot", "revision": 0, "conversationState": state()]])
             try session.publishEvents(); _ = session.takeFrames()
-            if ownerDisconnect {
+            if failure == "owner" {
                 try send(&session, method: "client-status-changed", version: 0, params: ["clientId": owner, "status": "disconnected"])
+            } else if failure == "resume" {
+                try send(&session, method: "thread-stream-state-changed", version: 11, params: ["hostId": host, "conversationId": thread,
+                    "change": patch(base: 0, changes: [["op": "replace", "path": ["resumeState"], "value": "needs_resume"]])])
             } else {
                 try send(&session, method: "thread-stream-state-changed", version: 11, params: ["hostId": host, "conversationId": thread,
                     "change": patch(base: 10, changes: [])])
@@ -161,6 +217,20 @@ final class RemoteControlTests: XCTestCase {
             let frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
             XCTAssertTrue(frames.contains { $0["kind"] as? String == "streamInvalidated" && $0["hostId"] as? String == host })
             XCTAssertFalse(frames.compactMap { $0["events"] as? [[String: Any]] }.flatMap { $0 }.contains { $0["method"] as? String == "turn/completed" })
+            let failed = try streamStatus(&session, host: host)
+            XCTAssertFalse(failed.connected)
+            XCTAssertFalse(failed.waitingForSession, "A lost observed runtime is a failure, not normal idle")
+            XCTAssertTrue(failed.hasConnectionFailure)
+            for seconds in [100.0, 200, 300, 400] { try session.service(at: Date().addingTimeInterval(seconds)) }
+            XCTAssertTrue(try streamStatus(&session, host: host).hasConnectionFailure, "Snapshot expiry cannot hide the failure")
+
+            try send(&session, method: "thread-stream-following-status-requested", version: 1, params: ["hostId": host, "conversationId": thread])
+            try send(&session, method: "thread-stream-state-changed", version: 11, params: ["hostId": host, "conversationId": thread,
+                "change": ["type": "snapshot", "revision": 1, "conversationState": state()]])
+            let recovered = try streamStatus(&session, host: host)
+            XCTAssertTrue(recovered.connected)
+            XCTAssertFalse(recovered.waitingForSession)
+            XCTAssertFalse(recovered.hasConnectionFailure)
         }
     }
 

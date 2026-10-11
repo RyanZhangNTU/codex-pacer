@@ -60,7 +60,7 @@ public actor ClaudeActivityMonitor {
     /// Reconcile discovery/settings without replacing healthy local/SSH state.
     public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget]) async {
         wanted = Dictionary(remoteTargets.prefix(8).filter { target in
-            target.alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
+            target.sshArguments() != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
@@ -175,7 +175,8 @@ public actor ClaudeActivityMonitor {
         let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
         let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(Data("~/.claude".utf8).base64EncodedString()) \(policy.interval)"
         process.executableURL = sshExecutable
-        process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", target.alias, command]
+        guard let arguments = target.sshArguments() else { return }
+        process.arguments = arguments + [command]
         process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
         // OS readiness callbacks read available bytes without occupying Swift's
         // cooperative executor while a quiet SSH pipe waits for a heartbeat.

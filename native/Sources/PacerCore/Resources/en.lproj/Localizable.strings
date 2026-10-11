@@ -48,7 +48,6 @@
 "provider.claude_home" = "Claude home";
 "provider.choose_claude_home" = "Choose the Claude configuration folder";
 "provider.invalid_claude_home" = "Choose an existing Claude configuration folder.";
-"provider.invalid_ssh_hosts" = "Enter SSH aliases using letters, numbers, periods, hyphens or underscores.";
 "claude.quota.source_statusline" = "Claude Code status line";
 "claude.quota.source_oauth" = "Claude usage service";
 "claude.quota.source_history" = "Claude Desktop cache";
@@ -470,12 +469,14 @@
 "connections.kind.remote_control" = "Remote Control";
 "connections.state.connected" = "Connected";
 "connections.state.retrying" = "Disconnected, retrying";
+"connections.state.idle" = "Waiting for a session";
 "connections.state.paused" = "%@ not installed, paused";
 "connections.sessions" = "%ld sessions";
 "connections.sessions_one" = "%ld session";
 "connections.retry" = "Retry";
 "connections.summary.ok" = "All sources connected";
 "connections.summary.checking" = "Checking sources";
+"connections.summary.idle" = "Waiting for Remote Control sessions";
 "connections.summary.retrying" = "%ld sources retrying";
 "connections.summary.retrying_one" = "%ld source retrying";
 "connections.summary.connecting" = "%ld sources connecting";
@@ -484,8 +485,6 @@
 "connections.summary.paused_one" = "%ld source paused";
 "connections.summary.detail" = "%ld sources · %ld running sessions";
 "connections.section.ssh" = "SSH Hosts";
-"connections.ssh_add" = "Add hosts";
-"connections.ssh_add_placeholder" = "SSH aliases, separated by commas or spaces";
 "connections.host.connected" = "connected";
 "connections.host.configuring" = "setting up";
 "connections.host.waiting" = "connecting";

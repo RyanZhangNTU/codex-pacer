@@ -6,7 +6,7 @@ import SwiftUI
 struct ConnectionSource: Equatable, Identifiable {
     enum State: Int, Comparable {
         /// Ordered so problems sort first.
-        case retrying, paused, connected
+        case retrying, paused, idle, connected
         static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
     }
     let provider: AgentProvider
@@ -27,7 +27,9 @@ struct ConnectionSource: Equatable, Identifiable {
         var result: [ConnectionSource] = []
         for (provider, byKey) in statuses {
             for (key, status) in byKey {
-                let state: State = status.connected ? .connected : status.sourceAvailable == false ? .paused : .retrying
+                let state: State = status.connected ? .connected :
+                    key.hasPrefix(controlPrefix) && status.waitingForSession ? .idle :
+                    status.sourceAvailable == false ? .paused : .retrying
                 let name: String, kind: String
                 if key == "local" {
                     name = L10n.text("common.local"); kind = provider.displayName
@@ -75,6 +77,7 @@ struct SSHHost: Equatable, Identifiable {
         let sessions: Int
     }
     let alias: String
+    let name: String
     let modules: [Module]
     var id: String { alias }
     var claudeSetupFailed: Bool { modules.contains { $0.provider == .claude && $0.state == .setupFailed } }
@@ -83,7 +86,7 @@ struct SSHHost: Equatable, Identifiable {
     /// itself, so a connected host is only "connected" once its hooks are current.
     static func hosts(codex: [String: RuntimeStreamStatus]?, unavailableCodex: [String],
                       claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], configured: Set<String>,
-                      configuring: Set<String>, failed: Set<String>) -> [SSHHost] {
+                      configuring: Set<String>, failed: Set<String>, names: [String: String] = [:]) -> [SSHHost] {
         let prefix = ConnectionSource.sshPrefix
         var modules: [String: [Module]] = [:]
         if let codex {
@@ -105,11 +108,11 @@ struct SSHHost: Equatable, Identifiable {
                 modules[alias, default: []].append(.init(provider: .claude, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
             }
         }
-        return modules.map { SSHHost(alias: $0.key, modules: $0.value.sorted { $0.provider == .codex && $1.provider != .codex }) }
+        return modules.map { SSHHost(alias: $0.key, name: names[$0.key] ?? $0.key, modules: $0.value.sorted { $0.provider == .codex && $1.provider != .codex }) }
             .sorted {
                 let lhs = $0.modules.map(\.state).min()!, rhs = $1.modules.map(\.state).min()!
                 if lhs.isProblem != rhs.isProblem { return lhs.isProblem }
-                return $0.alias.localizedStandardCompare($1.alias) == .orderedAscending
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
     }
 }
@@ -118,19 +121,21 @@ struct SSHHost: Equatable, Identifiable {
 /// including configured targets whose collector has not published yet.
 struct ConnectionSummary: Equatable {
     enum State: Equatable {
-        case disabled, checking, retrying(Int), connecting(Int), paused(Int), connected
+        case disabled, checking, retrying(Int), connecting(Int), paused(Int), idle, connected
     }
+    private enum EntryState { case retrying, connecting, paused, idle, connected }
     let state: State
     let sources: Int
     let sessions: Int
 
     init(enabledProviders: [AgentProvider], sources: [ConnectionSource], hosts: [SSHHost]) {
         let enabled = Set(enabledProviders)
-        var entries: [String: (state: SSHHost.State, sessions: Int)] = [:]
+        var entries: [String: (state: EntryState, sessions: Int)] = [:]
         for source in sources where enabled.contains(source.provider) {
-            let state: SSHHost.State = switch source.state {
+            let state: EntryState = switch source.state {
             case .retrying: .retrying
             case .paused: .paused
+            case .idle: .idle
             case .connected: .connected
             }
             entries[source.id] = (state, source.sessions)
@@ -138,7 +143,13 @@ struct ConnectionSummary: Equatable {
         for host in hosts {
             for module in host.modules where enabled.contains(module.provider) {
                 let id = module.provider.rawValue + ":" + ConnectionSource.sshPrefix + host.alias
-                entries[id] = (module.state, module.sessions)
+                let state: EntryState = switch module.state {
+                case .setupFailed, .retrying: .retrying
+                case .configuring, .waiting: .connecting
+                case .paused: .paused
+                case .connected: .connected
+                }
+                entries[id] = (state, module.sessions)
             }
         }
         let checking = entries.isEmpty
@@ -146,16 +157,17 @@ struct ConnectionSummary: Equatable {
         // must not imply that another module is already connected.
         for provider in enabled {
             let id = provider.rawValue + ":local"
-            if entries[id] == nil { entries[id] = (.waiting, 0) }
+            if entries[id] == nil { entries[id] = (.connecting, 0) }
         }
         self.sources = entries.count
         sessions = entries.values.reduce(0) { $0 + $1.sessions }
-        let retrying = entries.values.filter { $0.state.isProblem }.count
-        let connecting = entries.values.filter { $0.state == .waiting || $0.state == .configuring }.count
+        let retrying = entries.values.filter { $0.state == .retrying }.count
+        let connecting = entries.values.filter { $0.state == .connecting }.count
         let paused = entries.values.filter { $0.state == .paused }.count
+        let idle = entries.values.contains { $0.state == .idle }
         state = enabled.isEmpty ? .disabled : checking ? .checking :
             retrying > 0 ? .retrying(retrying) : connecting > 0 ? .connecting(connecting) :
-            paused > 0 ? .paused(paused) : .connected
+            paused > 0 ? .paused(paused) : idle ? .idle : .connected
     }
 }
 
@@ -166,12 +178,8 @@ struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
     @Binding var monitorRemoteControl: Bool
-    @Binding var additionalSSHHosts: String
     let codexEnabled: Bool
     let claudeEnabled: Bool
-    /// Why the added hosts were not applied; the field keeps the last valid list.
-    let hostsIssue: String?
-    var focusedText: FocusState<TextSetting?>.Binding
 
     private var sources: [ConnectionSource] {
         let names = Dictionary(model.activities.compactMap { activity in
@@ -192,7 +200,8 @@ struct SettingsConnectionsPane: View {
             codex: model.isModuleEnabled(.codex) ? model.providerStreamStatuses(.codex) : nil, unavailableCodex: model.unavailableSSH,
             claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
             configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
-            configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys))
+            configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys),
+            names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }))
     }
 
     var body: some View {
@@ -208,14 +217,6 @@ struct SettingsConnectionsPane: View {
             Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
                 .disabled(!codexEnabled && !claudeEnabled)
             ForEach(hosts) { host in hostRow(host) }
-            TextField(L10n.text("connections.ssh_add"), text: $additionalSSHHosts,
-                prompt: Text(L10n.text("connections.ssh_add_placeholder")))
-                .focused(focusedText, equals: .sshHosts)
-                .onSubmit { focusedText.wrappedValue = nil }
-                .disabled(!monitorSSH || !claudeEnabled)
-            if let hostsIssue {
-                Text(hostsIssue).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-            }
         }
         if !model.enabledProviders.isEmpty {
             Section(L10n.text("layout.group.quota")) {
@@ -234,6 +235,7 @@ struct SettingsConnectionsPane: View {
             L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count))
         case .paused(let count): ("pause", .secondary,
             L10n.text(count == 1 ? "connections.summary.paused_one" : "connections.summary.paused", count))
+        case .idle: ("ellipsis", .secondary, L10n.text("connections.summary.idle"))
         case .connected: ("checkmark", .green, L10n.text("connections.summary.ok"))
         }
         return HStack(spacing: 12) {
@@ -269,6 +271,7 @@ struct SettingsConnectionsPane: View {
         case .connected: (.green, L10n.text("connections.state.connected"))
         case .retrying: (.orange, L10n.text("connections.state.retrying"))
         case .paused: (.secondary, L10n.text("connections.state.paused", source.provider.displayName))
+        case .idle: (.secondary, L10n.text("connections.state.idle"))
         }
         return HStack(spacing: 10) {
             ProviderTile(provider: source.provider)
@@ -296,7 +299,7 @@ struct SettingsConnectionsPane: View {
                 .background(Color.secondary.opacity(0.16), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(host.alias).lineLimit(1).truncationMode(.middle).help(host.alias)
+                Text(host.name).lineLimit(1).truncationMode(.middle).help(host.name)
                 HStack(spacing: 14) {
                     ForEach(host.modules, id: \.provider) { module in moduleStatus(module) }
                 }.font(.system(size: 11))
