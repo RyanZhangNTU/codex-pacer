@@ -32,8 +32,7 @@ struct SettingsAppearancePane: View {
                     StyleSwatch(glass: true)
                 }
                 .disabled(!glassAvailable)
-                .help(!glassAvailable ? L10n.text("settings.glass_requirement")
-                    : collapsedStaysBlack ? L10n.text("appearance.notch_black") : "")
+                .help(glassAvailable ? "" : L10n.text("settings.glass_requirement"))
             }
             if appearance == .liquidGlass, glassAvailable {
                 LabeledContent(L10n.text("appearance.glass_transparency")) {
@@ -46,6 +45,11 @@ struct SettingsAppearancePane: View {
                                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Appearance-Settings.extension")!)
                             }
                         }
+                    }
+                }
+                if collapsedStaysBlack, !reduceTransparency {
+                    LabeledContent(L10n.text("appearance.notch_mode")) {
+                        Text(L10n.text("appearance.notch_black")).foregroundStyle(.secondary)
                     }
                 }
             }

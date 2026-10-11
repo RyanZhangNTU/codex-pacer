@@ -292,7 +292,8 @@
 "settings.hide_projects" = "隐藏项目名称";
 "appearance.style" = "样式";
 "appearance.position" = "位置";
-"appearance.notch_black" = "贴合刘海时，折叠栏保持纯黑以融入刘海，展开后才显示液态玻璃；选择「悬浮」可让折叠栏也呈现玻璃效果。";
+"appearance.notch_mode" = "刘海模式";
+"appearance.notch_black" = "折叠时纯黑，展开为液态玻璃";
 "appearance.glass_transparency" = "通透度";
 "appearance.glass_system" = "跟随系统";
 "appearance.glass_adjust" = "调整…";

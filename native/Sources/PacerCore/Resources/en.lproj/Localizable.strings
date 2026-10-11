@@ -292,7 +292,8 @@
 "settings.hide_projects" = "Hide Project Names";
 "appearance.style" = "Style";
 "appearance.position" = "Position";
-"appearance.notch_black" = "Attached to the notch, the collapsed bar stays black to blend with it, and Liquid Glass shows once it expands. Choose Floating for a glass collapsed bar.";
+"appearance.notch_mode" = "Notch Mode";
+"appearance.notch_black" = "Black when collapsed, glass when expanded";
 "appearance.glass_transparency" = "Transparency";
 "appearance.glass_system" = "Matches System";
 "appearance.glass_adjust" = "Adjust…";
