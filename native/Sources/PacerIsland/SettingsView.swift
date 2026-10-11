@@ -96,7 +96,6 @@ struct SettingsView: View {
         .onChange(of: focusedText) { previous, _ in if let previous { commit(previous) } }
         .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
         .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }
-        .onExitCommand { onClose() }
         .onDisappear {
             if let focusedText { commit(focusedText) }
             if applyTask != nil { applyNow() }

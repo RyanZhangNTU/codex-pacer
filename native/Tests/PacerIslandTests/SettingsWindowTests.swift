@@ -39,6 +39,24 @@ final class SettingsWindowTests: XCTestCase {
         }
     }
 
+    func testEscapeCancelsInputMethodCompositionInsteadOfClosing() throws {
+        _ = NSApplication.shared
+        let window = SettingsWindow(contentRect: CGRect(x: 0, y: 0, width: 300, height: 200),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let delegate = Delegate(), field = NSTextView(frame: CGRect(x: 0, y: 0, width: 200, height: 24))
+        window.delegate = delegate; window.contentView = field
+        XCTAssertTrue(window.makeFirstResponder(field))
+        field.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(field.hasMarkedText())
+        _ = window.performKeyEquivalent(with: try key(window: window))
+        XCTAssertEqual(delegate.closes, 0, "Esc while composing belongs to the input method")
+        field.unmarkText()
+        XCTAssertTrue(window.performKeyEquivalent(with: try key(window: window)))
+        XCTAssertEqual(delegate.closes, 1, "Once composition ends, Esc closes Settings again")
+    }
+
     func testModifiedEscapeReturnAndCommandWRetainTheirResponderChain() throws {
         _ = NSApplication.shared
         let window = SettingsWindow(contentRect: CGRect(x: 0, y: 0, width: 300, height: 200),

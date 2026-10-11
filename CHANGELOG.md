@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Let Esc cancel an input method's in-progress composition in Settings text fields instead of closing the window.
+
 - Apply settings as they change, like System Settings: the Save and Cancel bar is gone. Controls apply after a short coalescing delay; text fields commit on Return, focus loss, a chooser or close and keep the last valid value with an inline message; language offers Restart Now; system notifications ask for permission when switched on. Quit moves to the bottom of the sidebar and Esc closes the window.
 
 - Configure every warning and reminder in one place. The collapsed bar keeps a single warnings slot (layout schema 7 merges the former 5h, delayed-update and SSH components at the first one's position and keeps the kinds that were shown); the Reminders page chooses which warnings it shows, then the one-time reminders with system notifications, and the ended-task retention as its own row.
