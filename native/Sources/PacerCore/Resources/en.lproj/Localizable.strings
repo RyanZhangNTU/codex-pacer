@@ -293,9 +293,10 @@
 "appearance.style" = "Style";
 "appearance.position" = "Position";
 "appearance.notch_black" = "Attached to the notch, the collapsed bar stays black to blend with it, and Liquid Glass shows once it expands. Choose Floating for a glass collapsed bar.";
-"appearance.glass_system" = "Liquid Glass follows the look you choose for the whole system in System Settings → Appearance.";
-"appearance.glass_reduced" = "Reduce Transparency is on, so the island stays solid black.";
-"appearance.glass_open_settings" = "Open Appearance Settings…";
+"appearance.glass_transparency" = "Transparency";
+"appearance.glass_system" = "Matches System";
+"appearance.glass_adjust" = "Adjust…";
+"appearance.glass_reduced" = "Solid (Reduce Transparency is on)";
 "settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
 "reminders.section.island" = "On the island";
 "warning.fiveHour" = "5h quota low";

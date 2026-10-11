@@ -2,7 +2,7 @@
 
 ## 3.0.0 (development candidate)
 
-- Follow Apple's Liquid Glass guidance: the island uses regular, untinted glass whose clarity follows the system-wide Liquid Glass setting (System Settings → Appearance on macOS 27), so the app's own glass style, transparency, tint and corner-radius controls are gone. A fixed dark wash keeps text legible over bright windows, deepening with Increase Contrast; Reduce Transparency still shows solid black. Appearance links to the system setting.
+- Follow Apple's Liquid Glass guidance: the island uses regular, untinted glass whose clarity follows the system-wide Liquid Glass setting (System Settings → Appearance on macOS 27), so the app's own glass style, transparency, tint and corner-radius controls are gone. A fixed dark wash keeps text legible over bright windows, deepening with Increase Contrast; Reduce Transparency still shows solid black. Appearance shows this as one Transparency row with an Adjust button, and the notch behavior moves into the Liquid Glass tile's help, so the page has no footnotes.
 
 - Remove the optional menu bar item and its Show in Menu Bar setting: Pacer lives in the island. Settings, refresh and Quit stay on the island, Check for Updates stays in Settings → General, and task cards still open their conversations. The stored preference is cleared on the next settings change.
 

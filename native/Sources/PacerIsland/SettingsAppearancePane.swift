@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Style and position are picture tiles; changes apply to the real island at
 /// once, so the page needs no preview of its own. Liquid Glass has no settings
-/// of its own: like system glass it follows the look chosen in System Settings.
+/// of its own: like system glass it follows the look chosen in System Settings,
+/// shown as one row rather than footnotes.
 struct SettingsAppearancePane: View {
     @ObservedObject var model: IslandModel
     @Binding var appearance: IslandAppearance
@@ -31,26 +32,25 @@ struct SettingsAppearancePane: View {
                     StyleSwatch(glass: true)
                 }
                 .disabled(!glassAvailable)
-                .help(glassAvailable ? "" : L10n.text("settings.glass_requirement"))
+                .help(!glassAvailable ? L10n.text("settings.glass_requirement")
+                    : collapsedStaysBlack ? L10n.text("appearance.notch_black") : "")
+            }
+            if appearance == .liquidGlass, glassAvailable {
+                LabeledContent(L10n.text("appearance.glass_transparency")) {
+                    if reduceTransparency {
+                        Text(L10n.text("appearance.glass_reduced")).foregroundStyle(.secondary)
+                    } else {
+                        HStack(spacing: 10) {
+                            Text(L10n.text("appearance.glass_system")).foregroundStyle(.secondary)
+                            Button(L10n.text("appearance.glass_adjust")) {
+                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Appearance-Settings.extension")!)
+                            }
+                        }
+                    }
+                }
             }
         } header: {
             Text(L10n.text("appearance.style"))
-        } footer: {
-            if appearance == .liquidGlass, glassAvailable {
-                VStack(alignment: .leading, spacing: 6) {
-                    if collapsedStaysBlack { note(L10n.text("appearance.notch_black")) }
-                    if reduceTransparency {
-                        note(L10n.text("appearance.glass_reduced"))
-                    } else {
-                        note(L10n.text("appearance.glass_system"))
-                        Button(L10n.text("appearance.glass_open_settings")) {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Appearance-Settings.extension")!)
-                        }
-                        .buttonStyle(.link).font(.system(size: 11))
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
         Section(L10n.text("appearance.position")) {
             HStack(spacing: 10) {
@@ -72,11 +72,6 @@ struct SettingsAppearancePane: View {
             }
             Toggle(L10n.text("settings.fullscreen"), isOn: $fullscreen)
         }
-    }
-
-    private func note(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
-            .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: Tiles

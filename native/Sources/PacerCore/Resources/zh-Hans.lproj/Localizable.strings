@@ -293,9 +293,10 @@
 "appearance.style" = "样式";
 "appearance.position" = "位置";
 "appearance.notch_black" = "贴合刘海时，折叠栏保持纯黑以融入刘海，展开后才显示液态玻璃；选择「悬浮」可让折叠栏也呈现玻璃效果。";
-"appearance.glass_system" = "液态玻璃的通透程度跟随系统，可在“系统设置 → 外观”中统一调整。";
-"appearance.glass_reduced" = "已开启“降低透明度”，灵动岛显示为纯黑。";
-"appearance.glass_open_settings" = "打开“外观”设置…";
+"appearance.glass_transparency" = "通透度";
+"appearance.glass_system" = "跟随系统";
+"appearance.glass_adjust" = "调整…";
+"appearance.glass_reduced" = "纯黑（已开启“降低透明度”）";
 "settings.hide_projects_help" = "灵动岛和通知里的任务名统一显示为「任务」，适合录屏或共享屏幕时使用。";
 "reminders.section.island" = "在岛上提醒";
 "warning.fiveHour" = "5h 额度不足";
