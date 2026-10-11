@@ -2,7 +2,7 @@
 
 ## 3.0.0 (development candidate)
 
-- Choose each provider's collapsed quota window as 5 hours (if available) or 7 days instead of from every reported service window. Both come from the provider's own account bucket, and 5 hours falls back to 7 days when the service has no 5-hour limit; the expanded rings use the same bucket. Earlier saved windows read as the matching period until a new choice.
+- Choose each provider's collapsed quota window as 5 hours or 7 days instead of from every reported service window. Both come from the provider's own account bucket; a weekly-only account such as Codex Pro shows 7 days without a choice, and a saved 5-hour choice falls back to 7 days; the expanded rings use the same bucket. Earlier saved windows read as the matching period until a new choice.
 
 - Call the single-task badge choice Task Status or Task Count instead of Current Stage, and use "status" in the activity badge description and the Help legend.
 

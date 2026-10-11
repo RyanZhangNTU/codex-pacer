@@ -264,7 +264,7 @@
 "redaction.key" = "[redacted]";
 "redaction.token" = "[redacted]";
 "settings.auto_discovery" = "Find automatically";
-"settings.window_five_hour" = "5 hours (if available)";
+"settings.window_five_hour" = "5 hours";
 "settings.window_weekly" = "7 days";
 "settings.automatic" = "Automatic";
 "settings.choose_cli" = "Choose Codex.app, the Codex executable, or its folder";

@@ -117,6 +117,10 @@ final class IslandModel: ObservableObject {
     func providerWindow(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaWindow? {
         providerDashboardBucket(provider)?.windows.first { $0.durationMinutes == period.durationMinutes }
     }
+    /// A weekly-only account, such as Codex Pro, has no 5-hour window to choose.
+    func providerIsWeeklyOnly(_ provider: AgentProvider) -> Bool {
+        providerWindow(provider, period: .weekly) != nil && providerWindow(provider, period: .fiveHour) == nil
+    }
     func providerHistory(_ provider: AgentProvider) -> QuotaCycleHistory { provider == .codex ? codexHistory : claudeHistory }
     func providerHistoryWarning(_ provider: AgentProvider) -> String? { provider == .codex ? codexHistoryWarning : claudeHistoryWarning }
     func providerCurrentCycle(_ provider: AgentProvider) -> QuotaCycle? {
@@ -169,7 +173,8 @@ final class IslandModel: ObservableObject {
         onLayoutChange?(); onStatusChange?()
     }
     /// The collapsed window: 5 hours when chosen and reported, otherwise 7 days,
-    /// both from the provider's own bucket.
+    /// both from the provider's own bucket. A saved 5-hour choice falls back to
+    /// 7 days on an account without that window.
     func providerSelectedWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
         guard let snapshot = providerQuota(provider) else { return nil }
         let choice = QuotaWindowSelection(saved: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"),

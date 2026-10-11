@@ -54,9 +54,13 @@ final class QuotaDashboardModelTests: XCTestCase {
         XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/week")
         XCTAssertEqual(model.dashboardQuota(provider: .codex, period: .fiveHour).remainingQuotaPercent, 80)
         XCTAssertEqual(model.selectedProvider, .claude, "Provider presentation reads do not change quota selection")
+        XCTAssertFalse(model.providerIsWeeklyOnly(.codex))
         defaults.set("5h", forKey: "quotaWindowID")
         publish(snapshot([bucket("codex", [window("codex/week", minutes: 10080)])]), for: .codex, to: model)
-        XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/week", "Without a 5-hour window the choice falls back to 7 days")
+        XCTAssertTrue(model.providerIsWeeklyOnly(.codex), "A weekly-only account offers no 5-hour choice")
+        XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/week", "A saved 5-hour choice falls back to 7 days")
+        publish(nil, for: .codex, to: model)
+        XCTAssertFalse(model.providerIsWeeklyOnly(.codex), "Unread quota cannot prove the account is weekly-only")
     }
 
     func testWeeklyOnlyProRequiresActualPrimaryBucketFreshUsageAndKnownFutureReset() throws {

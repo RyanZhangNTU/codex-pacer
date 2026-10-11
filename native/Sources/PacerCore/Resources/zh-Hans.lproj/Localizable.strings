@@ -264,7 +264,7 @@
 "redaction.key" = "[密钥已隐藏]";
 "redaction.token" = "[令牌已隐藏]";
 "settings.auto_discovery" = "自动查找";
-"settings.window_five_hour" = "5 小时（如有）";
+"settings.window_five_hour" = "5 小时";
 "settings.window_weekly" = "7 天";
 "settings.automatic" = "自动";
 "settings.choose_cli" = "选择 Codex.app、Codex 可执行文件或其所在目录";

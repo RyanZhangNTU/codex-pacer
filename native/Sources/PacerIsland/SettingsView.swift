@@ -516,11 +516,17 @@ struct SettingsView: View {
     }
 
     /// An earlier saved window id shows as its period and is kept until a new choice.
-    private func quotaWindowPicker(_ provider: AgentProvider, selection: Binding<String>) -> some View {
-        let choice = Binding(get: { QuotaWindowSelection(saved: selection.wrappedValue, snapshot: model.providerQuota(provider)) },
-                             set: { selection.wrappedValue = $0.rawValue })
-        return Picker(L10n.text("provider.window_selection", provider.displayName), selection: choice) {
-            ForEach(QuotaWindowSelection.allCases, id: \.self) { Text($0.label).tag($0) }
+    /// A weekly-only account has nothing to choose, so it shows 7 days as a value.
+    @ViewBuilder private func quotaWindowPicker(_ provider: AgentProvider, selection: Binding<String>) -> some View {
+        let title = L10n.text("provider.window_selection", provider.displayName)
+        if model.providerIsWeeklyOnly(provider) {
+            LabeledContent(title) { Text(QuotaWindowSelection.weekly.label).foregroundStyle(.secondary) }
+        } else {
+            Picker(title, selection: Binding(
+                get: { QuotaWindowSelection(saved: selection.wrappedValue, snapshot: model.providerQuota(provider)) },
+                set: { selection.wrappedValue = $0.rawValue })) {
+                ForEach(QuotaWindowSelection.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
         }
     }
 
