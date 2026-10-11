@@ -312,7 +312,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if statusItem == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             if let button = item.button {
-                button.image = NSImage(systemSymbolName: "gauge.with.needle", accessibilityDescription: "Codex Pacer")
+                button.image = menuBarMark()
                 button.imagePosition = .imageLeading
                 button.target = self
                 button.action = #selector(statusClicked)
@@ -498,4 +498,40 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         return .terminateLater
     }
+}
+
+/// The app icon's P with its pace tick (native/Resources/Pacer.svg) as a menu-bar
+/// template. Coordinates are Pacer.svg units; strokes are lighter than the icon's
+/// so the mark matches menu-bar text weight and the tick stays visible.
+private func menuBarMark() -> NSImage {
+    let glyph = CGRect(x: 334, y: 236, width: 372, height: 544)  // bowl top to stem cap
+    let height: CGFloat = 14, scale = height / glyph.height
+    let size = NSSize(width: (glyph.width * scale).rounded(.up), height: height)
+    let image = NSImage(size: size, flipped: true) { _ in
+        guard let context = NSGraphicsContext.current?.cgContext else { return false }
+        context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: (size.width / scale - glyph.width) / 2 - glyph.minX, y: -glyph.minY)
+        let diagonal = CGFloat(0.5).squareRoot()
+        let tick = CGMutablePath()
+        tick.move(to: CGPoint(x: 520 + 90 * diagonal, y: 422 - 90 * diagonal))
+        tick.addLine(to: CGPoint(x: 520 + 210 * diagonal, y: 422 - 210 * diagonal))
+        context.saveGState()
+        context.addRect(glyph.insetBy(dx: -100, dy: -100))
+        context.addPath(tick.copy(strokingWithWidth: 88, lineCap: .round, lineJoin: .round, miterLimit: 10))
+        context.clip(using: .evenOdd)
+        context.setLineWidth(72)
+        context.setLineCap(.round)
+        context.strokeEllipse(in: CGRect(x: 370, y: 272, width: 300, height: 300))
+        context.move(to: CGPoint(x: 370, y: 422))
+        context.addLine(to: CGPoint(x: 370, y: 744))
+        context.strokePath()
+        context.restoreGState()
+        context.setLineWidth(40)
+        context.addPath(tick)
+        context.strokePath()
+        return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = "Codex Pacer"
+    return image
 }

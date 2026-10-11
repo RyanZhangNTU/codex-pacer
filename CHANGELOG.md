@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Give Pacer its own icon in place of the inherited Tauri logo, which macOS 26 and later shrank into a gray tile: a white P on charcoal whose bowl is the quota ring, crossed by a teal pace tick. The menu bar item uses the same mark instead of a generic gauge symbol. The SVG source and `scripts/native/render-app-icon.swift` regenerate the bundled icon.
+
 - Drop the Appearance preview now that changes apply to the real island at once. With Liquid Glass around the notch, the page explains that the collapsed bar stays black to blend with the camera and shows glass once expanded, with Floating as the way to a glass collapsed bar. Style and position tiles share one desktop backdrop. Hide Project Names now says what it replaces and when it helps instead of showing an example.
 
 - Let Esc cancel an input method's in-progress composition in Settings text fields instead of closing the window.
