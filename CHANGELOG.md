@@ -2,6 +2,8 @@
 
 ## 3.0.0 (development candidate)
 
+- Remove the Specified Width option; the island always fits its content. On a notched display the collapsed bar keeps equal sides around the camera sized by its components, so it no longer covers menus or the status items beside the notch; on other displays and when floating it is a capsule that fits them. The expanded panel fits its task rows between 404 and 680 points. A saved specified width is ignored and cleared on the next settings change.
+
 - Follow Apple's Liquid Glass guidance: the island uses regular, untinted glass whose clarity follows the system-wide Liquid Glass setting (System Settings → Appearance on macOS 27), so the app's own glass style, transparency, tint and corner-radius controls are gone. A fixed dark wash keeps text legible over bright windows, deepening with Increase Contrast; Reduce Transparency still shows solid black. Appearance shows this as one Transparency row with an Adjust button, and in Notch mode a second row states that the collapsed bar stays black and the expanded island shows glass, so the page has no footnotes.
 
 - Remove the optional menu bar item and its Show in Menu Bar setting: Pacer lives in the island. Settings, refresh and Quit stay on the island, Check for Updates stays in Settings → General, and task cards still open their conversations. The stored preference is cleared on the next settings change.

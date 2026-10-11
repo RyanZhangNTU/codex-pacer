@@ -69,7 +69,7 @@ final class CompactLayoutEditorTests: XCTestCase {
         var draft = CompactIslandLayout(leading: [.activity], trailing: [.quotaGauge, .quota])
         let binding = Binding(get: { draft }, set: { draft = $0 })
         func render(_ providers: [AgentProvider], name: String) async throws -> Data {
-            let view = CompactLayoutEditor(model: model, layout: binding, widthSettings: .constant(.init()), providers: Set(providers))
+            let view = CompactLayoutEditor(model: model, layout: binding, providers: Set(providers))
                 .padding(16).frame(width: 524).background(Color(nsColor: .windowBackgroundColor))
             let host = NSHostingView(rootView: view)
             let size = host.fittingSize

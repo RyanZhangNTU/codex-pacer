@@ -280,7 +280,6 @@ final class IslandModel: ObservableObject {
     private var measuredContentHeight: CGFloat?
     private(set) var measuredContentWidth: CGFloat = 0
     private(set) var measuredCompactWidth: CGFloat = 0
-    var widthSettings: IslandWidthSettings { .load() }
     @Published private(set) var compactLayout = CompactIslandLayout.load()
     func updateMeasuredCompactWidth(_ width: CGFloat) {
         guard width.isFinite, width >= 0 else { return }

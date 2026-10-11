@@ -274,14 +274,6 @@
 "settings.codex_home" = "Codex Data Folder";
 "settings.compact_metric" = "Show As";
 "settings.data_source" = "Sources";
-"settings.width_narrow" = "Narrow";
-"settings.width_medium" = "Medium";
-"settings.width_wide" = "Wide";
-"settings.width_mode" = "Width";
-"settings.width_adaptive" = "Adaptive";
-"settings.width_fixed" = "Specified Width";
-"settings.width_adaptive_help" = "Fits the current status, rate, quota and task rows.";
-"settings.width_fixed_help" = "One width for the island and expanded panel, with room for the camera and display edges.";
 "settings.display_picker" = "Display";
 "settings.fifteen_minutes" = "15 minutes";
 "settings.five_minutes" = "5 minutes";

@@ -28,14 +28,13 @@ final class CompactIslandLayoutTests: XCTestCase {
         let name = "CompactLayoutTests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        defaults.set("fixed", forKey: "islandWidthMode")
-        defaults.set(610, forKey: "specifiedIslandWidth")
+        defaults.set("floating", forKey: "islandDisplayMode")
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         XCTAssertNil(defaults.data(forKey: CompactIslandLayout.defaultsKey), "A new or upgraded profile must not write settings on load")
         var layout = CompactIslandLayout(leading: [.tps], trailing: [.quota, .firstOutput])
         layout.save(to: defaults)
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
-        XCTAssertEqual(IslandWidthSettings.load(from: defaults), .init(mode: .fixed, width: 610))
+        XCTAssertEqual(IslandDisplayMode.load(from: defaults), .floating)
         for component in layout.components { layout.hide(component) }
         layout.save(to: defaults)
         XCTAssertTrue(CompactIslandLayout.load(from: defaults).components.isEmpty, "Hiding everything is intentional")
@@ -62,16 +61,13 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertNil(object["center"])
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
     }
-    func testCameraClearanceAndAdaptiveShrinkingRespectExpandedAndFixedWidths() {
-        let widths = IslandWidthSettings()
-        let full = widths.desiredWidth(expanded: false, notchWidth: 0, leading: 300, trailing: 80, headerWidth: 420)
-        let compact = widths.desiredWidth(expanded: false, notchWidth: 0, leading: 300, trailing: 80, headerWidth: 112)
+    func testCameraClearanceAndAdaptiveShrinkingRespectExpandedWidth() {
+        let full = IslandWidth.desired(expanded: false, notchWidth: 0, leading: 300, trailing: 80, headerWidth: 420)
+        let compact = IslandWidth.desired(expanded: false, notchWidth: 0, leading: 300, trailing: 80, headerWidth: 112)
         XCTAssertEqual(compact, 114)
         XCTAssertLessThan(compact, full, "Hidden content must not retain a previously measured wide header")
-        XCTAssertEqual(widths.desiredWidth(expanded: false, notchWidth: 180, leading: 0, trailing: 0, headerWidth: 218), 240)
-        XCTAssertGreaterThanOrEqual(widths.desiredWidth(expanded: true, notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 404)
-        XCTAssertEqual(IslandWidthSettings(mode: .fixed, width: 600).desiredWidth(expanded: false,
-            notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 600)
+        XCTAssertEqual(IslandWidth.desired(expanded: false, notchWidth: 180, leading: 0, trailing: 0, headerWidth: 218), 240)
+        XCTAssertGreaterThanOrEqual(IslandWidth.desired(expanded: true, notchWidth: 0, leading: 0, trailing: 0, headerWidth: 112), 404)
     }
     func testLegacyComponentMigrationDropsRemovedControlsAndPreservesCustomOrder() throws {
         let data = Data(#"{"version":2,"leading":["statusIcon","subagentCount","taskCount","settings"],"trailing":["pace","quotaMetric","quotaWindow","quotaLabel","resetCountdown","quotaWarning","freshness","pin","refresh","quit","collapse"]}"#.utf8)

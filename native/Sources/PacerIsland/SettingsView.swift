@@ -14,7 +14,6 @@ struct SettingsView: View {
     @State private var claudeSSHHosts = UserDefaults.standard.string(forKey: "claudeSSHHosts") ?? ""
     @State private var showsResetExpiryDetails: Set<AgentProvider> = []
     @State private var displayMode = IslandDisplayMode.load()
-    @State private var widthSettings = IslandWidthSettings.load()
     @State private var compactLayout = CompactIslandLayout.load()
     @State private var appearance = IslandAppearance.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -181,7 +180,7 @@ struct SettingsView: View {
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             Section {
-                CompactLayoutEditor(model: model, layout: $compactLayout, widthSettings: $widthSettings, providers: Set(enabled))
+                CompactLayoutEditor(model: model, layout: $compactLayout, providers: Set(enabled))
             }
             componentSection(.tasks, enabled: enabled)
             componentSection(.performance, enabled: enabled)
@@ -582,7 +581,7 @@ struct SettingsView: View {
     /// Every non-text setting; any change is written and applied shortly
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
-        LiveSettings(modules: modules, displayMode: displayMode, width: widthSettings, layout: compactLayout, appearance: appearance,
+        LiveSettings(modules: modules, displayMode: displayMode, layout: compactLayout, appearance: appearance,
             fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, lowReminder: lowReminder, inputReminder: inputReminder,
             completionReminder: completionReminder, retention: completedRetention, hideProjects: hideProjects,
@@ -605,11 +604,11 @@ struct SettingsView: View {
         defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
         modules.save(to: defaults)
         displayMode.save(to: defaults)
-        widthSettings.normalized.save(to: defaults)
         compactLayout.save(to: defaults)
         // Retired preferences.
         for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
-                    "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius"] {
+                    "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius",
+                    "islandWidthMode", "specifiedIslandWidth", "collapsedIslandWidth", "expandedIslandWidth"] {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
@@ -684,7 +683,6 @@ enum TextSetting: Hashable { case cli, codexHome, claudeHome, sshHosts }
 private struct LiveSettings: Equatable {
     var modules: ProviderModules
     var displayMode: IslandDisplayMode
-    var width: IslandWidthSettings
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
     var fullscreen: Bool

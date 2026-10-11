@@ -2,13 +2,12 @@ import SwiftUI
 import PacerCore
 
 /// The Collapsed Bar page's first card: a lane strip shaped like the bar (left
-/// wing, camera, right wing) for arranging components, and the width choice.
-/// Edits reach the real bar at once, so the card has no preview of its own.
-/// Turning components on or off lives in the grouped rows below.
+/// wing, camera, right wing) for arranging components. Edits reach the real bar
+/// at once, so the card has no preview of its own, and its width follows the
+/// content. Turning components on or off lives in the grouped rows below.
 struct CompactLayoutEditor: View {
     @ObservedObject var model: IslandModel
     @Binding var layout: CompactIslandLayout
-    @Binding var widthSettings: IslandWidthSettings
     let providers: Set<AgentProvider>
     @State private var dragged: CompactIslandLayout.Component?
     @State private var dragLocation = CGPoint.zero
@@ -27,8 +26,6 @@ struct CompactLayoutEditor: View {
             }
             laneStrip
             Text(L10n.text("layout.help")).font(.system(size: 11)).foregroundStyle(.secondary)
-            Divider().padding(.vertical, 2)
-            widthControls
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
@@ -81,34 +78,6 @@ struct CompactLayoutEditor: View {
         .frame(maxWidth: .infinity, minHeight: 58, alignment: Alignment(horizontal: alignment, vertical: .top))
         .contentShape(Rectangle()).background(dropRegion(lane, before: nil))
         .accessibilityElement(children: .contain).accessibilityLabel(lane.label)
-    }
-
-    private var widthControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(L10n.text("settings.width_mode")).font(.system(size: 13))
-                Spacer()
-                Picker(L10n.text("settings.width_mode"), selection: $widthSettings.mode) {
-                    Text(L10n.text("settings.width_adaptive")).tag(IslandWidthSettings.Mode.adaptive)
-                    Text(L10n.text("settings.width_fixed")).tag(IslandWidthSettings.Mode.fixed)
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-            }
-            if widthSettings.mode == .fixed {
-                let range = IslandWidthSettings.range
-                let fraction = (widthSettings.normalized.width - range.lowerBound) / (range.upperBound - range.lowerBound)
-                HStack(spacing: 10) {
-                    Text(L10n.text("settings.width_narrow"))
-                    Slider(value: $widthSettings.width, in: range)
-                        .accessibilityLabel(L10n.text("settings.width_mode"))
-                        .accessibilityValue(L10n.text(fraction < 0.33 ? "settings.width_narrow" :
-                            fraction > 0.66 ? "settings.width_wide" : "settings.width_medium"))
-                    Text(L10n.text("settings.width_wide"))
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Text(L10n.text(widthSettings.mode == .adaptive ? "settings.width_adaptive_help" : "settings.width_fixed_help"))
-                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     private func chip(_ component: CompactIslandLayout.Component) -> some View {
