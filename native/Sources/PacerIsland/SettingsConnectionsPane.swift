@@ -17,7 +17,7 @@ struct ConnectionSource: Equatable, Identifiable {
     let sessions: Int
     var id: String { provider.rawValue + ":" + key }
 
-    private static let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
+    static let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
 
     /// Connected sources report their subscribed sessions; a reachable host
     /// without the provider is paused rather than failed. Codex SSH hosts that
@@ -59,6 +59,61 @@ struct ConnectionSource: Equatable, Identifiable {
     }
 }
 
+/// One SSH host with the state of each enabled module on it. Codex follows the
+/// hosts Codex Desktop connects to and Claude also watches added aliases, but
+/// both read the same way here: one row per host, one status per module.
+struct SSHHost: Equatable, Identifiable {
+    enum State: Int, Comparable {
+        /// Ordered so problems sort first.
+        case setupFailed, retrying, configuring, waiting, paused, connected
+        static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+        var isProblem: Bool { self == .setupFailed || self == .retrying }
+    }
+    struct Module: Equatable {
+        let provider: AgentProvider
+        let state: State
+        let sessions: Int
+    }
+    let alias: String
+    let modules: [Module]
+    var id: String { alias }
+    var claudeSetupFailed: Bool { modules.contains { $0.provider == .claude && $0.state == .setupFailed } }
+
+    /// `codex`/`claude` are nil for a disabled module. Claude setup runs by
+    /// itself, so a connected host is only "connected" once its hooks are current.
+    static func hosts(codex: [String: RuntimeStreamStatus]?, unavailableCodex: [String],
+                      claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], configured: Set<String>,
+                      configuring: Set<String>, failed: Set<String>) -> [SSHHost] {
+        let prefix = ConnectionSource.sshPrefix
+        var modules: [String: [Module]] = [:]
+        if let codex {
+            let aliases = codex.keys.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) } + unavailableCodex
+            for alias in Set(aliases) {
+                let status = codex[prefix + alias]
+                let state: State = status?.connected == true ? .connected : status?.sourceAvailable == false ? .paused : .retrying
+                modules[alias, default: []].append(.init(provider: .codex, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
+            }
+        }
+        if let claude {
+            for alias in Set(claudeAliases) {
+                let status = claude[prefix + alias]
+                let state: State = configuring.contains(alias) ? .configuring :
+                    status?.sourceAvailable == false ? .paused :
+                    status?.hasConnectionFailure == true ? .retrying :
+                    failed.contains(alias) ? .setupFailed :
+                    status?.connected == true ? (configured.contains(alias) ? .connected : .configuring) : .waiting
+                modules[alias, default: []].append(.init(provider: .claude, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
+            }
+        }
+        return modules.map { SSHHost(alias: $0.key, modules: $0.value.sorted { $0.provider == .codex && $1.provider != .codex }) }
+            .sorted {
+                let lhs = $0.modules.map(\.state).min()!, rhs = $1.modules.map(\.state).min()!
+                if lhs.isProblem != rhs.isProblem { return lhs.isProblem }
+                return $0.alias.localizedStandardCompare($1.alias) == .orderedAscending
+            }
+    }
+}
+
 /// Connection diagnostics live here because the island shows no connection
 /// banners: a summary, every task source with problems first, quota freshness
 /// and the data-source switches.
@@ -66,8 +121,11 @@ struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
     @Binding var monitorRemoteControl: Bool
+    @Binding var additionalSSHHosts: String
     let codexEnabled: Bool
     let claudeEnabled: Bool
+    /// SSH drafts that take effect on Save.
+    let sshPending: Bool
 
     private var sources: [ConnectionSource] {
         let names = Dictionary(model.activities.compactMap { activity in
@@ -78,12 +136,37 @@ struct SettingsConnectionsPane: View {
             unavailableSSH: model.enabledProviders.contains(.codex) ? model.unavailableSSH : [], names: names)
     }
 
+    private var hosts: [SSHHost] {
+        guard model.monitorsSSH else { return [] }
+        let prefix = ConnectionSource.sshPrefix, targets = model.claudeRemoteTargets
+        func aliases<S: Sequence>(_ ids: S) -> Set<String> where S.Element == String {
+            Set(ids.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
+        }
+        return SSHHost.hosts(
+            codex: model.isModuleEnabled(.codex) ? model.providerStreamStatuses(.codex) : nil, unavailableCodex: model.unavailableSSH,
+            claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
+            configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
+            configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys))
+    }
+
     var body: some View {
-        let sources = sources
-        Section { summary(sources) }
-        if !sources.isEmpty {
-            Section(L10n.text("connections.section.tasks")) {
-                ForEach(sources) { source in sourceRow(source) }
+        let sources = sources, hosts = hosts
+        Section { summary(sources, setupFailures: hosts.filter(\.claudeSetupFailed).count) }
+        Section(L10n.text("connections.section.tasks")) {
+            ForEach(sources.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) }) { source in sourceRow(source) }
+            Toggle(L10n.text("settings.monitor_remote_control"), isOn: $monitorRemoteControl)
+                .disabled(!codexEnabled)
+                .help(L10n.text("settings.remote_control_help"))
+        }
+        Section(L10n.text("connections.section.ssh")) {
+            Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
+                .disabled(!codexEnabled && !claudeEnabled)
+            ForEach(hosts) { host in hostRow(host) }
+            TextField(L10n.text("connections.ssh_add"), text: $additionalSSHHosts,
+                prompt: Text(L10n.text("connections.ssh_add_placeholder")))
+                .disabled(!monitorSSH || !claudeEnabled)
+            if sshPending {
+                Text(L10n.text("settings.applies_on_save")).font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         if !model.enabledProviders.isEmpty {
@@ -91,24 +174,11 @@ struct SettingsConnectionsPane: View {
                 ForEach(model.enabledProviders, id: \.self) { provider in quotaRow(provider) }
             }
         }
-        Section {
-            Toggle(L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
-                .disabled(!codexEnabled && !claudeEnabled)
-            Toggle(isOn: $monitorRemoteControl) {
-                Text(L10n.text("settings.monitor_remote_control"))
-                Text(L10n.text("settings.remote_control_help"))
-            }
-            .disabled(!codexEnabled)
-        } header: {
-            Text(L10n.text("settings.data_source"))
-        } footer: {
-            Text(L10n.text("connections.footer")).font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
-    private func summary(_ sources: [ConnectionSource]) -> some View {
-        let retrying = sources.filter { $0.state == .retrying }.count
+    /// Hosts whose Claude setup failed are retried automatically, so they count with retrying sources.
+    private func summary(_ sources: [ConnectionSource], setupFailures: Int) -> some View {
+        let retrying = sources.filter { $0.state == .retrying }.count + setupFailures
         let sessions = sources.reduce(0) { $0 + $1.sessions }
         let (symbol, tint, title): (String, Color, String) =
             model.enabledProviders.isEmpty ? ("power", .secondary, L10n.text("provider.none_enabled")) :
@@ -128,11 +198,20 @@ struct SettingsConnectionsPane: View {
             }
             Spacer(minLength: 8)
             if retrying > 0 {
-                Button(L10n.text("connections.retry")) { model.refreshTaskSources() }
+                Button(L10n.text("connections.retry")) { retryAll() }
             }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
+    }
+
+    private func retryAll() {
+        model.refreshTaskSources()
+        for host in hosts where host.claudeSetupFailed { retrySetup(host) }
+    }
+    private func retrySetup(_ host: SSHHost) {
+        guard !sshPending else { return }
+        Task { _ = await model.configureClaudeRemote(targetID: ConnectionSource.sshPrefix + host.alias) }
     }
 
     private func sourceRow(_ source: ConnectionSource) -> some View {
@@ -158,6 +237,47 @@ struct SettingsConnectionsPane: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func hostRow(_ host: SSHHost) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "server.rack").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(width: 22, height: 22)
+                .background(Color.secondary.opacity(0.16), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.alias).lineLimit(1).truncationMode(.middle).help(host.alias)
+                HStack(spacing: 14) {
+                    ForEach(host.modules, id: \.provider) { module in moduleStatus(module) }
+                }.font(.system(size: 11))
+            }
+            Spacer(minLength: 8)
+            if host.claudeSetupFailed {
+                Button(L10n.text("connections.retry")) { retrySetup(host) }
+                    .disabled(sshPending)
+                    .help(model.claudeRemoteSetupFailures[ConnectionSource.sshPrefix + host.alias] ?? "")
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func moduleStatus(_ module: SSHHost.Module) -> some View {
+        let (tint, key): (Color, String) = switch module.state {
+        case .connected: (.green, "connections.host.connected")
+        case .configuring: (.secondary, "connections.host.configuring")
+        case .waiting: (.secondary, "connections.host.waiting")
+        case .paused: (.secondary, "connections.host.missing")
+        case .retrying: (.orange, "connections.host.retrying")
+        case .setupFailed: (.orange, "connections.host.setup_failed")
+        }
+        var text = module.provider.displayName + " " + L10n.text(key)
+        if module.sessions > 0 {
+            text += " · " + L10n.text(module.sessions == 1 ? "connections.sessions_one" : "connections.sessions", module.sessions)
+        }
+        return HStack(spacing: 5) {
+            Circle().fill(tint).frame(width: 6, height: 6).accessibilityHidden(true)
+            Text(text).foregroundStyle(module.state.isProblem ? Color.orange : Color.secondary).monospacedDigit()
+        }
     }
 
     private func quotaRow(_ provider: AgentProvider) -> some View {

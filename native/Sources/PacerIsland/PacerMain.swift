@@ -90,7 +90,15 @@ enum PacerMain {
                 "subagents": groups.reduce(0) { $0 + $1.runningSubagentCount }, "pendingRequests": requests.count,
                 "availableRates": values.filter { $0.displayedOutputEstimate(at: now) != nil }.count,
                 "availableFirstOutput": values.filter { $0.firstTokenLatency != nil }.count,
-                "numericUpdates": performance.count]
+                "numericUpdates": performance.count,
+                // Per source in key order, labelled by kind only so host aliases stay out of the output.
+                "sources": statuses.keys.sorted().map { key -> [String: Any] in
+                    let status = statuses[key]!, own = values.filter { ($0.sourceHostID ?? "local") == key }
+                    return ["kind": key == "local" ? "local" : key.hasPrefix("remote-ssh-discovered:") ? "ssh" : "other",
+                        "connected": status.connected, "claudeHome": status.sourceAvailable.map { $0 ? 1 : 0 } ?? -1,
+                        "running": own.filter { [.running, .waitingForInput].contains($0.phase) }.count,
+                        "completed": own.filter { [.completed, .interrupted].contains($0.phase) }.count]
+                }]
             if let data = try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]),
                let text = String(data: data, encoding: .utf8) { print(text) }
         }

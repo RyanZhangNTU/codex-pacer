@@ -1,8 +1,10 @@
 import Foundation
 
-/// Installation is an explicit Settings action. Existing hooks, environment
-/// variables and a user's status-line renderer are preserved and reversible.
+/// Pacer keeps its hooks current while the Claude module is on, like Codex
+/// needs no setup step. Existing hooks, environment variables and a user's
+/// status-line renderer are preserved and reversible.
 public enum ClaudeHookInstaller {
+    public enum EnsureResult: Equatable, Sendable { case current, installed, missingHome, failed }
     public struct Status: Equatable, Sendable {
         public let hooksConfigured: Bool
         public let telemetryConfigured: Bool
@@ -32,6 +34,17 @@ public enum ClaudeHookInstaller {
         "OTEL_TRACES_EXPORT_INTERVAL": "1000"
     ]
     public static func status(home: URL) -> Bool { details(home: home).hooksConfigured }
+    /// Never creates a Claude home and writes nothing when already current. An
+    /// update is applied in place first, so optional entries the user removed
+    /// stay removed; missing required hooks are installed again.
+    public static func ensureInstalled(home: URL) -> EnsureResult {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: home.path, isDirectory: &isDirectory), isDirectory.boolValue else { return .missingHome }
+        let status = details(home: home)
+        if status.hooksConfigured && !status.updateAvailable { return .current }
+        if status.hooksConfigured, migrate(home: home), !details(home: home).updateAvailable { return .installed }
+        return (try? install(home: home)) != nil ? .installed : .failed
+    }
     public static func details(home: URL) -> Status {
         let value = (try? settings(home: home).value) ?? [:], hooks = value["hooks"] as? [String: [[String: Any]]] ?? [:]
         let script = home.appendingPathComponent("pacer/hook.py")

@@ -197,18 +197,24 @@ final class IslandModel: ObservableObject {
         let path = configured.isEmpty ? (ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? NSHomeDirectory() + "/.claude") : configured
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
-    var claudeMonitoringConfigured: Bool { ClaudeHookInstaller.status(home: claudeHome) }
-    func configureClaudeMonitoring() async -> String? {
-        do {
-            try ClaudeHookInstaller.install(home: claudeHome)
-            settingsRevision += 1
-            startClaudeActivity()
-            return nil
-        } catch { return L10n.text("claude.monitoring_setup_failed") }
+    enum ClaudeLocalSetup: Equatable { case checking, configuring, ready, missingHome, failed }
+    /// Local hooks follow the Claude module: kept current while it is on.
+    @Published private(set) var claudeLocalSetup: ClaudeLocalSetup = .checking
+    private func ensureClaudeHooks(home: URL, generation: Int) async {
+        if claudeLocalSetup != .ready { claudeLocalSetup = .configuring }
+        let result = await Task.detached(priority: .utility) { ClaudeHookInstaller.ensureInstalled(home: home) }.value
+        guard generation == claudeGeneration else { return }
+        switch result {
+        case .current: claudeLocalSetup = .ready
+        case .installed: claudeLocalSetup = .ready; settingsRevision += 1
+        case .missingHome: claudeLocalSetup = .missingHome
+        case .failed: claudeLocalSetup = .failed
+        }
     }
-    func removeClaudeMonitoring() async -> String? {
-        do { try ClaudeHookInstaller.uninstall(home: claudeHome); settingsRevision += 1; return nil }
-        catch { return L10n.text("claude.monitoring_remove_failed") }
+    func retryClaudeLocalSetup() {
+        guard isModuleEnabled(.claude), !demo, !stopped else { return }
+        let home = claudeHome, generation = claudeGeneration
+        Task { [weak self] in await self?.ensureClaudeHooks(home: home, generation: generation) }
     }
     @Published var expanded = false
     @Published var pinned = false
@@ -317,18 +323,45 @@ final class IslandModel: ObservableObject {
     @Published private(set) var claudeRemoteTargets: [RemoteActivityTarget] = []
     @Published private(set) var configuringClaudeHosts: Set<String> = []
     @Published private(set) var claudeRemoteSetupStatus: [String: ClaudeHookInstaller.Status] = [:]
+    @Published private(set) var claudeRemoteSetupFailures: [String: String] = [:]
+    private var claudeRemoteSetupFailedAt: [String: Date] = [:]
+    private lazy var claudeAdapterDigest: String? = try? ClaudeRemoteSetup.adapterDigest()
+    /// True once this host carries the hooks shipped with this build.
+    func claudeRemoteConfigured(_ target: RemoteActivityTarget) -> Bool {
+        claudeAdapterDigest.map { ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults)[target.alias] == $0 } ?? false
+    }
+    /// Setup never creates a Claude home on a host without one. Success records
+    /// the adapter digest so later checks stay quiet until an update changes it.
     func configureClaudeRemote(targetID: String) async -> String? {
         guard let target = claudeRemoteTargets.first(where: { $0.id == targetID }), configuringClaudeHosts.insert(targetID).inserted else { return nil }
         defer { configuringClaudeHosts.remove(targetID) }
         let generation = claudeGeneration
         do {
-            let status = try await claudeRemoteSetup.install(target: target)
+            let status = try await claudeRemoteSetup.install(target: target, requireHome: true)
             guard generation == claudeGeneration, isModuleEnabled(.claude), !sleeping, !stopped,
                   claudeRemoteTargets.contains(target) else { return nil }
             claudeRemoteSetupStatus[targetID] = status
+            claudeRemoteSetupFailures.removeValue(forKey: targetID); claudeRemoteSetupFailedAt.removeValue(forKey: targetID)
+            if let digest = claudeAdapterDigest { ClaudeRemoteAutoSetup.recordConfigured(alias: target.alias, digest: digest, defaults: defaults) }
             await claudeMonitor.refresh(remoteTargetID: targetID)
             return nil
-        } catch { return L10n.text("provider.remote_configure_failed") }
+        } catch {
+            let message = L10n.text(error as? ClaudeRemoteSetup.Failure == .missingHome ? "provider.remote_source_missing" : "provider.remote_configure_failed")
+            if generation == claudeGeneration {
+                claudeRemoteSetupFailedAt[targetID] = Date(); claudeRemoteSetupFailures[targetID] = message
+            }
+            return message
+        }
+    }
+    private func scheduleClaudeRemoteSetup() {
+        guard isModuleEnabled(.claude), monitorsSSH,
+              !demo, !sleeping, !stopped, let digest = claudeAdapterDigest else { return }
+        let pending = ClaudeRemoteAutoSetup.pending(targets: claudeRemoteTargets, statuses: claudeStreamStatuses,
+            configured: ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults), digest: digest,
+            failures: claudeRemoteSetupFailedAt, inFlight: configuringClaudeHosts, now: Date())
+        for target in pending {
+            Task { [weak self] in _ = await self?.configureClaudeRemote(targetID: target.id) }
+        }
     }
     private var claudeClient: ClaudeQuotaClient?
     private var claudeWebClient: ClaudeWebQuotaClient?
@@ -997,11 +1030,8 @@ final class IslandModel: ObservableObject {
         claudeActivityTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.claudeGeneration { self.claudeActivityTask = nil } }
-            // Bring an earlier Pacer hook installation current before reading
-            // its spool; only Pacer-owned entries and its adapter change.
-            if await Task.detached(priority: .utility, operation: { ClaudeHookInstaller.migrate(home: sourceHome) }).value {
-                self.settingsRevision += 1
-            }
+            // Install or bring Pacer's hooks current before reading the spool.
+            await self.ensureClaudeHooks(home: sourceHome, generation: generation)
             guard generation == self.claudeGeneration, !self.stopped else { return }
             await self.claudeMonitor.start(home: sourceHome, remoteTargets: targets, refreshPolicy: self.activityRefreshPolicy) { [weak self] values, statuses, requests, performance in
                 guard let model = self else { return }
@@ -1028,6 +1058,7 @@ final class IslandModel: ObservableObject {
         for update in measured { rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt) }
         observeAttentionRequests(codexAttentionRequests + claudeAttentionRequests)
         combineActivities()
+        scheduleClaudeRemoteSetup()
     }
 
     private func localSubagentStates(_ values: [SessionActivity]) -> [String: SessionActivity.SubagentEvidence] {
@@ -1194,6 +1225,12 @@ final class IslandModel: ObservableObject {
         let newCodex = currentCodexSourceSignature, newClaude = currentClaudeSourceSignature
         let codexChanged = oldEnabled.contains(.codex) != isModuleEnabled(.codex) || newCodex != codexSourceSignature
         let claudeChanged = oldEnabled.contains(.claude) != isModuleEnabled(.claude) || newClaude != claudeSourceSignature
+        // Turning Claude off by hand also takes Pacer's local hooks out again.
+        if oldEnabled.contains(.claude), !isModuleEnabled(.claude), modules.claudeMode == .disabled, !demo {
+            let home = claudeHome
+            Task.detached(priority: .utility) { try? ClaudeHookInstaller.uninstall(home: home) }
+            claudeLocalSetup = .checking
+        }
         codexSourceSignature = newCodex; claudeSourceSignature = newClaude
         if codexChanged { resetCodexSource() }
         else { logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval); refreshRemote() }

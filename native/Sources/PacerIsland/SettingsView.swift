@@ -11,12 +11,6 @@ struct SettingsView: View {
     @State private var modules = ProviderModules.load()
     @State private var claudeHome = UserDefaults.standard.string(forKey: "claudeHome") ?? ""
     @State private var claudeSSHHosts = UserDefaults.standard.string(forKey: "claudeSSHHosts") ?? ""
-    @State private var configuringClaude = false
-    @State private var removingClaude = false
-    @State private var claudeSetupMessage: String?
-    @State private var claudeSetupStatus: ClaudeHookInstaller.Status?
-    @State private var claudeRemoteSetupMessages: [String: String] = [:]
-    @State private var claudeRemoteSetupRequests: Set<String> = []
     @State private var showsResetExpiryDetails: Set<AgentProvider> = []
     @State private var displayMode = IslandDisplayMode.load()
     @State private var widthSettings = IslandWidthSettings.load()
@@ -44,13 +38,16 @@ struct SettingsView: View {
     @State private var automaticUpdateChecks = true
     @State private var cliReport: CodexExecutableResolver.Report?
     @State private var cliScanRevision = 0
-    @State private var testingCLI = false
-    @State private var cliTestMessage: String?
-    @State private var cliTestSucceeded = false
+    /// Custom locations stay folded away unless one is already set.
+    @State private var expandedLocations: Set<AgentProvider> = {
+        let defaults = UserDefaults.standard
+        var result = Set<AgentProvider>()
+        if !(defaults.string(forKey: "codexExecutable") ?? "").isEmpty || !(defaults.string(forKey: "codexHome") ?? "").isEmpty { result.insert(.codex) }
+        if !(defaults.string(forKey: "claudeHome") ?? "").isEmpty { result.insert(.claude) }
+        return result
+    }()
     @State private var pane = UserDefaults.standard.string(forKey: SettingsPane.defaultsKey).flatMap(SettingsPane.init(rawValue:)) ?? .general
     private var languageChanges: Bool { language.resolved() != L10n.language }
-    private var claudeSetupBusy: Bool { configuringClaude || removingClaude }
-    private var claudeRemoteSetupBusy: Bool { !claudeRemoteSetupRequests.isEmpty || !model.configuringClaudeHosts.isEmpty }
     private var claudeSSHHostsChanged: Bool {
         claudeSSHHosts != (UserDefaults.standard.string(forKey: "claudeSSHHosts") ?? "")
     }
@@ -65,7 +62,7 @@ struct SettingsView: View {
                         .padding(.horizontal, 28).padding(.top, 20)
                     Form { paneContent }
                         .formStyle(.grouped)
-                        .disabled(saving || testingCLI || claudeSetupBusy)
+                        .disabled(saving)
                         .id(pane)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -77,7 +74,6 @@ struct SettingsView: View {
         .environment(\.locale, L10n.locale)
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
-            claudeSetupStatus = ClaudeHookInstaller.details(home: model.claudeHome)
             windowID = QuotaWindowSelection.validated(windowID, snapshot: model.providerQuota(.codex))
             claudeWindowID = QuotaWindowSelection.validated(claudeWindowID, snapshot: model.providerQuota(.claude))
         }
@@ -89,7 +85,6 @@ struct SettingsView: View {
         }
         .task(id: "\(cliScanRevision):\(executable)") {
             cliReport = nil
-            cliTestMessage = nil
             let path = executable
             let report = await Task.detached(priority: .utility) {
                 CodexExecutableResolver.discover(customPath: path)
@@ -97,11 +92,7 @@ struct SettingsView: View {
             guard !Task.isCancelled else { return }
             cliReport = report
         }
-        .onChange(of: home) { _, _ in cliTestMessage = nil }
         .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
-        .onChange(of: model.settingsRevision) { _, _ in
-            claudeSetupStatus = ClaudeHookInstaller.details(home: model.claudeHome)
-        }
     }
 
     private var sidebar: some View {
@@ -158,9 +149,9 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button(L10n.text("common.cancel"), action: onClose).keyboardShortcut(.cancelAction).disabled(saving || claudeSetupBusy || claudeRemoteSetupBusy)
+            Button(L10n.text("common.cancel"), action: onClose).keyboardShortcut(.cancelAction).disabled(saving)
             Button(L10n.text(saving ? "common.saving" : languageChanges ? "language.save_restart" : "common.save"), action: { save() })
-                .keyboardShortcut(.defaultAction).disabled(saving || claudeSetupBusy || claudeRemoteSetupBusy)
+                .keyboardShortcut(.defaultAction).disabled(saving)
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
     }
@@ -241,7 +232,8 @@ struct SettingsView: View {
             SettingsHelpPane()
         case .connections:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
-                codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
+                additionalSSHHosts: $claudeSSHHosts, codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude),
+                sshPending: claudeSSHHostsChanged || monitorSSH != model.monitorsSSH)
         }
     }
 
@@ -260,11 +252,9 @@ struct SettingsView: View {
             }
             .padding(.vertical, 2)
         } footer: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(L10n.text("provider.module_help")).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                if moduleMode(provider) != .automatic {
+            if moduleMode(provider) != .automatic {
+                HStack {
+                    Spacer()
                     Button(L10n.text("provider.restore_automatic")) {
                         if provider == .codex { modules.codexMode = .automatic } else { modules.claudeMode = .automatic }
                     }.font(.system(size: 11)).buttonStyle(.link)
@@ -272,7 +262,7 @@ struct SettingsView: View {
             }
         }
         if moduleEnabled(provider) {
-            if provider == .codex { codexSourceSections } else { claudeSourceSections }
+            localSection(provider)
             if model.enabledProviders.contains(provider) { quotaHistorySection(provider) }
         }
     }
@@ -315,35 +305,124 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder private var codexSourceSections: some View {
-        Section(L10n.text("settings.section.cli")) {
-            HStack {
-                TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))
-                Button(L10n.text("common.choose")) { choose(directory: false) }
-            }
-            cliDiscovery
-            HStack {
-                TextField(L10n.text("settings.codex_home"), text: $home, prompt: Text(L10n.text("settings.home_placeholder")))
-                Button(L10n.text("common.choose")) { choose(directory: true) }
+    /// Both modules read the same way: what was found on this Mac, a button only
+    /// when something needs the user, and path overrides folded away.
+    private func localSection(_ provider: AgentProvider) -> some View {
+        Section(L10n.text("provider.section.local")) {
+            if provider == .codex { codexCLIRow } else { claudeMonitoringRow; claudeAccountRow }
+            DisclosureGroup(L10n.text("provider.custom_locations"), isExpanded: Binding(
+                get: { expandedLocations.contains(provider) },
+                set: { if $0 { expandedLocations.insert(provider) } else { expandedLocations.remove(provider) } })) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if provider == .codex { codexLocations } else { claudeLocations }
+                }.padding(.top, 6)
             }
         }
     }
 
-    private func sshFailures(_ names: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(L10n.text("settings.ssh_unavailable"), systemImage: StatusSymbols.sshWarning)
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.orange)
-            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(name).font(.system(size: 12, design: .monospaced)).fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                    Spacer(minLength: 8)
-                    Text(L10n.text("source.ssh_unavailable")).font(.system(size: 11)).foregroundStyle(.orange).fixedSize()
+    private func statusRow<Action: View>(_ title: String, state: String, tint: Color, help: String? = nil,
+                                         @ViewBuilder action: () -> Action) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Spacer(minLength: 8)
+            Circle().fill(tint).frame(width: 6, height: 6).accessibilityHidden(true)
+            Text(state).foregroundStyle(tint == .orange ? Color.orange : Color.secondary)
+            action()
+        }
+        .help(help ?? "")
+    }
+
+    private var codexCLIRow: some View {
+        let report = cliReport
+        let (tint, state): (Color, String) = report == nil ? (.secondary, L10n.text("provider.state.searching")) :
+            report?.selected != nil ? (.green, L10n.text("provider.state.found")) : (.orange, L10n.text("provider.state.not_found"))
+        return VStack(alignment: .leading, spacing: 4) {
+            statusRow("Codex CLI", state: state, tint: tint, help: report?.selected?.url.path) {
+                if report != nil, report?.selected == nil {
+                    Button(L10n.text("settings.rescan")) { cliScanRevision += 1 }
                 }
             }
-            caption(L10n.text("source.ssh_retrying"))
+            if let issue = report?.issue, report?.selected == nil { caption(issue) }
         }
-        .padding(.vertical, 2)
+    }
+
+    private var claudeMonitoringRow: some View {
+        let (tint, state): (Color, String) = switch model.claudeLocalSetup {
+        case .ready: (.green, L10n.text("provider.state.ready"))
+        case .checking, .configuring: (.secondary, L10n.text("provider.state.configuring"))
+        case .missingHome: (.secondary, L10n.text("provider.state.no_home"))
+        case .failed: (.orange, L10n.text("provider.state.failed"))
+        }
+        return statusRow(L10n.text("provider.monitoring"), state: state, tint: tint,
+                         help: model.claudeLocalSetup == .failed ? L10n.text("claude.monitoring_setup_failed") : nil) {
+            if model.claudeLocalSetup == .failed {
+                Button(L10n.text("connections.retry")) { model.retryClaudeLocalSetup() }
+            }
+        }
+    }
+
+    /// Sign-in reads as a status. A button appears only when Claude needs the
+    /// user; switching accounts otherwise waits in the row's menu.
+    private var claudeAccountRow: some View {
+        let workspace = model.claudeNeedsOrganizationSelection, signedOut = model.claudeConnectionNeeded && !workspace
+        let signedIn = !model.claudeConnectionNeeded && model.claudeQuotaSource != nil
+        let (tint, key): (Color, String) =
+            workspace ? (.orange, "claude.account.workspace_needed") :
+            signedOut ? (.orange, "claude.account.signed_out") :
+            signedIn ? (.green, "claude.account.signed_in") :
+            model.providerRefreshing(.claude) ? (.secondary, "claude.account.checking") : (.secondary, "claude.account.unavailable")
+        let unavailable = model.providerRefreshing(.claude) || resolvedClaudeHome != model.claudeHome.path || !model.isModuleEnabled(.claude)
+        return statusRow(L10n.text("claude.account"), state: L10n.text(key), tint: tint,
+                         help: signedIn ? model.claudeQuotaSource?.label : nil) {
+            Group {
+                if workspace {
+                    Button(L10n.text("claude.quota.choose_workspace")) { model.chooseClaudeOrganization() }
+                        .help(L10n.text("claude.quota.choose_workspace_help"))
+                } else if signedOut {
+                    Button(L10n.text("claude.quota.connect")) { model.signInClaudeQuota() }
+                        .help(L10n.text("claude.quota.connect_help"))
+                } else {
+                    Menu {
+                        Button(L10n.text(signedIn ? "claude.account.switch" : "claude.quota.connect")) { model.signInClaudeQuota() }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel(L10n.text("claude.account.options"))
+                }
+            }
+            .disabled(unavailable)
+        }
+    }
+
+    @ViewBuilder private var codexLocations: some View {
+        HStack {
+            TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))
+            if let report = cliReport, report.candidates.count > 1 {
+                Menu(L10n.text("settings.other_locations")) {
+                    ForEach(report.candidates) { candidate in
+                        Button(L10n.text("settings.cli_candidate", candidate.source, candidate.url.path)) { executable = candidate.url.path }
+                    }
+                }.fixedSize()
+            }
+            Button(L10n.text("common.choose")) { choose(directory: false) }
+        }
+        HStack {
+            TextField(L10n.text("settings.codex_home"), text: $home, prompt: Text(L10n.text("settings.home_placeholder")))
+            Button(L10n.text("common.choose")) { choose(directory: true) }
+        }
+        if executable != (UserDefaults.standard.string(forKey: "codexExecutable") ?? "") ||
+            home != (UserDefaults.standard.string(forKey: "codexHome") ?? "") {
+            caption(L10n.text("settings.applies_on_save"))
+        }
+    }
+
+    @ViewBuilder private var claudeLocations: some View {
+        HStack {
+            TextField(L10n.text("provider.claude_home"), text: $claudeHome, prompt: Text("~/.claude"))
+            Button(L10n.text("common.choose")) { chooseClaudeHome() }
+        }
+        if resolvedClaudeHome != model.claudeHome.path { caption(L10n.text("settings.applies_on_save")) }
     }
 
     /// One grouped section per component category. Each component is a single
@@ -441,7 +520,7 @@ struct SettingsView: View {
                         set: { if $0 { showsResetExpiryDetails.insert(provider) } else { showsResetExpiryDetails.remove(provider) } }))
                 }
             } else {
-                Text(L10n.text(model.providerRefreshing(provider) ? "quota.loading" : "quota.not_connected"))
+                Text(model.providerRefreshing(provider) ? L10n.text("quota.loading") : L10n.text("quota.not_connected", provider.displayName))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             if let warning = model.providerHistoryWarning(provider) {
@@ -449,150 +528,11 @@ struct SettingsView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary).help(warning)
             }
             HStack(spacing: 12) {
-                if provider == .claude, model.claudeConnectionNeeded {
-                    Button(L10n.text(model.claudeConnectionActionTitleKey)) { model.connectClaudeQuota() }
-                        .help(L10n.text(model.claudeConnectionActionHelpKey))
-                }
                 Button(L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.refresh")) {
                     model.retryQuotaConnection(for: provider)
                 }
             }.font(.system(size: 11)).disabled(model.providerRefreshing(provider))
         }
-    }
-
-    @ViewBuilder private var claudeSourceSections: some View {
-        let monitoringConfigured = claudeSetupStatus?.hooksConfigured ?? model.claudeMonitoringConfigured
-        Section(L10n.text("claude.section.account")) {
-            HStack {
-                TextField(L10n.text("provider.claude_home"), text: $claudeHome, prompt: Text("~/.claude"))
-                Button(L10n.text("common.choose")) { chooseClaudeHome() }
-            }
-            LabeledContent {
-                HStack(spacing: 8) {
-                    if model.claudeNeedsOrganizationSelection {
-                        Button(L10n.text("claude.quota.choose_workspace")) { model.chooseClaudeOrganization() }
-                            .help(L10n.text("claude.quota.choose_workspace_help"))
-                    }
-                    Button(L10n.text("claude.quota.connect")) { model.signInClaudeQuota() }
-                        .help(L10n.text("claude.quota.connect_help"))
-                }
-                .disabled(model.providerRefreshing(.claude) || resolvedClaudeHome != model.claudeHome.path || !model.isModuleEnabled(.claude))
-            } label: {
-                Text(L10n.text("claude.section.web_session"))
-                Text(L10n.text("claude.quota.connect_help"))
-            }
-            if resolvedClaudeHome != model.claudeHome.path || !model.isModuleEnabled(.claude) {
-                caption(L10n.text("settings.applies_on_save"))
-            }
-        }
-        Section(L10n.text("claude.section.monitoring")) {
-            LabeledContent {
-                HStack(spacing: 8) {
-                    if monitoringConfigured {
-                        Button(L10n.text(removingClaude ? "provider.removing" : "provider.remove_monitoring")) { removeClaude() }
-                            .help(L10n.text("provider.remove_monitoring_help"))
-                            .disabled(claudeSetupBusy || resolvedClaudeHome != model.claudeHome.path)
-                    }
-                    Button(L10n.text(configuringClaude ? "provider.configuring" : "provider.configure")) { configureClaude() }
-                        .disabled(configuringClaude || resolvedClaudeHome != model.claudeHome.path)
-                }
-            } label: {
-                Label {
-                    Text(L10n.text(monitoringConfigured ? "provider.monitoring_configured" : "provider.monitoring_needed"))
-                } icon: {
-                    Image(systemName: monitoringConfigured ? "checkmark.circle.fill" : "circle.dashed")
-                        .foregroundStyle(monitoringConfigured ? Color.green : Color.secondary)
-                }
-                Text(L10n.text("provider.claude_monitoring_help"))
-            }
-            if monitoringConfigured, let status = claudeSetupStatus {
-                Text(L10n.text(status.telemetryConflict ? "provider.telemetry_conflict" :
-                    status.telemetryConfigured ? "provider.telemetry_configured" : "provider.telemetry_needed"))
-                    .font(.system(size: 11)).foregroundStyle(status.telemetryConflict ? Color.orange : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if claudeSetupStatus?.updateAvailable == true {
-                Text(L10n.text("provider.monitoring_update")).font(.system(size: 11)).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let claudeSetupMessage { caption(claudeSetupMessage) }
-        }
-        Section(L10n.text("claude.section.ssh")) {
-            TextField(L10n.text("provider.claude_ssh_hosts"), text: $claudeSSHHosts,
-                prompt: Text(L10n.text("provider.claude_ssh_placeholder")))
-                .disabled(!monitorSSH)
-            caption(L10n.text("provider.claude_ssh_help"))
-            claudeRemoteSetupControls
-            if monitorSSH, !claudeSSHFailures.isEmpty { sshFailures(claudeSSHFailures) }
-        }
-    }
-
-    @ViewBuilder private var claudeRemoteSetupControls: some View {
-        if !model.claudeRemoteTargets.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(L10n.text("provider.remote_setup")).font(.system(size: 12, weight: .medium))
-                ForEach(model.claudeRemoteTargets, id: \.id) { target in
-                    claudeRemoteSetupRow(target)
-                }
-                if claudeSSHHostsChanged || monitorSSH != model.monitorsSSH || !model.isModuleEnabled(.claude) {
-                    Text(L10n.text("settings.applies_on_save")).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-            }.padding(.vertical, 4)
-        }
-    }
-
-    private func claudeRemoteSetupRow(_ target: RemoteActivityTarget) -> some View {
-        let configuring = claudeRemoteSetupRequests.contains(target.id) || model.configuringClaudeHosts.contains(target.id)
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 12) {
-                Text(target.alias).font(.system(size: 12, weight: .medium, design: .monospaced)).lineLimit(1)
-                    .textSelection(.enabled).help(target.alias)
-                Spacer(minLength: 4)
-                Button(L10n.text(configuring ? "provider.configuring" : "provider.configure")) {
-                    configureClaudeRemote(target)
-                }
-                .font(.system(size: 11))
-                .disabled(configuring || !monitorSSH || claudeSSHHostsChanged ||
-                    monitorSSH != model.monitorsSSH || !model.isModuleEnabled(.claude))
-                .accessibilityLabel(L10n.text("provider.remote_setup_action", target.alias))
-            }
-            if model.providerStreamStatuses(.claude)[target.id]?.sourceAvailable == false {
-                Text(L10n.text("provider.remote_source_missing")).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let status = model.claudeRemoteSetupStatus[target.id] {
-                Text(L10n.text(status.hooksConfigured ? "provider.monitoring_configured" : "provider.monitoring_needed"))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                Text(L10n.text(status.telemetryConflict ? "provider.telemetry_conflict" :
-                    status.telemetryConfigured ? "provider.remote_metrics_configured" : "provider.telemetry_needed"))
-                    .font(.system(size: 11)).foregroundStyle(status.telemetryConflict ? Color.orange : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let message = claudeRemoteSetupMessages[target.id] {
-                Text(message).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func configureClaudeRemote(_ target: RemoteActivityTarget) {
-        guard monitorSSH, monitorSSH == model.monitorsSSH, !claudeSSHHostsChanged, model.isModuleEnabled(.claude),
-              !model.configuringClaudeHosts.contains(target.id), claudeRemoteSetupRequests.insert(target.id).inserted else { return }
-        claudeRemoteSetupMessages.removeValue(forKey: target.id)
-        Task { @MainActor in
-            let failure = await model.configureClaudeRemote(targetID: target.id)
-            if let failure { claudeRemoteSetupMessages[target.id] = failure }
-            else if model.claudeRemoteSetupStatus[target.id] != nil {
-                claudeRemoteSetupMessages[target.id] = L10n.text("provider.remote_setup_success") + " " + L10n.text("provider.remote_setup_restart")
-            }
-            claudeRemoteSetupRequests.remove(target.id)
-        }
-    }
-
-    private var claudeSSHFailures: [String] {
-        let prefix = "remote-ssh-discovered:"
-        return model.providerStreamStatuses(.claude).filter { $0.key.hasPrefix(prefix) && $0.value.hasConnectionFailure }
-            .map { String($0.key.dropFirst(prefix.count)) }.sorted()
     }
 
     private func quotaWindowPicker(_ provider: AgentProvider, selection: Binding<String>) -> some View {
@@ -639,99 +579,6 @@ struct SettingsView: View {
         panel.message = L10n.text("provider.choose_claude_home")
         if panel.runModal() == .OK, let path = panel.url?.path { claudeHome = path }
     }
-    private func configureClaude() {
-        guard !configuringClaude else { return }
-        configuringClaude = true; claudeSetupMessage = nil
-        Task { @MainActor in
-            claudeSetupMessage = await model.configureClaudeMonitoring()
-            claudeSetupStatus = ClaudeHookInstaller.details(home: model.claudeHome)
-            configuringClaude = false
-        }
-    }
-    private func removeClaude() {
-        guard !claudeSetupBusy else { return }
-        removingClaude = true; claudeSetupMessage = nil
-        Task { @MainActor in
-            claudeSetupMessage = await model.removeClaudeMonitoring()
-            claudeSetupStatus = ClaudeHookInstaller.details(home: model.claudeHome)
-            removingClaude = false
-        }
-    }
-
-    @ViewBuilder private var cliDiscovery: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let report = cliReport {
-                if let selected = report.selected {
-                    Text(L10n.text("settings.detected_cli", selected.source))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                    Text(selected.url.path)
-                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                } else if let issue = report.issue {
-                    Text(issue).font(.system(size: 11)).foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                }
-                HStack(spacing: 12) {
-                    Button(L10n.text("settings.rescan")) { cliScanRevision += 1 }
-                    if !executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button(L10n.text("settings.use_automatic")) { executable = "" }
-                    }
-                    if report.candidates.count > 1 {
-                        Menu(L10n.text("settings.other_locations")) {
-                            ForEach(report.candidates) { candidate in
-                                Button(L10n.text("settings.cli_candidate", candidate.source, candidate.url.path)) { executable = candidate.url.path }
-                            }
-                        }.fixedSize()
-                    }
-                    Button(testingCLI ? L10n.text("settings.testing") : L10n.text("settings.test_connection"), action: testCLIConnection)
-                        .disabled(report.selected == nil)
-                }.font(.system(size: 11))
-            } else {
-                Text(L10n.text("settings.finding_cli")).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            if let cliTestMessage {
-                Text(cliTestMessage)
-                    .font(.system(size: 11)).foregroundStyle(cliTestSucceeded ? Color.green : Color.orange)
-                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
-        }
-    }
-
-    private func testCLIConnection() {
-        guard let candidate = cliReport?.selected, !testingCLI else { return }
-        let requestedHome = home.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawHome = requestedHome.isEmpty
-            ? (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex") : requestedHome
-        let resolvedHome = CodexExecutableResolver.normalize(rawHome)
-        if !requestedHome.isEmpty {
-            var isDirectory: ObjCBool = false
-            guard resolvedHome.hasPrefix("/"), FileManager.default.fileExists(atPath: resolvedHome, isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
-                cliTestSucceeded = false
-                cliTestMessage = L10n.text("settings.home_missing", resolvedHome)
-                return
-            }
-        }
-        testingCLI = true
-        cliTestMessage = L10n.text("settings.testing_detail")
-        cliTestSucceeded = false
-        Task { @MainActor in
-            let client = CodexClient(executable: candidate.url, home: URL(fileURLWithPath: resolvedHome), timeout: 8)
-            do {
-                let snapshot = try await client.readQuota()
-                cliTestSucceeded = !snapshot.windows.isEmpty
-                cliTestMessage = snapshot.windows.isEmpty
-                    ? L10n.text("settings.empty_quota")
-                    : L10n.text("settings.connection_succeeded", snapshot.windows.count)
-            } catch {
-                cliTestSucceeded = false
-                cliTestMessage = CodexDiagnosticText.description(of: error)
-            }
-            await client.disconnect()
-            testingCLI = false
-        }
-    }
-
     private func choose(directory: Bool) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = !directory

@@ -21,9 +21,11 @@ final class ClaudeRemoteSetupTests: XCTestCase {
         try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
     }
 
-    private func runInstaller(home: URL, environment: [String: String]? = nil) throws -> (value: [String: Any], bytes: Data, status: Int32) {
+    private func runInstaller(home: URL, environment: [String: String]? = nil, requireHome: Bool = false) throws -> (value: [String: Any], bytes: Data, status: Int32) {
         let resources = try ClaudeRemoteSetup.resources()
-        let payload = try JSONSerialization.data(withJSONObject: ["home": home.path, "hook": resources.hook.base64EncodedString()])
+        var request: [String: Any] = ["home": home.path, "hook": resources.hook.base64EncodedString()]
+        if requireHome { request["requireHome"] = true }
+        let payload = try JSONSerialization.data(withJSONObject: request)
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", "-u", "-c", "import base64;exec(base64.b64decode('\(resources.installer.base64EncodedString())').decode())", payload.base64EncodedString()]
@@ -75,6 +77,71 @@ final class ClaudeRemoteSetupTests: XCTestCase {
         }
         XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: fixture.home.appendingPathComponent("pacer").path)[.posixPermissions] as? NSNumber)?.intValue, 0o700)
         XCTAssertEqual(try Data(contentsOf: fixture.home.appendingPathComponent("pacer/hook.py")), try ClaudeRemoteSetup.resources().hook)
+    }
+
+    /// Automatic setup runs on every update of the adapter, so a current host
+    /// must see no writes and a host without Claude must not gain a home.
+    func testAutomaticSetupSkipsMissingHomeAndLeavesCurrentFilesUntouched() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let absent = fixture.root.appendingPathComponent("absent/.claude")
+        let skipped = try runInstaller(home: absent, requireHome: true)
+        XCTAssertEqual(skipped.value["error"] as? String, "missingHome")
+        XCTAssertThrowsError(try ClaudeRemoteSetup.status(data: skipped.bytes, exitStatus: skipped.status)) { error in
+            XCTAssertEqual(error as? ClaudeRemoteSetup.Failure, .missingHome)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: absent.deletingLastPathComponent().path))
+
+        let file = fixture.home.appendingPathComponent("settings.json")
+        try write(["env": ["USER_SETTING": "retained"], "custom": ["enabled": true]], to: file)
+        XCTAssertEqual(try runInstaller(home: fixture.home, requireHome: true).status, 0)
+        let paths = [file, fixture.home.appendingPathComponent("pacer/installation.json"), fixture.home.appendingPathComponent("pacer/hook.py")]
+        // Content plus inode: an atomic rewrite of identical bytes still replaces the file.
+        func identities() throws -> [String] {
+            try paths.map { path in
+                let inode = (try FileManager.default.attributesOfItem(atPath: path.path)[.systemFileNumber] as? NSNumber)?.intValue ?? -1
+                return "\(try Data(contentsOf: path).base64EncodedString()):\(inode)"
+            }
+        }
+        let installed = try identities()
+        let repeated = try runInstaller(home: fixture.home, requireHome: true)
+        XCTAssertTrue(try ClaudeRemoteSetup.status(data: repeated.bytes, exitStatus: repeated.status).hooksConfigured)
+        XCTAssertEqual(try identities(), installed, "A current installation is not rewritten")
+
+        // An outdated hook is replaced on its own; settings stay byte-identical.
+        let settings = try Data(contentsOf: file)
+        try Data("# outdated\n".utf8).write(to: paths[2])
+        XCTAssertEqual(try runInstaller(home: fixture.home, requireHome: true).status, 0)
+        XCTAssertEqual(try Data(contentsOf: paths[2]), try ClaudeRemoteSetup.resources().hook)
+        XCTAssertEqual(try Data(contentsOf: file), settings)
+    }
+
+    func testAutomaticSetupRunsOncePerDigestForConnectedHostsAndBacksOffFailures() throws {
+        let suite = "pacer-claude-auto-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
+
+        func host(_ alias: String) -> RemoteActivityTarget {
+            RemoteActivityTarget(id: "remote-ssh-discovered:" + alias, name: alias, alias: alias, home: "~/.claude")
+        }
+        func stream(connected: Bool, source: Bool? = true) -> RuntimeStreamStatus {
+            var status = RuntimeStreamStatus(); status.connected = connected; status.sourceAvailable = source; return status
+        }
+        let targets = ["current", "outdated", "fresh", "offline", "no-claude", "busy", "failed", "failed-long-ago"].map(host)
+        var statuses = Dictionary(uniqueKeysWithValues: targets.map { ($0.id, stream(connected: true)) })
+        statuses[host("offline").id] = stream(connected: false, source: nil)
+        statuses[host("no-claude").id] = stream(connected: false, source: false)
+        let now = Date()
+        let pending = ClaudeRemoteAutoSetup.pending(targets: targets, statuses: statuses,
+            configured: ["current": "digest-2", "outdated": "digest-1"], digest: "digest-2",
+            failures: [host("failed").id: now.addingTimeInterval(-60), host("failed-long-ago").id: now.addingTimeInterval(-ClaudeRemoteAutoSetup.retryInterval)],
+            inFlight: [host("busy").id], now: now)
+        XCTAssertEqual(pending.map(\.alias), ["outdated", "fresh", "failed-long-ago"])
+
+        for index in 0..<40 { ClaudeRemoteAutoSetup.recordConfigured(alias: String(format: "host-%02d", index), digest: "digest", defaults: defaults) }
+        let recorded = ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults)
+        XCTAssertEqual(recorded.count, 32)
+        XCTAssertEqual(recorded["host-39"], "digest")
+        XCTAssertFalse(try ClaudeRemoteSetup.adapterDigest().isEmpty)
+        XCTAssertEqual(try ClaudeRemoteSetup.adapterDigest(), try ClaudeRemoteSetup.adapterDigest())
     }
 
     func testConflictingTelemetryAndInheritedExporterStayUntouched() throws {

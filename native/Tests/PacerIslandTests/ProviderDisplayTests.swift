@@ -471,6 +471,37 @@ final class ProviderDisplayTests: XCTestCase {
         XCTAssertEqual(Set(sources.map(\.id)).count, sources.count, "A failed Codex host listed twice appears once")
     }
 
+    func testSSHHostsShowEachModuleOnOneRowWithProblemsFirst() {
+        func status(_ connected: Bool, threads: Int = 0, available: Bool? = nil) -> RuntimeStreamStatus {
+            var value = RuntimeStreamStatus(); value.connected = connected; value.attachedThreads = threads; value.sourceAvailable = available
+            return value
+        }
+        let prefix = "remote-ssh-discovered:"
+        let codex = [prefix + "build-box": status(true, threads: 2), prefix + "gpu": status(false, available: false)]
+        let claude = [prefix + "build-box": status(true, threads: 1, available: true), prefix + "gpu": status(false, available: false),
+                      prefix + "fresh": status(true, available: true), prefix + "broken": status(true, available: true),
+                      prefix + "offline": status(false), prefix + "busy": status(true, available: true)]
+        let aliases = ["build-box", "gpu", "fresh", "broken", "offline", "pending", "busy"]
+        let hosts = SSHHost.hosts(codex: codex, unavailableCodex: ["lab"], claude: claude, claudeAliases: aliases,
+            configured: ["build-box"], configuring: ["busy"], failed: ["broken", "busy"])
+        XCTAssertEqual(hosts.map(\.alias), ["broken", "lab", "offline", "build-box", "busy", "fresh", "gpu", "pending"])
+        func modules(_ alias: String) -> [String] {
+            hosts.first { $0.alias == alias }!.modules.map { "\($0.provider.rawValue):\($0.state):\($0.sessions)" }
+        }
+        XCTAssertEqual(modules("build-box"), ["codex:connected:2", "claude:connected:1"], "Both modules share one row, Codex first")
+        XCTAssertEqual(modules("gpu"), ["codex:paused:0", "claude:paused:0"])
+        XCTAssertEqual(modules("fresh"), ["claude:configuring:0"], "A connected host without current hooks is still being set up")
+        XCTAssertEqual(modules("broken"), ["claude:setupFailed:0"])
+        XCTAssertEqual(modules("busy"), ["claude:configuring:0"], "A retry in flight replaces the earlier failure")
+        XCTAssertEqual(modules("offline"), ["claude:retrying:0"])
+        XCTAssertEqual(modules("pending"), ["claude:waiting:0"])
+        XCTAssertEqual(modules("lab"), ["codex:retrying:0"])
+        XCTAssertEqual(hosts.filter(\.claudeSetupFailed).map(\.alias), ["broken"])
+        let claudeOnly = SSHHost.hosts(codex: nil, unavailableCodex: ["lab"], claude: claude, claudeAliases: ["build-box"],
+            configured: ["build-box"], configuring: [], failed: [])
+        XCTAssertEqual(claudeOnly.map { $0.modules.map(\.provider) }, [[.claude]], "A disabled module adds no hosts or statuses")
+    }
+
     func testDisablingBothModulesLeavesNoQuotaOrTaskComponentsAndRejectsTabSelection() async throws {
         let fixture = try fixture(), model = fixture.model
         defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }

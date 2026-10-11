@@ -2,6 +2,10 @@
 
 ## 3.0.0 (development candidate)
 
+- Make Codex and Claude settings read the same and set themselves up. Pacer installs and refreshes its local Claude hooks while the Claude module is on (never creating a Claude home, writing nothing when current) and removes them when the module is turned off by hand, so the Configure/Remove buttons are gone. Each module pane now shows a "This Mac" section with one status row per item, a button only when something needs attention, and path overrides folded into Custom Locations. Claude sign-in reads as a status (signed in, not signed in, workspace needed); Switch Account sits in the row's menu once signed in. The Codex CLI test button and explanatory captions about telemetry, modules and SSH are removed or moved into tooltips; Claude's quota placeholder no longer says "Codex".
+
+- Set up Claude monitoring on SSH hosts automatically, like Codex SSH detection needs no setup: connected hosts that already have Claude Code get Pacer's additive hooks once per shipped adapter version, current hosts see no writes, hosts without Claude are skipped and failures retry after 30 minutes. SSH now lives in one place: Settings → Connections lists each SSH host once with its Codex and Claude status side by side, a single switch covers both modules, and added aliases sit beside them. The Claude pane's SSH section, its Configure buttons and the separate automatic-setup switch are gone; turning off SSH monitoring stops remote setup too.
+
 - Show a getting-started welcome once on a fresh 3.0 install or the first launch after upgrading from 2.x: quick links to Claude setup and the collapsed bar, then the Help legend. It stays available in Settings → Help.
 
 - Turn the Connections pane into a diagnostics page: a status summary, every task source with problems first and a retry action, quota freshness per provider, and the SSH and Codex Remote Control switches together. Paused hosts without the provider are distinguished from disconnected ones.

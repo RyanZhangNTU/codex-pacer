@@ -96,6 +96,10 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.model.providerStreamStatuses(.claude)["remote-ssh-discovered:fixture"]?.sourceAvailable, true)
         XCTAssertEqual(fixture.model.providerStreamStatuses(.claude)["remote-ssh-discovered:other"]?.sourceAvailable, false)
         XCTAssertEqual(fixture.model.claudeRemoteSetupStatus["remote-ssh-discovered:fixture"]?.hooksConfigured, true)
+        let targets = fixture.model.claudeRemoteTargets
+        XCTAssertEqual(targets.map { fixture.model.claudeRemoteConfigured($0) }, targets.map { $0.alias == "fixture" },
+            "Success records the shipped adapter digest for that alias only, so automatic setup stays quiet")
+        XCTAssertNil(fixture.model.claudeRemoteSetupFailures["remote-ssh-discovered:fixture"])
     }
 
     func testFailedRemoteSetupDoesNotBypassSourceBackoff() async throws {
@@ -106,5 +110,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         XCTAssertNotNil(result)
         XCTAssertEqual(try fixture.launches("fixture"), before)
         XCTAssertNil(fixture.model.claudeRemoteSetupStatus["remote-ssh-discovered:fixture"])
+        XCTAssertNotNil(fixture.model.claudeRemoteSetupFailures["remote-ssh-discovered:fixture"], "Settings shows the failure with a retry")
+        XCTAssertFalse(fixture.model.claudeRemoteTargets.contains { fixture.model.claudeRemoteConfigured($0) })
     }
 }

@@ -1,8 +1,9 @@
-"""Explicit, private Claude monitoring installation (Python 3.6+).
+"""Private Claude monitoring installation (Python 3.6+).
 
 The caller ships the Pacer emitter; this program never downloads packages or
 reads credentials. Its single stdout response contains only setup booleans or
-an allowlisted error code.
+an allowlisted error code. Automatic runs require an existing Claude home and
+write nothing when the installation is already current.
 """
 import base64
 import json
@@ -173,7 +174,8 @@ def removing_owned(groups, owned):
 def install(payload):
     path = payload.get('home')
     emitter = payload.get('hook')
-    if not isinstance(path, str) or len(path) > 4096 or not isinstance(emitter, str) or len(emitter) > LIMIT:
+    require_home = payload.get('requireHome', False)
+    if not isinstance(path, str) or len(path) > 4096 or not isinstance(emitter, str) or len(emitter) > LIMIT or not isinstance(require_home, bool):
         raise Failure('invalidPayload')
     try:
         hook_bytes = base64.b64decode(emitter, validate=True)
@@ -183,6 +185,9 @@ def install(payload):
     if not hook_bytes or len(hook_bytes) > LIMIT:
         raise Failure('invalidPayload')
     home = pathlib.Path(path).expanduser()
+    # A host without Claude is skipped rather than given a new Claude home.
+    if require_home and not home.is_dir():
+        raise Failure('missingHome')
     safe(home, directory=True)
     safe(home.parent, directory=True)
     directory = home / 'pacer'
@@ -256,19 +261,26 @@ def install(payload):
     safe(directory, directory=True)
     if read_bytes(settings_path) != original_settings or read_bytes(manifest_path) != original_manifest:
         raise Failure('changedSettings')
-    atomic_bytes(script_path, hook_bytes, 0o700)
+    # Unchanged content is never rewritten, so repeated automatic checks leave
+    # the user's files, their formatting and modification times alone.
+    if read_bytes(script_path) != hook_bytes:
+        atomic_bytes(script_path, hook_bytes, 0o700)
     if read_bytes(settings_path) != original_settings or read_bytes(manifest_path) != original_manifest:
         raise Failure('changedSettings')
-    atomic_bytes(manifest_path, encoded(manifest))
+    manifest_changed = original_manifest is None or manifest != object_bytes(original_manifest)
+    if manifest_changed:
+        atomic_bytes(manifest_path, encoded(manifest))
     try:
         if read_bytes(settings_path) != original_settings:
             raise Failure('changedSettings')
-        atomic_bytes(settings_path, encoded(value))
+        if original_settings is None or value != object_bytes(original_settings):
+            atomic_bytes(settings_path, encoded(value))
     except Exception:
-        if original_manifest is None:
-            manifest_path.unlink()
-        else:
-            atomic_bytes(manifest_path, original_manifest)
+        if manifest_changed:
+            if original_manifest is None:
+                manifest_path.unlink()
+            else:
+                atomic_bytes(manifest_path, original_manifest)
         raise
     return {'hooksConfigured': True,
             'telemetryConfigured': all(env.get(key) == setting for key, setting in ENVIRONMENT.items()) and not conflict,

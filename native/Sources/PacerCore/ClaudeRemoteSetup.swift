@@ -1,13 +1,16 @@
 import Foundation
 import CoreFoundation
+import CryptoKit
 import Darwin
 
-/// Settings calls this actor only after an explicit setup click. Discovery and
-/// monitoring never install configuration on a remote host.
+/// Installs Pacer's additive Claude hooks on an SSH host. The island runs it
+/// automatically for reachable hosts that already have Claude (see
+/// `ClaudeRemoteAutoSetup`); Settings can also retry it. It never creates a
+/// Claude home in automatic mode and rewrites nothing that is already current.
 public actor ClaudeRemoteSetup {
     public enum Failure: Error, LocalizedError, Equatable, Sendable {
         case invalidTarget, unavailableResources, connectionFailed, invalidSettings
-        case unsafePath, changedSettings, setupFailed, timedOut, cancelled, invalidResponse
+        case unsafePath, changedSettings, setupFailed, timedOut, cancelled, invalidResponse, missingHome
 
         public var errorDescription: String? {
             switch self {
@@ -21,6 +24,7 @@ public actor ClaudeRemoteSetup {
             case .timedOut: return "Remote Claude monitoring setup timed out."
             case .cancelled: return "Remote Claude monitoring setup was cancelled."
             case .invalidResponse: return "The remote Claude monitoring setup response could not be read."
+            case .missingHome: return "Claude is not installed for this SSH user; monitoring was not added."
             }
         }
     }
@@ -41,8 +45,9 @@ public actor ClaudeRemoteSetup {
         self.timeout = min(15, max(0.05, timeout))
     }
 
-    @discardableResult public func install(target: RemoteActivityTarget) async throws -> ClaudeHookInstaller.Status {
-        let arguments = try Self.arguments(target: target)
+    /// `requireHome` is set for automatic setup so a host without Claude is skipped.
+    @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false) async throws -> ClaudeHookInstaller.Status {
+        let arguments = try Self.arguments(target: target, requireHome: requireHome)
         let identifier = UUID()
         let operation = ClaudeRemoteSetupOperation(executable: executable, arguments: arguments)
         operations[identifier] = operation
@@ -73,15 +78,26 @@ public actor ClaudeRemoteSetup {
         operations.removeAll()
     }
 
-    static func arguments(target: RemoteActivityTarget) throws -> [String] {
+    static func arguments(target: RemoteActivityTarget, requireHome: Bool = false) throws -> [String] {
         guard target.alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { throw Failure.invalidTarget }
         let (installer, hook) = try resources()
         // Remote collectors use the default Claude home. Never reuse a Codex
         // target's home field or put a local/remote private path into this command.
-        let payload = try JSONSerialization.data(withJSONObject: ["home": "~/.claude", "hook": hook.base64EncodedString()], options: [.sortedKeys])
+        var request: [String: Any] = ["home": "~/.claude", "hook": hook.base64EncodedString()]
+        if requireHome { request["requireHome"] = true }
+        let payload = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
         let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(installer.base64EncodedString())\").decode())' \(payload.base64EncodedString())"
         return ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes",
                 "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", target.alias, command]
+    }
+
+    /// Identifies the shipped installer and hook. A host configured with an
+    /// older digest is brought current automatically after an update.
+    public static func adapterDigest() throws -> String {
+        let (installer, hook) = try resources()
+        var hash = SHA256()
+        hash.update(data: installer); hash.update(data: Data([0])); hash.update(data: hook)
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     static func resources() throws -> (installer: Data, hook: Data) {
@@ -102,6 +118,7 @@ public actor ClaudeRemoteSetup {
             case "invalidSettings": throw Failure.invalidSettings
             case "unsafePath": throw Failure.unsafePath
             case "changedSettings": throw Failure.changedSettings
+            case "missingHome": throw Failure.missingHome
             default: throw Failure.setupFailed
             }
         }

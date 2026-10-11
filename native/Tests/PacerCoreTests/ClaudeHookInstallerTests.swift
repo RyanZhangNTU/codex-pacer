@@ -161,6 +161,41 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertTrue(NSDictionary(dictionary: try XCTUnwrap((removed["hooks"] as? [String: [[String: Any]]])?["PreToolUse"]?.first)).isEqual(to: userGroup))
         XCTAssertNil(removed["statusLine"]); XCTAssertNil(removed["env"])
     }
+    /// The island runs this on every Claude start, so a current home must see
+    /// no writes and a Mac without Claude must not gain a Claude home.
+    func testEnsureInstalledSkipsMissingHomeAndWritesOnlyWhenNeeded() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let absent = fixture.root.appendingPathComponent("absent/.claude")
+        XCTAssertEqual(ClaudeHookInstaller.ensureInstalled(home: absent), .missingHome)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: absent.deletingLastPathComponent().path))
+
+        let file = fixture.home.appendingPathComponent("settings.json")
+        try write(["env": ["USER_SETTING": "retained"]], to: file)
+        XCTAssertEqual(ClaudeHookInstaller.ensureInstalled(home: fixture.home), .installed)
+        XCTAssertTrue(ClaudeHookInstaller.details(home: fixture.home).hooksConfigured)
+        XCTAssertEqual((try read(file)["env"] as? [String: String])?["USER_SETTING"], "retained")
+        let paths = [file, fixture.home.appendingPathComponent("pacer/installation.json"), fixture.home.appendingPathComponent("pacer/hook.py")]
+        func identities() throws -> [String] {
+            try paths.map { path in
+                let inode = (try FileManager.default.attributesOfItem(atPath: path.path)[.systemFileNumber] as? NSNumber)?.intValue ?? -1
+                return "\(try Data(contentsOf: path).base64EncodedString()):\(inode)"
+            }
+        }
+        let installed = try identities()
+        XCTAssertEqual(ClaudeHookInstaller.ensureInstalled(home: fixture.home), .current)
+        XCTAssertEqual(try identities(), installed, "A current installation is not rewritten")
+
+        var settings = try read(file), hooks = try XCTUnwrap(settings["hooks"] as? [String: Any])
+        hooks.removeValue(forKey: "Stop"); settings["hooks"] = hooks
+        try write(settings, to: file)
+        XCTAssertEqual(ClaudeHookInstaller.ensureInstalled(home: fixture.home), .installed, "A missing required hook is restored")
+        XCTAssertTrue(ClaudeHookInstaller.details(home: fixture.home).hooksConfigured)
+
+        try Data("{broken".utf8).write(to: file)
+        XCTAssertEqual(ClaudeHookInstaller.ensureInstalled(home: fixture.home), .failed)
+        XCTAssertEqual(try Data(contentsOf: file), Data("{broken".utf8), "Invalid settings are never overwritten")
+    }
+
     func testInstallReportsAvailableUpdateUntilLegacyEntriesAreReplaced() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let file = fixture.home.appendingPathComponent("settings.json")
