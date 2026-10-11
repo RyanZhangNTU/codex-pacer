@@ -292,7 +292,6 @@
 "appearance.glass_adjust" = "调整…";
 "appearance.glass_reduced" = "纯黑（已开启“降低透明度”）";
 "settings.hide_projects_help" = "灵动岛和通知里的任务名统一显示为「任务」，适合录屏或共享屏幕时使用。";
-"reminders.section.island" = "在岛上提醒";
 "warning.fiveHour" = "5h 额度不足";
 "warning.ssh" = "SSH 主机未连接";
 "warning.quotaDelay" = "额度更新延迟";
@@ -302,9 +301,6 @@
 "layout.short.warnings" = "警告";
 "layout.detail.warnings" = "出现问题时显示的图标";
 "layout.warnings_choose" = "在「提醒」中选择显示哪些警告";
-"reminders.low_quota" = "额度低于 15%";
-"reminders.waiting" = "等你回复或审批";
-"reminders.completion" = "本轮结束或中断";
 "settings.home_placeholder" = "CODEX_HOME 或 ~/.codex";
 "settings.invalid_home" = "请选择现有的 Codex 目录，使用绝对路径或 ~/ 路径。";
 "settings.liquid_glass" = "液态玻璃";
@@ -313,14 +309,15 @@
 "settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
 "settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";
 "settings.notch" = "刘海";
-"settings.notification_denied" = "系统通知未获授权，岛上提醒照常显示。";
+"settings.notification_denied" = "系统通知未获授权，可在“系统设置 > 通知”中允许。";
 "settings.one_hour" = "1 小时";
 "settings.other_locations" = "其他位置";
 "settings.pace_percentage" = "配速百分比";
 "settings.remaining_quota" = "剩余额度";
 "settings.reminders" = "提醒";
 "settings.rescan" = "重新检测";
-"settings.system_notifications" = "同时使用系统通知";
+"settings.system_notifications" = "系统通知";
+"settings.system_notifications_detail" = "需要你回复或审批、任务结束、额度低于 15% 时通知";
 "settings.thirty_minutes" = "30 分钟";
 "settings.until_clicked" = "直到点击";
 "source.ssh_retrying" = "将自动重试这些 SSH 连接。";

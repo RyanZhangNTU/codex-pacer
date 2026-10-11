@@ -292,7 +292,6 @@
 "appearance.glass_adjust" = "Adjust…";
 "appearance.glass_reduced" = "Solid (Reduce Transparency is on)";
 "settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
-"reminders.section.island" = "On the island";
 "warning.fiveHour" = "5h quota low";
 "warning.ssh" = "SSH host disconnected";
 "warning.quotaDelay" = "Quota update delayed";
@@ -302,9 +301,6 @@
 "layout.short.warnings" = "Warnings";
 "layout.detail.warnings" = "Icons that appear when something needs attention";
 "layout.warnings_choose" = "Choose warnings in Reminders";
-"reminders.low_quota" = "Quota below 15%";
-"reminders.waiting" = "Needs your reply or approval";
-"reminders.completion" = "Turn ended or interrupted";
 "settings.home_placeholder" = "CODEX_HOME or ~/.codex";
 "settings.invalid_home" = "Choose an existing Codex data folder using an absolute path or a ~/ path.";
 "settings.liquid_glass" = "Liquid Glass";
@@ -313,14 +309,15 @@
 "settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
 "settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";
 "settings.notch" = "Notch";
-"settings.notification_denied" = "System notifications aren’t allowed; island reminders still appear.";
+"settings.notification_denied" = "System notifications aren’t allowed. Allow them in System Settings > Notifications.";
 "settings.one_hour" = "1 hour";
 "settings.other_locations" = "Other Locations";
 "settings.pace_percentage" = "Pace Percentage";
 "settings.remaining_quota" = "Remaining Quota";
 "settings.reminders" = "Reminders";
 "settings.rescan" = "Rescan";
-"settings.system_notifications" = "Also Use System Notifications";
+"settings.system_notifications" = "System Notifications";
+"settings.system_notifications_detail" = "When a task needs your reply or approval, ends, or quota falls below 15%";
 "settings.thirty_minutes" = "30 minutes";
 "settings.until_clicked" = "Until Clicked";
 "source.ssh_retrying" = "Pacer will retry these connections automatically.";

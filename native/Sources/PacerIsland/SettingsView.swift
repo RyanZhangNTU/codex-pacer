@@ -22,9 +22,6 @@ struct SettingsView: View {
     @State private var singleTask = ActivityBadgeSingleTask()
     @State private var windowID = UserDefaults.standard.string(forKey: "quotaWindowID") ?? "auto"
     @State private var claudeWindowID = UserDefaults.standard.string(forKey: "claudeQuotaWindowID") ?? "auto"
-    @State private var lowReminder = UserDefaults.standard.bool(forKey: "lowQuotaReminder")
-    @State private var inputReminder = UserDefaults.standard.bool(forKey: "inputReminder")
-    @State private var completionReminder = UserDefaults.standard.bool(forKey: "completionReminder")
     @State private var completedRetention = UserDefaults.standard.object(forKey: "completedRetentionMinutes") as? Int ?? 30
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
@@ -179,27 +176,23 @@ struct SettingsView: View {
             componentSection(.quota, enabled: enabled)
             componentSection(.warnings, enabled: enabled)
         case .reminders:
-            // Warnings stay in the collapsed bar while their condition lasts;
-            // reminders mark a moment. Both are chosen here and nowhere else.
+            // The collapsed bar already shows replies, approvals, endings and
+            // quota; only warnings and the system notification are chosen here.
             Section(L10n.text("reminders.section.warnings")) {
                 warningRow(.fiveHour) { FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint) }
                 warningRow(.ssh) { Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)) }
                 warningRow(.quotaDelay) { Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)) }
             }
-            Section(L10n.text("reminders.section.island")) {
-                reminderRow("reminders.low_quota", isOn: $lowReminder) {
-                    Text("12%").font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
-                }
-                reminderRow("reminders.waiting", isOn: $inputReminder) {
-                    ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [:], attention: .input))
-                }
-                reminderRow("reminders.completion", isOn: $completionReminder) {
-                    ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
-                }
+            Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    reminderRow("settings.system_notifications", isOn: Binding(get: { notificationPreference.enabled },
-                        set: { notificationPreference.setEnabled($0) })) {
-                        Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                    HStack(spacing: 12) {
+                        IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth) {
+                            Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                        }
+                        Toggle(isOn: Binding(get: { notificationPreference.enabled }, set: { notificationPreference.setEnabled($0) })) {
+                            Text(L10n.text("settings.system_notifications"))
+                            Text(L10n.text("settings.system_notifications_detail"))
+                        }
                     }
                     if notificationPreference.denied {
                         caption(L10n.text("settings.notification_denied")).foregroundStyle(.orange)
@@ -426,14 +419,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Each reminder shows the mark it puts on the island.
-    private func reminderRow<Sample: View>(_ key: String, isOn: Binding<Bool>, @ViewBuilder sample: () -> Sample) -> some View {
-        HStack(spacing: 12) {
-            IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth, content: sample)
-            Toggle(L10n.text(key), isOn: isOn)
-        }
-    }
-
     /// Turning a warning on also brings the warnings slot back if it was removed
     /// from the bar, so this switch alone decides what shows.
     private func warningRow<Sample: View>(_ warning: CompactIslandLayout.Warning, @ViewBuilder sample: () -> Sample) -> some View {
@@ -575,8 +560,7 @@ struct SettingsView: View {
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, layout: compactLayout, appearance: appearance,
             fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
-            windowID: windowID, claudeWindowID: claudeWindowID, lowReminder: lowReminder, inputReminder: inputReminder,
-            completionReminder: completionReminder, retention: completedRetention, hideProjects: hideProjects,
+            windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl)
     }
 
@@ -600,7 +584,8 @@ struct SettingsView: View {
         // Retired preferences.
         for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
                     "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius",
-                    "islandWidthMode", "specifiedIslandWidth", "collapsedIslandWidth", "expandedIslandWidth"] {
+                    "islandWidthMode", "specifiedIslandWidth", "collapsedIslandWidth", "expandedIslandWidth",
+                    "lowQuotaReminder", "inputReminder", "completionReminder"] {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
@@ -610,9 +595,6 @@ struct SettingsView: View {
         defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)
         defaults.set(windowID, forKey: "quotaWindowID")
         defaults.set(claudeWindowID, forKey: "claudeQuotaWindowID")
-        defaults.set(lowReminder, forKey: "lowQuotaReminder")
-        defaults.set(inputReminder, forKey: "inputReminder")
-        defaults.set(completionReminder, forKey: "completionReminder")
         defaults.set(completedRetention, forKey: "completedRetentionMinutes")
         defaults.set(hideProjects, forKey: "hideProjects")
         model.applySettings(sourceChanged: false)
@@ -683,9 +665,6 @@ private struct LiveSettings: Equatable {
     var singleTask: ActivityBadgeSingleTask
     var windowID: String
     var claudeWindowID: String
-    var lowReminder: Bool
-    var inputReminder: Bool
-    var completionReminder: Bool
     var retention: Int
     var hideProjects: Bool
     var monitorSSH: Bool

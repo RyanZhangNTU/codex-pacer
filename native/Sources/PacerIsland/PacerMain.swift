@@ -221,8 +221,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     func applicationDidFinishLaunching(_ notification: Notification) {
         PreferencesMigration.migrate(to: .standard, from:
             UserDefaults.standard.persistentDomain(forName: "com.codexpacer.island.preview") ?? [:])
-        UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
-            "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false,
+        UserDefaults.standard.register(defaults: ["completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": QuotaWindowSelection.weekly.rawValue])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         updater = AppUpdater(enabled: !model.isDemo)

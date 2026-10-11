@@ -64,17 +64,6 @@ private struct IslandExpandedContent: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let notice = model.notice, !notice.id.hasPrefix("request:") {
-                HStack(spacing: 8) {
-                    Image(systemName: "bell.fill").font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
-                    Text(L10n.text("notice.body", notice.title, notice.detail))
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.primary).lineLimit(2)
-                }
-                .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PacerPalette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .padding(.bottom, 8)
-            }
             taskContent
             Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
             quotaContent

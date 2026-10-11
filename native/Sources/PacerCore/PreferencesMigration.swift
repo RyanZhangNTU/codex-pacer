@@ -6,8 +6,7 @@ public enum PreferencesMigration {
     private static let keys = [
         "codexExecutable", "codexHome", "monitorSSH", "floatingIsland", "islandDisplayMode",
         "islandAppearance", "showInFullscreen", "displayID",
-        "compactMetric", "quotaWindowID", "lowQuotaReminder", "inputReminder",
-        "completionReminder", "completedRetentionMinutes", "systemNotifications",
+        "compactMetric", "quotaWindowID", "completedRetentionMinutes", "systemNotifications",
         "hideProjects"
     ]
 

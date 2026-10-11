@@ -24,7 +24,6 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
         defaults.set("family-fixture", forKey: "claudeSSHHosts")
-        defaults.set(false, forKey: "completionReminder")
         defaults.set(0, forKey: "completedRetentionMinutes")
         ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
         let host = "remote-ssh-discovered:family-fixture"
@@ -63,7 +62,6 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
                     defaults.set("synthetic-ack", forKey: "claudeSSHHosts")
                     defaults.set(0, forKey: "completedRetentionMinutes")
-                    defaults.set(false, forKey: "completionReminder")
                     ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
                     let host = "remote-ssh-discovered:synthetic-ack"
                     let configuration: [String: Any] = [
@@ -120,7 +118,6 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     defer { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     defaults.set(directory.path, forKey: "codexHome")
-                    defaults.set(false, forKey: "completionReminder")
                     defaults.set(0, forKey: "completedRetentionMinutes")
                     ProviderModules(codexMode: .enabled, claudeMode: .disabled).save(to: defaults)
                     let host = "remote-ssh-discovered:scope-fixture", session = "019a0000-0000-7000-8000-000000000904"
@@ -146,9 +143,6 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                         ended.applyRuntime(["method": "turn/completed", "threadId": session, "turnId": "same-synthetic-turn", "status": "completed", "at": started.timeIntervalSince1970 + 1])
                     }
                     model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [])
-                    let notice = IslandNotice(id: ended.id + ":same-synthetic-turn:" + (waiting ? "waitingForInput" : "completed"), kind: waiting ? .waitingForInput : .completed,
-                        title: "Synthetic completion", detail: "Synthetic detail")
-                    model.notice = notice
                     let dispatched = expectation(description: "Navigation suspended"), returned = expectation(description: "Navigation returned")
                     var continuation: CheckedContinuation<ActivityOpenOutcome, Never>?
                     model.onOpenActivity = { _ in
@@ -162,13 +156,11 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     // Reconcile the real target configuration without changing the provider generation.
                     model.refreshRemote()
                     model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [])
-                    model.notice = notice
                     try XCTUnwrap(continuation).resume(returning: .openedConversation)
                     await fulfillment(of: [returned], timeout: 2)
                     await Task.yield()
                     XCTAssertEqual(model.activities.contains { $0.id == ended.id }, replaceHome || waiting)
                     XCTAssertEqual(model.isUnreadCompletion(ended), replaceHome && !waiting)
-                    XCTAssertEqual(model.notice, replaceHome ? notice : nil)
                     XCTAssertEqual(FileManager.default.fileExists(atPath: file.path), persist && !replaceHome && !waiting)
                     await model.shutdown()
                     if persist && replaceHome && !waiting {
@@ -331,7 +323,6 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             defaults.set(directory.path, forKey: "codexHome")
             defaults.set(directory.appendingPathComponent("claude-profile").path, forKey: "claudeHome")
             defaults.set(false, forKey: "monitorSSH")
-            defaults.set(false, forKey: "completionReminder")
             defaults.set(0, forKey: "completedRetentionMinutes")
             ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
             func configuration(_ home: URL, enabled: Bool = true) throws {

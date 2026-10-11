@@ -5,9 +5,6 @@ import PacerCore
 @MainActor
 final class AttentionDisplayTests: XCTestCase {
     func testAsyncRequestKeepsRunningTasksAndPersistsUntilExplicitResolution() async throws {
-        let old = UserDefaults.standard.object(forKey: "inputReminder")
-        defer { if let old { UserDefaults.standard.set(old, forKey: "inputReminder") } else { UserDefaults.standard.removeObject(forKey: "inputReminder") } }
-        UserDefaults.standard.set(true, forKey: "inputReminder")
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let model = IslandModel(demo: true, demoClock: { now })
         let before = model.activities
@@ -43,20 +40,7 @@ final class AttentionDisplayTests: XCTestCase {
         XCTAssertEqual(model.activities, before)
         XCTAssertEqual(model.headerActivity(), quiet)
     }
-    func testDisabledInputReminderRetainsSourceStateWithoutShowingAnAlert() {
-        let old = UserDefaults.standard.object(forKey: "inputReminder")
-        defer { if let old { UserDefaults.standard.set(old, forKey: "inputReminder") } else { UserDefaults.standard.removeObject(forKey: "inputReminder") } }
-        UserDefaults.standard.set(false, forKey: "inputReminder")
-        let model = IslandModel(demo: true)
-        model.observeAttentionRequests([PendingAttentionRequest(id: "synthetic", threadID: UUID().uuidString.lowercased(),
-            sourceHostID: nil, sourceName: nil, kind: .approval, detectedAt: Date())])
-        XCTAssertEqual(model.attentionRequests.count, 1)
-        XCTAssertTrue(model.pendingInputRequests.isEmpty)
-    }
     func testConnectionWarningDoesNotHideUnreadCompletion() throws {
-        let old = UserDefaults.standard.object(forKey: "completionReminder")
-        defer { if let old { UserDefaults.standard.set(old, forKey: "completionReminder") } else { UserDefaults.standard.removeObject(forKey: "completionReminder") } }
-        UserDefaults.standard.set(true, forKey: "completionReminder")
         let oldSSH = UserDefaults.standard.object(forKey: "monitorSSH")
         defer { if let oldSSH { UserDefaults.standard.set(oldSSH, forKey: "monitorSSH") } else { UserDefaults.standard.removeObject(forKey: "monitorSSH") } }
         UserDefaults.standard.set(true, forKey: "monitorSSH")
@@ -81,9 +65,6 @@ final class AttentionDisplayTests: XCTestCase {
         XCTAssertEqual(model.headerDisplayStatus, model.completionSummary)
     }
     func testAttentionJoinsMatchingTaskWithoutDuplicatesAndRetainsUnmatchedRouting() {
-        let old = UserDefaults.standard.object(forKey: "inputReminder")
-        defer { if let old { UserDefaults.standard.set(old, forKey: "inputReminder") } else { UserDefaults.standard.removeObject(forKey: "inputReminder") } }
-        UserDefaults.standard.set(true, forKey: "inputReminder")
         let model = IslandModel(demo: true)
         let task = model.activities[0]
         let request = PendingAttentionRequest(id: "matching", threadID: task.threadID!, sourceHostID: task.sourceHostID,

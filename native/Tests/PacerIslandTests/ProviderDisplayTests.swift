@@ -30,8 +30,6 @@ final class ProviderDisplayTests: XCTestCase {
     private func fixture() throws -> Fixture {
         let domain = "com.codexpacer.provider-display-tests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defaults.set(true, forKey: "completionReminder")
-        defaults.set(true, forKey: "inputReminder")
         defaults.set(true, forKey: "monitorSSH")
         defaults.set(0, forKey: "completedRetentionMinutes")
         let model = IslandModel(demo: true, defaults: defaults,
@@ -114,7 +112,6 @@ final class ProviderDisplayTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: domain) }
         defaults.set("/private/tmp/pacer-connection-actions-" + UUID().uuidString, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")
-        defaults.set(false, forKey: "completionReminder")
         ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
         let choices = [ClaudeWebOrganization(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Synthetic workspace")]
         var reads = ClaudeQuotaReadDependencies()
@@ -282,15 +279,13 @@ final class ProviderDisplayTests: XCTestCase {
             defer { defaults.removePersistentDomain(forName: domain) }
             ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
             defaults.set(0, forKey: "completedRetentionMinutes")
-            // Receive synthetic lifecycle with reminders disabled, so this
-            // non-demo fixture cannot deliver an actual system notification.
-            defaults.set(false, forKey: "completionReminder")
+            // This non-demo fixture's own defaults leave system notifications
+            // off, so receiving the synthetic lifecycle cannot deliver one.
             let model = IslandModel(defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
             let completed = activity(.claude, session: "019a0000-0000-7000-8000-000000000023", at: Date(),
                 completed: true, hostID: "remote-ssh-discovered:synthetic")
             model.receiveClaudeUpdate([completed], statuses: [:], requests: [])
-            defaults.set(true, forKey: "completionReminder")
             XCTAssertTrue(model.canOpen(completed))
             XCTAssertTrue(model.isUnreadCompletion(completed))
             let dispatched = expectation(description: "Navigation dispatch callback"), processed = expectation(description: "Open result processed")
@@ -338,7 +333,6 @@ final class ProviderDisplayTests: XCTestCase {
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
                 defaults.set(root.appendingPathComponent("old-home").path, forKey: "claudeHome")
                 defaults.set(false, forKey: "monitorSSH")
-                defaults.set(false, forKey: "completionReminder")
                 ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
                 let started = expectation(description: "Suspended \(boundary), home change \(changesHome)")
                 let passive = Suspension<QuotaSnapshot?>(started: { started.fulfill() })

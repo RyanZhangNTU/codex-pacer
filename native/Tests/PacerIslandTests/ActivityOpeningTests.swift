@@ -152,20 +152,4 @@ final class ActivityOpeningTests: XCTestCase {
         await fulfillment(of: [finish], timeout: 2)
         XCTAssertEqual(launches, 1)
     }
-
-    func testLateOpenCannotClearANewerNotice() async throws {
-        let (model, activity, _) = try completion()
-        let started = expectation(description: "opening"), finished = expectation(description: "finished")
-        model.notice = IslandNotice(id: activity.id + ":demo-turn:completed:old", kind: .completed, title: "Old", detail: "Synthetic")
-        model.onOpenActivity = { _ in
-            started.fulfill(); try? await Task.sleep(nanoseconds: 20_000_000)
-            finished.fulfill(); return .openedConversation
-        }
-        model.open(activity)
-        await fulfillment(of: [started], timeout: 2)
-        model.notice = IslandNotice(id: activity.id + ":new-turn:waiting:later", kind: .waitingForInput, title: "New", detail: "Synthetic")
-        await fulfillment(of: [finished], timeout: 2)
-        await Task.yield()
-        XCTAssertEqual(model.notice?.title, "New")
-    }
 }

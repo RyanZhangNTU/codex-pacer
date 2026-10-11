@@ -5,15 +5,19 @@ import PacerCore
 
 @MainActor
 final class NotificationDelivery {
+    private let defaults: UserDefaults
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
     func deliver(_ notice: IslandNotice) {
-        guard UserDefaults.standard.bool(forKey: "systemNotifications") else { return }
+        guard defaults.bool(forKey: "systemNotifications") else { return }
+        let hidden = defaults.bool(forKey: "hideProjects") && notice.kind != .lowQuota
         Task {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
             guard [.authorized, .provisional].contains(settings.authorizationStatus) else { return }
             let content = UNMutableNotificationContent()
             content.title = "Codex Pacer"
-            let detail = UserDefaults.standard.bool(forKey: "hideProjects") && notice.kind != .lowQuota ? L10n.text("activity.hidden_local_name") : notice.detail
+            let detail = hidden ? L10n.text("activity.hidden_local_name") : notice.detail
             content.body = L10n.text("notice.body", notice.title, detail)
             try? await center.add(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
         }

@@ -64,7 +64,6 @@ final class IslandModel: ObservableObject {
     private var remoteActivities: [SessionActivity] = []
     @Published private var codexHistory = QuotaCycleHistory()
     @Published private var codexHistoryWarning: String?
-    @Published var notice: IslandNotice?
     @Published private var codexErrorMessage: String?
     @Published var quotaCLI: CodexExecutableResolver.Candidate?
     @Published private var codexRefreshing = false
@@ -414,14 +413,13 @@ final class IslandModel: ObservableObject {
     private var lastClaudeQuotaAttempt = Date.distantPast
     private var lastClaudeDiscovery = Date.distantPast
     private var claudeFailureCount = 0
-    private let notifications = NotificationDelivery()
+    private lazy var notifications = NotificationDelivery(defaults: defaults)
     private var attention = AttentionPolicy()
     private var completionInbox = CompletionInbox()
     private var clock: Timer?
     private var refreshTask: Task<Void, Never>?
     private var localTask: Task<Void, Never>?
     private var closeWork: DispatchWorkItem?
-    private var noticeWork: DispatchWorkItem?
     private var rateExpiryWork: DispatchWorkItem?
     private var rateExpiryAt: Date?
     private var localActivityDirty = false
@@ -492,13 +490,10 @@ final class IslandModel: ObservableObject {
         return Double([0, 5, 15, 30, 60, 240].contains(minutes) ? minutes : 30) * 60
     }
     var pendingCompletions: [SessionActivity] {
-        guard defaults.bool(forKey: "completionReminder") else { return [] }
         let roots = Set(taskGroups.filter { !$0.isRunning }.map { $0.primary.id })
         return completionInbox.unreadActivities.filter { roots.contains($0.id) }
     }
-    var pendingInputRequests: [PendingAttentionRequest] {
-        defaults.bool(forKey: "inputReminder") ? attentionRequests : []
-    }
+    var pendingInputRequests: [PendingAttentionRequest] { attentionRequests }
     var headerStatus: String {
         if let first = pendingInputRequests.first {
             return L10n.text(first.kind == .approval ? "attention.approval" : "attention.input")
@@ -767,8 +762,6 @@ final class IslandModel: ObservableObject {
         let acknowledgment = completionInbox.acknowledgment(for: activity)
         let source = completionInbox.sourceToken(for: activity)
         let descendants = acknowledgment == nil ? [] : descendantAcknowledgments(for: activity, source: source)
-        let prefix = activity.id + ":" + (activity.turnID ?? "") + ":"
-        let openedNoticeID = notice.flatMap { $0.id.hasPrefix(prefix) ? $0.id : nil }
         Task { [weak self] in
             guard let self else { return }
             defer { self.openingActivities.remove(activity.id) }
@@ -803,9 +796,6 @@ final class IslandModel: ObservableObject {
                     self.activities.removeAll {
                         value in removed.contains { self.sameLifecycle(value, $0) }
                     }
-                }
-                if acknowledged || acknowledgment == nil, let openedNoticeID, self.notice?.id == openedNoticeID {
-                    self.noticeWork?.cancel(); self.notice = nil
                 }
             }
             self.onLayoutChange?(); self.onStatusChange?()
@@ -1069,9 +1059,6 @@ final class IslandModel: ObservableObject {
         if !excluded.isEmpty {
             completionInbox.remove(activityIDs: excluded)
             if activities.contains(where: { excluded.contains($0.id) }) { activities.removeAll { excluded.contains($0.id) } }
-            if let notice, excluded.contains(where: { notice.id.contains($0 + ":") }) {
-                noticeWork?.cancel(); self.notice = nil
-            }
         }
         now = Date(); claudeActivities = values.filter { !excluded.contains($0.id) }; claudeStreamStatuses = statuses; claudeAttentionRequests = requests
         let measured = performance.filter { !excluded.contains($0.id) }
@@ -1181,9 +1168,6 @@ final class IslandModel: ObservableObject {
         if attentionRequests != requests { attentionRequests = requests }
         present(attention.requestNotices(requests.filter { $0.provider == .codex }) +
             claudeActivityAttention.requestNotices(requests.filter { $0.provider == .claude }))
-        // A resolved async request clears its persistent UI immediately. Its
-        // tool completion alone cannot clear it because the tool is nonblocking.
-        if requests.isEmpty, notice?.id.hasPrefix("request:") == true { noticeWork?.cancel(); notice = nil }
     }
     private func combineActivities() {
         let oldHeight = panelContentHeight
@@ -1240,9 +1224,6 @@ final class IslandModel: ObservableObject {
         compactLayout = .load(from: defaults); measuredCompactWidth = 0; settingsRevision += 1
         if clock != nil { scheduleClock() }
         pruneCompletions()
-        if hideProjects, let current = notice, current.kind != .lowQuota {
-            notice = IslandNotice(id: current.id, kind: current.kind, title: current.title, detail: L10n.text("activity.hidden_name"))
-        }
         let newCodex = currentCodexSourceSignature, newClaude = currentClaudeSourceSignature
         let codexChanged = oldEnabled.contains(.codex) != isModuleEnabled(.codex) || newCodex != codexSourceSignature
         let claudeChanged = oldEnabled.contains(.claude) != isModuleEnabled(.claude) || newClaude != claudeSourceSignature
@@ -1269,7 +1250,7 @@ final class IslandModel: ObservableObject {
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         activities.removeAll { $0.provider == .codex }
         observeAttentionRequests(claudeAttentionRequests)
-        clearSourceNotice(.codex)
+        clearSourceState()
         let generation = sourceGeneration
         Task { [weak self, reader] in
             guard let self, generation == self.sourceGeneration else { return }
@@ -1296,7 +1277,7 @@ final class IslandModel: ObservableObject {
         claudeActivities = []; claudeAttentionRequests = []; claudeStreamStatuses = [:]
         activities.removeAll { $0.provider == .claude }
         observeAttentionRequests(codexAttentionRequests)
-        clearSourceNotice(.claude)
+        clearSourceState()
         let generation = claudeGeneration
         Task { [weak self] in
             guard let self, generation == self.claudeGeneration else { return }
@@ -1305,10 +1286,7 @@ final class IslandModel: ObservableObject {
             self.refreshClaudeQuota(); self.startClaudeActivity()
         }
     }
-    private func clearSourceNotice(_ provider: AgentProvider) {
-        if let notice, (notice.id.hasPrefix("claude:") || notice.id.hasPrefix("request:claude:")) == (provider == .claude) {
-            noticeWork?.cancel(); self.notice = nil
-        }
+    private func clearSourceState() {
         navigationError = nil
         latestFirstOutputAt = nil; latestFirstOutputLatency = nil
         observeFirstOutputs(activities)
@@ -1328,7 +1306,6 @@ final class IslandModel: ObservableObject {
         logWatcher.stop()
         clock?.invalidate()
         closeWork?.cancel()
-        noticeWork?.cancel()
         invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         claudeGeneration += 1; claudeQuotaRestartTask?.cancel(); claudeQuotaTask?.cancel(); claudeActivityTask?.cancel()
@@ -1419,29 +1396,11 @@ final class IslandModel: ObservableObject {
         case .unknown: return 4
         }
     }
+    /// The collapsed bar already shows each of these states while it lasts, so
+    /// a moment only leaves the island as a system notification, when chosen.
     private func present(_ notices: [IslandNotice]) {
-        guard !demo else { return }
-        let enabled = notices.filter { notice in
-            switch notice.kind {
-            case .lowQuota: return defaults.bool(forKey: "lowQuotaReminder")
-            case .waitingForInput: return defaults.bool(forKey: "inputReminder")
-            case .completed, .interrupted: return defaults.bool(forKey: "completionReminder")
-            }
-        }
-        guard let newest = enabled.last else { return }
-        let visible = hideProjects && newest.kind != .lowQuota ?
-            IslandNotice(id: newest.id, kind: newest.kind, title: newest.title, detail: L10n.text("activity.hidden_name")) : newest
-        notifications.deliver(visible)
-        noticeWork?.cancel()
-        if [.completed, .interrupted].contains(visible.kind) {
-            notice = nil
-            return
-        }
-        notice = visible
-        if visible.id.hasPrefix("request:") { return }
-        let work = DispatchWorkItem { [weak self] in self?.notice = nil }
-        noticeWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
+        guard !demo, let newest = notices.last else { return }
+        notifications.deliver(newest)
     }
     private func makeDemo() {
         for snapshot in DemoScenario.quota(at: now) { history.record(snapshot); quota = snapshot }
