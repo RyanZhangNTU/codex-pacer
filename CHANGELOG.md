@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.0 (development candidate)
+## 3.0.0
 
 Codex Pacer now follows Claude Code as well as Codex.
 
