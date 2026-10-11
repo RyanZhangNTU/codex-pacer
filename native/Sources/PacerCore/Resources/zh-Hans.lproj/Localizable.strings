@@ -66,7 +66,6 @@
 "claude.performance.ttft_help" = "实际观察到的流式首输出展示耗时，或服务报告的请求首 token 耗时。完整消息块无法推断首次输出时间。";
 "claude.performance.rate_help" = "按权威输出 token 数与服务报告的请求耗时或观察到的响应窗口计算吞吐，排除必要工具执行时段；此值不是模型解码速度。";
 "claude.open_remote_help" = "打开此主机上的 Claude Code 会话";
-"menu.open_claude" = "打开 Claude";
 "account.credit_balance" = "剩余积分：%@";
 "account.credits" = "积分";
 "account.credits_help" = "账户剩余积分";
@@ -222,10 +221,7 @@
 "language.restart_now" = "立即重启";
 "language.system" = "跟随 macOS";
 "language.update_busy" = "正在检查或安装更新，请结束后再切换语言。";
-"menu.open_codex" = "打开 Codex";
-"menu.refresh_quota" = "刷新额度";
 "menu.settings_title" = "Codex Pacer 设置";
-"menu.show_island" = "显示状态岛";
 "notice.body" = "%1$@：%2$@";
 "notice.low_quota" = "额度偏低";
 "notice.quota_remaining" = "%1$@剩余 %2$ld%%";
@@ -322,8 +318,6 @@
 "settings.invalid_home" = "请选择现有的 Codex 目录，使用绝对路径或 ~/ 路径。";
 "settings.liquid_glass" = "液态玻璃";
 "settings.main_display" = "主显示器";
-"settings.menu_bar" = "在菜单栏显示";
-"settings.menu_bar_help" = "关闭后仍可从灵动岛的齿轮按钮打开设置。";
 "settings.monitor_ssh" = "监测 SSH 主机上的任务";
 "settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
 "settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";

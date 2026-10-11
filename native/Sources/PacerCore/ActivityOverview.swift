@@ -41,7 +41,4 @@ public struct ActivityOverview: Sendable {
         default: return L10n.text("activity.idle")
         }
     }
-    public var compactTitle: String {
-        phase == .running && running.count > 1 ? L10n.text("activity.task_count", running.count) : title
-    }
 }

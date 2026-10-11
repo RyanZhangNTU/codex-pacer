@@ -11,7 +11,6 @@ struct SettingsAppearancePane: View {
     @Binding var displayMode: IslandDisplayMode
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
-    @Binding var showInMenuBar: Bool
     @Binding var glass: IslandGlassSettings
 
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
@@ -62,8 +61,6 @@ struct SettingsAppearancePane: View {
                 }
             }
             Toggle(L10n.text("settings.fullscreen"), isOn: $fullscreen)
-            Toggle(L10n.text("settings.menu_bar"), isOn: $showInMenuBar)
-                .help(L10n.text("settings.menu_bar_help"))
         }
         if appearance == .liquidGlass, glassAvailable { glassSection }
     }

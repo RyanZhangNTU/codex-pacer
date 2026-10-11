@@ -2,9 +2,11 @@
 
 ## 3.0.0 (development candidate)
 
+- Remove the optional menu bar item and its Show in Menu Bar setting: Pacer lives in the island. Settings, refresh and Quit stay on the island, Check for Updates stays in Settings → General, and task cards still open their conversations. The stored preference is cleared on the next settings change.
+
 - Drop the Collapsed Bar preview as well: layout and width edits already reach the real bar at once. The first card keeps the bar-shaped lane strip and width controls under a Layout heading.
 
-- Give Pacer its own icon in place of the inherited Tauri logo, which macOS 26 and later shrank into a gray tile: a white P on charcoal whose bowl is the quota ring, crossed by a teal pace tick. The menu bar item uses the same mark instead of a generic gauge symbol. The SVG source and `scripts/native/render-app-icon.swift` regenerate the bundled icon.
+- Give Pacer its own icon in place of the inherited Tauri logo, which macOS 26 and later shrank into a gray tile: a white P on charcoal whose bowl is the quota ring, crossed by a teal pace tick. The SVG source and `scripts/native/render-app-icon.swift` regenerate the bundled icon.
 
 - Drop the Appearance preview now that changes apply to the real island at once. With Liquid Glass around the notch, the page explains that the collapsed bar stays black to blend with the camera and shows glass once expanded, with Floating as the way to a glass collapsed bar. Style and position tiles share one desktop backdrop. Hide Project Names now says what it replaces and when it helps instead of showing an example.
 

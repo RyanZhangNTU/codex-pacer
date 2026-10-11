@@ -212,7 +212,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var model: IslandModel!
     private var updater: AppUpdater!
     private var panel: PanelController!
-    private var statusItem: NSStatusItem?
     private lazy var notificationPreference = SystemNotificationPreference()
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
@@ -224,7 +223,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             UserDefaults.standard.persistentDomain(forName: "com.codexpacer.island.preview") ?? [:])
         UserDefaults.standard.register(defaults: ["lowQuotaReminder": true, "inputReminder": true,
             "completionReminder": true, "completedRetentionMinutes": 30, "systemNotifications": false,
-            "compactMetric": "remaining", "quotaWindowID": "auto", "showInMenuBar": false,
+            "compactMetric": "remaining", "quotaWindowID": "auto",
             "islandWidthMode": IslandWidthSettings.Mode.adaptive.rawValue])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         updater = AppUpdater(enabled: !model.isDemo)
@@ -256,7 +255,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             guard let self else { return .failed(L10n.text("activity.open_failed")) }
             return await self.openActivity(activity)
         }
-        model.onStatusChange = { [weak self] in self?.updateStatusItem() }
         UNUserNotificationCenter.current().delegate = self
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem()
@@ -290,7 +288,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
         NSApp.mainMenu = mainMenu
-        updateStatusItem()
         model.start()
         updater.start()
         if CommandLine.arguments.contains("--settings") { showSettings() }
@@ -301,53 +298,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
-    private func updateStatusItem() {
-        guard model.showInMenuBar else {
-            if let statusItem {
-                NSStatusBar.system.removeStatusItem(statusItem)
-                self.statusItem = nil
-            }
-            return
-        }
-        if statusItem == nil {
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            if let button = item.button {
-                button.image = menuBarMark()
-                button.imagePosition = .imageLeading
-                button.target = self
-                button.action = #selector(statusClicked)
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            }
-            // Keep left-click independent from the right-click context menu.
-            statusItem = item
-        }
-        statusItem?.button?.title = " " + model.enabledProviders.map { provider in
-            provider.displayName + " " + model.compactQuotaText(provider)
-        }.joined(separator: " · ")
-        statusItem?.button?.toolTip = "Codex Pacer · \(model.compactStatus) · \(model.freshnessText)"
-    }
-
-    @objc private func statusClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            DispatchQueue.main.async { [weak self] in self?.showMenu() }
-        } else if model.expanded { model.close() }
-        else { panel.show() }
-    }
-    private func showMenu() {
-        let menu = NSMenu()
-        for (title, selector) in [(L10n.text("menu.show_island"), #selector(showIsland)), (L10n.text("menu.open_codex"), #selector(openCodex)), (L10n.text("menu.refresh_quota"), #selector(refresh)), (L10n.text("updates.check"), #selector(checkForUpdates)), (L10n.text("common.settings_menu"), #selector(showSettings)), (L10n.text("common.quit"), #selector(quit))] {
-            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-        }
-        if model.isModuleEnabled(.claude) {
-            let item = NSMenuItem(title: L10n.text("menu.open_claude"), action: #selector(openClaude), keyEquivalent: "")
-            item.target = self; menu.insertItem(item, at: 2)
-        }
-        if let button = statusItem?.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button) }
-    }
-    @objc private func showIsland() { panel.show() }
-    @objc private func refresh() { model.refreshQuota() }
     @objc private func checkForUpdates() { updater.checkForUpdates() }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action == #selector(checkForUpdates) ? updater.canCheck : true
@@ -367,27 +317,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // terminateLater's nested AppKit loop must be able to run shutdown tasks.
         perform(#selector(quit), with: nil, afterDelay: 0)
         return nil
-    }
-    @objc private func openCodex() {
-        guard let url = CodexApplicationResolver.find() else {
-            model.navigationError = L10n.text("activity.app_missing"); panel.show(); return
-        }
-        model.close()
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-            guard let error else { return }
-            let message = L10n.text("activity.open_failed_detail", CodexDiagnosticText.description(of: error))
-            Task { @MainActor in self?.model.navigationError = message; self?.panel.show() }
-        }
-    }
-    @objc private func openClaude() {
-        guard let url = ClaudeApplicationResolver.find() else {
-            model.navigationError = L10n.text("activity.open_failed"); panel.show(); return
-        }
-        model.close()
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-            guard error != nil else { return }
-            Task { @MainActor in self?.model.navigationError = L10n.text("activity.open_failed"); self?.panel.show() }
-        }
     }
     @objc private func demoStageChanged(_ sender: NSMenuItem) {
         if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
@@ -498,40 +427,4 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         return .terminateLater
     }
-}
-
-/// The app icon's P with its pace tick (native/Resources/Pacer.svg) as a menu-bar
-/// template. Coordinates are Pacer.svg units; strokes are lighter than the icon's
-/// so the mark matches menu-bar text weight and the tick stays visible.
-private func menuBarMark() -> NSImage {
-    let glyph = CGRect(x: 334, y: 236, width: 372, height: 544)  // bowl top to stem cap
-    let height: CGFloat = 14, scale = height / glyph.height
-    let size = NSSize(width: (glyph.width * scale).rounded(.up), height: height)
-    let image = NSImage(size: size, flipped: true) { _ in
-        guard let context = NSGraphicsContext.current?.cgContext else { return false }
-        context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: (size.width / scale - glyph.width) / 2 - glyph.minX, y: -glyph.minY)
-        let diagonal = CGFloat(0.5).squareRoot()
-        let tick = CGMutablePath()
-        tick.move(to: CGPoint(x: 520 + 90 * diagonal, y: 422 - 90 * diagonal))
-        tick.addLine(to: CGPoint(x: 520 + 210 * diagonal, y: 422 - 210 * diagonal))
-        context.saveGState()
-        context.addRect(glyph.insetBy(dx: -100, dy: -100))
-        context.addPath(tick.copy(strokingWithWidth: 88, lineCap: .round, lineJoin: .round, miterLimit: 10))
-        context.clip(using: .evenOdd)
-        context.setLineWidth(72)
-        context.setLineCap(.round)
-        context.strokeEllipse(in: CGRect(x: 370, y: 272, width: 300, height: 300))
-        context.move(to: CGPoint(x: 370, y: 422))
-        context.addLine(to: CGPoint(x: 370, y: 744))
-        context.strokePath()
-        context.restoreGState()
-        context.setLineWidth(40)
-        context.addPath(tick)
-        context.strokePath()
-        return true
-    }
-    image.isTemplate = true
-    image.accessibilityDescription = "Codex Pacer"
-    return image
 }

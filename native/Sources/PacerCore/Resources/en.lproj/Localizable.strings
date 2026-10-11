@@ -66,7 +66,6 @@
 "claude.performance.ttft_help" = "Actual streaming first-display timing when observed, or service-reported request time to first token. Completed message blocks cannot establish first-output timing.";
 "claude.performance.rate_help" = "Throughput from authoritative output tokens and service-reported request duration or an observed response window. Required tool time is excluded; this is not model decoder speed.";
 "claude.open_remote_help" = "Open Claude Code on this host";
-"menu.open_claude" = "Open Claude";
 "account.credit_balance" = "Credits left: %@";
 "account.credits" = "credits";
 "account.credits_help" = "Remaining account credits";
@@ -222,10 +221,7 @@
 "language.restart_now" = "Restart Now";
 "language.system" = "Follow macOS";
 "language.update_busy" = "An update check or installation is in progress. Finish it before changing the language.";
-"menu.open_codex" = "Open Codex";
-"menu.refresh_quota" = "Refresh Quota";
 "menu.settings_title" = "Codex Pacer Settings";
-"menu.show_island" = "Show Island";
 "notice.body" = "%1$@: %2$@";
 "notice.low_quota" = "Quota is low";
 "notice.quota_remaining" = "%1$@: %2$ld%% remaining";
@@ -322,8 +318,6 @@
 "settings.invalid_home" = "Choose an existing Codex data folder using an absolute path or a ~/ path.";
 "settings.liquid_glass" = "Liquid Glass";
 "settings.main_display" = "Main Display";
-"settings.menu_bar" = "Show in Menu Bar";
-"settings.menu_bar_help" = "You can still open Settings using the island’s gear button.";
 "settings.monitor_ssh" = "Monitor Tasks on SSH Hosts";
 "settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
 "settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";

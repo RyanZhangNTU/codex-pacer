@@ -448,7 +448,6 @@ final class IslandModel: ObservableObject {
     var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
-    var showInMenuBar: Bool { defaults.bool(forKey: "showInMenuBar") }
     var hideProjects: Bool { defaults.bool(forKey: "hideProjects") }
     var displayID: Int { defaults.integer(forKey: "displayID") }
     var taskGroups: [ActivityTaskGroup] {
@@ -605,10 +604,6 @@ final class IslandModel: ObservableObject {
     func compactTimeRemainingText(_ provider: AgentProvider, selection: String? = nil) -> String {
         providerSelectedWindow(provider, selection: selection)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
     }
-    var compactStatus: String {
-        if let notice, ![.completed, .interrupted].contains(notice.kind) { return notice.title }
-        return overview.compactTitle
-    }
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
     var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
@@ -618,13 +613,6 @@ final class IslandModel: ObservableObject {
     var accent: Color {
         if errorMessage != nil || stale { return Color(red: 0.65, green: 0.68, blue: 0.73) }
         return selectedProvider == .codex ? taskAccent : Color(red: 0.88, green: 0.59, blue: 0.40)
-    }
-    var freshnessText: String {
-        guard let quota else { return refreshing ? L10n.text("quota.reading") : L10n.text("quota.not_read") }
-        if selectedWindow?.resetsAt.map({ $0 <= now }) == true { return L10n.text("quota.expired") }
-        let elapsed = max(0, Int(now.timeIntervalSince(quota.capturedAt)))
-        if stale || errorMessage != nil { return L10n.text("quota.age", max(1, elapsed / 60)) }
-        return elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60)
     }
     func projectName(_ activity: SessionActivity) -> String {
         hideProjects ? L10n.text("activity.hidden_name") : (activity.title ?? activity.project)

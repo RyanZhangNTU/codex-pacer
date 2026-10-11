@@ -17,7 +17,7 @@ A native macOS island for Codex and Claude Code tasks, output rate and account q
 - Track the reported short and seven-day quota, reset times, pacing and current cycle. A missing reset date stays unknown and cannot establish pacing or a cycle curve.
 - View quota history, Credit balance and banked-reset details in Settings when the service supplies them. Codex reset-expiry details remain available; Claude has no fabricated Credit or reset-bank equivalent.
 - Retain completion cards until a successful conversation open, state change or configured expiry; acknowledged endings stay dismissed across normal relaunch. Claude requires a verified Desktop destination and keeps its card after a Terminal resume fallback. Receive reminders while the island is collapsed.
-- Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
+- Adjust appearance, display, reminders and privacy. Quit from the island or settings.
 - Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.
 - Use adaptive width by default, or set a single width with a slider in Settings.
 - Customize the single-line collapsed bar: a bar-shaped lane strip for dragging order and sides, plus grouped switches with descriptions and inline options, applied to the island as you change them.

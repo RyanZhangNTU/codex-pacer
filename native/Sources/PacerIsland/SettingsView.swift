@@ -19,7 +19,6 @@ struct SettingsView: View {
     @State private var appearance = IslandAppearance.stored
     @State private var glass = IslandGlassSettings.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
-    @State private var showInMenuBar = UserDefaults.standard.bool(forKey: "showInMenuBar")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
     @State private var singleTask = ActivityBadgeSingleTask()
@@ -179,7 +178,7 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, displayID: $displayID,
-                fullscreen: $fullscreen, showInMenuBar: $showInMenuBar, glass: $glass)
+                fullscreen: $fullscreen, glass: $glass)
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             Section {
@@ -585,7 +584,7 @@ struct SettingsView: View {
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, width: widthSettings, layout: compactLayout, appearance: appearance,
-            glass: glass, fullscreen: fullscreen, menuBar: showInMenuBar, displayID: displayID, metric: metric, singleTask: singleTask,
+            glass: glass, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, lowReminder: lowReminder, inputReminder: inputReminder,
             completionReminder: completionReminder, retention: completedRetention, hideProjects: hideProjects,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl)
@@ -611,10 +610,10 @@ struct SettingsView: View {
         compactLayout.save(to: defaults)
         defaults.removeObject(forKey: "performanceRefreshMode")
         defaults.removeObject(forKey: "quotaDashboardPeriod")
+        defaults.removeObject(forKey: "showInMenuBar")
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
         glass.save()
         defaults.set(fullscreen, forKey: "showInFullscreen")
-        defaults.set(showInMenuBar, forKey: "showInMenuBar")
         defaults.set(displayID, forKey: "displayID")
         defaults.set(metric, forKey: "compactMetric")
         defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)
@@ -690,7 +689,6 @@ private struct LiveSettings: Equatable {
     var appearance: IslandAppearance
     var glass: IslandGlassSettings
     var fullscreen: Bool
-    var menuBar: Bool
     var displayID: Int
     var metric: String
     var singleTask: ActivityBadgeSingleTask
