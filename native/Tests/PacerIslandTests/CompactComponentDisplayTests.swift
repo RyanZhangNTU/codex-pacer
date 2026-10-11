@@ -54,7 +54,12 @@ final class CompactComponentDisplayTests: XCTestCase {
     }
     func testWarningsAreConditionalAndSSHWarningRespectsDisabledMonitoring() throws {
         let defaults = UserDefaults.standard, old = defaults.object(forKey: "monitorSSH")
-        defer { if let old { defaults.set(old, forKey: "monitorSSH") } else { defaults.removeObject(forKey: "monitorSSH") } }
+        let oldLayout = defaults.object(forKey: CompactIslandLayout.defaultsKey)
+        defer {
+            if let old { defaults.set(old, forKey: "monitorSSH") } else { defaults.removeObject(forKey: "monitorSSH") }
+            if let oldLayout { defaults.set(oldLayout, forKey: CompactIslandLayout.defaultsKey) }
+            else { defaults.removeObject(forKey: CompactIslandLayout.defaultsKey) }
+        }
         defaults.set(true, forKey: "monitorSSH")
         let model = IslandModel(), now = Date(); model.now = now
         model.quota = try snapshot(used: 50, at: now, minutes: 300)
@@ -75,11 +80,13 @@ final class CompactComponentDisplayTests: XCTestCase {
         XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
         model.streamStatuses = [:]; model.unavailableSSH = ["Synthetic unavailable"]
         XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
-        let chosen = CompactQuotaPreview(providers: [.codex], metric: "remaining", windowIDs: [:], warnings: [.quotaDelay])
-        XCTAssertEqual(CompactIslandComponent.activeWarnings(model, quotaPreview: chosen), [.quotaDelay],
+        var layout = CompactIslandLayout.standard
+        layout.warnings = [.quotaDelay]; layout.save(to: defaults); model.applySettings(sourceChanged: false)
+        XCTAssertEqual(CompactIslandComponent.activeWarnings(model), [.quotaDelay],
             "A warning turned off in Reminders stays hidden while its condition holds")
-        XCTAssertFalse(CompactIslandComponent.isVisible(.warnings, model: model,
-            quotaPreview: CompactQuotaPreview(providers: [.codex], metric: "remaining", windowIDs: [:], warnings: [])))
+        layout.warnings = []; layout.save(to: defaults); model.applySettings(sourceChanged: false)
+        XCTAssertFalse(CompactIslandComponent.isVisible(.warnings, model: model))
+        CompactIslandLayout.standard.save(to: defaults); model.applySettings(sourceChanged: false)
         defaults.set(false, forKey: "monitorSSH")
         XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.ssh))
     }

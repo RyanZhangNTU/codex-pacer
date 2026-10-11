@@ -1,33 +1,30 @@
 import SwiftUI
 import PacerCore
 
-/// The Collapsed Bar page's first card: the live preview, a lane strip shaped
-/// like the bar (left wing, camera, right wing) for arranging components, and
-/// the width choice. Turning components on or off lives in the grouped rows below.
+/// The Collapsed Bar page's first card: a lane strip shaped like the bar (left
+/// wing, camera, right wing) for arranging components, and the width choice.
+/// Edits reach the real bar at once, so the card has no preview of its own.
+/// Turning components on or off lives in the grouped rows below.
 struct CompactLayoutEditor: View {
     @ObservedObject var model: IslandModel
     @Binding var layout: CompactIslandLayout
     @Binding var widthSettings: IslandWidthSettings
-    let attached: Bool
-    let quotaPreview: CompactQuotaPreview
+    let providers: Set<AgentProvider>
     @State private var dragged: CompactIslandLayout.Component?
     @State private var dragLocation = CGPoint.zero
     @State private var dropRegions: [CompactEditorDropRegion] = []
     @FocusState private var focusedComponent: CompactIslandLayout.Component?
     private let accent = Color.accentColor
-    private var providers: Set<AgentProvider> { Set(quotaPreview.providers) }
     private var hasNotch: Bool { model.screenNotchSize.width > 0 && model.screenNotchSize.height > 0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text(L10n.text("layout.preview")).font(.system(size: 13, weight: .semibold))
+                Text(L10n.text("layout.arrangement")).font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Button(L10n.text("common.restore_defaults")) { layout = .standard }
                     .buttonStyle(.link).font(.system(size: 12))
             }
-            IslandWidthControl(model: model, settings: $widthSettings, layout: layout,
-                attached: attached, quotaPreview: quotaPreview)
             laneStrip
             Text(L10n.text("layout.help")).font(.system(size: 11)).foregroundStyle(.secondary)
             Divider().padding(.vertical, 2)

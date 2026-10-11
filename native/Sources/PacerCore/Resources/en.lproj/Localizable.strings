@@ -284,10 +284,6 @@
 "settings.compact_metric" = "Show As";
 "settings.corner_radius" = "Corner Radius";
 "settings.data_source" = "Sources";
-"settings.width_preview" = "Island width preview";
-"settings.width_preview_notch" = "Island width preview with the screen notch marked";
-"settings.width_notch_marker" = "Notch";
-"settings.width_notch_floating_help" = "The screen notch is marked above the floating bar. The bar keeps its full content width.";
 "settings.width_narrow" = "Narrow";
 "settings.width_medium" = "Medium";
 "settings.width_wide" = "Wide";
@@ -395,7 +391,7 @@
 "layout.title" = "Collapsed bar layout";
 "layout.collapsed" = "Collapsed bar";
 "layout.help" = "Drag to reorder or switch sides; click × to hide.";
-"layout.preview" = "Preview";
+"layout.arrangement" = "Layout";
 "layout.drop_here" = "Drop here";
 "layout.lane.leading" = "Left";
 "layout.lane.trailing" = "Right";

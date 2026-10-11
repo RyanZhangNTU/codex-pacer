@@ -284,10 +284,6 @@
 "settings.compact_metric" = "显示为";
 "settings.corner_radius" = "圆角";
 "settings.data_source" = "数据来源";
-"settings.width_preview" = "灵动岛宽度预览";
-"settings.width_preview_notch" = "灵动岛宽度预览，已标注屏幕刘海位置";
-"settings.width_notch_marker" = "刘海";
-"settings.width_notch_floating_help" = "屏幕刘海标在悬浮栏上方，栏内空间均可用于显示内容。";
 "settings.width_narrow" = "窄";
 "settings.width_medium" = "适中";
 "settings.width_wide" = "宽";
@@ -395,7 +391,7 @@
 "layout.title" = "折叠栏布局";
 "layout.collapsed" = "折叠栏";
 "layout.help" = "拖动调整顺序或换边，点 × 隐藏。";
-"layout.preview" = "预览";
+"layout.arrangement" = "布局";
 "layout.drop_here" = "拖到这里";
 "layout.lane.leading" = "左侧";
 "layout.lane.trailing" = "右侧";

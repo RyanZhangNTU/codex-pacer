@@ -1,16 +1,6 @@
 import SwiftUI
 import PacerCore
 
-/// Unsaved Settings choices affect the preview without changing live collectors or preferences.
-struct CompactQuotaPreview {
-    let providers: [AgentProvider]
-    let metric: String
-    let windowIDs: [AgentProvider: String]
-    var singleTask: ActivityBadgeSingleTask? = nil
-    /// The Reminders draft, so Settings previews follow it before Save.
-    var warnings: Set<CompactIslandLayout.Warning>? = nil
-}
-
 /// Both display modes have only left and right content. A real camera needs
 /// equal wings; floating headers use each side's natural width.
 struct CompactRowLayout: Layout {
@@ -45,8 +35,6 @@ struct CompactIslandHeader: View {
     let layout: CompactIslandLayout
     let baseHeight: CGFloat
     let notchWidth: CGFloat
-    var measuresLayout = true
-    var quotaPreview: CompactQuotaPreview? = nil
 
     var body: some View {
         rowView
@@ -58,7 +46,6 @@ struct CompactIslandHeader: View {
                 }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
         .onPreferenceChange(CompactHeaderIdealWidth.self) { width in
-            guard measuresLayout else { return }
             DispatchQueue.main.async { model.updateMeasuredCompactWidth(width) }
         }
         .contentShape(Rectangle())
@@ -80,8 +67,8 @@ struct CompactIslandHeader: View {
     private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment) -> some View {
         HStack(spacing: model.isAttached ? 6 : 8) {
             ForEach(components.filter { CompactIslandComponent.isVisible($0, model: model,
-                showsStatus: layout.components.contains(.status), quotaPreview: quotaPreview) }) { component in
-                CompactIslandComponent(model: model, component: component, quotaPreview: quotaPreview)
+                showsStatus: layout.components.contains(.status)) }) { component in
+                CompactIslandComponent(model: model, component: component)
             }
         }.fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: alignment).clipped()
@@ -91,57 +78,55 @@ struct CompactIslandHeader: View {
 struct CompactIslandComponent: View {
     @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
-    var quotaPreview: CompactQuotaPreview? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandLayoutProbe) private var layoutProbe
-    private var providers: [AgentProvider] { quotaPreview?.providers ?? model.enabledProviders }
+    private var providers: [AgentProvider] { model.enabledProviders }
     /// Expanded rings repeat these values in more detail, so the header quiets
-    /// them instead of moving the row; Settings previews keep them at full strength.
+    /// them instead of moving the row.
     static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
         [.quota, .quotaGauge, .quotaLabel, .timeRemaining].contains(component)
     }
-    private var dimmed: Bool { quotaPreview == nil && model.expanded && Self.dimsWhenExpanded(component) }
+    private var dimmed: Bool { model.expanded && Self.dimsWhenExpanded(component) }
 
-    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true,
-                          quotaPreview: CompactQuotaPreview? = nil) -> Bool {
-        guard component.isAvailable(for: Set(quotaPreview?.providers ?? model.enabledProviders)) else { return false }
+    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
+        guard component.isAvailable(for: Set(model.enabledProviders)) else { return false }
         switch component {
         case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .warnings: return !activeWarnings(model, quotaPreview: quotaPreview).isEmpty
+        case .warnings: return !activeWarnings(model).isEmpty
         default: return true
         }
     }
     /// Alternation skips providers without a value, so an unavailable service
     /// never spends half the time as a dash; with none known, the first shows one.
-    static func alternatingProviders(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [AgentProvider] {
-        let providers = quotaPreview?.providers ?? model.enabledProviders
+    static func alternatingProviders(_ model: IslandModel) -> [AgentProvider] {
+        let providers = model.enabledProviders
         let known = providers.filter {
-            model.compactQuotaValue($0, metric: quotaPreview?.metric, selection: quotaPreview?.windowIDs[$0]) != nil
+            model.compactQuotaValue($0) != nil
         }
         return known.isEmpty ? Array(providers.prefix(1)) : known
     }
     /// Enabled warnings whose condition holds now, in display order.
-    static func activeWarnings(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [CompactIslandLayout.Warning] {
-        let enabled = quotaPreview?.warnings ?? model.compactLayout.warnings
+    static func activeWarnings(_ model: IslandModel) -> [CompactIslandLayout.Warning] {
+        let enabled = model.compactLayout.warnings
         return CompactIslandLayout.Warning.allCases.filter { warning in
             guard enabled.contains(warning) else { return false }
             switch warning {
-            case .fiveHour: return !fiveHourAlerts(model, quotaPreview: quotaPreview).isEmpty
+            case .fiveHour: return !fiveHourAlerts(model).isEmpty
             case .ssh: return model.hasSSHConnectionIssue
-            case .quotaDelay: return !delayedQuotaProviders(model, quotaPreview: quotaPreview).isEmpty
+            case .quotaDelay: return !delayedQuotaProviders(model).isEmpty
             }
         }
     }
-    static func fiveHourAlerts(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [(provider: AgentProvider, alert: FiveHourQuotaAlert)] {
-        (quotaPreview?.providers ?? model.enabledProviders).compactMap { provider in
+    static func fiveHourAlerts(_ model: IslandModel) -> [(provider: AgentProvider, alert: FiveHourQuotaAlert)] {
+        model.enabledProviders.compactMap { provider in
             model.fiveHourAlert(provider).map { (provider, $0) }
         }
     }
-    private static func delayedQuotaProviders(_ model: IslandModel, quotaPreview: CompactQuotaPreview? = nil) -> [AgentProvider] {
-        (quotaPreview?.providers ?? model.enabledProviders).filter { provider in
+    private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
+        model.enabledProviders.filter { provider in
             model.providerQuotaError(provider) != nil ||
                 model.providerQuota(provider)?.isStale(at: model.now) == true ||
-                model.providerSelectedWindow(provider, selection: quotaPreview?.windowIDs[provider])?.resetsAt.map({ $0 <= model.now }) == true
+                model.providerSelectedWindow(provider)?.resetsAt.map({ $0 <= model.now }) == true
         }
     }
     var body: some View {
@@ -155,7 +140,7 @@ struct CompactIslandComponent: View {
     @ViewBuilder private var content: some View {
         switch component {
         case .activity:
-            ActivityBadge(activity: model.headerActivity(singleTask: quotaPreview?.singleTask))
+            ActivityBadge(activity: model.headerActivity())
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(activitySummary)
         case .status:
@@ -173,10 +158,10 @@ struct CompactIslandComponent: View {
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
         case .warnings:
             HStack(spacing: 4) {
-                ForEach(Self.activeWarnings(model, quotaPreview: quotaPreview), id: \.self) { warning in
+                ForEach(Self.activeWarnings(model), id: \.self) { warning in
                     switch warning {
                     case .fiveHour:
-                        ForEach(Self.fiveHourAlerts(model, quotaPreview: quotaPreview), id: \.provider) { item in
+                        ForEach(Self.fiveHourAlerts(model), id: \.provider) { item in
                             FiveHourAlertGlyph(alert: item.alert, tint: item.provider.tint)
                         }
                     case .ssh:
@@ -188,7 +173,7 @@ struct CompactIslandComponent: View {
             }
             .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
         case .quota:
-            let shown = Self.alternatingProviders(model, quotaPreview: quotaPreview)
+            let shown = Self.alternatingProviders(model)
             Group {
                 if shown.count > 1 {
                     AlternatingQuotaText(entries: shown.map { .init(text: quotaText($0), color: NSColor($0.tint)) },
@@ -202,14 +187,14 @@ struct CompactIslandComponent: View {
             .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
         case .quotaGauge:
             QuotaRingsGlyph(rings: providers.map { provider in
-                let window = model.providerSelectedWindow(provider, selection: quotaPreview?.windowIDs[provider])
+                let window = model.providerSelectedWindow(provider)
                 return .init(tint: provider.tint, remaining: model.providerQuotaError(provider) == nil ? window?.remainingPercent : nil,
                     stale: model.providerQuotaIsStale(provider))
             })
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(gaugeSummary)
         case .quotaLabel:
-            Text(quotaPreview.map { L10n.text($0.metric == "pace" ? "quota.pace" : "layout.quota_label") } ?? model.compactMetricLabel)
+            Text(model.compactMetricLabel)
                 .font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
         case .timeRemaining:
             HStack(spacing: 4) {
@@ -232,7 +217,7 @@ struct CompactIslandComponent: View {
         }
     }
     private var fiveHourSummary: String {
-        Self.fiveHourAlerts(model, quotaPreview: quotaPreview).map { item in
+        Self.fiveHourAlerts(model).map { item in
             switch item.alert {
             case .low(let remaining): L10n.text("quota.five_hour_low", item.provider.displayName, "\(Int(remaining.rounded()))%")
             case .exhausted: L10n.text("quota.five_hour_exhausted", item.provider.displayName)
@@ -240,18 +225,18 @@ struct CompactIslandComponent: View {
         }.joined(separator: " · ")
     }
     private var warningSummary: String {
-        Self.activeWarnings(model, quotaPreview: quotaPreview).map { warning in
+        Self.activeWarnings(model).map { warning in
             switch warning {
             case .fiveHour: fiveHourSummary
             case .ssh: L10n.text("source.ssh_retrying")
-            case .quotaDelay: Self.delayedQuotaProviders(model, quotaPreview: quotaPreview).map(\.displayName).joined(separator: " · ")
+            case .quotaDelay: Self.delayedQuotaProviders(model).map(\.displayName).joined(separator: " · ")
                 + " · " + warning.label
             }
         }.joined(separator: "\n")
     }
     private var gaugeSummary: String {
         providers.map { provider in
-            let remaining = model.providerSelectedWindow(provider, selection: quotaPreview?.windowIDs[provider])?.remainingPercent
+            let remaining = model.providerSelectedWindow(provider)?.remainingPercent
             return L10n.text("provider.compact_quota", provider.displayName, remaining.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—")
         }.joined(separator: " · ")
     }
@@ -282,10 +267,10 @@ struct CompactIslandComponent: View {
         }
     }
     private func quotaText(_ provider: AgentProvider) -> String {
-        model.compactQuotaText(provider, metric: quotaPreview?.metric, selection: quotaPreview?.windowIDs[provider])
+        model.compactQuotaText(provider)
     }
     private func timeText(_ provider: AgentProvider) -> String {
-        model.compactTimeRemainingText(provider, selection: quotaPreview?.windowIDs[provider])
+        model.compactTimeRemainingText(provider)
     }
     private func action() {
         switch component {

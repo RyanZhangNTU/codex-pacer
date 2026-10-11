@@ -19,8 +19,8 @@ A native macOS island for Codex and Claude Code tasks, output rate and account q
 - Retain completion cards until a successful conversation open, state change or configured expiry; acknowledged endings stay dismissed across normal relaunch. Claude requires a verified Desktop destination and keeps its card after a Terminal resume fallback. Receive reminders while the island is collapsed.
 - Adjust appearance, display, reminders and privacy. Menu-bar visibility is optional. Quit from the island or settings.
 - Choose Automatic, Notch or Floating on any display; browse tasks three at a time while quota stays visible.
-- Use adaptive width by default, or adjust a single width with a preview and slider in Settings.
-- Customize the single-line collapsed bar: a preview card with a bar-shaped lane strip for dragging order and sides, plus grouped switches with descriptions and inline options, applied as you change them.
+- Use adaptive width by default, or set a single width with a slider in Settings.
+- Customize the single-line collapsed bar: a bar-shaped lane strip for dragging order and sides, plus grouped switches with descriptions and inline options, applied to the island as you change them.
 - View available task TPS and first-output latency; spawned agents are grouped under the parent with their running count and summed TPS. Matching numeric OTLP request evidence supplies exact Claude request timing. After a verified stop, authoritative transcript token counts with a complete observed window can supply estimated throughput. First-output latency needs an actual partial display callback or reported TTFT. Desktop SDK and `-p` final-only messages leave it unknown without numeric telemetry; completed messages cannot establish it. Previous measurements stay visible during tools or while awaiting new data; white means updated within 15 seconds, gray means older.
 - Use English or Simplified Chinese, following your Mac's language by default or selecting a language in Settings.
 - Update inside the app: daily checks by default, with download and installation after you choose to install.

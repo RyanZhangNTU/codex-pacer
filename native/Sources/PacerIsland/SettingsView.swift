@@ -181,13 +181,10 @@ struct SettingsView: View {
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, displayID: $displayID,
                 fullscreen: $fullscreen, showInMenuBar: $showInMenuBar, glass: $glass)
         case .collapsedBar:
-            Section {
-                CompactLayoutEditor(model: model, layout: $compactLayout, widthSettings: $widthSettings,
-                    attached: displayMode.layout(safeAreaTop: model.screenNotchSize.height,
-                        hardwareNotchWidth: model.screenNotchSize.width).attached,
-                    quotaPreview: compactQuotaPreview)
-            }
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
+            Section {
+                CompactLayoutEditor(model: model, layout: $compactLayout, widthSettings: $widthSettings, providers: Set(enabled))
+            }
             componentSection(.tasks, enabled: enabled)
             componentSection(.performance, enabled: enabled)
             componentSection(.quota, enabled: enabled)
@@ -438,12 +435,6 @@ struct SettingsView: View {
             }
             .padding(.leading, CompactComponentToggle.optionInset)
         }
-    }
-
-    private var compactQuotaPreview: CompactQuotaPreview {
-        CompactQuotaPreview(providers: AgentProvider.allCases.filter { moduleEnabled($0) },
-            metric: metric, windowIDs: [.codex: windowID, .claude: claudeWindowID], singleTask: singleTask,
-            warnings: compactLayout.warnings)
     }
 
     /// Each reminder shows the mark it puts on the island.
