@@ -284,6 +284,46 @@ final class SubagentMetricsTests: XCTestCase {
         try consume(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "items", 1, "kind"], "value": "completed"]]], at: 14)
         XCTAssertEqual(try group(14).runningSubagentCount, 1)
     }
+    func testReplayedDesktopCrumbsCannotReviveEndedChildrenAndClearWithTheParentTurn() throws {
+        // Desktop keeps a "started" crumb after the child ends. Pacer then
+        // reattaches (wake, relaunch or stream reconnect) during the parent turn.
+        var projection = DesktopWireProjection(threadID: id(1))
+        var state = RuntimeEventState(sourceID: nil, sourceName: nil)
+        state.consume(["kind": "status", "connected": true])
+        func consume(_ value: [String: Any], at second: Double) throws {
+            let view = try JSONFieldView.document(JSONSerialization.data(withJSONObject: value))
+            state.consume(["kind": "runtimeBatch", "events": try projection.consume(view, owner: "owner", at: start.addingTimeInterval(second))])
+        }
+        func crumb(_ kind: String, _ n: Int, _ item: String) -> [String: Any] {
+            ["type": "subAgentActivity", "id": item, "kind": kind, "agentThreadId": id(n)]
+        }
+        var ended = SessionActivity(id: id(2), phaseAwareRate: true)
+        ended.updateParent(id(1))
+        let formatter = ISO8601DateFormatter()
+        for (second, kind) in [(1.0, "task_started"), (20.0, "task_complete")] {
+            ended.consume(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+                "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": ["type": kind, "turn_id": "child"]]))
+        }
+        func group() throws -> ActivityTaskGroup {
+            let combined = ActivitySourceMerger.merge(logged: [ended], streamed: state.activities)
+            return try XCTUnwrap(ActivityTaskGroup.make(combined).first { $0.primary.threadID == id(1) })
+        }
+        func parentStates() -> [String: SessionActivity.SubagentEvidence]? { state.activities.first { $0.threadID == id(1) }?.subagentStates }
+        try consume(["type": "snapshot", "revision": 0, "conversationState": ["turns": [["turnId": "turn", "status": "inProgress",
+            "turnStartedAtMs": start.timeIntervalSince1970 * 1000, "items": [crumb("started", 2, "a"), crumb("started", 3, "b")]]]]], at: 30)
+        XCTAssertEqual(parentStates()?[id(2)]?.observedAt, start, "Replayed running crumbs are dated no later than the turn start")
+        XCTAssertEqual(try group().runningSubagentCount, 1, "The replay cannot revive the logged ending; an unlogged child still runs")
+        XCTAssertEqual(try group().members.first { $0.threadID == id(2) }?.phase, .completed)
+        // A transition observed live after the ending is a genuine reactivation.
+        try consume(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [["op": "replace", "path": ["turns", 0, "items", 0, "kind"], "value": "completed"]]], at: 31)
+        try consume(["type": "patches", "baseRevision": 1, "revision": 2, "patches": [["op": "add", "path": ["turns", 0, "items", 2], "value": crumb("interacted", 2, "c")]]], at: 32)
+        XCTAssertEqual(try group().runningSubagentCount, 2)
+        // The terminal patch alone ends the turn's crumbs; no later patch is required.
+        try consume(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "status"], "value": "completed"]]], at: 40)
+        XCTAssertEqual(state.activities.first { $0.threadID == id(1) }?.phase, .completed)
+        XCTAssertEqual(parentStates()?.isEmpty, true)
+        XCTAssertFalse(try group().isRunning, "A finished parent cannot keep its task row running through stale crumbs")
+    }
     func testHelperPreservesParentAndDiscoversReceiverWithoutForwardingCollaborationText() throws {
         let script = RealtimeProbe.library + "\n" + #"""
         class WS:

@@ -699,14 +699,16 @@ struct DesktopWireProjection {
         if let current, staged.runtimeAvailable {
             staged.previousTurn = .object(["turnId", "status", "turnStartedAtMs"].reduce(into: [:]) { $0[$1] = current[$1] })
         } else { staged.previousTurn = nil }
-        let childStates = staged.subagentStates
+        staged.isTerminal = staged.runtimeAvailable && Self.terminal.contains(current?["status"]?.text ?? "")
+        // A finished turn keeps only item counts below, so its breadcrumbs end
+        // with it instead of lingering until some later patch arrives.
+        let childStates = staged.isTerminal ? [:] : staged.subagentStates
         staged.collaborationThreadIDs = staged.projectedCollaborationThreadIDs
         if !attentionOnly && staged.runtimeAvailable, childStates != previousAgentStates || ((snapshot || reconnecting) && !childStates.isEmpty), let turn = staged.currentTurnID {
-            events.append(event("subagents/updated", ["turnId": turn, "states": childStates]))
+            events.append(event("subagents/updated", ["turnId": turn, "states": childStates, "replayed": snapshot || reconnecting]))
         }
         staged.previousAgentStates = childStates
         staged.isActive = staged.runtimeAvailable && current?["status"]?.text == "inProgress"
-        staged.isTerminal = staged.runtimeAvailable && Self.terminal.contains(current?["status"]?.text ?? "")
         if staged.isTerminal, let selected, case .items(let count, _, _)? = current?["items"] {
             try staged.tree.patch((selected + [.key("items")])[...], op: "replace", value: .items(count: count, values: [:], hydrated: false))
             staged.previousItems.removeAll()

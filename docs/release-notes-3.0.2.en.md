@@ -1,6 +1,7 @@
 Codex Pacer 3.0.2 fixes a task-status issue that could make an ended local Codex child task appear to be running.
 
 - Older parent status hints no longer override a newer child completion or interruption.
+- Ended child tasks stay ended after Pacer reconnects, wakes from sleep or relaunches while the parent task runs. A finished conversation is no longer kept running by its children.
 - Removing a running hint restores the state recorded in the task log, even when the log has not changed. Confirmed endings survive the parent subscription closing, and a genuinely new activation can still resume the task.
 
 ### Install

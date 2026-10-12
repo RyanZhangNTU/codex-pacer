@@ -587,11 +587,16 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if method == "subagents/updated" {
             guard event["turnId"] as? String == turnID, let states = event["states"] as? [String: String], states.count <= 64,
                   let parent = threadID, subagentStatesObservedAt.map({ date >= $0 }) ?? true else { return }
+            // A replayed snapshot cannot date its breadcrumbs. Anchor a newly
+            // seen running state at this turn's start, so it cannot revive a
+            // child that ended during the turn; the child's log reports new runs.
+            let runningAt = event["replayed"] as? Bool == true ? min(turnStartedAt ?? date, date) : date
             var next: [String: SubagentEvidence] = [:]
             for (raw, state) in states {
                 guard let id = provider.validatedSessionID(raw), id != parent,
                       ["running", "completed"].contains(state) else { continue }
-                next[id] = subagentStates[id].flatMap { $0.state == state ? $0 : nil } ?? SubagentEvidence(parentThreadID: parent, state: state, observedAt: date)
+                next[id] = subagentStates[id].flatMap { $0.state == state ? $0 : nil } ??
+                    SubagentEvidence(parentThreadID: parent, state: state, observedAt: state == "running" ? runningAt : date)
             }
             subagentStates = next
             subagentStatesObservedAt = date

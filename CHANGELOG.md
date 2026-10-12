@@ -3,6 +3,7 @@
 ## 3.0.2
 
 - Fix ended Codex child tasks appearing to run again when an older parent status arrives. A newer activation can still start the child normally.
+- Keep ended child tasks ended after Pacer reconnects to Codex, wakes from sleep or relaunches during the parent task, and release the parent's child states as soon as its turn finishes, so a finished conversation no longer stays marked as running.
 - Keep parent status hints separate from the local log cache, so removing a running hint restores the task's recorded state without requiring another log write. Confirmed endings remain effective after the parent subscription closes.
 
 ## 3.0.1
