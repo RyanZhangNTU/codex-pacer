@@ -22,7 +22,7 @@
   &nbsp;·&nbsp; <a href="README.md">English</a>
 </p>
 
-![Codex Pacer 在刘海下方展开：上方是两个运行中的任务及速度，下方是 Codex 与 Claude 的额度圆环](docs/assets/hero.zh-CN.png)
+![Codex Pacer 在刘海处（演示数据）：悬停展开三个运行中的 Codex 与 Claude 任务和额度圆环，审批请求排到最前，收起后徽标保持琥珀色直到处理完成](docs/assets/demo.zh-CN.webp)
 
 ## 一眼看清
 
