@@ -63,6 +63,122 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertEqual(groups.count, 2, "A remote child cannot join an identically named local parent")
         XCTAssertEqual(ActivityOverview(activities: [parent, remote], at: start.addingTimeInterval(11)).displayedRate, 120)
     }
+    func testParentRunningEvidenceMustBeNewerThanTheChildEnding() throws {
+        let formatter = ISO8601DateFormatter()
+        for ending in ["task_complete", "turn_aborted"] {
+            var child = SessionActivity(id: id(2), phaseAwareRate: true)
+            for (second, payload) in [(0.0, ["type": "task_started", "turn_id": "child"]),
+                                      (20.0, ["type": ending, "turn_id": "child"])] {
+                child.consume(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+                    "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": payload]))
+            }
+            // Later bookkeeping must not change the actual ending boundary.
+            child.consume(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+                "timestamp": formatter.string(from: start.addingTimeInterval(40)),
+                "payload": ["type": "thread_settings_applied", "thread_id": id(2)]]))
+            for second in [10.0, 20.0, 21.0] {
+                var parent = measured(1)
+                live(&parent, "subagents/updated", second, ["states": [id(2): "running"]])
+                let group = try XCTUnwrap(ActivityTaskGroup.make([parent, child]).first)
+                let projected = try XCTUnwrap(group.members.first { $0.threadID == id(2) })
+                XCTAssertEqual(projected.phase, second > 20 ? .running : ending == "task_complete" ? .completed : .interrupted,
+                    "An old or equal-time parent hint cannot undo \(ending); a newer activation remains supported")
+                XCTAssertEqual(group.runningSubagentCount, second > 20 ? 1 : 0)
+                if second <= 20 { XCTAssertEqual(projected.phaseChangedAt, start.addingTimeInterval(20)) }
+            }
+        }
+    }
+    func testParentProjectionDoesNotPersistInAnUnchangedLogCursor() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-overlay-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let day = DateFormatter(); day.dateFormat = "yyyy/MM/dd"
+        let directory = home.appendingPathComponent("sessions/" + day.string(from: start))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("rollout-" + id(2) + ".jsonl")
+        let formatter = ISO8601DateFormatter()
+        var data = Data()
+        func append(_ second: Double, _ payload: [String: Any]) throws {
+            data.append(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+                "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": payload])); data.append(10)
+            try data.write(to: file)
+        }
+        try append(0, ["type": "task_started", "turn_id": "first"])
+        try append(20, ["type": "task_complete", "turn_id": "first"])
+        var parent = measured(1)
+        live(&parent, "subagents/updated", 30, ["states": [id(2): "running"]])
+        let reader = LocalActivityReader()
+        let projected = await reader.read(home: home, now: start.addingTimeInterval(31), phaseAwareRate: true,
+                                          subagentStates: parent.subagentStates)
+        XCTAssertEqual(projected.activities.first?.phase, .running, "A new parent activation still shows immediately")
+        let restored = await reader.read(home: home, now: start.addingTimeInterval(32), phaseAwareRate: true,
+                                         metricsOnly: true, subagentStates: [:])
+        XCTAssertEqual(restored.activities.first?.phase, .completed, "Removing a hint must reveal the unchanged log ending")
+        XCTAssertEqual(restored.activities.first?.phaseChangedAt, start.addingTimeInterval(20))
+        try append(40, ["type": "task_started", "turn_id": "second"])
+        let running = await reader.read(home: home, now: start.addingTimeInterval(41), phaseAwareRate: true)
+        XCTAssertEqual(running.activities.first?.turnID, "second")
+        XCTAssertEqual(running.activities.first?.phase, .running)
+        try append(50, ["type": "task_complete", "turn_id": "second"])
+        let finished = await reader.read(home: home, now: start.addingTimeInterval(51), phaseAwareRate: true,
+                                         subagentStates: parent.subagentStates)
+        XCTAssertEqual(finished.activities.first?.phase, .completed, "The earlier hint cannot revive the next ending either")
+        XCTAssertEqual(finished.activities.first?.turnID, "second")
+    }
+    func testExplicitlyClearedChildStatesCannotReturnThroughMetadataMerge() throws {
+        var parent = measured(1)
+        live(&parent, "subagents/updated", 11, ["states": [id(2): "running"]])
+        let earlier = parent
+        live(&parent, "subagents/updated", 12, ["states": [String: String]()])
+        parent.mergeDisplayMetadata(from: earlier)
+        XCTAssertTrue(parent.subagentStates.isEmpty, "An explicit empty map is not missing metadata")
+        live(&parent, "subagents/updated", 11, ["states": [id(2): "running"]])
+        XCTAssertTrue(parent.subagentStates.isEmpty, "An older map cannot undo a newer clear")
+        XCTAssertEqual(ActivityTaskGroup.make([parent]).first?.runningSubagentCount, 0)
+
+        var logged = SessionActivity(id: id(1), phaseAwareRate: true)
+        logged.consume(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+            "timestamp": ISO8601DateFormatter().string(from: start), "payload": ["type": "task_started", "turn_id": "turn"]]))
+        logged.mergeDisplayMetadata(from: earlier)
+        XCTAssertEqual(logged.subagentStates.count, 1, "A log with no parent map can retain known metadata for the same turn")
+        var clearedFallback = SessionActivity(id: id(1), phaseAwareRate: true)
+        live(&clearedFallback, "turn/started", 0)
+        clearedFallback.mergeDisplayMetadata(from: parent)
+        clearedFallback.mergeDisplayMetadata(from: earlier)
+        XCTAssertTrue(clearedFallback.subagentStates.isEmpty, "The explicit-clear marker must survive source replacement")
+    }
+    func testParentCompletionSurvivesHintRemovalAndDoesNotHideANewChildTurn() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-completion-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let day = DateFormatter(); day.dateFormat = "yyyy/MM/dd"
+        let directory = home.appendingPathComponent("sessions/" + day.string(from: start))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("rollout-" + id(2) + ".jsonl")
+        let formatter = ISO8601DateFormatter()
+        var data = Data()
+        func append(_ second: Double, turn: String) throws {
+            data.append(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+                "timestamp": formatter.string(from: start.addingTimeInterval(second)),
+                "payload": ["type": "task_started", "turn_id": turn]])); data.append(10)
+            try data.write(to: file)
+        }
+        try append(0, turn: "first")
+        var parent = measured(1)
+        live(&parent, "subagents/updated", 20, ["states": [id(2): "completed"]])
+        let reader = LocalActivityReader()
+        let ended = await reader.read(home: home, now: start.addingTimeInterval(21), phaseAwareRate: true,
+                                      subagentStates: parent.subagentStates)
+        XCTAssertEqual(ended.activities.first?.phase, .completed)
+        let retained = await reader.read(home: home, now: start.addingTimeInterval(22), phaseAwareRate: true,
+                                         metricsOnly: true, subagentStates: [:])
+        XCTAssertEqual(retained.activities.first?.phase, .completed, "Releasing the parent cannot discard confirmed terminal evidence")
+        XCTAssertEqual(retained.activities.first?.phaseChangedAt, start.addingTimeInterval(20))
+        try append(30, turn: "second")
+        let resumed = await reader.read(home: home, now: start.addingTimeInterval(31), phaseAwareRate: true,
+                                        subagentStates: parent.subagentStates)
+        XCTAssertEqual(resumed.activities.first?.phase, .running)
+        XCTAssertEqual(resumed.activities.first?.turnID, "second")
+        XCTAssertEqual(resumed.activities.first?.turnStartedAt, start.addingTimeInterval(30))
+    }
     func testLogParentMetadataIsNumericOnlyAndSurvivesSourceMerge() throws {
         var log = measured(2)
         let bytes = try JSONSerialization.data(withJSONObject: ["type": "session_meta", "payload": ["id": id(2), "source": ["subagent": ["thread_spawn": ["parent_thread_id": id(1), "agent_path": "PRIVATE", "agent_nickname": "PRIVATE"]]]]])
@@ -167,6 +283,46 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertTrue(try group(13).rateIsEstimated(at: start.addingTimeInterval(13)))
         try consume(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "items", 1, "kind"], "value": "completed"]]], at: 14)
         XCTAssertEqual(try group(14).runningSubagentCount, 1)
+    }
+    func testReplayedDesktopCrumbsCannotReviveEndedChildrenAndClearWithTheParentTurn() throws {
+        // Desktop keeps a "started" crumb after the child ends. Pacer then
+        // reattaches (wake, relaunch or stream reconnect) during the parent turn.
+        var projection = DesktopWireProjection(threadID: id(1))
+        var state = RuntimeEventState(sourceID: nil, sourceName: nil)
+        state.consume(["kind": "status", "connected": true])
+        func consume(_ value: [String: Any], at second: Double) throws {
+            let view = try JSONFieldView.document(JSONSerialization.data(withJSONObject: value))
+            state.consume(["kind": "runtimeBatch", "events": try projection.consume(view, owner: "owner", at: start.addingTimeInterval(second))])
+        }
+        func crumb(_ kind: String, _ n: Int, _ item: String) -> [String: Any] {
+            ["type": "subAgentActivity", "id": item, "kind": kind, "agentThreadId": id(n)]
+        }
+        var ended = SessionActivity(id: id(2), phaseAwareRate: true)
+        ended.updateParent(id(1))
+        let formatter = ISO8601DateFormatter()
+        for (second, kind) in [(1.0, "task_started"), (20.0, "task_complete")] {
+            ended.consume(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
+                "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": ["type": kind, "turn_id": "child"]]))
+        }
+        func group() throws -> ActivityTaskGroup {
+            let combined = ActivitySourceMerger.merge(logged: [ended], streamed: state.activities)
+            return try XCTUnwrap(ActivityTaskGroup.make(combined).first { $0.primary.threadID == id(1) })
+        }
+        func parentStates() -> [String: SessionActivity.SubagentEvidence]? { state.activities.first { $0.threadID == id(1) }?.subagentStates }
+        try consume(["type": "snapshot", "revision": 0, "conversationState": ["turns": [["turnId": "turn", "status": "inProgress",
+            "turnStartedAtMs": start.timeIntervalSince1970 * 1000, "items": [crumb("started", 2, "a"), crumb("started", 3, "b")]]]]], at: 30)
+        XCTAssertEqual(parentStates()?[id(2)]?.observedAt, start, "Replayed running crumbs are dated no later than the turn start")
+        XCTAssertEqual(try group().runningSubagentCount, 1, "The replay cannot revive the logged ending; an unlogged child still runs")
+        XCTAssertEqual(try group().members.first { $0.threadID == id(2) }?.phase, .completed)
+        // A transition observed live after the ending is a genuine reactivation.
+        try consume(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [["op": "replace", "path": ["turns", 0, "items", 0, "kind"], "value": "completed"]]], at: 31)
+        try consume(["type": "patches", "baseRevision": 1, "revision": 2, "patches": [["op": "add", "path": ["turns", 0, "items", 2], "value": crumb("interacted", 2, "c")]]], at: 32)
+        XCTAssertEqual(try group().runningSubagentCount, 2)
+        // The terminal patch alone ends the turn's crumbs; no later patch is required.
+        try consume(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "status"], "value": "completed"]]], at: 40)
+        XCTAssertEqual(state.activities.first { $0.threadID == id(1) }?.phase, .completed)
+        XCTAssertEqual(parentStates()?.isEmpty, true)
+        XCTAssertFalse(try group().isRunning, "A finished parent cannot keep its task row running through stale crumbs")
     }
     func testHelperPreservesParentAndDiscoversReceiverWithoutForwardingCollaborationText() throws {
         let script = RealtimeProbe.library + "\n" + #"""

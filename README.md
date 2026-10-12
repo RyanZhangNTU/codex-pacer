@@ -22,7 +22,7 @@
   &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-![Codex Pacer opened below the notch: two running tasks with their speed, then Codex and Claude quota rings](docs/assets/hero.png)
+![Codex Pacer at the notch, with sample data: hovering expands three running Codex and Claude tasks above the quota rings, an approval request moves to the top, and the collapsed badge stays amber until it is handled](docs/assets/demo.webp)
 
 ## At a glance
 
