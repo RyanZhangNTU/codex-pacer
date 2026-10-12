@@ -1,0 +1,12 @@
+Codex Pacer 3.0.2 修复了本地 Codex 子任务已经结束，却仍显示为“运行中”的状态问题。
+
+- 父任务的旧状态提示不再覆盖子任务更新的完成或中断状态。
+- 撤销运行提示后，即使日志没有新增内容，也会恢复日志中记录的状态。父任务订阅结束后，已确认的完成状态仍会保留；真正的新一轮激活仍可正常恢复运行。
+
+### 安装
+
+- **已有安装：** 此版本发布后，可通过“检查更新”原地升级，保留现有设置。
+- **手动安装：** 先退出 Codex Pacer，再用新版替换“应用程序”中的副本，然后重新打开。
+- 需要 macOS 14 及以上。
+
+详见[使用指南](https://github.com/RyanZhangNTU/codex-pacer/blob/main/docs/guide.zh-CN.md)和[完整更新记录](https://github.com/RyanZhangNTU/codex-pacer/blob/main/CHANGELOG.md)。

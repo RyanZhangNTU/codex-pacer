@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.2
+
+- Fix ended Codex child tasks appearing to run again when an older parent status arrives. A newer activation can still start the child normally.
+- Keep parent status hints separate from the local log cache, so removing a running hint restores the task's recorded state without requiring another log write. Confirmed endings remain effective after the parent subscription closes.
+
 ## 3.0.1
 
 - Sign Codex Pacer with Developer ID and notarize it with Apple, so a new install opens after the standard macOS confirmation without **Open Anyway** in System Settings. Installed 3.0.0 copies update in place as before.

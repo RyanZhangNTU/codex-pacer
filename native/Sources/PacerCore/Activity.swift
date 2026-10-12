@@ -76,6 +76,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         public let observedAt: Date
     }
     public private(set) var subagentStates: [String: SubagentEvidence] = [:]
+    private var subagentStatesObservedAt: Date?
     private var projectedRate = false
     mutating func applySubagentEvidence(_ evidence: SubagentEvidence) {
         guard !hasLiveEvidence, !isInternalReview, threadID != evidence.parentThreadID,
@@ -85,6 +86,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if ![.completed, .interrupted].contains(phase) { phaseChangedAt = evidence.observedAt }
             phase = .completed; projectedRate = true
         } else if evidence.state == "running" {
+            // A parent's cached running hint cannot undo a newer (or equal)
+            // ending read from the child's own log. New activations still can.
+            if [.completed, .interrupted].contains(phase), let ended = phaseChangedAt,
+               evidence.observedAt <= ended { return }
             projectedRate = lastMeasuredRate.map { $0.reportedAt < evidence.observedAt } ?? true
             if ![.running, .waitingForInput].contains(phase) {
                 phase = .running; stage = .starting; phaseChangedAt = evidence.observedAt
@@ -164,7 +169,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if latencyStart == nil { latencyStart = other.latencyStart; latencyTurnID = key }
             if firstTokenReportedAt == nil { firstTokenReportedAt = other.firstTokenReportedAt }
         }
-        if turnID == other.turnID, subagentStates.isEmpty { subagentStates = other.subagentStates }
+        if turnID == other.turnID, subagentStatesObservedAt == nil {
+            subagentStates = other.subagentStates
+            subagentStatesObservedAt = other.subagentStatesObservedAt
+        }
         if let sample = other.lastMeasuredRate,
            shouldRemember(sample, turn: other.lastMeasuredTurnID, performance: other.lastMeasuredPerformance, exact: other.lastMeasuredExact) {
             lastMeasuredRate = sample; lastMeasuredTurnID = other.lastMeasuredTurnID; lastMeasuredExact = other.lastMeasuredExact
@@ -454,7 +462,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         // An unknown ID during reconnect does not prove the old turn ended.
         if let id { identifyTurn(id) }
-        subagentStates = [:]; projectedRate = false
+        subagentStates = [:]; subagentStatesObservedAt = nil; projectedRate = false
         hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
         turnID = id
         turnStartedAt = date
@@ -578,7 +586,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         defer { rememberRate() }
         if method == "subagents/updated" {
             guard event["turnId"] as? String == turnID, let states = event["states"] as? [String: String], states.count <= 64,
-                  let parent = threadID else { return }
+                  let parent = threadID, subagentStatesObservedAt.map({ date >= $0 }) ?? true else { return }
             var next: [String: SubagentEvidence] = [:]
             for (raw, state) in states {
                 guard let id = provider.validatedSessionID(raw), id != parent,
@@ -586,6 +594,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 next[id] = subagentStates[id].flatMap { $0.state == state ? $0 : nil } ?? SubagentEvidence(parentThreadID: parent, state: state, observedAt: date)
             }
             subagentStates = next
+            subagentStatesObservedAt = date
             return
         }
         if method == "thread/name/updated" {
@@ -775,6 +784,7 @@ public actor LocalActivityReader {
         var fragment: Data
         var activity: SessionActivity
         var identity: UInt64
+        var parentCompletion: SessionActivity.SubagentEvidence?
     }
     private var cursors: [URL: Cursor] = [:]
     private var metadata: [URL: (identity: UInt64, activity: SessionActivity)] = [:]
@@ -788,6 +798,22 @@ public actor LocalActivityReader {
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
                      excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
                      subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL]) {
+        func retainingCompletion(_ cursor: Cursor) -> Cursor {
+            var value = cursor
+            if let id = value.activity.threadID, let evidence = subagentStates[id], evidence.state == "completed",
+               value.parentCompletion.map({ evidence.observedAt > $0.observedAt }) ?? true {
+                value.parentCompletion = evidence
+            }
+            return value
+        }
+        func projected(_ cursor: Cursor) -> SessionActivity {
+            var value = cursor.activity
+            // A confirmed ending survives the parent's subscription being
+            // released. A new child turn rejects this older ending normally.
+            if let completion = cursor.parentCompletion { value.applySubagentEvidence(completion) }
+            if let id = value.threadID, let evidence = subagentStates[id] { value.applySubagentEvidence(evidence) }
+            return value
+        }
         let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd"
@@ -821,17 +847,17 @@ public actor LocalActivityReader {
             watchURLs.append(file.deletingLastPathComponent())
         }
         for file in Array(cursors.keys) {
-            if let id = cursors[file]?.activity.threadID, let evidence = subagentStates[id] { cursors[file]?.activity.applySubagentEvidence(evidence) }
+            if let cursor = cursors[file] { cursors[file] = retainingCompletion(cursor) }
         }
         var unavailable: [SessionActivity] = []
         for (file, cursor) in cursors where !manager.isReadableFile(atPath: file.path) {
-            var activity = cursor.activity
+            var activity = projected(cursor)
             if ![.completed, .interrupted].contains(activity.phase) { activity.markUnconfirmed() }
             unavailable.append(activity)
             cursors.removeValue(forKey: file)
             metadata.removeValue(forKey: file)
         }
-        for (file, cursor) in cursors where [.running, .waitingForInput].contains(cursor.activity.phase) && !files.contains(where: { $0.0 == file }) {
+        for (file, cursor) in cursors where [.running, .waitingForInput].contains(projected(cursor).phase) && !files.contains(where: { $0.0 == file }) {
             files.append((file, cursor.activity.lastObserved ?? .distantPast))
         }
         // Reviews must not consume the user-task discovery slots.
@@ -839,7 +865,7 @@ public actor LocalActivityReader {
             excludingThreads.contains(String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased())
         }
         var selected = metricsOnly ? Array(cursors.keys) : cursors.filter {
-            [.running, .waitingForInput].contains($0.value.activity.phase) && !covered($0.key)
+            [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key)
         }.map(\.key)
         let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
@@ -876,7 +902,8 @@ public actor LocalActivityReader {
             if excludingThreads.contains(id), !includeCoveredMetrics { continue }
             guard let attributes = try? manager.attributesOfItem(atPath: file.path),
                   let size = (attributes[.size] as? NSNumber)?.uint64Value else {
-                if var activity = cursors.removeValue(forKey: file)?.activity {
+                if let cursor = cursors.removeValue(forKey: file) {
+                    var activity = projected(cursor)
                     if ![.completed, .interrupted].contains(activity.phase) { activity.markUnconfirmed() }
                     unavailable.append(activity)
                 }
@@ -923,21 +950,24 @@ public actor LocalActivityReader {
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll() }
                 if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
-                if let id = current.activity.threadID, let evidence = subagentStates[id] { current.activity.applySubagentEvidence(evidence) }
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview {
                     metadata[file] = (identity, current.activity)
                     cursors.removeValue(forKey: file)
-                } else { cursors[file] = current }
+                } else { cursors[file] = retainingCompletion(current) }
             } catch {
-                if ![.completed, .interrupted].contains(current.activity.phase) { current.activity.markUnconfirmed() }
-                unavailable.append(current.activity)
+                var activity = projected(retainingCompletion(current))
+                if ![.completed, .interrupted].contains(activity.phase) { activity.markUnconfirmed() }
+                unavailable.append(activity)
                 cursors.removeValue(forKey: file)
                 metadata.removeValue(forKey: file)
             }
         }
-        return ((cursors.values.map(\.activity) + unavailable).filter { !$0.isInternalReview }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
+        // Parent hints affect the published view and cursor selection, never
+        // the log baseline. Withdrawing a running hint must work at unchanged
+        // EOF, while explicitly observed endings remain independently known.
+        return ((cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
                 watchURLs + selected.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) })
     }
     /// Recover the latest explicit turn anchor without loading conversation history.
