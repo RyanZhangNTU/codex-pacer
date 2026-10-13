@@ -89,6 +89,52 @@ final class CodexConnectionFailureTests: XCTestCase {
         }
     }
 
+    /// Older bundled CLIs (the standalone Codex.app that was renamed/merged into
+    /// ChatGPT.app) type the rate-limits params as `unit`, so a params object is
+    /// rejected with -32600. They still honor a no-params request. The client must
+    /// retry without params and still surface a valid quota.
+    private func legacyUnitParamServer(account: [String: Any] = [
+        "account": ["type": "chatgpt", "planType": "pro"],
+        "workspaceRouting": ["chatgptAccountId": "fixture", "backendOrigin": "test"]
+    ]) throws -> String {
+        func encoded(_ value: [String: Any]) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+                .replacingOccurrences(of: "%", with: "%%")
+                .replacingOccurrences(of: "'", with: "'\\''")
+        }
+        let accountJSON = try encoded(account)
+        let quotaJSON = try encoded([
+            "result": ["rateLimits": ["primary": ["usedPercent": 41, "windowDurationMins": 300]]]
+        ])
+        let quotaFields = String(quotaJSON.dropFirst().dropLast())
+        return #"""
+        while IFS= read -r line; do
+          printf '%s\n' "$line" >> '\#(root.appendingPathComponent("requests.log").path)'
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+          [ -n "$id" ] || continue
+          case "$line" in
+            *initialize*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+            *account/read*) printf '{"id":%s,"result":\#(accountJSON)}\n' "$id" ;;
+            *account/rateLimits/read*"excludeResetCreditDetails"*)
+              printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: invalid type: map, expected unit"}}\n' "$id" ;;
+            *account/rateLimits/read*) printf '{"id":%s,\#(quotaFields)}\n' "$id" ;;
+          esac
+        done
+        """#
+    }
+
+    func testLegacyCliRejectsParamObjectButSucceedsWithoutParams() async throws {
+        let client = try client(legacyUnitParamServer())
+        defer { Task { await client.disconnect() } }
+        let quota = try await client.readQuota()
+        XCTAssertEqual(quota.windows.first?.usedPercent, 41)
+        let requests = try String(contentsOf: root.appendingPathComponent("requests.log"))
+        XCTAssertTrue(requests.contains("excludeResetCreditDetails"),
+            "first attempt should send the params object")
+        let retryCount = requests.components(separatedBy: "account/rateLimits/read").count - 1
+        XCTAssertEqual(retryCount, 2, "the -32600 attempt must be retried once without params")
+    }
+
     func testEarlyExitRetainsStderrAndExitStatus() async throws {
         let client = try client("printf 'env: node: No such file or directory\\naccess_token=private-startup-token\\n' >&2\nexit 127\n")
         defer { Task { await client.disconnect() } }

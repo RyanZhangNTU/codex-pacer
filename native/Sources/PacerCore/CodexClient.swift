@@ -148,7 +148,15 @@ public actor CodexClient {
                 let key = accountID + "|" + (routing["backendOrigin"] as? String ?? "") + "|" + plan
                 verifiedAccountScope = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
             }
-            let data = try await request("account/rateLimits/read", params: ["excludeResetCreditDetails": false])
+            let data: Data
+            do {
+                data = try await request("account/rateLimits/read", params: ["excludeResetCreditDetails": false])
+            } catch CodexClientError.server(method: "account/rateLimits/read", code: -32600, message: _) {
+                // Older bundled CLIs (e.g. the standalone Codex.app that was merged into
+                // ChatGPT.app) type the rate-limits params as `unit`, so any object is
+                // rejected with -32600. They still honor a no-params request.
+                data = try await request("account/rateLimits/read")
+            }
             if let usage = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let responseID = usage["accountId"] as? String, let verifiedID, responseID != verifiedID {
                 verifiedAccountScope = nil
