@@ -6,10 +6,11 @@ import SwiftUI
 /// the real components on the Appearance wallpaper, then which services to
 /// follow. Settings → Help keeps the full legend.
 struct WelcomeView: View {
-    static let size = CGSize(width: 560, height: 504)
+    static let size = CGSize(width: 560, height: 532)
 
     @ObservedObject var model: IslandModel
     @ObservedObject var notificationPreference: SystemNotificationPreference
+    @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     let onOpenSettings: (SettingsPane) -> Void
     let onDone: () -> Void
     @State private var step = 0
@@ -121,9 +122,19 @@ struct WelcomeView: View {
                     Toggle(L10n.text("settings.system_notifications"), isOn: Binding(get: { notificationPreference.enabled },
                         set: { notificationPreference.setEnabled($0) })).labelsHidden().toggleStyle(.switch)
                 }
+                Divider().padding(.leading, 50)
+                personalizeRow(.general, title: L10n.text("settings.open_at_login"), detail: launchAtLoginDetail,
+                               detailTint: launchAtLogin.needsApproval || launchAtLogin.failure != nil ? .orange : .secondary) {
+                    Toggle(L10n.text("settings.open_at_login"), isOn: Binding(get: { launchAtLogin.enabled },
+                        set: { launchAtLogin.setEnabled($0) })).labelsHidden().toggleStyle(.switch)
+                }
             }
             .welcomeGroup()
         }
+    }
+
+    private var launchAtLoginDetail: String {
+        launchAtLogin.failure ?? L10n.text(launchAtLogin.needsApproval ? "settings.login_item_approval" : "welcome.login_detail")
     }
 
     private func moduleEnabled(_ provider: AgentProvider) -> Bool {
@@ -241,7 +252,7 @@ struct WelcomeView: View {
     }
 }
 
-private extension View {
+extension View {
     /// A grouped-form box that reads in light and dark appearance.
     func welcomeGroup() -> some View {
         background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(WelcomeColors.group))

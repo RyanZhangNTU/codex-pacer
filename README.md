@@ -62,7 +62,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 ![The welcome guide: the collapsed bar explained with callouts, the three badge states, and hover to expand](docs/assets/welcome.png)
 
 1. [Download the latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest) and install it as described below.
-2. Open Codex Pacer. A two-step guide explains the island and lets you choose which services to follow. You can open it again from **Settings → Help**.
+2. Open Codex Pacer. A two-step guide explains the island and lets you choose which services to follow and whether Pacer opens at login. You can open it again from **Settings → Help**.
 3. To see Claude quota, sign in once in Pacer's own Claude window. Task tracking for Claude Code and SSH hosts sets itself up.
 
 ## Install
@@ -72,7 +72,7 @@ Codex Pacer is distributed as a universal DMG signed with Developer ID and notar
 1. Double-click the downloaded DMG and drag **Codex Pacer** into **Applications**.
 2. Open Codex Pacer from Applications. macOS asks once to confirm an app downloaded from the internet; click **Open**.
 
-After that, Pacer updates itself: it checks daily and installs when you choose to. **Settings → General → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
+After that, Pacer updates itself: it checks daily, installs when you choose to and shows what changed once after an update. **Settings → General → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
 
 ## Requirements
 

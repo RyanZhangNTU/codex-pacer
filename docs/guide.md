@@ -21,11 +21,13 @@ This guide covers everyday use of Codex Pacer 3. For installation, see the [READ
 The first time you open Codex Pacer 3, or the first launch after upgrading from 2.x, a two-step guide appears.
 
 1. **Meet the island** labels the parts of the collapsed bar, shows the three badge states and demonstrates hover to expand.
-2. **Choose what to follow** turns the Codex and Claude modules on or off, shows whether each one is ready, and offers shortcuts to customize the collapsed bar and turn on notifications.
+2. **Choose what to follow** turns the Codex and Claude modules on or off, shows whether each one is ready, and offers shortcuts to customize the collapsed bar, turn on notifications and open Pacer at login.
 
-![Step 2 of the welcome guide: Codex and Claude cards with their own switches, then Customize the Collapsed Bar and System Notifications](assets/welcome-services.png)
+![Step 2 of the welcome guide: Codex and Claude cards with their own switches, then Customize the Collapsed Bar, System Notifications and Open at Login](assets/welcome-services.png)
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex** or **Settings → Claude**, and reopen the guide from **Settings → Help**.
+
+After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list.
 
 ## The collapsed bar
 
@@ -106,13 +108,15 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 
 | Page | What you can change |
 | --- | --- |
-| General | Language (follow macOS, English or Simplified Chinese), updates, Hide Project Names. |
+| General | Updates, Open at Login, language (follow macOS, English or Simplified Chinese), Hide Project Names. |
 | Appearance | Solid black or Liquid Glass, Automatic / Notch / Floating, which display, and whether to show in full-screen spaces. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |
 | Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, quota history and details. |
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
 | Help | A legend of every mark on the island, the welcome guide, and links to this guide and the issue tracker. |
+
+**Open at Login** uses the macOS login item, so it also appears in **System Settings → General → Login Items**. If Pacer is switched off there, Settings says so and offers a **Login Items** button to allow it again.
 
 ## Notifications
 
@@ -137,7 +141,7 @@ Everything that needs attention already shows on the collapsed bar. Turn on **Se
 ## Uninstall
 
 1. In **Settings → Claude**, turn the Claude module off to remove Pacer's hooks from your local Claude settings.
-2. Quit Pacer from **Settings → Quit Codex Pacer** and move it from Applications to the Trash.
+2. Turn off **Open at Login** in **Settings → General**, quit Pacer from **Settings → Quit Codex Pacer** and move it from Applications to the Trash.
 3. Optionally remove its data: `~/Library/Application Support/CodexPacerIsland` and the preferences (`defaults delete com.codexpacer.app`).
 
 Entries Pacer added on SSH hosts stay there and point to `~/.claude/pacer` on each host. Remove them from that host's Claude settings if you no longer use Pacer.

@@ -540,3 +540,17 @@
 "welcome.all_marks" = "全部标识";
 "welcome.next" = "下一步";
 "welcome.back" = "上一步";
+"settings.open_at_login" = "登录时打开";
+"settings.open_at_login_detail" = "登录 Mac 时自动启动 Codex Pacer";
+"settings.login_item_approval" = "macOS 尚未允许 Codex Pacer 登录时打开，可在“系统设置 > 通用 > 登录项”中允许。";
+"settings.login_item_open" = "登录项…";
+"settings.login_item_failed" = "无法更改登录时打开：%@";
+"welcome.login_detail" = "随 Mac 一起启动，灵动岛随时都在";
+"whats_new.window_title" = "更新内容";
+"whats_new.title" = "Codex Pacer 更新内容";
+"whats_new.version" = "版本 %@";
+"whats_new.release_notes" = "发布说明";
+"whats_new.done" = "继续";
+"whats_new.open_at_login" = "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。";
+"whats_new.child_endings" = "已结束的子代理不再显示为运行中";
+"whats_new.child_endings_detail" = "Pacer 重新连接、唤醒或重启后，已结束的 Codex 子代理不会再显示为运行中。";
