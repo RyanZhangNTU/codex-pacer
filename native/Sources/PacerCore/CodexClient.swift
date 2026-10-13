@@ -151,11 +151,11 @@ public actor CodexClient {
             let data: Data
             do {
                 data = try await request("account/rateLimits/read", params: ["excludeResetCreditDetails": false])
-            } catch CodexClientError.server(method: "account/rateLimits/read", code: -32600, message: _) {
-                // Older bundled CLIs (e.g. the standalone Codex.app that was merged into
-                // ChatGPT.app) type the rate-limits params as `unit`, so any object is
-                // rejected with -32600. They still honor a no-params request.
-                data = try await request("account/rateLimits/read")
+            } catch CodexClientError.server(method: "account/rateLimits/read", code: -32600, message: let message)
+                where message.lowercased().contains("invalid type: map, expected unit") {
+                // Legacy CLIs type this method's params as unit. Retry that schema
+                // mismatch once with params omitted; preserve other RPC failures.
+                data = try await request("account/rateLimits/read", params: nil)
             }
             if let usage = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let responseID = usage["accountId"] as? String, let verifiedID, responseID != verifiedID {
@@ -282,7 +282,7 @@ public actor CodexClient {
         output = stdout.fileHandleForReading
     }
 
-    private func request(_ method: String, params: [String: Any] = [:]) async throws -> Data {
+    private func request(_ method: String, params: [String: Any]? = [:]) async throws -> Data {
         let id = nextID
         nextID += 1
         return try await withCheckedThrowingContinuation { continuation in
@@ -292,7 +292,9 @@ public actor CodexClient {
                 await self?.expired(id)
             }
             pending[id] = Pending(method: method, continuation: continuation, timeout: timeout)
-            do { try write(["id": id, "method": method, "params": params]) }
+            var message: [String: Any] = ["id": id, "method": method]
+            if let params { message["params"] = params }
+            do { try write(message) }
             catch {
                 let entry = pending.removeValue(forKey: id)
                 entry?.timeout.cancel()

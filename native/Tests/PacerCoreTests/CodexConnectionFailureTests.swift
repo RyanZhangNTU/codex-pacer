@@ -20,15 +20,14 @@ final class CodexConnectionFailureTests: XCTestCase {
     private func server(account: [String: Any] = [
         "account": ["type": "chatgpt", "planType": "pro"],
         "workspaceRouting": ["chatgptAccountId": "fixture", "backendOrigin": "test"]
-    ], failure: [String: Any]? = nil) throws -> String {
+    ], failure: [String: Any]? = nil, rejectObjectParams: Bool = false,
+       quota: [String: Any] = ["rateLimits": ["primary": ["usedPercent": 25, "windowDurationMins": 300]]]) throws -> String {
         func encoded(_ value: [String: Any]) throws -> String {
             let json = String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
             return json.replacingOccurrences(of: "%", with: "%%").replacingOccurrences(of: "'", with: "'\\''")
         }
         let accountJSON = try encoded(account)
-        let quotaJSON = try encoded(failure.map { ["error": $0] } ?? [
-            "result": ["rateLimits": ["primary": ["usedPercent": 25, "windowDurationMins": 300]]]
-        ])
+        let quotaJSON = try encoded(failure.map { ["error": $0] } ?? ["result": quota])
         let quotaFields = String(quotaJSON.dropFirst().dropLast())
         return #"""
         while IFS= read -r line; do
@@ -38,7 +37,12 @@ final class CodexConnectionFailureTests: XCTestCase {
           case "$line" in
             *initialize*) printf '{"id":%s,"result":{}}\n' "$id" ;;
             *account/read*) printf '{"id":%s,"result":\#(accountJSON)}\n' "$id" ;;
-            *account/rateLimits/read*) printf '{"id":%s,\#(quotaFields)}\n' "$id" ;;
+            *account/rateLimits/read*)
+              if [ '\#(rejectObjectParams)' = true ] && printf '%s' "$line" | /usr/bin/grep -q '"params"'; then
+                printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: invalid type: map, expected unit"}}\n' "$id"
+              else
+                printf '{"id":%s,\#(quotaFields)}\n' "$id"
+              fi ;;
           esac
         done
         """#
@@ -89,50 +93,95 @@ final class CodexConnectionFailureTests: XCTestCase {
         }
     }
 
-    /// Older bundled CLIs (the standalone Codex.app that was renamed/merged into
-    /// ChatGPT.app) type the rate-limits params as `unit`, so a params object is
-    /// rejected with -32600. They still honor a no-params request. The client must
-    /// retry without params and still surface a valid quota.
-    private func legacyUnitParamServer(account: [String: Any] = [
-        "account": ["type": "chatgpt", "planType": "pro"],
-        "workspaceRouting": ["chatgptAccountId": "fixture", "backendOrigin": "test"]
-    ]) throws -> String {
-        func encoded(_ value: [String: Any]) throws -> String {
-            String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
-                .replacingOccurrences(of: "%", with: "%%")
-                .replacingOccurrences(of: "'", with: "'\\''")
+    private func quotaRequests() throws -> [[String: Any]] {
+        try String(contentsOf: root.appendingPathComponent("requests.log")).split(separator: "\n").compactMap {
+            let request = try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+            return request?["method"] as? String == "account/rateLimits/read" ? request : nil
         }
-        let accountJSON = try encoded(account)
-        let quotaJSON = try encoded([
-            "result": ["rateLimits": ["primary": ["usedPercent": 41, "windowDurationMins": 300]]]
-        ])
-        let quotaFields = String(quotaJSON.dropFirst().dropLast())
-        return #"""
-        while IFS= read -r line; do
-          printf '%s\n' "$line" >> '\#(root.appendingPathComponent("requests.log").path)'
-          id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-          [ -n "$id" ] || continue
-          case "$line" in
-            *initialize*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-            *account/read*) printf '{"id":%s,"result":\#(accountJSON)}\n' "$id" ;;
-            *account/rateLimits/read*"excludeResetCreditDetails"*)
-              printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: invalid type: map, expected unit"}}\n' "$id" ;;
-            *account/rateLimits/read*) printf '{"id":%s,\#(quotaFields)}\n' "$id" ;;
-          esac
-        done
-        """#
     }
 
     func testLegacyCliRejectsParamObjectButSucceedsWithoutParams() async throws {
-        let client = try client(legacyUnitParamServer())
-        defer { Task { await client.disconnect() } }
+        for hasRouting in [true, false] {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent("requests.log"))
+            var account: [String: Any] = ["account": ["type": "chatgpt", "planType": "pro"]]
+            if hasRouting {
+                account["workspaceRouting"] = ["chatgptAccountId": "fixture", "backendOrigin": "test"]
+            }
+            let client = try client(server(account: account, rejectObjectParams: true,
+                quota: ["accountId": "fixture", "rateLimits": ["primary": ["usedPercent": 41, "windowDurationMins": 300]]]))
+            let quota = try await client.readQuota()
+            await client.disconnect()
+            XCTAssertEqual(quota.windows.first?.usedPercent, 41)
+            XCTAssertEqual(quota.accountScope != nil, hasRouting, "The fallback must preserve verified scope without inventing identity")
+            let requests = try quotaRequests()
+            XCTAssertEqual(requests.count, 2)
+            XCTAssertEqual((requests.first?["params"] as? [String: Any])?["excludeResetCreditDetails"] as? Bool, false)
+            XCTAssertNil(requests.last?["params"], "The retry must omit params entirely")
+            XCTAssertNotEqual(requests.first?["id"] as? Int, requests.last?["id"] as? Int)
+        }
+    }
+
+    func testModernCliUsesOneRequestWithResetDetails() async throws {
+        let client = try client(server())
         let quota = try await client.readQuota()
-        XCTAssertEqual(quota.windows.first?.usedPercent, 41)
-        let requests = try String(contentsOf: root.appendingPathComponent("requests.log"))
-        XCTAssertTrue(requests.contains("excludeResetCreditDetails"),
-            "first attempt should send the params object")
-        let retryCount = requests.components(separatedBy: "account/rateLimits/read").count - 1
-        XCTAssertEqual(retryCount, 2, "the -32600 attempt must be retried once without params")
+        await client.disconnect()
+        XCTAssertEqual(quota.windows.first?.usedPercent, 25)
+        let requests = try quotaRequests()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual((requests.first?["params"] as? [String: Any])?["excludeResetCreditDetails"] as? Bool, false)
+    }
+
+    func testOtherRpcFailuresDoNotTriggerCompatibilityRetry() async throws {
+        for (code, message) in [
+            (-32600, "codex account authentication required to read rate limits"),
+            (-32600, "Invalid request: invalid type: map, expected string"),
+            (-32601, "Invalid request: invalid type: map, expected unit")
+        ] {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent("requests.log"))
+            let client = try client(server(failure: ["code": code, "message": message]))
+            do { _ = try await client.readQuota(); XCTFail("expected RPC failure") }
+            catch CodexClientError.server(let method, let actualCode, let actualMessage) {
+                XCTAssertEqual(method, "account/rateLimits/read")
+                XCTAssertEqual(actualCode, code)
+                XCTAssertEqual(actualMessage, message)
+            }
+            catch { XCTFail("unexpected \(error)") }
+            await client.disconnect()
+            XCTAssertEqual(try quotaRequests().count, 1)
+        }
+    }
+
+    func testCompatibilityRetryIsBoundedAndPreservesItsFailure() async throws {
+        for (code, message) in [
+            (-32600, "Invalid request: invalid type: map, expected unit"),
+            (-32001, "Quota temporarily unavailable")
+        ] {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent("requests.log"))
+            let client = try client(server(failure: ["code": code, "message": message], rejectObjectParams: true))
+            do { _ = try await client.readQuota(); XCTFail("expected retry failure") }
+            catch CodexClientError.server(let method, let actualCode, let actualMessage) {
+                XCTAssertEqual(method, "account/rateLimits/read")
+                XCTAssertEqual(actualCode, code)
+                XCTAssertEqual(actualMessage, message)
+            }
+            catch { XCTFail("unexpected \(error)") }
+            await client.disconnect()
+            let requests = try quotaRequests()
+            XCTAssertEqual(requests.count, 2, "A failed retry must not make a third request")
+            XCTAssertNil(requests.last?["params"])
+        }
+    }
+
+    func testCompatibilityRetryStillRejectsMismatchedAccount() async throws {
+        let client = try client(server(rejectObjectParams: true,
+            quota: ["accountId": "other-fixture", "rateLimits": ["primary": ["usedPercent": 41, "windowDurationMins": 300]]]))
+        do { _ = try await client.readQuota(); XCTFail("expected account mismatch") }
+        catch CodexClientError.accountMismatch { }
+        catch { XCTFail("unexpected \(error)") }
+        let scope = await client.currentAccountScope()
+        await client.disconnect()
+        XCTAssertNil(scope)
+        XCTAssertEqual(try quotaRequests().count, 2)
     }
 
     func testEarlyExitRetainsStderrAndExitStatus() async throws {

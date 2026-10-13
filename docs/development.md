@@ -19,6 +19,8 @@ Development builds are ad hoc signed. The build prints its app path; open that a
 
 Codex quota comes from a dedicated read-only app-server connection using `account/read` and `account/rateLimits/read`. No turns are created or resumed. Missing data remains unavailable. Multiple service buckets take precedence over a legacy single-bucket response. Credit and reset details are read from the service, without API-price conversions.
 
+Some legacy CLIs reject the rate-limit parameter object with `-32600` and `invalid type: map, expected unit`. Pacer retries that specific schema mismatch once with the `params` field omitted. Other RPC errors are surfaced without this retry, and the fallback retains the same account verification and quota decoding. A CLI without account-routing metadata can report quota but cannot establish an account scope for history.
+
 ### Provider ownership and Claude sources
 
 `AgentProvider` distinguishes Codex and Claude. Existing Codex activity keys stay `host:UUID`; Claude keys are `claude:host:session`. Parent/agent grouping cannot cross provider or host. Claude agent IDs may be bounded opaque identifiers rather than UUIDs. Display metadata, late numeric updates, input/approval requests and retained completions use the same provider-qualified identity. Turning one module off releases only its collectors, work and reminder baselines, preserving the other module's tasks and completion cards.
