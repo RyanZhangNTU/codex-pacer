@@ -62,7 +62,7 @@
 ![入门引导：用标注讲解折叠栏、徽标的三种状态以及悬停展开](docs/assets/welcome.zh-CN.png)
 
 1. [下载最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)，按下方步骤安装。
-2. 打开 Codex Pacer。两步入门引导会介绍灵动岛，并让你选择要追踪的服务。之后可以在“设置 → 帮助”中再次打开。
+2. 打开 Codex Pacer。两步入门引导会介绍灵动岛，并让你选择要追踪的服务以及是否登录时打开。之后可以在“设置 → 帮助”中再次打开。
 3. 想看 Claude 额度，只需在 Pacer 自带的 Claude 窗口中登录一次。Claude Code 和 SSH 主机上的任务追踪会自动配置好。
 
 ## 安装
@@ -72,7 +72,7 @@ Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 
 1. 双击下载的 DMG，把 **Codex Pacer** 拖入“应用程序”。
 2. 从“应用程序”中打开 Codex Pacer。macOS 会询问一次是否打开从互联网下载的应用，点击“打开”即可。
 
-之后 Pacer 会自行更新：每天检查一次，由你决定何时安装。在“设置 → 通用 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
+之后 Pacer 会自行更新：每天检查一次，由你决定何时安装，更新后会显示一次更新内容。在“设置 → 通用 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
 
 ## 系统要求
 
