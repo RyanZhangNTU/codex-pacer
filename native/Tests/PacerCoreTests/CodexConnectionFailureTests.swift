@@ -20,7 +20,7 @@ final class CodexConnectionFailureTests: XCTestCase {
     private func server(account: [String: Any] = [
         "account": ["type": "chatgpt", "planType": "pro"],
         "workspaceRouting": ["chatgptAccountId": "fixture", "backendOrigin": "test"]
-    ], failure: [String: Any]? = nil, paramsRejection: String? = nil,
+    ], failure: [String: Any]? = nil, paramsRejection: String? = nil, malformedAfterQuota: Bool = false,
        quota: [String: Any] = ["rateLimits": ["primary": ["usedPercent": 25, "windowDurationMins": 300]]]) throws -> String {
         func encoded(_ value: [String: Any]) throws -> String {
             let json = String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
@@ -30,6 +30,8 @@ final class CodexConnectionFailureTests: XCTestCase {
         let quotaJSON = try encoded(failure.map { ["error": $0] } ?? ["result": quota])
         let quotaFields = String(quotaJSON.dropFirst().dropLast())
         let rejectionJSON = try encoded(["code": -32600, "message": paramsRejection ?? ""])
+        // The external printf makes one write, so a malformed trailer arrives in the reply's read.
+        let trailer = malformedAfterQuota ? #"not json\n"# : ""
         return #"""
         while IFS= read -r line; do
           printf '%s\n' "$line" >> '\#(root.appendingPathComponent("requests.log").path)'
@@ -42,7 +44,7 @@ final class CodexConnectionFailureTests: XCTestCase {
               if [ '\#(paramsRejection != nil)' = true ] && printf '%s' "$line" | /usr/bin/grep -q '"params"'; then
                 printf '{"id":%s,"error":\#(rejectionJSON)}\n' "$id"
               else
-                printf '{"id":%s,\#(quotaFields)}\n' "$id"
+                /usr/bin/printf '{"id":%s,\#(quotaFields)}\n\#(trailer)' "$id"
               fi ;;
           esac
         done
@@ -103,18 +105,23 @@ final class CodexConnectionFailureTests: XCTestCase {
         }
     }
 
-    /// Expects the server's own rate-limit error, then returns the quota requests that were sent.
-    private func quotaRequestsAfterFailure(_ script: String, code: Int, message: String,
-                                           file: StaticString = #filePath, line: UInt = #line) async throws -> [[String: Any]] {
+    /// Expects two reads to fail with the server's own rate-limit error without keeping the
+    /// legacy request shape, then returns the quota requests that were sent.
+    private func quotaRequestsAfterFailures(_ script: String, code: Int, message: String,
+                                            file: StaticString = #filePath, line: UInt = #line) async throws -> [[String: Any]] {
         try? FileManager.default.removeItem(at: root.appendingPathComponent("requests.log"))
         let client = try client(script)
-        do { _ = try await client.readQuota(); XCTFail("expected RPC failure", file: file, line: line) }
-        catch CodexClientError.server(let method, let actualCode, let actualMessage) {
-            XCTAssertEqual(method, "account/rateLimits/read", file: file, line: line)
-            XCTAssertEqual(actualCode, code, file: file, line: line)
-            XCTAssertEqual(actualMessage, message, file: file, line: line)
+        for _ in 0..<2 {
+            do { _ = try await client.readQuota(); XCTFail("expected RPC failure", file: file, line: line) }
+            catch CodexClientError.server(let method, let actualCode, let actualMessage) {
+                XCTAssertEqual(method, "account/rateLimits/read", file: file, line: line)
+                XCTAssertEqual(actualCode, code, file: file, line: line)
+                XCTAssertEqual(actualMessage, message, file: file, line: line)
+            }
+            catch { XCTFail("unexpected \(error)", file: file, line: line) }
+            let legacy = await client.usesLegacyRateLimitRequest()
+            XCTAssertFalse(legacy, "A failed read must not keep the legacy request shape", file: file, line: line)
         }
-        catch { XCTFail("unexpected \(error)", file: file, line: line) }
         await client.disconnect()
         return try quotaRequests()
     }
@@ -147,6 +154,33 @@ final class CodexConnectionFailureTests: XCTestCase {
         }
     }
 
+    func testDisconnectDuringCompatibilityRetryDoesNotCarryLegacyShapeToTheNextConnection() async throws {
+        // The retry reply and a malformed line share one read: the reply resumes the request,
+        // then the malformed line disconnects before the quota read finishes.
+        let client = try client(server(paramsRejection: Self.unitParams, malformedAfterQuota: true))
+        for _ in 0..<2 {
+            let quota = try await client.readQuota()
+            XCTAssertEqual(quota.windows.first?.usedPercent, 25)
+            let legacy = await client.usesLegacyRateLimitRequest()
+            XCTAssertFalse(legacy, "A closed connection's retry must not mark its replacement as legacy")
+        }
+        await client.disconnect()
+        XCTAssertEqual(try quotaRequests().map { $0["params"] != nil }, [true, false, true, false],
+                       "Each new connection must probe with params again")
+    }
+
+    func testConcurrentReadsShareOneCompatibilityProbe() async throws {
+        let client = try client(server(paramsRejection: Self.unitParams))
+        async let first = client.readQuota()
+        async let second = client.readQuota()
+        let (a, b) = try await (first, second)
+        await client.disconnect()
+        XCTAssertEqual([a, b].map { $0.windows.first?.usedPercent }, [25, 25])
+        let shapes = try quotaRequests().map { $0["params"] != nil }
+        XCTAssertEqual(shapes.first, true)
+        XCTAssertEqual(shapes.filter { $0 }.count, 1, "Concurrent reads must not probe twice")
+    }
+
     func testModernCliUsesOneRequestWithResetDetails() async throws {
         let client = try client(server())
         for _ in 0..<2 {
@@ -169,32 +203,36 @@ final class CodexConnectionFailureTests: XCTestCase {
             (-32600, "Invalid request: invalid type: map, expected unit struct Empty"),
             (-32601, Self.unitParams)
         ] {
-            let requests = try await quotaRequestsAfterFailure(server(failure: ["code": code, "message": message]),
-                                                               code: code, message: message)
-            XCTAssertEqual(requests.count, 1, message)
+            let requests = try await quotaRequestsAfterFailures(server(failure: ["code": code, "message": message]),
+                                                                code: code, message: message)
+            XCTAssertEqual(requests.map { $0["params"] != nil }, [true, true], message)
         }
     }
 
     func testCompatibilityRetryIsBoundedAndPreservesItsFailure() async throws {
         for (code, message) in [(-32600, Self.unitParams), (-32001, "Quota temporarily unavailable")] {
-            let requests = try await quotaRequestsAfterFailure(
+            let requests = try await quotaRequestsAfterFailures(
                 server(failure: ["code": code, "message": message], paramsRejection: Self.unitParams),
                 code: code, message: message)
-            XCTAssertEqual(requests.count, 2, "A failed retry must not make a third request")
-            XCTAssertNil(requests.last?["params"])
+            XCTAssertEqual(requests.map { $0["params"] != nil }, [true, false, true, false],
+                           "A failed retry must not make a third request, and the next read probes again")
         }
     }
 
     func testCompatibilityRetryStillRejectsMismatchedAccount() async throws {
         let client = try client(server(paramsRejection: Self.unitParams,
             quota: ["accountId": "other-fixture", "rateLimits": ["primary": ["usedPercent": 41, "windowDurationMins": 300]]]))
-        do { _ = try await client.readQuota(); XCTFail("expected account mismatch") }
-        catch CodexClientError.accountMismatch { }
-        catch { XCTFail("unexpected \(error)") }
-        let scope = await client.currentAccountScope()
+        for _ in 0..<2 {
+            do { _ = try await client.readQuota(); XCTFail("expected account mismatch") }
+            catch CodexClientError.accountMismatch { }
+            catch { XCTFail("unexpected \(error)") }
+            let scope = await client.currentAccountScope()
+            let legacy = await client.usesLegacyRateLimitRequest()
+            XCTAssertNil(scope)
+            XCTAssertFalse(legacy)
+        }
         await client.disconnect()
-        XCTAssertNil(scope)
-        XCTAssertEqual(try quotaRequests().count, 2)
+        XCTAssertEqual(try quotaRequests().map { $0["params"] != nil }, [true, false, true, false])
     }
 
     func testEarlyExitRetainsStderrAndExitStatus() async throws {

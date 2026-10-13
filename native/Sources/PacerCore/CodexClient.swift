@@ -70,7 +70,7 @@ public actor CodexClient {
     private var nextID = 1
     private var generation = 0
     private var ready = false
-    private var legacyRateLimitRequest = false
+    private var legacyRateLimitGeneration: Int?
     private var quotaTask: Task<QuotaSnapshot, Error>?
     private var verifiedAccountScope: String?
     private var authFingerprint: String?
@@ -107,7 +107,7 @@ public actor CodexClient {
         return try await task.value
     }
     public func currentAccountScope() -> String? { verifiedAccountScope }
-    public func usesLegacyRateLimitRequest() -> Bool { legacyRateLimitRequest }
+    public func usesLegacyRateLimitRequest() -> Bool { legacyRateLimitGeneration == generation }
     public func shutdown() async {
         disconnect()
         // Allow the bounded child-termination fallback to run before application exit.
@@ -151,15 +151,18 @@ public actor CodexClient {
                 verifiedAccountScope = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
             }
             let data: Data
+            let connection = generation
+            let legacy = legacyRateLimitGeneration == connection
             do {
                 data = try await request("account/rateLimits/read",
-                    params: legacyRateLimitRequest ? nil : ["excludeResetCreditDetails": false])
+                    params: legacy ? nil : ["excludeResetCreditDetails": false])
             } catch CodexClientError.server(_, code: -32600, let message)
-                where !legacyRateLimitRequest && Self.rejectsParamObject(message) {
+                where !legacy && Self.rejectsParamObject(message) {
                 // Legacy CLIs type this method's params as unit. Retry that schema mismatch
-                // once with params omitted and keep that shape for this connection.
+                // once with params omitted and keep that shape for this connection only:
+                // a disconnect during the retry advances the generation, so it cannot leak.
                 data = try await request("account/rateLimits/read", params: nil)
-                legacyRateLimitRequest = true
+                legacyRateLimitGeneration = connection
             }
             if let usage = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let responseID = usage["accountId"] as? String, let verifiedID, responseID != verifiedID {
@@ -196,7 +199,6 @@ public actor CodexClient {
     private func disconnect(reason: CodexClientError) {
         generation += 1
         ready = false
-        legacyRateLimitRequest = false
         pipeReader?.stop()
         pipeReader = nil
         output?.readabilityHandler = nil
