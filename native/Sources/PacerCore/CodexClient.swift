@@ -70,6 +70,7 @@ public actor CodexClient {
     private var nextID = 1
     private var generation = 0
     private var ready = false
+    private var legacyRateLimitRequest = false
     private var quotaTask: Task<QuotaSnapshot, Error>?
     private var verifiedAccountScope: String?
     private var authFingerprint: String?
@@ -106,6 +107,7 @@ public actor CodexClient {
         return try await task.value
     }
     public func currentAccountScope() -> String? { verifiedAccountScope }
+    public func usesLegacyRateLimitRequest() -> Bool { legacyRateLimitRequest }
     public func shutdown() async {
         disconnect()
         // Allow the bounded child-termination fallback to run before application exit.
@@ -150,12 +152,14 @@ public actor CodexClient {
             }
             let data: Data
             do {
-                data = try await request("account/rateLimits/read", params: ["excludeResetCreditDetails": false])
-            } catch CodexClientError.server(method: "account/rateLimits/read", code: -32600, message: let message)
-                where message.lowercased().contains("invalid type: map, expected unit") {
-                // Legacy CLIs type this method's params as unit. Retry that schema
-                // mismatch once with params omitted; preserve other RPC failures.
+                data = try await request("account/rateLimits/read",
+                    params: legacyRateLimitRequest ? nil : ["excludeResetCreditDetails": false])
+            } catch CodexClientError.server(_, code: -32600, let message)
+                where !legacyRateLimitRequest && Self.rejectsParamObject(message) {
+                // Legacy CLIs type this method's params as unit. Retry that schema mismatch
+                // once with params omitted and keep that shape for this connection.
                 data = try await request("account/rateLimits/read", params: nil)
+                legacyRateLimitRequest = true
             }
             if let usage = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let responseID = usage["accountId"] as? String, let verifiedID, responseID != verifiedID {
@@ -181,12 +185,18 @@ public actor CodexClient {
         let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         return "\(attrs[.systemFileNumber] ?? "")|\(modified)|\(attrs[.size] ?? "")"
     }
+    /// Serde's unit-params mismatch, not its distinct unit variant/struct errors.
+    private static func rejectsParamObject(_ message: String) -> Bool {
+        message.range(of: #"invalid type: map, expected unit(?! (?:variant|struct))"#,
+                      options: [.regularExpression, .caseInsensitive]) != nil
+    }
 
     public func disconnect() { disconnect(reason: .disconnected) }
 
     private func disconnect(reason: CodexClientError) {
         generation += 1
         ready = false
+        legacyRateLimitRequest = false
         pipeReader?.stop()
         pipeReader = nil
         output?.readabilityHandler = nil
@@ -282,7 +292,7 @@ public actor CodexClient {
         output = stdout.fileHandleForReading
     }
 
-    private func request(_ method: String, params: [String: Any]? = [:]) async throws -> Data {
+    private func request(_ method: String, params: [String: Any]?) async throws -> Data {
         let id = nextID
         nextID += 1
         return try await withCheckedThrowingContinuation { continuation in

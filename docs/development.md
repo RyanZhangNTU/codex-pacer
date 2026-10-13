@@ -19,7 +19,7 @@ Development builds are ad hoc signed. The build prints its app path; open that a
 
 Codex quota comes from a dedicated read-only app-server connection using `account/read` and `account/rateLimits/read`. No turns are created or resumed. Missing data remains unavailable. Multiple service buckets take precedence over a legacy single-bucket response. Credit and reset details are read from the service, without API-price conversions.
 
-Some legacy CLIs reject the rate-limit parameter object with `-32600` and `invalid type: map, expected unit`. Pacer retries that specific schema mismatch once with the `params` field omitted. Other RPC errors are surfaced without this retry, and the fallback retains the same account verification and quota decoding. A CLI without account-routing metadata can report quota but cannot establish an account scope for history.
+Some legacy CLIs reject the rate-limit parameter object with `-32600` and `invalid type: map, expected unit`. Pacer retries that specific schema mismatch once with the `params` field omitted and keeps that request shape until the connection closes; a new connection probes again, and `--diagnose` reports whether the legacy shape was used. That shape cannot request reset-credit details. Other RPC errors are surfaced without this retry, and the fallback retains the same account verification and quota decoding. A CLI without account-routing metadata can report quota but cannot establish an account scope for history.
 
 ### Provider ownership and Claude sources
 

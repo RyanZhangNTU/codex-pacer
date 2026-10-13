@@ -183,6 +183,7 @@ enum PacerMain {
             print("Reset summary available: \(snapshot.resetCredits != nil)")
             print("Reset expiry details complete: \(snapshot.resetCredits?.hasCompleteDetails == true)")
             print("Credit balance available: \(snapshot.credits?.amount != nil || snapshot.credits?.unlimited == true)")
+            print("Legacy rate-limit request used: \(await client.usesLegacyRateLimitRequest())")
             let local = await LocalActivityReader().read(home: home)
             let overview = ActivityOverview(activities: local.activities, at: Date())
             print("User task states: \(overview.running.count) running, \(overview.waiting.count) waiting")
