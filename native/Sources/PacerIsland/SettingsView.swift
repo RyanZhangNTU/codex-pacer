@@ -6,6 +6,7 @@ struct SettingsView: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var updater: AppUpdater
     @ObservedObject var notificationPreference: SystemNotificationPreference
+    @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     let onClose: () -> Void
     var onShowWelcome: () -> Void = {}
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
@@ -66,6 +67,7 @@ struct SettingsView: View {
         .environment(\.locale, L10n.locale)
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
+            launchAtLogin.refresh()
         }
         .task(id: "\(cliScanRevision):\(executable)") {
             cliReport = nil
@@ -142,6 +144,20 @@ struct SettingsView: View {
         switch pane {
         case .general:
             UpdateSettingsView(updater: updater, automaticallyChecks: $automaticUpdateChecks)
+            Section {
+                Toggle(isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) })) {
+                    Text(L10n.text("settings.open_at_login"))
+                    Text(L10n.text("settings.open_at_login_detail"))
+                }
+                if launchAtLogin.needsApproval {
+                    HStack(spacing: 8) {
+                        caption(L10n.text("settings.login_item_approval")).foregroundStyle(.orange)
+                        Spacer(minLength: 8)
+                        Button(L10n.text("settings.login_item_open")) { launchAtLogin.openSystemSettings() }
+                    }
+                }
+                if let failure = launchAtLogin.failure { caption(failure).foregroundStyle(.orange) }
+            }
             Section {
                 Picker(L10n.text("language.label"), selection: $language) {
                     ForEach(LanguagePreference.allCases, id: \.rawValue) { preference in

@@ -540,3 +540,17 @@
 "welcome.all_marks" = "All Marks";
 "welcome.next" = "Next";
 "welcome.back" = "Back";
+"settings.open_at_login" = "Open at Login";
+"settings.open_at_login_detail" = "Start Codex Pacer when you log in to your Mac";
+"settings.login_item_approval" = "macOS hasn’t allowed Codex Pacer to open at login. Allow it in System Settings > General > Login Items.";
+"settings.login_item_open" = "Login Items…";
+"settings.login_item_failed" = "Open at Login couldn’t be changed: %@";
+"welcome.login_detail" = "Start with your Mac, so the island is always there";
+"whats_new.window_title" = "What’s New";
+"whats_new.title" = "What’s New in Codex Pacer";
+"whats_new.version" = "Version %@";
+"whats_new.release_notes" = "Release Notes";
+"whats_new.done" = "Continue";
+"whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";
+"whats_new.child_endings" = "Ended subagents stay ended";
+"whats_new.child_endings_detail" = "Ended Codex subagents no longer appear to run again after Pacer reconnects, wakes or relaunches.";

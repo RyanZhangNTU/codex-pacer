@@ -212,8 +212,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var updater: AppUpdater!
     private var panel: PanelController!
     private lazy var notificationPreference = SystemNotificationPreference()
+    private lazy var launchAtLogin = LaunchAtLoginPreference(demo: model.isDemo)
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
+    private var whatsNewWindow: NSWindow?
+    private static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     private var demoConversationWindow: NSWindow?
     private var reopenObserver: NSObjectProtocol?
 
@@ -288,10 +291,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         model.start()
         updater.start()
         if CommandLine.arguments.contains("--settings") { showSettings() }
+        let quiet = model.isDemo || CommandLine.arguments.contains("--settings")
         // Once per major line, after the island appears; --welcome forces it for checks.
-        if CommandLine.arguments.contains("--welcome") ||
-            (!model.isDemo && !CommandLine.arguments.contains("--settings") && WelcomeGuide.shouldShow()) {
+        // The guide covers this version, so its update note stays quiet.
+        if CommandLine.arguments.contains("--welcome") || (!quiet && WelcomeGuide.shouldShow()) {
+            if !model.isDemo, let version = Self.version { WhatsNew.markSeen(version) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.showWelcome() }
+        } else if let version = Self.version {
+            // Within a line, each update's highlights once; --whats-new forces them.
+            let pending = WhatsNew.pending(current: version)
+            if CommandLine.arguments.contains("--whats-new") || (!quiet && !pending.isEmpty) {
+                let releases = pending.isEmpty ? Array(WhatsNew.releases.prefix(1)) : pending
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    self?.showWhatsNew(version: version, releases: releases)
+                }
+            } else if !quiet {
+                WhatsNew.markSeen(version)
+            }
         }
     }
 
@@ -369,7 +385,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // The guide's module switches would race Settings' own copy, so
         // Settings closes (and applies pending changes) before it opens.
         settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater,
-            notificationPreference: notificationPreference,
+            notificationPreference: notificationPreference, launchAtLogin: launchAtLogin,
             onClose: { [weak self] in self?.closeSettings() },
             onShowWelcome: { [weak self] in self?.closeSettings(); self?.showWelcome() }))
         settingsWindow?.makeKeyAndOrderFront(nil)
@@ -392,10 +408,35 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             welcomeWindow = window
         }
         welcomeWindow?.contentView = NSHostingView(rootView: WelcomeView(model: model, notificationPreference: notificationPreference,
+            launchAtLogin: launchAtLogin,
             onOpenSettings: { [weak self] pane in self?.closeWelcome(); self?.showSettingsPane(pane) },
             onDone: { [weak self] in self?.closeWelcome() }))
         welcomeWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func showWhatsNew(version: String, releases: [WhatsNew.Release]) {
+        if whatsNewWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: WhatsNewView.width, height: 300),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = L10n.text("whats_new.window_title")
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            whatsNewWindow = window
+        }
+        let hosting = NSHostingView(rootView: WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
+            onDone: { [weak self] in self?.closeWhatsNew() }))
+        whatsNewWindow?.contentView = hosting
+        whatsNewWindow?.setContentSize(hosting.fittingSize)
+        whatsNewWindow?.center()
+        whatsNewWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func closeWhatsNew() {
+        if !model.isDemo, let version = Self.version { WhatsNew.markSeen(version) }
+        whatsNewWindow?.orderOut(nil)
+        whatsNewWindow?.contentView = nil
     }
 
     /// Demo runs never record the guide, so checks leave preferences untouched.
@@ -413,7 +454,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow else { return }
         if closing === welcomeWindow, !model.isDemo { WelcomeGuide.markShown() }
-        guard closing === settingsWindow || closing === welcomeWindow else { return }
+        if closing === whatsNewWindow, !model.isDemo, let version = Self.version { WhatsNew.markSeen(version) }
+        guard closing === settingsWindow || closing === welcomeWindow || closing === whatsNewWindow else { return }
         closing.contentView = nil
     }
 
