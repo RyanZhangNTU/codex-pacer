@@ -273,7 +273,10 @@ final class NativeDesktopSocketTests: XCTestCase {
         final class Observed: @unchecked Sendable {
             let lock = NSLock()
             var phases: Set<String> = []
+            private var controls = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
             func first(_ name: String) -> Bool { lock.lock(); defer { lock.unlock() }; return phases.insert(name).inserted }
+            func recordControls(_ value: RemoteControlSourceBindings) { lock.lock(); defer { lock.unlock() }; controls = value }
+            var controlBindings: RemoteControlSourceBindings { lock.lock(); defer { lock.unlock() }; return controls }
         }
         let home = URL(fileURLWithPath: "/private/tmp/pacer-slow-catalog-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -326,7 +329,8 @@ final class NativeDesktopSocketTests: XCTestCase {
         let observed = Observed(), monitor = RealtimeActivityMonitor(controlCatalog: catalog)
         addTeardownBlock { await gate.release(); await monitor.shutdown() }
         let startup = Task {
-            await monitor.start(home: home, includeSSH: false, refreshPolicy: .expanded) { activities, _, _, _, _, _ in
+            await monitor.start(home: home, includeSSH: false, refreshPolicy: .expanded) { activities, _, _, _, _, _, controls in
+                observed.recordControls(controls)
                 guard let activity = activities.first(where: { $0.sourceHostID == nil }) else { return }
                 if activity.phase == .running, observed.first("running") { local.fulfill() }
                 if activity.tokensPerSecond(at: Date()) != nil, observed.first("measured") { measured.fulfill() }
@@ -335,12 +339,14 @@ final class NativeDesktopSocketTests: XCTestCase {
         }
         defer { startup.cancel() }
         await fulfillment(of: [fetching, local], timeout: 3)
+        XCTAssertEqual(observed.controlBindings, .init(hostIDs: [], authoritative: false), "A pending directory cannot confirm device removal")
         try commands.fileHandleForWriting.write(contentsOf: Data("measure\n".utf8))
         await fulfillment(of: [measured], timeout: 3)
         await monitor.updateRefreshPolicy(.collapsed)
         await gate.release(); await startup.value
         let statuses = await monitor.statuses()
         XCTAssertEqual(statuses["remote-control:added"]?.sourceName, "Added device")
+        XCTAssertEqual(observed.controlBindings, .init(hostIDs: ["remote-control:added"], authoritative: true), "The directory's source bindings reach the same ordered publication as its metadata")
         try commands.fileHandleForWriting.write(contentsOf: Data("complete\n".utf8))
         await fulfillment(of: [completed], timeout: 3)
         await monitor.shutdown()

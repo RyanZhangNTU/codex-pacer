@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.1
+
+- Fix several bugs and improve overall stability.
+- Make Remote Control task monitoring more reliable during long conversations.
+- Show device names and clearer online, offline and waiting states for Remote Control connections.
+- Keep completed remote task cards read after opening their conversations, including after a restart.
+
 ## 3.1.0
 
 - Add Open at Login to Settings → General and the welcome guide. macOS keeps the choice in Login Items; when macOS still needs approval, Pacer says so and opens Login Items.
