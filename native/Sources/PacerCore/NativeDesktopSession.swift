@@ -20,7 +20,7 @@ struct NativeDesktopSession {
     private var events: [HostEvent] = []
     private var frames: [Data] = []
     private(set) var notifications = 0
-    let hosts: Set<String>
+    private(set) var hosts: Set<String>
     let localRuntime: Bool
     private func suppliesRuntime(_ host: String) -> Bool {
         host == "local" ? localRuntime : host.hasPrefix("remote-control:")
@@ -94,6 +94,20 @@ struct NativeDesktopSession {
     }
     var dormantSubscriptionCount: Int { dormant.count }
     var retainedItemCount: Int { streams.values.reduce(0) { $0 + $1.retainedItemCount } }
+    var observedTurnIDs: Set<String> { Set(streams.values.compactMap(\.currentTurnID)) }
+    mutating func setHosts(_ wanted: Set<String>, resetting resets: Set<String> = [], at now: Date = Date()) throws {
+        guard wanted != hosts || !resets.isEmpty else { return }
+        try publishEvents()
+        hosts = wanted
+        waiting.removeAll { !wanted.contains($0.host) }
+        let renewed = followed.filter { wanted.contains($0.host) && resets.contains($0.host) }
+        for key in Array(followed) where !wanted.contains(key.host) || resets.contains(key.host) { try release(key, at: now) }
+        excluded = excluded.filter { wanted.contains($0.host) && !resets.contains($0.host) }
+        invalidatedRemoteHosts.formIntersection(wanted)
+        invalidatedRemoteHosts.subtract(resets)
+        try discover(Array(renewed))
+        try status(loopIterations: 0)
+    }
     var nextServiceDate: Date? { awaitingSnapshot.values.map(\.next).min() }
     mutating func service(at now: Date) throws {
         // The routing ID may be saved before its owner can answer a follow.
@@ -117,8 +131,8 @@ struct NativeDesktopSession {
         }
         if ready { try drain() }
     }
-    mutating func receive(_ bytes: Data, at now: Date = Date()) throws {
-        let root = try JSONFieldView.document(bytes)
+    mutating func receive(_ bytes: Data, at now: Date = Date(), projectedItems: Bool = false) throws {
+        let root = try JSONFieldView.document(bytes, projectedItems: projectedItems)
         guard root.isObject else { throw JSONFieldView.Failure.malformed }
         let fields = try root.fields(["type", "method", "requestId", "resultType", "result", "version", "sourceClientId", "targetClientIds", "params"])
         let kind = fields["type"]?.string(), method = fields["method"]?.string()
@@ -194,6 +208,7 @@ struct NativeDesktopSession {
         var projection = old ?? DesktopWireProjection(threadID: thread, attentionOnly: !suppliesRuntime(host),
                                                       requiresResumedRuntime: host.hasPrefix("remote-control:"))
         do {
+            if projectedItems, try change.fields(["_pacerRejected"])["_pacerRejected"]?.boolean() == true { throw JSONFieldView.Failure.limit }
             let output = try projection.consume(change, owner: owner, at: now)
             streams[key] = projection
             if projection.runtimeAvailable { invalidatedRemoteHosts.remove(host) }

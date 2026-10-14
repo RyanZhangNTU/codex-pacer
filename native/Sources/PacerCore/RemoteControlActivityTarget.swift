@@ -1,9 +1,24 @@
 import Foundation
 
+/// Saved routes can add sources while the catalog is unavailable, but only a
+/// verified catalog (or disabling monitoring) can confirm device removal.
+public struct RemoteControlSourceBindings: Equatable, Sendable {
+    public let hostIDs: Set<String>
+    public let authoritative: Bool
+    public init(hostIDs: Set<String>, authoritative: Bool) {
+        self.hostIDs = hostIDs; self.authoritative = authoritative
+    }
+}
+
 /// Saved routes discover hosts; only Desktop stream evidence creates activity.
 public struct RemoteControlActivityTarget: Equatable, Sendable {
     public let id: String
     public let name: String
+    public let online: Bool?
+
+    public init(id: String, name: String, online: Bool? = nil) {
+        self.id = id; self.name = name; self.online = online
+    }
 
     public static func configured(home: URL) -> [RemoteControlActivityTarget] {
         let file = home.appendingPathComponent(".codex-global-state.json")

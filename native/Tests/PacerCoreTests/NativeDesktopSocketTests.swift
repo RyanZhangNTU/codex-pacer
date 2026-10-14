@@ -64,6 +64,8 @@ final class NativeDesktopSocketTests: XCTestCase {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let child = Process(), stderr = Pipe()
+        let childEnded = expectation(description: "cadence fixture exited")
+        child.terminationHandler = { _ in childEnded.fulfill() }
         let marker = try XCTUnwrap(Self.server.range(of: "time.sleep(.3)"))
         let script = String(Self.server[..<marker.lowerBound]) + #"""
         time.sleep(.3)
@@ -97,7 +99,8 @@ final class NativeDesktopSocketTests: XCTestCase {
         collector.setBatchInterval(1, flushPending: true)
         await fulfillment(of: [expanded], timeout: 1)
         collector.stop(); await fulfillment(of: [closed], timeout: 2)
-        child.waitUntilExit()
+        await fulfillment(of: [childEnded], timeout: 3)
+        guard !child.isRunning else { XCTFail("Cadence fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
 
@@ -253,7 +256,171 @@ final class NativeDesktopSocketTests: XCTestCase {
         let report = try JSONSerialization.jsonObject(with: stdout.fileHandleForReading.readDataToEndOfFile()) as! [String: Any]
         XCTAssertTrue(report["onlyMonitoringRequests"] as? Bool == true)
     }
-    private func verifyMonitorEnding(host: String, atomic: Bool, routing: Bool) async throws {
+    func testLargeSnapshotOnAnotherHostCannotBreakRemoteControlCompletion() async throws {
+        try await verifyMonitorEnding(host: "remote-control:env_fixture", atomic: false, routing: true, largeSnapshot: true)
+    }
+    func testSlowCatalogStartsLocalMonitoringAndAddingDevicesPreservesItsLiveStream() async throws {
+        actor CatalogGate {
+            var waiting: CheckedContinuation<Data, Never>?
+            var released = false
+            let data = Data(#"{"items":[{"env_id":"added","name":"Added device","online":true}],"cursor":null}"#.utf8)
+            func response() async -> Data {
+                if released { return data }
+                return await withCheckedContinuation { waiting = $0 }
+            }
+            func release() { released = true; waiting?.resume(returning: data); waiting = nil }
+        }
+        final class Observed: @unchecked Sendable {
+            let lock = NSLock()
+            var phases: Set<String> = []
+            private var controls = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
+            func first(_ name: String) -> Bool { lock.lock(); defer { lock.unlock() }; return phases.insert(name).inserted }
+            func recordControls(_ value: RemoteControlSourceBindings) { lock.lock(); defer { lock.unlock() }; controls = value }
+            var controlBindings: RemoteControlSourceBindings { lock.lock(); defer { lock.unlock() }; return controls }
+        }
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-slow-catalog-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try JSONSerialization.data(withJSONObject: ["electron-remote-control-client-enrollments": [
+            "synthetic": ["accountUserId": "user", "clientId": "client"]]])
+            .write(to: home.appendingPathComponent(".codex-global-state.json"))
+        try Data("synthetic-profile".utf8).write(to: home.appendingPathComponent("auth.json"))
+        let claims = try JSONSerialization.data(withJSONObject: ["https://api.openai.com/auth": [
+            "chatgpt_account_id": "account", "chatgpt_account_user_id": "user"]]).base64EncodedString()
+        let replies = try JSONSerialization.data(withJSONObject: ["initialize": ["capabilities": [:]],
+            "account/read": ["account": ["type": "chatgpt"]], "getAuthStatus": ["authMethod": "chatgpt", "authToken": "e30." + claims + ".synthetic"]])
+        let rpc = """
+        import sys,json
+        replies=json.loads(\(String(reflecting: String(decoding: replies, as: UTF8.self))))
+        for line in sys.stdin:
+            value=json.loads(line)
+            if 'id' not in value:continue
+            print(json.dumps({'id':value['id'],'result':replies[value['method']]}),flush=True)
+        """
+        let gate = CatalogGate(), fetching = expectation(description: "catalog suspended")
+        let catalog = RemoteControlCatalog(fetch: { _ in fetching.fulfill(); return await gate.response() }, makeClient: { home in
+            CodexClient(executable: URL(fileURLWithPath: "/usr/bin/python3"), home: home, arguments: ["-u", "-c", rpc])
+        })
+        let child = Process(), commands = Pipe(), stdout = Pipe(), stderr = Pipe()
+        let childEnded = expectation(description: "catalog fixture exited")
+        child.terminationHandler = { _ in childEnded.fulfill() }
+        let marker = try XCTUnwrap(Self.server.range(of: "time.sleep(.3)"))
+        let script = String(Self.server[..<marker.lowerBound]) + #"""
+        assert sys.stdin.readline().strip()=='measure'
+        time.sleep(.4)
+        change({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['latestTokenUsageInfo','total','outputTokens'],'value':40}]})
+        assert sys.stdin.readline().strip()=='complete'
+        change({'type':'patches','baseRevision':1,'revision':2,'patches':[{'op':'replace','path':['turns',0,'status'],'value':'completed'}]})
+        try:
+            while True:read()
+        except (EOFError,ConnectionResetError):pass
+        print(json.dumps({'initialize':sum(v.get('method')=='initialize' for v in messages),
+            'localFollows':sum(v.get('params',{}).get('hostId')=='local' and v.get('params',{}).get('following') is True for v in messages)}))
+        connection.close();server.close()
+        """#
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", script, home.path]
+        child.standardInput = commands; child.standardOutput = stdout; child.standardError = stderr
+        try child.run()
+        defer { try? commands.fileHandleForWriting.close(); if child.isRunning { child.terminate() } }
+        let socket = home.appendingPathComponent("ipc/ipc.sock")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        let local = expectation(description: "local runs before catalog responds"), measured = expectation(description: "local measured"), completed = expectation(description: "same revision stream completes")
+        let observed = Observed(), monitor = RealtimeActivityMonitor(controlCatalog: catalog)
+        addTeardownBlock { await gate.release(); await monitor.shutdown() }
+        let startup = Task {
+            await monitor.start(home: home, includeSSH: false, refreshPolicy: .expanded) { activities, _, _, _, _, _, controls in
+                observed.recordControls(controls)
+                guard let activity = activities.first(where: { $0.sourceHostID == nil }) else { return }
+                if activity.phase == .running, observed.first("running") { local.fulfill() }
+                if activity.tokensPerSecond(at: Date()) != nil, observed.first("measured") { measured.fulfill() }
+                if activity.phase == .completed, observed.first("completed") { completed.fulfill() }
+            }
+        }
+        defer { startup.cancel() }
+        await fulfillment(of: [fetching, local], timeout: 3)
+        XCTAssertEqual(observed.controlBindings, .init(hostIDs: [], authoritative: false), "A pending directory cannot confirm device removal")
+        try commands.fileHandleForWriting.write(contentsOf: Data("measure\n".utf8))
+        await fulfillment(of: [measured], timeout: 3)
+        await monitor.updateRefreshPolicy(.collapsed)
+        await gate.release(); await startup.value
+        let statuses = await monitor.statuses()
+        XCTAssertEqual(statuses["remote-control:added"]?.sourceName, "Added device")
+        XCTAssertEqual(observed.controlBindings, .init(hostIDs: ["remote-control:added"], authoritative: true), "The directory's source bindings reach the same ordered publication as its metadata")
+        try commands.fileHandleForWriting.write(contentsOf: Data("complete\n".utf8))
+        await fulfillment(of: [completed], timeout: 3)
+        await monitor.shutdown()
+        await fulfillment(of: [childEnded], timeout: 5)
+        guard !child.isRunning else { XCTFail("Catalog fixture did not exit"); return }
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        let report = try JSONSerialization.jsonObject(with: stdout.fileHandleForReading.readDataToEndOfFile()) as! [String: Int]
+        XCTAssertEqual(report["initialize"], 1)
+        XCTAssertEqual(report["localFollows"], 1, "A device-directory change cannot reset the local subscription or rate baseline")
+    }
+    func testCoalescedDeviceRemovalAndReadditionRefollowsAndRestoresAttention() async throws {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-host-reset-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let host = "remote-control:fixture"
+        let marker = try XCTUnwrap(Self.server.range(of: "change({'type':'snapshot'"))
+        var script = String(Self.server[..<marker.lowerBound]).replacingOccurrences(of: "'hostId':'local'", with: "'hostId':'\(host)'")
+        script += #"""
+        def snapshot():change({'type':'snapshot','revision':0,'conversationState':{'resumeState':'resumed','threadRuntimeStatus':{'type':'active'},
+            'requests':[{'id':'question','method':'item/tool/requestUserInput','params':{'isBlocking':False}}],
+            'turns':[{'turnId':'turn','status':'inProgress','items':[]}]}})
+        snapshot()
+        # Hold the shared reader inside one valid frame until both host updates
+        # have been submitted, fixing the remove/re-add interleaving.
+        body=json.dumps({'type':'broadcast','method':'ignored','params':{'ignored':'x'*70000}}).encode()
+        connection.sendall(struct.pack('<I',len(body))+body[:100])
+        (root/'blocked').write_text('ready')
+        assert sys.stdin.readline().strip()=='continue'
+        connection.sendall(body[100:])
+        while True:
+            value=read()
+            if value.get('params',{}).get('following') is False:break
+        value=read();assert value.get('params',{}).get('following') is True
+        snapshot()
+        try:
+            while True:read()
+        except (EOFError,ConnectionResetError):pass
+        connection.close();server.close()
+        """#
+        let child = Process(), commands = Pipe(), stderr = Pipe()
+        let childEnded = expectation(description: "device reset fixture exited")
+        child.terminationHandler = { _ in childEnded.fulfill() }
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", script, home.path]
+        child.standardInput = commands; child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
+        try child.run()
+        defer { try? commands.fileHandleForWriting.close(); if child.isRunning { child.terminate() } }
+        let socket = home.appendingPathComponent("ipc/ipc.sock")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        let initial = expectation(description: "original pending input"), restored = expectation(description: "fresh snapshot restores input")
+        let closed = expectation(description: "device reset collector closed"), frames = Frames()
+        let collector = NativeDesktopCollector(home: home, hosts: ["local", host], onFrame: { data in
+            _ = frames.append(data)
+            let frame = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            guard frame?["kind"] as? String == "attention", (frame?["requests"] as? [[String: Any]])?.isEmpty == false else { return }
+            let count = frames.all().filter {
+                let value = (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+                return value?["kind"] as? String == "attention" && (value?["requests"] as? [[String: Any]])?.isEmpty == false
+            }.count
+            if count == 1 { initial.fulfill() }
+            if count == 2 { restored.fulfill() }
+        }, onClosed: { closed.fulfill() })
+        try collector.start(); defer { collector.stop() }
+        await fulfillment(of: [initial], timeout: 3)
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: home.appendingPathComponent("blocked").path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("blocked").path))
+        collector.setHosts(["local"]); collector.setHosts(["local", host])
+        try commands.fileHandleForWriting.write(contentsOf: Data("continue\n".utf8))
+        await fulfillment(of: [restored], timeout: 3)
+        collector.stop(); await fulfillment(of: [closed, childEnded], timeout: 3)
+        guard !child.isRunning else { XCTFail("Device reset fixture did not exit"); return }
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+    private func verifyMonitorEnding(host: String, atomic: Bool, routing: Bool, largeSnapshot: Bool = false) async throws {
         final class Ending: @unchecked Sendable {
             let lock = NSLock()
             var delivered = false
@@ -310,6 +477,24 @@ final class NativeDesktopSocketTests: XCTestCase {
                     with: "follow=read();assert follow['params']['following'] is True\nfollow=read();assert follow['params']['following'] is True")
             }
         }
+        if largeSnapshot {
+            let initial = "initialize=read();send({'type':'response','method':'initialize','resultType':'success','result':{'clientId':client}})"
+            let giant = """
+            \(initial)
+            send({'type':'broadcast','method':'thread-stream-state-changed','version':11,'sourceClientId':owner,
+                  'params':{'hostId':'local','conversationId':'019a0000-0000-7000-8000-000000000099',
+                            'change':{'type':'snapshot','revision':0,'conversationState':{'ephemeral':True,'unrelatedHistory':'x'*(17*1024*1024)}}}})
+            """
+            XCTAssertTrue(script.contains(initial))
+            script = script.replacingOccurrences(of: initial, with: giant)
+            // The large local snapshot discovers another interest first.
+            // A real owner answers the follow for its own host, not that one.
+            script = script.replacingOccurrences(of: "follow=read();assert follow['params']['following'] is True", with: """
+            follow=read()
+            while follow.get('params',{}).get('hostId')!='\(host)':follow=read()
+            assert follow['params']['following'] is True
+            """)
+        }
         script += "\nconnection.close();server.close()\n"
         child.arguments = ["-u", "-c", script, home.path]
         child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
@@ -323,7 +508,7 @@ final class NativeDesktopSocketTests: XCTestCase {
             XCTAssertTrue(activities.allSatisfy { ($0.sourceHostID ?? "local") == host })
             if ending.first(activities) { delivered.fulfill() }
         }
-        await fulfillment(of: [delivered], timeout: 5)
+        await fulfillment(of: [delivered], timeout: largeSnapshot ? 10 : 5)
         await monitor.shutdown()
         XCTAssertEqual(ending.unreadCount(), 1, "The reminder must outlive runtime release, trailing patches and EOF")
         await fulfillment(of: [childEnded], timeout: 5)

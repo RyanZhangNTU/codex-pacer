@@ -48,6 +48,94 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         model.receiveRemoteUpdate(values.filter { $0.provider == .codex }, statuses: [:], unavailable: [], requests: [], names: [])
     }
 
+    private func controlCatalogFixture(savedRoute: Bool = false) throws -> FamilyFixture {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-catalog-ack-" + UUID().uuidString)
+        let domain = "com.codexpacer.catalog-ack-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defaults.set(directory.path, forKey: "codexHome")
+        defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
+        defaults.set(false, forKey: "monitorSSH")
+        defaults.set(0, forKey: "completedRetentionMinutes")
+        ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
+        var configuration: [String: Any] = ["electron-remote-control-client-enrollments": [
+            "synthetic": ["accountUserId": "user", "clientId": "client"]]]
+        if savedRoute { configuration["added-remote-control-env-ids"] = ["catalog-fixture"] }
+        try JSONSerialization.data(withJSONObject: configuration).write(to: directory.appendingPathComponent(".codex-global-state.json"))
+        XCTAssertEqual(RemoteControlActivityTarget.configured(home: directory).isEmpty, !savedRoute)
+        let file = directory.appendingPathComponent("dismissals.json")
+        let model = IslandModel(demo: true, defaults: defaults,
+            installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
+            completionDismissalStore: CompletionDismissalStore(fileURL: file))
+        return FamilyFixture(model: model, defaults: defaults, file: file, host: "remote-control:catalog-fixture")
+    }
+
+    func testCatalogOnlyCompletionPersistsBeforeReplayDespiteMissingConnectionStatus() async throws {
+        for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {
+            let fixture = try controlCatalogFixture(), model = fixture.model, host = try XCTUnwrap(fixture.host)
+            let ended = familyActivity(.codex, 960, host: host, at: Date().addingTimeInterval(-2))
+            // Source bindings precede the first ending in the same publication.
+            model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
+                remoteControlBindings: .init(hostIDs: [host], authoritative: true))
+            XCTAssertTrue(model.isUnreadCompletion(ended))
+            // Adding a device and losing status must not unbind this ending.
+            model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
+                remoteControlBindings: .init(hostIDs: [host, "remote-control:another"], authoritative: true))
+            // A cold catalog after transport restart is not evidence of removal.
+            model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
+                remoteControlBindings: .init(hostIDs: [], authoritative: false))
+            model.refreshRemote()
+            let handled = expectation(description: "Catalog-only conversation open handled")
+            var reported = false
+            model.onOpenActivity = { _ in outcome }
+            model.onStatusChange = { if !reported { reported = true; handled.fulfill() } }
+            model.open(ended)
+            await fulfillment(of: [handled], timeout: 2)
+            let acknowledged = outcome == .openedConversation
+            XCTAssertEqual(FileManager.default.fileExists(atPath: fixture.file.path), acknowledged)
+            XCTAssertEqual(model.isUnreadCompletion(ended), !acknowledged)
+            await model.shutdown()
+            let rebuilt = fixture.rebuild()
+            rebuilt.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
+                remoteControlBindings: .init(hostIDs: [host], authoritative: true))
+            XCTAssertEqual(rebuilt.activities.contains { $0.id == ended.id }, !acknowledged)
+            XCTAssertEqual(rebuilt.isUnreadCompletion(ended), !acknowledged)
+            await rebuilt.shutdown()
+        }
+    }
+
+    func testCatalogRemovalInvalidatesAwaitedOpenEvenWithStaleSavedRoute() async throws {
+        let fixture = try controlCatalogFixture(savedRoute: true), model = fixture.model, host = try XCTUnwrap(fixture.host)
+        let at = Date().addingTimeInterval(-2)
+        let ended = familyActivity(.codex, 961, host: host, at: at), claude = familyActivity(.claude, 962, at: at)
+        model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
+            remoteControlBindings: .init(hostIDs: [host], authoritative: true))
+        model.receiveClaudeUpdate([claude], statuses: [:], requests: [])
+        let dispatched = expectation(description: "Catalog-only open suspended"), returned = expectation(description: "Open returned")
+        var continuation: CheckedContinuation<ActivityOpenOutcome, Never>?
+        model.onOpenActivity = { _ in
+            let outcome = await withCheckedContinuation { continuation = $0; dispatched.fulfill() }
+            returned.fulfill(); return outcome
+        }
+        model.open(ended)
+        await fulfillment(of: [dispatched], timeout: 2)
+        model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
+            remoteControlBindings: .init(hostIDs: [], authoritative: true))
+        model.refreshRemote() // Periodic discovery must not reinstate the stale saved route.
+        try XCTUnwrap(continuation).resume(returning: .openedConversation)
+        await fulfillment(of: [returned], timeout: 2); await Task.yield()
+        XCTAssertTrue(model.isUnreadCompletion(ended), "An old open cannot acknowledge the removed device's ending")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.file.path))
+        XCTAssertTrue(model.isUnreadCompletion(claude), "The other provider's completion remains independent")
+        await model.shutdown()
+        let rebuilt = fixture.rebuild()
+        rebuilt.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
+            remoteControlBindings: .init(hostIDs: [host], authoritative: true))
+        XCTAssertTrue(rebuilt.isUnreadCompletion(ended), "Re-adding the device must not recover an acknowledgment from its removed source")
+        await rebuilt.shutdown()
+    }
+
     func testOnlyActualConversationOpenPersistsAcrossModelReconstructionForBothProvidersAndHosts() async throws {
         for provider in AgentProvider.allCases {
             for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack", "remote-control:synthetic-ack"] as [String?]

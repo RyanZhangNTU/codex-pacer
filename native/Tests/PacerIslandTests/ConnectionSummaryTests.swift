@@ -93,4 +93,18 @@ final class ConnectionSummaryTests: XCTestCase {
         XCTAssertEqual(summary(statuses).state, .connected)
         XCTAssertEqual(summary(statuses).sessions, 3)
     }
+    func testDeviceNamesSurviveZeroSessionsAndOfflineIsNotAConnectionFailure() throws {
+        var work = status(true, sessions: 1), notebook = status(false)
+        work.sourceName = "Workstation"; work.remoteHostOnline = true
+        notebook.sourceName = "Notebook"; notebook.remoteHostOnline = false
+        let rows = ConnectionSource.sources(statuses: [.codex: ["local": status(true),
+            ConnectionSource.controlPrefix + "work": work, ConnectionSource.controlPrefix + "notebook": notebook]], unavailableSSH: [], names: [:])
+        let offline = try XCTUnwrap(rows.first { $0.name == "Notebook" })
+        XCTAssertEqual(offline.state, .offline)
+        XCTAssertFalse(notebook.hasConnectionFailure)
+        let result = ConnectionSummary(enabledProviders: [.codex], sources: rows, hosts: [])
+        XCTAssertEqual(result.sources, 3)
+        XCTAssertEqual(result.sessions, 1)
+        XCTAssertEqual(result.state, .offline(1), "An offline device must not imply that the running source is waiting for a session")
+    }
 }

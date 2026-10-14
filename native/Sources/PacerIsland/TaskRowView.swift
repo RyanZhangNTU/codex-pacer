@@ -6,6 +6,7 @@ struct TaskRowView: View {
     var group: ActivityTaskGroup? = nil
     let activity: SessionActivity
     let name: String
+    let sourceName: String?
     let now: Date
     let enabled: Bool
     let unread: Bool
@@ -86,7 +87,7 @@ struct TaskRowView: View {
         .help(enabled ? [L10n.text(activity.provider == .claude && activity.sourceHostID != nil ? "claude.open_remote_help" : "common.open_chat"),
             activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
         .accessibilityLabel(activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
-            [detail, elapsed].compactMap { $0 }.joined(separator: ", "), activity.sourceHost ?? L10n.text("common.local")) + ", " + performanceText)
+            [detail, elapsed].compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + performanceText)
     }
 
     private var rowContent: some View {
@@ -107,7 +108,7 @@ struct TaskRowView: View {
                     }
                     separator
                     Text(activity.provider.displayName).foregroundStyle(activity.provider.tint).fixedSize()
-                    if let host = activity.sourceHost {
+                    if let host = sourceName {
                         separator
                         Text(host).foregroundStyle(PacerPalette.secondary).lineLimit(1)
                     }
