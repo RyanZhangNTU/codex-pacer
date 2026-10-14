@@ -327,6 +327,7 @@ final class IslandModel: ObservableObject {
     private let reader = LocalActivityReader()
     private let realtimeMonitor = RealtimeActivityMonitor()
     private var remoteTask: Task<Void, Never>?
+    private var remoteControlHostIDs: Set<String>?
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
     private let claudeHistoryStore: QuotaHistoryStore
@@ -1178,12 +1179,13 @@ final class IslandModel: ObservableObject {
         remoteTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
-            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] activities, statuses, unavailable, requests, names, performance in
+            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] activities, statuses, unavailable, requests, names, performance, controls in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names, performance: performance)
+                    self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names, performance: performance,
+                        remoteControlBindings: controls)
                 }
             }
             // A hover/collapse can occur while start is awaiting the monitor.
@@ -1192,7 +1194,16 @@ final class IslandModel: ObservableObject {
     }
 
     func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
-                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = []) {
+                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = [],
+                             remoteControlBindings: RemoteControlSourceBindings? = nil) {
+        if let bindings = remoteControlBindings {
+            let previous = remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id))
+            let hosts = bindings.authoritative ? bindings.hostIDs : previous.union(bindings.hostIDs)
+            if remoteControlHostIDs != hosts {
+                remoteControlHostIDs = hosts
+                bindCompletionSources(.codex)
+            }
+        }
         let oldLocal = Set(remoteActivities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let agentStatesChanged = localSubagentStates(remoteActivities) != localSubagentStates(activities)
@@ -1292,6 +1303,7 @@ final class IslandModel: ObservableObject {
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
         quotaCLI = nil; failureCount = 0; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
+        remoteControlHostIDs = nil
         bindCompletionSources(.codex)
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         activities.removeAll { $0.provider == .codex }
@@ -1341,7 +1353,7 @@ final class IslandModel: ObservableObject {
         let targets = provider == .codex ? (monitorsSSH ? RemoteActivityTarget.configured(home: home) : []) : claudeRemoteTargets
         let remoteHomes = Dictionary(targets.map { ($0.id, $0.home) }, uniquingKeysWith: { _, latest in latest })
         let controls = provider == .codex && isModuleEnabled(.codex) && monitorsRemoteControl
-            ? Set(RemoteControlActivityTarget.configured(home: home).map(\.id)) : []
+            ? remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id)) : []
         completionInbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? home : claudeHome,
             remoteHomes: remoteHomes, remoteControlHostIDs: controls)
     }

@@ -8,6 +8,9 @@ public actor RealtimeActivityMonitor {
     public typealias AttentionUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest]) -> Void
     public typealias MetadataUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate]) -> Void
     public typealias PerformanceUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate], [SessionPerformanceUpdate]) -> Void
+    /// Source bindings travel with the publication, independently of transient
+    /// connection status, so completion acknowledgment uses the same routes.
+    public typealias SourceUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate], [SessionPerformanceUpdate], RemoteControlSourceBindings) -> Void
     private struct Source: Equatable {
         let id: String
         let name: String?
@@ -50,7 +53,7 @@ public actor RealtimeActivityMonitor {
     private var attentionRequests: [String: PendingAttentionRequest] = [:]
     private var failed: [String: Source] = [:]
     private var retryAfter: [String: Date] = [:]
-    private var callback: PerformanceUpdate?
+    private var callback: SourceUpdate?
     private var localUnavailable = true
     private var disconnected: [String: [SessionActivity]] = [:]
     private var pendingHints: [String: Set<String>] = [:]
@@ -58,6 +61,7 @@ public actor RealtimeActivityMonitor {
     private var refreshPolicy = ActivityRefreshPolicy.collapsed
     private var startGeneration = 0
     private var knownControls: [String: RemoteControlActivityTarget]?
+    private var remoteControlBindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
     public init() { controlCatalog = RemoteControlCatalog() }
     init(controlCatalog: RemoteControlCatalog) { self.controlCatalog = controlCatalog }
 
@@ -77,6 +81,13 @@ public actor RealtimeActivityMonitor {
     }
     public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true,
                       refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping PerformanceUpdate) async {
+        await start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl,
+            useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { activities, status, unavailable, requests, names, performance, _ in
+            update(activities, status, unavailable, requests, names, performance)
+        }
+    }
+    public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true,
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping SourceUpdate) async {
         startGeneration += 1
         let generation = startGeneration
         self.refreshPolicy = refreshPolicy
@@ -106,6 +117,7 @@ public actor RealtimeActivityMonitor {
             sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshPolicy: refreshPolicy) }
         }
         let controls = includeRemoteControl ? catalog ?? RemoteControlActivityTarget.configured(home: home) : []
+        remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || catalog != nil)
         let controlTargets = catalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
         knownControls = controlTargets
         let names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
@@ -190,6 +202,7 @@ public actor RealtimeActivityMonitor {
         for id in Array(connections.keys) { stop(id) }
         failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
         knownControls = nil
+        remoteControlBindings = .init(hostIDs: [], authoritative: false)
         await controlCatalog.shutdown()
         try? await Task.sleep(nanoseconds: 650_000_000)
     }
@@ -412,7 +425,7 @@ public actor RealtimeActivityMonitor {
             (desktop?.states.values.flatMap { $0.nameUpdates } ?? [])
         callback?(activities(), status, failed.values.filter { status[$0.id]?.connected != true }.compactMap(\.name).sorted(),
                   requests.sorted { $0.detectedAt < $1.detectedAt }, names, connections.values.flatMap { $0.state.performanceUpdates } +
-                  (desktop?.states.values.flatMap { $0.performanceUpdates } ?? []))
+                  (desktop?.states.values.flatMap { $0.performanceUpdates } ?? []), remoteControlBindings)
         if let hosts = desktop?.states.keys { for host in hosts { desktop?.states[host]?.releasePublishedState() } }
         for id in Array(connections.keys) { connections[id]?.state.releasePublishedState() }
     }
