@@ -20,7 +20,8 @@ final class CodexDiagnosticTests: XCTestCase {
         let result = CodexDiagnosticText.sanitized("\u{001B}[31mConnection refused\u{001B}[0m\n" + String(repeating: "x", count: 20_000), limit: 120)
         XCTAssertTrue(result.hasPrefix("Connection refused"))
         XCTAssertFalse(result.contains("\u{001B}"))
-        XCTAssertLessThan(result.count, 160)
+        let noticeLength = L10n.text("diagnostic.truncated", "").count
+        XCTAssertLessThanOrEqual(result.count, 120 + noticeLength, "The bound includes the localized truncation notice")
     }
     func testRepeatedSanitizationDoesNotAccumulateRedactionMarkers() {
         let input = "HTTP 403: access_token=private-value Authorization: Bearer private-bearer OPENAI_API_KEY=sk-proj-1234567890abcdef"

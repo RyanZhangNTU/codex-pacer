@@ -64,6 +64,8 @@ final class NativeDesktopSocketTests: XCTestCase {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let child = Process(), stderr = Pipe()
+        let childEnded = expectation(description: "cadence fixture exited")
+        child.terminationHandler = { _ in childEnded.fulfill() }
         let marker = try XCTUnwrap(Self.server.range(of: "time.sleep(.3)"))
         let script = String(Self.server[..<marker.lowerBound]) + #"""
         time.sleep(.3)
@@ -97,7 +99,8 @@ final class NativeDesktopSocketTests: XCTestCase {
         collector.setBatchInterval(1, flushPending: true)
         await fulfillment(of: [expanded], timeout: 1)
         collector.stop(); await fulfillment(of: [closed], timeout: 2)
-        child.waitUntilExit()
+        await fulfillment(of: [childEnded], timeout: 3)
+        guard !child.isRunning else { XCTFail("Cadence fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
 
