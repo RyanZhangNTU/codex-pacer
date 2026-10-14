@@ -106,6 +106,11 @@ final class IslandModel: ObservableObject {
     func providerStreamStatuses(_ provider: AgentProvider) -> [String: RuntimeStreamStatus] {
         provider == .codex ? streamStatuses : claudeStreamStatuses
     }
+    func taskSourceName(_ activity: SessionActivity) -> String? {
+        guard activity.provider == .codex, let host = activity.sourceHostID,
+              host.hasPrefix("remote-control:") else { return activity.sourceHost }
+        return streamStatuses[host]?.sourceName ?? activity.sourceHost
+    }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? { provider == .codex ? codexQuota : claudeQuota }
     func providerQuotaError(_ provider: AgentProvider) -> String? { provider == .codex ? codexErrorMessage : claudeErrorMessage }
     /// The provider's own service bucket; model-scoped buckets stay in Settings details.
@@ -1120,7 +1125,12 @@ final class IslandModel: ObservableObject {
         return result
     }
     func refreshTaskSources() {
-        refreshActivity(); refreshRemote()
+        refreshActivity()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.realtimeMonitor.invalidateRemoteControlCatalog()
+            self.refreshRemote()
+        }
         discoverClaudeRemoteTargets(refresh: true)
     }
     func refreshActivity(metricsOnly: Bool = false) {

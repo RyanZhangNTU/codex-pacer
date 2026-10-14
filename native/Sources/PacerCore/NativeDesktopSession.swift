@@ -20,7 +20,7 @@ struct NativeDesktopSession {
     private var events: [HostEvent] = []
     private var frames: [Data] = []
     private(set) var notifications = 0
-    let hosts: Set<String>
+    private(set) var hosts: Set<String>
     let localRuntime: Bool
     private func suppliesRuntime(_ host: String) -> Bool {
         host == "local" ? localRuntime : host.hasPrefix("remote-control:")
@@ -95,6 +95,19 @@ struct NativeDesktopSession {
     var dormantSubscriptionCount: Int { dormant.count }
     var retainedItemCount: Int { streams.values.reduce(0) { $0 + $1.retainedItemCount } }
     var observedTurnIDs: Set<String> { Set(streams.values.compactMap(\.currentTurnID)) }
+    mutating func setHosts(_ wanted: Set<String>, resetting resets: Set<String> = [], at now: Date = Date()) throws {
+        guard wanted != hosts || !resets.isEmpty else { return }
+        try publishEvents()
+        hosts = wanted
+        waiting.removeAll { !wanted.contains($0.host) }
+        let renewed = followed.filter { wanted.contains($0.host) && resets.contains($0.host) }
+        for key in Array(followed) where !wanted.contains(key.host) || resets.contains(key.host) { try release(key, at: now) }
+        excluded = excluded.filter { wanted.contains($0.host) && !resets.contains($0.host) }
+        invalidatedRemoteHosts.formIntersection(wanted)
+        invalidatedRemoteHosts.subtract(resets)
+        try discover(Array(renewed))
+        try status(loopIterations: 0)
+    }
     var nextServiceDate: Date? { awaitingSnapshot.values.map(\.next).min() }
     mutating func service(at now: Date) throws {
         // The routing ID may be saved before its owner can answer a follow.

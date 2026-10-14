@@ -117,14 +117,7 @@ public actor CodexClient {
     private func fetchQuota() async throws -> QuotaSnapshot {
         do {
             verifiedAccountScope = nil
-            let fingerprint = Self.authenticationFingerprint(home: home)
-            if fingerprint != authFingerprint { disconnect(); authFingerprint = fingerprint }
-            if !ready {
-                try start()
-                _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"], "capabilities": ["experimentalApi": true]])
-                try write(["method": "initialized", "params": [:]])
-                ready = true
-            }
+            try await prepareReadConnection()
             let account = try await request("account/read", params: ["refreshToken": false])
             guard let accountResponse = try JSONSerialization.jsonObject(with: account) as? [String: Any] else {
                 throw CodexClientError.invalidReply(method: "account/read", reason: L10n.text("cli.account_not_object"))
@@ -183,7 +176,27 @@ public actor CodexClient {
             throw error
         }
     }
-    private static func authenticationFingerprint(home: URL) -> String? {
+    private func prepareReadConnection() async throws {
+        let fingerprint = Self.authenticationFingerprint(home: home)
+        if fingerprint != authFingerprint { disconnect(); authFingerprint = fingerprint }
+        if !ready {
+            try start()
+            _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"], "capabilities": ["experimentalApi": true]])
+            try write(["method": "initialized", "params": [:]])
+            ready = true
+        }
+    }
+    /// Short-lived authorization for the paired-device metadata GET only.
+    /// No authentication material is cached by the catalog or exposed to UI.
+    func remoteControlCatalogAuthorization() async throws -> RemoteControlCatalogAuthorization {
+        do {
+            try await prepareReadConnection()
+            let account = try await request("account/read", params: ["refreshToken": false])
+            let auth = try await request("getAuthStatus", params: ["includeToken": true, "refreshToken": false])
+            return try RemoteControlCatalogAuthorization(account: account, auth: auth)
+        } catch { disconnect(); throw error }
+    }
+    static func authenticationFingerprint(home: URL) -> String? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: home.appendingPathComponent("auth.json").path) else { return nil }
         let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         return "\(attrs[.systemFileNumber] ?? "")|\(modified)|\(attrs[.size] ?? "")"

@@ -11,7 +11,9 @@ final class NativeDesktopCollector: @unchecked Sendable {
     private var flushRequested = false
     private var cancelled = false
     private let home: URL
-    private let hosts: Set<String>
+    private var hosts: Set<String>
+    private var hostsChanged = false
+    private var removedHosts: Set<String> = []
     private let localRuntime: Bool
     private var batchInterval: TimeInterval
     func setBatchInterval(_ value: TimeInterval, flushPending: Bool = false) {
@@ -24,9 +26,21 @@ final class NativeDesktopCollector: @unchecked Sendable {
             _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
         }
     }
-    private func batchUpdate() -> (interval: TimeInterval, flush: Bool) {
+    func setHosts(_ value: Set<String>) {
         lock.lock(); defer { lock.unlock() }
-        let result = (batchInterval, flushRequested); flushRequested = false; return result
+        guard hosts != value else { return }
+        removedHosts.formUnion(hosts.subtracting(value))
+        hosts = value; hostsChanged = true
+        if eventQueue >= 0 {
+            var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
+            _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
+        }
+    }
+    private func currentHosts() -> Set<String> { lock.lock(); defer { lock.unlock() }; return hosts }
+    private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts)
+        flushRequested = false; hostsChanged = false; removedHosts.removeAll(); return result
     }
     private let onFrame: @Sendable (Data) -> Void
     private let onClosed: @Sendable () -> Void
@@ -108,7 +122,7 @@ final class NativeDesktopCollector: @unchecked Sendable {
     private func run(_ fd: Int32) {
         defer { finish(fd); onClosed() }
         do {
-            var session = try NativeDesktopSession(hosts: hosts, localRuntime: localRuntime) { [self] value in try send(value, fd: fd) }
+            var session = try NativeDesktopSession(hosts: currentHosts(), localRuntime: localRuntime) { [self] value in try send(value, fd: fd) }
             defer {
                 // EOF can arrive during the batch interval. Deliver the
                 // last valid events before signalling closure to the consumer.
@@ -149,11 +163,15 @@ final class NativeDesktopCollector: @unchecked Sendable {
                 iterations += 1
                 let now = Date()
                 let batch = batchUpdate()
+                if let hosts = batch.hosts {
+                    try session.setHosts(hosts, resetting: batch.resetHosts, at: now)
+                    routing = DesktopRouteHints(); routingDirty = true
+                }
                 let nextFlush = lastFlush.addingTimeInterval(batch.interval)
                 try session.service(at: now)
                 if routingDirty && now >= nextRoutingRead {
                     if reopenRouting { try reopenRoutingWatch(); reopenRouting = false }
-                    try session.discover(routing.changed(home: home, hosts: hosts))
+                    try session.discover(routing.changed(home: home, hosts: session.hosts))
                     routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
                 }
                 if !session.ready && now.timeIntervalSince(opened) > 5 { throw POSIXError(.ETIMEDOUT) }

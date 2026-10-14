@@ -321,6 +321,37 @@ final class NativeDesktopTests: XCTestCase {
         XCTAssertFalse(String(describing: frames).contains("PRIVATE"))
     }
 
+    func testChangingHostsPreservesExistingThreadItemsRevisionAndSubscription() throws {
+        final class Sent { var values: [[String: Any]] = [] }
+        let sent = Sent(), client = "019a0000-0000-7000-8000-000000000010", owner = "019a0000-0000-7000-8000-000000000020"
+        let removed = "remote-control:removed", added = "remote-control:added"
+        var session = try NativeDesktopSession(hosts: ["local", removed]) { sent.values.append($0) }
+        func send(_ host: String, _ change: [String: Any]) throws {
+            try session.receive(JSONSerialization.data(withJSONObject: ["type": "broadcast", "method": "thread-stream-state-changed",
+                "version": 11, "sourceClientId": owner, "params": ["hostId": host, "conversationId": thread, "change": change]]), at: epoch)
+        }
+        try session.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success", "result": ["clientId": client]]))
+        try session.discover([.init(host: "local", thread: thread), .init(host: removed, thread: thread)])
+        try send("local", ["type": "snapshot", "revision": 0, "conversationState": state()])
+        var remoteState = state(); remoteState["resumeState"] = "resumed"
+        try send(removed, ["type": "snapshot", "revision": 0, "conversationState": remoteState])
+        let before = session.retainedItemCount
+        XCTAssertGreaterThan(before, 0)
+        _ = session.takeFrames(); sent.values.removeAll()
+        try session.setHosts(["local", added], at: epoch)
+        XCTAssertEqual(sent.values.count, 1)
+        let removal = sent.values.first?["params"] as? [String: Any]
+        XCTAssertEqual(removal?["hostId"] as? String, removed)
+        XCTAssertEqual(removal?["following"] as? Bool, false)
+        try send("local", ["type": "patches", "baseRevision": 0, "revision": 1,
+            "patches": [["op": "replace", "path": ["turnHistory", "history", "entitiesByKey", "key0", "status"], "value": "completed"]]])
+        try session.publishEvents()
+        let frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+        XCTAssertFalse(frames.contains { $0["kind"] as? String == "streamInvalidated" })
+        XCTAssertTrue(frames.contains { ($0["events"] as? [[String: Any]])?.contains { $0["method"] as? String == "turn/completed" } == true })
+        try session.discover([.init(host: added, thread: thread)])
+        XCTAssertEqual((sent.values.last?["params"] as? [String: Any])?["hostId"] as? String, added)
+    }
     func testEphemeralSnapshotsAndPatchesClearRequestsAndStopFollowingOnlyThatThread() throws {
         let remote = "remote-ssh-discovered:synthetic"
         for host in ["local", remote] {
