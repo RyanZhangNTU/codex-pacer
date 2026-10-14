@@ -6,7 +6,7 @@ import SwiftUI
 struct ConnectionSource: Equatable, Identifiable {
     enum State: Int, Comparable {
         /// Ordered so problems sort first.
-        case retrying, paused, idle, connected
+        case retrying, paused, offline, idle, connected
         static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
     }
     let provider: AgentProvider
@@ -28,6 +28,7 @@ struct ConnectionSource: Equatable, Identifiable {
         for (provider, byKey) in statuses {
             for (key, status) in byKey {
                 let state: State = status.connected ? .connected :
+                    key.hasPrefix(controlPrefix) && status.remoteHostOnline == false ? .offline :
                     key.hasPrefix(controlPrefix) && status.waitingForSession ? .idle :
                     status.sourceAvailable == false ? .paused : .retrying
                 let name: String, kind: String
@@ -36,7 +37,8 @@ struct ConnectionSource: Equatable, Identifiable {
                 } else if key.hasPrefix(sshPrefix) {
                     name = String(key.dropFirst(sshPrefix.count)); kind = L10n.text("connections.kind.ssh")
                 } else if key.hasPrefix(controlPrefix) {
-                    name = names[key] ?? L10n.text("connections.kind.remote_control"); kind = L10n.text("connections.kind.remote_control")
+                    name = status.sourceName ?? names[key] ?? L10n.text("connections.kind.remote_control") + " (" + String(key.suffix(8)) + ")"
+                    kind = L10n.text("connections.kind.remote_control")
                 } else {
                     name = names[key] ?? key; kind = provider.displayName
                 }
@@ -121,9 +123,9 @@ struct SSHHost: Equatable, Identifiable {
 /// including configured targets whose collector has not published yet.
 struct ConnectionSummary: Equatable {
     enum State: Equatable {
-        case disabled, checking, retrying(Int), connecting(Int), paused(Int), idle, connected
+        case disabled, checking, retrying(Int), connecting(Int), paused(Int), offline(Int), idle, connected
     }
-    private enum EntryState { case retrying, connecting, paused, idle, connected }
+    private enum EntryState { case retrying, connecting, paused, offline, idle, connected }
     let state: State
     let sources: Int
     let sessions: Int
@@ -136,6 +138,7 @@ struct ConnectionSummary: Equatable {
             case .retrying: .retrying
             case .paused: .paused
             case .idle: .idle
+            case .offline: .offline
             case .connected: .connected
             }
             entries[source.id] = (state, source.sessions)
@@ -164,10 +167,11 @@ struct ConnectionSummary: Equatable {
         let retrying = entries.values.filter { $0.state == .retrying }.count
         let connecting = entries.values.filter { $0.state == .connecting }.count
         let paused = entries.values.filter { $0.state == .paused }.count
+        let offline = entries.values.filter { $0.state == .offline }.count
         let idle = entries.values.contains { $0.state == .idle }
         state = enabled.isEmpty ? .disabled : checking ? .checking :
             retrying > 0 ? .retrying(retrying) : connecting > 0 ? .connecting(connecting) :
-            paused > 0 ? .paused(paused) : idle ? .idle : .connected
+            paused > 0 ? .paused(paused) : offline > 0 ? .offline(offline) : idle ? .idle : .connected
     }
 }
 
@@ -235,6 +239,8 @@ struct SettingsConnectionsPane: View {
             L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count))
         case .paused(let count): ("pause", .secondary,
             L10n.text(count == 1 ? "connections.summary.paused_one" : "connections.summary.paused", count))
+        case .offline(let count): ("network.slash", .secondary,
+            L10n.text(count == 1 ? "connections.summary.offline_one" : "connections.summary.offline", count))
         case .idle: ("ellipsis", .secondary, L10n.text("connections.summary.idle"))
         case .connected: ("checkmark", .green, L10n.text("connections.summary.ok"))
         }
@@ -272,6 +278,7 @@ struct SettingsConnectionsPane: View {
         case .retrying: (.orange, L10n.text("connections.state.retrying"))
         case .paused: (.secondary, L10n.text("connections.state.paused", source.provider.displayName))
         case .idle: (.secondary, L10n.text("connections.state.idle"))
+        case .offline: (.secondary, L10n.text("connections.state.offline"))
         }
         return HStack(spacing: 10) {
             ProviderTile(provider: source.provider)

@@ -471,6 +471,9 @@
 "connections.state.connected" = "已连接";
 "connections.state.retrying" = "未连接，正在重试";
 "connections.state.idle" = "等待会话";
+"connections.state.offline" = "设备离线";
+"connections.summary.offline_one" = "%d 台设备离线";
+"connections.summary.offline" = "%d 台设备离线";
 "connections.state.paused" = "未安装 %@，已暂停";
 "connections.sessions" = "%ld 个会话";
 "connections.sessions_one" = "%ld 个会话";

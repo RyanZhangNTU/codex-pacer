@@ -36,11 +36,13 @@ public actor RealtimeActivityMonitor {
     private struct DesktopConnection {
         let source: Source
         let collector: NativeDesktopCollector
-        let hosts: [String: String]
+        var hosts: [String: String]
         let localRuntime: Bool
+        var catalog: [String: RemoteControlActivityTarget]?
         let continuation: AsyncStream<Data>.Continuation
         var delivery: Task<Void, Never>?
         var states: [String: RuntimeEventState] = [:]
+        var observedControlHosts: Set<String> = []
     }
     private var desktop: DesktopConnection?
     private var desktopRetryAfter = Date.distantPast
@@ -52,25 +54,47 @@ public actor RealtimeActivityMonitor {
     private var localUnavailable = true
     private var disconnected: [String: [SessionActivity]] = [:]
     private var pendingHints: [String: Set<String>] = [:]
-    public init() {}
+    private let controlCatalog: RemoteControlCatalog
+    private var refreshPolicy = ActivityRefreshPolicy.collapsed
+    private var startGeneration = 0
+    private var knownControls: [String: RemoteControlActivityTarget]?
+    public init() { controlCatalog = RemoteControlCatalog() }
+    init(controlCatalog: RemoteControlCatalog) { self.controlCatalog = controlCatalog }
 
-    public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true, update: @escaping Update) {
-        start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback) { activities, status, unavailable, _ in update(activities, status, unavailable) }
+    public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true, update: @escaping Update) async {
+        await start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback) { activities, status, unavailable, _ in update(activities, status, unavailable) }
     }
-    public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true, update: @escaping AttentionUpdate) {
-        start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback) { activities, status, unavailable, requests, _ in
+    public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true, update: @escaping AttentionUpdate) async {
+        await start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback) { activities, status, unavailable, requests, _ in
             update(activities, status, unavailable, requests)
         }
     }
     public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true,
-                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping MetadataUpdate) {
-        start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { activities, status, unavailable, requests, names, _ in
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping MetadataUpdate) async {
+        await start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { activities, status, unavailable, requests, names, _ in
             update(activities, status, unavailable, requests, names)
         }
     }
     public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true,
-                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping PerformanceUpdate) {
+                      refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping PerformanceUpdate) async {
+        startGeneration += 1
+        let generation = startGeneration
+        self.refreshPolicy = refreshPolicy
+        let cached = includeRemoteControl ? await controlCatalog.cachedTargets(home: home) : nil
+        guard generation == startGeneration, !Task.isCancelled else { return }
         callback = update
+        reconcile(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl,
+            useSSHFallback: useSSHFallback, refreshPolicy: self.refreshPolicy, catalog: cached)
+        // Local/SSH transports and their callbacks are already live while the
+        // independent device metadata request waits on RPC or the network.
+        if !includeRemoteControl { await controlCatalog.shutdown(); return }
+        let catalog = await controlCatalog.targets(home: home)
+        guard generation == startGeneration, !Task.isCancelled else { return }
+        reconcile(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl,
+            useSSHFallback: useSSHFallback, refreshPolicy: self.refreshPolicy, catalog: catalog)
+    }
+    private func reconcile(home: URL, includeSSH: Bool, includeRemoteControl: Bool, useSSHFallback: Bool,
+                           refreshPolicy: ActivityRefreshPolicy, catalog: [RemoteControlActivityTarget]?) {
         let local = Source(id: "local", name: nil, alias: nil, home: home.path,
             desktopIPC: !Self.controlEndpointAvailable(home: home), refreshPolicy: refreshPolicy)
         primaryLocalIsDesktop = local.desktopIPC
@@ -81,14 +105,28 @@ public actor RealtimeActivityMonitor {
         if includeSSH && useSSHFallback {
             sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshPolicy: refreshPolicy) }
         }
-        let controls = includeRemoteControl ? RemoteControlActivityTarget.configured(home: home) : []
+        let controls = includeRemoteControl ? catalog ?? RemoteControlActivityTarget.configured(home: home) : []
+        let controlTargets = catalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
+        knownControls = controlTargets
         let names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
         let desktopAvailable = Self.desktopEndpointAvailable(home: home)
-        if let current = desktop, current.source != local || current.hosts != names || !desktopAvailable {
+        if let current = desktop, current.source != local || !desktopAvailable {
             desktop = nil; current.collector.stop(); current.continuation.finish(); current.delivery?.cancel()
             attentionRequests.removeAll(); desktopRetryAfter = .distantPast
         }
-        if desktopAvailable && desktop == nil && Date() >= desktopRetryAfter { connectDesktop(local, hosts: names) }
+        if var current = desktop, Set(current.hosts.keys) != Set(names.keys) {
+            let allowed = Set(names.keys).union(["local"])
+            for (host, state) in current.states where !allowed.contains(host) {
+                disconnected[host] = state.activities.filter { [.completed, .interrupted].contains($0.phase) }
+            }
+            current.states = current.states.filter { allowed.contains($0.key) }
+            current.observedControlHosts.formIntersection(allowed)
+            attentionRequests = attentionRequests.filter { allowed.contains($0.value.sourceHostID ?? "local") }
+            current.collector.setHosts(allowed)
+            desktop = current
+        }
+        desktop?.hosts = names; desktop?.catalog = controlTargets
+        if desktopAvailable && desktop == nil && Date() >= desktopRetryAfter { connectDesktop(local, hosts: names, catalog: controlTargets) }
         let wanted = Set(sources.map(\.id)).union(local.desktopIPC ? ["local"] : [])
         pendingHints = pendingHints.filter { wanted.contains($0.key) }
         for (id, connection) in Array(connections) where !wanted.contains(id) || sources.first(where: { $0.id == id }) != connection.source {
@@ -105,6 +143,7 @@ public actor RealtimeActivityMonitor {
     }
     /// Updates existing owned transports, without discovery or reconnecting.
     public func updateRefreshPolicy(_ policy: ActivityRefreshPolicy, flushPending: Bool = false) {
+        refreshPolicy = policy
         desktop?.collector.setBatchInterval(policy.interval, flushPending: flushPending)
         for (id, var connection) in connections where connection.source.refreshPolicy != policy || flushPending {
             if let input = connection.input, var bytes = try? JSONSerialization.data(withJSONObject: [
@@ -125,21 +164,37 @@ public actor RealtimeActivityMonitor {
         var result = connections.mapValues { $0.state.status }
         if let desktop {
             for (host, state) in desktop.states where state.status.connected || result[host] == nil {
-                result[host] = state.status
+                // Saved routes are fallback discovery hints, not device entries.
+                // A catalog failure cannot revive deleted hosts in Settings.
+                if host.hasPrefix("remote-control:"), desktop.catalog == nil,
+                   !desktop.observedControlHosts.contains(host), !state.status.connected { continue }
+                var status = state.status
+                status.sourceName = desktop.hosts[host]
+                status.remoteHostOnline = desktop.catalog?[host]?.online
+                result[host] = status
             }
+        }
+        for (host, target) in knownControls ?? [:] where result[host] == nil {
+            var status = RuntimeStreamStatus()
+            status.sourceName = target.name; status.remoteHostOnline = target.online
+            result[host] = status
         }
         if localUnavailable || (primaryLocalIsDesktop && desktop == nil) { result["local"] = RuntimeStreamStatus() }
         return result
     }
     public func shutdown() async {
+        startGeneration += 1
         callback = nil
         if let current = desktop { desktop = nil; current.collector.stop(); current.continuation.finish(); current.delivery?.cancel() }
         attentionRequests.removeAll()
         for id in Array(connections.keys) { stop(id) }
         failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
+        knownControls = nil
+        await controlCatalog.shutdown()
         try? await Task.sleep(nanoseconds: 650_000_000)
     }
-    private func connectDesktop(_ source: Source, hosts: [String: String]) {
+    public func invalidateRemoteControlCatalog() async { await controlCatalog.invalidate() }
+    private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) {
         let id = UUID()
         let frames = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let collector = NativeDesktopCollector(id: id, home: URL(fileURLWithPath: source.home), hosts: Set(hosts.keys).union(["local"]),
@@ -147,7 +202,7 @@ public actor RealtimeActivityMonitor {
                 // Never silently keep a stream after dropping one of its frames.
                 if case .dropped = frames.continuation.yield(bytes) { frames.continuation.finish() }
             }, onClosed: { frames.continuation.finish() })
-        desktop = DesktopConnection(source: source, collector: collector, hosts: hosts, localRuntime: source.desktopIPC,
+        desktop = DesktopConnection(source: source, collector: collector, hosts: hosts, localRuntime: source.desktopIPC, catalog: catalog,
             continuation: frames.continuation)
         do {
             try collector.start(); failed.removeValue(forKey: source.id); disconnected.removeValue(forKey: source.id)
@@ -194,6 +249,9 @@ public actor RealtimeActivityMonitor {
             let host = frame["hostId"] as? String ?? "local"
             guard host == "local" ? current.localRuntime : current.hosts[host] != nil && host.hasPrefix("remote-control:") else { return }
             var state = current.states[host] ?? RuntimeEventState(sourceID: host == "local" ? nil : host, sourceName: current.hosts[host])
+            if host.hasPrefix("remote-control:"), ["runtimeBatch", "streamInvalidated"].contains(frame["kind"] as? String ?? "") {
+                current.observedControlHosts.insert(host)
+            }
             // A validated runtime frame itself establishes a live source;
             // it need not wait for the next 15-second status heartbeat.
             if frame["kind"] as? String == "runtimeBatch", !state.status.connected {

@@ -143,24 +143,10 @@ struct DesktopWireProjection {
         return selected
     }
     private static func prefers(_ turn: DesktopValue, over previous: DesktopValue?, currentID: String?) -> Bool {
-        guard let previous else { return true }
-        let start = turn["turnStartedAtMs"]?.number.flatMap { $0 > 0 ? $0 : nil }
-        let oldStart = previous["turnStartedAtMs"]?.number.flatMap { $0 > 0 ? $0 : nil }
-        if let start, let oldStart, start != oldStart { return start > oldStart }
-        // Activity can arrive before startedAt. A completed historical timestamp
-        // must not hide it; known unequal timestamps still preserve chronology.
-        let active = turn["status"]?.text == "inProgress"
-        let oldActive = previous["status"]?.text == "inProgress"
-        if active != oldActive { return active }
-        // Once observed, a timestamp-less turn must also keep its terminal
-        // event when older history still has a timestamp.
-        if let currentID {
-            let current = turn["turnId"]?.text == currentID
-            let oldCurrent = previous["turnId"]?.text == currentID
-            if current != oldCurrent { return current }
+        func header(_ value: DesktopValue) -> DesktopTurnHeader {
+            .init(id: value["turnId"]?.text, status: value["status"]?.text, startedAt: value["turnStartedAtMs"]?.number)
         }
-        if (start != nil) != (oldStart != nil) { return start != nil }
-        return true // Equal/absent timestamps retain the later wire position.
+        return header(turn).prefers(over: previous.map(header), currentID: currentID)
     }
     private static func string(_ view: JSONFieldView?, limit: Int = 256) -> DesktopValue? {
         view?.string(limit: limit).map(DesktopValue.text)
@@ -226,6 +212,21 @@ struct DesktopWireProjection {
     }
     private static func items(_ view: JSONFieldView?, hydrate: Bool, attentionOnly: Bool = false) throws -> DesktopValue {
         guard let view, !view.isNull else { return .items(count: 0, values: [:], hydrated: hydrate) }
+        if view.projectedItems, view.isObject {
+            let fields = try view.fields(["_pacerCount", "_pacerItems", "_pacerHydrated"])
+            guard let count = fields["_pacerCount"]?.integer(), (0...8192).contains(count),
+                  let projected = fields["_pacerItems"], projected.isArray else { throw JSONFieldView.Failure.malformed }
+            if !hydrate { return .items(count: count, values: [:], hydrated: false) }
+            guard fields["_pacerHydrated"]?.boolean() == true else { throw DesktopProjectionFailure.gap }
+            var values: [Int: DesktopValue] = [:], index = 0
+            try projected.forEachElement { item in
+                let value = try Self.item(item, attentionOnly: attentionOnly)
+                if value["id"]?.text != nil { values[index] = value }
+                index += 1
+            }
+            guard index == count else { throw JSONFieldView.Failure.malformed }
+            return .items(count: count, values: values, hydrated: true)
+        }
         guard view.isArray else { throw JSONFieldView.Failure.malformed }
         var count = 0, values: [Int: DesktopValue] = [:]
         try view.forEachElement { item in

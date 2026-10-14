@@ -4,6 +4,11 @@ import Foundation
 public struct RemoteControlActivityTarget: Equatable, Sendable {
     public let id: String
     public let name: String
+    public let online: Bool?
+
+    public init(id: String, name: String, online: Bool? = nil) {
+        self.id = id; self.name = name; self.online = online
+    }
 
     public static func configured(home: URL) -> [RemoteControlActivityTarget] {
         let file = home.appendingPathComponent(".codex-global-state.json")
