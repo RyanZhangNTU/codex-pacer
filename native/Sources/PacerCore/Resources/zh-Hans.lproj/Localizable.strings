@@ -557,3 +557,7 @@
 "whats_new.open_at_login" = "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。";
 "whats_new.child_endings" = "已结束的子代理不再显示为运行中";
 "whats_new.child_endings_detail" = "Pacer 重新连接、唤醒或重启后，已结束的 Codex 子代理不会再显示为运行中。";
+"whats_new.remote_control" = "Remote Control 连接更清晰";
+"whats_new.remote_control_detail" = "通过设备名称识别远程任务，清楚区分在线、离线和等待会话的状态。";
+"whats_new.stability" = "稳定性改进";
+"whats_new.stability_detail" = "远程任务监控更可靠，打开对话后的完成卡片会保持已读。";

@@ -557,3 +557,7 @@
 "whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";
 "whats_new.child_endings" = "Ended subagents stay ended";
 "whats_new.child_endings_detail" = "Ended Codex subagents no longer appear to run again after Pacer reconnects, wakes or relaunches.";
+"whats_new.remote_control" = "Clearer Remote Control connections";
+"whats_new.remote_control_detail" = "Recognize devices by name and see whether they are online, offline or waiting for a session.";
+"whats_new.stability" = "Improved stability";
+"whats_new.stability_detail" = "More reliable remote task monitoring, with completed cards staying read after you open their conversations.";
