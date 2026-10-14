@@ -96,11 +96,14 @@ final class NativeDesktopCollector: @unchecked Sendable {
             else { throw POSIXError(.EPIPE) }
         }
     }
-    private func receive(_ fd: Int32) throws -> Data {
+    private func receive(_ fd: Int32, observedTurnIDs: Set<String>) throws -> Data {
         let header = try read(4, fd: fd)
         let count = Int(UInt32(header[0]) | UInt32(header[1]) << 8 | UInt32(header[2]) << 16 | UInt32(header[3]) << 24)
-        guard count > 0, count <= 16 * 1024 * 1024 else { throw JSONFieldView.Failure.limit }
-        return try read(count, fd: fd)
+        guard count > 0 else { throw JSONFieldView.Failure.malformed }
+        var decoder = DesktopFrameDecoder(byteCount: count, observedTurnIDs: observedTurnIDs) { [self] count in
+            try read(count, fd: fd)
+        }
+        return try decoder.decode().data
     }
     private func run(_ fd: Int32) {
         defer { finish(fd); onClosed() }
@@ -176,7 +179,7 @@ final class NativeDesktopCollector: @unchecked Sendable {
                     if filesystem.contains(where: { (directory >= 0 && $0.ident == UInt64(directory)) || $0.fflags & UInt32(NOTE_RENAME | NOTE_DELETE) != 0 }) { reopenRouting = true }
                 }
                 if changed.prefix(Int(result)).contains(where: { $0.filter == Int16(EVFILT_READ) }) {
-                    try session.receive(receive(fd))
+                    try session.receive(receive(fd, observedTurnIDs: session.observedTurnIDs), projectedItems: true)
                     // Pending questions and approvals are delivered immediately,
                     // independently of the ordinary token/activity batch.
                     for frame in session.takeFrames() { onFrame(frame) }

@@ -6,7 +6,9 @@ struct JSONFieldView {
     enum Failure: Error { case malformed, limit }
     private let data: Data
     private let range: Range<Int>
-    static func document(_ data: Data, maximumBytes: Int = 16 * 1024 * 1024) throws -> Self {
+    /// Set only by our streaming decoder, never by a field in the wire data.
+    let projectedItems: Bool
+    static func document(_ data: Data, maximumBytes: Int = 16 * 1024 * 1024, projectedItems: Bool = false) throws -> Self {
         guard data.count <= maximumBytes else { throw Failure.limit }
         let range = try data.withUnsafeBytes { raw -> Range<Int> in
             var cursor = Cursor(bytes: raw.bindMemory(to: UInt8.self), position: 0, end: data.count)
@@ -16,7 +18,7 @@ struct JSONFieldView {
             guard cursor.position == data.count else { throw Failure.malformed }
             return start..<end
         }
-        return Self(data: data, range: range)
+        return Self(data: data, range: range, projectedItems: projectedItems)
     }
     var isObject: Bool { data[range.lowerBound] == 123 }
     var isArray: Bool { data[range.lowerBound] == 91 }
@@ -59,7 +61,7 @@ struct JSONFieldView {
                 if keyRange.count <= 1538,
                    let key = try? JSONDecoder().decode(String.self, from: data.subdata(in: keyRange)),
                    key.count <= 256, allowed?.contains(key) ?? true {
-                    fields[key] = Self(data: data, range: valueStart..<cursor.position)
+                    fields[key] = Self(data: data, range: valueStart..<cursor.position, projectedItems: projectedItems)
                     count += 1
                     guard count <= maximumCount else { throw Failure.limit }
                 }
@@ -84,7 +86,7 @@ struct JSONFieldView {
                 cursor.whitespace(); let start = cursor.position
                 try cursor.skipValue(depth: 0); count += 1
                 guard count <= maximumCount else { throw Failure.limit }
-                try body(Self(data: data, range: start..<cursor.position))
+                try body(Self(data: data, range: start..<cursor.position, projectedItems: projectedItems))
                 cursor.whitespace()
                 if cursor.consume(93) { return }
                 try cursor.require(44)
@@ -111,7 +113,7 @@ struct JSONFieldView {
                 cursor.whitespace(); try cursor.require(58); cursor.whitespace()
                 let valueStart = cursor.position; try cursor.skipValue(depth: 0)
                 count += 1; guard count <= maximumCount else { throw Failure.limit }
-                try body(key, Self(data: data, range: valueStart..<cursor.position))
+                try body(key, Self(data: data, range: valueStart..<cursor.position, projectedItems: projectedItems))
                 cursor.whitespace(); if cursor.consume(125) { return }
                 try cursor.require(44)
             } while true

@@ -253,7 +253,10 @@ final class NativeDesktopSocketTests: XCTestCase {
         let report = try JSONSerialization.jsonObject(with: stdout.fileHandleForReading.readDataToEndOfFile()) as! [String: Any]
         XCTAssertTrue(report["onlyMonitoringRequests"] as? Bool == true)
     }
-    private func verifyMonitorEnding(host: String, atomic: Bool, routing: Bool) async throws {
+    func testLargeSnapshotOnAnotherHostCannotBreakRemoteControlCompletion() async throws {
+        try await verifyMonitorEnding(host: "remote-control:env_fixture", atomic: false, routing: true, largeSnapshot: true)
+    }
+    private func verifyMonitorEnding(host: String, atomic: Bool, routing: Bool, largeSnapshot: Bool = false) async throws {
         final class Ending: @unchecked Sendable {
             let lock = NSLock()
             var delivered = false
@@ -310,6 +313,24 @@ final class NativeDesktopSocketTests: XCTestCase {
                     with: "follow=read();assert follow['params']['following'] is True\nfollow=read();assert follow['params']['following'] is True")
             }
         }
+        if largeSnapshot {
+            let initial = "initialize=read();send({'type':'response','method':'initialize','resultType':'success','result':{'clientId':client}})"
+            let giant = """
+            \(initial)
+            send({'type':'broadcast','method':'thread-stream-state-changed','version':11,'sourceClientId':owner,
+                  'params':{'hostId':'local','conversationId':'019a0000-0000-7000-8000-000000000099',
+                            'change':{'type':'snapshot','revision':0,'conversationState':{'ephemeral':True,'unrelatedHistory':'x'*(17*1024*1024)}}}})
+            """
+            XCTAssertTrue(script.contains(initial))
+            script = script.replacingOccurrences(of: initial, with: giant)
+            // The large local snapshot discovers another interest first.
+            // A real owner answers the follow for its own host, not that one.
+            script = script.replacingOccurrences(of: "follow=read();assert follow['params']['following'] is True", with: """
+            follow=read()
+            while follow.get('params',{}).get('hostId')!='\(host)':follow=read()
+            assert follow['params']['following'] is True
+            """)
+        }
         script += "\nconnection.close();server.close()\n"
         child.arguments = ["-u", "-c", script, home.path]
         child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
@@ -323,7 +344,7 @@ final class NativeDesktopSocketTests: XCTestCase {
             XCTAssertTrue(activities.allSatisfy { ($0.sourceHostID ?? "local") == host })
             if ending.first(activities) { delivered.fulfill() }
         }
-        await fulfillment(of: [delivered], timeout: 5)
+        await fulfillment(of: [delivered], timeout: largeSnapshot ? 10 : 5)
         await monitor.shutdown()
         XCTAssertEqual(ending.unreadCount(), 1, "The reminder must outlive runtime release, trailing patches and EOF")
         await fulfillment(of: [childEnded], timeout: 5)
