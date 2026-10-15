@@ -60,7 +60,7 @@ Tasks from both services share one list: tasks that need you come first, then ru
 
 Agents that a task spawns are grouped under it with their running count and combined speed. With more than three tasks, use the arrows beside the page number or Option + ← / → to page through them.
 
-Click a task to open its conversation. Codex opens the chat in the Codex app. Claude opens a matching Claude Desktop session when it can, otherwise it resumes the session in Terminal. Opening never sends a prompt.
+Click a task to open its conversation. Codex tasks open in the Codex app. A task started in another app shows that app's name and switches to it, relaunching the app if it quit. This covers Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin. Claude Desktop sessions open in Claude Desktop, and Claude sessions on SSH hosts resume in Terminal. Pacer only learns which app started a task while the task is running; if it doesn't know, it says so, and the message disappears after 30 seconds. Opening never sends a prompt.
 
 When a turn ends, its card stays until you open it or the retention time passes (30 minutes by default; set it in **Settings → Reminders**).
 
@@ -84,6 +84,8 @@ Pacer finds the Codex app or CLI in the usual places, including Homebrew, npm ma
 
 Codex quota comes from your own Codex sign-in through the CLI. API-key or Amazon Bedrock sign-ins do not have ChatGPT subscription limits, and Pacer says so.
 
+**Sessions from other apps.** Apps that embed Codex, such as a Zotero plugin, show their sessions with the app's name. To hide those sessions and their reminders, turn off **Settings → Codex → Show Codex Sessions from Other Apps**. Codex app, Terminal and VS Code sessions always show. Translations from the Zotero Agent plugin are never shown.
+
 ## Claude Code
 
 Pacer uses `~/.claude`, or `CLAUDE_CONFIG_DIR` when set; choose another folder under **Settings → Claude → Custom locations**.
@@ -91,6 +93,8 @@ Pacer uses `~/.claude`, or `CLAUDE_CONFIG_DIR` when set; choose another folder u
 **Task tracking sets itself up.** While the Claude module is on, Pacer adds its own hooks and a local-only telemetry endpoint to your Claude settings and wraps any existing status-line command so its output stays the same. It writes nothing when the settings are already current, never creates a Claude folder, and leaves conflicting telemetry settings untouched. Restart running Claude Code sessions to pick up the change. Turning the module off by hand removes Pacer's entries.
 
 **Quota needs one sign-in.** Click **Sign in to Claude** (or **Sign In** in the welcome guide) to open Pacer's own claude.ai window and sign in as usual. If your account belongs to several organizations, choose one. The session lives in Pacer's private WebKit storage and is reused across restarts until the website ends it; Pacer never reads other apps' Keychain items or browser cookies. When Claude Code's status line already reports fresh quota for the same account, Pacer uses that instead.
+
+**Sessions from other apps.** Apps that embed Claude Code through the Claude Agent SDK, such as a Zotero plugin, show their sessions with the app's name. To hide those sessions and their reminders, turn off **Settings → Claude → Show Claude Sessions from Other Apps**. Terminal, VS Code and Claude Desktop sessions always show.
 
 ## SSH hosts and Remote Control
 
@@ -112,7 +116,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Appearance | Solid black or Liquid Glass, Automatic / Notch / Floating, which display, and whether to show in full-screen spaces. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |
-| Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, quota history and details. |
+| Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, each service's sessions from other apps, quota history and details. |
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
 | Help | A legend of every mark on the island, the welcome guide, and links to this guide and the issue tracker. |
 

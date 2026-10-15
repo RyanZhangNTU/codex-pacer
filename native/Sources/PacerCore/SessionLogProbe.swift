@@ -2,7 +2,7 @@ import Foundation
 
 enum SessionLogProbe {
     // Only sanitized lifecycle and counters leave the remote host.
-    static let library = #"""
+    static let library = CodexSessionOrigin.python + "\n" + #"""
     import base64, datetime, json, math, pathlib, re, sqlite3, sys, time, uuid
     home = pathlib.Path(base64.b64decode(sys.argv[1]).decode()).expanduser()
     cursors = {}
@@ -38,6 +38,8 @@ enum SessionLogProbe {
         if not isinstance(p, dict): return None
         kind = p.get('type'); q = {}
         if outer == 'session_meta':
+            classification=codex_origin(p.get('originator'),p.get('cwd'))
+            if classification:q.update(classification)
             parent=parent_thread(p)
             if parent and parent!=p.get('id'):q['parent_thread_id']=parent
             for k in ('id','cwd','thread_source'):
@@ -106,6 +108,60 @@ enum SessionLogProbe {
         except (ValueError,TypeError,AttributeError): return None
     def header(f):
         f.seek(0); return parse(f.readline(1024*1024))
+    def rollout_origin(path,tid=None):
+        try:
+            path=pathlib.Path(path).resolve()
+            if not str(path).startswith(str((home/'sessions').resolve())+'/') or path.suffix!='.jsonl':return None
+            with path.open('rb') as f:
+                first=f.readline(1024*1024);f.seek(0,2);size=f.tell()
+                f.seek(0);head=f.read(max(len(first),min(size,32768)))
+                rows=[first]+head.split(b'\n')[1:-1]
+                if size>len(first):
+                    offset=max(len(first),size-128*1024);f.seek(offset);tail=f.read(128*1024).split(b'\n')
+                    rows+=tail[1:] if offset>len(first) else tail
+            found=None;found_at=None
+            for line in rows:
+                if b'session_meta' not in line:continue
+                value=parse(line)
+                if value and value['type']=='session_meta':
+                    p=value['payload']
+                    if (tid is None or p.get('id','').lower()==tid.lower()) and (isinstance(p.get('embedded'),bool) or p.get('parent_thread_id')):
+                        at=timestamp_ms(value['timestamp'])
+                        if found_at is not None and at is not None and at<found_at:continue
+                        found=dict(p,embedded=p.get('embedded',False),ignoredSession=p.get('ignoredSession',False),_originTimestamp=value['timestamp']);found_at=at
+            return found
+        except (OSError,ValueError,TypeError):return None
+    origin_by_thread={}
+    def saved_thread_origin(tid,seen=None):
+        seen=set() if seen is None else seen
+        if tid in seen or len(seen)>=64:return None
+        seen.add(tid)
+        for candidate in candidates():
+            if not candidate.stem.lower().endswith(tid):continue
+            record=rollout_origin(candidate,tid)
+            if record is None:continue
+            classification={k:record[k] for k in ('embedded','ignoredSession')}
+            parent=parent_thread(record)
+            inherited=saved_thread_origin(parent,seen) if parent else None
+            if inherited is not None:classification=inherited
+            origin_by_thread[tid]=classification
+            if len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
+            return classification
+        return origin_by_thread.get(tid)
+    def thread_origin(thread):
+        tid=thread.get('id')
+        record=None
+        classification=codex_origin(thread.get('originator'),thread.get('cwd'))
+        if isinstance(thread.get('path'),str):
+            record=rollout_origin(thread['path'],tid)
+            if record is not None:classification={k:record[k] for k in ('embedded','ignoredSession')}
+        parent=parent_thread(thread) or parent_thread(record or {})
+        inherited=saved_thread_origin(parent) if parent else None
+        if inherited is not None:classification=inherited
+        if isinstance(tid,str) and classification is not None:
+            origin_by_thread[tid]=classification
+            if len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
+        return classification
     def anchor(f,size,thread_id=None):
         offset, floor, fragment = size, max(0,size-8*1024*1024), b''
         fallback=None;latest_turn=None;first_times={}
@@ -162,7 +218,23 @@ enum SessionLogProbe {
         return selected
     def snapshot(excluding=()):
         rows=[]; selected=[]
-        for p in candidates():
+        paths=candidates();parents={}
+        # Classify the bounded candidate set before spending reader/watch slots,
+        # including a child that sorts ahead of its excluded parent.
+        for p in paths:
+            try:
+                record=rollout_origin(p)
+                if record is not None and isinstance(record.get('id'),str):
+                    tid=record['id'];origin_by_thread[tid]={k:record[k] for k in ('embedded','ignoredSession')}
+                    if record.get('parent_thread_id'):parents[tid]=record['parent_thread_id']
+            except OSError:pass
+        for _ in range(64):
+            changed=False
+            for tid,parent in parents.items():
+                if parent in origin_by_thread and origin_by_thread.get(tid)!=origin_by_thread[parent]:origin_by_thread[tid]=origin_by_thread[parent];changed=True
+            if not changed:break
+        while len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
+        for p in paths:
             if len(selected)>=32: break
             if p.stem[-36:].lower() in excluding:
                 selected.append(p);continue
@@ -175,6 +247,14 @@ enum SessionLogProbe {
                     headers[p]=(stat.st_ino,meta)
                     if meta:
                         q=meta['payload'];source=q.get('source')
+                        latest=rollout_origin(p,q.get('id'))
+                        if latest is not None:
+                            q.update({k:latest[k] for k in ('embedded','ignoredSession')})
+                            meta['timestamp']=latest['_originTimestamp']
+                        classification=origin_by_thread.get(q.get('id'))
+                        if classification:q.update(classification)
+                        if isinstance(q.get('id'),str) and isinstance(q.get('embedded'),bool):origin_by_thread[q['id']]={k:q[k] for k in ('embedded','ignoredSession')}
+                        if q.get('ignoredSession') is True:continue
                         sub=source.get('subagent',source.get('subAgent')) if isinstance(source,dict) else None
                         role=sub.get('other') if isinstance(sub,dict) else None
                         if q.get('thread_source') in ('guardian_review','auto_review','autoreview') or sub=='review' or isinstance(sub,dict) and 'review' in sub or role in ('guardian','auto_review','autoreview'):continue

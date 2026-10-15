@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.2
+
+- Open a task in the app that started it. Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin, show that app's name; clicking one switches to the app and relaunches it if it quit. Claude Desktop sessions still open in Claude Desktop, Codex tasks in the Codex app, and Claude sessions on SSH hosts still resume in Terminal.
+- Stop resuming local Claude tasks in a new Terminal window or importing them into Claude Desktop. Pacer can only identify the app while a task runs; when it doesn't know, the click says so.
+- Add **Show Claude Sessions from Other Apps** and **Show Codex Sessions from Other Apps** to Settings → Claude and Settings → Codex, on by default and offered once in the 3.1.2 What's New note. Turning one off hides those sessions, with their agents, questions and completion cards, until it is turned back on.
+- Never show translation requests from the Zotero Agent plugin, which have no conversation to open.
+- Fix answered Claude questions and approvals staying marked as waiting.
+
 ## 3.1.1
 
 - Fix several bugs and improve overall stability.

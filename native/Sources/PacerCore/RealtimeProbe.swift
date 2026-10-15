@@ -60,7 +60,8 @@ enum RealtimeProbe {
         s=t.get('source') or {}; sub=s.get('subAgent',s.get('subagent',{})) if isinstance(s,dict) else {}
         return source in ('guardianreview','autoreview','subagentreview') or model.startswith('codex-auto-review') or sub=='review' or isinstance(sub,dict) and (sub.get('other') in ('guardian','autoreview','auto_review') or 'review' in sub)
     def is_excluded_thread(t):
-        return t.get('ephemeral') is True or is_review(t)
+        origin=thread_origin(t)
+        return t.get('ephemeral') is True or is_review(t) or (origin is not None and origin['ignoredSession'])
     class WebSocket:
         def __init__(self,path):
             uid=os.getuid(); parent=path.parent.stat(); link=path.lstat(); target=path.stat(); actual_parent=path.resolve().parent.stat()
@@ -171,14 +172,17 @@ enum RealtimeProbe {
     class Session:
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
-            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict()
-            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'3.1.1'},'capabilities':{'experimentalApi':True}},'initialize')
+            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict();self.origin_paths=OrderedDict();self.origin_excluded=set()
+            self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'3.1.2'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
             if method not in ('initialize','thread/loaded/list','thread/read','thread/resume'): raise ValueError('request not allowed')
             rid=self.next_id; self.next_id+=1; self.pending[rid]=(kind,tid,time.monotonic())
             self.ws.send({'id':rid,'method':method,'params':params})
         def queue_thread(self,tid,priority=False):
+            if tid in self.origin_excluded and tid in self.origin_paths:
+                origin=rollout_origin(self.origin_paths[tid],tid)
+                if origin is not None and origin['ignoredSession'] is False:self.excluded.discard(tid);self.origin_excluded.discard(tid)
             if not valid_id(tid):return
             tid=tid.lower()
             if tid in self.excluded or tid in self.attached or tid in self.attaching or any(v[0]=='read' and v[1]==tid for v in self.pending.values()):return
@@ -234,7 +238,8 @@ enum RealtimeProbe {
             for tid in list(self.known):
                 if len(self.known)<=64:break
                 if tid not in self.attached and tid not in self.attaching:self.known.pop(tid,None)
-        def exclude_thread(self,tid):
+        def exclude_thread(self,tid,origin=False):
+            if origin:self.origin_excluded.add(tid)
             if len(self.excluded)<1024:self.excluded.add(tid)
             self.rollout_paths.pop(tid,None)
             self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None);self.first_text.discard(tid)
@@ -264,11 +269,17 @@ enum RealtimeProbe {
                     for thread in threads:self.queue_thread(thread)
                 elif kind in ('read','resume'):
                     thread=result.get('thread') or {}
+                    if isinstance(thread,dict) and isinstance(thread.get('path'),str):
+                        self.origin_paths[tid]=thread['path'];self.origin_paths.move_to_end(tid)
+                        while len(self.origin_paths)>1024:self.origin_paths.popitem(last=False)
                     if not isinstance(thread,dict) or thread.get('id')!=tid or is_excluded_thread(thread):
-                        self.exclude_thread(tid);return
+                        origin=thread_origin(thread) if isinstance(thread,dict) else None
+                        self.exclude_thread(tid,origin is not None and origin['ignoredSession']);return
                     self.known[tid]=thread.get('status') or {}
                     self.known.move_to_end(tid)
                     meta={'method':'metadata','threadId':tid.lower(),'at':time.time(),'source':thread.get('threadSource') if isinstance(thread.get('threadSource'),str) else ''}
+                    origin=thread_origin(thread)
+                    if origin is not None:meta.update(origin)
                     parent=parent_thread(thread)
                     if parent and parent!=tid:
                         meta['parentThreadId']=parent
@@ -307,7 +318,8 @@ enum RealtimeProbe {
                 thread=p.get('thread') or {}
                 if not isinstance(thread,dict):return
                 tid=thread.get('id')
-                if valid_id(tid) and is_excluded_thread(thread):self.exclude_thread(tid.lower());return
+                if valid_id(tid) and is_excluded_thread(thread):
+                    origin=thread_origin(thread);self.exclude_thread(tid.lower(),origin is not None and origin['ignoredSession']);return
                 self.read_thread(tid);return
             e=event(method,p)
             if e is None:return

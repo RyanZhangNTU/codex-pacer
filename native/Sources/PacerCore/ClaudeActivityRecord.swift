@@ -6,7 +6,7 @@ struct ClaudeTranscriptFields {
     let values: [String: JSONFieldView]
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint"]) else { return nil }
         self.values = values
     }
 }
@@ -53,6 +53,8 @@ enum ClaudeActivityRecord {
         if let title = fields["sessionTitle"]?.string(limit: 240) { metadata["title"] = title }
         let message = fields["message"].flatMap { try? $0.fields(["role", "id", "model", "content", "usage", "stop_reason"]) } ?? [:]
         if let model = message["model"]?.string() { metadata["model"] = model }
+        // Apps that embed Claude Code through the Agent SDK launch it as `sdk-*`.
+        if let entrypoint = fields["entrypoint"]?.string(limit: 64) { metadata["embedded"] = entrypoint.hasPrefix("sdk-") }
         result.append(metadata)
         let content = message["content"]
         let originFields = fields["origin"].flatMap { try? $0.fields(["kind", "producer", "runId"]) }
@@ -283,6 +285,7 @@ struct ClaudeActivityState: Sendable {
             if let parent = ClaudeActivityRecord.identifier(record["parentId"] as? String) { event["parentThreadId"] = parent }
             value.applyRuntime(event)
             if sourceID == nil, let path = record["localDirectory"] as? String { value.setClaudeNavigation(directory: URL(fileURLWithPath: path), desktopSessionID: nil) }
+            if let embedded = record["embedded"] as? Bool { value.setClaudeLaunch(embedded: embedded) }
             sessions[key] = value; return
         }
         if kind == "agentResult" {

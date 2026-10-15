@@ -268,12 +268,14 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertFalse(ClaudeHookInstaller.details(home: fixture.home).hooksConfigured)
     }
 
-    private func runScript(home: URL, mode: String, input: [String: Any]) throws -> (stdout: Data, stderr: Data) {
+    private func runScript(home: URL, mode: String, input: [String: Any], entrypoint: String? = nil) throws -> (stdout: Data, stderr: Data) {
         let child = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         child.arguments = [home.appendingPathComponent("pacer/hook.py").path, mode, home.path]
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+        // The test runner may itself run under Claude Code.
+        environment["CLAUDE_CODE_ENTRYPOINT"] = entrypoint
         child.environment = environment
         child.standardInput = stdin; child.standardOutput = stdout; child.standardError = stderr
         try child.run()
@@ -291,7 +293,7 @@ final class ClaudeHookInstallerTests: XCTestCase {
         let inputs: [[String: Any]] = [
             ["hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-1", "prompt": "PRIVATE prompt"],
             ["hook_event_name": "PreToolUse", "tool_use_id": "tool-1", "tool_name": "AskUserQuestion", "tool_input": ["question": "PRIVATE question"]],
-            ["hook_event_name": "PermissionRequest", "tool_use_id": "tool-1", "tool_input": ["command": "PRIVATE command"]],
+            ["hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": ["question": "PRIVATE question"]],
             ["hook_event_name": "PostToolUse", "tool_use_id": "tool-1", "tool_response": "PRIVATE output"],
             ["hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "PRIVATE notification"],
             ["hook_event_name": "SubagentStart", "agent_id": "agent-1", "agent_type": "PRIVATE agent nickname"],
@@ -308,7 +310,9 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
         let rows = try bytes.split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
         let events = rows.filter { $0["kind"] as? String != "metadata" }
-        XCTAssertEqual(events.compactMap { $0["kind"] as? String }, ["prompt", "toolStart", "approval", "toolEnd", "approval", "subagentStart", "stopRequested", "stopRequested"])
+        // The question's permission asks for a reply; the notification after its
+        // answer has no waiting tool left to flag.
+        XCTAssertEqual(events.compactMap { $0["kind"] as? String }, ["prompt", "toolStart", "input", "toolEnd", "subagentStart", "stopRequested", "stopRequested"])
         XCTAssertEqual(events.first { $0["kind"] as? String == "toolStart" }?["attention"] as? String, "input")
         let child = try XCTUnwrap(events.first { $0["kind"] as? String == "subagentStart" })
         XCTAssertEqual(child["sessionId"] as? String, "agent-1")
@@ -317,6 +321,76 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0["project"] as? String == "fixture-project" })
         let state = try Data(contentsOf: fixture.home.appendingPathComponent("pacer/hook-state.json"))
         XCTAssertFalse(String(decoding: state, as: UTF8.self).contains("PRIVATE"))
+    }
+
+    func testPermissionWithoutToolIDIsOwnedAndClearedByTheWaitingTool() throws {
+        // Claude Code sends PermissionRequest and permission_prompt Notification
+        // without tool_use_id. Sequence observed for a question answered in Desktop.
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        let session = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", question: [String: Any] = ["questions": [["question": "PRIVATE question"]]]
+        var state = ClaudeActivityState(), consumed = 0
+        func send(_ input: [String: Any]) throws -> [String] {
+            let common: [String: Any] = ["session_id": session, "cwd": "/PRIVATE/fixture-project"]
+            _ = try runScript(home: fixture.home, mode: "hook", input: common.merging(input) { _, supplied in supplied })
+            let lines = try Data(contentsOf: fixture.home.appendingPathComponent("pacer/events.jsonl")).split(separator: 10)
+            defer { consumed = lines.count }
+            return try lines.dropFirst(consumed).compactMap { line in
+                state.consume(Data(line))
+                let row = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+                guard let kind = row["kind"] as? String, kind != "metadata" else { return nil }
+                return kind + ":" + (row["itemId"] as? String ?? "")
+            }
+        }
+        func waiting() -> [String] { state.attention.map { $0.kind.rawValue } }
+        _ = try send(["hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-1", "prompt": "PRIVATE prompt"])
+        XCTAssertEqual(try send(["hook_event_name": "PreToolUse", "tool_use_id": "tool-question", "tool_name": "AskUserQuestion", "tool_input": question]), ["toolStart:tool-question"])
+        XCTAssertEqual(try send(["hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": question]), ["input:tool-question"])
+        _ = try send(["hook_event_name": "PreToolUse", "tool_use_id": "tool-plan", "tool_name": "TodoWrite", "tool_input": ["todos": "PRIVATE plan"]])
+        _ = try send(["hook_event_name": "PostToolUse", "tool_use_id": "tool-plan", "tool_name": "TodoWrite", "tool_response": "PRIVATE output"])
+        XCTAssertEqual(try send(["hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "PRIVATE notification"]), ["input:tool-question"])
+        XCTAssertEqual(waiting(), ["input"]); XCTAssertEqual(state.activities.first?.phase, .waitingForInput)
+        XCTAssertEqual(try send(["hook_event_name": "PostToolUse", "tool_use_id": "tool-question", "tool_name": "AskUserQuestion", "tool_response": "PRIVATE answer"]), ["toolEnd:tool-question"])
+        XCTAssertEqual(waiting(), []); XCTAssertEqual(state.activities.first?.phase, .running)
+        XCTAssertEqual(try send(["hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "PRIVATE late notification"]), [])
+        XCTAssertEqual(waiting(), [])
+
+        // Two pending tools share a name; the input checksum picks the one asking.
+        _ = try send(["hook_event_name": "PreToolUse", "tool_use_id": "tool-first", "tool_name": "Bash", "tool_input": ["command": "PRIVATE first"]])
+        _ = try send(["hook_event_name": "PreToolUse", "tool_use_id": "tool-second", "tool_name": "Bash", "tool_input": ["command": "PRIVATE second"]])
+        XCTAssertEqual(try send(["hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": ["command": "PRIVATE first"]]), ["approval:tool-first"])
+        _ = try send(["hook_event_name": "PostToolUse", "tool_use_id": "tool-second", "tool_name": "Bash", "tool_response": "PRIVATE output"])
+        XCTAssertEqual(waiting(), ["approval"])
+        _ = try send(["hook_event_name": "PostToolUse", "tool_use_id": "tool-first", "tool_name": "Bash", "tool_response": "PRIVATE output"])
+        XCTAssertEqual(waiting(), []); XCTAssertEqual(state.activities.first?.phase, .running)
+        for name in ["pacer/events.jsonl", "pacer/hook-state.json"] {
+            XCTAssertFalse(String(decoding: try Data(contentsOf: fixture.home.appendingPathComponent(name)), as: UTF8.self).contains("PRIVATE"))
+        }
+    }
+
+    func testHooksRecordOnlyWhetherAnAgentSDKAppLaunchedTheSession() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        let session = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+        var state = ClaudeActivityState(), consumed = 0
+        func send(_ event: String, entrypoint: String?) throws -> [Bool] {
+            let input: [String: Any] = ["session_id": session, "cwd": "/PRIVATE/fixture-project", "hook_event_name": event, "prompt_id": "prompt-1"]
+            _ = try runScript(home: fixture.home, mode: "hook", input: input, entrypoint: entrypoint)
+            let lines = try Data(contentsOf: fixture.home.appendingPathComponent("pacer/events.jsonl")).split(separator: 10)
+            defer { consumed = lines.count }
+            return try lines.dropFirst(consumed).compactMap { line in
+                state.consume(Data(line))
+                let row = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+                return row["kind"] as? String == "metadata" ? row["embedded"] as? Bool : nil
+            }
+        }
+        XCTAssertEqual(try send("UserPromptSubmit", entrypoint: "sdk-ts"), [true])
+        XCTAssertEqual(state.activities.first?.launchedByEmbeddingApp, true)
+        XCTAssertEqual(try send("UserPromptSubmit", entrypoint: "cli"), [false])
+        XCTAssertEqual(state.activities.first?.launchedByEmbeddingApp, false)
+        XCTAssertEqual(try send("UserPromptSubmit", entrypoint: nil), [], "No launcher, no claim")
+        XCTAssertEqual(state.activities.first?.launchedByEmbeddingApp, false)
+        XCTAssertFalse(String(decoding: try Data(contentsOf: fixture.home.appendingPathComponent("pacer/events.jsonl")), as: UTF8.self).contains("sdk-"))
     }
 
     func testStatusLineAdapterCachesOnlyQuotaAndPassesOriginalInputToExistingRenderer() throws {

@@ -5,37 +5,49 @@ import PacerCore
 enum ClaudeConversationOpener {
     typealias DesktopLookup = @Sendable (String, String?) async -> String?
 
-    @MainActor static func open(_ activity: SessionActivity, home: URL, sourceTarget: RemoteActivityTarget? = nil) async -> ActivityOpenOutcome {
+    /// Where a local session opens. A session started by any app other than
+    /// Claude Desktop opens that app; none is resumed in Terminal or imported
+    /// into Desktop.
+    enum LocalDestination: Equatable {
+        case host(HostApplication)
+        case desktop(URL)
+        case missing
+    }
+
+    static func localDestination(host: HostApplication?, desktop: URL?) -> LocalDestination {
+        if let host, !host.isClaudeDesktop { return .host(host) }
+        if let desktop { return .desktop(desktop) }
+        return host.map { .host($0) } ?? .missing
+    }
+
+    @MainActor static func open(_ activity: SessionActivity, home: URL, sourceTarget: RemoteActivityTarget? = nil,
+                                recordedHost: HostApplication? = nil) async -> ActivityOpenOutcome {
         guard activity.provider == .claude, let session = activity.threadID,
               AgentProvider.claude.validatedSessionID(session) != nil else { return .failed(L10n.text("activity.open_failed")) }
-        let desktopDestination = await desktopDestination(for: activity, home: home, sourceTarget: sourceTarget)
-        if let destination = desktopDestination, let app = ClaudeApplicationResolver.find() {
-            return await withCheckedContinuation { continuation in
-                NSWorkspace.shared.open([destination], withApplicationAt: app,
-                    configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                    continuation.resume(returning: error == nil ? .openedConversation : .failed(L10n.text("activity.open_failed")))
-                }
+        guard let source = activity.sourceHostID else {
+            // The process holding the session now outranks an earlier record.
+            let live = await Task.detached(priority: .userInitiated) {
+                ClaudeLiveSessionRegistry.holder(for: session, claudeHome: home).flatMap(HostApplication.application(above:))
+            }.value
+            let host = live ?? recordedHost
+            let desktop = host?.isClaudeDesktop == false ? nil : await desktopDestination(for: activity, home: home)
+            switch localDestination(host: host, desktop: desktop) {
+            case .host(let host): return await activate(host)
+            case .desktop(let destination): return await openDesktop(destination)
+            case .missing: return .failed(L10n.text("activity.claude_host_missing"))
             }
         }
-        // Desktop's CLI launcher also needs a real TTY. Without a verified
-        // Desktop mapping, open its resume command in Terminal.
-        guard UUID(uuidString: session) != nil else { return .failed(L10n.text("activity.open_failed")) }
-        let command: String
-        if let source = activity.sourceHostID {
-            let prefix = "remote-ssh-discovered:"
-            guard source.hasPrefix(prefix) else { return .failed(L10n.text("activity.open_failed")) }
-            let alias = String(source.dropFirst(prefix.count))
-            guard alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { return .failed(L10n.text("activity.open_failed")) }
-            let target = sourceTarget ?? RemoteActivityTarget(id: source, name: alias, alias: alias, home: "~/.claude")
-            guard target.id == source, let resume = remoteResumeCommand(target: target, session: session) else { return .failed(L10n.text("activity.open_failed")) }
-            command = resume
-        } else {
-            guard let executable = ClaudeApplicationResolver.findExecutable(),
-                  let localCommand = localResumeCommand(executable: executable, session: session,
-                    directory: activity.navigationDirectory, desktop: ClaudeApplicationResolver.find() != nil,
-                    home: home) else { return .failed(L10n.text("activity.open_failed")) }
-            command = localCommand
+        if let destination = await desktopDestination(for: activity, home: home, sourceTarget: sourceTarget),
+           ClaudeApplicationResolver.find() != nil {
+            return await openDesktop(destination)
         }
+        // An SSH session resumes over ssh in Terminal, which provides the TTY.
+        let prefix = "remote-ssh-discovered:"
+        guard UUID(uuidString: session) != nil, source.hasPrefix(prefix) else { return .failed(L10n.text("activity.open_failed")) }
+        let alias = String(source.dropFirst(prefix.count))
+        guard alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { return .failed(L10n.text("activity.open_failed")) }
+        let target = sourceTarget ?? RemoteActivityTarget(id: source, name: alias, alias: alias, home: "~/.claude")
+        guard target.id == source, let command = remoteResumeCommand(target: target, session: session) else { return .failed(L10n.text("activity.open_failed")) }
         do {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-resume-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -52,23 +64,26 @@ enum ClaudeConversationOpener {
         } catch { return .failed(L10n.text("activity.open_failed")) }
     }
 
+    @MainActor static func activate(_ host: HostApplication) async -> ActivityOpenOutcome {
+        await HostApplication.activate(host, provider: .claude)
+    }
+
+    @MainActor private static func openDesktop(_ destination: URL) async -> ActivityOpenOutcome {
+        guard let app = ClaudeApplicationResolver.find() else { return .failed(L10n.text("activity.open_failed")) }
+        return await withCheckedContinuation { continuation in
+            NSWorkspace.shared.open([destination], withApplicationAt: app,
+                configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                continuation.resume(returning: error == nil ? .openedConversation : .failed(L10n.text("activity.open_failed")))
+            }
+        }
+    }
+
     private static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     static func remoteResumeCommand(target: RemoteActivityTarget, session: String) -> String? {
         guard let arguments = target.sshArguments(terminal: true),
               let command = ClaudeRemoteResume.command(sessionID: session) else { return nil }
         return "/usr/bin/ssh " + (arguments + [command]).map(quote).joined(separator: " ")
-    }
-
-    static func localResumeCommand(executable: URL, session: String, directory: URL?, desktop: Bool,
-                                   home: URL = defaultHome(), userHome: URL = URL(fileURLWithPath: NSHomeDirectory())) -> String? {
-        guard executable.isFileURL, executable.path.hasPrefix("/"), let id = UUID(uuidString: session),
-              home.isFileURL, home.path.hasPrefix("/"),
-              directory.map({ $0.isFileURL && $0.path.hasPrefix("/") }) ?? true else { return nil }
-        let usesDesktop = desktop && home.standardizedFileURL == defaultHome(userHome: userHome).standardizedFileURL
-        return (directory.map { "cd -- " + quote($0.path) + " || exit 1\n" } ?? "") +
-            "/usr/bin/env " + quote("CLAUDE_CONFIG_DIR=" + home.path) + " " + quote(executable.path) +
-            (usesDesktop ? " --desktop --resume " : " --resume ") + quote(id.uuidString.lowercased())
     }
 
     /// Default Desktop metadata does not establish ownership of a separately

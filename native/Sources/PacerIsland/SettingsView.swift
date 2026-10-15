@@ -27,6 +27,9 @@ struct SettingsView: View {
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var monitorRemoteControl = UserDefaults.standard.object(forKey: "monitorRemoteControl") == nil || UserDefaults.standard.bool(forKey: "monitorRemoteControl")
+    /// Shared with the update note, which can change it while this is open.
+    @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
+    @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
     /// Text settings commit on Return, focus loss, a chooser or window close;
@@ -270,7 +273,10 @@ struct SettingsView: View {
     /// when something needs the user, and path overrides folded away.
     private func localSection(_ provider: AgentProvider) -> some View {
         Section(L10n.text("provider.section.local")) {
-            if provider == .codex { codexCLIRow } else { claudeMonitoringRow; claudeAccountRow }
+            if provider == .codex { codexCLIRow; embeddedSessionsToggle(.codex) } else {
+                claudeMonitoringRow; claudeAccountRow
+                embeddedSessionsToggle(.claude)
+            }
             DisclosureGroup(L10n.text("provider.custom_locations"), isExpanded: Binding(
                 get: { expandedLocations.contains(provider) },
                 set: { if $0 { expandedLocations.insert(provider) } else { expandedLocations.remove(provider) } })) {
@@ -278,6 +284,12 @@ struct SettingsView: View {
                     if provider == .codex { codexLocations } else { claudeLocations }
                 }.padding(.top, 6)
             }
+        }
+    }
+    private func embeddedSessionsToggle(_ provider: AgentProvider) -> some View {
+        Toggle(isOn: provider == .codex ? $showEmbeddedCodexSessions : $showEmbeddedClaudeSessions) {
+            Text(L10n.text(provider.rawValue + ".embedded_sessions"))
+            Text(L10n.text(provider.rawValue + ".embedded_sessions_help"))
         }
     }
 
@@ -576,7 +588,8 @@ struct SettingsView: View {
         LiveSettings(modules: modules, displayMode: displayMode, layout: compactLayout, appearance: appearance,
             fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects,
-            monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl)
+            monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
+            showEmbeddedCodexSessions: showEmbeddedCodexSessions)
     }
 
     private func scheduleApply() {
@@ -677,6 +690,8 @@ private struct LiveSettings: Equatable {
     var hideProjects: Bool
     var monitorSSH: Bool
     var monitorRemoteControl: Bool
+    var showEmbeddedClaudeSessions: Bool
+    var showEmbeddedCodexSessions: Bool
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {

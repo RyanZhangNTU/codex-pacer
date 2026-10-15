@@ -19,7 +19,7 @@ public struct SessionPerformanceUpdate: Equatable, Sendable {
         self.firstTokenLatency = firstTokenLatency; self.firstTokenReportedAt = firstTokenReportedAt
     }
     public init?(_ activity: SessionActivity) {
-        guard !activity.isInternalReview, let turn = activity.turnID,
+        guard !activity.isInternalReview, !activity.isIgnoredCodexSession, let turn = activity.turnID,
               activity.responsePerformance != nil || activity.firstTokenLatency != nil else { return nil }
         id = activity.canonicalized().id; turnID = turn
         response = activity.responsePerformance; firstTokenLatency = activity.firstTokenLatency

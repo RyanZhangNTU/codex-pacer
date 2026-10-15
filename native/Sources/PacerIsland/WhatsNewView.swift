@@ -11,7 +11,11 @@ struct WhatsNewView: View {
     let version: String
     let releases: [WhatsNew.Release]
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
+    /// Applies a preference changed here to the running island.
+    var onSettingsChange: () -> Void = {}
     let onDone: () -> Void
+    @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showsEmbeddedClaudeSessions = true
+    @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showsEmbeddedCodexSessions = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,6 +59,7 @@ struct WhatsNewView: View {
         .frame(width: Self.width)
         .fixedSize(horizontal: false, vertical: true)
         .environment(\.locale, L10n.locale)
+        .onChange(of: [showsEmbeddedClaudeSessions, showsEmbeddedCodexSessions]) { _, _ in onSettingsChange() }
     }
 
     private func row(_ item: WhatsNew.Item) -> some View {
@@ -68,9 +73,15 @@ struct WhatsNewView: View {
                     .foregroundStyle(warning == nil ? Color.secondary : Color.orange).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            if login {
+            switch item.control {
+            case .openAtLogin:
                 Toggle(L10n.text(item.titleKey), isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) }))
                     .labelsHidden().toggleStyle(.switch)
+            case .showEmbeddedSessions:
+                Toggle(L10n.text(item.titleKey), isOn: Binding(get: { showsEmbeddedClaudeSessions && showsEmbeddedCodexSessions },
+                    set: { showsEmbeddedClaudeSessions = $0; showsEmbeddedCodexSessions = $0 })).labelsHidden().toggleStyle(.switch)
+            case nil:
+                EmptyView()
             }
         }
         .font(.system(size: 13))

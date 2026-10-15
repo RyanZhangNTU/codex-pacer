@@ -84,8 +84,7 @@ struct TaskRowView: View {
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-        .help(enabled ? [L10n.text(activity.provider == .claude && activity.sourceHostID != nil ? "claude.open_remote_help" : "common.open_chat"),
-            activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
+        .help(enabled ? [openHelp, activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
         .accessibilityLabel(activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             [detail, elapsed].compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + performanceText)
     }
@@ -119,6 +118,15 @@ struct TaskRowView: View {
             metrics
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+    }
+
+    /// Local SDK/ACP rows name the app that started their session.
+    private var openHelp: String {
+        if activity.sourceHostID != nil {
+            return L10n.text(activity.provider == .claude ? "claude.open_remote_help" : "common.open_chat")
+        }
+        guard activity.provider == .claude || activity.launchedByEmbeddingApp else { return L10n.text("common.open_chat") }
+        return sourceName.map { L10n.text("claude.open_host_help", $0) } ?? L10n.text("common.open_chat")
     }
 
     private var separator: some View {

@@ -25,6 +25,8 @@
 "provider.section.local" = "This Mac";
 "provider.custom_locations" = "Custom locations";
 "provider.monitoring" = "Task monitoring";
+"claude.embedded_sessions" = "Show Claude Sessions from Other Apps";
+"claude.embedded_sessions_help" = "Sessions in apps that embed Claude Code through the Claude Agent SDK, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Terminal, VS Code and Claude Desktop sessions are unaffected.";
 "provider.state.ready" = "Ready";
 "provider.state.found" = "Found";
 "provider.state.searching" = "Searching";
@@ -323,6 +325,9 @@
 "activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
 "activity.open_failed" = "The conversation could not be opened.";
 "activity.open_failed_detail" = "The conversation could not be opened: %@";
+"activity.claude_host_missing" = "Pacer doesn’t know which app started this Claude task. It can only see the app while the task is running.";
+"activity.host_app_missing" = "Can’t find %@. It may have been moved or deleted.";
+"claude.open_host_help" = "Switch to %@";
 "attention.approval" = "Approval needed";
 "attention.input" = "Reply needed";
 "updates.automatic" = "Automatically Check for Updates";
@@ -561,3 +566,9 @@
 "whats_new.remote_control_detail" = "Recognize devices by name and see whether they are online, offline or waiting for a session.";
 "whats_new.stability" = "Improved stability";
 "whats_new.stability_detail" = "More reliable remote task monitoring, with completed cards staying read after you open their conversations.";
+"whats_new.third_party_claude" = "Claude and Codex tasks from third-party apps";
+"whats_new.third_party_claude_detail" = "Pacer now recognizes Claude and Codex tasks started by third-party apps, such as a Zotero plugin. Click one to jump straight to its app.";
+
+"codex.embedded_sessions" = "Show Codex Sessions from Other Apps";
+"codex.embedded_sessions_help" = "Sessions in apps that embed Codex, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.";
+"activity.codex_host_missing" = "Pacer doesn’t know which app started this Codex task. It can only see the app while the task is running.";
