@@ -565,5 +565,9 @@
 "whats_new.remote_control_detail" = "通过设备名称识别远程任务，清楚区分在线、离线和等待会话的状态。";
 "whats_new.stability" = "稳定性改进";
 "whats_new.stability_detail" = "远程任务监控更可靠，打开对话后的完成卡片会保持已读。";
-"whats_new.third_party_claude" = "识别第三方应用中的 Claude 任务";
-"whats_new.third_party_claude_detail" = "已支持识别第三方应用（如 Zotero 插件）启动的 Claude 任务，点击任务即可自动跳转到对应应用。";
+"whats_new.third_party_claude" = "识别第三方应用中的 Claude 和 Codex 任务";
+"whats_new.third_party_claude_detail" = "已支持识别第三方应用（如 Zotero 插件）启动的 Claude 和 Codex 任务，点击任务即可自动跳转到对应应用。";
+
+"codex.embedded_sessions" = "显示其他应用中的 Codex 会话";
+"codex.embedded_sessions_help" = "Zotero 插件等内嵌 Codex 的应用中的会话，会标出应用名称，点击即可切换过去。关闭后不再显示这些会话及其提醒；Codex 应用、终端和 VS Code 的会话不受影响。";
+"activity.codex_host_missing" = "未找到启动此 Codex 会话的应用。";

@@ -15,6 +15,7 @@ struct WhatsNewView: View {
     var onSettingsChange: () -> Void = {}
     let onDone: () -> Void
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showsEmbeddedClaudeSessions = true
+    @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showsEmbeddedCodexSessions = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,7 +59,7 @@ struct WhatsNewView: View {
         .frame(width: Self.width)
         .fixedSize(horizontal: false, vertical: true)
         .environment(\.locale, L10n.locale)
-        .onChange(of: showsEmbeddedClaudeSessions) { _, _ in onSettingsChange() }
+        .onChange(of: [showsEmbeddedClaudeSessions, showsEmbeddedCodexSessions]) { _, _ in onSettingsChange() }
     }
 
     private func row(_ item: WhatsNew.Item) -> some View {
@@ -76,8 +77,9 @@ struct WhatsNewView: View {
             case .openAtLogin:
                 Toggle(L10n.text(item.titleKey), isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) }))
                     .labelsHidden().toggleStyle(.switch)
-            case .showEmbeddedClaudeSessions:
-                Toggle(L10n.text(item.titleKey), isOn: $showsEmbeddedClaudeSessions).labelsHidden().toggleStyle(.switch)
+            case .showEmbeddedSessions:
+                Toggle(L10n.text(item.titleKey), isOn: Binding(get: { showsEmbeddedClaudeSessions && showsEmbeddedCodexSessions },
+                    set: { showsEmbeddedClaudeSessions = $0; showsEmbeddedCodexSessions = $0 })).labelsHidden().toggleStyle(.switch)
             case nil:
                 EmptyView()
             }

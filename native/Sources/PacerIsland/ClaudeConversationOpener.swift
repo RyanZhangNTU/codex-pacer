@@ -9,25 +9,25 @@ enum ClaudeConversationOpener {
     /// Claude Desktop opens that app; none is resumed in Terminal or imported
     /// into Desktop.
     enum LocalDestination: Equatable {
-        case host(ClaudeHostApplication)
+        case host(HostApplication)
         case desktop(URL)
         case missing
     }
 
-    static func localDestination(host: ClaudeHostApplication?, desktop: URL?) -> LocalDestination {
+    static func localDestination(host: HostApplication?, desktop: URL?) -> LocalDestination {
         if let host, !host.isClaudeDesktop { return .host(host) }
         if let desktop { return .desktop(desktop) }
         return host.map { .host($0) } ?? .missing
     }
 
     @MainActor static func open(_ activity: SessionActivity, home: URL, sourceTarget: RemoteActivityTarget? = nil,
-                                recordedHost: ClaudeHostApplication? = nil) async -> ActivityOpenOutcome {
+                                recordedHost: HostApplication? = nil) async -> ActivityOpenOutcome {
         guard activity.provider == .claude, let session = activity.threadID,
               AgentProvider.claude.validatedSessionID(session) != nil else { return .failed(L10n.text("activity.open_failed")) }
         guard let source = activity.sourceHostID else {
             // The process holding the session now outranks an earlier record.
             let live = await Task.detached(priority: .userInitiated) {
-                ClaudeLiveSessionRegistry.holder(for: session, claudeHome: home).flatMap(ClaudeHostApplication.application(above:))
+                ClaudeLiveSessionRegistry.holder(for: session, claudeHome: home).flatMap(HostApplication.application(above:))
             }.value
             let host = live ?? recordedHost
             let desktop = host?.isClaudeDesktop == false ? nil : await desktopDestination(for: activity, home: home)
@@ -64,21 +64,8 @@ enum ClaudeConversationOpener {
         } catch { return .failed(L10n.text("activity.open_failed")) }
     }
 
-    /// Brings the host forward, launching it again if it quit. Which of its
-    /// windows shows the session is not verified.
-    @MainActor static func activate(_ host: ClaudeHostApplication) async -> ActivityOpenOutcome {
-        let installed = FileManager.default.fileExists(atPath: host.bundleURL.path) ? host.bundleURL
-            : NSWorkspace.shared.urlForApplication(withBundleIdentifier: host.bundleIdentifier)
-        guard let application = installed else { return .failed(L10n.text("activity.claude_host_missing")) }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        return await withCheckedContinuation { continuation in
-            NSWorkspace.shared.openApplication(at: application, configuration: configuration) { _, error in
-                continuation.resume(returning: error.map {
-                    .failed(L10n.text("activity.open_failed_detail", CodexDiagnosticText.description(of: $0)))
-                } ?? .openedConversation)
-            }
-        }
+    @MainActor static func activate(_ host: HostApplication) async -> ActivityOpenOutcome {
+        await HostApplication.activate(host, provider: .claude)
     }
 
     @MainActor private static func openDesktop(_ destination: URL) async -> ActivityOpenOutcome {

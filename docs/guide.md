@@ -27,7 +27,7 @@ The first time you open Codex Pacer 3, or the first launch after upgrading from 
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex** or **Settings → Claude**, and reopen the guide from **Settings → Help**.
 
-After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list.
+After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list. The 3.1.2 third-party-session switch controls both Codex and Claude; it is on only when both module settings are on.
 
 ## The collapsed bar
 
@@ -60,7 +60,9 @@ Tasks from both services share one list: tasks that need you come first, then ru
 
 Agents that a task spawns are grouped under it with their running count and combined speed. With more than three tasks, use the arrows beside the page number or Option + ← / → to page through them.
 
-Click a task to open its conversation. Codex opens the chat in the Codex app. A Claude task started in another app (a terminal, an editor or an app that embeds Claude Code) shows that app's name and switches to it, relaunching the app if it quit. A Claude Desktop session opens in Claude Desktop, and an SSH session resumes in Terminal. If Pacer did not see which app started a session, it says so, and the message disappears after 30 seconds. Opening never sends a prompt.
+Click a task to open it. A local Claude task or a Codex task started by a third-party app shows that app's name and switches to it, relaunching the app if it quit. Switching to that app marks the captured completion as read; Pacer does not select a particular window. A third-party Codex task never falls back to opening a Codex chat. Official Codex client navigation, Claude Desktop links and SSH navigation keep their existing behavior. If Pacer cannot find the starting app, it reports that and clears the message after 30 seconds. Opening never sends a prompt.
+
+**Codex sessions from other apps.** Under **Settings → Codex → This Mac**, **Show Codex Sessions from Other Apps** is on by default. Turn it off to hide third-party sessions, their agents, questions, approvals and completion cards. Turning it back on restores retained cards with their original unread state and expiry. Official Codex app, Terminal and VS Code sessions are unaffected. Zotero Agent's translation and temporary model-catalog sessions are always excluded, including their activity and performance measurements. SSH sessions follow the same visibility rules, but keep their existing remote navigation.
 
 When a turn ends, its card stays until you open it or the retention time passes (30 minutes by default; set it in **Settings → Reminders**).
 
@@ -114,7 +116,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Appearance | Solid black or Liquid Glass, Automatic / Notch / Floating, which display, and whether to show in full-screen spaces. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |
-| Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, Claude sessions from other apps, quota history and details. |
+| Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, each service's sessions from other apps, quota history and details. |
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
 | Help | A legend of every mark on the island, the welcome guide, and links to this guide and the issue tracker. |
 

@@ -4,11 +4,11 @@ import XCTest
 
 @MainActor
 final class ClaudeHostTrackingTests: XCTestCase {
-    private let zotero = ClaudeHostApplication(bundleIdentifier: "org.zotero.zotero",
+    private let zotero = HostApplication(bundleIdentifier: "org.zotero.zotero",
         bundleURL: URL(fileURLWithPath: "/Applications/Zotero.app"), name: "Zotero")
-    private let terminal = ClaudeHostApplication(bundleIdentifier: "com.apple.Terminal",
+    private let terminal = HostApplication(bundleIdentifier: "com.apple.Terminal",
         bundleURL: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"), name: "Terminal")
-    private let desktop = ClaudeHostApplication(bundleIdentifier: ClaudeApplicationResolver.bundleIdentifier,
+    private let desktop = HostApplication(bundleIdentifier: ClaudeApplicationResolver.bundleIdentifier,
         bundleURL: URL(fileURLWithPath: "/Applications/Claude.app"), name: "Claude")
 
     private actor Scans {
@@ -18,50 +18,53 @@ final class ClaudeHostTrackingTests: XCTestCase {
     }
     private actor PendingScans {
         var requests: [Set<String>] = []
-        var continuations: [Int: CheckedContinuation<[String: ClaudeHostApplication], Never>] = [:]
-        func resolve(_ sessions: Set<String>) async -> [String: ClaudeHostApplication] {
+        var continuations: [Int: CheckedContinuation<[String: HostApplication], Never>] = [:]
+        func resolve(_ sessions: Set<String>) async -> [String: HostApplication] {
             requests.append(sessions)
             let index = requests.count
             return await withCheckedContinuation { continuations[index] = $0 }
         }
         func count() -> Int { requests.count }
-        func finish(_ index: Int, with hosts: [String: ClaudeHostApplication]) {
+        func finish(_ index: Int, with hosts: [String: HostApplication]) {
             continuations.removeValue(forKey: index)?.resume(returning: hosts)
         }
     }
 
     func testSleepAndShutdownReleaseHostScansAndRejectTheirLateResults() async throws {
-        let fixture = try fixture(claudeEnabled: false)
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
-        let model = fixture.model, scans = PendingScans()
-        let session = "019a0000-0000-7000-8000-0000000000e1"
-        model.claudeHostResolver = { sessions, _ in await scans.resolve(sessions) }
-        model.receiveClaudeUpdate([activity(session)], statuses: [:], requests: [])
-        try await waitUntil { await scans.count() == 1 }
+        for provider in AgentProvider.allCases {
+            let fixture = try fixture(claudeEnabled: false)
+            defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+            let model = fixture.model, scans = PendingScans()
+            let session = "019a0000-0000-7000-8000-0000000000e1"
+            model.hostApplicationResolver = { actual, sessions, _ in actual == provider ? await scans.resolve(sessions) : [:] }
+            if provider == .claude { model.receiveClaudeUpdate([activity(session)], statuses: [:], requests: []) }
+            else { model.receiveRemoteUpdate([activity(session, provider: .codex)], statuses: [:], unavailable: [], requests: [], names: []) }
+            try await waitUntil { await scans.count() == 1 }
 
-        await model.prepareForSleep()
-        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
-        var count = await scans.count()
-        XCTAssertEqual(count, 1, "Sleep must not start a replacement scan")
-        model.resumeAfterSleep()
-        try await waitUntil { await scans.count() == 2 }
+            await model.prepareForSleep()
+            model.trackHostApplications(for: provider, now: Date().addingTimeInterval(3))
+            var count = await scans.count()
+            XCTAssertEqual(count, 1, "Sleep must not start a replacement scan")
+            model.resumeAfterSleep()
+            try await waitUntil { await scans.count() == 2 }
 
-        await scans.finish(1, with: [session: zotero])
-        try await Task.sleep(nanoseconds: 20_000_000)
-        XCTAssertNil(model.claudeHosts[session], "A pre-sleep result cannot publish after waking")
-        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
-        try await Task.sleep(nanoseconds: 20_000_000)
-        count = await scans.count()
-        XCTAssertEqual(count, 2, "The old result must not clear the new scan's slot")
-        await scans.finish(2, with: [session: terminal])
-        try await waitUntil { model.claudeHosts[session] == self.terminal }
+            await scans.finish(1, with: [session: zotero])
+            try await Task.sleep(nanoseconds: 20_000_000)
+            XCTAssertNil(model.hostApplications[provider]?[session], "A pre-sleep result cannot publish after waking")
+            model.trackHostApplications(for: provider, now: Date().addingTimeInterval(3))
+            try await Task.sleep(nanoseconds: 20_000_000)
+            count = await scans.count()
+            XCTAssertEqual(count, 2, "The old result must not clear the new scan's slot")
+            await scans.finish(2, with: [session: terminal])
+            try await waitUntil { model.hostApplications[provider]?[session] == self.terminal }
 
-        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
-        try await waitUntil { await scans.count() == 3 }
-        await model.shutdown()
-        await scans.finish(3, with: [session: zotero])
-        try await Task.sleep(nanoseconds: 20_000_000)
-        XCTAssertEqual(model.claudeHosts[session], terminal, "A scan returning after shutdown cannot publish")
+            model.trackHostApplications(for: provider, now: Date().addingTimeInterval(3))
+            try await waitUntil { await scans.count() == 3 }
+            await model.shutdown()
+            await scans.finish(3, with: [session: zotero])
+            try await Task.sleep(nanoseconds: 20_000_000)
+            XCTAssertEqual(model.hostApplications[provider]?[session], terminal, "A scan returning after shutdown cannot publish")
+        }
     }
 
     func testHostIsScannedOnceAfterEndingAndKeptOnlyWhileShown() async throws {
@@ -192,17 +195,18 @@ final class ClaudeHostTrackingTests: XCTestCase {
         return Fixture(model: model, defaults: defaults, domain: domain)
     }
 
-    private func activity(_ session: String, completed: Bool = false, hostID: String? = nil) -> SessionActivity {
+    private func activity(_ session: String, completed: Bool = false, hostID: String? = nil, provider: AgentProvider = .claude) -> SessionActivity {
         let now = Date()
-        var value = SessionActivity(id: AgentProvider.claude.activityID(sessionID: session, sourceHostID: hostID),
+        var value = SessionActivity(id: provider.activityID(sessionID: session, sourceHostID: hostID),
             project: "Synthetic task", sourceHost: hostID == nil ? nil : "Synthetic host", sourceHostID: hostID,
-            phaseAwareRate: true, provider: .claude, sessionID: session)
+            phaseAwareRate: true, provider: provider, sessionID: session)
         value.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "synthetic-turn",
             "at": now.addingTimeInterval(-10).timeIntervalSince1970])
         if completed {
             value.applyRuntime(["method": "turn/completed", "threadId": session, "turnId": "synthetic-turn",
                 "status": "completed", "at": now.addingTimeInterval(-1).timeIntervalSince1970])
         }
+        if provider == .codex { value.setCodexOrigin(.init(embedded: true, ignored: false)) }
         return value.canonicalized()
     }
 

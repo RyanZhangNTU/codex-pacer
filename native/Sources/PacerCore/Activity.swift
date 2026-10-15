@@ -36,8 +36,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var threadID: String?
     public private(set) var navigationDirectory: URL?
     public private(set) var desktopSessionID: String?
-    /// Another app launched this Claude session through the Agent SDK (`sdk-*`).
+    /// Another app launched this session through a provider SDK/ACP adapter.
     public private(set) var launchedByEmbeddingApp = false
+    public private(set) var codexOrigin: CodexSessionOrigin?
+    private var codexOriginAt: Date?
+    public private(set) var rolloutURL: URL?
+    public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
     public var threadURL: URL? {
         if provider == .claude {
             guard sourceHostID == nil, let desktopSessionID else { return nil }
@@ -121,6 +125,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return raw.flatMap { provider.validatedSessionID($0) }
     }
     private mutating func rememberRate() {
+        guard !isIgnoredCodexSession else { return }
         if retainedLatency == nil, let latency = performanceMeter.firstTokenLatency, let turnID {
             latencyTurnID = turnID; retainedLatency = latency
             if firstTokenReportedAt == nil { firstTokenReportedAt = (latencyStart ?? logTurnStart ?? turnStartedAt)?.addingTimeInterval(latency) ?? lastObserved }
@@ -166,6 +171,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if parentThreadID == nil { parentThreadID = other.parentThreadID }
         if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
         if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
+        if rolloutURL == nil { rolloutURL = other.rolloutURL }
+        if let origin = other.codexOrigin,
+           codexOrigin == nil || (other.codexOriginAt ?? .distantPast) > (codexOriginAt ?? .distantPast) {
+            setCodexOrigin(origin, at: other.codexOriginAt)
+        }
         if let key = other.latencyTurnID, key == turnID || (turnID == nil && !liveStatusOnly) {
             if retainedLatency == nil { retainedLatency = other.retainedLatency; latencyTurnID = key }
             if latencyStart == nil { latencyStart = other.latencyStart; latencyTurnID = key }
@@ -280,6 +290,16 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public mutating func setClaudeLaunch(embedded: Bool) {
         if provider == .claude { launchedByEmbeddingApp = embedded }
     }
+    public mutating func setCodexOrigin(_ origin: CodexSessionOrigin, at: Date? = nil) {
+        guard provider == .codex, codexOriginAt == nil || at == nil || at! >= codexOriginAt! else { return }
+        codexOrigin = origin; codexOriginAt = at; launchedByEmbeddingApp = origin.embedded
+    }
+    mutating func inheritCodexOrigin(_ origin: CodexSessionOrigin) {
+        codexOrigin = origin; launchedByEmbeddingApp = origin.embedded
+    }
+    public mutating func setCodexRollout(_ url: URL) {
+        if provider == .codex, sourceHostID == nil, url.isFileURL { rolloutURL = url }
+    }
     /// A transcript UUID alone cannot establish a Desktop conversation route.
     /// Directories are local navigation metadata and never enter SSH frames.
     public mutating func setClaudeNavigation(directory: URL? = nil, desktopSessionID: String? = nil) {
@@ -350,6 +370,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 ignoringInheritedHistory = false
             }
             if let title = payload["title"] as? String { updateTitle(title) }
+            if let origin = CodexSessionOrigin.sanitized(payload) {
+                setCodexOrigin(origin, at: (value["timestamp"] as? String).flatMap(Self.parseDate))
+            }
             updateParent(Self.parentID(in: payload))
             let source = payload["source"] as? [String: Any]
             let rawSubagent = source?["subagent"] ?? source?["subAgent"]
@@ -362,6 +385,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if let cwd = payload["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             return
         }
+        guard !isIgnoredCodexSession else { return }
         if ignoringInheritedHistory {
             // The first owned settings/item/accounting event proves that the
             // copied prefix has ended. Its body is otherwise ignored normally.
@@ -614,6 +638,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             return
         }
         if method == "metadata" {
+            if let origin = CodexSessionOrigin.sanitized(event) { setCodexOrigin(origin, at: date) }
+            if sourceHostID == nil, let path = event["localRolloutPath"] as? String { setCodexRollout(URL(fileURLWithPath: path)) }
             updateParent(Self.parentID(in: event, provider: provider))
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
@@ -799,16 +825,18 @@ public actor LocalActivityReader {
     }
     private var cursors: [URL: Cursor] = [:]
     private var metadata: [URL: (identity: UInt64, activity: SessionActivity)] = [:]
+    private var originSizes: [URL: UInt64] = [:]
+    private var ignoredIDs: Set<String> = []
     private let maxFiles = 16
     private let maxBytes = 128 * 1024
     private let startupBytes = 512 * 1024
 
     public init() {}
-    public func reset() { cursors.removeAll(); metadata.removeAll() }
+    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll() }
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
                      excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
-                     subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL]) {
+                     subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>) {
         func retainingCompletion(_ cursor: Cursor) -> Cursor {
             var value = cursor
             if let id = value.activity.threadID, let evidence = subagentStates[id], evidence.state == "completed",
@@ -855,7 +883,6 @@ public actor LocalActivityReader {
             let file = entry.url
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             if !files.contains(where: { $0.0 == file }) { files.append((file, date)) }
-            watchURLs.append(file.deletingLastPathComponent())
         }
         for file in Array(cursors.keys) {
             if let cursor = cursors[file] { cursors[file] = retainingCompletion(cursor) }
@@ -881,12 +908,12 @@ public actor LocalActivityReader {
         let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
         if !metricsOnly { for file in candidates {
-            guard selected.count < maxFiles else { break }
-            let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
-            if excludingThreads.contains(id) { continue }
-            let identity = ((try? manager.attributesOfItem(atPath: file.path))?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
-            if metadata[file]?.identity != identity {
+            let attributes = try? manager.attributesOfItem(atPath: file.path)
+            let identity = (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+            let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+            if metadata[file]?.identity != identity || (metadata[file]?.activity.isIgnoredCodexSession == true && originSizes[file] != size) {
                 var activity = SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
+                activity.setCodexRollout(file)
                 if let handle = try? FileHandle(forReadingFrom: file) {
                     defer { try? handle.close() }
                     // Session metadata can include a long instruction block.
@@ -897,14 +924,28 @@ public actor LocalActivityReader {
                         if let end = header.firstIndex(of: 10) { activity.consume(header.prefix(upTo: end)); break }
                     }
                 }
+                if let latest = CodexRolloutMetadata.read(file, threadID: activity.threadID) {
+                    activity.setCodexOrigin(latest.origin, at: latest.observedAt)
+                }
                 metadata[file] = (identity, activity)
+                originSizes[file] = size
             }
-            if metadata[file]?.activity.isInternalReview != true, !selected.contains(file) { selected.append(file) }
         }
+            let inherited = Dictionary(CodexSessionOrigin.inheriting(candidates.compactMap { metadata[$0]?.activity })
+                .map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            ignoredIDs = Set(inherited.values.filter(\.isIgnoredCodexSession).map { $0.canonicalized().id })
+            selected.removeAll { file in metadata[file].flatMap { inherited[$0.activity.id] }?.isIgnoredCodexSession == true }
+            for file in candidates {
+                guard selected.count < maxFiles else { break }
+                guard !covered(file), let value = metadata[file]?.activity, !value.isInternalReview,
+                      inherited[value.id]?.isIgnoredCodexSession != true, !selected.contains(file) else { continue }
+                selected.append(file)
+            }
+            originSizes = originSizes.filter { metadata[$0.key] != nil }
         }
         // Keep covered baselines for reconnects without spending fallback slots.
         if includeCoveredMetrics && !metricsOnly {
-            let metricFiles = candidates.filter(covered).prefix(32)
+            let metricFiles = candidates.filter { covered($0) && metadata[$0]?.activity.isIgnoredCodexSession != true }.prefix(32)
             selected += metricFiles.filter { !selected.contains($0) }
         }
         if !metricsOnly { cursors = cursors.filter { selected.contains($0.key) || covered($0.key) } }
@@ -963,7 +1004,8 @@ public actor LocalActivityReader {
                 if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
-                if current.activity.isInternalReview {
+                if current.activity.isInternalReview || current.activity.isIgnoredCodexSession {
+                    if current.activity.isIgnoredCodexSession { ignoredIDs.insert(current.activity.canonicalized().id) }
                     metadata[file] = (identity, current.activity)
                     cursors.removeValue(forKey: file)
                 } else { cursors[file] = retainingCompletion(current) }
@@ -978,8 +1020,10 @@ public actor LocalActivityReader {
         // Parent hints affect the published view and cursor selection, never
         // the log baseline. Withdrawing a running hint must work at unchanged
         // EOF, while explicitly observed endings remain independently known.
-        return ((cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
-                watchURLs + selected.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) })
+        let watched = selected.filter { metadata[$0]?.activity.isIgnoredCodexSession != true }
+        watchURLs += watched.map { $0.deletingLastPathComponent() }
+        return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
+                watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs)
     }
     /// Recover the latest explicit turn anchor without loading conversation history.
     /// Scan the existing 8 MiB budget; retain one anchor and numeric first-output times.
@@ -1031,7 +1075,7 @@ public actor LocalActivityReader {
 }
 
 /// Shared formatters avoid constructing two ICU parsers for every appended record.
-private final class LogDateParser: @unchecked Sendable {
+final class LogDateParser: @unchecked Sendable {
     private let lock = NSLock()
     private let fractional = ISO8601DateFormatter()
     private let whole = ISO8601DateFormatter()

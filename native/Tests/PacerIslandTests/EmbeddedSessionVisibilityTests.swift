@@ -1,0 +1,176 @@
+import XCTest
+@testable import PacerCore
+@testable import PacerIsland
+
+@MainActor
+final class EmbeddedSessionVisibilityTests: XCTestCase {
+    private let parent = "019a0000-0000-7000-8000-0000000000d1"
+    private var provider: AgentProvider = .claude
+    private var child: String { provider == .claude ? "retained-agent" : "019a0000-0000-7000-8000-0000000000d2" }
+    private var settingKey: String { provider == .claude ? IslandModel.showsEmbeddedClaudeSessionsKey : IslandModel.showsEmbeddedCodexSessionsKey }
+    private let remote = "remote-ssh-discovered:visibility-fixture"
+
+    func testHidingAndShowingRetainedFamiliesSurvivesEitherOrderOfReaderEviction() async throws {
+        for current in AgentProvider.allCases {
+            provider = current
+            for host in [nil, remote] as [String?] {
+                for hideFirst in [false, true] {
+                    let (model, defaults, _) = try fixture()
+                    var ended = activity(parent, host: host, completed: true)
+                    setEmbedded(&ended)
+                    var descendant = activity(child, host: host, completed: true)
+                    descendant.updateParent(parent)
+                    // The same session on another host is independent.
+                    let other = activity(parent, host: host == nil ? remote : nil, completed: true)
+                    let requests = [ended, descendant, other].map {
+                        PendingAttentionRequest(id: "question:" + $0.id, threadID: $0.threadID!, sourceHostID: $0.sourceHostID,
+                            sourceName: nil, kind: .input, detectedAt: Date(), provider: provider)
+                    }
+                    publish(model, [ended, descendant, other], requests: requests)
+                    let application = HostApplication(bundleIdentifier: "com.apple.Terminal",
+                        bundleURL: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"), name: "Terminal")
+                    if host == nil { model.recordHostApplications([parent: application], provider: provider) }
+                    XCTAssertTrue(model.isUnreadCompletion(ended)); XCTAssertTrue(model.isUnreadCompletion(descendant))
+
+                    func hide() {
+                        defaults.set(false, forKey: settingKey)
+                        model.refilterEmbeddedSessions()
+                    }
+                    if hideFirst { hide() }
+                    publish(model, [], requests: requests)
+                    if !hideFirst { hide() }
+                    XCTAssertEqual(Set(model.activities.map(\.id)), [other.id])
+                    XCTAssertEqual(model.pendingCompletions.map(\.id), [other.id])
+                    XCTAssertEqual(model.pendingInputRequests.map { $0.activity.id }, [other.id])
+
+                    defaults.set(true, forKey: settingKey)
+                    model.refilterEmbeddedSessions()
+                    XCTAssertEqual(Set(model.activities.map(\.id)), [ended.id, descendant.id, other.id])
+                    XCTAssertTrue(model.isUnreadCompletion(ended)); XCTAssertTrue(model.isUnreadCompletion(descendant))
+                    XCTAssertEqual(model.pendingInputRequests.count, 3)
+                    if host == nil { XCTAssertEqual(model.hostApplication(for: ended), application) }
+                    await model.shutdown()
+                }
+            }
+        }
+    }
+
+    func testHiddenCompletionIsRetainedAndOnlySuccessfulOpenDismissesIt() async throws {
+        for current in AgentProvider.allCases {
+            provider = current
+            let (model, defaults, dismissals) = try fixture()
+            defaults.set(false, forKey: settingKey)
+            var running = activity(parent)
+            setEmbedded(&running)
+            publish(model, [running], requests: [])
+            var ended = activity(parent, completed: true)
+            setEmbedded(&ended)
+            publish(model, [ended], requests: [])
+            publish(model, [], requests: [])
+            XCTAssertTrue(model.activities.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: dismissals.path), "Hiding does not acknowledge an ending")
+
+            defaults.set(true, forKey: settingKey)
+            model.refilterEmbeddedSessions()
+            XCTAssertTrue(model.isUnreadCompletion(ended))
+            XCTAssertEqual(model.activities.map(\.id), [ended.id])
+            model.onOpenActivity = { _ in .openedConversation }
+            model.open(ended)
+            try await waitUntil { model.activities.isEmpty }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: dismissals.path))
+            defaults.set(false, forKey: settingKey)
+            model.refilterEmbeddedSessions()
+            defaults.set(true, forKey: settingKey)
+            publish(model, [ended], requests: [])
+            XCTAssertTrue(model.activities.isEmpty, "Toggling visibility cannot undo a successful open")
+            await model.shutdown()
+        }
+    }
+
+    func testHiddenRetainedCompletionStillExpires() async throws {
+        for current in AgentProvider.allCases {
+            provider = current
+            let (model, defaults, dismissals) = try fixture()
+            defaults.set(5, forKey: "completedRetentionMinutes")
+            defaults.set(false, forKey: settingKey)
+            var ended = activity(parent, completed: true)
+            setEmbedded(&ended)
+            publish(model, [ended], requests: [])
+            publish(model, [], requests: [])
+            model.now = Date().addingTimeInterval(301)
+            defaults.set(true, forKey: settingKey)
+            model.refilterEmbeddedSessions()
+            XCTAssertTrue(model.activities.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: dismissals.path))
+            await model.shutdown()
+        }
+    }
+
+    func testCurrentCliResumeOverridesTheRetainedEmbeddedLaunch() async throws {
+        for current in AgentProvider.allCases {
+            provider = current
+            let (model, defaults, _) = try fixture()
+            var ended = activity(parent, completed: true)
+            setEmbedded(&ended)
+            publish(model, [ended], requests: [])
+            defaults.set(false, forKey: settingKey)
+            model.refilterEmbeddedSessions()
+            var resumed = activity(parent)
+            resumed.applyRuntime(["method": "turn/started", "threadId": parent, "turnId": "cli-resume",
+                "at": Date().timeIntervalSince1970])
+            publish(model, [resumed], requests: [])
+            XCTAssertEqual(model.running.map(\.id), [resumed.id])
+            XCTAssertFalse(model.activities.first?.launchedByEmbeddingApp ?? true)
+            await model.shutdown()
+        }
+    }
+
+    private func setEmbedded(_ value: inout SessionActivity) {
+        if provider == .claude { value.setClaudeLaunch(embedded: true) }
+        else { value.setCodexOrigin(.init(embedded: true, ignored: false)) }
+    }
+    private func publish(_ model: IslandModel, _ values: [SessionActivity], requests: [PendingAttentionRequest]) {
+        if provider == .claude { model.receiveClaudeUpdate(values, statuses: [:], requests: requests) }
+        else { model.receiveRemoteUpdate(values, statuses: [:], unavailable: [], requests: requests, names: []) }
+    }
+
+    private func fixture() throws -> (IslandModel, UserDefaults, URL) {
+        let domain = "com.codexpacer.visibility-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-visibility-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: root) }
+        defaults.set(root.appendingPathComponent("codex").path, forKey: "codexHome")
+        defaults.set(root.appendingPathComponent("claude").path, forKey: "claudeHome")
+        defaults.set(false, forKey: "monitorSSH")
+        ProviderModules(codexMode: provider == .codex ? .enabled : .disabled, claudeMode: provider == .claude ? .enabled : .disabled).save(to: defaults)
+        let dismissals = root.appendingPathComponent("dismissals.json")
+        let model = IslandModel(defaults: defaults,
+            installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
+            completionDismissalStore: CompletionDismissalStore(fileURL: dismissals))
+        model.hostApplicationResolver = { _, _, _ in [:] }
+        return (model, defaults, dismissals)
+    }
+
+    private func activity(_ session: String, host: String? = nil, completed: Bool = false) -> SessionActivity {
+        let now = Date()
+        var value = SessionActivity(id: provider.activityID(sessionID: session, sourceHostID: host),
+            project: "Synthetic task", sourceHostID: host, phaseAwareRate: true, provider: provider, sessionID: session)
+        value.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "synthetic-turn",
+            "at": now.addingTimeInterval(-10).timeIntervalSince1970])
+        if completed {
+            value.applyRuntime(["method": "turn/completed", "threadId": session, "turnId": "synthetic-turn",
+                "status": "completed", "at": now.addingTimeInterval(-1).timeIntervalSince1970])
+        }
+        if provider == .codex { value.setCodexOrigin(.init(embedded: false, ignored: false)) }
+        return value.canonicalized()
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while !condition() {
+            guard Date() < deadline else { return XCTFail("Timed out") }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+}

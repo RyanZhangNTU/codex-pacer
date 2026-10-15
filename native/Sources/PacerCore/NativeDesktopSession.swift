@@ -7,6 +7,8 @@ struct NativeDesktopSession {
     private var followed: Set<Key> = []
     private var waiting: [Key] = []
     private var excluded: Set<Key> = []
+    private var originExcluded: Set<Key> = []
+    var localOrigin: (String) -> CodexRolloutMetadata? = { _ in nil }
     private var streams: [Key: DesktopWireProjection] = [:]
     /// Saved routes alone are idle. Losing an observed runtime remains a
     /// failure until a usable stream returns, even after snapshot retries end.
@@ -41,6 +43,14 @@ struct NativeDesktopSession {
     }
     private mutating func follow(_ key: Key, value: Bool) throws {
         guard let client else { return }
+        if value, key.host == "local", let metadata = localOrigin(key.thread) {
+            if metadata.origin.ignored {
+                excluded.insert(key); originExcluded.insert(key)
+                return
+            }
+            try queue(["method": "metadata", "threadId": key.thread, "at": (metadata.observedAt ?? Date()).timeIntervalSince1970,
+                "embedded": metadata.origin.embedded, "ignoredSession": false, "localRolloutPath": metadata.url.path], host: key.host)
+        }
         try send(["type": "broadcast", "method": "thread-stream-following-changed", "sourceClientId": client,
             "version": 1, "params": ["conversationId": key.thread, "hostId": key.host, "following": value]])
         if value {
@@ -124,6 +134,9 @@ struct NativeDesktopSession {
     mutating func discover(_ keys: [Key]) throws {
         var added: [Key] = []
         for key in keys where hosts.contains(key.host) && Self.valid(key.thread) != nil {
+            if originExcluded.contains(key), let metadata = localOrigin(key.thread), !metadata.origin.ignored {
+                excluded.remove(key); originExcluded.remove(key)
+            }
             if !followed.contains(key) && !excluded.contains(key) && !waiting.contains(key) && waiting.count < 256 { waiting.append(key); added.append(key) }
         }
         for host in Set(added.map(\.host)) where host != "local" {
@@ -202,6 +215,12 @@ struct NativeDesktopSession {
             return
         }
         guard ready, method == "thread-stream-state-changed", followed.contains(key), let change = p["change"], change.isObject else { return }
+        if key.host == "local", let metadata = localOrigin(thread), metadata.origin.ignored {
+            excluded.insert(key); originExcluded.insert(key)
+            try frame(["kind": "attention", "hostId": host, "threadId": thread, "requests": []])
+            try follow(key, value: false); streams.removeValue(forKey: key); try drain()
+            return
+        }
         guard fields["version"]?.integer() == 11, let owner = Self.valid(fields["sourceClientId"]?.string()) else { throw JSONFieldView.Failure.malformed }
         notifications += 1
         let old = streams[key]
