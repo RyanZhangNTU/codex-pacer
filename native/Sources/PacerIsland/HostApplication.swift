@@ -34,7 +34,7 @@ struct HostApplication: Equatable, Sendable {
     @MainActor static func activate(_ host: HostApplication, provider: AgentProvider) async -> ActivityOpenOutcome {
         let installed = FileManager.default.fileExists(atPath: host.bundleURL.path) ? host.bundleURL
             : NSWorkspace.shared.urlForApplication(withBundleIdentifier: host.bundleIdentifier)
-        guard let application = installed else { return .failed(L10n.text(provider == .codex ? "activity.codex_host_missing" : "activity.claude_host_missing")) }
+        guard let application = installed else { return .failed(L10n.text("activity.host_app_missing", host.name)) }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         return await withCheckedContinuation { continuation in

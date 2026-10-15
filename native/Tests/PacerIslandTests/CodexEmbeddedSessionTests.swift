@@ -67,6 +67,14 @@ final class CodexEmbeddedSessionTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testRememberedHostThatWasRemovedIsNamedInsteadOfUnknown() async {
+        let removed = HostApplication(bundleIdentifier: "test.codexpacer.removed-host." + UUID().uuidString,
+            bundleURL: URL(fileURLWithPath: "/private/tmp/pacer-no-such-app/Synthetic Host.app"), name: "Synthetic Host")
+        let outcome = await HostApplication.activate(removed, provider: .codex)
+        XCTAssertEqual(outcome, .failed(L10n.text("activity.host_app_missing", "Synthetic Host")))
+        XCTAssertNotEqual(L10n.text("activity.host_app_missing", "Synthetic Host"), L10n.text("activity.codex_host_missing"))
+    }
+
     func testOnlyLocalEmbeddedCodexUsesHostRoutingAndOfficialNavigationKeepsItsGuards() async throws {
         let (model, _, _) = try fixture()
         var embedded = activity(session); embedded.setCodexOrigin(.init(embedded: true, ignored: false))

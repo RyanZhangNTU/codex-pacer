@@ -325,7 +325,8 @@
 "activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
 "activity.open_failed" = "The conversation could not be opened.";
 "activity.open_failed_detail" = "The conversation could not be opened: %@";
-"activity.claude_host_missing" = "The app that started this Claude session could not be found.";
+"activity.claude_host_missing" = "Pacer doesn’t know which app started this Claude task. It can only see the app while the task is running.";
+"activity.host_app_missing" = "Can’t find %@. It may have been moved or deleted.";
 "claude.open_host_help" = "Switch to %@";
 "attention.approval" = "Approval needed";
 "attention.input" = "Reply needed";
@@ -566,8 +567,8 @@
 "whats_new.stability" = "Improved stability";
 "whats_new.stability_detail" = "More reliable remote task monitoring, with completed cards staying read after you open their conversations.";
 "whats_new.third_party_claude" = "Claude and Codex tasks from third-party apps";
-"whats_new.third_party_claude_detail" = "Pacer now recognizes Claude and Codex tasks started by third-party apps, such as a Zotero plugin. Click a task to switch to its app.";
+"whats_new.third_party_claude_detail" = "Pacer now recognizes Claude and Codex tasks started by third-party apps, such as a Zotero plugin. Click one to jump straight to its app.";
 
 "codex.embedded_sessions" = "Show Codex Sessions from Other Apps";
-"codex.embedded_sessions_help" = "Sessions from apps embedding Codex, such as a Zotero plugin, show their app name and open that app when clicked. Turn this off to hide those sessions and their reminders; Codex, Terminal and VS Code sessions are unaffected.";
-"activity.codex_host_missing" = "The app that started this Codex session could not be found.";
+"codex.embedded_sessions_help" = "Sessions in apps that embed Codex, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.";
+"activity.codex_host_missing" = "Pacer doesn’t know which app started this Codex task. It can only see the app while the task is running.";

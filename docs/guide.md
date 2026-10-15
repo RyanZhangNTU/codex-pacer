@@ -27,7 +27,7 @@ The first time you open Codex Pacer 3, or the first launch after upgrading from 
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex** or **Settings → Claude**, and reopen the guide from **Settings → Help**.
 
-After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list. The 3.1.2 third-party-session switch controls both Codex and Claude; it is on only when both module settings are on.
+After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list.
 
 ## The collapsed bar
 
@@ -60,9 +60,7 @@ Tasks from both services share one list: tasks that need you come first, then ru
 
 Agents that a task spawns are grouped under it with their running count and combined speed. With more than three tasks, use the arrows beside the page number or Option + ← / → to page through them.
 
-Click a task to open it. A local Claude task or a Codex task started by a third-party app shows that app's name and switches to it, relaunching the app if it quit. Switching to that app marks the captured completion as read; Pacer does not select a particular window. A third-party Codex task never falls back to opening a Codex chat. Official Codex client navigation, Claude Desktop links and SSH navigation keep their existing behavior. If Pacer cannot find the starting app, it reports that and clears the message after 30 seconds. Opening never sends a prompt.
-
-**Codex sessions from other apps.** Under **Settings → Codex → This Mac**, **Show Codex Sessions from Other Apps** is on by default. Turn it off to hide third-party sessions, their agents, questions, approvals and completion cards. Turning it back on restores retained cards with their original unread state and expiry. Official Codex app, Terminal and VS Code sessions are unaffected. Zotero Agent's translation and temporary model-catalog sessions are always excluded, including their activity and performance measurements. SSH sessions follow the same visibility rules, but keep their existing remote navigation.
+Click a task to open its conversation. Codex tasks open in the Codex app. A task started in another app shows that app's name and switches to it, relaunching the app if it quit. This covers Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin. Claude Desktop sessions open in Claude Desktop, and Claude sessions on SSH hosts resume in Terminal. Pacer only learns which app started a task while the task is running; if it doesn't know, it says so, and the message disappears after 30 seconds. Opening never sends a prompt.
 
 When a turn ends, its card stays until you open it or the retention time passes (30 minutes by default; set it in **Settings → Reminders**).
 
@@ -85,6 +83,8 @@ The ⋯ menu in the task header refreshes data or quits Pacer; the gear opens Se
 Pacer finds the Codex app or CLI in the usual places, including Homebrew, npm managers such as nvm, fnm, Volta, asdf, mise and pnpm, and a moved Codex.app. **Settings → Codex → This Mac** shows what it found; hover for the exact path, or pick another CLI or data folder under **Custom locations**. A custom path that stops working is reported rather than silently replaced.
 
 Codex quota comes from your own Codex sign-in through the CLI. API-key or Amazon Bedrock sign-ins do not have ChatGPT subscription limits, and Pacer says so.
+
+**Sessions from other apps.** Apps that embed Codex, such as a Zotero plugin, show their sessions with the app's name. To hide those sessions and their reminders, turn off **Settings → Codex → Show Codex Sessions from Other Apps**. Codex app, Terminal and VS Code sessions always show. Translations from the Zotero Agent plugin are never shown.
 
 ## Claude Code
 

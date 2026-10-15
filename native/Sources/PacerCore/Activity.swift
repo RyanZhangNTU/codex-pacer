@@ -914,17 +914,19 @@ public actor LocalActivityReader {
             if metadata[file]?.identity != identity || (metadata[file]?.activity.isIgnoredCodexSession == true && originSizes[file] != size) {
                 var activity = SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
                 activity.setCodexRollout(file)
+                var header: Data?
                 if let handle = try? FileHandle(forReadingFrom: file) {
                     defer { try? handle.close() }
                     // Session metadata can include a long instruction block.
-                    var header = Data()
-                    while header.count < 1024 * 1024 {
+                    var head = Data()
+                    while head.count < 1024 * 1024 {
                         guard let chunk = try? handle.read(upToCount: 32768), !chunk.isEmpty else { break }
-                        header.append(chunk)
-                        if let end = header.firstIndex(of: 10) { activity.consume(header.prefix(upTo: end)); break }
+                        head.append(chunk)
+                        if let end = head.firstIndex(of: 10) { activity.consume(head.prefix(upTo: end)); break }
                     }
+                    header = head
                 }
-                if let latest = CodexRolloutMetadata.read(file, threadID: activity.threadID) {
+                if let latest = CodexRolloutMetadata.read(file, threadID: activity.threadID, head: header) {
                     activity.setCodexOrigin(latest.origin, at: latest.observedAt)
                 }
                 metadata[file] = (identity, activity)

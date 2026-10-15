@@ -68,15 +68,20 @@ public struct CodexRolloutMetadata: Sendable {
     public let observedAt: Date?
     public let parentThreadID: String?
     private static let dates = LogDateParser()
-    static func read(_ url: URL, threadID: String? = nil) -> Self? {
+    private static let marker = Data(#""session_meta""#.utf8)
+    /// `head` is the header a caller already read with the same bounded loop,
+    /// so the reader does not read each candidate's first line twice.
+    static func read(_ url: URL, threadID: String? = nil, head known: Data? = nil) -> Self? {
         guard url.isFileURL, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
-        try? handle.seek(toOffset: 0)
-        var head = Data()
-        while head.count < 1024 * 1024, !head.contains(10) {
-            guard let chunk = try? handle.read(upToCount: 32768), !chunk.isEmpty else { break }
-            head.append(chunk)
+        var head = known ?? Data()
+        if known == nil {
+            try? handle.seek(toOffset: 0)
+            while head.count < 1024 * 1024, !head.contains(10) {
+                guard let chunk = try? handle.read(upToCount: 32768), !chunk.isEmpty else { break }
+                head.append(chunk)
+            }
         }
         var rows = head.split(separator: 10).map(Data.init)
         if size > UInt64(head.count), head.last != 10 { rows.removeLast() }
@@ -87,7 +92,8 @@ public struct CodexRolloutMetadata: Sendable {
         }
         var found: Self?
         for row in rows {
-            guard row.count <= 1024 * 1024,
+            // Most tail rows are conversation records; skip them before parsing.
+            guard row.count <= 1024 * 1024, row.range(of: Self.marker) != nil,
                   let document = try? JSONFieldView.document(row, maximumBytes: 1024 * 1024),
                   let root = try? document.fields(["type", "payload", "timestamp"]), root["type"]?.string(limit: 32) == "session_meta",
                   let fields = try? root["payload"]?.fields(["id", "originator", "cwd", "source", "parent_thread_id", "parentThreadId"]),

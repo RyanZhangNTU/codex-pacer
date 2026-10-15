@@ -151,6 +151,8 @@ final class CodexSessionOriginTests: XCTestCase {
             data.append(try metadata(session, origin: "private-client-name", at: "2026-10-15T00:00:01Z")); data.append(10)
             try data.write(to: file)
             XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file)).origin.embedded)
+            // The reader passes the header chunk it already read; the result must not change.
+            XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file, head: data.prefix(32768))).origin.embedded)
             let output = try python(SessionLogProbe.library + "\nr=rollout_origin(home/'sessions'/'\(file.lastPathComponent)')\nprint(json.dumps(r['embedded']))", home: root)
             XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "false")
         }
