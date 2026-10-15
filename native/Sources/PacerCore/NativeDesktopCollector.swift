@@ -123,6 +123,8 @@ final class NativeDesktopCollector: @unchecked Sendable {
         defer { finish(fd); onClosed() }
         do {
             var session = try NativeDesktopSession(hosts: currentHosts(), localRuntime: localRuntime) { [self] value in try send(value, fd: fd) }
+            let origins = CodexOriginLookup(home: home)
+            session.localOrigin = { origins.lookup($0) }
             defer {
                 // EOF can arrive during the batch interval. Deliver the
                 // last valid events before signalling closure to the consumer.

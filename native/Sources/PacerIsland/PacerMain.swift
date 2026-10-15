@@ -353,6 +353,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 sourceTarget: model.claudeRemoteTargets.first { $0.id == activity.sourceHostID },
                 recordedHost: model.claudeHost(for: activity))
         }
+        if activity.sourceHostID == nil, activity.launchedByEmbeddingApp {
+            guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }
+            model.close()
+            return await CodexConversationOpener.open(activity, home: model.home, recordedHost: model.hostApplication(for: activity))
+        }
         guard model.canOpen(activity), let threadURL = activity.threadURL else { return .failed(L10n.text("activity.open_failed")) }
         guard let appURL = CodexApplicationResolver.find() else { return .failed(L10n.text("activity.app_missing")) }
         model.close()

@@ -26,6 +26,6 @@ public enum ActivitySourceMerger {
             }
             result[value.id] = value
         }
-        return result.values.filter { !$0.isInternalReview }
+        return CodexSessionOrigin.inheriting(Array(result.values)).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }
     }
 }

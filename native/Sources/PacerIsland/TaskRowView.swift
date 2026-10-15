@@ -120,10 +120,12 @@ struct TaskRowView: View {
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
-    /// A local Claude row names the app that started its session.
+    /// Local SDK/ACP rows name the app that started their session.
     private var openHelp: String {
-        guard activity.provider == .claude else { return L10n.text("common.open_chat") }
-        if activity.sourceHostID != nil { return L10n.text("claude.open_remote_help") }
+        if activity.sourceHostID != nil {
+            return L10n.text(activity.provider == .claude ? "claude.open_remote_help" : "common.open_chat")
+        }
+        guard activity.provider == .claude || activity.launchedByEmbeddingApp else { return L10n.text("common.open_chat") }
         return sourceName.map { L10n.text("claude.open_host_help", $0) } ?? L10n.text("common.open_chat")
     }
 

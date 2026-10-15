@@ -28,6 +28,7 @@ struct RuntimeEventState: Sendable {
     private var metricLogs: [String: SessionActivity] = [:]
     private var metricUpdates: [String: SessionPerformanceUpdate] = [:]
     private var terminalMetrics: [String: SessionActivity] = [:]
+    private var origins: [String: (origin: CodexSessionOrigin, at: Date?)] = [:]
     private var names: [String: SessionNameUpdate] = [:]
     private var invalidated: Set<String> = []
     private var released: Set<String> = []
@@ -107,6 +108,7 @@ struct RuntimeEventState: Sendable {
                     if let bytes = try? JSONSerialization.data(withJSONObject: record) { value!.consume(bytes) }
                     if row["partial"] as? Bool == true, index + 1 == prelude { value!.markPartialRate() }
                 }
+                if value!.isIgnoredCodexSession { metricLogs.removeValue(forKey: id); metricUpdates.removeValue(forKey: id); continue }
                 metricLogs[id] = value
                 if let update = SessionPerformanceUpdate(value!) { metricUpdates[id] = update }
             }
@@ -143,6 +145,18 @@ struct RuntimeEventState: Sendable {
         } else if frame["kind"] as? String == "runtime", let event = frame["event"] as? [String: Any],
                   let thread = event["threadId"] as? String, UUID(uuidString: thread) != nil {
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
+            if event["method"] as? String == "metadata" {
+                let at = (event["at"] as? Double).map(Date.init(timeIntervalSince1970:))
+                if let origin = CodexSessionOrigin.sanitized(event),
+                   origins[id]?.at == nil || at == nil || at! >= origins[id]!.at! { origins[id] = (origin, at) }
+                if let parent = SessionActivity.parentID(in: event), let origin = origins[(sourceID ?? "local") + ":" + parent] { origins[id] = origin }
+                if origins.count > 1024 { origins.removeValue(forKey: origins.keys.sorted().first!) }
+            }
+            if origins[id]?.origin.ignored == true {
+                live.removeValue(forKey: id); fallback.removeValue(forKey: id); metricLogs.removeValue(forKey: id)
+                metricUpdates.removeValue(forKey: id); names.removeValue(forKey: id)
+                return
+            }
             if event["method"] as? String == "thread/tokenUsage/updated", event["terminalUsage"] as? Bool == true {
                 guard sourceID?.hasPrefix("remote-control:") == true,
                       var value = live[id].flatMap({ [.completed, .interrupted].contains($0.phase) ? $0 : nil }) ?? terminalMetrics[id],
@@ -170,6 +184,12 @@ struct RuntimeEventState: Sendable {
                 return
             }
             value.consumeLive(event)
+            if let origin = origins[id] { value.setCodexOrigin(origin.origin, at: origin.at) }
+            if value.isIgnoredCodexSession {
+                live.removeValue(forKey: id); fallback.removeValue(forKey: id); metricLogs.removeValue(forKey: id)
+                metricUpdates.removeValue(forKey: id); names.removeValue(forKey: id)
+                return
+            }
             let method = event["method"] as? String
             let hasName = (event["name"] as? String).map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
             if (method == "metadata" && hasName) ||
