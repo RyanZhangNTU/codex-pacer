@@ -16,6 +16,53 @@ final class ClaudeHostTrackingTests: XCTestCase {
         func record(_ sessions: Set<String>) { requests.append(sessions) }
         func all() -> [Set<String>] { requests }
     }
+    private actor PendingScans {
+        var requests: [Set<String>] = []
+        var continuations: [Int: CheckedContinuation<[String: ClaudeHostApplication], Never>] = [:]
+        func resolve(_ sessions: Set<String>) async -> [String: ClaudeHostApplication] {
+            requests.append(sessions)
+            let index = requests.count
+            return await withCheckedContinuation { continuations[index] = $0 }
+        }
+        func count() -> Int { requests.count }
+        func finish(_ index: Int, with hosts: [String: ClaudeHostApplication]) {
+            continuations.removeValue(forKey: index)?.resume(returning: hosts)
+        }
+    }
+
+    func testSleepAndShutdownReleaseHostScansAndRejectTheirLateResults() async throws {
+        let fixture = try fixture(claudeEnabled: false)
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        let model = fixture.model, scans = PendingScans()
+        let session = "019a0000-0000-7000-8000-0000000000e1"
+        model.claudeHostResolver = { sessions, _ in await scans.resolve(sessions) }
+        model.receiveClaudeUpdate([activity(session)], statuses: [:], requests: [])
+        try await waitUntil { await scans.count() == 1 }
+
+        await model.prepareForSleep()
+        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
+        var count = await scans.count()
+        XCTAssertEqual(count, 1, "Sleep must not start a replacement scan")
+        model.resumeAfterSleep()
+        try await waitUntil { await scans.count() == 2 }
+
+        await scans.finish(1, with: [session: zotero])
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertNil(model.claudeHosts[session], "A pre-sleep result cannot publish after waking")
+        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
+        try await Task.sleep(nanoseconds: 20_000_000)
+        count = await scans.count()
+        XCTAssertEqual(count, 2, "The old result must not clear the new scan's slot")
+        await scans.finish(2, with: [session: terminal])
+        try await waitUntil { model.claudeHosts[session] == self.terminal }
+
+        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
+        try await waitUntil { await scans.count() == 3 }
+        await model.shutdown()
+        await scans.finish(3, with: [session: zotero])
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(model.claudeHosts[session], terminal, "A scan returning after shutdown cannot publish")
+    }
 
     func testHostIsScannedOnceAfterEndingAndKeptOnlyWhileShown() async throws {
         let fixture = try fixture()
@@ -134,10 +181,10 @@ final class ClaudeHostTrackingTests: XCTestCase {
 
     private struct Fixture { let model: IslandModel; let defaults: UserDefaults; let domain: String }
 
-    private func fixture() throws -> Fixture {
+    private func fixture(claudeEnabled: Bool = true) throws -> Fixture {
         let domain = "com.codexpacer.claude-host-tests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
+        ProviderModules(codexMode: .disabled, claudeMode: claudeEnabled ? .enabled : .disabled).save(to: defaults)
         // Own defaults leave system notifications off; no monitor is started.
         let model = IslandModel(defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
