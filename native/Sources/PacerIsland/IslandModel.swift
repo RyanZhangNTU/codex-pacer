@@ -59,6 +59,16 @@ final class IslandModel: ObservableObject {
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
+    var navigationErrorDuration: TimeInterval = 30
+    private var navigationErrorToken = 0
+    @Published private(set) var claudeHosts: [String: ClaudeHostApplication] = [:]
+    private var claudeHostAttempts: Set<String> = []
+    private var claudeHostScanAt = Date.distantPast
+    private var claudeHostScan: Task<Void, Never>?
+    private var claudeHostRetry: Task<Void, Never>?
+    var claudeHostResolver: @Sendable (Set<String>, URL) async -> [String: ClaudeHostApplication] = { sessions, home in
+        await Task.detached(priority: .utility) { ClaudeHostApplication.resolve(sessions: sessions, claudeHome: home) }.value
+    }
     @Published private(set) var attentionRequests: [PendingAttentionRequest] = []
     private var localActivities: [SessionActivity] = []
     private var remoteActivities: [SessionActivity] = []
@@ -107,6 +117,9 @@ final class IslandModel: ObservableObject {
         provider == .codex ? streamStatuses : claudeStreamStatuses
     }
     func taskSourceName(_ activity: SessionActivity) -> String? {
+        if activity.provider == .claude, activity.sourceHostID == nil {
+            return claudeHost(for: activity).flatMap { $0.isClaudeDesktop ? nil : $0.name }
+        }
         guard activity.provider == .codex, let host = activity.sourceHostID,
               host.hasPrefix("remote-control:") else { return activity.sourceHost }
         return streamStatuses[host]?.sourceName ?? activity.sourceHost
@@ -279,8 +292,9 @@ final class IslandModel: ObservableObject {
     func canOpen(_ activity: SessionActivity) -> Bool {
         if activity.provider == .claude {
             guard let target = conversationTarget(for: activity) else { return false }
-            return demo || (target.threadURL != nil && ClaudeApplicationResolver.cachedApplication() != nil) ||
-                (target.threadID.flatMap(UUID.init(uuidString:)) != nil && (target.sourceHostID != nil || ClaudeApplicationResolver.cachedExecutable() != nil))
+            // A local session whose app is unknown still opens, to report that.
+            return demo || target.threadID.flatMap(UUID.init(uuidString:)) != nil ||
+                (target.threadURL != nil && ClaudeApplicationResolver.cachedApplication() != nil)
         }
         return (demo || activity.threadURL != nil) && (demo || activity.sourceHostID != nil ||
             home.path == URL(fileURLWithPath: NSHomeDirectory() + "/.codex").standardizedFileURL.path)
@@ -449,6 +463,10 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaTask: Task<Void, Never>?
     private var claudeActivityTask: Task<Void, Never>?
     private var claudeGeneration = 0
+    /// Everything the Claude reader reported; the two lists below are what
+    /// the island shows after the embedded-app setting.
+    private var claudeReceivedActivities: [SessionActivity] = []
+    private var claudeReceivedRequests: [PendingAttentionRequest] = []
     private var claudeActivities: [SessionActivity] = []
     private var claudeAttentionRequests: [PendingAttentionRequest] = []
     private var codexAttentionRequests: [PendingAttentionRequest] = []
@@ -653,6 +671,12 @@ final class IslandModel: ObservableObject {
     var showsRate: Bool { !running.isEmpty }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.object(forKey: "monitorRemoteControl") == nil || defaults.bool(forKey: "monitorRemoteControl") }
+    static let showsEmbeddedClaudeSessionsKey = "showEmbeddedClaudeSessions"
+    /// Claude sessions that another app runs through the Agent SDK (a Zotero
+    /// plugin, for example). Terminal, editor and Desktop sessions always show.
+    var showsEmbeddedClaudeSessions: Bool {
+        defaults.object(forKey: Self.showsEmbeddedClaudeSessionsKey) == nil || defaults.bool(forKey: Self.showsEmbeddedClaudeSessionsKey)
+    }
     var accent: Color {
         if errorMessage != nil || stale { return Color(red: 0.65, green: 0.68, blue: 0.73) }
         return selectedProvider == .codex ? taskAccent : Color(red: 0.88, green: 0.59, blue: 0.40)
@@ -818,8 +842,7 @@ final class IslandModel: ObservableObject {
                   self.completionInbox.isCurrentSource(source),
                   self.isModuleEnabled(activity.provider) || self.demo else { return }
             if case .failed(let failure) = outcome {
-                self.navigationError = failure
-                self.setExpanded(true)
+                self.showNavigationError(failure)
             } else if outcome == .openedConversation {
                 if activity.provider == .claude, activity.parentThreadID != nil {
                     guard let current = self.activities.first(where: { $0.canonicalized().id == activity.canonicalized().id }),
@@ -844,6 +867,75 @@ final class IslandModel: ObservableObject {
                 }
             }
             self.onLayoutChange?(); self.onStatusChange?()
+        }
+    }
+    /// An open failure expands the island and clears itself after
+    /// `navigationErrorDuration` unless a newer failure replaced it.
+    func showNavigationError(_ message: String) {
+        navigationErrorToken += 1
+        let token = navigationErrorToken, duration = navigationErrorDuration
+        navigationError = message
+        setExpanded(true)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, duration) * 1_000_000_000))
+            guard let self, self.navigationErrorToken == token, self.navigationError != nil else { return }
+            self.navigationError = nil
+            self.onLayoutChange?()
+        }
+    }
+
+    /// The app that started the session a local Claude row opens, once seen.
+    func claudeHost(for activity: SessionActivity) -> ClaudeHostApplication? {
+        guard activity.provider == .claude, activity.sourceHostID == nil,
+              let session = conversationTarget(for: activity)?.threadID?.lowercased() else { return nil }
+        return claudeHosts[session]
+    }
+    func recordClaudeHosts(_ found: [String: ClaudeHostApplication]) {
+        var next = claudeHosts
+        for (session, host) in found { next[session.lowercased()] = host }
+        guard next != claudeHosts else { return }
+        claudeHosts = next
+        onLayoutChange?()
+    }
+    /// Checks a local session's live holder when the session is first seen and
+    /// on updates while it runs, at most every two seconds, so the latest holder
+    /// wins and the record outlives the process. Only shown sessions are kept.
+    func trackClaudeHosts(now: Date = Date()) {
+        var referenced = Set<String>(), wanted = Set<String>()
+        for activity in activities where activity.provider == .claude && activity.sourceHostID == nil {
+            guard let session = conversationTarget(for: activity)?.threadID?.lowercased() else { continue }
+            referenced.insert(session)
+            if !claudeHostAttempts.contains(session) || ![.completed, .interrupted].contains(activity.phase) {
+                wanted.insert(session)
+            }
+        }
+        claudeHostAttempts.formIntersection(referenced)
+        if claudeHosts.keys.contains(where: { !referenced.contains($0) }) {
+            claudeHosts = claudeHosts.filter { referenced.contains($0.key) }
+        }
+        guard !demo, !stopped, !wanted.isEmpty, claudeHostScan == nil else { return }
+        let wait = 2 - now.timeIntervalSince(claudeHostScanAt)
+        guard wait <= 0 else {
+            // A session first seen during the pause may receive no later update.
+            guard claudeHostRetry == nil, !wanted.isSubset(of: claudeHostAttempts) else { return }
+            claudeHostRetry = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                self.claudeHostRetry = nil
+                self.trackClaudeHosts()
+            }
+            return
+        }
+        claudeHostScanAt = now
+        claudeHostAttempts.formUnion(wanted)
+        let generation = claudeGeneration, home = claudeHome, resolve = claudeHostResolver
+        claudeHostScan = Task { [weak self] in
+            let found = await resolve(wanted, home)
+            guard let self, generation == self.claudeGeneration else { return }
+            self.claudeHostScan = nil
+            guard !self.stopped else { return }
+            self.recordClaudeHosts(found)
+            self.trackClaudeHosts()
         }
     }
 
@@ -1107,13 +1199,50 @@ final class IslandModel: ObservableObject {
             completionInbox.remove(activityIDs: excluded)
             if activities.contains(where: { excluded.contains($0.id) }) { activities.removeAll { excluded.contains($0.id) } }
         }
-        now = Date(); claudeActivities = values.filter { !excluded.contains($0.id) }; claudeStreamStatuses = statuses; claudeAttentionRequests = requests
-        let measured = performance.filter { !excluded.contains($0.id) }
+        now = Date(); claudeReceivedActivities = values.filter { !excluded.contains($0.id) }; claudeStreamStatuses = statuses
+        claudeReceivedRequests = requests
+        let hidden = filterClaudeSessions()
+        let measured = performance.filter { !excluded.contains($0.id) && !hidden.contains($0.id) }
         completionInbox.updatePerformance(measured)
         for update in measured { rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt) }
         observeAttentionRequests(codexAttentionRequests + claudeAttentionRequests)
         combineActivities()
+        trackClaudeHosts()
         scheduleClaudeRemoteSetup()
+    }
+
+    /// A hidden embedded session takes its subagents, endings and pending
+    /// questions with it; turning the setting back on shows them again.
+    @discardableResult
+    private func filterClaudeSessions() -> Set<String> {
+        let hidden = showsEmbeddedClaudeSessions ? [] : Self.embeddedClaudeIDs(claudeReceivedActivities)
+        if !hidden.isEmpty {
+            completionInbox.remove(activityIDs: hidden)
+            if activities.contains(where: { hidden.contains($0.id) }) { activities.removeAll { hidden.contains($0.id) } }
+        }
+        claudeActivities = claudeReceivedActivities.filter { !hidden.contains($0.id) }
+        claudeAttentionRequests = claudeReceivedRequests.filter { !hidden.contains($0.activity.id) }
+        return hidden
+    }
+
+    func refilterClaudeSessions() {
+        filterClaudeSessions()
+        observeAttentionRequests(codexAttentionRequests + claudeAttentionRequests)
+        combineActivities()
+    }
+
+    static func embeddedClaudeIDs(_ values: [SessionActivity]) -> Set<String> {
+        var hidden = Set(values.filter { $0.provider == .claude && $0.launchedByEmbeddingApp }.map(\.id))
+        var grew = !hidden.isEmpty
+        while grew {
+            grew = false
+            for value in values where !hidden.contains(value.id) {
+                guard let parent = value.parentThreadID,
+                      hidden.contains(AgentProvider.claude.activityID(sessionID: parent, sourceHostID: value.sourceHostID)) else { continue }
+                hidden.insert(value.id); grew = true
+            }
+        }
+        return hidden
     }
 
     private func localSubagentStates(_ values: [SessionActivity]) -> [String: SessionActivity.SubagentEvidence] {
@@ -1294,7 +1423,7 @@ final class IslandModel: ObservableObject {
         if codexChanged { resetCodexSource() }
         else { logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval); refreshRemote() }
         if claudeChanged { resetClaudeSource() }
-        else { startClaudeActivity() }
+        else { refilterClaudeSessions(); startClaudeActivity() }
         onLayoutChange?(); onStatusChange?()
     }
     private func resetCodexSource() {
@@ -1331,7 +1460,10 @@ final class IslandModel: ObservableObject {
         completionInbox.remove(provider: .claude)
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
         bindCompletionSources(.claude)
+        claudeReceivedActivities = []; claudeReceivedRequests = []
         claudeActivities = []; claudeAttentionRequests = []; claudeStreamStatuses = [:]
+        claudeHostScan?.cancel(); claudeHostScan = nil; claudeHostRetry?.cancel(); claudeHostRetry = nil
+        claudeHosts = [:]; claudeHostAttempts = []; claudeHostScanAt = .distantPast
         activities.removeAll { $0.provider == .claude }
         observeAttentionRequests(codexAttentionRequests)
         clearSourceState()

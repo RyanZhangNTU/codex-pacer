@@ -86,6 +86,8 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if isinstance(model, str): meta['model'] = model[:256]
     title = value.get('sessionTitle')
     if isinstance(title, str): meta['title'] = title[:240]
+    entry = value.get('entrypoint')
+    if isinstance(entry, str): meta['embedded'] = entry.startswith('sdk-')
     rows = [meta]; starts = []; ends = []; model_kinds = set()
     content = message.get('content')
     kind = value.get('type')
@@ -132,7 +134,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
 
-ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn'}
+ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request'}
 
 def sanitized(raw):
@@ -151,6 +153,7 @@ def sanitized(raw):
             else: out.pop(key)
     if 'agentTool' in out and out['agentTool'] is not True:out.pop('agentTool')
     if 'promptOwned' in out and out['promptOwned'] is not True:out.pop('promptOwned')
+    if 'embedded' in out and not isinstance(out['embedded'], bool):out.pop('embedded')
     if 'agentStatus' in out and out['agentStatus'] not in ('completed','async_launched','failed','killed'):out.pop('agentStatus')
     return [out]
 

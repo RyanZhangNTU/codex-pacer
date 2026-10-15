@@ -118,29 +118,63 @@ def hook(home,value):
         if event=='SessionStart':
             if isinstance(value.get('model'),str):meta['model']=value['model'][:256]
             if isinstance(value.get('session_title'),str):meta['title']=value['session_title'][:240]
+        # Hooks inherit Claude Code's launch source; apps embedding it through
+        # the Agent SDK use sdk-*. Only that yes/no is recorded.
+        entry=os.environ.get('CLAUDE_CODE_ENTRYPOINT')
+        if entry:meta['embedded']=entry.startswith('sdk-')
         # Every event row already carries routing; repeat display metadata only
         # when it changes or a new turn begins, halving routine spool writes.
-        signature=json.dumps([meta.get(name) for name in ('project','parentId','model','title')])
+        signature=json.dumps([meta.get(name) for name in ('project','parentId','model','title','embedded')])
         if event in ('SessionStart','UserPromptSubmit','SubagentStart') or state.get('meta')!=signature:
             rows.append(meta);state['meta']=signature
         item=ident(value.get('tool_use_id')) or ident(value.get('elicitation_id')) or 'attention'
+        # PermissionRequest carries no tool_use_id. Match the started tool by a
+        # checksum of its name/input, so that tool's own end clears the request.
+        # A question asks for a reply, not an approval.
+        pending=[entry for entry in state.get('pendingTools',[]) if isinstance(entry,list) and len(entry)==4]
+        if event in ('PreToolUse','PermissionRequest'):
+            import zlib
+            name=value.get('tool_name') if isinstance(value.get('tool_name'),str) else ''
+            named=zlib.crc32(name.encode('utf-8','replace'))
+            try:inputs=zlib.crc32(json.dumps([name,value.get('tool_input')],sort_keys=True,default=str).encode('utf-8','replace'))
+            except (TypeError,ValueError):inputs=None
+        if event=='PreToolUse' and item!='attention':
+            pending=[entry for entry in pending if entry[0]!=item][-15:]+[[item,named,inputs,'input' if name=='AskUserQuestion' else 'approval']]
+        if event=='PermissionRequest' and item=='attention':
+            match=[entry for entry in pending if inputs is not None and entry[2]==inputs] or [entry for entry in pending if entry[1]==named] or [entry for entry in pending if entry[0]==state.get('lastToolId')]
+            if match:item=match[-1][0]
+            state['permissionKind']=match[-1][3] if match else 'approval'
+        elif event=='PermissionRequest':state['permissionKind']=next((entry[3] for entry in pending if entry[0]==item),'approval')
+        if event in ('PostToolUse','PostToolUseFailure','PermissionDenied'):pending=[entry for entry in pending if entry[0]!=item]
+        if event in ('UserPromptSubmit','Stop','StopFailure'):
+            pending=[];state.pop('permissionToolId',None);state.pop('permissionKind',None)
+        if pending:state['pendingTools']=pending
+        else:state.pop('pendingTools',None)
         if event=='PreToolUse':state['lastToolId']=item
         if event=='PermissionRequest':state['permissionToolId']=item
         if event=='Elicitation':state['elicitationId']=item
         if event=='Notification':
             notification=value.get('notification_type')
-            if notification=='permission_prompt':item=state.get('permissionToolId') or state.get('lastToolId') or item
+            # Claude may send this seconds after the prompt; one already answered
+            # must not flag its ended tool again.
+            if notification=='permission_prompt':
+                owner=state.get('permissionToolId')
+                item=owner if owner=='attention' or any(entry[0]==owner for entry in pending) else None
             elif notification in ('elicitation_dialog','elicitation_url_dialog','elicitation_complete','elicitation_response'):item=state.get('elicitationId') or item
-        if event in ('PostToolUse','PostToolUseFailure','PermissionDenied') and state.get('permissionToolId')==item:state.pop('permissionToolId',None)
+        permission=state.get('permissionKind','approval') if event=='PermissionRequest' or (event=='Notification' and state.get('permissionToolId')==item) else 'approval'
+        if event in ('PostToolUse','PostToolUseFailure','PermissionDenied') and state.get('permissionToolId')==item:
+            state.pop('permissionToolId',None);state.pop('permissionKind',None)
         if event=='ElicitationResult' and state.get('elicitationId')==item:state.pop('elicitationId',None)
         row['itemId']=item
         mapping={'UserPromptSubmit':'prompt','PreToolUse':'toolStart','PostToolUse':'toolEnd','PostToolUseFailure':'toolEnd','PermissionDenied':'toolEnd','PermissionRequest':'approval','Stop':'stopRequested','StopFailure':'failure','SubagentStart':'subagentStart','SubagentStop':'stopRequested','SessionEnd':'unavailable','Elicitation':'input','ElicitationResult':'attentionCleared'}
         kind=mapping.get(event)
+        if event=='PermissionRequest':kind=permission
         if display:
             kind='responseDelta';row.update(itemId=display[0],displayTurnId=display[1],partial=True,index=0,hasText=True,promptOwned=True)
         if event=='Notification':
             notification=value.get('notification_type')
-            kind='approval' if notification=='permission_prompt' else 'input' if notification in ('elicitation_dialog','elicitation_url_dialog','agent_needs_input') else 'attentionCleared' if notification in ('elicitation_complete','elicitation_response') else None
+            kind=permission if notification=='permission_prompt' else 'input' if notification in ('elicitation_dialog','elicitation_url_dialog','agent_needs_input') else 'attentionCleared' if notification in ('elicitation_complete','elicitation_response') else None
+            if item is None:kind=None
         if kind:
             row['kind']=kind
             if kind=='prompt' and value.get('prompt') in ('[Request interrupted by user]','[Request interrupted by user for tool use]'):row['typedInterruptMarker']=True

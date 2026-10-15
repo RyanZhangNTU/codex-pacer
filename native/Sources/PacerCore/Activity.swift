@@ -36,6 +36,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var threadID: String?
     public private(set) var navigationDirectory: URL?
     public private(set) var desktopSessionID: String?
+    /// Another app launched this Claude session through the Agent SDK (`sdk-*`).
+    public private(set) var launchedByEmbeddingApp = false
     public var threadURL: URL? {
         if provider == .claude {
             guard sourceHostID == nil, let desktopSessionID else { return nil }
@@ -274,6 +276,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         titleWasExplicitlyCleared = title == nil
     }
 
+    /// The latest launch wins: a session resumed in a terminal shows again.
+    public mutating func setClaudeLaunch(embedded: Bool) {
+        if provider == .claude { launchedByEmbeddingApp = embedded }
+    }
     /// A transcript UUID alone cannot establish a Desktop conversation route.
     /// Directories are local navigation metadata and never enter SSH frames.
     public mutating func setClaudeNavigation(directory: URL? = nil, desktopSessionID: String? = nil) {
