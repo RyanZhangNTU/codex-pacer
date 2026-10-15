@@ -492,8 +492,8 @@ final class ClaudeActivityTests: XCTestCase {
     }
     func testNativeAndSshProjectionAgreeForListContentWithoutPrivateText() throws {
         let fixtures: [[String: Any]] = [
-            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "user-1", "timestamp": "2027-01-15T08:00:00Z", "origin": ["kind": "human"], "message": ["role": "user", "content": [["type": "text", "text": "PRIVATE prompt"]]]],
-            ["type": "assistant", "sessionId": session, "uuid": "answer-1", "timestamp": "2027-01-15T08:00:01Z", "requestId": "req-1", "message": ["id": "msg-1", "role": "assistant", "model": "claude-sonnet-4", "stop_reason": "end_turn", "usage": ["output_tokens": 100], "content": [["type": "thinking", "thinking": "PRIVATE reasoning"], ["type": "text", "text": "PRIVATE response"], ["type": "tool_use", "id": "tool-1", "name": "AskUserQuestion", "input": ["question": "PRIVATE question"]]]]],
+            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "user-1", "timestamp": "2027-01-15T08:00:00Z", "entrypoint": "sdk-ts", "origin": ["kind": "human"], "message": ["role": "user", "content": [["type": "text", "text": "PRIVATE prompt"]]]],
+            ["type": "assistant", "sessionId": session, "uuid": "answer-1", "timestamp": "2027-01-15T08:00:01Z", "entrypoint": "cli", "requestId": "req-1", "message": ["id": "msg-1", "role": "assistant", "model": "claude-sonnet-4", "stop_reason": "end_turn", "usage": ["output_tokens": 100], "content": [["type": "thinking", "thinking": "PRIVATE reasoning"], ["type": "text", "text": "PRIVATE response"], ["type": "tool_use", "id": "tool-1", "name": "AskUserQuestion", "input": ["question": "PRIVATE question"]]]]],
             ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-1", "timestamp": "2027-01-15T08:00:02Z", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-1", "content": "PRIVATE output"]]]]
         ]
         let native = fixtures.flatMap { fixture in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(fixture)!, sessionID: session, promptID: turn) }
@@ -513,5 +513,26 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
         XCTAssertTrue(actual.contains { $0["kind"] as? String == "modelBlock" })
         XCTAssertTrue(actual.contains { $0["kind"] as? String == "toolEnd" })
+        XCTAssertEqual(actual.compactMap { $0["embedded"] as? Bool }, [true, false])
+    }
+    func testOnlyAgentSDKEntrypointsMarkASessionAsEmbedded() throws {
+        func launch(_ entrypoints: [String?]) throws -> Bool {
+            var state = ClaudeActivityState()
+            for (index, entrypoint) in entrypoints.enumerated() {
+                var raw: [String: Any] = ["type": "user", "sessionId": session, "promptId": turn, "uuid": "user-\(index)",
+                    "timestamp": "2027-01-15T08:00:0\(index)Z", "origin": ["kind": "human"], "message": ["role": "user", "content": "PRIVATE prompt"]]
+                if let entrypoint { raw["entrypoint"] = entrypoint }
+                let rows = ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(raw)!, sessionID: session)
+                // Only the yes/no leaves the transcript, never the launcher's name.
+                XCTAssertFalse(rows.compactMap { String(data: $0, encoding: .utf8) }.joined().contains("sdk-"))
+                for row in rows { state.consume(row, now: now.addingTimeInterval(10)) }
+            }
+            return try XCTUnwrap(state.activities.first).launchedByEmbeddingApp
+        }
+        XCTAssertTrue(try launch(["sdk-ts"])); XCTAssertTrue(try launch(["sdk-py"])); XCTAssertTrue(try launch(["sdk-cli"]))
+        XCTAssertFalse(try launch(["cli"])); XCTAssertFalse(try launch(["claude-desktop"])); XCTAssertFalse(try launch(["claude-vscode"]))
+        XCTAssertFalse(try launch([nil]))
+        XCTAssertTrue(try launch(["sdk-ts", nil]), "A record without a launcher keeps the known one")
+        XCTAssertFalse(try launch(["sdk-ts", "cli"]), "Resuming in a terminal shows the session again")
     }
 }

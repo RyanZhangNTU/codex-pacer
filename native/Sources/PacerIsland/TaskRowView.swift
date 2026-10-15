@@ -84,8 +84,7 @@ struct TaskRowView: View {
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-        .help(enabled ? [L10n.text(activity.provider == .claude && activity.sourceHostID != nil ? "claude.open_remote_help" : "common.open_chat"),
-            activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
+        .help(enabled ? [openHelp, activity.modelName].compactMap { $0 }.joined(separator: " · ") : L10n.text("activity.no_link"))
         .accessibilityLabel(activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             [detail, elapsed].compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + performanceText)
     }
@@ -119,6 +118,13 @@ struct TaskRowView: View {
             metrics
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+    }
+
+    /// A local Claude row names the app that started its session.
+    private var openHelp: String {
+        guard activity.provider == .claude else { return L10n.text("common.open_chat") }
+        if activity.sourceHostID != nil { return L10n.text("claude.open_remote_help") }
+        return sourceName.map { L10n.text("claude.open_host_help", $0) } ?? L10n.text("common.open_chat")
     }
 
     private var separator: some View {

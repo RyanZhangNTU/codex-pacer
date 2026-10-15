@@ -350,7 +350,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }
             model.close()
             return await ClaudeConversationOpener.open(activity, home: model.claudeHome,
-                sourceTarget: model.claudeRemoteTargets.first { $0.id == activity.sourceHostID })
+                sourceTarget: model.claudeRemoteTargets.first { $0.id == activity.sourceHostID },
+                recordedHost: model.claudeHost(for: activity))
         }
         guard model.canOpen(activity), let threadURL = activity.threadURL else { return .failed(L10n.text("activity.open_failed")) }
         guard let appURL = CodexApplicationResolver.find() else { return .failed(L10n.text("activity.app_missing")) }
@@ -426,6 +427,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             whatsNewWindow = window
         }
         let hosting = NSHostingView(rootView: WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
+            onSettingsChange: { [weak self] in self?.model.applySettings(sourceChanged: false) },
             onDone: { [weak self] in self?.closeWhatsNew() }))
         whatsNewWindow?.contentView = hosting
         whatsNewWindow?.setContentSize(hosting.fittingSize)

@@ -4,7 +4,7 @@ import CoreServices
 public enum ClaudeApplicationResolver {
     public static let bundleIdentifier = "com.anthropic.claudefordesktop"
     private final class Located: @unchecked Sendable {
-        let lock = NSLock(); var application: (url: URL?, at: Date)?; var executable: (url: URL?, at: Date)?
+        let lock = NSLock(); var application: (url: URL?, at: Date)?
     }
     private static let located = Located()
     /// Task rows ask on every render whether Claude can open; installations
@@ -13,11 +13,6 @@ public enum ClaudeApplicationResolver {
         located.lock.lock(); defer { located.lock.unlock() }
         if let value = located.application, now.timeIntervalSince(value.at) < 60 { return value.url }
         let url = find(); located.application = (url, now); return url
-    }
-    public static func cachedExecutable(now: Date = Date()) -> URL? {
-        located.lock.lock(); defer { located.lock.unlock() }
-        if let value = located.executable, now.timeIntervalSince(value.at) < 60 { return value.url }
-        let url = findExecutable(); located.executable = (url, now); return url
     }
 
     public static func locations(userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
