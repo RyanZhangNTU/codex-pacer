@@ -20,13 +20,14 @@ struct AlternatingQuotaText: NSViewRepresentable {
     static let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     let entries: [Entry]
     let animates: Bool
+    var font = Self.font
 
     func makeNSView(context: Context) -> AlternatingQuotaView { AlternatingQuotaView() }
-    func updateNSView(_ view: AlternatingQuotaView, context: Context) { view.update(entries: entries, animates: animates) }
+    func updateNSView(_ view: AlternatingQuotaView, context: Context) { view.update(entries: entries, animates: animates, font: font) }
     /// The widest value reserves the slot, so alternating never moves its neighbors.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: AlternatingQuotaView, context: Context) -> CGSize? {
-        let width = entries.map { ($0.text as NSString).size(withAttributes: [.font: Self.font]).width }.max() ?? 0
-        return CGSize(width: ceil(width), height: ceil(Self.font.ascender - Self.font.descender))
+        let width = entries.map { ($0.text as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return CGSize(width: ceil(width), height: ceil(font.ascender - font.descender))
     }
 }
 
@@ -35,6 +36,7 @@ final class AlternatingQuotaView: NSView {
     private var layers: [CATextLayer] = []
     private var entries: [AlternatingQuotaText.Entry] = []
     private var animates = true
+    private var font = AlternatingQuotaText.font
     private var occlusionObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
@@ -46,10 +48,10 @@ final class AlternatingQuotaView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func update(entries: [AlternatingQuotaText.Entry], animates: Bool) {
-        guard entries != self.entries || animates != self.animates else { return }
+    func update(entries: [AlternatingQuotaText.Entry], animates: Bool, font: NSFont = AlternatingQuotaText.font) {
+        guard entries != self.entries || animates != self.animates || font != self.font else { return }
         let restart = entries.count != layers.count || animates != self.animates
-        self.entries = entries; self.animates = animates
+        self.entries = entries; self.animates = animates; self.font = font
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if entries.count != layers.count {
             layers.forEach { $0.removeFromSuperlayer() }
@@ -63,7 +65,7 @@ final class AlternatingQuotaView: NSView {
         }
         for (text, entry) in zip(layers, entries) {
             text.string = NSAttributedString(string: entry.text,
-                attributes: [.font: AlternatingQuotaText.font, .foregroundColor: entry.color])
+                attributes: [.font: font, .foregroundColor: entry.color])
         }
         layoutLayers()
         CATransaction.commit()
@@ -97,7 +99,7 @@ final class AlternatingQuotaView: NSView {
     }
 
     private func layoutLayers() {
-        let height = ceil(AlternatingQuotaText.font.ascender - AlternatingQuotaText.font.descender)
+        let height = ceil(font.ascender - font.descender)
         for text in layers {
             text.frame = CGRect(x: 0, y: (bounds.height - height) / 2, width: bounds.width, height: height)
         }

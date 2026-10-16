@@ -10,6 +10,14 @@ final class ClaudeActivityTests: XCTestCase {
         let record: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": session, "promptId": turn, "at": now.timeIntervalSince1970 + offset]
         state.consume(ClaudeActivityRecord.encode(record.merging(extra) { _, newer in newer })!, now: now.addingTimeInterval(100), attaching: attaching)
     }
+    private func nextStepBox(_ endTurn: Any?, promptID: String? = nil) -> [Data] {
+        var raw: [String: Any] = ["type": "user", "sessionId": session, "uuid": "result-box", "timestamp": "2027-01-15T08:00:03Z",
+            "entrypoint": "claude-desktop", "toolUseResult": [["type": "text", "text": "PRIVATE box"]],
+            "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "box-1", "content": "PRIVATE recap"]]]]
+        if let promptID { raw["promptId"] = promptID }
+        if let endTurn { raw["mcpMeta"] = ["_meta": ["claude/endTurn": endTurn]] }
+        return ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(raw)!, sessionID: session)
+    }
     func testTranscriptProjectionNeverRetainsTextToolArgumentsOrInfersTTFT() throws {
         let raw: [String: Any] = ["type": "assistant", "sessionId": session, "timestamp": "2027-01-15T08:00:02Z", "uuid": "answer-1",
             "message": ["role": "assistant", "model": "claude-sonnet-4", "stop_reason": "end_turn", "content": [
@@ -87,6 +95,69 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertFalse(block.contains { String(data: $0, encoding: .utf8)!.contains("stopVerified") })
         let continued = ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(common.merging(["preventedContinuation": false, "hookAdditionalContext": ["Synthetic continuation"]]) { _, v in v })!, sessionID: session)
         XCTAssertFalse(continued.contains { String(data: $0, encoding: .utf8)!.contains("stopVerified") })
+    }
+    func testNextStepBoxEndsTheTurnAndAwaitsTheReplyUntilTheNextPrompt() throws {
+        // Claude Desktop 2.1.299: the box's tool result ends the turn, and no
+        // end_turn or stop_hook_summary follows it.
+        func ends(_ rows: [Data]) -> Bool { rows.contains { String(decoding: $0, as: UTF8.self).contains("stopVerified") } }
+        let rows = nextStepBox(true, promptID: turn)
+        XCTAssertTrue(ends(rows))
+        XCTAssertFalse(rows.map { String(decoding: $0, as: UTF8.self) }.joined().contains("PRIVATE"))
+        XCTAssertFalse(ends(nextStepBox(nil, promptID: turn))); XCTAssertFalse(ends(nextStepBox(false, promptID: turn)))
+        XCTAssertFalse(ends(nextStepBox("true", promptID: turn))); XCTAssertFalse(ends(nextStepBox(true)), "An unowned result cannot end a turn")
+
+        // Hooks see the box start and end just before its result is written.
+        var state = ClaudeActivityState(), policy = AttentionPolicy()
+        consume("prompt", state: &state, offset: 0)
+        consume("toolStart", state: &state, offset: 1, extra: ["itemId": "box-1", "attention": "none"])
+        consume("toolEnd", state: &state, offset: 2.997, extra: ["itemId": "box-1"])
+        _ = policy.activityNotices(state.activities, at: now.addingTimeInterval(3))
+        for row in rows { state.consume(row, now: now.addingTimeInterval(10)) }
+        XCTAssertEqual(state.activities.first?.phase, .completed)
+        XCTAssertEqual(state.attention.map(\.kind), [.input])
+        consume("stopRequested", state: &state, offset: 4)
+        XCTAssertEqual(state.activities.first?.phase, .completed); XCTAssertEqual(state.attention.count, 1)
+
+        // One notice asks for the reply; the ending adds no second one.
+        let notices = policy.activityNotices(state.activities, at: now.addingTimeInterval(4))
+        XCTAssertEqual(notices.map(\.kind), [.completed])
+        XCTAssertEqual(policy.requestNotices(state.attention).map(\.kind), [.waitingForInput])
+        XCTAssertTrue(AttentionPolicy.excludingPendingReplies(notices, activityIDs: Set(state.attention.map(\.activity.id))).isEmpty)
+        XCTAssertEqual(AttentionPolicy.excludingPendingReplies(notices, activityIDs: []), notices)
+
+        consume("prompt", state: &state, offset: 20, extra: ["promptId": "next-turn"])
+        XCTAssertTrue(state.attention.isEmpty); XCTAssertEqual(state.activities.first?.phase, .running)
+
+        // A baseline replay cannot tell whether the box was already answered.
+        var baseline = ClaudeActivityState()
+        consume("prompt", state: &baseline, offset: 0, attaching: true)
+        for row in rows { baseline.consume(row, now: now.addingTimeInterval(10), attaching: true) }
+        XCTAssertEqual(baseline.activities.first?.phase, .completed); XCTAssertTrue(baseline.attention.isEmpty)
+    }
+    func testNextStepReplyClearsOnlyForAnOwnedCurrentEngineInterruption() throws {
+        for scenario in ["engine", "human", "typed", "otherPrompt", "older"] {
+            var state = ClaudeActivityState()
+            consume("prompt", state: &state, offset: 0, extra: ["typedInterruptMarker": scenario == "typed"])
+            consume("toolStart", state: &state, offset: 1, extra: ["itemId": "box-1"])
+            for row in nextStepBox(true, promptID: turn) { state.consume(row, now: now.addingTimeInterval(10)) }
+            let ended = try XCTUnwrap(state.activities.first)
+            XCTAssertEqual(ended.phase, .completed); XCTAssertEqual(state.attention.count, 1)
+            var raw: [String: Any] = ["type": "user", "sessionId": session, "uuid": "interrupt-1",
+                "promptId": scenario == "otherPrompt" ? "previous-prompt" : turn,
+                "timestamp": scenario == "older" ? "2027-01-15T08:00:02Z" : "2027-01-15T08:00:04Z",
+                "message": ["role": "user", "content": [["type": "text", "text": "[Request interrupted by user]"]]]]
+            if scenario == "human" { raw["origin"] = ["kind": "human"]; raw["promptSource"] = "sdk"; raw["turnOrigin"] = "human" }
+            let rows = ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(raw)!, sessionID: session)
+            for row in rows { state.consume(row, now: now.addingTimeInterval(10)) }
+            XCTAssertEqual(state.attention.count, scenario == "engine" ? 0 : 1, scenario)
+            XCTAssertEqual(state.activities.first?.phase, .completed, "Clearing a reply must not replace the verified ending")
+            XCTAssertEqual(state.activities.first?.phaseChangedAt, ended.phaseChangedAt)
+            if scenario == "engine" {
+                for row in rows { state.consume(row, now: now.addingTimeInterval(10)) }
+                XCTAssertTrue(state.attention.isEmpty, "Duplicate markers cannot restore a reply")
+                XCTAssertEqual(state.activities.first?.phaseChangedAt, ended.phaseChangedAt)
+            }
+        }
     }
     func testThinkingAndTextBlocksSharingEndTurnDoNotPrematurelyCompleteTask() {
         var state = ClaudeActivityState()
@@ -494,7 +565,8 @@ final class ClaudeActivityTests: XCTestCase {
         let fixtures: [[String: Any]] = [
             ["type": "user", "sessionId": session, "promptId": turn, "uuid": "user-1", "timestamp": "2027-01-15T08:00:00Z", "entrypoint": "sdk-ts", "origin": ["kind": "human"], "message": ["role": "user", "content": [["type": "text", "text": "PRIVATE prompt"]]]],
             ["type": "assistant", "sessionId": session, "uuid": "answer-1", "timestamp": "2027-01-15T08:00:01Z", "entrypoint": "cli", "requestId": "req-1", "message": ["id": "msg-1", "role": "assistant", "model": "claude-sonnet-4", "stop_reason": "end_turn", "usage": ["output_tokens": 100], "content": [["type": "thinking", "thinking": "PRIVATE reasoning"], ["type": "text", "text": "PRIVATE response"], ["type": "tool_use", "id": "tool-1", "name": "AskUserQuestion", "input": ["question": "PRIVATE question"]]]]],
-            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-1", "timestamp": "2027-01-15T08:00:02Z", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-1", "content": "PRIVATE output"]]]]
+            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-1", "timestamp": "2027-01-15T08:00:02Z", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-1", "content": "PRIVATE output"]]]],
+            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-2", "timestamp": "2027-01-15T08:00:03Z", "mcpMeta": ["_meta": ["claude/endTurn": true]], "toolUseResult": [["type": "text", "text": "PRIVATE box"]], "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-2", "content": "PRIVATE recap"]]]]
         ]
         let native = fixtures.flatMap { fixture in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(fixture)!, sessionID: session, promptID: turn) }
         let expected = try native.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
@@ -513,6 +585,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
         XCTAssertTrue(actual.contains { $0["kind"] as? String == "modelBlock" })
         XCTAssertTrue(actual.contains { $0["kind"] as? String == "toolEnd" })
+        XCTAssertEqual(actual.filter { $0["kind"] as? String == "stopVerified" }.compactMap { $0["awaitsReply"] as? Bool }, [true])
         XCTAssertEqual(actual.compactMap { $0["embedded"] as? Bool }, [true, false])
     }
     func testOnlyAgentSDKEntrypointsMarkASessionAsEmbedded() throws {

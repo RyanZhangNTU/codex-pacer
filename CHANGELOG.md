@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.0
+
+- Replace the Automatic, Notch and Floating choices in Settings → Appearance with **Notch** and **Custom**. Custom places the island yourself under **Screen Position**: centered below the menu bar as before, or docked at any of the four corners as a narrow vertical strip whose long edge lies against the side of the screen, 10 points from the top or bottom. Choosing Custom over the notch starts at bottom left; a Mac that already floated keeps the centered bar.
+- Stack the collapsed components in the docked strip, with each number on its own line above its unit so nothing is wider than an icon. The top and bottom groups stay at the strip's ends, and the panel opens beside it, aligned with the strip's top or bottom edge.
+- Fix Claude Desktop tasks staying marked as running after the next-step box ends a turn. The task now shows as finished with a reply reminder until you answer, and sends one notification instead of two.
+
 ## 3.1.2
 
 - Open a task in the app that started it. Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin, show that app's name; clicking one switches to the app and relaunches it if it quit. Claude Desktop sessions still open in Claude Desktop, Codex tasks in the Codex app, and Claude sessions on SSH hosts still resume in Terminal.

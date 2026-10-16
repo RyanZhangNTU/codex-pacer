@@ -21,13 +21,15 @@ public struct IslandTransition {
 
     public let target: Sample
     public let hasBlackHeader: Bool
+    public var anchor: IslandGeometry.Anchor { shell.anchor }
     private let opening: Bool
     private let initial: Sample
     private let shell: IslandMotion
     private let fadeOut: Fade?
     private var fadeIn: Fade?
 
-    public init(from sample: Sample, to frame: CGRect, opening: Bool, hasBlackHeader: Bool, start: TimeInterval) {
+    public init(from sample: Sample, to frame: CGRect, opening: Bool, hasBlackHeader: Bool,
+                anchor: IslandGeometry.Anchor = .topCenter, start: TimeInterval) {
         initial = sample
         self.opening = opening
         self.hasBlackHeader = hasBlackHeader
@@ -35,10 +37,10 @@ public struct IslandTransition {
         let fadeOut = hasBlackHeader && opening && sample.blackOpacity > 0
             ? Fade(from: sample.blackOpacity, to: 0, start: start, duration: 0.10) : nil
         self.fadeOut = fadeOut
-        shell = IslandMotion(from: sample.geometry, to: frame, opening: opening, start: fadeOut?.end ?? start)
+        shell = IslandMotion(from: sample.geometry, to: frame, opening: opening, anchor: anchor, start: fadeOut?.end ?? start)
         // Reversing during the opening fade never moved the shell, so the
         // backing can fade straight back in from its current opacity.
-        if hasBlackHeader && !opening && Self.isVisuallyClosed(sample.geometry, at: frame) {
+        if hasBlackHeader && !opening && Self.isVisuallyClosed(sample.geometry, at: frame, anchor: anchor) {
             fadeIn = Fade(from: sample.blackOpacity, to: 1, start: start, duration: 0.13)
         }
     }
@@ -51,7 +53,7 @@ public struct IslandTransition {
         guard hasBlackHeader && !opening else {
             return Sample(geometry: geometry, blackOpacity: 0, finished: geometry.finished)
         }
-        if fadeIn == nil, Self.isVisuallyClosed(geometry, at: target.frame) {
+        if fadeIn == nil, Self.isVisuallyClosed(geometry, at: target.frame, anchor: anchor) {
             // The integral window is already fully folded. Do not wait for the
             // invisible subpoint spring tail before beginning the backing fade.
             fadeIn = Fade(from: initial.blackOpacity, to: 1, start: time, duration: 0.13)
@@ -60,8 +62,8 @@ public struct IslandTransition {
                       finished: geometry.finished && fadeIn.map { time >= $0.end } == true)
     }
 
-    private static func isVisuallyClosed(_ geometry: IslandMotion.Sample, at frame: CGRect) -> Bool {
-        geometry.content == 0 && IslandGeometry.windowFrame(geometry.frame) == frame
+    private static func isVisuallyClosed(_ geometry: IslandMotion.Sample, at frame: CGRect, anchor: IslandGeometry.Anchor) -> Bool {
+        geometry.content == 0 && IslandGeometry.windowFrame(geometry.frame, anchor: anchor) == frame
     }
 
     private struct Fade {

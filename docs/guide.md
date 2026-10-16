@@ -42,7 +42,9 @@ After later 3.x updates, a short **What's New** note appears once instead. It li
 
 Optional components include status text and the latest time to first output. Arrange everything in **Settings → Collapsed Bar**: drag components between the left and right of the camera, click × to hide one, or restore the defaults. Each service's quota can show its 5-hour or 7-day window; accounts with only a weekly limit always show 7 days.
 
-On a display with a notch the bar sits around the camera and stays black so it blends in. On other displays, or when you choose Floating, it is a capsule just below the menu bar.
+Until you choose otherwise, the bar sits around the camera on a display with a notch and stays black so it blends in; on other displays it is a capsule just below the menu bar.
+
+**Settings → Appearance → Position** offers **Notch** and **Custom**. Notch keeps the bar at the top center of any display. Custom shows **Screen Position** below it: Center is the capsule below the menu bar, and a corner (bottom left when you first switch from Notch) makes the bar a narrow vertical strip with its long edge against the side of the screen, 10 points from the menu bar or the Dock. The strip stacks its components: the left group at the top, the right group at the bottom, each number above its unit. Status text and the quota label don't fit, so they stay in tooltips and the panel. Hover the strip and the panel opens beside it, with the two groups holding its top and bottom edges.
 
 ## The expanded island
 
@@ -113,7 +115,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Page | What you can change |
 | --- | --- |
 | General | Updates, Open at Login, language (follow macOS, English or Simplified Chinese), Hide Project Names. |
-| Appearance | Solid black or Liquid Glass, Automatic / Notch / Floating, which display, and whether to show in full-screen spaces. |
+| Appearance | Solid black or Liquid Glass, Notch or Custom with its screen position (center or a corner strip), which display, and whether to show in full-screen spaces. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |
 | Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, each service's sessions from other apps, quota history and details. |
@@ -124,7 +126,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 
 ## Notifications
 
-Everything that needs attention already shows on the collapsed bar. Turn on **Settings → Reminders → System Notifications** to also get a macOS notification when a task needs your reply or approval, a turn ends or is interrupted, or a quota window drops to 15%. macOS asks for permission the first time; if you decline, the switch turns back off.
+Everything that needs attention already shows on the collapsed bar. Turn on **Settings → Reminders → System Notifications** to also get a macOS notification when a task needs your reply or approval, a turn ends or is interrupted, or a quota window drops to 15%. A turn that ends by asking you to choose the next step, like Claude's next-step box, sends just the reply notification. macOS asks for permission the first time; if you decline, the switch turns back off.
 
 ## Privacy and stored data
 

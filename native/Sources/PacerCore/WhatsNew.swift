@@ -22,6 +22,10 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "3.2.0", items: [
+            Item(symbol: "sidebar.left", titleKey: "whats_new.screen_position", detailKey: "whats_new.screen_position_detail"),
+            Item(symbol: "ellipsis.bubble", titleKey: "whats_new.claude_next_step", detailKey: "whats_new.claude_next_step_detail")
+        ]),
         Release(version: "3.1.2", items: [
             Item(symbol: "arrow.up.forward.app", titleKey: "whats_new.third_party_claude", detailKey: "whats_new.third_party_claude_detail",
                  control: .showEmbeddedSessions)
