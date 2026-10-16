@@ -2,24 +2,31 @@ import AppKit
 import PacerCore
 import SwiftUI
 
-/// Style and position are picture tiles; changes apply to the real island at
-/// once, so the page needs no preview of its own. Liquid Glass has no settings
-/// of its own: like system glass it follows the look chosen in System Settings,
-/// shown as one row rather than footnotes.
+/// Style, position and screen position are pictures; changes apply to the real
+/// island at once, so the page needs no preview of its own. Liquid Glass has no
+/// settings of its own: like system glass it follows the look chosen in System
+/// Settings, shown as one row rather than footnotes.
 struct SettingsAppearancePane: View {
     @ObservedObject var model: IslandModel
     @Binding var appearance: IslandAppearance
     @Binding var displayMode: IslandDisplayMode
+    @Binding var position: IslandPosition?
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
+    private var attachesHere: Bool {
+        displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width).attached
+    }
     /// Around the camera the collapsed bar keeps a black backing so it reads as
     /// one shape with the hardware notch; glass shows once it expands.
-    private var collapsedStaysBlack: Bool {
-        appearance == .liquidGlass && glassAvailable &&
-            displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width).attached
+    private var collapsedStaysBlack: Bool { appearance == .liquidGlass && glassAvailable && attachesHere }
+    /// Before a choice, the island attaches only around a notch, so the tile
+    /// that matches what the island shows here is the selected one.
+    private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }
+    private var customBinding: Binding<IslandPosition> {
+        Binding(get: { customPosition }, set: { position = $0 })
     }
 
     var body: some View {
@@ -58,14 +65,22 @@ struct SettingsAppearancePane: View {
         }
         Section(L10n.text("appearance.position")) {
             HStack(spacing: 10) {
-                tile(L10n.text("settings.automatic"), selected: displayMode == .automatic) { displayMode = .automatic } art: {
-                    PositionSwatch(kind: .automatic)
-                }
-                tile(L10n.text("settings.notch"), selected: displayMode == .notch) { displayMode = .notch } art: {
+                tile(L10n.text("settings.notch"), selected: attachesHere) { displayMode = .notch } art: {
                     PositionSwatch(kind: .attached)
                 }
-                tile(L10n.text("settings.floating"), selected: displayMode == .floating) { displayMode = .floating } art: {
-                    PositionSwatch(kind: .floating)
+                tile(L10n.text("settings.custom"), selected: !attachesHere) {
+                    position = customPosition
+                    displayMode = .floating
+                } art: {
+                    PositionSwatch(kind: .custom(customPosition))
+                }
+            }
+            if !attachesHere {
+                LabeledContent {
+                    ScreenPositionPicker(selection: customBinding)
+                } label: {
+                    Text(L10n.text("appearance.screen_position"))
+                    Text(L10n.text(customPosition == .center ? "appearance.position_center_note" : "appearance.position_side_note"))
                 }
             }
             Picker(L10n.text("settings.display_picker"), selection: $displayID) {
@@ -128,24 +143,80 @@ private struct StyleSwatch: View {
     }
 }
 
-/// A screen's top edge: the bar hangs from it when attached and floats
-/// below the menu bar otherwise.
+/// A small screen with the five places a floating island can sit: the capsule
+/// below the menu bar, and a strip against the side at each corner.
+private struct ScreenPositionPicker: View {
+    @Binding var selection: IslandPosition
+    private static let size = CGSize(width: 168, height: 104)
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // The wallpaper's glows are wider than the screen; pin it so edge
+            // positions are measured from the visible edges.
+            Wallpaper().frame(width: Self.size.width, height: Self.size.height)
+            Rectangle().fill(Color.black.opacity(0.22)).frame(height: 9)
+            Capsule().fill(Color.white.opacity(0.3)).frame(width: 56, height: 8)
+                .position(x: Self.size.width / 2, y: Self.size.height - 7)
+            ForEach(IslandPosition.allCases, id: \.self) { position in spot(position) }
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.text("appearance.screen_position"))
+    }
+
+    private func spot(_ position: IslandPosition) -> some View {
+        let selected = position == selection
+        let inner: CGFloat = 5
+        let shape = UnevenRoundedRectangle(topLeadingRadius: position.side == .left ? 0 : inner,
+            bottomLeadingRadius: position.side == .left ? 0 : inner,
+            bottomTrailingRadius: position.side == .right ? 0 : inner, topTrailingRadius: position.side == .right ? 0 : inner)
+        let size = position.side == nil ? CGSize(width: 40, height: 11) : CGSize(width: 11, height: 32)
+        let x: CGFloat = switch position.side {
+        case nil: Self.size.width / 2
+        case .left: size.width / 2
+        case .right: Self.size.width - size.width / 2
+        }
+        let y: CGFloat = position.side == nil ? 19 : position.isBottom ? Self.size.height - 18 - size.height / 2 : 13 + size.height / 2
+        return Button { selection = position } label: {
+            shape.fill(selected ? Color.black : Color.black.opacity(0.15))
+                .overlay(shape.stroke(selected ? Color.accentColor : Color.white.opacity(0.8),
+                    style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: selected ? [] : [3, 2])))
+                .frame(width: size.width, height: size.height)
+                .padding(5).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .position(x: x, y: y)
+        .help(position.label)
+        .accessibilityLabel(position.label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// A screen's top edge: the bar hangs from it when attached. Custom shows the
+/// chosen place: the capsule below the menu bar or a strip at a corner.
 private struct PositionSwatch: View {
-    enum Kind { case automatic, attached, floating }
+    enum Kind { case attached, custom(IslandPosition) }
     let kind: Kind
     var body: some View {
         ZStack(alignment: .top) {
-            Wallpaper()
+            Wallpaper().frame(width: 112, height: 40)
             Rectangle().fill(Color.black.opacity(0.22)).frame(height: 9)
             switch kind {
             case .attached:
                 UnevenRoundedRectangle(bottomLeadingRadius: 6, bottomTrailingRadius: 6).fill(Color.black)
                     .frame(width: 52, height: 12)
-            case .floating:
-                Capsule().fill(Color.black).frame(width: 52, height: 11).padding(.top, 14)
-            case .automatic:
-                Image(systemName: "wand.and.stars").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.92))
-                    .frame(maxHeight: .infinity).padding(.top, 9)
+            case .custom(let position):
+                if let side = position.side {
+                    UnevenRoundedRectangle(topLeadingRadius: side == .left ? 0 : 4, bottomLeadingRadius: side == .left ? 0 : 4,
+                        bottomTrailingRadius: side == .right ? 0 : 4, topTrailingRadius: side == .right ? 0 : 4)
+                        .fill(Color.black).frame(width: 8, height: 18)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: Alignment(horizontal: side == .left ? .leading : .trailing, vertical: position.isBottom ? .bottom : .top))
+                        .padding(.top, 12).padding(.bottom, 3)
+                } else {
+                    Capsule().fill(Color.black).frame(width: 52, height: 11).padding(.top, 14)
+                }
             }
         }
         .frame(width: 112, height: 40)

@@ -19,6 +19,8 @@ final class PanelController: NSObject {
     private var displayLink: CADisplayLink?
     private var motion: IslandTransition?
     private var motionRevision = 0
+    /// The point the current frame keeps fixed; set before each frame is applied.
+    private var anchor = IslandGeometry.Anchor.topCenter
 
     init(model: IslandModel) {
         self.model = model
@@ -106,6 +108,9 @@ final class PanelController: NSObject {
         let mode: IslandDisplayMode = demoNotch ? .notch : model.displayMode
         let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width)
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
+        let position = layout.attached ? IslandPosition.center : model.islandPosition
+        let dock = position.side == nil ? nil : position
+        if model.sideDock != dock { model.sideDock = dock }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
         if model.baseHeaderHeight != layout.topHeight { model.baseHeaderHeight = layout.topHeight }
         let headerHeight = layout.topHeight
@@ -116,18 +121,26 @@ final class PanelController: NSObject {
         let expandedWidth = IslandWidth.desired(expanded: true, notchWidth: layout.notchWidth,
             leading: 80, trailing: 65,
             contentWidth: model.measuredContentWidth, headerWidth: model.measuredCompactWidth)
-        let frame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
-            topHeight: model.topHeight, expanded: model.expanded, attached: layout.attached,
-            contentHeight: model.panelContentHeight, desiredWidth: model.expanded ? expandedWidth : collapsedWidth)
-        let expandedFrame = IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
-            topHeight: model.topHeight, expanded: true, attached: layout.attached, contentHeight: model.panelContentHeight,
-            desiredWidth: expandedWidth)
+        func islandFrame(expanded: Bool) -> CGRect {
+            if let dock {
+                return IslandGeometry.sideFrame(visible: screen.visibleFrame, position: dock, stripHeight: model.stripHeight,
+                    expanded: expanded, panelWidth: IslandWidth.sidePanel(contentWidth: model.measuredContentWidth),
+                    contentHeight: model.panelContentHeight)
+            }
+            return IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
+                topHeight: model.topHeight, expanded: expanded, attached: layout.attached,
+                contentHeight: model.panelContentHeight, desiredWidth: expanded ? expandedWidth : collapsedWidth)
+        }
+        let frame = islandFrame(expanded: model.expanded), expandedFrame = islandFrame(expanded: true)
         if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample
         let hasBlackHeader = layout.attached && model.appearance == .liquidGlass
         let target = IslandTransition.Sample.resting(at: frame, expanded: model.expanded, hasBlackHeader: hasBlackHeader)
-        let sameAnchor = abs(current.frame.maxY - frame.maxY) < 1 && abs(current.frame.midX - frame.midX) < 1
+        let anchor = position.anchor
+        let from = anchor.point(in: current.frame), to = anchor.point(in: frame)
+        let sameAnchor = anchor == self.anchor && abs(from.y - to.y) < 1 && abs(from.x - to.x) < 1
+        self.anchor = anchor
         if animated && sameAnchor && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             // Quota/settings updates must not restart an unchanged destination.
             if let motion, motion.target.frame == frame, motion.target.expansion == target.expansion,
@@ -137,7 +150,7 @@ final class PanelController: NSObject {
                 stopMotion(); return
             }
             motion = IslandTransition(from: current, to: frame, opening: model.expanded,
-                                      hasBlackHeader: hasBlackHeader, start: CACurrentMediaTime())
+                                      hasBlackHeader: hasBlackHeader, anchor: anchor, start: CACurrentMediaTime())
             motionRevision += 1
             if displayLink == nil {
                 let link = screen.displayLink(target: self, selector: #selector(step(_:)))
@@ -174,7 +187,7 @@ final class PanelController: NSObject {
         CATransaction.setDisableActions(true)
         withTransaction(transaction) {
             presentation.sample = sample
-            let frame = IslandGeometry.windowFrame(sample.frame)
+            let frame = IslandGeometry.windowFrame(sample.frame, anchor: anchor)
             if panel.frame != frame { panel.setFrame(frame, display: false) }
             // Resolve SwiftUI geometry in the same frame without forcing a
             // second synchronous window redraw or implicit glass animation.

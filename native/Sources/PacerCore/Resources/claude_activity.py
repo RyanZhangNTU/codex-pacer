@@ -118,6 +118,10 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if kind=='user' and len(ends)==1 and isinstance(response,dict) and response.get('status') in ('completed','async_launched'):
         child=ident(response.get('agentId'))
         if child and child!=owner:rows.append(dict(base,kind='agentResult',itemId=ends[0],agentId=child,agentStatus=response['status']))
+    # Claude Desktop's next-step box ends the turn from its tool result; only
+    # the engine's boolean is read, never the box's text.
+    mcp=value.get('mcpMeta');mcp=mcp.get('_meta') if isinstance(mcp,dict) else None
+    if kind=='user' and len(ends)==1 and owned_prompt and isinstance(mcp,dict) and mcp.get('claude/endTurn') is True:rows.append(dict(base,kind='stopVerified',itemId=ends[0],awaitsReply=True))
     if kind == 'assistant':
         item = ident(value.get('uuid')) or ident(message.get('id')) or 'assistant'
         request=ident(value.get('requestId')) or ident(message.get('id'));message_id=ident(message.get('id'));usage=message.get('usage',{});usage=usage if isinstance(usage,dict) else {};output=usage.get('output_tokens')

@@ -26,4 +26,11 @@ public enum IslandWidth {
         let panel = min(expandedRange.upperBound, max(expandedRange.lowerBound, content))
         return max(collapsed, panel)
     }
+
+    /// The panel beside a docked strip fits its rows within the same bounds;
+    /// the strip's own width is added by the frame.
+    public static func sidePanel(contentWidth: CGFloat) -> CGFloat {
+        let content = contentWidth.isFinite ? max(0, contentWidth) : 0
+        return min(expandedRange.upperBound, max(expandedRange.lowerBound, content))
+    }
 }

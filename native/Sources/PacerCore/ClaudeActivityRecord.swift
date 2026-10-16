@@ -6,7 +6,7 @@ struct ClaudeTranscriptFields {
     let values: [String: JSONFieldView]
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta"]) else { return nil }
         self.values = values
     }
 }
@@ -110,6 +110,16 @@ enum ClaudeActivityRecord {
            let agent = identifier(response["agentId"]?.string()), agent != thread {
             var value = base; value["kind"] = "agentResult"; value["itemId"] = toolEnds[0]
             value["agentId"] = agent; value["agentStatus"] = status; result.append(value)
+        }
+        // Claude Desktop's next-step box can end the turn from its tool result
+        // (`claude/endTurn`, Claude Code 2.1.299); no end_turn or stop summary
+        // follows. The turn is over and the box waits for the user's choice.
+        // Only the engine's boolean is read, never the box's text.
+        if kind == "user", toolEnds.count == 1, base["promptId"] != nil,
+           let meta = fields["mcpMeta"].flatMap({ try? $0.fields(["_meta"]) })?["_meta"].flatMap({ try? $0.fields(["claude/endTurn"]) }),
+           meta["claude/endTurn"]?.boolean() == true {
+            var value = base; value["kind"] = "stopVerified"; value["itemId"] = toolEnds[0]; value["awaitsReply"] = true
+            result.append(value)
         }
         if kind == "assistant" {
             let id = identifier(fields["uuid"]?.string() ?? message["id"]?.string()) ?? "assistant"
@@ -455,6 +465,11 @@ struct ClaudeActivityState: Sendable {
         case "stop", "stopVerified", "failure", "interrupt", "subagentStop":
             value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed"]))
             requests = requests.filter { $0.value.threadID != thread }
+            // The ended turn's question stays until the next prompt answers it;
+            // a baseline replay cannot tell whether it is still open.
+            if kind == "stopVerified", record["awaitsReply"] as? Bool == true, !historical, value.phase == .completed {
+                attention(.input, thread: thread, item: "reply-" + item, at: date)
+            }
             if ["stop", "stopVerified", "subagentStop"].contains(kind), [.completed, .interrupted].contains(value.phase),
                let meter = observedMeters[key], meter.turnID == turn {
                 for sample in meter.settled(at: date) {

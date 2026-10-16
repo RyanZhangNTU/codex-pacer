@@ -26,6 +26,9 @@ struct CompactLayoutEditor: View {
             }
             laneStrip
             Text(L10n.text("layout.help")).font(.system(size: 11)).foregroundStyle(.secondary)
+            if model.sideDock != nil {
+                Text(L10n.text("layout.strip_help")).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
@@ -62,11 +65,17 @@ struct CompactLayoutEditor: View {
             .stroke(accent.opacity(dragged == nil ? 0 : 0.55), lineWidth: 1))
     }
 
+    /// A docked strip stacks the lanes, so they are named for where they show.
+    private func title(_ lane: CompactIslandLayout.Lane) -> String {
+        guard model.sideDock != nil else { return lane.label }
+        return L10n.text(lane == .leading ? "layout.lane.strip_top" : "layout.lane.strip_bottom")
+    }
+
     private func laneEditor(_ lane: CompactIslandLayout.Lane) -> some View {
         let alignment: HorizontalAlignment = lane == .leading ? .leading : .trailing
         let components = layout.visibleComponents(in: lane, providers: providers)
         return VStack(alignment: alignment, spacing: 8) {
-            Text(lane.label).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            Text(title(lane)).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             if components.isEmpty {
                 Text(L10n.text("layout.drop_here")).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.vertical, 5)
             } else {
@@ -77,7 +86,7 @@ struct CompactLayoutEditor: View {
         }
         .frame(maxWidth: .infinity, minHeight: 58, alignment: Alignment(horizontal: alignment, vertical: .top))
         .contentShape(Rectangle()).background(dropRegion(lane, before: nil))
-        .accessibilityElement(children: .contain).accessibilityLabel(lane.label)
+        .accessibilityElement(children: .contain).accessibilityLabel(title(lane))
     }
 
     private func chip(_ component: CompactIslandLayout.Component) -> some View {

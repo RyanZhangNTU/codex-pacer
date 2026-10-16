@@ -88,6 +88,52 @@ final class ClaudeActivityTests: XCTestCase {
         let continued = ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(common.merging(["preventedContinuation": false, "hookAdditionalContext": ["Synthetic continuation"]]) { _, v in v })!, sessionID: session)
         XCTAssertFalse(continued.contains { String(data: $0, encoding: .utf8)!.contains("stopVerified") })
     }
+    func testNextStepBoxEndsTheTurnAndAwaitsTheReplyUntilTheNextPrompt() throws {
+        // Claude Desktop 2.1.299: the box's tool result ends the turn, and no
+        // end_turn or stop_hook_summary follows it.
+        func box(_ endTurn: Any?, promptID: String? = nil) -> [Data] {
+            var raw: [String: Any] = ["type": "user", "sessionId": session, "uuid": "result-box", "timestamp": "2027-01-15T08:00:03Z",
+                "entrypoint": "claude-desktop", "toolUseResult": [["type": "text", "text": "PRIVATE box"]],
+                "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "box-1", "content": "PRIVATE recap"]]]]
+            if let promptID { raw["promptId"] = promptID }
+            if let endTurn { raw["mcpMeta"] = ["_meta": ["claude/endTurn": endTurn]] }
+            return ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(raw)!, sessionID: session)
+        }
+        func ends(_ rows: [Data]) -> Bool { rows.contains { String(decoding: $0, as: UTF8.self).contains("stopVerified") } }
+        let rows = box(true, promptID: turn)
+        XCTAssertTrue(ends(rows))
+        XCTAssertFalse(rows.map { String(decoding: $0, as: UTF8.self) }.joined().contains("PRIVATE"))
+        XCTAssertFalse(ends(box(nil, promptID: turn))); XCTAssertFalse(ends(box(false, promptID: turn)))
+        XCTAssertFalse(ends(box("true", promptID: turn))); XCTAssertFalse(ends(box(true)), "An unowned result cannot end a turn")
+
+        // Hooks see the box start and end just before its result is written.
+        var state = ClaudeActivityState(), policy = AttentionPolicy()
+        consume("prompt", state: &state, offset: 0)
+        consume("toolStart", state: &state, offset: 1, extra: ["itemId": "box-1", "attention": "none"])
+        consume("toolEnd", state: &state, offset: 2.997, extra: ["itemId": "box-1"])
+        _ = policy.activityNotices(state.activities, at: now.addingTimeInterval(3))
+        for row in rows { state.consume(row, now: now.addingTimeInterval(10)) }
+        XCTAssertEqual(state.activities.first?.phase, .completed)
+        XCTAssertEqual(state.attention.map(\.kind), [.input])
+        consume("stopRequested", state: &state, offset: 4)
+        XCTAssertEqual(state.activities.first?.phase, .completed); XCTAssertEqual(state.attention.count, 1)
+
+        // One notice asks for the reply; the ending adds no second one.
+        let notices = policy.activityNotices(state.activities, at: now.addingTimeInterval(4))
+        XCTAssertEqual(notices.map(\.kind), [.completed])
+        XCTAssertEqual(policy.requestNotices(state.attention).map(\.kind), [.waitingForInput])
+        XCTAssertTrue(AttentionPolicy.excludingPendingReplies(notices, activityIDs: Set(state.attention.map(\.activity.id))).isEmpty)
+        XCTAssertEqual(AttentionPolicy.excludingPendingReplies(notices, activityIDs: []), notices)
+
+        consume("prompt", state: &state, offset: 20, extra: ["promptId": "next-turn"])
+        XCTAssertTrue(state.attention.isEmpty); XCTAssertEqual(state.activities.first?.phase, .running)
+
+        // A baseline replay cannot tell whether the box was already answered.
+        var baseline = ClaudeActivityState()
+        consume("prompt", state: &baseline, offset: 0, attaching: true)
+        for row in rows { baseline.consume(row, now: now.addingTimeInterval(10), attaching: true) }
+        XCTAssertEqual(baseline.activities.first?.phase, .completed); XCTAssertTrue(baseline.attention.isEmpty)
+    }
     func testThinkingAndTextBlocksSharingEndTurnDoNotPrematurelyCompleteTask() {
         var state = ClaudeActivityState()
         let prompt = ClaudeActivityRecord.encode(["type": "user", "sessionId": session, "timestamp": "2027-01-15T08:00:00Z", "promptId": turn, "uuid": "user-1", "message": ["role": "user", "content": "synthetic"]])!
@@ -494,7 +540,8 @@ final class ClaudeActivityTests: XCTestCase {
         let fixtures: [[String: Any]] = [
             ["type": "user", "sessionId": session, "promptId": turn, "uuid": "user-1", "timestamp": "2027-01-15T08:00:00Z", "entrypoint": "sdk-ts", "origin": ["kind": "human"], "message": ["role": "user", "content": [["type": "text", "text": "PRIVATE prompt"]]]],
             ["type": "assistant", "sessionId": session, "uuid": "answer-1", "timestamp": "2027-01-15T08:00:01Z", "entrypoint": "cli", "requestId": "req-1", "message": ["id": "msg-1", "role": "assistant", "model": "claude-sonnet-4", "stop_reason": "end_turn", "usage": ["output_tokens": 100], "content": [["type": "thinking", "thinking": "PRIVATE reasoning"], ["type": "text", "text": "PRIVATE response"], ["type": "tool_use", "id": "tool-1", "name": "AskUserQuestion", "input": ["question": "PRIVATE question"]]]]],
-            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-1", "timestamp": "2027-01-15T08:00:02Z", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-1", "content": "PRIVATE output"]]]]
+            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-1", "timestamp": "2027-01-15T08:00:02Z", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-1", "content": "PRIVATE output"]]]],
+            ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-2", "timestamp": "2027-01-15T08:00:03Z", "mcpMeta": ["_meta": ["claude/endTurn": true]], "toolUseResult": [["type": "text", "text": "PRIVATE box"]], "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-2", "content": "PRIVATE recap"]]]]
         ]
         let native = fixtures.flatMap { fixture in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(fixture)!, sessionID: session, promptID: turn) }
         let expected = try native.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
@@ -513,6 +560,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
         XCTAssertTrue(actual.contains { $0["kind"] as? String == "modelBlock" })
         XCTAssertTrue(actual.contains { $0["kind"] as? String == "toolEnd" })
+        XCTAssertEqual(actual.filter { $0["kind"] as? String == "stopVerified" }.compactMap { $0["awaitsReply"] as? Bool }, [true])
         XCTAssertEqual(actual.compactMap { $0["embedded"] as? Bool }, [true, false])
     }
     func testOnlyAgentSDKEntrypointsMarkASessionAsEmbedded() throws {

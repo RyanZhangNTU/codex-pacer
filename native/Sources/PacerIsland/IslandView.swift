@@ -7,6 +7,19 @@ struct IslandView: View {
     private var attached: Bool { model.isAttached }
 
     var body: some View {
+        Group {
+            if let dock = model.sideDock, let side = dock.side { docked(dock, side: side) } else { centered }
+        }
+        .foregroundStyle(PacerPalette.primary)
+        .modifier(IslandSurface(appearance: model.appearance, attached: attached, flatSide: model.sideDock?.side,
+            expanded: model.expanded, progress: presentation.expansion))
+        .onHover { model.hover($0) }
+        .onExitCommand { model.close() }
+        .preferredColorScheme(.dark)
+        .environment(\.locale, L10n.locale)
+    }
+
+    private var centered: some View {
         VStack(spacing: 0) {
             CompactIslandHeader(model: model, layout: model.compactLayout,
                 baseHeight: model.baseHeaderHeight, notchWidth: model.notchWidth)
@@ -18,28 +31,52 @@ struct IslandView: View {
             // Retire invisible content before the spring settles, so the final
             // capsule frame only stops motion rather than changing its subtree.
             if model.expanded || presentation.contentVisibility > 0 {
-                IslandExpandedContent(model: model)
+                revealed(IslandExpandedContent(model: model)
                     .frame(width: max(0, presentation.canvas.width - 2 * IslandMetrics.edgeInset),
                            height: max(0, presentation.canvas.height - model.topHeight), alignment: .top)
                     .padding(.horizontal, IslandMetrics.edgeInset)
-                    .opacity(presentation.contentVisibility)
-                    .offset(y: model.topHeight + (1 - presentation.contentVisibility) * 8)
-                    .allowsHitTesting(model.expanded && presentation.contentVisibility > 0.95)
-                    .accessibilityHidden(!model.expanded || presentation.contentVisibility < 0.95)
+                    .offset(y: model.topHeight + (1 - presentation.contentVisibility) * 8))
             }
         }
-        .foregroundStyle(PacerPalette.primary)
-        .modifier(IslandSurface(appearance: model.appearance, attached: attached, expanded: model.expanded,
-            progress: presentation.expansion))
-        .onHover { model.hover($0) }
-        .onExitCommand { model.close() }
-        .preferredColorScheme(.dark)
-        .environment(\.locale, L10n.locale)
+    }
+
+    /// The strip keeps its screen-side corner under the pointer; the panel
+    /// opens beside it, toward the center of the screen, at its full size so
+    /// the growing window reveals it rather than reflowing it.
+    private func docked(_ dock: IslandPosition, side: IslandPosition.Side) -> some View {
+        let corner: Alignment = switch (dock.isBottom, side) {
+        case (false, .left): .topLeading
+        case (false, .right): .topTrailing
+        case (true, .left): .bottomLeading
+        case (true, .right): .bottomTrailing
+        }
+        let strip = IslandGeometry.stripWidth, inward: CGFloat = side == .left ? 1 : -1
+        return CompactIslandStrip(model: model, layout: model.compactLayout)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner)
+            .overlay(alignment: corner) {
+                if model.expanded || presentation.contentVisibility > 0 {
+                    revealed(IslandExpandedContent(model: model, topInset: 10)
+                        .frame(width: max(0, presentation.canvas.width - strip - 2 * IslandMetrics.edgeInset),
+                               height: max(0, presentation.canvas.height), alignment: dock.isBottom ? .bottom : .top)
+                        .padding(.horizontal, IslandMetrics.edgeInset)
+                        .offset(x: inward * (strip + (1 - presentation.contentVisibility) * 8)))
+                }
+            }
+    }
+
+    private func revealed(_ content: some View) -> some View {
+        content
+            .opacity(presentation.contentVisibility)
+            .allowsHitTesting(model.expanded && presentation.contentVisibility > 0.95)
+            .accessibilityHidden(!model.expanded || presentation.contentVisibility < 0.95)
     }
 }
 
 private struct IslandExpandedContent: View {
     @ObservedObject var model: IslandModel
+    /// Below the header there is little room to leave; beside a strip the
+    /// panel's own top edge needs some.
+    var topInset: CGFloat = 4
 
     /// Room below the last section now that panel actions sit in the task header.
     private static let bottomInset: CGFloat = 14
@@ -68,7 +105,7 @@ private struct IslandExpandedContent: View {
             Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
             quotaContent
         }
-        .padding(.top, 4)
+        .padding(.top, topInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { geometry in

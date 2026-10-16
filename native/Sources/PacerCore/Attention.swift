@@ -33,6 +33,15 @@ public struct AttentionPolicy: Sendable {
         }
     }
 
+    /// A pending reply already has its own notice. Neither its task's waiting
+    /// phase nor the ending of the turn that asked (Claude's next-step box)
+    /// adds a second one.
+    public static func excludingPendingReplies(_ notices: [IslandNotice], activityIDs: Set<String>) -> [IslandNotice] {
+        notices.filter { notice in
+            ![.waitingForInput, .completed].contains(notice.kind) || !activityIDs.contains { notice.id.hasPrefix($0 + ":") }
+        }
+    }
+
     public mutating func quotaNotices(_ snapshot: QuotaSnapshot, at now: Date, threshold: Double = 15) -> [IslandNotice] {
         guard !snapshot.isStale(at: now) else { return [] }
         if quotaScope != snapshot.accountScope { lowWindows.removeAll(); quotaScope = snapshot.accountScope }
