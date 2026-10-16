@@ -20,6 +20,33 @@ final class CompactLayoutEditorTests: XCTestCase {
         return (model, defaults, name, directory)
     }
 
+    func testChoosingAScreenPositionLeavesAutomaticModeAcrossDisplayChanges() async throws {
+        let (model, defaults, name, directory) = try fixture()
+        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        var mode = IslandDisplayMode.automatic
+        var position: IslandPosition?
+        let pane = SettingsAppearancePane(model: model, appearance: .constant(.classic),
+            displayMode: Binding(get: { mode }, set: { mode = $0 }),
+            position: Binding(get: { position }, set: { position = $0 }),
+            displayID: .constant(0), fullscreen: .constant(false))
+        model.screenNotchSize = .zero
+        XCTAssertEqual(pane.customBinding.wrappedValue, .center)
+        XCTAssertNil(position, "Showing the legacy Automatic choice must not save a position")
+        for chosen in IslandPosition.allCases {
+            mode = .automatic; position = nil
+            pane.customBinding.wrappedValue = chosen
+            XCTAssertEqual(mode, .floating, "Choosing even the already displayed Center is an explicit Custom choice")
+            XCTAssertEqual(position, chosen)
+            mode.save(to: defaults); position?.save(to: defaults)
+            model.screenNotchSize = CGSize(width: 180, height: 36)
+            XCTAssertFalse(IslandDisplayMode.load(from: defaults).layout(safeAreaTop: 36, hardwareNotchWidth: 180).attached,
+                "A selected Custom position must stay floating when the island moves to a notched display")
+            XCTAssertEqual(IslandPosition.load(from: defaults), chosen)
+            model.screenNotchSize = .zero
+        }
+        await model.shutdown()
+    }
+
     func testQuotaComponentsFollowEnabledProvidersWithoutDiscardingLayout() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }

@@ -18,6 +18,10 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             default: return true
             }
         }
+        /// A docked strip stacks components in a 32-point column. Status text
+        /// and the metric label are words that do not fit; the activity badge
+        /// and the tooltips still carry what they say.
+        public var showsInStrip: Bool { self != .status && self != .quotaLabel }
         public var preferredLane: Lane {
             switch self {
             case .activity, .status, .tps, .firstOutput: .leading

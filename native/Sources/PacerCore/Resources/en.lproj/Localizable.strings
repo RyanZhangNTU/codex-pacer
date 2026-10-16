@@ -267,7 +267,6 @@
 "settings.auto_discovery" = "Find automatically";
 "settings.window_five_hour" = "5 hours";
 "settings.window_weekly" = "7 days";
-"settings.automatic" = "Automatic";
 "settings.choose_cli" = "Choose Codex.app, the Codex executable, or its folder";
 "settings.choose_home" = "Choose the Codex data folder";
 "settings.classic" = "Solid black";
@@ -279,7 +278,7 @@
 "settings.display_picker" = "Display";
 "settings.fifteen_minutes" = "15 minutes";
 "settings.five_minutes" = "5 minutes";
-"settings.floating" = "Floating";
+"settings.custom" = "Custom";
 "settings.four_hours" = "4 hours";
 "settings.fullscreen" = "Show in Full Screen";
 "settings.glass_requirement" = "Liquid Glass requires macOS 26 or later";
@@ -292,6 +291,14 @@
 "appearance.glass_system" = "Matches System";
 "appearance.glass_adjust" = "Adjust…";
 "appearance.glass_reduced" = "Solid (Reduce Transparency is on)";
+"appearance.screen_position" = "Screen Position";
+"appearance.position_center_note" = "A capsule centered below the menu bar.";
+"appearance.position_side_note" = "A vertical strip against the side of the screen, with its components stacked. Hover to open the panel beside it.";
+"position.center" = "Center";
+"position.topLeft" = "Top Left";
+"position.bottomLeft" = "Bottom Left";
+"position.topRight" = "Top Right";
+"position.bottomRight" = "Bottom Right";
 "settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
 "warning.fiveHour" = "5h quota low";
 "warning.ssh" = "SSH host disconnected";
@@ -378,6 +385,9 @@
 "layout.drop_here" = "Drop here";
 "layout.lane.leading" = "Left";
 "layout.lane.trailing" = "Right";
+"layout.lane.strip_top" = "Top";
+"layout.lane.strip_bottom" = "Bottom";
+"layout.strip_help" = "The island is a side strip now, so the top lane stacks above the bottom lane. Status text and the quota label don't show in the strip.";
 "layout.component.activity" = "Activity badge";
 "layout.component.status" = "Status text";
 "layout.component.tps" = "Total TPS";
@@ -568,6 +578,10 @@
 "whats_new.stability_detail" = "More reliable remote task monitoring, with completed cards staying read after you open their conversations.";
 "whats_new.third_party_claude" = "Claude and Codex tasks from third-party apps";
 "whats_new.third_party_claude_detail" = "Pacer now recognizes Claude and Codex tasks started by third-party apps, such as a Zotero plugin. Click one to jump straight to its app.";
+"whats_new.screen_position" = "Place the island anywhere";
+"whats_new.screen_position_detail" = "Choose Custom in Settings > Appearance to keep it below the menu bar or dock it as a slim strip in any corner of the screen, handy on Macs without a notch.";
+"whats_new.claude_next_step" = "Claude’s next-step prompt";
+"whats_new.claude_next_step_detail" = "When Claude Desktop ends a turn by asking you to choose the next step, the task shows as finished and Pacer reminds you to reply.";
 
 "codex.embedded_sessions" = "Show Codex Sessions from Other Apps";
 "codex.embedded_sessions_help" = "Sessions in apps that embed Codex, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.";

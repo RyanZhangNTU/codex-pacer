@@ -75,9 +75,72 @@ struct CompactIslandHeader: View {
     }
 }
 
+/// The collapsed bar on its side for a docked corner: the left lane stacks
+/// above the right lane, one component per row, in a column whose height
+/// follows them. Both sides keep this order, so a layout reads the same. The
+/// lanes hold the column's top and bottom edges, so opening the panel draws
+/// them apart with the window and closing brings them back together.
+struct CompactIslandStrip: View {
+    @ObservedObject var model: IslandModel
+    let layout: CompactIslandLayout
+    /// Values stay within the activity badge's width.
+    static let valueWidth: CGFloat = 20
+
+    var body: some View {
+        column
+            .frame(width: IslandGeometry.stripWidth)
+            .frame(maxHeight: .infinity)
+            .background {
+                column.fixedSize().background(GeometryReader { geometry in
+                    Color.clear.preference(key: CompactStripIdealHeight.self, value: geometry.size.height)
+                }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .onPreferenceChange(CompactStripIdealHeight.self) { height in
+                DispatchQueue.main.async { model.updateMeasuredStripHeight(height) }
+            }
+            .contentShape(Rectangle())
+            .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.togglePin() })
+            .contextMenu {
+                Button(L10n.text("common.settings")) { model.onSettings?() }
+                Button(L10n.text("common.quit")) { model.onQuit?() }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(L10n.text("layout.collapsed"))
+    }
+
+    private var column: some View {
+        let leading = visible(layout.leading), trailing = visible(layout.trailing)
+        let divided = !leading.isEmpty && !trailing.isEmpty
+        return VStack(spacing: 0) {
+            lane(leading)
+            Spacer(minLength: divided ? 6 : 0)
+            if divided {
+                Rectangle().fill(PacerPalette.hairline).frame(width: 16, height: 1).padding(.bottom, 6).accessibilityHidden(true)
+            }
+            lane(trailing)
+        }
+        .padding(.vertical, 12)
+    }
+
+    private func visible(_ components: [CompactIslandLayout.Component]) -> [CompactIslandLayout.Component] {
+        components.filter { $0.showsInStrip && CompactIslandComponent.isVisible($0, model: model, showsStatus: false) }
+    }
+
+    private func lane(_ components: [CompactIslandLayout.Component]) -> some View {
+        VStack(spacing: 4) {
+            ForEach(components) { component in
+                CompactIslandComponent(model: model, component: component, vertical: true)
+            }
+        }
+    }
+}
+
 struct CompactIslandComponent: View {
     @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
+    /// Stacked for the docked strip: values sit above their units, multiple
+    /// providers one above another.
+    var vertical = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandLayoutProbe) private var layoutProbe
     private var providers: [AgentProvider] { model.enabledProviders }
@@ -130,7 +193,10 @@ struct CompactIslandComponent: View {
         }
     }
     var body: some View {
-        Button(action: action) { content.padding(.vertical, 4).contentShape(Rectangle()) }
+        Button(action: action) {
+            Group { if vertical { stripContent } else { content } }
+                .padding(.vertical, vertical ? 2 : 4).frame(maxWidth: vertical ? .infinity : nil).contentShape(Rectangle())
+        }
             .buttonStyle(.plain)
             .lineLimit(1)
             .help(help)
@@ -157,21 +223,8 @@ struct CompactIslandComponent: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
         case .warnings:
-            HStack(spacing: 4) {
-                ForEach(Self.activeWarnings(model), id: \.self) { warning in
-                    switch warning {
-                    case .fiveHour:
-                        ForEach(Self.fiveHourAlerts(model), id: \.provider) { item in
-                            FiveHourAlertGlyph(alert: item.alert, tint: item.provider.tint)
-                        }
-                    case .ssh:
-                        Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
-                    case .quotaDelay:
-                        Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
-                    }
-                }
-            }
-            .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
+            HStack(spacing: 4) { warningGlyphs }
+                .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
         case .quota:
             let shown = Self.alternatingProviders(model)
             Group {
@@ -208,6 +261,76 @@ struct CompactIslandComponent: View {
         }
     }
     /// Provider values stay color-coded without names; a hairline separates them.
+    @ViewBuilder private var warningGlyphs: some View {
+        ForEach(Self.activeWarnings(model), id: \.self) { warning in
+            switch warning {
+            case .fiveHour:
+                ForEach(Self.fiveHourAlerts(model), id: \.provider) { item in
+                    FiveHourAlertGlyph(alert: item.alert, tint: item.provider.tint)
+                }
+            case .ssh:
+                Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+            case .quotaDelay:
+                Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+            }
+        }
+    }
+    /// The strip's stacked forms: each number sits above its unit at a size
+    /// that keeps three digits within the badge's width; longer values shrink.
+    /// The badge and rings are already that narrow.
+    @ViewBuilder private var stripContent: some View {
+        switch component {
+        case .tps:
+            VStack(spacing: 0) {
+                stripNumber(model.headerRateText ?? "—", color: model.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
+                stripUnit("t/s")
+            }
+        case .firstOutput:
+            VStack(spacing: 0) {
+                stripNumber(model.latestFirstOutputLatency.map { String(format: $0 < 10 ? "%.1f" : "%.0f", $0) } ?? "—",
+                    color: PacerPalette.secondary)
+                stripUnit("s")
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
+        case .quota:
+            let shown = Self.alternatingProviders(model)
+            VStack(spacing: 0) {
+                if shown.count > 1 {
+                    AlternatingQuotaText(entries: shown.map { .init(text: model.compactQuotaNumber($0) ?? "—", color: NSColor($0.tint)) },
+                        animates: !layoutProbe, font: .monospacedDigitSystemFont(ofSize: Self.stripNumberSize, weight: .semibold))
+                } else if let provider = shown.first {
+                    stripNumber(model.compactQuotaNumber(provider) ?? "—", color: provider.tint)
+                }
+                stripUnit("%")
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
+        case .timeRemaining:
+            VStack(spacing: 1) {
+                Image(systemName: "hourglass").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+                ForEach(providers, id: \.rawValue) { provider in
+                    stripNumber(model.compactTimeRemainingNumber(provider) ?? "—", color: provider.tint.opacity(0.85))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
+                }
+                stripUnit("%")
+            }
+        case .warnings:
+            VStack(spacing: 4) { warningGlyphs }
+                .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
+        default:
+            content
+        }
+    }
+    private static let stripNumberSize: CGFloat = 10
+    private func stripNumber(_ text: String, color: Color) -> some View {
+        Text(text).font(.system(size: Self.stripNumberSize, weight: .semibold)).monospacedDigit().foregroundStyle(color)
+            .lineLimit(1).minimumScaleFactor(0.7).frame(maxWidth: CompactIslandStrip.valueWidth)
+    }
+    private func stripUnit(_ text: String) -> some View {
+        Text(text).font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+    }
     private func providerValues<Value: View>(spacing: CGFloat, @ViewBuilder value: @escaping (AgentProvider) -> Value) -> some View {
         HStack(spacing: spacing) {
             ForEach(Array(providers.enumerated()), id: \.element.rawValue) { index, provider in
@@ -278,6 +401,11 @@ struct CompactIslandComponent: View {
         default: model.togglePin()
         }
     }
+}
+
+struct CompactStripIdealHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 struct CompactHeaderIdealWidth: PreferenceKey {

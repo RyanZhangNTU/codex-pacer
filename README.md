@@ -52,7 +52,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 - **Arrange the bar.** Drag components between the left and right of the camera, hide what you don't need, and pick 5 hours or 7 days for each service's quota.
 - **Black or Liquid Glass.** On macOS 26 and later the island can use Liquid Glass, and its clarity follows the system setting.
-- **Notch or floating.** Automatic, Notch or Floating on any display, including full-screen spaces if you like.
+- **Notch or custom.** Around the notch, or placed yourself on any display: centered below the menu bar or as a narrow strip against the side of the screen in any corner. Full-screen spaces too, if you like.
 - **Only what you use.** Turn the Codex and Claude modules on or off independently.
 - **Notifications, if you want them.** macOS notifications when a task needs you, ends, or quota runs low.
 - **In your language.** English and Simplified Chinese.

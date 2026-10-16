@@ -1,6 +1,9 @@
 import Foundation
 import CoreGraphics
 
+/// Settings offers Notch and Custom (`floating`, placed by `IslandPosition`).
+/// `automatic` remains only as the state before either is chosen: it attaches
+/// on a display with a notch and floats elsewhere, as it always has.
 public enum IslandDisplayMode: String, CaseIterable, Sendable {
     case automatic, notch, floating
 

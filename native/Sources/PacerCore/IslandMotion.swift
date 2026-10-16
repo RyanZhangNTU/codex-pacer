@@ -3,12 +3,14 @@ import CoreGraphics
 
 /// A critically damped spring shared by both shell dimensions and the reveal.
 /// Retargeting carries the displayed position AND velocity into the next spring.
+/// The anchor point springs too, so an unchanged anchor stays exactly fixed.
 public struct IslandMotion {
     public struct Velocity {
         public var width: Double = 0
         public var height: Double = 0
-        public var center: Double = 0
-        public var top: Double = 0
+        /// The anchor point's coordinates: top center, or a docked strip's corner.
+        public var anchorX: Double = 0
+        public var anchorY: Double = 0
         public var expansion: Double = 0
 
         public static let zero = Self()
@@ -33,13 +35,16 @@ public struct IslandMotion {
     }
 
     public let target: Sample
+    public let anchor: IslandGeometry.Anchor
     private let initial: Sample
     private let start: TimeInterval
     private let frequency: Double
 
-    public init(from sample: Sample, to frame: CGRect, opening: Bool, start: TimeInterval) {
+    public init(from sample: Sample, to frame: CGRect, opening: Bool,
+                anchor: IslandGeometry.Anchor = .topCenter, start: TimeInterval) {
         initial = sample
         target = .resting(at: frame, expanded: opening)
+        self.anchor = anchor
         self.start = start
         // Opening has a soft landing; closing is a little more responsive.
         // Both dimensions start together and keep the same response throughout.
@@ -56,18 +61,18 @@ public struct IslandMotion {
         guard elapsed < 1.2 else { return target }
         let width = spring(initial.frame.width, target.frame.width, initial.velocity.width, elapsed)
         let height = spring(initial.frame.height, target.frame.height, initial.velocity.height, elapsed)
-        let center = spring(initial.frame.midX, target.frame.midX, initial.velocity.center, elapsed)
-        let top = spring(initial.frame.maxY, target.frame.maxY, initial.velocity.top, elapsed)
+        let from = anchor.point(in: initial.frame), to = anchor.point(in: target.frame)
+        let x = spring(from.x, to.x, initial.velocity.anchorX, elapsed)
+        let y = spring(from.y, to.y, initial.velocity.anchorY, elapsed)
         let expansion = spring(initial.expansion, target.expansion, initial.velocity.expansion, elapsed)
-        if width.settled && height.settled && center.settled && top.settled &&
+        if width.settled && height.settled && x.settled && y.settled &&
             abs(expansion.value - target.expansion) < 0.0002 && abs(expansion.velocity) < 0.005 {
             return target
         }
-        return Sample(frame: CGRect(x: center.value - width.value / 2, y: top.value - height.value,
-                                    width: width.value, height: height.value),
+        return Sample(frame: anchor.frame(at: CGPoint(x: x.value, y: y.value), size: CGSize(width: width.value, height: height.value)),
                       expansion: expansion.value,
                       velocity: Velocity(width: width.velocity, height: height.velocity,
-                                         center: center.velocity, top: top.velocity, expansion: expansion.velocity),
+                                         anchorX: x.velocity, anchorY: y.velocity, expansion: expansion.velocity),
                       finished: false)
     }
 

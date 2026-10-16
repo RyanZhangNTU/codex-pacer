@@ -15,6 +15,8 @@ struct SettingsView: View {
     @State private var claudeHome = UserDefaults.standard.string(forKey: "claudeHome") ?? ""
     @State private var showsResetExpiryDetails: Set<AgentProvider> = []
     @State private var displayMode = IslandDisplayMode.load()
+    /// Nil until chosen, so an unrelated change never stores the center.
+    @State private var position = IslandPosition.saved()
     @State private var compactLayout = CompactIslandLayout.load()
     @State private var appearance = IslandAppearance.stored
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
@@ -183,8 +185,8 @@ struct SettingsView: View {
                 }
             }
         case .appearance:
-            SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, displayID: $displayID,
-                fullscreen: $fullscreen)
+            SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, position: $position,
+                displayID: $displayID, fullscreen: $fullscreen)
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             Section {
@@ -585,7 +587,7 @@ struct SettingsView: View {
     /// Every non-text setting; any change is written and applied shortly
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
-        LiveSettings(modules: modules, displayMode: displayMode, layout: compactLayout, appearance: appearance,
+        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance,
             fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
@@ -608,6 +610,7 @@ struct SettingsView: View {
         defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
         modules.save(to: defaults)
         displayMode.save(to: defaults)
+        position?.save(to: defaults)
         compactLayout.save(to: defaults)
         // Retired preferences.
         for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
@@ -678,6 +681,7 @@ enum TextSetting: Hashable { case cli, codexHome, claudeHome }
 private struct LiveSettings: Equatable {
     var modules: ProviderModules
     var displayMode: IslandDisplayMode
+    var position: IslandPosition?
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
     var fullscreen: Bool

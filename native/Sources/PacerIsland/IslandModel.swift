@@ -249,6 +249,9 @@ final class IslandModel: ObservableObject {
     @Published var now = Date()
     @Published var settingsRevision = 0
     @Published var isAttached = false
+    /// The docked corner while the island floats as a vertical strip; nil for
+    /// the centered bar and notch attachment.
+    @Published var sideDock: IslandPosition?
     @Published var notchWidth: CGFloat = 0
     /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
     @Published var screenNotchSize: CGSize = .zero
@@ -315,6 +318,16 @@ final class IslandModel: ObservableObject {
     private var measuredContentHeight: CGFloat?
     private(set) var measuredContentWidth: CGFloat = 0
     private(set) var measuredCompactWidth: CGFloat = 0
+    private var measuredStripHeight: CGFloat?
+    /// The docked strip follows its stacked components, as the bar's width does.
+    var stripHeight: CGFloat { measuredStripHeight ?? 132 }
+    func updateMeasuredStripHeight(_ height: CGFloat) {
+        guard height.isFinite, height > 0 else { return }
+        let rounded = max(56, ceil(height))
+        guard rounded != measuredStripHeight else { return }
+        measuredStripHeight = rounded
+        onLayoutChange?()
+    }
     @Published private(set) var compactLayout = CompactIslandLayout.load()
     func updateMeasuredCompactWidth(_ width: CGFloat) {
         guard width.isFinite, width >= 0 else { return }
@@ -523,6 +536,7 @@ final class IslandModel: ObservableObject {
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
     var displayMode: IslandDisplayMode { .load() }
+    var islandPosition: IslandPosition { .load(from: defaults) }
     var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
     var appearance: IslandAppearance { .stored }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
@@ -644,8 +658,9 @@ final class IslandModel: ObservableObject {
     }
     var headerRateText: String? {
         guard let rate else { return nil }
-        if isAttached && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
-        if isAttached && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
+        let compact = isAttached || sideDock != nil
+        if compact && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
+        if compact && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
         return String(format: "%.0f", rate)
     }
     var hasSSHConnectionIssue: Bool {
@@ -673,11 +688,18 @@ final class IslandModel: ObservableObject {
         (metric ?? defaults.string(forKey: "compactMetric")) == "pace"
             ? providerPace(provider, selection: selection) : providerSelectedWindow(provider, selection: selection)?.remainingPercent
     }
+    /// The percentage without its sign, for the docked strip's stacked units.
+    func compactQuotaNumber(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String? {
+        compactQuotaValue(provider, metric: metric, selection: selection).map { "\(Int($0.rounded()))" }
+    }
     func compactQuotaText(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String {
-        compactQuotaValue(provider, metric: metric, selection: selection).map { "\(Int($0.rounded()))%" } ?? "—"
+        compactQuotaNumber(provider, metric: metric, selection: selection).map { $0 + "%" } ?? "—"
+    }
+    func compactTimeRemainingNumber(_ provider: AgentProvider, selection: String? = nil) -> String? {
+        providerSelectedWindow(provider, selection: selection)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))" }
     }
     func compactTimeRemainingText(_ provider: AgentProvider, selection: String? = nil) -> String {
-        providerSelectedWindow(provider, selection: selection)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))%" } ?? "—"
+        compactTimeRemainingNumber(provider, selection: selection).map { $0 + "%" } ?? "—"
     }
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
@@ -1428,10 +1450,8 @@ final class IslandModel: ObservableObject {
         if oldHeight != panelContentHeight { onLayoutChange?() }
         let inputs = Set(pendingInputRequests.map { $0.activity.id })
         let noticeTasks = taskGroups.filter { !($0.isRunning && [.completed, .interrupted].contains($0.primary.phase)) }.map(\.primary)
-        present((attention.activityNotices(noticeTasks.filter { $0.provider == .codex }, at: now) +
-            claudeActivityAttention.activityNotices(noticeTasks.filter { $0.provider == .claude }, at: now)).filter { notice in
-            notice.kind != .waitingForInput || !inputs.contains(where: { notice.id.hasPrefix($0 + ":") })
-        })
+        present(AttentionPolicy.excludingPendingReplies(attention.activityNotices(noticeTasks.filter { $0.provider == .codex }, at: now) +
+            claudeActivityAttention.activityNotices(noticeTasks.filter { $0.provider == .claude }, at: now), activityIDs: inputs))
         onStatusChange?()
     }
 
