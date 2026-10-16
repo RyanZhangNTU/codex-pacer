@@ -399,7 +399,11 @@ struct ClaudeActivityState: Sendable {
            let current = value.turnID, incoming != current { return }
         var turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID
         if kind == "interrupt", record["engineInterrupt"] as? Bool == true {
-            guard turn == value.turnID, typedInterruptPrompts[key] != turn, [.running, .waitingForInput].contains(value.phase) else { return }
+            guard turn == value.turnID, typedInterruptPrompts[key] != turn else { return }
+            // An ended next-step box can still be dismissed. Its interrupt
+            // clears the reply; SessionActivity preserves the verified ending.
+            let endedReply = value.phase == .completed && requests.keys.contains { $0.hasPrefix(key + ":reply-") }
+            guard [.running, .waitingForInput].contains(value.phase) || endedReply else { return }
         }
         if kind == "prompt", let prompt = ClaudeActivityRecord.identifier(record["promptId"] as? String) { turn = prompt }
         if turn == nil, ["toolStart", "response", "thinking", "subagentStart"].contains(kind) { turn = "attached-" + String(Int(seconds * 1000)) }

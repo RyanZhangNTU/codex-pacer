@@ -25,8 +25,11 @@ struct SettingsAppearancePane: View {
     /// Before a choice, the island attaches only around a notch, so the tile
     /// that matches what the island shows here is the selected one.
     private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }
-    private var customBinding: Binding<IslandPosition> {
-        Binding(get: { customPosition }, set: { position = $0 })
+    var customBinding: Binding<IslandPosition> {
+        Binding(get: { customPosition }, set: {
+            position = $0
+            displayMode = .floating
+        })
     }
 
     var body: some View {
@@ -69,8 +72,7 @@ struct SettingsAppearancePane: View {
                     PositionSwatch(kind: .attached)
                 }
                 tile(L10n.text("settings.custom"), selected: !attachesHere) {
-                    position = customPosition
-                    displayMode = .floating
+                    customBinding.wrappedValue = customPosition
                 } art: {
                     PositionSwatch(kind: .custom(customPosition))
                 }
