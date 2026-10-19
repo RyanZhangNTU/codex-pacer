@@ -246,7 +246,11 @@ struct NativeDesktopSession {
             for event in output { try queue(event, host: host) }
             if old == nil || old?.requests != projection.requests {
                 try frame(["kind": "attention", "hostId": host, "threadId": thread,
-                    "requests": projection.requests.map { ["id": $0.id, "kind": $0.kind.rawValue] }])
+                    "requests": projection.requests.map { request in
+                        var row = ["id": request.id, "kind": request.kind.rawValue]
+                        if let key = request.questionKey { row["questionKey"] = key }
+                        return row
+                    }])
             }
             if projection.isTerminal && projection.requests.isEmpty { try retire(key, at: now) }
             else { dormant.removeValue(forKey: key) }
