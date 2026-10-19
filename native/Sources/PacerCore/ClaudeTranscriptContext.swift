@@ -11,6 +11,7 @@ struct ClaudeTranscriptContext: Sendable {
     private static let pendingField = Data(#""promptId":"pacer-pending-owner""#.utf8)
     private static let unownedField = Data(#""unownedTurn":true"#.utf8)
     private static let metadataKind = Data(#""kind":"metadata""#.utf8)
+    private static let promptKind = Data(#""kind":"prompt""#.utf8)
     private static let replyEnding = Data(#""awaitsReply":true"#.utf8)
     struct Release: Sendable {
         let rows: [Data]
@@ -84,11 +85,17 @@ struct ClaudeTranscriptContext: Sendable {
         return prompt
     }
 
-    /// The rows a record emits before its owner is known. `transcript`
-    /// differs without an owner only in this field and the reply-box ending,
-    /// which it emits for owned turns alone.
+    /// The rows a record emits before its owner is known.
+    /// Generated prompt rows keep their own UUID, but still need the unknown
+    /// ownership marker. Reply-box endings are emitted for owned turns alone.
     static func unowned(_ owned: [Data]) -> [Data] {
         owned.compactMap { row in
+            if row.range(of: promptKind) != nil {
+                // Unlike inherited rows, this promptId is the record's UUID.
+                var row = row; row.removeLast()
+                row.append(Data(#","unownedTurn":true}"#.utf8))
+                return row
+            }
             guard let field = row.range(of: pendingField) else { return row }
             guard row.range(of: replyEnding) == nil else { return nil }
             var row = row; row.replaceSubrange(field, with: unownedField)

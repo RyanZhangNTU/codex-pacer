@@ -62,11 +62,12 @@ def agent_notification(text):
     return agent,item,status
 
 def unowned_rows(owned):
-    # transcript_record differs without an owner only in this field and the
-    # reply-box ending, which it emits for owned turns alone.
+    # Generated prompts keep their own UUID but still carry unknown ownership.
+    # Reply-box endings are emitted for owned turns alone.
     rows=[]
     for row in owned:
-        if row.get('promptId')!=PENDING_OWNER:rows.append(row)
+        if row.get('kind')=='prompt':rows.append(dict(row,unownedTurn=True))
+        elif row.get('promptId')!=PENDING_OWNER:rows.append(row)
         elif not row.get('awaitsReply'):
             row=dict(row,unownedTurn=True);del row['promptId'];rows.append(row)
     return rows

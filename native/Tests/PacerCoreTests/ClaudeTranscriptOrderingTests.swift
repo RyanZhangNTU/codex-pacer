@@ -206,6 +206,10 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         // Every row kind an unresolved descendant can produce, including the
         // reply-box ending that only an owned turn emits.
         let records = [
+            row("user", id: "legacy-text", parent: "unread", second: 1,
+                extra: ["message": ["role": "user", "content": "PRIVATE legacy prompt"]]),
+            row("user", id: "legacy-block", parent: "unread", second: 1,
+                extra: ["message": ["role": "user", "content": [["type": "text", "text": "PRIVATE legacy prompt"]]]]),
             row("assistant", id: "model", parent: "unread", second: 1, extra: ["requestId": "request-1", "cwd": "/private/tmp/synthetic",
                 "message": ["role": "assistant", "id": "message-1", "model": "claude-synthetic", "usage": ["output_tokens": 12],
                     "stop_reason": "end_turn", "content": [["type": "thinking"], ["type": "text", "text": "PRIVATE answer"],
@@ -229,6 +233,71 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         let data = try ssh("rows=json.loads(sys.argv[2])\nprint(json.dumps([unowned_rows(transcript_record(row,sys.argv[1],None,PENDING_OWNER))==transcript_record(row,sys.argv[1]) for row in rows]))\n",
             arguments: [session, String(decoding: try JSONSerialization.data(withJSONObject: records), as: UTF8.self)])
         XCTAssertEqual(try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Bool]), Array(repeating: true, count: records.count))
+    }
+
+    func testUnresolvedLegacyPromptPreservesTheCurrentTurnInNativeAndSsh() throws {
+        let next = "00000000-0000-4000-8000-000000000003"
+        let stop: [String: Any] = ["subtype": "stop_hook_summary", "preventedContinuation": false,
+            "hookErrors": [String](), "hookAdditionalContext": [String]()]
+        let appends = [
+            row("user", id: "legacy", parent: "late-parent", second: 2,
+                extra: ["message": ["role": "user", "content": "PRIVATE unresolved legacy prompt"]]),
+            row("system", id: "legacy-stop", parent: "legacy", second: 3, extra: stop),
+            row("user", id: "next-start", prompt: next, second: 4,
+                extra: ["origin": ["kind": "human"], "message": ["role": "user", "content": "PRIVATE next prompt"]]),
+            row("attachment", id: "late-parent", parent: "start", second: 1),
+            row("system", id: "next-stop", parent: "next-start", second: 5, extra: stop)
+        ]
+        // No Hook: transcript fallback must protect both a running turn and
+        // an already completed turn while the legacy record remains unowned.
+        for completed in [false, true] {
+            let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-legacy-" + UUID().uuidString)
+            let project = home.appendingPathComponent("projects/synthetic")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let file = project.appendingPathComponent(session + ".jsonl")
+            let baseline = [ending[0]] + (completed ? [row("system", id: "old-stop", parent: "start", second: 1, extra: stop)] : [])
+            try bytes(baseline).write(to: file)
+            var reader = ClaudeActivityReader(), native = ClaudeActivityState()
+            for record in reader.read(home: home, discover: true, now: now).records { native.consume(record, now: now) }
+            let originalPhase: ActivityPhase = completed ? .completed : .running
+            XCTAssertEqual(native.activities.first?.phase, originalPhase)
+            XCTAssertEqual(native.activities.first?.turnID, prompt)
+            func check(_ state: ClaudeActivityState, at index: Int) {
+                XCTAssertEqual(state.activities.first?.phase, index < 2 ? originalPhase : index < 4 ? .running : .completed)
+                XCTAssertEqual(state.activities.first?.turnID, index < 2 ? prompt : next,
+                    "Unknown legacy prompts cannot switch turns; their late replay cannot replace the next owned turn")
+            }
+            var projected = Data()
+            for (index, value) in appends.enumerated() {
+                let handle = try FileHandle(forWritingTo: file)
+                try handle.seekToEnd(); try handle.write(contentsOf: bytes([value])); try handle.close()
+                for record in reader.read(home: home, discover: false, now: now).records {
+                    projected.append(record); native.consume(record, now: now)
+                }
+                check(native, at: index)
+            }
+            XCTAssertFalse(String(decoding: projected, as: UTF8.self).contains("PRIVATE"))
+            XCTAssertFalse(String(decoding: projected, as: UTF8.self).contains(ClaudeTranscriptContext.pendingOwner))
+
+            try bytes(baseline).write(to: file)
+            let fixture = home.appendingPathComponent("appends.json")
+            try JSONSerialization.data(withJSONObject: appends).write(to: fixture)
+            let program = "tailer=Tailer(pathlib.Path(sys.argv[1]));tailer.discover();chunks=[tailer.read()]\nfor row in json.loads(pathlib.Path(sys.argv[3]).read_text()):\n with open(sys.argv[2],'ab') as stream:stream.write((json.dumps(row)+'\\n').encode())\n tailer.poll();chunks.append(tailer.read())\ntailer.close();print(json.dumps(chunks))\n"
+            let output = try ssh(program, arguments: [home.path, file.path, fixture.path])
+            let chunks = try XCTUnwrap(JSONSerialization.jsonObject(with: output) as? [[[String: Any]]])
+            XCTAssertEqual(chunks.count, appends.count + 1)
+            var remote = ClaudeActivityState(sourceID: "synthetic-ssh", sourceName: nil)
+            for (index, chunk) in chunks.enumerated() {
+                remote.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": chunk])!, now: now)
+                if index == 0 {
+                    XCTAssertEqual(remote.activities.first?.phase, originalPhase)
+                    XCTAssertEqual(remote.activities.first?.turnID, prompt)
+                } else { check(remote, at: index - 1) }
+            }
+            XCTAssertFalse(String(decoding: output, as: UTF8.self).contains("PRIVATE"))
+            XCTAssertFalse(String(decoding: output, as: UTF8.self).contains(ClaudeTranscriptContext.pendingOwner))
+        }
     }
 
     func testLateParentStaysBoundToItsOriginalPromptAndCannotEndTheNextPrompt() throws {
