@@ -26,7 +26,7 @@ public enum WhatsNew {
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
         Release(version: "3.2.1", items: [
-            Item(symbol: "checkmark.circle", titleKey: "whats_new.mark_all_read", detailKey: "whats_new.mark_all_read_detail")
+            Item(symbol: "checkmark.rectangle.stack", titleKey: "whats_new.mark_all_read", detailKey: "whats_new.mark_all_read_detail")
         ], requiredSeenVersion: "3.2.0"),
         Release(version: "3.2.0", items: [
             Item(symbol: "sidebar.left", titleKey: "whats_new.screen_position", detailKey: "whats_new.screen_position_detail"),

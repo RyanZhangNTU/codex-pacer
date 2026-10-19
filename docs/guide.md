@@ -64,7 +64,7 @@ Agents that a task spawns are grouped under it with their running count and comb
 
 Click a task to open its conversation. Codex tasks open in the Codex app. A task started in another app shows that app's name and switches to it, relaunching the app if it quit. This covers Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin. Claude Desktop sessions open in Claude Desktop, and Claude sessions on SSH hosts resume in Terminal. Pacer only learns which app started a task while the task is running; if it doesn't know, it says so, and the message disappears after 30 seconds. Opening never sends a prompt.
 
-When a turn ends, its card stays until you open it, mark it as read or the retention time passes (30 minutes by default; set it in **Settings → Reminders**). Click **Mark All as Read**, the checkmark to the left of the pin in the expanded island, to clear unread ended cards across every task page. Running tasks and pending replies or approvals stay visible. Acknowledged endings stay read after a restart.
+When a turn ends, its card stays until you open it, clear it with **Mark All as Read** or the retention time passes (30 minutes by default; set it in **Settings → Reminders**). **Mark All as Read** is the button next to the pin in the expanded island. It clears every ended card on all pages at once and leaves running tasks and anything waiting for your reply or approval. Cleared cards don't come back after a restart.
 
 ### Quota
 

@@ -169,7 +169,7 @@ struct IslandPanelControls: View {
                     .background(PacerPalette.fill, in: Capsule())
                     .fixedSize().padding(.trailing, 4)
             }
-            IslandIconButton(symbol: "checkmark.circle", title: L10n.text("activity.mark_all_read")) { model.markAllRead() }
+            IslandIconButton(symbol: "checkmark.rectangle.stack", title: L10n.text("activity.mark_all_read")) { model.markAllRead() }
                 .disabled(!model.canMarkAllRead)
             IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin",
                 title: model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"), active: model.pinned) { model.togglePin() }

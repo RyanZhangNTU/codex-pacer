@@ -184,7 +184,7 @@
 "common.open_settings" = "打开设置";
 "common.more" = "更多";
 "common.pin" = "固定展开";
-"activity.mark_all_read" = "一键已读";
+"activity.mark_all_read" = "全部标为已读";
 "common.quit" = "退出 Codex Pacer";
 "common.refresh" = "刷新";
 "common.restore_defaults" = "恢复默认";
@@ -570,8 +570,8 @@
 "whats_new.version" = "版本 %@";
 "whats_new.release_notes" = "发布说明";
 "whats_new.done" = "继续";
-"whats_new.mark_all_read" = "一键将已结束任务标为已读";
-"whats_new.mark_all_read_detail" = "展开灵动岛后，点击钉子左侧的勾号，即可清除所有页面中已结束任务的未读卡片。运行中及等待回复或审批的任务会保留。";
+"whats_new.mark_all_read" = "全部标为已读";
+"whats_new.mark_all_read_detail" = "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。";
 "whats_new.open_at_login" = "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。";
 "whats_new.child_endings" = "已结束的子代理不再显示为运行中";
 "whats_new.child_endings_detail" = "Pacer 重新连接、唤醒或重启后，已结束的 Codex 子代理不会再显示为运行中。";

@@ -1,6 +1,7 @@
-Codex Pacer 3.2.1 adds one-click acknowledgment of ended tasks.
+Codex Pacer 3.2.1 lets you clear all ended tasks with one click.
 
-- **Mark All as Read:** click the checkmark to the left of the pin in the expanded island to clear unread ended tasks across every page. Running tasks and pending replies or approvals remain visible, and acknowledged endings stay read after a restart.
+- **Mark All as Read:** the new button next to the pin in the expanded island clears every ended task at once, on all pages. Tasks that are running or waiting for your reply or approval stay in the list, and cleared tasks don't come back after a restart.
+- Long What's New notes now scroll, so the **Continue** button stays in view.
 
 ### Install
 
