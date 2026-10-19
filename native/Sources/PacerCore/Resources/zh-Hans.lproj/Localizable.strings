@@ -195,6 +195,9 @@
 "common.unknown" = "未知";
 "common.unlimited" = "不限";
 "common.unpin" = "取消固定";
+"demo.app_detail" = "正式模式中，点击这个按钮会打开 %@ 桌面版。";
+"demo.app_heading" = "打开应用演示";
+"demo.app_title" = "打开应用 · 演示";
 "demo.chat_detail" = "正式模式中，点击任务会在 Codex 中打开对应会话，继续查看进度或回复。";
 "demo.chat_heading" = "会话跳转演示";
 "demo.chat_title" = "会话跳转 · 演示";
@@ -302,6 +305,8 @@
 "position.topRight" = "右上";
 "position.bottomRight" = "右下";
 "settings.hide_projects_help" = "灵动岛和通知里的任务名统一显示为「任务」，适合录屏或共享屏幕时使用。";
+"settings.app_buttons" = "显示应用按钮";
+"settings.app_buttons_help" = "展开后的任务标题栏里，为每个已启用的模块显示一个按钮，点击直接打开 Codex 或 Claude 桌面版，没有任务时也可用。未安装桌面版的模块不显示。";
 "warning.fiveHour" = "5h 额度不足";
 "warning.ssh" = "SSH 主机未连接";
 "warning.quotaDelay" = "额度更新延迟";
@@ -334,6 +339,8 @@
 "activity.app_missing" = "未找到 Codex，请确认已安装 Codex 应用。";
 "activity.open_failed" = "无法打开会话。";
 "activity.open_failed_detail" = "无法打开会话：%@";
+"activity.open_app" = "打开 %@";
+"activity.open_app_failed" = "无法打开 %1$@：%2$@";
 "activity.claude_host_missing" = "不知道是哪个应用启动了这个 Claude 任务。Pacer 只能在任务运行时识别它的应用。";
 "activity.host_app_missing" = "找不到“%@”，它可能已被移动或删除。";
 "claude.open_host_help" = "切换到 %@";

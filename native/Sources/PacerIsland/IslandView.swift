@@ -154,9 +154,10 @@ private struct IslandExpandedContent: View {
     }
 }
 
-/// Panel actions sit at the right of the task header. Read, Pin and Settings stay
-/// one click away; refresh and quit are rare and share one menu. Collapsing
-/// needs no control: moving away, Escape or unpinning closes the panel.
+/// Panel actions sit at the right of the task header, after a button for each
+/// enabled module's desktop app. Read, Pin and Settings stay one click away;
+/// refresh and quit are rare and share one menu. Collapsing needs no control:
+/// moving away, Escape or unpinning closes the panel.
 struct IslandPanelControls: View {
     @ObservedObject var model: IslandModel
     @State private var hovered = false
@@ -168,6 +169,14 @@ struct IslandPanelControls: View {
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(PacerPalette.fill, in: Capsule())
                     .fixedSize().padding(.trailing, 4)
+            }
+            let apps = model.appButtonProviders
+            if !apps.isEmpty {
+                ForEach(apps, id: \.self) { provider in
+                    IslandIconButton(symbol: provider.glyph, title: L10n.text("activity.open_app", provider.displayName),
+                        tint: provider.tint) { model.openDesktopApplication(provider) }
+                }
+                Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
             }
             IslandIconButton(symbol: "checkmark.rectangle.stack", title: L10n.text("activity.mark_all_read")) { model.markAllRead() }
                 .disabled(!model.canMarkAllRead)

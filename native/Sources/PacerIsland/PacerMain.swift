@@ -256,6 +256,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             guard let self else { return .failed(L10n.text("activity.open_failed")) }
             return await self.openActivity(activity)
         }
+        model.onOpenDesktopApplication = { [weak self] provider, application in
+            guard let self else { return .failed(L10n.text("activity.open_failed")) }
+            return await self.openDesktopApplication(provider, at: application)
+        }
         UNUserNotificationCenter.current().delegate = self
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem()
@@ -335,16 +339,35 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     @objc private func demoStageChanged(_ sender: NSMenuItem) {
         if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
     }
+    private func showDemoDestination(title: String, _ view: (@escaping () -> Void) -> DemoConversationView) -> ActivityOpenOutcome {
+        let window = demoConversationWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 320),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = title; window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: view { [weak self] in
+            self?.demoConversationWindow?.orderOut(nil); self?.panel.show()
+        })
+        window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        demoConversationWindow = window; model.close(); return .openedConversation
+    }
+    /// Brings the desktop app forward, launching it if needed; no conversation opens.
+    private func openDesktopApplication(_ provider: AgentProvider, at application: URL) async -> ActivityOpenOutcome {
+        if model.isDemo {
+            return showDemoDestination(title: L10n.text("demo.app_title")) { DemoConversationView(application: provider, onReturn: $0) }
+        }
+        model.close()
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        return await withCheckedContinuation { continuation in
+            NSWorkspace.shared.openApplication(at: application, configuration: configuration) { _, error in
+                continuation.resume(returning: error.map {
+                    .failed(L10n.text("activity.open_app_failed", provider.displayName, CodexDiagnosticText.description(of: $0)))
+                } ?? .openedConversation)
+            }
+        }
+    }
     private func openActivity(_ activity: SessionActivity) async -> ActivityOpenOutcome {
         if model.isDemo {
-            let window = demoConversationWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 320),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = L10n.text("demo.chat_title"); window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: DemoConversationView(activity: activity) { [weak self] in
-                self?.demoConversationWindow?.orderOut(nil); self?.panel.show()
-            })
-            window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-            demoConversationWindow = window; model.close(); return .openedConversation
+            return showDemoDestination(title: L10n.text("demo.chat_title")) { DemoConversationView(activity: activity, onReturn: $0) }
         }
         if activity.provider == .claude {
             guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }
