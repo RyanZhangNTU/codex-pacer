@@ -7,7 +7,7 @@ public enum WhatsNew {
     public static let defaultsKey = "whatsNewVersion"
 
     public struct Item: Equatable, Sendable {
-        public enum Control: Equatable, Sendable { case openAtLogin, showEmbeddedSessions }
+        public enum Control: Equatable, Sendable { case openAtLogin, showEmbeddedSessions, showAppButtons }
         public let symbol: String
         public let titleKey: String
         public let detailKey: String
@@ -25,6 +25,10 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "3.2.2", items: [
+            Item(symbol: "macwindow", titleKey: "whats_new.app_buttons", detailKey: "whats_new.app_buttons_detail", control: .showAppButtons),
+            Item(symbol: "circle.dashed", titleKey: "whats_new.dual_orbit", detailKey: "whats_new.dual_orbit_detail")
+        ]),
         Release(version: "3.2.1", items: [
             Item(symbol: "checkmark.rectangle.stack", titleKey: "whats_new.mark_all_read", detailKey: "whats_new.mark_all_read_detail")
         ], requiredSeenVersion: "3.2.0"),

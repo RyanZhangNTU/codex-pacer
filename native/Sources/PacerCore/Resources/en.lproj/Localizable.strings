@@ -580,6 +580,10 @@
 "whats_new.done" = "Continue";
 "whats_new.mark_all_read" = "Mark all as read";
 "whats_new.mark_all_read_detail" = "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.";
+"whats_new.app_buttons" = "Open Codex or Claude from the island";
+"whats_new.app_buttons_detail" = "Buttons beside Mark All as Read in the expanded island bring each service’s desktop app forward, even with no task running. Turn them off here or in Settings > General.";
+"whats_new.dual_orbit" = "A smoother badge with both services";
+"whats_new.dual_orbit_detail" = "When Codex and Claude run together, both arcs around the task badge keep a clean head and their own places, and grow or fade smoothly as tasks start and end.";
 "whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";
 "whats_new.child_endings" = "Ended subagents stay ended";
 "whats_new.child_endings_detail" = "Ended Codex subagents no longer appear to run again after Pacer reconnects, wakes or relaunches.";

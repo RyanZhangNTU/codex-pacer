@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.2
+
+- Add a button for each enabled service's desktop app to the expanded island's task header, beside **Mark All as Read**, in the service's color. A click brings Codex or Claude forward, launching it if needed, even when that service has no task, and opens no conversation. A service whose desktop app isn't installed shows no button. Turn the buttons off with **Show App Buttons** in Settings → General; they are on by default and the switch is also offered in the 3.2.2 What's New note.
+- Smooth the task badge's orbit when Codex and Claude run at the same time. Claude's arc used to blur ahead of its head and look twice as long as Codex's; both arcs now have a sharp head and the same shape. Each service keeps its own place on the ring, so one starting or stopping no longer makes the other jump half a turn, and an arc now grows in or fades out over about a third of a second instead of appearing or vanishing at once. The rotation no longer restarts when the badge switches between a task count and a stage icon.
+
 ## 3.2.1
 
 - Add **Mark All as Read** next to the pin in the expanded island. One click clears every unread ended task on all pages, and cleared tasks stay cleared after a restart. Tasks that are running or waiting for a reply or approval, and sessions hidden in Settings, are left alone.
