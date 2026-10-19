@@ -669,6 +669,21 @@ final class IslandModel: ObservableObject {
         })
     }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
+    private var readableCompletions: [SessionActivity] {
+        let ids = Set(taskGroups.filter {
+            !$0.isRunning && !$0.isWaiting && attentionKind(for: $0.primary) == nil
+        }.flatMap { $0.members.map(\.id) })
+        return completionInbox.unreadActivities.filter { ids.contains($0.id) }
+    }
+    var canMarkAllRead: Bool { !readableCompletions.isEmpty }
+    /// Acknowledge the displayed ended families across every page, without
+    /// opening a conversation or resolving an outstanding reply/approval.
+    func markAllRead() {
+        let removed = Set(readableCompletions.filter { completionInbox.dismiss($0) }.map(\.id))
+        guard !removed.isEmpty else { return }
+        activities.removeAll { removed.contains($0.id) }
+        onLayoutChange?(); onStatusChange?()
+    }
     var completionSummary: String {
         let pending = pendingCompletions
         guard let first = pending.first else { return L10n.text("activity.idle") }

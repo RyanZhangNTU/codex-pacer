@@ -10,6 +10,8 @@ struct WhatsNewView: View {
 
     let version: String
     let releases: [WhatsNew.Release]
+    /// Nil only while measuring the natural height before the window opens.
+    var height: CGFloat? = nil
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     /// Applies a preference changed here to the running island.
     var onSettingsChange: () -> Void = {}
@@ -28,23 +30,13 @@ struct WhatsNewView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 14)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(releases, id: \.version) { release in
-                    // Skipped updates keep their own headings, newest first.
-                    if releases.count > 1 {
-                        Text(L10n.text("whats_new.version", release.version)).font(.system(size: 12)).foregroundStyle(.secondary)
-                            .padding(.leading, 10).padding(.top, release == releases.first ? 0 : 8)
-                    }
-                    VStack(spacing: 0) {
-                        ForEach(Array(release.items.enumerated()), id: \.offset) { index, item in
-                            if index > 0 { Divider().padding(.leading, 50) }
-                            row(item)
-                        }
-                    }
-                    .welcomeGroup()
-                }
+            .fixedSize(horizontal: false, vertical: true)
+            if height != nil {
+                ScrollView(.vertical) { highlights }
+                    .frame(maxHeight: .infinity)
+            } else {
+                highlights
             }
-            .padding(.horizontal, 20).padding(.bottom, 18)
             Divider()
             HStack(spacing: 10) {
                 Button(L10n.text("whats_new.release_notes")) {
@@ -55,11 +47,32 @@ struct WhatsNewView: View {
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
             }
             .padding(.horizontal, 20).padding(.vertical, 12)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: Self.width)
+        .frame(width: Self.width, height: height)
         .fixedSize(horizontal: false, vertical: true)
         .environment(\.locale, L10n.locale)
         .onChange(of: [showsEmbeddedClaudeSessions, showsEmbeddedCodexSessions]) { _, _ in onSettingsChange() }
+    }
+
+    private var highlights: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(releases, id: \.version) { release in
+                // Skipped updates keep their own headings, newest first.
+                if releases.count > 1 {
+                    Text(L10n.text("whats_new.version", release.version)).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .padding(.leading, 10).padding(.top, release == releases.first ? 0 : 8)
+                }
+                VStack(spacing: 0) {
+                    ForEach(Array(release.items.enumerated()), id: \.offset) { index, item in
+                        if index > 0 { Divider().padding(.leading, 50) }
+                        row(item)
+                    }
+                }
+                .welcomeGroup()
+            }
+        }
+        .padding(.horizontal, 20).padding(.bottom, 18)
     }
 
     private func row(_ item: WhatsNew.Item) -> some View {

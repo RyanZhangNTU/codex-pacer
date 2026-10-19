@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.1
+
+- Add **Mark All as Read** next to the pin in the expanded island. One click clears every unread ended task on all pages, and cleared tasks stay cleared after a restart. Tasks that are running or waiting for a reply or approval, and sessions hidden in Settings, are left alone.
+
 ## 3.2.0
 
 - Replace the Automatic, Notch and Floating choices in Settings → Appearance with **Notch** and **Custom**. Custom places the island yourself under **Screen Position**: centered below the menu bar as before, or docked at any of the four corners as a narrow vertical strip whose long edge lies against the side of the screen, 10 points from the top or bottom. Choosing Custom over the notch starts at bottom left; a Mac that already floated keeps the centered bar.

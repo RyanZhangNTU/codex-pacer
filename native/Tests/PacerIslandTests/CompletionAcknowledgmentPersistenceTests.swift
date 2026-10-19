@@ -48,6 +48,61 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         model.receiveRemoteUpdate(values.filter { $0.provider == .codex }, statuses: [:], unavailable: [], requests: [], names: [])
     }
 
+    func testMarkAllReadPersistsVisibleEndedFamiliesAcrossProvidersHostsAndPages() async throws {
+        let fixture = try familyFixture(remote: true), model = fixture.model
+        let at = Date().addingTimeInterval(-3)
+        let parent = familyActivity(.codex, 970, at: at)
+        let child = familyActivity(.codex, 971, parent: parent.threadID, at: at)
+        let claude = familyActivity(.claude, 972, host: fixture.host, at: at)
+        var interrupted = familyActivity(.codex, 973, completed: false, at: at)
+        interrupted.applyRuntime(["method": "turn/completed", "threadId": interrupted.threadID!, "turnId": "family-turn",
+            "status": "interrupted", "at": at.timeIntervalSince1970 + 1])
+        var failed = familyActivity(.claude, 974, completed: false, at: at)
+        failed.applyRuntime(["method": "turn/completed", "threadId": failed.threadID!, "turnId": "family-turn",
+            "status": "failed", "at": at.timeIntervalSince1970 + 1])
+        let activeParent = familyActivity(.claude, 975, at: at)
+        let activeChild = familyActivity(.claude, 976, parent: activeParent.threadID, completed: false, at: at)
+        let reply = familyActivity(.codex, 977, at: at)
+        var hidden = familyActivity(.codex, 978, at: at)
+        hidden.setCodexOrigin(.init(embedded: true, ignored: false))
+        fixture.defaults.set(false, forKey: IslandModel.showsEmbeddedCodexSessionsKey)
+        let values = [parent, child, claude, interrupted, failed, activeParent, activeChild, reply, hidden]
+        let request = PendingAttentionRequest(id: "still-needs-reply", threadID: reply.threadID!, sourceHostID: nil,
+            sourceName: nil, kind: .input, detectedAt: at)
+        func publish(_ model: IslandModel) {
+            model.receiveClaudeUpdate(values.filter { $0.provider == .claude }, statuses: [:], requests: [])
+            model.receiveRemoteUpdate(values.filter { $0.provider == .codex }, statuses: [:], unavailable: [], requests: [request], names: [])
+        }
+        publish(model)
+        XCTAssertTrue(model.canMarkAllRead)
+        XCTAssertGreaterThan(model.visibleActivities.count, 3, "The action covers more than one task page")
+        var opens = 0
+        model.onOpenActivity = { _ in opens += 1; return .openedConversation }
+        model.markAllRead()
+        let removed = Set([parent, child, claude, interrupted, failed].map(\.id))
+        XCTAssertTrue(removed.isDisjoint(with: Set(model.activities.map(\.id))))
+        XCTAssertEqual(Set(model.activities.map(\.id)), Set([activeParent, activeChild, reply].map(\.id)))
+        XCTAssertEqual(model.pendingInputRequests, [request])
+        XCTAssertFalse(model.canMarkAllRead)
+        XCTAssertEqual(opens, 0, "Explicit acknowledgment never opens conversations")
+        model.markAllRead()
+        publish(model)
+        XCTAssertTrue(removed.isDisjoint(with: Set(model.activities.map(\.id))), "Reader replay cannot restore acknowledged endings")
+        await model.shutdown()
+        let rebuilt = fixture.rebuild()
+        publish(rebuilt)
+        XCTAssertTrue(removed.isDisjoint(with: Set(rebuilt.activities.map(\.id))), "The acknowledgment survives relaunch")
+        fixture.defaults.set(true, forKey: IslandModel.showsEmbeddedCodexSessionsKey)
+        rebuilt.refilterEmbeddedSessions()
+        XCTAssertTrue(rebuilt.isUnreadCompletion(hidden), "Hidden tasks were not acknowledged")
+        var next = parent
+        next.applyRuntime(["method": "turn/started", "threadId": parent.threadID!, "turnId": "next-turn", "at": Date().timeIntervalSince1970])
+        next.applyRuntime(["method": "turn/completed", "threadId": parent.threadID!, "turnId": "next-turn", "status": "completed", "at": Date().timeIntervalSince1970])
+        rebuilt.receiveRemoteUpdate([next], statuses: [:], unavailable: [], requests: [], names: [])
+        XCTAssertTrue(rebuilt.isUnreadCompletion(next), "A new ending remains unread")
+        await rebuilt.shutdown()
+    }
+
     private func controlCatalogFixture(savedRoute: Bool = false) throws -> FamilyFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-catalog-ack-" + UUID().uuidString)
         let domain = "com.codexpacer.catalog-ack-tests." + UUID().uuidString

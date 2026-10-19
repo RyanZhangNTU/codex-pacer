@@ -17,11 +17,17 @@ public enum WhatsNew {
     public struct Release: Equatable, Sendable {
         public let version: String
         public let items: [Item]
+        /// A targeted introduction uses the last confirmed note as its
+        /// migration baseline. Older copies did not record launch versions.
+        public var requiredSeenVersion: String? = nil
     }
 
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "3.2.1", items: [
+            Item(symbol: "checkmark.rectangle.stack", titleKey: "whats_new.mark_all_read", detailKey: "whats_new.mark_all_read_detail")
+        ], requiredSeenVersion: "3.2.0"),
         Release(version: "3.2.0", items: [
             Item(symbol: "sidebar.left", titleKey: "whats_new.screen_position", detailKey: "whats_new.screen_position_detail"),
             Item(symbol: "ellipsis.bubble", titleKey: "whats_new.claude_next_step", detailKey: "whats_new.claude_next_step_detail")
@@ -47,6 +53,9 @@ public enum WhatsNew {
         let seen = defaults.string(forKey: defaultsKey)
         return releases.filter { release in
             guard !newer(release.version, than: current) else { return false }
+            if let required = release.requiredSeenVersion {
+                guard let seen, seen.compare(required, options: .numeric) == .orderedSame else { return false }
+            }
             guard let seen else { return release.version.compare(current, options: .numeric) == .orderedSame }
             return newer(release.version, than: seen)
         }
