@@ -1693,7 +1693,8 @@ final class IslandModel: ObservableObject {
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
         now = demoClock()
-        let observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
+        var observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
+        if CommandLine.arguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed
         var status = RuntimeStreamStatus()
