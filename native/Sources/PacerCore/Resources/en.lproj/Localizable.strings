@@ -195,6 +195,9 @@
 "common.unknown" = "Unknown";
 "common.unlimited" = "Unlimited";
 "common.unpin" = "Unpin";
+"demo.app_detail" = "Outside demo mode, this button brings the %@ desktop app forward.";
+"demo.app_heading" = "Open App Demo";
+"demo.app_title" = "Open App · Demo";
 "demo.chat_detail" = "Outside demo mode, clicking a task opens its chat in Codex so you can follow progress or reply.";
 "demo.chat_heading" = "Open Chat Demo";
 "demo.chat_title" = "Open Chat · Demo";
@@ -302,6 +305,8 @@
 "position.topRight" = "Top Right";
 "position.bottomRight" = "Bottom Right";
 "settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
+"settings.app_buttons" = "Show App Buttons";
+"settings.app_buttons_help" = "The expanded island’s task header gets a button for each enabled module’s desktop app, Codex or Claude, even when it has no task. A module without its desktop app shows none.";
 "warning.fiveHour" = "5h quota low";
 "warning.ssh" = "SSH host disconnected";
 "warning.quotaDelay" = "Quota update delayed";
@@ -334,6 +339,8 @@
 "activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
 "activity.open_failed" = "The conversation could not be opened.";
 "activity.open_failed_detail" = "The conversation could not be opened: %@";
+"activity.open_app" = "Open %@";
+"activity.open_app_failed" = "%1$@ could not be opened: %2$@";
 "activity.claude_host_missing" = "Pacer doesn’t know which app started this Claude task. It can only see the app while the task is running.";
 "activity.host_app_missing" = "Can’t find %@. It may have been moved or deleted.";
 "claude.open_host_help" = "Switch to %@";

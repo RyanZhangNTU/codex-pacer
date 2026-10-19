@@ -152,4 +152,67 @@ final class ActivityOpeningTests: XCTestCase {
         await fulfillment(of: [finish], timeout: 2)
         XCTAssertEqual(launches, 1)
     }
+
+    func testAppButtonsOfferEnabledModulesWithADesktopAppAndOpenOnlyThose() async throws {
+        let domain = "com.codexpacer.app-button-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        func model(codex: ProviderModuleMode, demo: Bool = false) -> IslandModel {
+            ProviderModules(codexMode: codex, claudeMode: .enabled).save(to: defaults)
+            return IslandModel(demo: demo, defaults: defaults,
+                installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
+        }
+        let codexApp = URL(fileURLWithPath: "/Applications/Synthetic Codex.app")
+        let claudeApp = URL(fileURLWithPath: "/Applications/Synthetic Claude.app")
+
+        // Only Codex has a desktop app; Claude is enabled but gets no button.
+        let both = model(codex: .enabled)
+        both.desktopApplicationResolver = { $0 == .codex ? codexApp : nil }
+        let codexFound = expectation(description: "Codex app found")
+        both.onLayoutChange = { codexFound.fulfill() }
+        both.refreshDesktopApplications()
+        await fulfillment(of: [codexFound], timeout: 2)
+        both.onLayoutChange = nil
+        XCTAssertEqual(both.appButtonProviders, [.codex])
+        var opened: [(AgentProvider, URL)] = []
+        let launched = expectation(description: "Codex opened")
+        both.onOpenDesktopApplication = { provider, url in
+            opened.append((provider, url)); launched.fulfill(); return .openedConversation
+        }
+        both.openDesktopApplication(.claude)
+        both.openDesktopApplication(.codex)
+        await fulfillment(of: [launched], timeout: 2)
+        XCTAssertEqual(opened.map(\.0), [.codex]); XCTAssertEqual(opened.first?.1, codexApp)
+        XCTAssertNil(both.navigationError)
+        defaults.set(false, forKey: IslandModel.showsAppButtonsKey)
+        XCTAssertEqual(both.appButtonProviders, [], "The setting hides every app button")
+        both.openDesktopApplication(.codex)
+        await Task.yield()
+        XCTAssertEqual(opened.count, 1)
+        defaults.removeObject(forKey: IslandModel.showsAppButtonsKey)
+
+        // A disabled module is not looked up, even with its app installed.
+        let claudeOnly = model(codex: .disabled)
+        claudeOnly.desktopApplicationResolver = { $0 == .codex ? codexApp : claudeApp }
+        let claudeFound = expectation(description: "Claude app found")
+        claudeOnly.onLayoutChange = { claudeFound.fulfill() }
+        claudeOnly.refreshDesktopApplications()
+        await fulfillment(of: [claudeFound], timeout: 2)
+        claudeOnly.onLayoutChange = nil
+        XCTAssertEqual(claudeOnly.appButtonProviders, [.claude])
+        XCTAssertNil(claudeOnly.desktopApplications[.codex])
+
+        // Demo shows every enabled module without looking up real apps, and a
+        // failed open explains itself like a failed task open.
+        let demo = model(codex: .enabled, demo: true)
+        demo.desktopApplicationResolver = { _ in XCTFail("Demo never resolves real apps"); return nil }
+        demo.refreshDesktopApplications()
+        XCTAssertEqual(demo.appButtonProviders, [.codex, .claude])
+        let failed = expectation(description: "open attempted")
+        demo.onOpenDesktopApplication = { _, _ in failed.fulfill(); return .failed("Synthetic open failure") }
+        demo.openDesktopApplication(.claude)
+        await fulfillment(of: [failed], timeout: 2)
+        await Task.yield()
+        XCTAssertEqual(demo.navigationError, "Synthetic open failure")
+    }
 }
