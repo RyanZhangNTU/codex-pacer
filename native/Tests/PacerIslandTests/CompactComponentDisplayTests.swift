@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
@@ -25,6 +26,37 @@ final class CompactComponentDisplayTests: XCTestCase {
             L10n.text("dashboard.countdown_soon"))
         XCTAssertNil(TaskRowView.elapsedText(running, phase: .completed, now: start.addingTimeInterval(95)), "Only running turns count up")
         XCTAssertNil(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(-5)), "A future start is never shown")
+    }
+    func testActivityOrbitKeepsEachProviderSlotAndAHardEdgedHead() {
+        func stops(codex: Int, claude: Int, animates: Bool = true) -> [String] {
+            ActivityOrbit.stops(for: [.init(color: NSColor(srgbRed: 0.49, green: 0.84, blue: 0.77, alpha: 1), weight: codex),
+                                      .init(color: NSColor(srgbRed: 0.95, green: 0.61, blue: 0.42, alpha: 1), weight: claude)],
+                                animates: animates)
+                .map { String(format: "%.3f@%.2f", $0.location, $0.color.alphaComponent) }
+        }
+        XCTAssertEqual(stops(codex: 1, claude: 1),
+            ["0.000@0.00", "0.000@1.00", "0.250@0.00", "0.500@0.00", "0.500@1.00", "0.750@0.00"],
+            "Both heads are hard edges; the gap before the second head stays transparent")
+        XCTAssertEqual(stops(codex: 3, claude: 1),
+            ["0.000@0.00", "0.000@1.00", "0.375@0.00", "0.500@0.00", "0.500@1.00", "0.625@0.00"],
+            "Lengths follow the share of running tasks")
+        XCTAssertEqual(stops(codex: 1, claude: 0),
+            ["0.000@0.00", "0.000@1.00", "0.340@0.00", "0.500@0.00", "0.500@0.00", "0.500@0.00"])
+        XCTAssertEqual(stops(codex: 0, claude: 2),
+            ["0.000@0.00", "0.000@0.00", "0.000@0.00", "0.500@0.00", "0.500@1.00", "0.840@0.00"],
+            "A provider alone keeps its slot, so the other starting or stopping never moves its comet")
+        for (codex, claude) in [(0, 0), (1, 0), (0, 1), (1, 1), (9, 1), (1, 9)] {
+            let locations = stops(codex: codex, claude: claude).map { Double($0.prefix(5))! }
+            XCTAssertEqual(locations.count, 6, "Equal stop counts let a change ease")
+            XCTAssertEqual(locations, locations.sorted()); XCTAssertLessThanOrEqual(locations.last!, 1)
+        }
+        XCTAssertEqual(stops(codex: 3, claude: 1, animates: false), ["0.000@0.75", "0.750@0.75", "0.750@0.75", "1.000@0.75"],
+            "Without motion the running shares fill the ring")
+        XCTAssertEqual(stops(codex: 0, claude: 1, animates: false), ["0.000@0.75", "1.000@0.75"])
+        // --demo-claude shows both providers' comets, and its completion stage leaves Codex alone.
+        let now = Date(timeIntervalSince1970: 1_800_000_000), claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        XCTAssertEqual(claude.provider, .claude); XCTAssertEqual(claude.phase, .running)
+        XCTAssertEqual(DemoScenario.claudeTask(stage: .completed, at: now).phase, .completed)
     }
     func testLatestTTFTUsesMeasurementTimeAndSurvivesToolsNewTurnsAndRemovedCards() async throws {
         let model = IslandModel(), now = Date()

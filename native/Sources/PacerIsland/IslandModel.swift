@@ -269,6 +269,54 @@ final class IslandModel: ObservableObject {
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?
     private var openingActivities: Set<String> = []
+    /// The expanded task header offers each enabled module's desktop app,
+    /// whether or not it has a task. A module without one shows no button.
+    static let showsAppButtonsKey = "showAppButtons"
+    var showsAppButtons: Bool { defaults.object(forKey: Self.showsAppButtonsKey) == nil || defaults.bool(forKey: Self.showsAppButtonsKey) }
+    var appButtonProviders: [AgentProvider] {
+        showsAppButtons ? enabledProviders.filter { desktopApplications[$0] != nil } : []
+    }
+    @Published private(set) var desktopApplications: [AgentProvider: URL] = [:]
+    var desktopApplicationResolver: @Sendable (AgentProvider) async -> URL? = { provider in
+        await Task.detached(priority: .utility) {
+            provider == .codex ? CodexApplicationResolver.find() : ClaudeApplicationResolver.find()
+        }.value
+    }
+    var onOpenDesktopApplication: ((AgentProvider, URL) async -> ActivityOpenOutcome)?
+    private var desktopApplicationScan: Task<Void, Never>?
+    private var desktopApplicationsScannedAt = Date.distantPast
+    /// Installations change rarely, so opening the panel looks again at most
+    /// once a minute; settings changes and a failed open look at once. Demo
+    /// shows every enabled module and opens only its labeled sample.
+    func refreshDesktopApplications(force: Bool = true, now: Date = Date()) {
+        guard showsAppButtons, !stopped, force || now.timeIntervalSince(desktopApplicationsScannedAt) >= 60 else { return }
+        desktopApplicationsScannedAt = now
+        let providers = enabledProviders
+        if demo {
+            desktopApplications = Dictionary(uniqueKeysWithValues: providers.map { ($0, Bundle.main.bundleURL) }); return
+        }
+        desktopApplicationScan?.cancel()
+        let resolve = desktopApplicationResolver
+        desktopApplicationScan = Task { [weak self] in
+            var found: [AgentProvider: URL] = [:]
+            for provider in providers { found[provider] = await resolve(provider) }
+            guard let self, !Task.isCancelled else { return }
+            self.desktopApplicationScan = nil
+            guard found != self.desktopApplications else { return }
+            self.desktopApplications = found; self.onLayoutChange?()
+        }
+    }
+    func openDesktopApplication(_ provider: AgentProvider) {
+        guard appButtonProviders.contains(provider), let application = desktopApplications[provider],
+              let open = onOpenDesktopApplication else { return }
+        navigationError = nil
+        Task { [weak self] in
+            let outcome = await open(provider, application)
+            guard let self, case .failed(let failure) = outcome else { return }
+            self.showNavigationError(failure)
+            self.refreshDesktopApplications()
+        }
+    }
     var onFocusRequested: (() -> Void)?
     private func conversationTarget(for activity: SessionActivity) -> SessionActivity? {
         guard activity.provider == .claude || activity.launchedByEmbeddingApp, let parent = activity.parentThreadID else { return activity }
@@ -780,6 +828,7 @@ final class IslandModel: ObservableObject {
 
     func start() {
         if !demo { refreshQuota(); refreshActivity(); refreshRemote(); startClaudeActivity() }
+        refreshDesktopApplications()
         scheduleClock()
         scheduleRateExpiry()
         let center = NSWorkspace.shared.notificationCenter
@@ -836,6 +885,7 @@ final class IslandModel: ObservableObject {
         if clock != nil { scheduleClock() }
         onLayoutChange?()
         if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
+        if value { refreshDesktopApplications(force: false) }
     }
     func hover(_ entered: Bool) {
         guard !interactionSuspended else { return }
@@ -1524,6 +1574,7 @@ final class IslandModel: ObservableObject {
         if claudeChanged { resetClaudeSource() }
         else { startClaudeActivity() }
         refilterEmbeddedSessions()
+        refreshDesktopApplications()
         onLayoutChange?(); onStatusChange?()
     }
     private func resetCodexSource() {
@@ -1594,6 +1645,7 @@ final class IslandModel: ObservableObject {
 
     func shutdown() async {
         stopped = true
+        desktopApplicationScan?.cancel()
         logWatcher.stop()
         clock?.invalidate()
         closeWork?.cancel()
@@ -1693,7 +1745,8 @@ final class IslandModel: ObservableObject {
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
         now = demoClock()
-        let observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
+        var observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
+        if CommandLine.arguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed
         var status = RuntimeStreamStatus()

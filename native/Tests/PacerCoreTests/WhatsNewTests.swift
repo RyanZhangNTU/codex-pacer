@@ -40,7 +40,10 @@ final class WhatsNewTests: XCTestCase {
         WhatsNew.markSeen("3.0.10", defaults: defaults)
         XCTAssertEqual(versions("3.0.10", defaults), [])
         XCTAssertEqual(WhatsNew.history(upTo: "3.0.10", releases: unordered).count, 3, "Seen notes stay readable")
-        XCTAssertEqual(WhatsNew.history(upTo: "3.2.1").map(\.version), WhatsNew.releases.map(\.version),
+        let latest = try XCTUnwrap(WhatsNew.releases.first?.version)
+        XCTAssertEqual(WhatsNew.history(upTo: latest).map(\.version), WhatsNew.releases.map(\.version),
+            "The shipped catalog stays newest first")
+        XCTAssertEqual(WhatsNew.history(upTo: "3.2.1").first?.version, "3.2.1",
             "A targeted introduction is still part of the history")
     }
 

@@ -29,9 +29,10 @@ struct SettingsView: View {
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var monitorRemoteControl = UserDefaults.standard.object(forKey: "monitorRemoteControl") == nil || UserDefaults.standard.bool(forKey: "monitorRemoteControl")
-    /// Shared with the update note, which can change it while this is open.
+    /// Shared with the update note, which can change them while this is open.
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
+    @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
     /// Text settings commit on Return, focus loss, a chooser or window close;
@@ -183,6 +184,10 @@ struct SettingsView: View {
                 Toggle(isOn: $hideProjects) {
                     Text(L10n.text("settings.hide_projects"))
                     Text(L10n.text("settings.hide_projects_help"))
+                }
+                Toggle(isOn: $showsAppButtons) {
+                    Text(L10n.text("settings.app_buttons"))
+                    Text(L10n.text("settings.app_buttons_help"))
                 }
             }
         case .appearance:
@@ -592,7 +597,7 @@ struct SettingsView: View {
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance,
             fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
-            windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects,
+            windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions)
     }
@@ -695,6 +700,7 @@ private struct LiveSettings: Equatable {
     var claudeWindowID: String
     var retention: Int
     var hideProjects: Bool
+    var showsAppButtons: Bool
     var monitorSSH: Bool
     var monitorRemoteControl: Bool
     var showEmbeddedClaudeSessions: Bool

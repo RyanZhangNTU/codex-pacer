@@ -195,6 +195,9 @@
 "common.unknown" = "Unknown";
 "common.unlimited" = "Unlimited";
 "common.unpin" = "Unpin";
+"demo.app_detail" = "Outside demo mode, this button brings the %@ desktop app forward.";
+"demo.app_heading" = "Open App Demo";
+"demo.app_title" = "Open App · Demo";
 "demo.chat_detail" = "Outside demo mode, clicking a task opens its chat in Codex so you can follow progress or reply.";
 "demo.chat_heading" = "Open Chat Demo";
 "demo.chat_title" = "Open Chat · Demo";
@@ -202,6 +205,7 @@
 "demo.menu" = "Demo: %@";
 "demo.optimize" = "Improve the app interface";
 "demo.return" = "Back to Island";
+"demo.review_notes" = "Review the release notes";
 "demo.thinking" = "Model Thinking";
 "demo.tool" = "Running a Tool";
 "demo.verify_remote" = "Verify the remote build";
@@ -301,6 +305,8 @@
 "position.topRight" = "Top Right";
 "position.bottomRight" = "Bottom Right";
 "settings.hide_projects_help" = "Task names on the island and in notifications show as “Task”, handy when recording or sharing your screen.";
+"settings.app_buttons" = "Show App Buttons";
+"settings.app_buttons_help" = "The expanded island’s task header gets a button for each enabled module’s desktop app, Codex or Claude, even when it has no task. A module without its desktop app shows none.";
 "warning.fiveHour" = "5h quota low";
 "warning.ssh" = "SSH host disconnected";
 "warning.quotaDelay" = "Quota update delayed";
@@ -333,6 +339,8 @@
 "activity.app_missing" = "Codex could not be found. Check that the Codex app is installed.";
 "activity.open_failed" = "The conversation could not be opened.";
 "activity.open_failed_detail" = "The conversation could not be opened: %@";
+"activity.open_app" = "Open %@";
+"activity.open_app_failed" = "%1$@ could not be opened: %2$@";
 "activity.claude_host_missing" = "Pacer doesn’t know which app started this Claude task. It can only see the app while the task is running.";
 "activity.host_app_missing" = "Can’t find %@. It may have been moved or deleted.";
 "claude.open_host_help" = "Switch to %@";
@@ -572,6 +580,10 @@
 "whats_new.done" = "Continue";
 "whats_new.mark_all_read" = "Mark all as read";
 "whats_new.mark_all_read_detail" = "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.";
+"whats_new.app_buttons" = "Open Codex or Claude from the island";
+"whats_new.app_buttons_detail" = "Buttons beside Mark All as Read in the expanded island bring each service’s desktop app forward, even with no task running. Turn them off here or in Settings > General.";
+"whats_new.dual_orbit" = "A smoother badge with both services";
+"whats_new.dual_orbit_detail" = "When Codex and Claude run together, both arcs around the task badge keep a clean head and their own places, and grow or fade smoothly as tasks start and end.";
 "whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";
 "whats_new.child_endings" = "Ended subagents stay ended";
 "whats_new.child_endings_detail" = "Ended Codex subagents no longer appear to run again after Pacer reconnects, wakes or relaunches.";

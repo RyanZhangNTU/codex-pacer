@@ -55,7 +55,10 @@ struct ActivityBadge: View {
     private static let attentionInk = Color(red: 0.26, green: 0.15, blue: 0.02)
 
     var body: some View {
-        coreView
+        // The stack keeps the core's count/symbol switch inside it. In the
+        // island's nesting, a switch at the root of this chain recreated the
+        // orbit as well, which dropped its easing and restarted its rotation.
+        ZStack { coreView }
             .frame(minWidth: 15, minHeight: 15)
             .padding(.horizontal, isWide ? 3.5 : 0)
             .background { fill }
@@ -64,8 +67,8 @@ struct ActivityBadge: View {
             .frame(minWidth: 20, minHeight: 20)
             .background {
                 if !activity.orbit.isEmpty {
-                    ActivityOrbit(segments: AgentProvider.allCases.compactMap { provider in
-                        activity.orbit[provider].map { ActivityOrbit.Segment(color: NSColor(provider.tint), weight: $0) }
+                    ActivityOrbit(segments: AgentProvider.allCases.map { provider in
+                        ActivityOrbit.Segment(color: NSColor(provider.tint), weight: activity.orbit[provider] ?? 0)
                     }, animates: !reduceMotion && !layoutProbe)
                     .transition(.opacity)
                 }
@@ -152,12 +155,47 @@ private struct RippleFrame {
 /// the render server, so the island does not re-render SwiftUI every frame; it
 /// pauses while the window is occluded and stays a static ring with Reduce Motion.
 struct ActivityOrbit: NSViewRepresentable {
+    /// One per provider, in a fixed order, so each keeps its own slot.
     struct Segment: Equatable {
         let color: NSColor
+        /// Running tasks; zero leaves the slot empty.
         let weight: Int
+    }
+    struct Stop: Equatable {
+        let color: NSColor
+        let location: Double
     }
     let segments: [Segment]
     let animates: Bool
+
+    /// Each provider's comet starts at its own slot, evenly spaced, so one
+    /// provider starting or stopping never moves the other's comet. Comet
+    /// length follows the share of running tasks. A conic gradient's location
+    /// grows counterclockwise, so each opaque head is a hard edge after a
+    /// transparent stop at the same location and leads the clockwise orbit;
+    /// without that edge, the gap before a later comet would brighten into
+    /// its head. Every slot keeps three stops, so a change can ease. Without
+    /// motion the running shares fill the whole ring instead.
+    static func stops(for segments: [Segment], animates: Bool) -> [Stop] {
+        let running = segments.filter { $0.weight > 0 }
+        let total = Double(max(1, running.reduce(0) { $0 + $1.weight }))
+        guard animates else {
+            var start = 0.0
+            return running.flatMap { segment -> [Stop] in
+                let color = segment.color.withAlphaComponent(0.75), end = start + Double(segment.weight) / total
+                defer { start = end }
+                return [Stop(color: color, location: start), Stop(color: color, location: end)]
+            }
+        }
+        let span = running.count > 1 ? 0.5 : 0.34
+        return segments.enumerated().flatMap { index, segment -> [Stop] in
+            let head = Double(index) / Double(segments.count), clear = segment.color.withAlphaComponent(0)
+            let tail = head + span * Double(max(0, segment.weight)) / total
+            return [Stop(color: clear, location: head),
+                    Stop(color: segment.weight > 0 ? segment.color : clear, location: head),
+                    Stop(color: clear, location: tail)]
+        }
+    }
 
     func makeNSView(context: Context) -> ActivityOrbitView { ActivityOrbitView() }
     func updateNSView(_ view: ActivityOrbitView, context: Context) { view.update(segments: segments, animates: animates) }
@@ -197,10 +235,12 @@ final class ActivityOrbitView: NSView {
 
     func update(segments: [ActivityOrbit.Segment], animates: Bool) {
         guard segments != self.segments || animates != self.animates else { return }
+        let stops = ActivityOrbit.stops(for: segments, animates: animates)
+        // A comet grows from or shrinks into its head; switching to or from
+        // the static ring changes the stops entirely and snaps.
+        let eases = animates && self.animates && stops.count == comet.locations?.count
         self.segments = segments; self.animates = animates
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        applyColors()
-        CATransaction.commit()
+        apply(stops, easing: eases)
         refreshAnimation()
     }
 
@@ -231,35 +271,30 @@ final class ActivityOrbitView: NSView {
         refreshAnimation()
     }
 
-    /// Each provider gets its own comet, evenly spaced, with length in
-    /// proportion to its running tasks. A conic gradient's location grows
-    /// counterclockwise, so each opaque head sits at its comet's lowest
-    /// location and leads the clockwise orbit. Without motion the shares fill
-    /// the whole ring instead.
-    private func applyColors() {
-        let total = Double(max(1, segments.reduce(0) { $0 + $1.weight }))
-        let span = segments.count > 1 ? 0.5 : 0.34
-        var colors: [CGColor] = [], locations: [Double] = []
-        var start = 0.0
-        for (index, segment) in segments.enumerated() {
-            let share = Double(segment.weight) / total
-            if animates {
-                let head = Double(index) / Double(segments.count), tail = head + span * share
-                colors += [segment.color.cgColor, segment.color.withAlphaComponent(0).cgColor, NSColor.clear.cgColor]
-                locations += [head, tail, tail + 0.001]
-            } else {
-                colors += [segment.color.withAlphaComponent(0.75).cgColor, segment.color.withAlphaComponent(0.75).cgColor]
-                locations += [start, start + share]
-                start += share
+    /// Eases from what is on screen, so a change during an earlier one
+    /// continues from there. The orbit's rotation is a separate animation.
+    private func apply(_ stops: [ActivityOrbit.Stop], easing: Bool) {
+        let shown = comet.presentation() ?? comet
+        let from: [String: Any?] = ["colors": shown.colors, "locations": shown.locations]
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        comet.colors = stops.map(\.color.cgColor)
+        comet.locations = stops.map { NSNumber(value: $0.location) }
+        if easing {
+            for (key, value) in from {
+                let transition = CABasicAnimation(keyPath: key)
+                transition.fromValue = value
+                transition.duration = 0.35
+                transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                comet.add(transition, forKey: key)
             }
         }
-        comet.colors = colors
-        comet.locations = locations.map { NSNumber(value: $0) }
+        CATransaction.commit()
     }
 
     private func refreshAnimation() {
         // Occlusion pauses the orbit; a window whose state is not computed yet still starts it.
-        guard animates, let window, window.occlusionState.contains(.visible) || !window.isVisible, !segments.isEmpty else {
+        guard animates, let window, window.occlusionState.contains(.visible) || !window.isVisible,
+              segments.contains(where: { $0.weight > 0 }) else {
             comet.removeAnimation(forKey: "orbit")
             return
         }

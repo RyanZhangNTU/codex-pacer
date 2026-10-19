@@ -64,6 +64,8 @@ Agents that a task spawns are grouped under it with their running count and comb
 
 Click a task to open its conversation. Codex tasks open in the Codex app. A task started in another app shows that app's name and switches to it, relaunching the app if it quit. This covers Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin. Claude Desktop sessions open in Claude Desktop, and Claude sessions on SSH hosts resume in Terminal. Pacer only learns which app started a task while the task is running; if it doesn't know, it says so, and the message disappears after 30 seconds. Opening never sends a prompt.
 
+To open Codex or Claude without a task, use the app buttons just left of the panel controls in the task header, one per enabled module in its color. A click brings that desktop app forward, launching it if needed, without opening a conversation. A module whose desktop app isn't installed shows no button; turn them all off with *Show App Buttons* in **Settings → General**.
+
 When a turn ends, its card stays until you open it, clear it with **Mark All as Read** or the retention time passes (30 minutes by default; set it in **Settings → Reminders**). **Mark All as Read** is the button next to the pin in the expanded island. It clears every ended card on all pages at once and leaves running tasks and anything waiting for your reply or approval. Cleared cards don't come back after a restart.
 
 ### Quota
@@ -114,7 +116,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 
 | Page | What you can change |
 | --- | --- |
-| General | Updates, Open at Login, language (follow macOS, English or Simplified Chinese), Hide Project Names. |
+| General | Updates, Open at Login, language (follow macOS, English or Simplified Chinese), Hide Project Names, Show App Buttons. |
 | Appearance | Solid black or Liquid Glass, Notch or Custom with its screen position (center or a corner strip), which display, and whether to show in full-screen spaces. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |

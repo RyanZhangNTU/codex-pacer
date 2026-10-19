@@ -19,7 +19,7 @@ extension AgentProvider {
     var tint: Color {
         self == .codex ? Color(red: 0.49, green: 0.84, blue: 0.77) : Color(red: 0.95, green: 0.61, blue: 0.42)
     }
-    /// Generic glyph for settings navigation; never a vendor logo.
+    /// Generic glyph for settings navigation and app buttons; never a vendor logo.
     var glyph: String { self == .codex ? "chevron.left.forwardslash.chevron.right" : "asterisk" }
 }
 
@@ -126,6 +126,8 @@ struct IslandIconButton: View {
     let title: String
     var help: String?
     var active = false
+    /// A provider color stays on at rest; plain controls brighten on hover.
+    var tint: Color?
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
@@ -134,7 +136,7 @@ struct IslandIconButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(active || hovered ? PacerPalette.primary : PacerPalette.secondary)
+                .foregroundStyle(tint ?? (active || hovered ? PacerPalette.primary : PacerPalette.secondary))
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(active || (hovered && enabled) ? PacerPalette.hover : .clear))
                 .contentShape(Circle())
