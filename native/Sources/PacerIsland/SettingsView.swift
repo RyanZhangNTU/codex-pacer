@@ -27,13 +27,12 @@ struct SettingsView: View {
     @State private var claudeWindowID = UserDefaults.standard.string(forKey: "claudeQuotaWindowID") ?? "auto"
     @State private var completedRetention = UserDefaults.standard.object(forKey: "completedRetentionMinutes") as? Int ?? 30
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
-    @State private var showsAppButtons = UserDefaults.standard.object(forKey: IslandModel.showsAppButtonsKey) == nil
-        || UserDefaults.standard.bool(forKey: IslandModel.showsAppButtonsKey)
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var monitorRemoteControl = UserDefaults.standard.object(forKey: "monitorRemoteControl") == nil || UserDefaults.standard.bool(forKey: "monitorRemoteControl")
-    /// Shared with the update note, which can change it while this is open.
+    /// Shared with the update note, which can change them while this is open.
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
+    @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
     /// Text settings commit on Return, focus loss, a chooser or window close;
@@ -637,7 +636,6 @@ struct SettingsView: View {
         defaults.set(claudeWindowID, forKey: "claudeQuotaWindowID")
         defaults.set(completedRetention, forKey: "completedRetentionMinutes")
         defaults.set(hideProjects, forKey: "hideProjects")
-        defaults.set(showsAppButtons, forKey: IslandModel.showsAppButtonsKey)
         model.applySettings(sourceChanged: false)
     }
 

@@ -580,6 +580,10 @@
 "whats_new.done" = "继续";
 "whats_new.mark_all_read" = "全部标为已读";
 "whats_new.mark_all_read_detail" = "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。";
+"whats_new.app_buttons" = "从灵动岛打开 Codex 或 Claude";
+"whats_new.app_buttons_detail" = "展开后“全部标为已读”旁的按钮可直接打开各服务的桌面版，没有任务时也可用。可在这里或“设置 > 通用”中关闭。";
+"whats_new.dual_orbit" = "两个服务同时运行时徽标更顺滑";
+"whats_new.dual_orbit_detail" = "Codex 和 Claude 同时运行时，任务徽标周围的两道光弧头部清晰、位置固定，任务开始或结束时平滑地长出或淡出。";
 "whats_new.open_at_login" = "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。";
 "whats_new.child_endings" = "已结束的子代理不再显示为运行中";
 "whats_new.child_endings_detail" = "Pacer 重新连接、唤醒或重启后，已结束的 Codex 子代理不会再显示为运行中。";
