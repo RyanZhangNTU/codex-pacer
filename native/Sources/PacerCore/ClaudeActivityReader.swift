@@ -34,6 +34,11 @@ struct ClaudeActivityReader {
             guard !cursor.sanitized else { return nil }
             return ClaudeActivityRecord.encode(["kind": "discontinuity", "origin": "reader", "sessionId": cursor.session, "at": now.timeIntervalSince1970])
         }
+        func emit(_ rows: [Data], historical: Bool) {
+            guard historical else { records += rows; return }
+            let values = rows.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            if !values.isEmpty, let frame = ClaudeActivityRecord.encode(["kind": "claudeBatch", "attaching": true, "records": values]) { records.append(frame) }
+        }
         var candidates: [(URL, Date, String, String?, Bool)] = []
         if discover {
             scans += 1
@@ -148,13 +153,19 @@ struct ClaudeActivityReader {
                         transcriptDocumentParses += 1
                         if let parsed = ClaudeTranscriptFields(Data(line)) {
                             let prompt = cursor.context.promptID(for: parsed, sessionID: cursor.session, parentID: cursor.parent)
-                            sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt)
+                            if prompt == nil, cursor.context.awaitedParent != nil {
+                                let owned = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent,
+                                    promptID: ClaudeTranscriptContext.pendingOwner)
+                                sanitized = ClaudeTranscriptContext.unowned(owned)
+                                cursor.context.deferLast(owned, historical: historical)
+                            } else {
+                                sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt)
+                            }
                         } else { sanitized = [] }
                     }
-                    if historical {
-                        let rows = sanitized.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-                        if !rows.isEmpty, let frame = ClaudeActivityRecord.encode(["kind": "claudeBatch", "attaching": true, "records": rows]) { records.append(frame) }
-                    } else { records += sanitized }
+                    emit(sanitized, historical: historical)
+                    // A late parent proves the owner of descendants read before it.
+                    for release in cursor.context.takeReleased() { emit(release.rows, historical: release.historical) }
                 }
                 if cursor.fragment.contains(10) || cursor.offset < size { caughtUp = false }
                 if cursor.offset >= (cursor.historicalEnd ?? UInt64.max),

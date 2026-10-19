@@ -93,6 +93,144 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         XCTAssertTrue(history.activities.first?.isHistoricalCompletion ?? false)
     }
 
+    func testParentWrittenAfterTheEndingReleasesTheDeferredEndingInNativeSshAndReplay() throws {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-late-parent-" + UUID().uuidString)
+        let project = home.appendingPathComponent("projects/synthetic")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = project.appendingPathComponent(session + ".jsonl")
+        // The answer and stop reach the file before the tool result they
+        // descend from; the result carries no promptId of its own.
+        var rows = ending
+        rows[3].removeValue(forKey: "promptId")
+        rows = [rows[0], rows[2], rows[1], rows[4], rows[5], rows[3]]
+        try bytes([rows[0]]).write(to: file)
+        var reader = ClaudeActivityReader(), native = runningState()
+        for record in reader.read(home: home, discover: true, now: now).records { native.consume(record, now: now) }
+        var projected: [Data] = []
+        for (index, row) in rows.dropFirst().enumerated() {
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.seekToEnd(); try handle.write(contentsOf: bytes([row])); try handle.close()
+            let result = reader.read(home: home, discover: false, now: now)
+            projected += result.records
+            for record in result.records { native.consume(record, now: now) }
+            if index == 3 { XCTAssertEqual(native.activities.first?.phase, .running, "An ending without a proven owner waits") }
+        }
+        XCTAssertEqual(native.activities.first?.phase, .completed)
+        XCTAssertEqual(native.activities.first?.turnID, prompt)
+        XCTAssertFalse(native.activities.first?.isHistoricalCompletion ?? true)
+        let nativeText = projected.map { String(decoding: $0, as: UTF8.self) }.joined()
+        XCTAssertFalse(nativeText.contains("PRIVATE") || nativeText.contains(ClaudeTranscriptContext.pendingOwner))
+
+        try bytes([rows[0]]).write(to: file)
+        let fixture = home.appendingPathComponent("rows.json")
+        try JSONSerialization.data(withJSONObject: Array(rows.dropFirst())).write(to: fixture)
+        let program = "tailer=Tailer(pathlib.Path(sys.argv[1]));tailer.discover();chunks=[tailer.read()]\nfor row in json.loads(pathlib.Path(sys.argv[3]).read_text()):\n with open(sys.argv[2],'ab') as stream:stream.write((json.dumps(row)+'\\n').encode())\n tailer.poll();chunks.append(tailer.read())\ntailer.close();print(json.dumps(chunks))\n"
+        let output = try ssh(program, arguments: [home.path, file.path, fixture.path])
+        let chunks = try XCTUnwrap(JSONSerialization.jsonObject(with: output) as? [[[String: Any]]])
+        var remote = runningState(remote: true)
+        for (index, chunk) in chunks.enumerated() {
+            remote.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": chunk])!, now: now)
+            if index == 4 { XCTAssertEqual(remote.activities.first?.phase, .running) }
+        }
+        XCTAssertEqual(remote.activities.first?.phase, .completed)
+        XCTAssertEqual(remote.activities.first?.turnID, prompt)
+        let remoteText = String(decoding: output, as: UTF8.self)
+        XCTAssertFalse(remoteText.contains("PRIVATE") || remoteText.contains(ClaudeTranscriptContext.pendingOwner))
+
+        var historicalReader = ClaudeActivityReader(), history = ClaudeActivityState()
+        for record in historicalReader.read(home: home, discover: true, now: now).records { history.consume(record, now: now) }
+        XCTAssertEqual(history.activities.first?.phase, .completed)
+        XCTAssertTrue(history.activities.first?.isHistoricalCompletion ?? false)
+    }
+
+    func testCompressedChainsStayCheapRepeatedRecordsKeepOwnersAndDeferredRowsStayBounded() throws {
+        var context = ClaudeTranscriptContext()
+        var records: [[String: Any]] = [], expected: [String?] = []
+        func resolve(_ value: [String: Any]) -> String? {
+            let owner = context.promptID(for: ClaudeActivityRecord.encode(value)!, sessionID: session, parentID: nil)
+            records.append(value); expected.append(owner)
+            return owner
+        }
+        // A window that starts mid-turn and an ownerless legacy root both
+        // leave long unresolved chains; neither is walked again per record.
+        var parent = "before-window"
+        for i in 0..<1500 { XCTAssertNil(resolve(row("attachment", id: "lost-\(i)", parent: parent))); parent = "lost-\(i)" }
+        XCTAssertNil(resolve(row("user", id: "legacy-root")))
+        parent = "legacy-root"
+        for i in 0..<1500 { XCTAssertNil(resolve(row("attachment", id: "legacy-\(i)", parent: parent))); parent = "legacy-\(i)" }
+        XCTAssertLessThan(context.parentLookups, 4 * records.count, "Unresolved links are compressed")
+
+        XCTAssertEqual(resolve(row("user", id: "root", prompt: prompt)), prompt)
+        XCTAssertEqual(resolve(row("assistant", id: "repeated", parent: "root")), prompt)
+        XCTAssertEqual(resolve(row("assistant", id: "repeated", parent: "never-read")), prompt, "A repeated record keeps its proven owner")
+        XCTAssertEqual(resolve(row("system", id: "after-repeat", parent: "repeated")), prompt)
+
+        var bounded = ClaudeTranscriptContext()
+        func wait(_ id: String, on parent: String, item: Int) {
+            XCTAssertNil(bounded.promptID(for: ClaudeActivityRecord.encode(row("system", id: id, parent: parent))!, sessionID: session, parentID: nil))
+            bounded.deferLast([ClaudeActivityRecord.encode(["kind": "stopVerified", "origin": "transcript", "sessionId": session,
+                "promptId": ClaudeTranscriptContext.pendingOwner, "itemId": "item-\(item)", "at": 1_800_000_000.0])!], historical: false)
+        }
+        func arrive(_ id: String) -> [String] {
+            XCTAssertEqual(bounded.promptID(for: ClaudeActivityRecord.encode(row("user", id: id, prompt: prompt))!, sessionID: session, parentID: nil), prompt)
+            return bounded.takeReleased().flatMap(\.rows).compactMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+                .map { ($0["promptId"] as? String ?? "") + "/" + ($0["itemId"] as? String ?? "") }
+        }
+        for i in 0..<100 { wait("same-\(i)", on: "shared-parent", item: i) }
+        XCTAssertEqual(bounded.deferredRows, 64, "One awaited ID keeps its newest rows")
+        let shared = (36..<100).map { prompt + "/item-\($0)" }
+        XCTAssertEqual(arrive("shared-parent"), shared)
+        for i in 0..<600 { wait("wait-\(i)", on: "missing-\(i)", item: i) }
+        XCTAssertEqual(bounded.deferredRows, 16, "Only the newest awaited IDs are kept")
+        XCTAssertEqual(arrive("missing-0"), [], "The oldest awaited ID was evicted")
+        XCTAssertEqual(arrive("missing-599"), [prompt + "/item-599"])
+
+        let fixture = URL(fileURLWithPath: "/private/tmp/pacer-claude-compressed-" + UUID().uuidString + ".json")
+        try JSONSerialization.data(withJSONObject: records).write(to: fixture)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let program = "class Counting(dict):\n lookups=0\n def get(self,key,default=None):\n  Counting.lookups+=1;return dict.get(self,key,default)\ncursor={'session':sys.argv[1],'parent':None,'context':Counting()};tailer=Tailer(pathlib.Path('/synthetic'))\nowners=[tailer.prompt_context_record(row,cursor) for row in json.loads(pathlib.Path(sys.argv[2]).read_text())]\nlate={'session':sys.argv[1],'parent':None}\ndef wait(uid,parent,item):\n tailer.prompt_context_record({'type':'system','sessionId':sys.argv[1],'uuid':uid,'parentUuid':parent},late)\n tailer.defer_record(late,[{'kind':'stopVerified','promptId':PENDING_OWNER,'itemId':'item-%d'%item}],False)\ndef arrive(uid):\n tailer.prompt_context_record({'type':'user','sessionId':sys.argv[1],'uuid':uid,'promptId':sys.argv[3]},late)\n return [row['promptId']+'/'+row['itemId'] for row in late.pop('released',[])]\ndef deferred():return sum(slot[0] for slot in late.get('deferred',{}).values())\nfor i in range(100):wait('same-%d'%i,'shared-parent',i)\nchecks=[deferred(),arrive('shared-parent')]\nfor i in range(600):wait('wait-%d'%i,'missing-%d'%i,i)\nchecks+=[deferred(),arrive('missing-0'),arrive('missing-599')]\ntailer.close();print(json.dumps({'owners':owners,'lookups':Counting.lookups,'checks':checks}))\n"
+        let output = try ssh(program, arguments: [session, fixture.path, prompt])
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: output) as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(result["owners"] as? [Any]).map { $0 as? String }, expected, "SSH and native ownership agree")
+        XCTAssertLessThan(try XCTUnwrap(result["lookups"] as? Int), 4 * records.count)
+        let checks = try XCTUnwrap(result["checks"] as? [Any])
+        XCTAssertEqual(checks[0] as? Int, 64)
+        XCTAssertEqual(checks[1] as? [String], shared)
+        XCTAssertEqual(checks[2] as? Int, 16)
+        XCTAssertEqual(checks[3] as? [String], [])
+        XCTAssertEqual(checks[4] as? [String], [prompt + "/item-599"])
+    }
+
+    func testRowsDerivedFromTheDeferredFormMatchTheUnownedTranscriptInNativeAndSsh() throws {
+        // Every row kind an unresolved descendant can produce, including the
+        // reply-box ending that only an owned turn emits.
+        let records = [
+            row("assistant", id: "model", parent: "unread", second: 1, extra: ["requestId": "request-1", "cwd": "/private/tmp/synthetic",
+                "message": ["role": "assistant", "id": "message-1", "model": "claude-synthetic", "usage": ["output_tokens": 12],
+                    "stop_reason": "end_turn", "content": [["type": "thinking"], ["type": "text", "text": "PRIVATE answer"],
+                        ["type": "tool_use", "id": "tool-one", "name": "AskUserQuestion"], ["type": "tool_use", "id": "tool-two", "name": "Agent"]]]]),
+            row("user", id: "reply-box", parent: "unread", second: 2, extra: ["mcpMeta": ["_meta": ["claude/endTurn": true]],
+                "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-one", "content": "PRIVATE choice"]]]]),
+            row("system", id: "stop", parent: "unread", second: 3,
+                extra: ["subtype": "stop_hook_summary", "preventedContinuation": false, "hookErrors": [String](), "hookAdditionalContext": [String]()]),
+            row("result", id: "result", parent: "unread", second: 4, extra: ["subtype": "success"]),
+            row("attachment", id: "attachment", parent: "unread", second: 5)]
+        func decoded(_ rows: [Data]) -> NSArray { rows.compactMap { try? JSONSerialization.jsonObject(with: $0) } as NSArray }
+        var replyEnding = false
+        for record in records {
+            let parsed = try XCTUnwrap(ClaudeTranscriptFields(ClaudeActivityRecord.encode(record)!))
+            let owned = ClaudeActivityRecord.transcript(parsed, sessionID: session, promptID: ClaudeTranscriptContext.pendingOwner)
+            replyEnding = replyEnding || decoded(owned).contains { ($0 as? [String: Any])?["awaitsReply"] as? Bool == true }
+            XCTAssertEqual(decoded(ClaudeTranscriptContext.unowned(owned)), decoded(ClaudeActivityRecord.transcript(parsed, sessionID: session)),
+                record["uuid"] as? String ?? "")
+        }
+        XCTAssertTrue(replyEnding, "The fixture covers the owned-only ending")
+        let data = try ssh("rows=json.loads(sys.argv[2])\nprint(json.dumps([unowned_rows(transcript_record(row,sys.argv[1],None,PENDING_OWNER))==transcript_record(row,sys.argv[1]) for row in rows]))\n",
+            arguments: [session, String(decoding: try JSONSerialization.data(withJSONObject: records), as: UTF8.self)])
+        XCTAssertEqual(try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Bool]), Array(repeating: true, count: records.count))
+    }
+
     func testLateParentStaysBoundToItsOriginalPromptAndCannotEndTheNextPrompt() throws {
         let next = "00000000-0000-4000-8000-000000000003"
         let rows = [row("user", id: "old", prompt: prompt),
