@@ -154,7 +154,7 @@ private struct IslandExpandedContent: View {
     }
 }
 
-/// Panel actions sit at the right of the task header. Pin and Settings stay
+/// Panel actions sit at the right of the task header. Read, Pin and Settings stay
 /// one click away; refresh and quit are rare and share one menu. Collapsing
 /// needs no control: moving away, Escape or unpinning closes the panel.
 struct IslandPanelControls: View {
@@ -169,6 +169,8 @@ struct IslandPanelControls: View {
                     .background(PacerPalette.fill, in: Capsule())
                     .fixedSize().padding(.trailing, 4)
             }
+            IslandIconButton(symbol: "checkmark.rectangle.stack", title: L10n.text("activity.mark_all_read")) { model.markAllRead() }
+                .disabled(!model.canMarkAllRead)
             IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin",
                 title: model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"), active: model.pinned) { model.togglePin() }
             IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings")) { model.onSettings?() }

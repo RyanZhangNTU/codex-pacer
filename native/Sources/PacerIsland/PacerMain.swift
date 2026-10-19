@@ -431,11 +431,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.delegate = self
             whatsNewWindow = window
         }
-        let hosting = NSHostingView(rootView: WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
+        var view = WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
             onSettingsChange: { [weak self] in self?.model.applySettings(sourceChanged: false) },
-            onDone: { [weak self] in self?.closeWhatsNew() }))
+            onDone: { [weak self] in self?.closeWhatsNew() })
+        let hosting = NSHostingView(rootView: view)
+        let screen = whatsNewWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first
+        let titleHeight = whatsNewWindow.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 28
+        let maximumHeight = min(640, max(0, (screen?.visibleFrame.height ?? 800) - titleHeight - 48))
+        view.height = min(hosting.fittingSize.height, maximumHeight)
+        hosting.rootView = view
         whatsNewWindow?.contentView = hosting
-        whatsNewWindow?.setContentSize(hosting.fittingSize)
+        whatsNewWindow?.setContentSize(NSSize(width: WhatsNewView.width, height: view.height ?? maximumHeight))
         whatsNewWindow?.center()
         whatsNewWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

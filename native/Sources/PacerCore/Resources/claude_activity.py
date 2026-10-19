@@ -7,6 +7,8 @@ import base64, datetime, json, math, os, pathlib, re, select, socket, struct, sy
 
 MAX_FRAME = 1024 * 1024
 ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$')
+# Stands in for the owner of a record whose parent has not been read yet.
+PENDING_OWNER = 'pacer-pending-owner'
 
 def ident(value):
     if not isinstance(value, str) or not ID.fullmatch(value): return None
@@ -58,6 +60,17 @@ def agent_notification(text):
     report=tail[:-len('\n</task-notification>')]
     if '</task-notification>' in report:return None
     return agent,item,status
+
+def unowned_rows(owned):
+    # Generated prompts keep their own UUID but still carry unknown ownership.
+    # Reply-box endings are emitted for owned turns alone.
+    rows=[]
+    for row in owned:
+        if row.get('kind')=='prompt':rows.append(dict(row,unownedTurn=True))
+        elif row.get('promptId')!=PENDING_OWNER:rows.append(row)
+        elif not row.get('awaitsReply'):
+            row=dict(row,unownedTurn=True);del row['promptId'];rows.append(row)
+    return rows
 
 def transcript_record(value, owner, parent=None, prompt=None):
     # The tailer shares this one decoded line with its ID-only parent context.
@@ -435,13 +448,13 @@ class Tailer:
             if cursor is None: continue
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
-                if reset: cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],discardingOversize=False)
+                if reset: cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
                 budget=512*1024 if cursor['offset']==0 else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
                 gap=s.st_size-cursor['offset']>(budget if cursor['offset']==0 else 8*1024*1024)
                 if gap:
-                    cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],discardingOversize=False)
+                    cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 fragment_start=cursor['offset']-len(cursor['fragment'])
                 with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(budget)
@@ -460,7 +473,7 @@ class Tailer:
                 for line in lines:
                     historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd'];fragment_start+=len(line)+1
                     if len(line)>MAX_FRAME:
-                        cursor.update(context={},contextOrder=[])
+                        cursor.update(context={},contextOrder=[],deferred={})
                         if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                         continue
                     if cursor['owned']: values=sanitized(line)
@@ -468,10 +481,15 @@ class Tailer:
                         try: value=json.loads(line)
                         except (ValueError,UnicodeError): continue
                         prompt=self.prompt_context_record(value,cursor)
-                        values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
+                        if prompt is None and cursor.get('awaiting'):
+                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER)
+                            values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
+                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
                     rows.extend(dict(row,historical=historical) for row in values)
+                    # A late parent proves the owner of descendants read before it.
+                    rows.extend(cursor.pop('released',[]))
                 if len(cursor['fragment'])>MAX_FRAME:
-                    cursor.update(fragment=b'',context={},contextOrder=[],discardingOversize=True)
+                    cursor.update(fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=True)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 if cursor['offset']<s.st_size:self.dirty.add(file)
                 # Keep both byte/line budgets. Complete owned records must
@@ -485,18 +503,69 @@ class Tailer:
         try:value=json.loads(raw)
         except (ValueError,UnicodeError):return None
         return self.prompt_context_record(value,cursor)
+    def resolve_owner(self,context,current):
+        # Follow links to a proven prompt, the first unread ID or an ownerless
+        # root, then compress the walked links onto that answer.
+        path=[]
+        for _ in range(len(context)+1):
+            if not current:
+                for walked in path[:-1]:context[walked]=(None,path[-1])
+                return None,None
+            node=context.get(current)
+            if node is None:
+                for walked in path:context[walked]=(None,current)
+                return None,current
+            if node[0]:
+                for walked in path:context[walked]=(node[0],context[walked][1])
+                return node[0],None
+            path.append(current);current=node[1]
+        return None,None
     def prompt_context_record(self,value,cursor):
+        cursor['awaiting']=None
         if not isinstance(value,dict) or (ident(value.get('sessionId')) or cursor['session'])!=(cursor['parent'] or cursor['session']):return None
         context=cursor.setdefault('context',{});order=cursor.setdefault('contextOrder',[])
-        prompt=ident(value.get('promptId')) or context.get(ident(value.get('parentUuid')))
+        parent=ident(value.get('parentUuid'));prompt=ident(value.get('promptId'));missing=None
+        if prompt is None:prompt,missing=self.resolve_owner(context,parent)
         origin=value.get('origin',{})
         if prompt is None and value.get('type')=='user' and isinstance(origin,dict) and origin.get('kind')=='human':prompt=ident(value.get('uuid'))
         node=ident(value.get('uuid'))
-        if node and prompt:
+        if node:
+            # Keep unresolved parent links as well as proven prompt anchors.
+            # A repeated record keeps the ownership it already proved.
+            if missing==node:missing=None
             if node not in context:order.append(node)
-            context[node]=prompt
+            elif prompt is None:prompt=context[node][0]
+            context[node]=(prompt,parent)
             if len(order)>512:context.pop(order.pop(0),None)
+            self.settle_deferred(cursor,node,prompt,missing)
+        if prompt is None:cursor['awaiting']=missing
         return prompt
+    def defer_record(self,cursor,values,historical):
+        # Hold the owned form until the awaited parent arrives. Metadata
+        # already applies without an owner, so only the other rows wait.
+        waiting=[row for row in values if row.get('kind')!='metadata']
+        if waiting:self.enqueue_deferred(cursor,cursor['awaiting'],[(waiting,historical)])
+    def enqueue_deferred(self,cursor,awaiting,entries):
+        # At most 16 awaited IDs, each keeping its newest 64 rows.
+        deferred=cursor.setdefault('deferred',{})
+        if awaiting not in deferred:
+            if len(deferred)>=16:deferred.pop(next(iter(deferred)))
+            deferred[awaiting]=[0,[]]
+        slot=deferred[awaiting]
+        for rows,historical in entries:slot[1].append((rows,historical));slot[0]+=len(rows)
+        while slot[0]>64 and len(slot[1])>1:slot[0]-=len(slot[1].pop(0)[0])
+    def settle_deferred(self,cursor,node,prompt,missing):
+        slot=cursor.get('deferred',{}).pop(node,None)
+        if slot is None:return
+        entries=slot[1]
+        if prompt:
+            released=cursor.setdefault('released',[])
+            for rows,historical in entries:
+                for row in rows:
+                    row=dict(row,historical=historical)
+                    if row.get('promptId')==PENDING_OWNER:row['promptId']=prompt
+                    released.append(row)
+        elif missing:self.enqueue_deferred(cursor,missing,entries)
     def close(self):
         if self.fd >= 0: os.close(self.fd);self.fd=-1
 

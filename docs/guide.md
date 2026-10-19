@@ -27,7 +27,7 @@ The first time you open Codex Pacer 3, or the first launch after upgrading from 
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex** or **Settings → Claude**, and reopen the guide from **Settings → Help**.
 
-After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list.
+After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list. Settings → What's New keeps every note to read again.
 
 ## The collapsed bar
 
@@ -64,7 +64,7 @@ Agents that a task spawns are grouped under it with their running count and comb
 
 Click a task to open its conversation. Codex tasks open in the Codex app. A task started in another app shows that app's name and switches to it, relaunching the app if it quit. This covers Claude tasks started in a terminal or an editor, and Claude or Codex tasks from apps that embed them, such as a Zotero plugin. Claude Desktop sessions open in Claude Desktop, and Claude sessions on SSH hosts resume in Terminal. Pacer only learns which app started a task while the task is running; if it doesn't know, it says so, and the message disappears after 30 seconds. Opening never sends a prompt.
 
-When a turn ends, its card stays until you open it or the retention time passes (30 minutes by default; set it in **Settings → Reminders**).
+When a turn ends, its card stays until you open it, clear it with **Mark All as Read** or the retention time passes (30 minutes by default; set it in **Settings → Reminders**). **Mark All as Read** is the button next to the pin in the expanded island. It clears every ended card on all pages at once and leaves running tasks and anything waiting for your reply or approval. Cleared cards don't come back after a restart.
 
 ### Quota
 
@@ -120,6 +120,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |
 | Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, each service's sessions from other apps, quota history and details. |
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
+| What's New | The highlights of every update since 3.1, newest first, with the same switches as the update note and a link to the full release notes. |
 | Help | A legend of every mark on the island, the welcome guide, and links to this guide and the issue tracker. |
 
 **Open at Login** uses the macOS login item, so it also appears in **System Settings → General → Login Items**. If Pacer is switched off there, Settings says so and offers a **Login Items** button to allow it again.

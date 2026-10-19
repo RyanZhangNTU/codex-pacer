@@ -24,9 +24,21 @@ public struct AttentionPolicy: Sendable {
     public init() {}
 
     public mutating func requestNotices(_ requests: [PendingAttentionRequest]) -> [IslandNotice] {
-        let current = Set(requests.map { $0.id + ":" + $0.kind.rawValue })
+        // Only the same observed thread/turn/call can share a reminder across
+        // sources. A source change alone says nothing about question identity.
+        func key(_ request: PendingAttentionRequest) -> String {
+            if request.provider == .codex, request.sourceHostID == nil, request.kind == .input, let question = request.questionKey {
+                return "codex-question:" + question
+            }
+            return request.id + ":" + request.kind.rawValue
+        }
+        let current = Set(requests.map(key))
         defer { pendingRequests = current }
-        return requests.filter { !pendingRequests.contains($0.id + ":" + $0.kind.rawValue) }.map { request in
+        var emitted: Set<String> = []
+        return requests.filter { request in
+            let identity = key(request)
+            return !pendingRequests.contains(identity) && emitted.insert(identity).inserted
+        }.map { request in
             IslandNotice(id: "request:" + request.id, kind: .waitingForInput,
                 title: L10n.text(request.kind == .approval ? "attention.approval" : "attention.input"),
                 detail: request.sourceName ?? L10n.text("activity.local_task"))

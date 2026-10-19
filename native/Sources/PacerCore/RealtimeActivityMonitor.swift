@@ -255,8 +255,11 @@ public actor RealtimeActivityMonitor {
                 guard let rawID = row["id"], rawID.count <= 256,
                       let kind = row["kind"].flatMap(PendingAttentionRequest.Kind.init(rawValue:)) else { continue }
                 let key = prefix + rawID
-                attentionRequests[key] = previous[key].flatMap { $0.kind == kind ? $0 : nil } ?? PendingAttentionRequest(id: key, threadID: thread.lowercased(),
-                    sourceHostID: host == "local" ? nil : host, sourceName: current.hosts[host], kind: kind, detectedAt: Date())
+                let question = row["questionKey"].flatMap { value in
+                    value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } ? value : nil
+                }
+                attentionRequests[key] = previous[key].flatMap { $0.kind == kind && $0.questionKey == question ? $0 : nil } ?? PendingAttentionRequest(id: key, threadID: thread.lowercased(),
+                    sourceHostID: host == "local" ? nil : host, sourceName: current.hosts[host], kind: kind, detectedAt: Date(), questionKey: question)
             }
         } else {
             let host = frame["hostId"] as? String ?? "local"

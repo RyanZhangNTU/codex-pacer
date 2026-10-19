@@ -111,6 +111,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
             ForEach([SettingsPane.codex, .claude, .connections]) { sidebarRow($0) }
             Spacer(minLength: 0)
+            sidebarRow(.whatsNew)
             sidebarRow(.help)
             Button { model.onQuit?() } label: {
                 Label(L10n.text("common.quit"), systemImage: "power").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -233,6 +234,8 @@ struct SettingsView: View {
             }
         case .codex, .claude:
             if let provider = pane.provider { providerPane(provider) }
+        case .whatsNew:
+            SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
         case .help:
             SettingsHelpPane(onShowWelcome: onShowWelcome)
         case .connections:
@@ -699,7 +702,7 @@ private struct LiveSettings: Equatable {
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, appearance, collapsedBar, reminders, codex, claude, connections, help
+    case general, appearance, collapsedBar, reminders, codex, claude, connections, whatsNew, help
     static let defaultsKey = "settingsPane"
     var id: String { rawValue }
     var provider: AgentProvider? { self == .codex ? .codex : self == .claude ? .claude : nil }
@@ -712,6 +715,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .codex: return AgentProvider.codex.displayName
         case .claude: return AgentProvider.claude.displayName
         case .connections: return L10n.text("settings.pane.connections")
+        case .whatsNew: return L10n.text("whats_new.window_title")
         case .help: return L10n.text("settings.pane.help")
         }
     }
@@ -724,6 +728,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .codex: return AgentProvider.codex.glyph
         case .claude: return AgentProvider.claude.glyph
         case .connections: return "point.3.connected.trianglepath.dotted"
+        case .whatsNew: return "sparkles"
         case .help: return "questionmark"
         }
     }
@@ -736,6 +741,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .codex: return AgentProvider.codex.tint
         case .claude: return AgentProvider.claude.tint
         case .connections: return Color(red: 0.16, green: 0.5, blue: 1)
+        case .whatsNew: return Color(red: 0.93, green: 0.29, blue: 0.6)
         case .help: return Color(white: 0.52)
         }
     }

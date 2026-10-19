@@ -354,8 +354,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     public mutating func consume(_ line: Data) {
         guard provider == .codex,
-              let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let payload = value["payload"] as? [String: Any] else { return }
+              let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
+        consume(value)
+    }
+    var acceptsLogAttention: Bool { provider == .codex && !ignoringInheritedHistory && !isInternalReview && !isIgnoredCodexSession }
+    mutating func consume(_ value: [String: Any]) {
+        guard provider == .codex, let payload = value["payload"] as? [String: Any] else { return }
         defer { rememberRate() }
         if value["type"] as? String == "session_meta" {
             if let raw = payload["id"] as? String, let uuid = UUID(uuidString: raw) {
@@ -810,7 +814,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private static let dates = LogDateParser()
-    fileprivate static func parseDate(_ string: String) -> Date? { dates.parse(string) }
+    static func parseDate(_ string: String) -> Date? { dates.parse(string) }
 }
 
 /// Reads recent files and resumed sessions from the read-only Codex index.
@@ -822,6 +826,7 @@ public actor LocalActivityReader {
         var activity: SessionActivity
         var identity: UInt64
         var parentCompletion: SessionActivity.SubagentEvidence?
+        var attention = CodexLogAttention()
     }
     private var cursors: [URL: Cursor] = [:]
     private var metadata: [URL: (identity: UInt64, activity: SessionActivity)] = [:]
@@ -836,7 +841,7 @@ public actor LocalActivityReader {
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
                      excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
-                     subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>) {
+                     subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>, requests: [PendingAttentionRequest]) {
         func retainingCompletion(_ cursor: Cursor) -> Cursor {
             var value = cursor
             if let id = value.activity.threadID, let evidence = subagentStates[id], evidence.state == "completed",
@@ -985,6 +990,7 @@ public actor LocalActivityReader {
                 current.fragment.removeAll()
                 if cursors[file] != nil {
                     current.activity.markDiscontinuity()
+                    current.attention.reset()
                     if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: current.activity.threadID) { current.activity.consume(anchor) }
                 }
                 dropPartial = true
@@ -999,10 +1005,13 @@ public actor LocalActivityReader {
                     current.fragment.removeSubrange(...end)
                 }
                 while let end = current.fragment.firstIndex(of: 10) {
-                    current.activity.consume(current.fragment.prefix(upTo: end))
+                    if let value = try? JSONSerialization.jsonObject(with: current.fragment.prefix(upTo: end)) as? [String: Any] {
+                        current.activity.consume(value)
+                        current.attention.consume(value, activity: current.activity, now: now)
+                    }
                     current.fragment.removeSubrange(...end)
                 }
-                if current.fragment.count > maxBytes { current.fragment.removeAll() }
+                if current.fragment.count > maxBytes { current.fragment.removeAll(); current.attention.reset() }
                 if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
@@ -1025,7 +1034,8 @@ public actor LocalActivityReader {
         let watched = selected.filter { metadata[$0]?.activity.isIgnoredCodexSession != true }
         watchURLs += watched.map { $0.deletingLastPathComponent() }
         return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
-                watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs)
+                watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs,
+                cursors.values.flatMap { $0.attention.requests(for: projected($0)) }.filter { !ignoredIDs.contains($0.activity.id) })
     }
     /// Recover the latest explicit turn anchor without loading conversation history.
     /// Scan the existing 8 MiB budget; retain one anchor and numeric first-output times.

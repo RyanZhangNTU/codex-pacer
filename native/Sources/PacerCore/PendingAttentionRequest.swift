@@ -11,10 +11,13 @@ public struct PendingAttentionRequest: Equatable, Sendable, Identifiable {
     public let sourceName: String?
     public let kind: Kind
     public let detectedAt: Date
-    public init(id: String, threadID: String, sourceHostID: String?, sourceName: String?, kind: Kind, detectedAt: Date, provider: AgentProvider = .codex) {
+    /// Hashed thread/turn/call identity shared by local Codex async-question sources.
+    public let questionKey: String?
+    public init(id: String, threadID: String, sourceHostID: String?, sourceName: String?, kind: Kind, detectedAt: Date, provider: AgentProvider = .codex,
+                questionKey: String? = nil) {
         self.id = id; self.threadID = threadID; self.sourceHostID = sourceHostID
         self.provider = provider
-        self.sourceName = sourceName; self.kind = kind; self.detectedAt = detectedAt
+        self.sourceName = sourceName; self.kind = kind; self.detectedAt = detectedAt; self.questionKey = questionKey
     }
     public var activity: SessionActivity {
         SessionActivity(id: provider.activityID(sessionID: threadID, sourceHostID: sourceHostID),

@@ -29,6 +29,21 @@ final class WhatsNewTests: XCTestCase {
         XCTAssertEqual(versions("3.0.9", defaults), ["3.0.9"], "Newer notes wait for their own version")
     }
 
+    func testSettingsHistoryListsEveryNoteUpToTheRunningVersionNewestFirst() throws {
+        let unordered = [catalog[2], catalog[0], catalog[1]]
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.10", releases: unordered).map(\.version), ["3.0.10", "3.0.9", "3.0.2"])
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.9", releases: unordered).map(\.version), ["3.0.9", "3.0.2"],
+            "Notes for a newer version wait for it")
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.1", releases: unordered).map(\.version), [])
+        XCTAssertEqual(WhatsNew.history(upTo: nil, releases: unordered).map(\.version), ["3.0.10", "3.0.9", "3.0.2"])
+        let defaults = try defaults()
+        WhatsNew.markSeen("3.0.10", defaults: defaults)
+        XCTAssertEqual(versions("3.0.10", defaults), [])
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.10", releases: unordered).count, 3, "Seen notes stay readable")
+        XCTAssertEqual(WhatsNew.history(upTo: "3.2.1").map(\.version), WhatsNew.releases.map(\.version),
+            "A targeted introduction is still part of the history")
+    }
+
     func testOlderCopyNeverLowersTheRecordOrReplaysNotes() throws {
         let defaults = try defaults()
         WhatsNew.markSeen("3.0.10", defaults: defaults)
@@ -36,6 +51,22 @@ final class WhatsNewTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: WhatsNew.defaultsKey), "3.0.10")
         XCTAssertEqual(versions("3.0.9", defaults), [])
         XCTAssertEqual(versions("3.0.10", defaults), [])
+    }
+
+    func test321IntroductionTargets320WithoutChangingCumulativeOlderHighlights() throws {
+        let defaults = try defaults()
+        func pending() -> [String] { WhatsNew.pending(current: "3.2.1", defaults: defaults).map(\.version) }
+        XCTAssertEqual(pending(), [], "An unknown migration baseline must not opt into the targeted introduction")
+        defaults.set("3.1.0", forKey: WhatsNew.defaultsKey)
+        XCTAssertEqual(pending(), ["3.2.0", "3.1.2", "3.1.1"], "Older upgrades still collect their missed highlights")
+        defaults.set("3.1.2", forKey: WhatsNew.defaultsKey)
+        XCTAssertEqual(pending(), ["3.2.0"])
+        defaults.set("3.2.0", forKey: WhatsNew.defaultsKey)
+        XCTAssertEqual(pending(), ["3.2.1"])
+        XCTAssertEqual(pending(), ["3.2.1"], "Opening without confirming keeps the introduction pending")
+        WhatsNew.markSeen("3.2.1", defaults: defaults)
+        XCTAssertEqual(pending(), [])
+        XCTAssertEqual(WhatsNew.pending(current: "3.2.0", defaults: defaults), [])
     }
 
     func testShippedHighlightsAreOrderedAndLocalized() {
@@ -46,7 +77,9 @@ final class WhatsNewTests: XCTestCase {
             XCTAssertFalse(release.items.isEmpty, release.version)
             for item in release.items {
                 for key in [item.titleKey, item.detailKey] {
-                    XCTAssertNotEqual(L10n.text(key, language: .english), key)
+                    for language in [AppLanguage.english, .simplifiedChinese] {
+                        XCTAssertNotEqual(L10n.text(key, language: language), key)
+                    }
                 }
             }
         }
