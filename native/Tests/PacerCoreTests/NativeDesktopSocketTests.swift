@@ -104,7 +104,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
 
-    func testMonitorPreservesAsyncQuestionIdentityWhenTheSameItemIDIsUsedInAnotherTurn() async throws {
+    func testMonitorGivesAReusedAsyncQuestionItemIDANewIdentityInAnotherTurn() async throws {
         final class Requests: @unchecked Sendable {
             let lock = NSLock()
             var values: [PendingAttentionRequest] = []
@@ -155,8 +155,9 @@ final class NativeDesktopSocketTests: XCTestCase {
         await fulfillment(of: [exited], timeout: 5)
         let values = captured.all(), thread = "019a0000-0000-7000-8000-000000000001"
         XCTAssertEqual(values.count, 2)
-        XCTAssertEqual(values.map(\.questionKey), ["first-turn", "next-turn"].map { CodexLogAttention.key(thread: thread, turn: $0, call: "question-call") })
-        XCTAssertEqual(values.first?.id, values.last?.id, "A reused Desktop item ID cannot keep the previous turn's question identity")
+        XCTAssertEqual(values.first?.id, values.last?.id, "Desktop's request ID alone cannot tell the two turns apart")
+        XCTAssertEqual(values.map(\.questionKey), ["first-turn", "next-turn"].map { CodexLogAttention.key(thread: thread, turn: $0, call: "question-call") },
+            "A reused Desktop item ID cannot keep the previous turn's question identity")
         XCTAssertFalse(String(describing: values).contains("PRIVATE"))
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
