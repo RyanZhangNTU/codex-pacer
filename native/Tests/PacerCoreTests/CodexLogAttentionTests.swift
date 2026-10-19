@@ -32,6 +32,7 @@ final class CodexLogAttentionTests: XCTestCase {
         feed(output())
         let pending = try XCTUnwrap(state.requests(for: activity).first)
         XCTAssertEqual(pending.kind, .input); XCTAssertEqual(pending.threadID, thread)
+        XCTAssertEqual(pending.questionKey, CodexLogAttention.key(thread: thread, turn: "turn-a", call: "synthetic-call"))
         XCTAssertEqual(activity.phase, .running)
         feed(output())
         XCTAssertEqual(state.requests(for: activity).map(\.id), [pending.id], "Repeated output cannot replay a notice")
@@ -142,13 +143,15 @@ final class CodexLogAttentionTests: XCTestCase {
     }
 
     func testQuestionMovingBetweenDesktopAndTheLogKeepsOneReminder() {
-        func request(_ id: String, kind: PendingAttentionRequest.Kind = .input, thread: String? = nil) -> PendingAttentionRequest {
-            PendingAttentionRequest(id: id, threadID: thread ?? self.thread, sourceHostID: nil, sourceName: nil, kind: kind, detectedAt: epoch)
+        func request(_ id: String, call: String? = nil, kind: PendingAttentionRequest.Kind = .input, thread: String? = nil) -> PendingAttentionRequest {
+            let thread = thread ?? self.thread
+            return PendingAttentionRequest(id: id, threadID: thread, sourceHostID: nil, sourceName: nil, kind: kind, detectedAt: epoch,
+                questionKey: call.flatMap { CodexLogAttention.key(thread: thread, turn: "turn-a", call: $0) })
         }
         var policy = AttentionPolicy()
-        let logged = request(CodexLogAttention.requestPrefix + "question")
+        let logged = request(CodexLogAttention.requestPrefix + "question", call: "question")
         XCTAssertEqual(policy.requestNotices([logged]).count, 1)
-        XCTAssertTrue(policy.requestNotices([request("desktop-question")]).isEmpty, "Desktop's stream takes over the logged question")
+        XCTAssertTrue(policy.requestNotices([request("desktop-question", call: "question")]).isEmpty, "Desktop's stream takes over the logged question")
         XCTAssertTrue(policy.requestNotices([logged]).isEmpty, "The fallback takes it back without a second reminder")
         XCTAssertEqual(policy.requestNotices([request("desktop-approval", kind: .approval), logged]).count, 1, "Approvals stay independent")
         XCTAssertEqual(policy.requestNotices([request(CodexLogAttention.requestPrefix + "next")]).count, 1,
@@ -157,5 +160,35 @@ final class CodexLogAttentionTests: XCTestCase {
         XCTAssertEqual(policy.requestNotices([request("desktop-question")]).count, 1)
         XCTAssertEqual(policy.requestNotices([request("desktop-next")]).count, 1)
         XCTAssertEqual(policy.requestNotices([request("desktop-next"), request("desktop-other", thread: "other-thread")]).count, 1)
+    }
+
+    func testDifferentCallsAndTurnsNotifyAcrossSourceChangesWithoutAnEmptyUpdate() throws {
+        for loggedFirst in [false, true] {
+            for (turn, call) in [("turn-a", "next-call"), ("turn-b", "original-call")] {
+                func request(logged: Bool, turn: String, call: String) throws -> PendingAttentionRequest {
+                    let key = try XCTUnwrap(CodexLogAttention.key(thread: thread, turn: turn, call: call))
+                    return PendingAttentionRequest(id: (logged ? CodexLogAttention.requestPrefix : "desktop:") + key,
+                        threadID: thread, sourceHostID: nil, sourceName: nil, kind: .input, detectedAt: epoch, questionKey: key)
+                }
+                var policy = AttentionPolicy()
+                let original = try request(logged: loggedFirst, turn: "turn-a", call: "original-call")
+                let next = try request(logged: !loggedFirst, turn: turn, call: call)
+                XCTAssertEqual(policy.requestNotices([original]).count, 1)
+                XCTAssertEqual(policy.requestNotices([next]).count, 1, "A different call or turn must notify even when its source changes")
+                XCTAssertTrue(policy.requestNotices([next]).isEmpty, "The new question still notifies only once")
+                let same = try request(logged: loggedFirst, turn: turn, call: call)
+                XCTAssertTrue(policy.requestNotices([same]).isEmpty, "Only the matching question shares the reminder")
+            }
+        }
+    }
+
+    func testSourceChangesWithoutProvenQuestionIdentityDoNotSuppressNewRequests() {
+        var policy = AttentionPolicy()
+        func request(_ id: String) -> PendingAttentionRequest {
+            PendingAttentionRequest(id: id, threadID: thread, sourceHostID: nil, sourceName: nil, kind: .input, detectedAt: epoch)
+        }
+        XCTAssertEqual(policy.requestNotices([request(CodexLogAttention.requestPrefix + "old")]).count, 1)
+        XCTAssertEqual(policy.requestNotices([request("desktop-new")]).count, 1)
+        XCTAssertTrue(policy.requestNotices([request("desktop-new")]).isEmpty)
     }
 }

@@ -4,8 +4,7 @@ import CryptoKit
 /// Fallback for Desktop async questions when its IPC owner supplies no stream.
 /// Keeps only hashed call IDs, acceptance and timestamps, never question text.
 struct CodexLogAttention: Sendable {
-    /// Marks requests from this fallback, so a question moving between it and
-    /// Desktop's stream keeps one reminder.
+    /// Namespace for request IDs emitted by the log fallback.
     static let requestPrefix = "codex-log-question:"
     private static let questionTools: Set<String> = ["request_user_input_async", "functions.request_user_input_async"]
     private static let hexDigits = Array("0123456789abcdef".utf8)
@@ -62,12 +61,12 @@ struct CodexLogAttention: Sendable {
               [.running, .waitingForInput].contains(activity.phase), let thread = activity.threadID else { return [] }
         return calls.filter { $0.value.accepted }.map { key, call in
             PendingAttentionRequest(id: Self.requestPrefix + key, threadID: thread, sourceHostID: nil,
-                sourceName: nil, kind: .input, detectedAt: call.at)
+                sourceName: nil, kind: .input, detectedAt: call.at, questionKey: key)
         }.sorted { $0.id < $1.id }
     }
 
     /// Thread, turn and call in one opaque key; the call ID itself is not kept.
-    private static func key(thread: String, turn: String, call: String) -> String? {
+    static func key(thread: String, turn: String, call: String) -> String? {
         guard !call.isEmpty, call.utf8.count <= 256,
               call.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]*\z"#, options: .regularExpression) != nil else { return nil }
         var hex: [UInt8] = []

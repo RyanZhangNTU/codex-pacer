@@ -4,7 +4,7 @@
 
 - Add **Mark All as Read** next to the pin in the expanded island. One click clears every unread ended task on all pages, and cleared tasks stay cleared after a restart. Tasks that are running or waiting for a reply or approval, and sessions hidden in Settings, are left alone.
 - Fix Claude Desktop tasks that sometimes stayed marked as running after the reply finished. Desktop can save a record before the one it follows, such as an attachment before its tool result, so Pacer could not tell which prompt the final reply and its stop belonged to. Pacer now links them once the missing record arrives, even when it lands after the reply, and the task ends normally. This applies to local and SSH sessions alike; an ending from an earlier prompt still cannot end a newer one.
-- Fix Codex Desktop questions that sometimes showed no reminder when Codex stopped sending live updates to Pacer. Pacer now also picks up the question from Codex's local session log, and the reminder clears once you reply or the turn ends. A question that moves between the two sources keeps a single reminder. Approval requests still rely on live updates.
+- Fix Codex Desktop questions that sometimes showed no reminder when Codex stopped sending live updates to Pacer. Pacer now also picks up the question from Codex's local session log, and the reminder clears once you reply or the turn ends. A question that moves between the two sources keeps a single reminder; different questions and new turns still notify when the source changes. Approval requests still rely on live updates.
 
 ## 3.2.0
 

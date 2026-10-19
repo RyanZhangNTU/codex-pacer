@@ -191,6 +191,8 @@ final class NativeDesktopTests: XCTestCase {
             history["history"] = canonical; raw["turnHistory"] = history
             _ = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": raw]), owner: "owner", at: epoch)
             XCTAssertEqual(projection.requests.map(\.kind), [.input])
+            let firstQuestion = try XCTUnwrap(projection.requests.first?.questionKey)
+            XCTAssertEqual(firstQuestion, CodexLogAttention.key(thread: thread, turn: "turn0", call: "question0"))
             XCTAssertTrue(projection.isActive)
             XCTAssertFalse(String(describing: projection).contains("PRIVATE"))
             func patch(_ base: Int, _ path: [Any], _ value: Any, op: String = "add") throws -> JSONFieldView {
@@ -205,6 +207,8 @@ final class NativeDesktopTests: XCTestCase {
             _ = try projection.consume(patch(2, items + [4], ["id": "question1", "type": "agentMessage", "questions": []]), owner: "owner", at: epoch)
             _ = try projection.consume(patch(3, items + [4, "questions", 0], ["title": "PRIVATE"]), owner: "owner", at: epoch)
             XCTAssertEqual(projection.requests.count, 1)
+            XCTAssertEqual(projection.requests.first?.questionKey, CodexLogAttention.key(thread: thread, turn: "turn0", call: "question1"))
+            XCTAssertNotEqual(projection.requests.first?.questionKey, firstQuestion, "Each async call has its own identity in the same turn")
             _ = try projection.consume(patch(4, items + [4, "questions", 0], NSNull(), op: "remove"), owner: "owner", at: epoch)
             XCTAssertTrue(projection.requests.isEmpty)
             _ = try projection.consume(patch(5, items + [4, "questions"], [["title": "PRIVATE"]], op: "replace"), owner: "owner", at: epoch)

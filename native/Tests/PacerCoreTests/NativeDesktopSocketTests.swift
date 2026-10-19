@@ -104,6 +104,63 @@ final class NativeDesktopSocketTests: XCTestCase {
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
 
+    func testMonitorPreservesAsyncQuestionIdentityWhenTheSameItemIDIsUsedInAnotherTurn() async throws {
+        final class Requests: @unchecked Sendable {
+            let lock = NSLock()
+            var values: [PendingAttentionRequest] = []
+            func append(_ requests: [PendingAttentionRequest]) -> Int? {
+                lock.lock(); defer { lock.unlock() }
+                guard let request = requests.first, values.last?.questionKey != request.questionKey else { return nil }
+                values.append(request); return values.count
+            }
+            func all() -> [PendingAttentionRequest] { lock.lock(); defer { lock.unlock() }; return values }
+        }
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-question-identity-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let prefix = try XCTUnwrap(Self.server.range(of: "change({'type':'snapshot'"))
+        let script = String(Self.server[..<prefix.lowerBound]) + #"""
+        change({'type':'snapshot','revision':0,'conversationState':{'threadRuntimeStatus':{'type':'active','activeFlags':[]},
+            'turns':[{'turnId':'first-turn','status':'inProgress','items':[{'id':'question-call','type':'agentMessage','questions':[{'title':'PRIVATE'}]}]}]}})
+        assert sys.stdin.readline().strip()=='next-turn'
+        change({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['turns',0,'turnId'],'value':'next-turn'}]})
+        try:
+            while True:read()
+        except (EOFError,ConnectionResetError):pass
+        connection.close();server.close()
+        """#
+        let child = Process(), input = Pipe(), stderr = Pipe()
+        let exited = expectation(description: "question fixture exited")
+        child.terminationHandler = { _ in exited.fulfill() }
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", script, home.path]
+        child.standardInput = input; child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
+        try child.run()
+        defer { if child.isRunning { child.terminate() } }
+        let socket = home.appendingPathComponent("ipc/ipc.sock")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        let first = expectation(description: "first question"), next = expectation(description: "same item in a new turn")
+        let captured = Requests(), monitor = RealtimeActivityMonitor()
+        await monitor.start(home: home, includeSSH: false, useSSHFallback: false) { _, _, _, requests, _, _, _ in
+            switch captured.append(requests) {
+            case 1: first.fulfill()
+            case 2: next.fulfill()
+            default: break
+            }
+        }
+        await fulfillment(of: [first], timeout: 5)
+        try input.fileHandleForWriting.write(contentsOf: Data("next-turn\n".utf8))
+        await fulfillment(of: [next], timeout: 5)
+        await monitor.shutdown()
+        await fulfillment(of: [exited], timeout: 5)
+        let values = captured.all(), thread = "019a0000-0000-7000-8000-000000000001"
+        XCTAssertEqual(values.count, 2)
+        XCTAssertEqual(values.map(\.questionKey), ["first-turn", "next-turn"].map { CodexLogAttention.key(thread: thread, turn: $0, call: "question-call") })
+        XCTAssertEqual(values.first?.id, values.last?.id, "A reused Desktop item ID cannot keep the previous turn's question identity")
+        XCTAssertFalse(String(describing: values).contains("PRIVATE"))
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+
     func testMonitorDeliversFinalEndingBeforeSocketEOF() async throws {
         for routing in [false, true] {
             for atomic in routing ? [true, false] : [true] {
