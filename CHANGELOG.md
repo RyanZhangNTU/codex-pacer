@@ -3,7 +3,6 @@
 ## 3.2.1
 
 - Add **Mark All as Read** next to the pin in the expanded island. One click clears every unread ended task on all pages, and cleared tasks stay cleared after a restart. Tasks that are running or waiting for a reply or approval, and sessions hidden in Settings, are left alone.
-- Scroll long What's New notes so the title and **Continue** button stay in view.
 
 ## 3.2.0
 
