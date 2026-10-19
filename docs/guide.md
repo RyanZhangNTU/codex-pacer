@@ -27,7 +27,7 @@ The first time you open Codex Pacer 3, or the first launch after upgrading from 
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex** or **Settings → Claude**, and reopen the guide from **Settings → Help**.
 
-After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list.
+After later 3.x updates, a short **What's New** note appears once instead. It lists the highlights, offers any new setting it mentions in place, and **Release Notes** opens the full list. Settings → What's New keeps every note to read again.
 
 ## The collapsed bar
 
@@ -120,6 +120,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Reminders | Collapsed-bar warnings, system notifications, and how long ended tasks stay. |
 | Codex, Claude | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, each service's sessions from other apps, quota history and details. |
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
+| What's New | The highlights of every update since 3.1, newest first, with the same switches as the update note and a link to the full release notes. |
 | Help | A legend of every mark on the island, the welcome guide, and links to this guide and the issue tracker. |
 
 **Open at Login** uses the macOS login item, so it also appears in **System Settings → General → Login Items**. If Pacer is switched off there, Settings says so and offers a **Login Items** button to allow it again.

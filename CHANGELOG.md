@@ -3,6 +3,7 @@
 ## 3.2.1
 
 - Add **Mark All as Read** next to the pin in the expanded island. One click clears every unread ended task on all pages, and cleared tasks stay cleared after a restart. Tasks that are running or waiting for a reply or approval, and sessions hidden in Settings, are left alone.
+- Add **What's New** to Settings, above Help. It lists the highlights of every update since 3.1.0, newest first, with the same switches as the update note and a link to the full release notes.
 
 ## 3.2.0
 

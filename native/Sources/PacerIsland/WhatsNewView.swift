@@ -66,7 +66,8 @@ struct WhatsNewView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(release.items.enumerated()), id: \.offset) { index, item in
                         if index > 0 { Divider().padding(.leading, 50) }
-                        row(item)
+                        WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin)
+                            .padding(.horizontal, 12).padding(.vertical, 10)
                     }
                 }
                 .welcomeGroup()
@@ -74,11 +75,20 @@ struct WhatsNewView: View {
         }
         .padding(.horizontal, 20).padding(.bottom, 18)
     }
+}
 
-    private func row(_ item: WhatsNew.Item) -> some View {
+/// One highlight, shared by the update note and Settings, with the setting it
+/// introduces offered in place.
+struct WhatsNewItemRow: View {
+    let item: WhatsNew.Item
+    @ObservedObject var launchAtLogin: LaunchAtLoginPreference
+    @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showsEmbeddedClaudeSessions = true
+    @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showsEmbeddedCodexSessions = true
+
+    var body: some View {
         let login = item.control == .openAtLogin
         let warning = login ? launchAtLogin.failure ?? (launchAtLogin.needsApproval ? L10n.text("settings.login_item_approval") : nil) : nil
-        return HStack(spacing: 12) {
+        HStack(spacing: 12) {
             SettingsIconTile(symbol: item.symbol, tint: .accentColor, size: 26)
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.text(item.titleKey))
@@ -98,6 +108,5 @@ struct WhatsNewView: View {
             }
         }
         .font(.system(size: 13))
-        .padding(.horizontal, 12).padding(.vertical, 10)
     }
 }

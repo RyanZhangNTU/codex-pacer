@@ -62,6 +62,13 @@ public enum WhatsNew {
         .sorted { newer($0.version, than: $1.version) }
     }
 
+    /// Every note up to the running version, newest first, for Settings; a
+    /// copy without a version shows them all. Targeting does not apply here.
+    public static func history(upTo current: String?, releases: [Release] = releases) -> [Release] {
+        releases.filter { release in current.map { !newer(release.version, than: $0) } ?? true }
+            .sorted { newer($0.version, than: $1.version) }
+    }
+
     /// Never lowers the record, so running an older copy cannot replay notes.
     public static func markSeen(_ version: String, defaults: UserDefaults = .standard) {
         if let seen = defaults.string(forKey: defaultsKey), !newer(version, than: seen) { return }
