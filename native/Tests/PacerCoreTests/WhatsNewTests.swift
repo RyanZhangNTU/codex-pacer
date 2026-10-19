@@ -29,6 +29,21 @@ final class WhatsNewTests: XCTestCase {
         XCTAssertEqual(versions("3.0.9", defaults), ["3.0.9"], "Newer notes wait for their own version")
     }
 
+    func testSettingsHistoryListsEveryNoteUpToTheRunningVersionNewestFirst() throws {
+        let unordered = [catalog[2], catalog[0], catalog[1]]
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.10", releases: unordered).map(\.version), ["3.0.10", "3.0.9", "3.0.2"])
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.9", releases: unordered).map(\.version), ["3.0.9", "3.0.2"],
+            "Notes for a newer version wait for it")
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.1", releases: unordered).map(\.version), [])
+        XCTAssertEqual(WhatsNew.history(upTo: nil, releases: unordered).map(\.version), ["3.0.10", "3.0.9", "3.0.2"])
+        let defaults = try defaults()
+        WhatsNew.markSeen("3.0.10", defaults: defaults)
+        XCTAssertEqual(versions("3.0.10", defaults), [])
+        XCTAssertEqual(WhatsNew.history(upTo: "3.0.10", releases: unordered).count, 3, "Seen notes stay readable")
+        XCTAssertEqual(WhatsNew.history(upTo: "3.2.1").map(\.version), WhatsNew.releases.map(\.version),
+            "A targeted introduction is still part of the history")
+    }
+
     func testOlderCopyNeverLowersTheRecordOrReplaysNotes() throws {
         let defaults = try defaults()
         WhatsNew.markSeen("3.0.10", defaults: defaults)
