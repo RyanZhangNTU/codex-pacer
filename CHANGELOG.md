@@ -2,6 +2,8 @@
 
 ## 3.2.1
 
+- Fix missed Codex Desktop question reminders when its live event stream is unavailable. Accepted questions now also reach the island through the existing local log reader and clear after a reply or the turn ends.
+
 - Add **Mark All as Read** next to the pin in the expanded island. One click clears every unread ended task on all pages, and cleared tasks stay cleared after a restart. Tasks that are running or waiting for a reply or approval, and sessions hidden in Settings, are left alone.
 - Fix Claude Desktop tasks that sometimes stayed marked as running after the reply finished. Desktop can save a record before the one it follows, such as an attachment before its tool result, so Pacer could not tell which prompt the final reply and its stop belonged to. Pacer now links them once the missing record arrives, even when it lands after the reply, and the task ends normally. This applies to local and SSH sessions alike; an ending from an earlier prompt still cannot end a newer one.
 
