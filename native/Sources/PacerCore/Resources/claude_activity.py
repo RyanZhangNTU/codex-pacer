@@ -488,13 +488,18 @@ class Tailer:
     def prompt_context_record(self,value,cursor):
         if not isinstance(value,dict) or (ident(value.get('sessionId')) or cursor['session'])!=(cursor['parent'] or cursor['session']):return None
         context=cursor.setdefault('context',{});order=cursor.setdefault('contextOrder',[])
-        prompt=ident(value.get('promptId')) or context.get(ident(value.get('parentUuid')))
+        parent=ident(value.get('parentUuid'));prompt=ident(value.get('promptId'));current=parent;visited=set()
+        while prompt is None and current and current not in visited:
+            visited.add(current);node=context.get(current)
+            if node is None:break
+            prompt,current=node
         origin=value.get('origin',{})
         if prompt is None and value.get('type')=='user' and isinstance(origin,dict) and origin.get('kind')=='human':prompt=ident(value.get('uuid'))
         node=ident(value.get('uuid'))
-        if node and prompt:
+        if node:
+            # Keep unresolved parent links as well as proven prompt anchors.
             if node not in context:order.append(node)
-            context[node]=prompt
+            context[node]=(prompt,parent)
             if len(order)>512:context.pop(order.pop(0),None)
         return prompt
     def close(self):
