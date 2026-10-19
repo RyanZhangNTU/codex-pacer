@@ -123,4 +123,39 @@ final class CodexLogAttentionTests: XCTestCase {
         let removed = await reader.read(home: home, now: now)
         XCTAssertTrue(removed.requests.isEmpty)
     }
+
+    func testOtherToolTrafficIsSkippedBeforeAnyCallIsHashed() {
+        var activity = SessionActivity(id: thread), state = CodexLogAttention()
+        func feed(_ value: [String: Any]) {
+            activity.consume(value); state.consume(value, activity: activity, now: epoch.addingTimeInterval(100))
+        }
+        feed(start())
+        for index in 0..<500 {
+            feed(record(["type": "function_call", "name": "shell", "call_id": "tool-\(index)", "arguments": "{}"], second: 1))
+            feed(output("tool-\(index)", second: 1))
+            feed(record(["type": "message", "role": "user", "content": "PRIVATE context"], second: 1))
+        }
+        XCTAssertEqual(state.keyedRecords, 0, "Unrelated calls, outputs and messages never reach the hash")
+        feed(question(second: 2)); feed(output(second: 3))
+        XCTAssertEqual(state.keyedRecords, 2)
+        XCTAssertEqual(state.requests(for: activity).count, 1)
+    }
+
+    func testQuestionMovingBetweenDesktopAndTheLogKeepsOneReminder() {
+        func request(_ id: String, kind: PendingAttentionRequest.Kind = .input, thread: String? = nil) -> PendingAttentionRequest {
+            PendingAttentionRequest(id: id, threadID: thread ?? self.thread, sourceHostID: nil, sourceName: nil, kind: kind, detectedAt: epoch)
+        }
+        var policy = AttentionPolicy()
+        let logged = request(CodexLogAttention.requestPrefix + "question")
+        XCTAssertEqual(policy.requestNotices([logged]).count, 1)
+        XCTAssertTrue(policy.requestNotices([request("desktop-question")]).isEmpty, "Desktop's stream takes over the logged question")
+        XCTAssertTrue(policy.requestNotices([logged]).isEmpty, "The fallback takes it back without a second reminder")
+        XCTAssertEqual(policy.requestNotices([request("desktop-approval", kind: .approval), logged]).count, 1, "Approvals stay independent")
+        XCTAssertEqual(policy.requestNotices([request(CodexLogAttention.requestPrefix + "next")]).count, 1,
+            "A different question from the same source still notifies")
+        XCTAssertTrue(policy.requestNotices([]).isEmpty)
+        XCTAssertEqual(policy.requestNotices([request("desktop-question")]).count, 1)
+        XCTAssertEqual(policy.requestNotices([request("desktop-next")]).count, 1)
+        XCTAssertEqual(policy.requestNotices([request("desktop-next"), request("desktop-other", thread: "other-thread")]).count, 1)
+    }
 }

@@ -16,6 +16,8 @@ public struct AttentionPolicy: Sendable {
     private var quotaScope: String?
     private var lowWindows: Set<String> = []
     private var pendingRequests: Set<String> = []
+    /// Whether each local thread's pending input came from the log fallback.
+    private var localInputSources: [String: Bool] = [:]
     private struct CompletionKey: Hashable, Sendable {
         let activity: String
         let turn: String
@@ -25,8 +27,17 @@ public struct AttentionPolicy: Sendable {
 
     public mutating func requestNotices(_ requests: [PendingAttentionRequest]) -> [IslandNotice] {
         let current = Set(requests.map { $0.id + ":" + $0.kind.rawValue })
-        defer { pendingRequests = current }
-        return requests.filter { !pendingRequests.contains($0.id + ":" + $0.kind.rawValue) }.map { request in
+        // A local question that moves between Desktop's stream and the log
+        // fallback is still one pending question, so it keeps its reminder.
+        func logged(_ request: PendingAttentionRequest) -> Bool { request.id.hasPrefix(CodexLogAttention.requestPrefix) }
+        let sources = Dictionary(requests.filter { $0.sourceHostID == nil && $0.kind == .input }.map { ($0.threadID, logged($0)) },
+            uniquingKeysWith: { $0 || $1 })
+        defer { pendingRequests = current; localInputSources = sources }
+        return requests.filter { request in
+            guard !pendingRequests.contains(request.id + ":" + request.kind.rawValue) else { return false }
+            guard request.sourceHostID == nil, request.kind == .input, let previous = localInputSources[request.threadID] else { return true }
+            return previous == logged(request)
+        }.map { request in
             IslandNotice(id: "request:" + request.id, kind: .waitingForInput,
                 title: L10n.text(request.kind == .approval ? "attention.approval" : "attention.input"),
                 detail: request.sourceName ?? L10n.text("activity.local_task"))
