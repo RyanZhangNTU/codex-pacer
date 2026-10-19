@@ -58,6 +58,23 @@ public enum DemoScenario {
               sourceID: "remote-ssh-discovered:demo", sourceName: "SSH")]
     }
 
+    /// A Claude task beside the Codex samples that follows the same stage, so
+    /// the completion stage leaves Codex running alone and the others bring
+    /// both providers back together.
+    public static func claudeTask(stage: DemoTaskStage, at now: Date) -> SessionActivity {
+        var state = ClaudeActivityState()
+        func record(_ kind: String, _ ago: Double, _ fields: [String: Any] = [:]) -> [String: Any] {
+            var value: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": "00000000-0000-4000-8000-000000000003",
+                                        "promptId": "demo-prompt", "at": now.addingTimeInterval(ago).timeIntervalSince1970]
+            value.merge(fields) { _, new in new }; return value
+        }
+        var records = [record("metadata", -40, ["title": L10n.text("demo.review_notes"), "model": "Claude"]),
+                       record("prompt", -40), record("thinking", -36, ["itemId": "thinking"])]
+        if stage == .completed { records.append(record("stopVerified", 0)) }
+        state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": records])!, now: now)
+        return state.activities[0]
+    }
+
     /// Bounded synthetic graph for native grouping/retained-rate UI acceptance.
     public static func subagentTasks(stage: DemoTaskStage, at now: Date) -> [SessionActivity] {
         let parent = "019a0000-0000-7000-8000-000000000101"

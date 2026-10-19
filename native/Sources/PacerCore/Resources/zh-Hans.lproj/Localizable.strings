@@ -202,6 +202,7 @@
 "demo.menu" = "演示：%@";
 "demo.optimize" = "优化应用界面";
 "demo.return" = "返回状态岛";
+"demo.review_notes" = "审阅发布说明";
 "demo.thinking" = "模型思考";
 "demo.tool" = "执行工具";
 "demo.verify_remote" = "验证远程构建";

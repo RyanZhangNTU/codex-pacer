@@ -202,6 +202,7 @@
 "demo.menu" = "Demo: %@";
 "demo.optimize" = "Improve the app interface";
 "demo.return" = "Back to Island";
+"demo.review_notes" = "Review the release notes";
 "demo.thinking" = "Model Thinking";
 "demo.tool" = "Running a Tool";
 "demo.verify_remote" = "Verify the remote build";
