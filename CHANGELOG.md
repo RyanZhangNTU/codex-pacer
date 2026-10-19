@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.1
+
+- Add **Mark All as Read** to the left of the pin in the expanded island. It clears unread ended task cards across every page and keeps them acknowledged after a restart. Running families, pending replies and approvals, and hidden sessions are preserved.
+- Show the 3.2.1 introduction only to users whose last confirmed update note is 3.2.0; keep the existing welcome guide and cumulative highlights for other upgrades.
+
 ## 3.2.0
 
 - Replace the Automatic, Notch and Floating choices in Settings → Appearance with **Notch** and **Custom**. Custom places the island yourself under **Screen Position**: centered below the menu bar as before, or docked at any of the four corners as a narrow vertical strip whose long edge lies against the side of the screen, 10 points from the top or bottom. Choosing Custom over the notch starts at bottom left; a Mac that already floated keeps the centered bar.

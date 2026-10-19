@@ -184,6 +184,7 @@
 "common.open_settings" = "Open Settings";
 "common.more" = "More";
 "common.pin" = "Keep Expanded";
+"activity.mark_all_read" = "Mark All as Read";
 "common.quit" = "Quit Codex Pacer";
 "common.refresh" = "Refresh";
 "common.restore_defaults" = "Restore Defaults";
@@ -569,6 +570,8 @@
 "whats_new.version" = "Version %@";
 "whats_new.release_notes" = "Release Notes";
 "whats_new.done" = "Continue";
+"whats_new.mark_all_read" = "Mark all ended tasks as read";
+"whats_new.mark_all_read_detail" = "Use the checkmark to the left of the pin in the expanded island to clear unread ended tasks across every page. Running tasks and requests awaiting your reply or approval stay visible.";
 "whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";
 "whats_new.child_endings" = "Ended subagents stay ended";
 "whats_new.child_endings_detail" = "Ended Codex subagents no longer appear to run again after Pacer reconnects, wakes or relaunches.";
