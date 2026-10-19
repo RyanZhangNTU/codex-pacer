@@ -87,6 +87,7 @@ private indirect enum DesktopValue: Equatable {
 struct DesktopRequestDescriptor: Equatable {
     let id: String
     let kind: PendingAttentionRequest.Kind
+    var questionKey: String? = nil
 }
 
 /// The private v11 adapter keeps bounded turn headers and current-turn items.
@@ -523,7 +524,8 @@ struct DesktopWireProjection {
             guard let item = items[index], item["type"]?.text == "agentMessage",
                   !(item["questions"]?.list.isEmpty ?? true), let id = item["id"]?.text else { continue }
             let digest = SHA256.hash(data: Data("async:\(id)".utf8)).map { String(format: "%02x", $0) }.joined()
-            requests.append(DesktopRequestDescriptor(id: digest, kind: .input))
+            let question = turn["turnId"]?.text.flatMap { CodexLogAttention.key(thread: threadID, turn: $0, call: id) }
+            requests.append(DesktopRequestDescriptor(id: digest, kind: .input, questionKey: question))
         }
     }
     mutating func consume(_ change: JSONFieldView, owner: String, at now: Date = Date()) throws -> [[String: Any]] {

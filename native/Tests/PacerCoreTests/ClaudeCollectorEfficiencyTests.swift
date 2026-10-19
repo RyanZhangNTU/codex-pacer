@@ -174,7 +174,9 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-decode-') as temporary:
         assert len(clean)==1 and len(unowned)==1
         assert not any(row['kind']=='stopVerified' and row.get('promptId') in ('blocked-stop','context-stop') for row in rows)
         context_values=tailer.cursors[file].get('context',{})
-        assert context_values['attachment-1']=='live-prompt' and context_values['answer-1']=='live-prompt'
+        assert context_values['attachment-1']==('live-prompt','live-prompt')
+        assert context_values['answer-1']==('live-prompt','attachment-1')
+        assert context_values['unowned-stop']==(None,'missing-parent')
         assert 'PRIVATE' not in json.dumps(rows) and 'PRIVATE' not in json.dumps(context_values)
         assert tailer.cursors[file]['fragment']==b''
         print(json.dumps({'loads':calls[0],'lines':len(raw),'sameOutput':True,'records':rows,

@@ -495,6 +495,7 @@ final class IslandModel: ObservableObject {
     private var claudeReceivedRequests: [PendingAttentionRequest] = []
     private var claudeAttentionRequests: [PendingAttentionRequest] = []
     private var codexReceivedRequests: [PendingAttentionRequest] = []
+    private var codexLogRequests: [PendingAttentionRequest] = []
     private var excludedCodexActivityIDs: Set<String> = []
     private var codexAttentionRequests: [PendingAttentionRequest] = []
     private var claudeStreamStatuses: [String: RuntimeStreamStatus] = [:]
@@ -1305,7 +1306,16 @@ final class IslandModel: ObservableObject {
     func refilterEmbeddedSessions() {
         let hidden = hiddenEmbeddedActivityIDs
         claudeAttentionRequests = claudeReceivedRequests.filter { !hidden.contains($0.activity.id) }
-        codexAttentionRequests = codexReceivedRequests.filter { !hidden.contains($0.activity.id) }
+        let liveInputs = Set(codexReceivedRequests.filter { $0.sourceHostID == nil && $0.kind == .input }.map(\.threadID))
+        let logged = codexLogRequests.filter { request in
+            guard !liveInputs.contains(request.threadID) else { return false }
+            if let live = remoteActivities.first(where: { $0.sourceHostID == nil && $0.threadID == request.threadID && $0.hasLiveEvidence }) {
+                if let start = live.turnStartedAt, start > request.detectedAt { return false }
+                if [.completed, .interrupted].contains(live.phase), (live.phaseChangedAt ?? .distantPast) >= request.detectedAt { return false }
+            }
+            return true
+        }
+        codexAttentionRequests = (codexReceivedRequests + logged).filter { !hidden.contains($0.activity.id) }
         observeAttentionRequests(codexAttentionRequests + claudeAttentionRequests)
         combineActivities()
         for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
@@ -1367,16 +1377,18 @@ final class IslandModel: ObservableObject {
                 }
             }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-            self.now = Date()
-            self.localActivities = result.activities
-            self.excludedCodexActivityIDs = result.excludedIDs
             if !onlyMetrics {
                 self.watchedLogURLs = result.watchURLs
                 self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
             }
-            self.refilterEmbeddedSessions()
+            self.receiveLocalUpdate(result.activities, requests: result.requests, excludedIDs: result.excludedIDs)
             self.onStatusChange?()
         }
+    }
+
+    func receiveLocalUpdate(_ values: [SessionActivity], requests: [PendingAttentionRequest], excludedIDs: Set<String> = []) {
+        now = Date(); localActivities = values; codexLogRequests = requests; excludedCodexActivityIDs = excludedIDs
+        refilterEmbeddedSessions()
     }
 
     func refreshRemote() {
@@ -1516,7 +1528,7 @@ final class IslandModel: ObservableObject {
     }
     private func resetCodexSource() {
         cancelHostTracking(for: .codex); hostApplications[.codex] = [:]
-        excludedCodexActivityIDs = []; codexReceivedRequests = []
+        excludedCodexActivityIDs = []; codexReceivedRequests = []; codexLogRequests = []
         logWatcher.stop(); invalidateWork()
         let previous = client; client = nil
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
