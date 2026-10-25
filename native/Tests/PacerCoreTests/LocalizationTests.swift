@@ -71,4 +71,18 @@ final class LocalizationTests: XCTestCase {
             XCTAssertFalse(L10n.text("cli.error_code", "-32601", language: language).contains("32,601"))
         }
     }
+
+    func testResetMomentNamesTheTimeTodayTheWeekdayThisWeekAndOtherwiseTheDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Singapore"))
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-25T09:20:00Z"))
+        func moment(_ hours: Double, _ id: String) -> String {
+            L10n.moment(now.addingTimeInterval(hours * 3600), relativeTo: now, calendar: calendar, locale: Locale(identifier: id))
+        }
+        XCTAssertEqual(moment(2.33, "zh-Hans"), "19:39")
+        XCTAssertEqual(moment(4 * 24 + 15.7, "zh-Hans"), "周五 09:02")
+        XCTAssertEqual(moment(6 * 24 + 17, "zh-Hans"), "11月1日 10:20", "Seven calendar days ahead repeats today's weekday, so it shows the date")
+        XCTAssertTrue(moment(4 * 24 + 15.7, "en").hasPrefix("Fri"))
+        XCTAssertTrue(moment(6 * 24 + 17, "en").hasPrefix("Nov 1"))
+    }
 }

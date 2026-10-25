@@ -458,6 +458,16 @@
 "dashboard.countdown_minutes" = "%d分";
 "dashboard.countdown_soon" = "<1分";
 "dashboard.countdown_waiting" = "更新中";
+"dashboard.pace" = "配速";
+"dashboard.reset" = "重置";
+"dashboard.reset_at" = "%@ 重置";
+"dashboard.projection" = "预计";
+"dashboard.projection_left" = "重置时剩 %@";
+"dashboard.projection_left_inline" = "预计重置时剩 %@";
+"dashboard.projection_out" = "约 %@后用完";
+"dashboard.projection_out_inline" = "预计 %@后用完";
+"dashboard.projection_used_up" = "已用完";
+"dashboard.projection_early" = "刚开始，暂不预计";
 "settings.pane.general" = "通用";
 "settings.pane.appearance" = "外观";
 "settings.pane.collapsed" = "折叠栏";
@@ -583,7 +593,7 @@
 "whats_new.app_buttons" = "从灵动岛打开 Codex 或 Claude";
 "whats_new.app_buttons_detail" = "展开后“全部标为已读”旁的按钮可直接打开各服务的桌面版，没有任务时也可用。可在这里或“设置 > 通用”中关闭。";
 "whats_new.split_quota" = "一个圆环，同时查看两段额度";
-"whats_new.split_quota_detail" = "展开灵动岛后，较短的上弧显示 5 小时额度，较长的下弧显示 7 天额度，各自保留百分比、重置倒计时和配速刻度。可随时在“设置 → 外观”切回经典样式。";
+"whats_new.split_quota_detail" = "展开灵动岛后，较短的上弧显示 5 小时额度，较长的下弧显示 7 天额度，各自保留百分比、重置倒计时和配速刻度。只开启一个服务时，配速、重置时刻和预计显示在圆环右侧。可随时在“设置 → 外观”切回经典样式。";
 "whats_new.dual_orbit" = "两个服务同时运行时徽标更顺滑";
 "whats_new.dual_orbit_detail" = "Codex 和 Claude 同时运行时，任务徽标周围的两道光弧头部清晰、位置固定，任务开始或结束时平滑地长出或淡出。";
 "whats_new.open_at_login" = "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。";

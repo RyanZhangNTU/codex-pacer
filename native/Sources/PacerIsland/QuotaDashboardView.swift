@@ -7,9 +7,13 @@ struct QuotaDashboardSlot: Equatable, Identifiable, Sendable {
 }
 
 enum QuotaDashboardLayout {
-    static func usesLegacyCodexDisplay(providers: [AgentProvider], snapshot: QuotaSnapshot?) -> Bool {
+    /// Codex alone without a 5-hour window keeps the original bars in Classic.
+    /// Split Ring draws a 7-day window itself, so there only nonstandard or
+    /// unspecified limits keep them.
+    static func usesLegacyCodexDisplay(providers: [AgentProvider], snapshot: QuotaSnapshot?, style: ExpandedQuotaStyle) -> Bool {
         guard Set(providers) == [.codex], let primary = snapshot?.buckets.first(where: { $0.id == "codex" }),
               !primary.windows.contains(where: { $0.durationMinutes == 300 }) else { return false }
+        if style == .split, primary.windows.contains(where: { $0.durationMinutes == 10080 }) { return false }
         return primary.windows.contains {
             $0.remainingPercent != nil || ($0.durationMinutes.map { $0 > 0 } ?? false) || $0.resetsAt != nil
         }
@@ -35,14 +39,35 @@ struct QuotaDashboardView: View {
     }
 
     var body: some View {
-        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: model.enabledProviders, snapshot: model.providerQuota(.codex)),
+        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: model.enabledProviders, snapshot: model.providerQuota(.codex),
+                                                       style: model.expandedQuotaStyle),
            let snapshot = model.providerQuota(.codex) {
             LegacyCodexQuotaView(model: model, snapshot: snapshot)
         } else if model.expandedQuotaStyle == .classic {
             ClassicQuotaDashboardView(model: model)
+        } else if slots.count == 1, let provider = slots.first?.provider,
+                  model.dashboardQuota(provider: provider, period: .weekly).availability != .unavailable {
+            single(provider)
         } else {
             rings
         }
+    }
+
+    /// One service: the ring on the left, and beside it what the ring has no
+    /// room for. The header above already names the provider.
+    private func single(_ provider: AgentProvider) -> some View {
+        let weekly = model.dashboardQuota(provider: provider, period: .weekly)
+        let fiveHour = model.dashboardQuota(provider: provider, period: .fiveHour)
+        let ring = QuotaDashboardRingView(quota: weekly, fiveHourQuota: fiveHour, providerHelp: providerHelp(provider),
+                                          now: model.now, showsCaption: false)
+        return VStack(spacing: 6) {
+            HStack(spacing: 20) {
+                ring
+                QuotaDashboardDetailsView(quota: weekly, fiveHourQuota: ring.showsSplitRing ? fiveHour : nil, now: model.now)
+            }
+            .padding(.horizontal, IslandMetrics.rowInset)
+            QuotaProviderStatusView(model: model, provider: provider)
+        }.padding(.bottom, 4)
     }
 
     private var rings: some View {
@@ -101,17 +126,19 @@ private struct LegacyCodexQuotaView: View {
 
 /// Both arcs advance clockwise, each against its own quota and reset clock.
 /// The breaks sit above the center, leaving more of the circle for the week.
+/// A weekly-only gauge opens at the bottom, so even a full arc keeps two ends
+/// and room for its label.
 struct QuotaRingGeometry {
     let startDegrees: Double
     let sweepDegrees: Double
-    static let full = Self(startDegrees: -90, sweepDegrees: 360)
+    static let gauge = Self(startDegrees: 125, sweepDegrees: 290)
     static let fiveHour = Self(startDegrees: 204, sweepDegrees: 132)
     static let weekly = Self(startDegrees: 348, sweepDegrees: 204)
 
     func angle(at fraction: Double) -> Double { startDegrees + sweepDegrees * fraction }
 }
 
-private struct QuotaRingReading {
+struct QuotaRingReading {
     let quota: QuotaDashboardQuota
     let now: Date
     var fraction: Double? { normalized(quota.remainingQuotaPercent) }
@@ -125,6 +152,28 @@ private struct QuotaRingReading {
         quota.availability == .available && (fraction.map { $0 <= 0.15 } == true || verdict == .fast)
     }
     var tint: Color { quota.period == .fiveHour && pressing ? PacerPalette.attention : quota.provider.tint }
+    /// Either period's label and value turn amber together; only the 5h arc does.
+    var labelColor: Color { pressing ? PacerPalette.attention : PacerPalette.tertiary }
+    var valueColor: Color { fraction == nil ? PacerPalette.tertiary : (pressing ? PacerPalette.attention : PacerPalette.primary) }
+    /// Pace and forecast, like the verdict, need fresh quota against the live clock.
+    var paceText: String {
+        guard quota.availability == .available, let pace = quota.window?.pacePercent(at: now) else { return "—" }
+        return "\(Int(pace.rounded()))%"
+    }
+    var projection: QuotaProjection? { quota.availability == .available ? quota.window?.projection(at: now) : nil }
+    var projectionWarns: Bool { if case .runsOut = projection { return true } else { return false } }
+    func projectionText(inline: Bool) -> String? {
+        switch projection {
+        case nil: return nil
+        case .tooEarly: return L10n.text("dashboard.projection_early")
+        case .remainingAtReset(let left):
+            return L10n.text(inline ? "dashboard.projection_left_inline" : "dashboard.projection_left", "\(Int(left.rounded()))%")
+        case .runsOut(let seconds):
+            guard seconds > 0 else { return L10n.text("dashboard.projection_used_up") }
+            return L10n.text(inline ? "dashboard.projection_out_inline" : "dashboard.projection_out", CompactDuration.text(seconds))
+        }
+    }
+    var resetMoment: String? { quota.window?.resetsAt.map { L10n.moment($0, relativeTo: now) } }
     var valueText: String { percentText(quota.remainingQuotaPercent).replacingOccurrences(of: "%", with: "") }
     var countdown: String {
         guard let seconds = quota.window?.remainingSeconds(at: now) else { return "—" }
@@ -166,6 +215,8 @@ struct QuotaDashboardRingView: View {
     var fiveHourQuota: QuotaDashboardQuota? = nil
     let providerHelp: String
     let now: Date
+    /// Beside the single-service details the header already names the provider.
+    var showsCaption = true
     private static let diameter: CGFloat = 104
     private var weekly: QuotaRingReading { QuotaRingReading(quota: quota, now: now) }
     /// A reported window establishes the split even when its usage is unknown
@@ -196,25 +247,30 @@ struct QuotaDashboardRingView: View {
                         .foregroundStyle(PacerPalette.tertiary)
                         .accessibilityLabel(weekly.accessibilityLabel)
                 } else {
-                    QuotaRingGauge(reading: weekly, geometry: .full)
-                    QuotaRingValue(reading: weekly, size: 24, showsPeriod: false).frame(maxWidth: 76)
+                    QuotaRingGauge(reading: weekly, geometry: .gauge)
+                    QuotaRingValue(reading: weekly, size: 24, showsPeriod: false).frame(maxWidth: 76).offset(y: -4)
+                    // The period sits in the opening, level with the arc's ends.
+                    Text(quota.period.rawValue).font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(weekly.pressing ? PacerPalette.attention : PacerPalette.secondary)
+                        .position(x: Self.diameter / 2, y: Self.diameter * 0.91)
+                        .opacity(weekly.stale ? 0.55 : 1)
+                        .accessibilityHidden(true)
                 }
             }
             .frame(width: Self.diameter, height: Self.diameter)
-            HStack(spacing: 5) {
-                Text(quota.provider.displayName).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.primary)
-                if !showsSplitRing {
-                    Text(quota.period.rawValue).font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
-                    if let verdict = weekly.verdict { QuotaVerdictChip(verdict: verdict) }
-                }
-                if weekly.stale || (showsSplitRing && fiveHourQuota?.availability == .stale) {
-                    Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(PacerPalette.attention)
-                        .accessibilityLabel(L10n.text("common.not_updated"))
-                }
-            }.frame(height: 15).accessibilityHidden(true)
+            if showsCaption {
+                HStack(spacing: 5) {
+                    Text(quota.provider.displayName).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.primary)
+                    if !showsSplitRing, let verdict = weekly.verdict { QuotaVerdictChip(verdict: verdict) }
+                    if weekly.stale || (showsSplitRing && fiveHourQuota?.availability == .stale) {
+                        Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(PacerPalette.attention)
+                            .accessibilityLabel(L10n.text("common.not_updated"))
+                    }
+                }.frame(height: 15).accessibilityHidden(true)
+            }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: showsCaption ? .infinity : nil)
         .help(detailsHelp)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(quota.provider.displayName)
@@ -268,12 +324,11 @@ private struct QuotaRingValue: View {
         VStack(spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 if showsPeriod {
-                    Text(reading.quota.period.rawValue).font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+                    Text(reading.quota.period.rawValue).font(.system(size: 9, weight: .medium)).foregroundStyle(reading.labelColor)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 1) {
                     Text(reading.valueText).font(.system(size: size, weight: .semibold, design: .rounded))
-                        .foregroundStyle(reading.fraction == nil ? PacerPalette.tertiary :
-                            (reading.quota.period == .fiveHour && reading.pressing ? PacerPalette.attention : PacerPalette.primary))
+                        .foregroundStyle(reading.valueColor)
                     if reading.fraction != nil {
                         Text("%").font(.system(size: 9, weight: .semibold, design: .rounded)).foregroundStyle(PacerPalette.secondary)
                     }
@@ -290,6 +345,103 @@ private struct QuotaRingValue: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(reading.accessibilityLabel)
         .accessibilityHint(reading.detailsHelp)
+    }
+}
+
+/// Pace, reset moment and forecast beside a single service's ring. With 5h the
+/// two groups face the upper and lower arcs; a weekly-only account gets rows.
+private struct QuotaDashboardDetailsView: View {
+    let quota: QuotaDashboardQuota
+    let fiveHourQuota: QuotaDashboardQuota?
+    let now: Date
+
+    var body: some View {
+        let weekly = QuotaRingReading(quota: quota, now: now)
+        Group {
+            if let fiveHourQuota {
+                VStack(alignment: .leading, spacing: 9) {
+                    QuotaPeriodDetailView(reading: QuotaRingReading(quota: fiveHourQuota, now: now))
+                    Rectangle().fill(PacerPalette.hairline).frame(height: 1)
+                    QuotaPeriodDetailView(reading: weekly)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    row(L10n.text("dashboard.pace")) {
+                        if weekly.stale { QuotaFreshnessMark() } else if let verdict = weekly.verdict { QuotaVerdictChip(verdict: verdict) }
+                        QuotaPaceValue(reading: weekly, showsLabel: false)
+                    }
+                    Rectangle().fill(PacerPalette.hairline).frame(height: 1)
+                    row(L10n.text("dashboard.reset")) {
+                        Text(weekly.resetMoment ?? "—").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.primary)
+                    }
+                    Rectangle().fill(PacerPalette.hairline).frame(height: 1)
+                    row(L10n.text("dashboard.projection")) {
+                        Text(weekly.projectionText(inline: false) ?? "—").font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(weekly.projectionWarns ? PacerPalette.attention :
+                                (weekly.projection == nil || weekly.projection == .tooEarly ? PacerPalette.tertiary : PacerPalette.primary))
+                    }
+                }
+                .help(weekly.detailsHelp)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .monospacedDigit().lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func row<Value: View>(_ key: String, @ViewBuilder value: () -> Value) -> some View {
+        HStack(spacing: 6) {
+            Text(key).font(.system(size: 11)).foregroundStyle(PacerPalette.secondary)
+            Spacer(minLength: 6)
+            value()
+        }.frame(height: 26)
+    }
+}
+
+private struct QuotaPeriodDetailView: View {
+    let reading: QuotaRingReading
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(reading.quota.period.rawValue).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(reading.pressing ? PacerPalette.attention : PacerPalette.secondary)
+                if reading.stale { QuotaFreshnessMark() } else if let verdict = reading.verdict { QuotaVerdictChip(verdict: verdict) }
+                Spacer(minLength: 6)
+                QuotaPaceValue(reading: reading, showsLabel: true)
+            }.frame(height: 16)
+            HStack(spacing: 6) {
+                Text(reading.resetMoment.map { L10n.text("dashboard.reset_at", $0) } ?? L10n.text("quota.reset_unknown"))
+                Spacer(minLength: 6)
+                if let projection = reading.projectionText(inline: true) {
+                    Text(projection).foregroundStyle(reading.projectionWarns ? PacerPalette.attention : PacerPalette.tertiary)
+                }
+            }
+            .font(.system(size: 10)).foregroundStyle(PacerPalette.tertiary)
+        }
+        .help(reading.detailsHelp)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct QuotaPaceValue: View {
+    let reading: QuotaRingReading
+    let showsLabel: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if showsLabel { Text(L10n.text("dashboard.pace")).font(.system(size: 10)).foregroundStyle(PacerPalette.secondary) }
+            Text(reading.paceText).font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(reading.verdict == .fast ? PacerPalette.attention : PacerPalette.primary)
+        }
+    }
+}
+
+private struct QuotaFreshnessMark: View {
+    var body: some View {
+        Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(PacerPalette.attention)
+            .accessibilityLabel(L10n.text("common.not_updated"))
     }
 }
 

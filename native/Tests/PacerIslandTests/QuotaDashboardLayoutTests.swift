@@ -89,24 +89,71 @@ final class QuotaDashboardLayoutTests: XCTestCase {
 
     func testLegacyBarsApplyOnlyToCodexAloneWithReportedLimitsAndNoPrimaryFiveHourWindow() throws {
         let weekly = try snapshot(primary: ["windowDurationMins": 10080, "usedPercent": 40])
-        XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: weekly))
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex, .claude], snapshot: weekly))
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.claude], snapshot: weekly))
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [], snapshot: weekly))
+        XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: weekly, style: .classic))
+        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: weekly, style: .split),
+                       "Split Ring draws a weekly-only account with its own gauge and details")
         let bothPeriods = try snapshot(primary: ["windowDurationMins": 300, "usedPercent": 20],
             secondary: ["windowDurationMins": 10080, "usedPercent": 40])
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: bothPeriods))
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: nil))
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: try snapshot(primary: nil)))
-        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: try snapshot(primary: [:])))
+        for style in ExpandedQuotaStyle.allCases {
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex, .claude], snapshot: weekly, style: style))
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.claude], snapshot: weekly, style: style))
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [], snapshot: weekly, style: style))
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: bothPeriods, style: style))
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: nil, style: style))
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: try snapshot(primary: nil), style: style))
+            XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: try snapshot(primary: [:]), style: style))
+        }
     }
 
     func testLegacyPolicyRetainsNonstandardAndUnspecifiedLimitsWithoutBorrowingOtherBucketPeriods() throws {
         let limits = try snapshot(primary: ["windowDurationMins": 480], secondary: ["usedPercent": 15],
             extraBucket: ["primary": ["windowDurationMins": 300, "usedPercent": 30]])
-        XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: limits))
         let unspecified = try snapshot(primary: ["usedPercent": 15])
-        XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: unspecified))
+        for style in ExpandedQuotaStyle.allCases {
+            XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: limits, style: style))
+            XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: unspecified, style: style))
+        }
+        let weeklyAndNonstandard = try snapshot(primary: ["windowDurationMins": 480, "usedPercent": 10],
+            secondary: ["windowDurationMins": 10080, "usedPercent": 40])
+        XCTAssertFalse(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: weeklyAndNonstandard, style: .split))
+        XCTAssertTrue(QuotaDashboardLayout.usesLegacyCodexDisplay(providers: [.codex], snapshot: weeklyAndNonstandard, style: .classic))
+    }
+
+    func testWeeklyOnlyGaugeOpensAtTheBottomSoAFullArcKeepsTwoEnds() {
+        let gauge = QuotaRingGeometry.gauge
+        XCTAssertLessThan(gauge.sweepDegrees, 360)
+        XCTAssertEqual((gauge.angle(at: 0) + gauge.angle(at: 1)) / 2, 270, "The arc is centered on the top, so its opening faces down")
+        XCTAssertEqual(QuotaRingGeometry.fiveHour.sweepDegrees + QuotaRingGeometry.weekly.sweepDegrees + 24, 360,
+                       "The split ring keeps its intended 132°/204° proportions and two 12° gaps")
+    }
+
+    func testEitherPeriodTurnsItsLabelAndValueAmberWhileOnlyTheFiveHourArcChanges() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func reading(_ period: QuotaDashboardPeriod, remaining: Double, time: Double,
+                     availability: QuotaDashboardQuota.Availability = .available) -> QuotaRingReading {
+            let window = QuotaWindow(id: period.rawValue, usedPercent: 100 - remaining, durationMinutes: period.durationMinutes,
+                resetsAt: now.addingTimeInterval(Double(period.durationMinutes) * 60 * time / 100))
+            return QuotaRingReading(quota: QuotaDashboardQuota(provider: .claude, period: period, window: window,
+                availability: availability, remainingQuotaPercent: remaining, remainingTimePercent: time, capturedAt: now,
+                freshnessText: "Synthetic", sourceText: nil, bucketName: nil), now: now)
+        }
+        let fastWeek = reading(.weekly, remaining: 30, time: 70)
+        XCTAssertEqual(fastWeek.labelColor, PacerPalette.attention)
+        XCTAssertEqual(fastWeek.valueColor, PacerPalette.attention)
+        XCTAssertEqual(fastWeek.tint, AgentProvider.claude.tint, "The 7d arc keeps the provider color")
+        XCTAssertEqual(fastWeek.paceText, "43%")
+        XCTAssertTrue(fastWeek.projectionWarns, "70% spent in 30% of the week runs out before reset")
+        let fastShort = reading(.fiveHour, remaining: 18, time: 70)
+        XCTAssertEqual(fastShort.tint, PacerPalette.attention)
+        XCTAssertEqual(fastShort.labelColor, PacerPalette.attention)
+        let steady = reading(.weekly, remaining: 64, time: 61)
+        XCTAssertEqual(steady.labelColor, PacerPalette.tertiary)
+        XCTAssertEqual(steady.valueColor, PacerPalette.primary)
+        XCTAssertFalse(steady.projectionWarns)
+        let stale = reading(.weekly, remaining: 30, time: 70, availability: .stale)
+        XCTAssertEqual(stale.labelColor, PacerPalette.tertiary, "Stale quota cannot claim a live pace")
+        XCTAssertEqual(stale.paceText, "—")
+        XCTAssertNil(stale.projectionText(inline: true))
     }
 
     func testEachProviderKeepsOneRingWithoutDependingOnSelectionOrderOrModuleCount() {

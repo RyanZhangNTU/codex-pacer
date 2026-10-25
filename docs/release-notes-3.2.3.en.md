@@ -2,8 +2,9 @@ Codex Pacer 3.2.3 brings both quota windows into one ring in the expanded island
 
 - **Your choice:** Split Ring is the default. Choose **Settings → Appearance → Expanded Quota → Classic** to keep the original layout; switching is immediate and remembered.
 - **5h above, 7d below:** a shorter upper arc shows the 5-hour quota and a longer lower arc shows the 7-day quota. Each has its own remaining percentage, reset countdown and white pace tick. The same layout works with one or both services enabled.
-- The 5-hour arc and value turn amber when quota is low or spending too fast. Missing or stale data stays independent for each period.
-- Accounts without a 5-hour limit keep the full weekly ring, or the existing bars when only Codex is enabled.
+- **One service, more detail:** with only one service on, the ring sits on the left and its pace, reset time and a forecast sit on the right. The forecast shows how much will be left at reset, or when quota would run out.
+- A period's label and percentage turn amber when its quota is low or spending too fast, for 7 days as well as 5 hours; the 5-hour arc turns amber too. Missing or stale data stays independent for each period.
+- Accounts without a 5-hour limit show a weekly gauge that opens at the bottom, now also when only Codex is enabled.
 
 ### Install
 

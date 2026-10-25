@@ -102,4 +102,17 @@ public enum L10n {
                             time timeStyle: Date.FormatStyle.TimeStyle = .shortened) -> String {
         value.formatted(Date.FormatStyle(date: dateStyle, time: timeStyle).locale(locale))
     }
+
+    /// A reset short enough for one row: the time today, the weekday within the
+    /// coming six days, otherwise the date.
+    public static func moment(_ value: Date, relativeTo now: Date, calendar: Calendar = .current,
+                              locale: Locale? = nil) -> String {
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: value)).day ?? 0
+        var style = days == 0 ? Date.FormatStyle(date: .omitted, time: .shortened)
+            : (1...6).contains(days) ? Date.FormatStyle().weekday(.abbreviated).hour().minute()
+            : Date.FormatStyle().month(.abbreviated).day().hour().minute()
+        style.calendar = calendar
+        style.timeZone = calendar.timeZone
+        return value.formatted(style.locale(locale ?? Self.locale))
+    }
 }

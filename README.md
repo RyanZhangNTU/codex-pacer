@@ -43,7 +43,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 - **Every task in one list.** Codex and Claude Code tasks on this Mac, on your SSH hosts and through Codex Remote Control, each with its current stage, elapsed time, output speed and time to first output. Agents a task spawns are grouped under it.
 - **Jump back in.** Click a task to open its conversation. An ended task stays as a card until you open it or its retention time passes, so nothing finishes unnoticed.
-- **Quota with pace.** Each service has one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own remaining quota, reset countdown and white pace tick. Accounts without a 5-hour limit keep their weekly display. Switch to the original Classic layout in **Settings → Appearance → Expanded Quota**.
+- **Quota with pace.** Each service has one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own remaining quota, reset countdown and white pace tick. Accounts without a 5-hour limit get a weekly gauge that opens at the bottom. With one service on, its pace, reset time and a forecast sit beside the ring. Switch to the original Classic layout in **Settings → Appearance → Expanded Quota**.
 - **History when you want it.** Settings keeps each service's quota curve for the current cycle, plus credits and banked resets when the service reports them.
 
 ## Make it yours

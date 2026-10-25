@@ -458,6 +458,16 @@
 "dashboard.countdown_minutes" = "%dm";
 "dashboard.countdown_soon" = "<1m";
 "dashboard.countdown_waiting" = "Updating";
+"dashboard.pace" = "Pace";
+"dashboard.reset" = "Resets";
+"dashboard.reset_at" = "Resets %@";
+"dashboard.projection" = "Forecast";
+"dashboard.projection_left" = "%@ left at reset";
+"dashboard.projection_left_inline" = "%@ left at reset";
+"dashboard.projection_out" = "Runs out in %@";
+"dashboard.projection_out_inline" = "Runs out in %@";
+"dashboard.projection_used_up" = "Used up";
+"dashboard.projection_early" = "Too early to forecast";
 "settings.pane.general" = "General";
 "settings.pane.appearance" = "Appearance";
 "settings.pane.collapsed" = "Collapsed Bar";
@@ -583,7 +593,7 @@
 "whats_new.app_buttons" = "Open Codex or Claude from the island";
 "whats_new.app_buttons_detail" = "Buttons beside Mark All as Read in the expanded island bring each service’s desktop app forward, even with no task running. Turn them off here or in Settings > General.";
 "whats_new.split_quota" = "Both quota windows in one ring";
-"whats_new.split_quota_detail" = "The expanded island puts 5-hour quota in a shorter upper arc and 7-day quota in a longer lower arc, each with its own percentage, reset countdown and pace tick. Switch to Classic anytime in Settings > Appearance.";
+"whats_new.split_quota_detail" = "The expanded island puts 5-hour quota in a shorter upper arc and 7-day quota in a longer lower arc, each with its own percentage, reset countdown and pace tick. With one service on, its pace, reset time and forecast sit beside the ring. Switch to Classic anytime in Settings > Appearance.";
 "whats_new.dual_orbit" = "A smoother badge with both services";
 "whats_new.dual_orbit_detail" = "When Codex and Claude run together, both arcs around the task badge keep a clean head and their own places, and grow or fade smoothly as tasks start and end.";
 "whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";

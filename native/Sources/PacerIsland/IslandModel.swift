@@ -396,7 +396,7 @@ final class IslandModel: ObservableObject {
         let count = visibleActivities.count, rows = max(1, min(3, count))
         let taskHeight = CGFloat(rows) * 74 + CGFloat(rows - 1) * 2 + (count > 3 ? 26 : 0) + (demo ? 25 : 0)
         let quotaHeight: CGFloat
-        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: enabledProviders, snapshot: providerQuota(.codex)),
+        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: enabledProviders, snapshot: providerQuota(.codex), style: expandedQuotaStyle),
            let snapshot = providerQuota(.codex) {
             let headers = snapshot.buckets.count > 1 ? snapshot.buckets.count : 0
             quotaHeight = 256 + CGFloat(snapshot.windows.count) * 92 + CGFloat(headers) * 20
