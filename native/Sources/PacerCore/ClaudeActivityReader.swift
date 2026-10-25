@@ -90,8 +90,13 @@ struct ClaudeActivityReader {
             var seen: Set<URL> = []
             discoveryDirectories = Array(directories.filter { seen.insert($0).inserted }.prefix(Self.maximumDirectoryWatches))
         }
-        var caughtUp = true
-        for url in cursors.keys.sorted(by: { $0.path < $1.path }) {
+        var caughtUp = true, ownedBacklog = false
+        // Hooks establish the current turn before transcript endings are
+        // correlated. Like the SSH helper, transcripts wait while the owned
+        // spool still has complete records, so a later hook prompt cannot
+        // reopen a turn whose ending was read first and dropped.
+        for url in cursors.keys.sorted(by: { (cursors[$0]?.sanitized == true ? 0 : 1, $0.path) < (cursors[$1]?.sanitized == true ? 0 : 1, $1.path) }) {
+            if ownedBacklog, cursors[url]?.sanitized == false { caughtUp = false; continue }
             guard var cursor = cursors[url], let attributes = try? manager.attributesOfItem(atPath: url.path),
                   attributes[.type] as? FileAttributeType == .typeRegular,
                   let size = (attributes[.size] as? NSNumber)?.uint64Value,
@@ -167,7 +172,7 @@ struct ClaudeActivityReader {
                     // A late parent proves the owner of descendants read before it.
                     for release in cursor.context.takeReleased() { emit(release.rows, historical: release.historical) }
                 }
-                if cursor.fragment.contains(10) || cursor.offset < size { caughtUp = false }
+                if cursor.fragment.contains(10) || cursor.offset < size { caughtUp = false; if cursor.sanitized { ownedBacklog = true } }
                 if cursor.offset >= (cursor.historicalEnd ?? UInt64.max),
                    cursor.fragment.isEmpty || cursor.offset - UInt64(cursor.fragment.count) >= (cursor.historicalEnd ?? UInt64.max) { cursor.historicalEnd = nil }
                 if cursor.fragment.count > ClaudeActivityRecord.maximumBytes {
