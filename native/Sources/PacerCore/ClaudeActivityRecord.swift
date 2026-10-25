@@ -177,6 +177,7 @@ struct ClaudeActivityState: Sendable {
     private var sessions: [String: SessionActivity] = [:]
     private var hooks: Set<String> = []
     private var historicalRunning: Set<String> = []
+    private var unconfirmedBaseline: [String: Date] = [:]
     private var requests: [String: PendingAttentionRequest] = [:]
     private var metrics: [String: SessionPerformanceUpdate] = [:]
     private var observedMeters: [String: ClaudeObservedRequestMeter] = [:]
@@ -226,9 +227,23 @@ struct ClaudeActivityState: Sendable {
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
     }
     mutating func finalizeHistoricalBaseline(now: Date = Date()) {
-        for id in historicalRunning where [.running, .waitingForInput].contains(sessions[id]?.phase ?? .unknown) &&
-            now.timeIntervalSince(sessions[id]?.lastObserved ?? .distantPast) > 900 { sessions[id]?.markSourceUnavailable() }
+        for id in historicalRunning where [.running, .waitingForInput].contains(sessions[id]?.phase ?? .unknown) {
+            guard let observed = sessions[id]?.lastObserved, now.timeIntervalSince(observed) <= 900 else { sessions[id]?.markSourceUnavailable(); continue }
+            unconfirmedBaseline[id] = observed
+        }
         historicalRunning.removeAll()
+    }
+    /// A baseline tail younger than 15 minutes may still be live. It is checked
+    /// again once its evidence reaches that age; newer evidence releases it.
+    mutating func expireUnconfirmedBaseline(now: Date = Date()) {
+        for (id, observed) in unconfirmedBaseline {
+            guard let value = sessions[id], [.running, .waitingForInput].contains(value.phase), value.lastObserved == observed else {
+                unconfirmedBaseline.removeValue(forKey: id); continue
+            }
+            guard now.timeIntervalSince(observed) > 900 else { continue }
+            sessions[id]?.markSourceUnavailable(); unconfirmedBaseline.removeValue(forKey: id)
+        }
+        status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
     }
     mutating func unavailable() {
         status.connected = false; status.sourceAvailable = nil; status.watchingLogs = false

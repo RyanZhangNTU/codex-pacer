@@ -124,6 +124,9 @@ public actor ClaudeActivityMonitor {
     }
     private func maintain() async {
         await readLocal(discover: true)
+        // Rechecking recent baseline tails rides this existing minute tick.
+        local.expireUnconfirmedBaseline()
+        for id in Array(connections.keys) { connections[id]?.state.expireUnconfirmedBaseline() }
         for (id, connection) in connections where Date().timeIntervalSince(connection.lastFrame) > 45 { closed(id, process: connection.process) }
         await connectWanted(); await publish()
     }
