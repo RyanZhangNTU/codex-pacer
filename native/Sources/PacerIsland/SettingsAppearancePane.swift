@@ -13,6 +13,7 @@ struct SettingsAppearancePane: View {
     @Binding var position: IslandPosition?
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
+    @Binding var quotaStyle: ExpandedQuotaStyle
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
@@ -65,6 +66,11 @@ struct SettingsAppearancePane: View {
             }
         } header: {
             Text(L10n.text("appearance.style"))
+        }
+        Section {
+            Picker(L10n.text("appearance.expanded_quota"), selection: $quotaStyle) {
+                ForEach(ExpandedQuotaStyle.allCases) { style in Text(style.label).tag(style) }
+            }.pickerStyle(.segmented)
         }
         Section(L10n.text("appearance.position")) {
             HStack(spacing: 10) {

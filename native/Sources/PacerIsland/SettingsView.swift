@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State private var position = IslandPosition.saved()
     @State private var compactLayout = CompactIslandLayout.load()
     @State private var appearance = IslandAppearance.stored
+    @State private var quotaStyle = ExpandedQuotaStyle.load()
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
@@ -192,7 +193,7 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, position: $position,
-                displayID: $displayID, fullscreen: $fullscreen)
+                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle)
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             Section {
@@ -596,7 +597,7 @@ struct SettingsView: View {
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance,
-            fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
+            quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions)
@@ -628,6 +629,7 @@ struct SettingsView: View {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
+        quotaStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
         defaults.set(displayID, forKey: "displayID")
         defaults.set(metric, forKey: "compactMetric")
@@ -692,6 +694,7 @@ private struct LiveSettings: Equatable {
     var position: IslandPosition?
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
+    var quotaStyle: ExpandedQuotaStyle
     var fullscreen: Bool
     var displayID: Int
     var metric: String

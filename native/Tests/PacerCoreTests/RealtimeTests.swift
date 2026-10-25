@@ -23,6 +23,22 @@ final class CycleTests: XCTestCase {
         XCTAssertNil(window.pacePercent(at: epoch.addingTimeInterval(604800)))
         XCTAssertEqual(window.pacePercent(at: epoch.addingTimeInterval(604799)), 1000)
     }
+    func testProjectionExtendsTheSpendSoFarAndStaysQuietEarlyOrWithoutData() throws {
+        let half = epoch.addingTimeInterval(302400)
+        XCTAssertEqual(try weekly(80).windows[0].projection(at: half), .remainingAtReset(60))
+        XCTAssertEqual(try weekly(50).windows[0].projection(at: half), .remainingAtReset(0))
+        XCTAssertEqual(try weekly(100).windows[0].projection(at: half), .remainingAtReset(100), "No spend yet keeps the whole quota")
+        guard case .runsOut(let seconds)? = try weekly(20).windows[0].projection(at: epoch.addingTimeInterval(151200)) else {
+            return XCTFail("80% spent in a quarter of the week runs out before reset")
+        }
+        XCTAssertEqual(seconds, 37800, accuracy: 1)
+        XCTAssertEqual(try weekly(0).windows[0].projection(at: epoch.addingTimeInterval(60)), .runsOut(after: 0))
+        XCTAssertEqual(try weekly(90).windows[0].projection(at: epoch), .tooEarly)
+        XCTAssertEqual(try weekly(90).windows[0].projection(at: epoch.addingTimeInterval(30240 - 1)), .tooEarly)
+        XCTAssertNotEqual(try weekly(90).windows[0].projection(at: epoch.addingTimeInterval(30240 + 1)), .tooEarly)
+        XCTAssertNil(try weekly(50).windows[0].projection(at: epoch.addingTimeInterval(604800)), "An expired window has nothing to project")
+        XCTAssertNil(QuotaWindow(id: "w", usedPercent: nil, durationMinutes: 10080, resetsAt: half).projection(at: epoch))
+    }
     func testEarlyResetStartsFreshCurveAndPaceWindow() throws {
         var history = QuotaCycleHistory()
         history.record(try weekly(80))
