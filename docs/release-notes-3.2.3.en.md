@@ -5,7 +5,6 @@ Codex Pacer 3.2.3 brings both quota windows into one ring in the expanded island
 - **One service, more detail:** with only one service on, the ring sits on the left and its pace, reset time and a forecast sit on the right. The forecast shows how much will be left at reset, or when quota would run out.
 - A period's label and percentage turn amber when its quota is low or spending too fast, for 7 days as well as 5 hours; the 5-hour arc turns amber too. Missing or stale data stays independent for each period.
 - Accounts without a 5-hour limit show a weekly gauge that opens at the bottom, now also when only Codex is enabled.
-- **Fix:** finished Claude tasks no longer stay marked as running after Codex Pacer restarts, such as after an update.
 
 ### Install
 
