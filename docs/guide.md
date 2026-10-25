@@ -70,13 +70,14 @@ When a turn ends, its card stays until you open it, clear it with **Mark All as 
 
 ### Quota
 
-Each service gets a ring for its 7-day window:
+**Settings → Appearance → Expanded Quota** offers **Split Ring** (the default) and **Classic**. The choice applies immediately and is remembered. Classic keeps the previous weekly rings with 5-hour details underneath, or two period rings when only one service is on.
 
-- the colored arc is the quota left, with the reset countdown in the middle;
-- the white tick is where an even pace would put you today. *Ahead* means you are using less than that, *On pace* about the same, *Fast* more;
-- the 5-hour window and its reset appear on the line below. Accounts that report only a weekly limit show a PRO placeholder there.
+In Split Ring, each service gets one ring. When it reports a 5-hour limit, the shorter upper arc shows **5h** and the longer lower arc shows **7d**, with each period’s remaining percentage and reset countdown inside the ring. The same layout applies with only one service on.
 
-With only one service on, its 5-hour and 7-day windows appear as two rings side by side.
+- Each colored arc shows the quota left in its own window. Its white tick marks the remaining-time fraction; quota beyond the tick is ahead of an even pace.
+- When a period has 15% or less left, or is being used too fast, its label and percentage turn amber; the 5-hour arc turns amber too. Hover each value for the pace verdict, reset date and freshness.
+- An unknown value shows a dash and a dotted arc. Accounts without a 5-hour limit show a 7-day gauge that opens at the bottom, with **7d** in the opening.
+- With only one service on, its ring sits on the left. On the right, the 5-hour and 7-day groups face their arcs and show the pace verdict and percentage, the reset time and a forecast. The forecast extends your spending so far to the reset: how much will be left, or when quota would run out (in amber). Early in a window it waits for more data. Accounts without a 5-hour limit show pace, reset and forecast as three rows. Codex limits that are neither 5-hour nor 7-day still appear as quota bars.
 
 If quota cannot be read, the ring says why and offers a retry. Hover over a ring for the source and last update. Quota history, credits and banked resets are in **Settings → Codex** and **Settings → Claude**.
 

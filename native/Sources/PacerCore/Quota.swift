@@ -30,6 +30,18 @@ public struct QuotaWindow: Codable, Equatable, Sendable, Identifiable {
         guard let remaining = remainingPercent, let time = remainingTimePercent(at: now), time > 0 else { return nil }
         return min(1000, remaining / time * 100)
     }
+    /// Extends the average spend since the window opened to its reset. In the
+    /// first 5% of the window the spend so far says too little to project.
+    public func projection(at now: Date) -> QuotaProjection? {
+        guard let remaining = remainingPercent, let time = remainingTimePercent(at: now),
+              let minutes = durationMinutes, minutes > 0 else { return nil }
+        if remaining <= 0 { return .runsOut(after: 0) }
+        let elapsed = 100 - time, used = 100 - remaining
+        guard elapsed >= 5 else { return .tooEarly }
+        guard used > 0 else { return .remainingAtReset(remaining) }
+        let rate = used / elapsed, left = remaining - rate * time
+        return left >= 0 ? .remainingAtReset(left) : .runsOut(after: remaining / rate / 100 * Double(minutes) * 60)
+    }
 
     public init(id: String, usedPercent: Double?, durationMinutes: Int?, resetsAt: Date?) {
         self.id = id
@@ -37,6 +49,13 @@ public struct QuotaWindow: Codable, Equatable, Sendable, Identifiable {
         self.durationMinutes = durationMinutes
         self.resetsAt = resetsAt
     }
+}
+
+/// Where the spend so far leads by the window's reset.
+public enum QuotaProjection: Equatable, Sendable {
+    case tooEarly
+    case remainingAtReset(Double)
+    case runsOut(after: TimeInterval)
 }
 
 public struct QuotaBucket: Codable, Equatable, Sendable, Identifiable {
