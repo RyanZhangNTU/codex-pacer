@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.4
+
+- Fix Claude tasks that could stay marked as running after Codex Pacer restarted, such as after an update. On restart Pacer reads its hook records in batches, and could reach a conversation's ending while an older batch still named the previous turn; it dropped that ending, and the next batch reopened the finished turn. Hook records are now read in full first, as they already were for SSH hosts. A task that was actually cut off shortly before a restart is checked again once its last activity is 15 minutes old instead of staying running.
+
 ## 3.2.3
 
 - Default to the new Split Ring layout while retaining the original dashboard as **Classic** in **Settings → Appearance → Expanded Quota**. Switching applies immediately and the choice survives relaunch.

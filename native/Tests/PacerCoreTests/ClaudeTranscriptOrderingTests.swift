@@ -368,4 +368,78 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         XCTAssertEqual(owners, expected, "SSH and native ownership decisions agree at every boundary")
         XCTAssertLessThanOrEqual(try XCTUnwrap(result["largest"] as? Int), 512)
     }
+
+    /// A restart reads the hook spool in 512-line passes. Until it drains, an
+    /// older hook turn is still current, so the newest transcript ending must
+    /// wait rather than be dropped as another turn's and leave a stale run.
+    func testNativeColdReplayDrainsTheHookBacklogBeforeCorrelatingTheTranscriptEnding() throws {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-hook-backlog-" + UUID().uuidString)
+        let projects = home.appendingPathComponent("projects/synthetic"), spool = home.appendingPathComponent("pacer")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let older = "00000000-0000-4000-8000-000000000003"
+        func hook(_ kind: String, _ turn: String, at seconds: Double, item: String? = nil) -> [String: Any] {
+            var value: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": session, "promptId": turn, "at": seconds]
+            if let item { value["itemId"] = item }
+            return value
+        }
+        var hooks = [hook("prompt", older, at: 1_799_999_000)]
+        for index in 0..<260 {
+            let second = 1_799_999_001 + Double(index * 3)
+            hooks += [hook("toolStart", older, at: second, item: "older-\(index)"), hook("toolEnd", older, at: second + 1, item: "older-\(index)")]
+        }
+        hooks += [hook("stopRequested", older, at: 1_799_999_900), hook("prompt", prompt, at: 1_799_999_990),
+                  hook("toolStart", prompt, at: 1_800_000_000.5, item: "tool-one"), hook("toolEnd", prompt, at: 1_800_000_002.04, item: "tool-one"),
+                  hook("stopRequested", prompt, at: 1_800_000_004.99)]
+        try bytes(hooks).write(to: spool.appendingPathComponent("events.jsonl"))
+        // The prompt record lies before the transcript tail; the tool result
+        // carries its prompt ID and owns the ending that follows it.
+        try bytes([ending[3], ending[1], ending[4], ending[5]]).write(to: projects.appendingPathComponent(session + ".jsonl"))
+        var reader = ClaudeActivityReader(), state = ClaudeActivityState(), passes: [[Data]] = []
+        while passes.count < 8 {
+            let result = reader.read(home: home, discover: passes.isEmpty, now: now)
+            passes.append(result.records)
+            for row in result.records { state.consume(row, now: now) }
+            if result.caughtUp { state.finalizeHistoricalBaseline(now: now); break }
+        }
+        let transcriptRow = Data(#""origin":"transcript""#.utf8)
+        XCTAssertGreaterThan(passes.count, 1)
+        XCTAssertFalse(passes[0].contains { $0.range(of: transcriptRow) != nil }, "Transcripts wait while complete hook records remain")
+        XCTAssertTrue(passes.last?.contains { $0.range(of: transcriptRow) != nil } == true)
+        let value = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(value.turnID, prompt)
+        XCTAssertEqual(value.phase, .completed)
+        XCTAssertTrue(value.isHistoricalCompletion)
+    }
+
+    /// A baseline tail younger than 15 minutes may still be live, so it stays
+    /// running; once its evidence is that old without anything newer, the
+    /// same rule as an older tail marks it unconfirmed.
+    func testRecentRunningBaselineTailIsRecheckedOnceItsEvidenceIsFifteenMinutesOld() throws {
+        let start = now.timeIntervalSince1970
+        func hook(_ kind: String, at seconds: Double, item: String) -> Data {
+            ClaudeActivityRecord.encode(["kind": kind, "origin": "hook", "sessionId": session, "promptId": prompt, "itemId": item, "at": seconds])!
+        }
+        func baseline() -> ClaudeActivityState {
+            var state = ClaudeActivityState()
+            let rows: [[String: Any]] = [["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": prompt, "at": start - 300],
+                ["kind": "toolStart", "origin": "hook", "sessionId": session, "promptId": prompt, "itemId": "tool-one", "at": start - 290]]
+            state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "attaching": true, "baselineFinal": true, "records": rows])!, now: now)
+            return state
+        }
+        var quiet = baseline()
+        XCTAssertEqual(quiet.activities.first?.phase, .running)
+        quiet.expireUnconfirmedBaseline(now: now.addingTimeInterval(600))
+        XCTAssertEqual(quiet.activities.first?.phase, .running, "890 seconds of silence is still within the window")
+        quiet.expireUnconfirmedBaseline(now: now.addingTimeInterval(611))
+        XCTAssertEqual(quiet.activities.first?.phase, .unknown)
+        quiet.consume(hook("toolStart", at: start + 700, item: "tool-two"), now: now.addingTimeInterval(700))
+        XCTAssertEqual(quiet.activities.first?.phase, .running, "Later live evidence reopens the same turn")
+
+        var live = baseline()
+        live.consume(hook("toolStart", at: start + 60, item: "tool-two"), now: now.addingTimeInterval(60))
+        live.expireUnconfirmedBaseline(now: now.addingTimeInterval(2_000))
+        XCTAssertEqual(live.activities.first?.phase, .running, "Newer live evidence releases the recheck")
+    }
 }
