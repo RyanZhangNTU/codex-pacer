@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.3
+
+- Default to the new Split Ring layout while retaining the original dashboard as **Classic** in **Settings → Appearance → Expanded Quota**. Switching applies immediately and the choice survives relaunch.
+- Combine each service’s expanded quota windows in one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own percentage, reset countdown and pace tick. This also applies with only one service enabled. Accounts without a 5-hour limit keep their weekly ring or the existing Codex-only bars.
+- Keep missing and stale quota independent for each arc, and highlight the 5-hour arc and value in amber when quota is low or spending too fast.
+
 ## 3.2.2
 
 - Add a button for each enabled service's desktop app to the expanded island's task header, beside **Mark All as Read**, in the service's color. A click brings Codex or Claude forward, launching it if needed, even when that service has no task, and opens no conversation. A service whose desktop app isn't installed shows no button. Turn the buttons off with **Show App Buttons** in Settings → General; they are on by default and the switch is also offered in the 3.2.2 What's New note.

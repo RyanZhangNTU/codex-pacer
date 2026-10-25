@@ -582,6 +582,8 @@
 "whats_new.mark_all_read_detail" = "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.";
 "whats_new.app_buttons" = "Open Codex or Claude from the island";
 "whats_new.app_buttons_detail" = "Buttons beside Mark All as Read in the expanded island bring each service’s desktop app forward, even with no task running. Turn them off here or in Settings > General.";
+"whats_new.split_quota" = "Both quota windows in one ring";
+"whats_new.split_quota_detail" = "The expanded island puts 5-hour quota in a shorter upper arc and 7-day quota in a longer lower arc, each with its own percentage, reset countdown and pace tick. Switch to Classic anytime in Settings > Appearance.";
 "whats_new.dual_orbit" = "A smoother badge with both services";
 "whats_new.dual_orbit_detail" = "When Codex and Claude run together, both arcs around the task badge keep a clean head and their own places, and grow or fade smoothly as tasks start and end.";
 "whats_new.open_at_login" = "Start Pacer with your Mac. You can change this anytime in Settings > General.";
@@ -601,3 +603,7 @@
 "codex.embedded_sessions" = "Show Codex Sessions from Other Apps";
 "codex.embedded_sessions_help" = "Sessions in apps that embed Codex, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.";
 "activity.codex_host_missing" = "Pacer doesn’t know which app started this Codex task. It can only see the app while the task is running.";
+
+"appearance.expanded_quota" = "Expanded Quota";
+"appearance.quota_split" = "Split Ring";
+"appearance.quota_classic" = "Classic";

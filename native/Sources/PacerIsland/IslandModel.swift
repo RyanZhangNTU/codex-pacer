@@ -588,6 +588,7 @@ final class IslandModel: ObservableObject {
     var islandPosition: IslandPosition { .load(from: defaults) }
     var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
     var appearance: IslandAppearance { .stored }
+    var expandedQuotaStyle: ExpandedQuotaStyle { .load(from: defaults) }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { defaults.bool(forKey: "hideProjects") }
     var displayID: Int { defaults.integer(forKey: "displayID") }

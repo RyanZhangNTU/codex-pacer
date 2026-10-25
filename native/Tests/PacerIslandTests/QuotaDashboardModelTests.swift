@@ -32,6 +32,25 @@ final class QuotaDashboardModelTests: XCTestCase {
         QuotaSnapshot(buckets: buckets, capturedAt: at ?? now, accountScope: "synthetic-scope", resetCredits: nil)
     }
 
+    func testQuotaStyleDefaultsToSplitAndPersistsBothChoicesWithoutChangingQuotaOrCollapsedSelection() throws {
+        let (model, defaults) = try fixture()
+        XCTAssertEqual(model.expandedQuotaStyle, .split)
+        defaults.set("unknown-style", forKey: ExpandedQuotaStyle.defaultsKey)
+        XCTAssertEqual(model.expandedQuotaStyle, .split)
+        let sample = snapshot([bucket("codex", [window("codex/five", minutes: 300), window("codex/week", minutes: 10080)])])
+        publish(sample, for: .codex, to: model)
+        defaults.set("5h", forKey: "quotaWindowID")
+        for style in [ExpandedQuotaStyle.classic, .split, .classic] {
+            style.save(to: defaults)
+            model.applySettings(sourceChanged: false)
+            XCTAssertEqual(model.expandedQuotaStyle, style)
+            XCTAssertEqual(ExpandedQuotaStyle.load(from: defaults), style, "The next launch keeps the saved choice")
+            XCTAssertEqual(model.providerQuota(.codex), sample)
+            XCTAssertEqual(model.providerSelectedWindow(.codex)?.id, "codex/five")
+            XCTAssertEqual(model.enabledProviders, [.codex, .claude])
+        }
+    }
+
     func testExactPeriodsUseTheProviderBucketAndIndependentProviderValues() throws {
         let (model, defaults) = try fixture()
         publish(snapshot([bucket("codex", [window("codex/five", minutes: 300), window("codex/week", minutes: 10080)]),
@@ -133,8 +152,8 @@ final class QuotaDashboardModelTests: XCTestCase {
         defaults.set("codex/custom", forKey: "quotaWindowID")
         defaults.set("claude/custom", forKey: "claudeQuotaWindowID")
         let provider = model.selectedProvider
-        XCTAssertEqual(QuotaDashboardLayout.slots(providers: model.enabledProviders).map(\.period), [.weekly, .weekly],
-            "A 5h choice from the removed switch cannot hide the weekly rings")
+        XCTAssertEqual(QuotaDashboardLayout.slots(providers: model.enabledProviders).map(\.provider), [.codex, .claude],
+            "A 5h choice from the removed switch cannot hide either provider")
         XCTAssertEqual(defaults.string(forKey: "quotaDashboardPeriod"), "5h", "Loading leaves removal to the next Settings save")
         XCTAssertEqual(model.selectedProvider, provider)
         XCTAssertEqual(defaults.string(forKey: "quotaWindowID"), "codex/custom")
