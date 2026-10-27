@@ -31,7 +31,8 @@ final class ClaudeHostTrackingTests: XCTestCase {
     }
 
     func testSleepAndShutdownReleaseHostScansAndRejectTheirLateResults() async throws {
-        for provider in AgentProvider.allCases {
+        // DeepSeek Harness is never embedded, so it has no host scans.
+        for provider in [AgentProvider.codex, .claude] {
             let fixture = try fixture(claudeEnabled: false)
             defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
             let model = fixture.model, scans = PendingScans()

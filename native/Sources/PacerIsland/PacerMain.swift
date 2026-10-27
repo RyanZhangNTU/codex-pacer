@@ -376,6 +376,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 sourceTarget: model.claudeRemoteTargets.first { $0.id == activity.sourceHostID },
                 recordedHost: model.claudeHost(for: activity))
         }
+        if activity.provider == .deepseek {
+            // Harness has no conversation link; bringing it forward shows its session list.
+            guard let application = DeepSeekApplicationResolver.find() else { return .failed(L10n.text("deepseek.app_missing")) }
+            model.close()
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            return await withCheckedContinuation { continuation in
+                NSWorkspace.shared.openApplication(at: application, configuration: configuration) { _, error in
+                    continuation.resume(returning: error.map {
+                        .failed(L10n.text("activity.open_app_failed", AgentProvider.deepseek.displayName, CodexDiagnosticText.description(of: $0)))
+                    } ?? .openedConversation)
+                }
+            }
+        }
         if activity.sourceHostID == nil, activity.launchedByEmbeddingApp {
             guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }
             model.close()

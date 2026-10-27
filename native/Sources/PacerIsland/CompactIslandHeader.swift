@@ -144,6 +144,8 @@ struct CompactIslandComponent: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandLayoutProbe) private var layoutProbe
     private var providers: [AgentProvider] { model.enabledProviders }
+    /// Rings and time remaining describe quota windows, which DeepSeek's wallet lacks.
+    private var percentageProviders: [AgentProvider] { providers.filter { $0 != .deepseek } }
     /// Expanded rings repeat these values in more detail, so the header quiets
     /// them instead of moving the row.
     static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
@@ -164,7 +166,7 @@ struct CompactIslandComponent: View {
     static func alternatingProviders(_ model: IslandModel) -> [AgentProvider] {
         let providers = model.enabledProviders
         let known = providers.filter {
-            model.compactQuotaValue($0) != nil
+            $0 == .deepseek ? model.deepseekBalance != nil : model.compactQuotaValue($0) != nil
         }
         return known.isEmpty ? Array(providers.prefix(1)) : known
     }
@@ -177,6 +179,8 @@ struct CompactIslandComponent: View {
             case .fiveHour: return !fiveHourAlerts(model).isEmpty
             case .ssh: return model.hasSSHConnectionIssue
             case .quotaDelay: return !delayedQuotaProviders(model).isEmpty
+            case .lowBalance: return lowBalanceState(model) != nil
+            case .peakPrice: return showsPeakPrice(model)
             }
         }
     }
@@ -185,9 +189,22 @@ struct CompactIslandComponent: View {
             model.fiveHourAlert(provider).map { (provider, $0) }
         }
     }
+    /// Low or exhausted, from a fresh reading only.
+    static func lowBalanceState(_ model: IslandModel) -> DeepSeekWallet.State? {
+        guard model.isModuleEnabled(.deepseek) else { return nil }
+        let state = model.deepseekWallet.state
+        return [.low, .exhausted].contains(state) ? state : nil
+    }
+    /// Doubled prices matter only while a DeepSeek task is spending.
+    static func showsPeakPrice(_ model: IslandModel) -> Bool {
+        model.isModuleEnabled(.deepseek) && DeepSeekPricing.isPeak(at: model.now) && model.running.contains { $0.provider == .deepseek }
+    }
     private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
         model.enabledProviders.filter { provider in
-            model.providerQuotaError(provider) != nil ||
+            if provider == .deepseek {
+                return model.deepseekBalanceError.map { !$0.needsConnection } ?? (model.deepseekBalance?.isStale(at: model.now) == true)
+            }
+            return model.providerQuotaError(provider) != nil ||
                 model.providerQuota(provider)?.isStale(at: model.now) == true ||
                 model.providerSelectedWindow(provider)?.resetsAt.map({ $0 <= model.now }) == true
         }
@@ -228,7 +245,9 @@ struct CompactIslandComponent: View {
         case .quota:
             let shown = Self.alternatingProviders(model)
             Group {
-                if shown.count > 1 {
+                if shown == [.deepseek], providers == [.deepseek] {
+                    DeepSeekCompactWallet(wallet: model.deepseekWallet)
+                } else if shown.count > 1 {
                     AlternatingQuotaText(entries: shown.map { .init(text: quotaText($0), color: NSColor($0.tint)) },
                         animates: !layoutProbe)
                 } else if let provider = shown.first {
@@ -239,7 +258,7 @@ struct CompactIslandComponent: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
         case .quotaGauge:
-            QuotaRingsGlyph(rings: providers.map { provider in
+            QuotaRingsGlyph(rings: percentageProviders.map { provider in
                 let window = model.providerSelectedWindow(provider)
                 return .init(tint: provider.tint, remaining: model.providerQuotaError(provider) == nil ? window?.remainingPercent : nil,
                     stale: model.providerQuotaIsStale(provider))
@@ -252,7 +271,7 @@ struct CompactIslandComponent: View {
         case .timeRemaining:
             HStack(spacing: 4) {
                 Image(systemName: "hourglass").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
-                providerValues(spacing: 7) { provider in
+                providerValues(percentageProviders, spacing: 7) { provider in
                     Text(timeText(provider)).font(.system(size: 11, weight: .medium)).foregroundStyle(provider.tint.opacity(0.85))
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
@@ -272,6 +291,10 @@ struct CompactIslandComponent: View {
                 Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
             case .quotaDelay:
                 Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+            case .lowBalance:
+                if let state = Self.lowBalanceState(model) { WalletAlertGlyph(exhausted: state == .exhausted) }
+            case .peakPrice:
+                PeakPriceGlyph()
             }
         }
     }
@@ -296,20 +319,23 @@ struct CompactIslandComponent: View {
         case .quota:
             let shown = Self.alternatingProviders(model)
             VStack(spacing: 0) {
+                // A wallet value carries its own sign, so a mixed column drops the shared unit.
+                let wallet = shown.contains(.deepseek)
+                let text = { (provider: AgentProvider) in provider == .deepseek ? model.compactStripWalletText : (model.compactQuotaNumber(provider).map { wallet ? $0 + "%" : $0 } ?? "—") }
                 if shown.count > 1 {
-                    AlternatingQuotaText(entries: shown.map { .init(text: model.compactQuotaNumber($0) ?? "—", color: NSColor($0.tint)) },
+                    AlternatingQuotaText(entries: shown.map { .init(text: text($0), color: NSColor($0.tint)) },
                         animates: !layoutProbe, font: .monospacedDigitSystemFont(ofSize: Self.stripNumberSize, weight: .semibold))
                 } else if let provider = shown.first {
-                    stripNumber(model.compactQuotaNumber(provider) ?? "—", color: provider.tint)
+                    stripNumber(text(provider), color: provider.tint)
                 }
-                stripUnit("%")
+                if !wallet { stripUnit("%") }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
         case .timeRemaining:
             VStack(spacing: 1) {
                 Image(systemName: "hourglass").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
-                ForEach(providers, id: \.rawValue) { provider in
+                ForEach(percentageProviders, id: \.rawValue) { provider in
                     stripNumber(model.compactTimeRemainingNumber(provider) ?? "—", color: provider.tint.opacity(0.85))
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(L10n.text("provider.compact_time", provider.displayName, timeText(provider)))
@@ -331,9 +357,9 @@ struct CompactIslandComponent: View {
     private func stripUnit(_ text: String) -> some View {
         Text(text).font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
     }
-    private func providerValues<Value: View>(spacing: CGFloat, @ViewBuilder value: @escaping (AgentProvider) -> Value) -> some View {
+    private func providerValues<Value: View>(_ shown: [AgentProvider], spacing: CGFloat, @ViewBuilder value: @escaping (AgentProvider) -> Value) -> some View {
         HStack(spacing: spacing) {
-            ForEach(Array(providers.enumerated()), id: \.element.rawValue) { index, provider in
+            ForEach(Array(shown.enumerated()), id: \.element.rawValue) { index, provider in
                 if index > 0 { Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 10).accessibilityHidden(true) }
                 value(provider)
             }
@@ -354,11 +380,14 @@ struct CompactIslandComponent: View {
             case .ssh: L10n.text("source.ssh_retrying")
             case .quotaDelay: Self.delayedQuotaProviders(model).map(\.displayName).joined(separator: " · ")
                 + " · " + warning.label
+            case .lowBalance: L10n.text(Self.lowBalanceState(model) == .exhausted ? "deepseek.notice.exhausted" : "deepseek.wallet.low_help",
+                model.deepseekBalance.map { DeepSeekWallet.compactAmount($0.total) } ?? "—")
+            case .peakPrice: L10n.text("deepseek.peak_help", model.deepseekPriceChangeText)
             }
         }.joined(separator: "\n")
     }
     private var gaugeSummary: String {
-        providers.map { provider in
+        percentageProviders.map { provider in
             let remaining = model.providerSelectedWindow(provider)?.remainingPercent
             return L10n.text("provider.compact_quota", provider.displayName, remaining.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—")
         }.joined(separator: " · ")
@@ -382,7 +411,7 @@ struct CompactIslandComponent: View {
         case .warnings: return warningSummary
         case .quotaGauge: return gaugeSummary + "\n" + L10n.text("layout.gauge_help")
         case .timeRemaining:
-            return providers.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
+            return percentageProviders.map { L10n.text("provider.compact_time", $0.displayName, timeText($0)) }
                 .joined(separator: " · ") + "\n" + L10n.text("layout.time_remaining_help")
         case .quota, .quotaLabel:
             return providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }

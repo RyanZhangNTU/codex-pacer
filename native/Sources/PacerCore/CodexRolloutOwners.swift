@@ -30,6 +30,10 @@ public enum CodexRolloutOwners {
         return Array(values.prefix(max(0, Int(count)) / MemoryLayout<pid_t>.stride)).filter { $0 > 1 }
     }
     public static func openFiles(_ pid: pid_t) -> [URL] {
+        openFiles(pid) { $0.hasPrefix("rollout-") && $0.hasSuffix(".jsonl") }
+    }
+    /// Files the process holds open for writing whose name `named` accepts.
+    public static func openFiles(_ pid: pid_t, named: (String) -> Bool) -> [URL] {
         let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
         guard size > 0 else { return [] }
         var descriptors = [proc_fdinfo](repeating: proc_fdinfo(), count: min(4096, Int(size) / MemoryLayout<proc_fdinfo>.stride + 16))
@@ -41,7 +45,7 @@ public enum CodexRolloutOwners {
             guard count == MemoryLayout.size(ofValue: info), info.pfi.fi_openflags & 2 != 0 else { continue }
             let path = withUnsafeBytes(of: &info.pvip.vip_path) { bytes in String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self) }
             let name = (path as NSString).lastPathComponent
-            if path.hasPrefix("/"), name.hasPrefix("rollout-"), name.hasSuffix(".jsonl") { result.append(URL(fileURLWithPath: path)) }
+            if path.hasPrefix("/"), named(name) { result.append(URL(fileURLWithPath: path)) }
         }
         return result
     }

@@ -43,6 +43,8 @@ struct QuotaDashboardView: View {
                                                        style: model.expandedQuotaStyle),
            let snapshot = model.providerQuota(.codex) {
             LegacyCodexQuotaView(model: model, snapshot: snapshot)
+        } else if slots == [QuotaDashboardSlot(provider: .deepseek)] {
+            DeepSeekSoloDashboard(model: model)
         } else if model.expandedQuotaStyle == .classic {
             ClassicQuotaDashboardView(model: model)
         } else if slots.count == 1, let provider = slots.first?.provider,
@@ -73,12 +75,14 @@ struct QuotaDashboardView: View {
     private var rings: some View {
         HStack(alignment: .top, spacing: 16) {
             ForEach(slots) { slot in
+                if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 104) } else {
                 VStack(spacing: 6) {
                     QuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: .weekly),
                         fiveHourQuota: model.dashboardQuota(provider: slot.provider, period: .fiveHour),
                         providerHelp: providerHelp(slot.provider), now: model.now)
                     QuotaProviderStatusView(model: model, provider: slot.provider)
                 }.frame(maxWidth: .infinity, alignment: .top)
+                }
             }
         }.padding(.bottom, 4)
     }
@@ -478,7 +482,7 @@ struct QuotaProviderStatusView: View {
 }
 
 /// Small capsule actions keep recovery visible without competing with the rings.
-private struct QuotaLinkButton: View {
+struct QuotaLinkButton: View {
     let title: String
     var prominent = false
     let action: () -> Void

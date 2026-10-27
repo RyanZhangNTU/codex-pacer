@@ -195,3 +195,64 @@ struct FiveHourAlertGlyph: View {
             .accessibilityHidden(true)
     }
 }
+
+/// The wallet when DeepSeek is the only module: the balance, then today's
+/// estimated spend, amber when it runs ahead of a usual day.
+struct DeepSeekCompactWallet: View {
+    let wallet: DeepSeekWallet
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(wallet.balance.map { DeepSeekWallet.compactAmount($0.total) } ?? "¥—")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(balanceColor)
+            Text(L10n.text("deepseek.today_short", DeepSeekWallet.compactSpend(wallet.today)))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(wallet.spendingFast ? PacerPalette.attention : PacerPalette.secondary)
+        }
+        .monospacedDigit().fixedSize(horizontal: true, vertical: false)
+    }
+    private var balanceColor: Color { DeepSeekWalletColors.balance(wallet.state) }
+}
+
+enum DeepSeekWalletColors {
+    static func balance(_ state: DeepSeekWallet.State) -> Color {
+        switch state {
+        case .normal: AgentProvider.deepseek.tint
+        case .low: PacerPalette.attention
+        case .exhausted: PacerPalette.danger
+        case .stale, .disconnected: PacerPalette.secondary
+        }
+    }
+}
+
+/// The low-balance pair, matching the 5h capsule: outlined when low, solid
+/// when the wallet can no longer pay.
+struct WalletAlertGlyph: View {
+    let exhausted: Bool
+    private let tint = AgentProvider.deepseek.tint
+
+    var body: some View {
+        Text("¥")
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .foregroundStyle(exhausted ? Color.black.opacity(0.82) : tint)
+            .padding(.horizontal, 4).frame(height: 13)
+            .background {
+                if exhausted { Capsule().fill(tint) } else { Capsule().strokeBorder(tint, lineWidth: 1) }
+            }
+            .fixedSize()
+            .accessibilityHidden(true)
+    }
+}
+
+/// Doubled peak prices while a DeepSeek task runs; off unless chosen.
+struct PeakPriceGlyph: View {
+    var body: some View {
+        Text("×2")
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .foregroundStyle(AgentProvider.deepseek.tint)
+            .padding(.horizontal, 3.5).frame(height: 13)
+            .background(Capsule().fill(AgentProvider.deepseek.tint.opacity(0.18)))
+            .fixedSize()
+            .accessibilityHidden(true)
+    }
+}

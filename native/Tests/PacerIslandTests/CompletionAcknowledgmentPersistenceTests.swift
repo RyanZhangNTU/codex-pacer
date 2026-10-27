@@ -194,7 +194,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
     func testOnlyActualConversationOpenPersistsAcrossModelReconstructionForBothProvidersAndHosts() async throws {
         for provider in AgentProvider.allCases {
             for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack", "remote-control:synthetic-ack"] as [String?]
-                where provider == .codex || sourceHostID?.hasPrefix("remote-control:") != true {
+                where (provider == .codex || sourceHostID?.hasPrefix("remote-control:") != true) && (provider != .deepseek || sourceHostID == nil) {
                 for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-model-ack-" + UUID().uuidString)
                     let domain = "com.codexpacer.ack-tests." + UUID().uuidString
@@ -205,7 +205,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
                     defaults.set("synthetic-ack", forKey: "claudeSSHHosts")
                     defaults.set(0, forKey: "completedRetentionMinutes")
-                    ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
+                    ProviderModules(codexMode: .enabled, claudeMode: .enabled, deepseekMode: .enabled).save(to: defaults)
                     let host = "remote-ssh-discovered:synthetic-ack"
                     let configuration: [String: Any] = [
                         "codex-managed-remote-connections": [["source": "discovered", "hostId": host, "alias": "synthetic-ack"]],
@@ -225,6 +225,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     }
                     func publish(_ activity: SessionActivity, to model: IslandModel) {
                         if provider == .claude { model.receiveClaudeUpdate([activity], statuses: [:], requests: []) }
+                        else if provider == .deepseek { model.receiveDeepSeekUpdate([activity], statuses: [:], requests: []) }
                         else { model.receiveRemoteUpdate([activity], statuses: [:], unavailable: [], requests: [], names: []) }
                     }
                     let first = makeModel()
@@ -320,7 +321,8 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
     }
 
     func testVerifiedParentOpenAcknowledgesOnlyCapturedTerminalFamilyAcrossRelaunch() async throws {
-        for provider in AgentProvider.allCases {
+        // DeepSeek Harness subagents are not grouped yet and it has no remote sources.
+        for provider in [AgentProvider.codex, .claude] {
             for remote in [false, true] {
                 for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {
                     let fixture = try familyFixture(remote: remote), model = fixture.model, at = Date().addingTimeInterval(-2)

@@ -107,6 +107,7 @@ struct WelcomeView: View {
             HStack(spacing: 10) {
                 moduleCard(.codex)
                 moduleCard(.claude)
+                moduleCard(.deepseek)
             }
             Text(L10n.text("welcome.modules_note")).font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.horizontal, 10).padding(.top, 8)
@@ -193,13 +194,13 @@ struct WelcomeView: View {
     private func moduleStatus(_ provider: AgentProvider, enabled: Bool) -> ModuleStatus {
         guard enabled else { return ModuleStatus(text: L10n.text("welcome.module.off", provider.displayName)) }
         let settings: (title: String, perform: () -> Void) = (L10n.text("welcome.module.settings"),
-            { onOpenSettings(provider == .codex ? .codex : .claude) })
+            { onOpenSettings(SettingsPane(provider: provider)) })
         guard model.providerDetected(provider) else {
-            return ModuleStatus(text: L10n.text(provider == .codex ? "welcome.module.codex_missing" : "welcome.module.claude_missing"),
-                                action: settings)
+            return ModuleStatus(text: L10n.text("welcome.module.\(provider.rawValue)_missing"), action: settings)
         }
         let ready = ModuleStatus(text: L10n.text("welcome.module.ready") +
             (modules.mode(for: provider) == .automatic ? " · " + L10n.text("welcome.module.automatic") : ""), ready: true)
+        if provider == .deepseek { return deepseekStatus(ready: ready) }
         guard provider == .claude else { return ready }
         if model.claudeNeedsOrganizationSelection {
             return ModuleStatus(text: L10n.text("claude.account.workspace_needed"),
@@ -211,6 +212,18 @@ struct WelcomeView: View {
         }
         return ModuleStatus(text: L10n.text("welcome.module.sign_in_detail"),
                             action: (L10n.text("welcome.module.sign_in"), { model.signInClaudeQuota() }))
+    }
+
+    /// The card's action follows how Harness bills: sign in, or paste a key.
+    private func deepseekStatus(ready: ModuleStatus) -> ModuleStatus {
+        if model.deepseekBalance != nil { return ready }
+        if model.deepseekRefreshing { return ModuleStatus(text: L10n.text("claude.account.checking")) }
+        if model.deepseekBalanceMode == .apiKey {
+            return ModuleStatus(text: L10n.text("welcome.module.balance_detail"),
+                                action: (L10n.text("deepseek.paste_key_short"), { onOpenSettings(.deepseek) }))
+        }
+        return ModuleStatus(text: L10n.text("welcome.module.balance_detail"),
+                            action: (L10n.text("welcome.module.sign_in"), { model.connectDeepSeek() }))
     }
 
     private func personalizeRow<Control: View>(_ pane: SettingsPane, title: String, detail: String, detailTint: Color = .secondary,

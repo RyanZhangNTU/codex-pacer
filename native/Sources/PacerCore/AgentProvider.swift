@@ -2,14 +2,20 @@ import Foundation
 
 /// The service that owns a session. Host names alone are not session identity.
 public enum AgentProvider: String, CaseIterable, Codable, Sendable, Identifiable {
-    case codex, claude
+    case codex, claude, deepseek
     public var id: String { rawValue }
-    public var displayName: String { self == .codex ? "Codex" : "Claude" }
+    public var displayName: String {
+        switch self {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .deepseek: "DeepSeek"
+        }
+    }
 
     /// Keep existing Codex keys unchanged so its retained state remains compatible.
     public func activityID(sessionID: String, sourceHostID: String? = nil) -> String {
         let host = sourceHostID ?? "local"
-        return (self == .claude ? "claude:" : "") + host + ":" + sessionID
+        return (self == .codex ? "" : rawValue + ":") + host + ":" + sessionID
     }
 
     public func validatedSessionID(_ value: String) -> String? {
@@ -20,7 +26,7 @@ public enum AgentProvider: String, CaseIterable, Codable, Sendable, Identifiable
     }
 
     func sessionID(in identity: String) -> String? {
-        if self == .claude {
+        if self != .codex {
             return validatedSessionID(String(identity.split(separator: ":").last ?? ""))
         }
         // Dotted SSH aliases must not be interpreted as a rollout extension.

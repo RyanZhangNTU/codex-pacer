@@ -37,7 +37,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
             [completion(.codex, hostID: controlHost)]
         var first = inbox(file)
         first.observe(endings, at: epoch.addingTimeInterval(2), retention: 0)
-        XCTAssertEqual(first.activities.count, 5)
+        XCTAssertEqual(first.activities.count, endings.count)
         for ending in endings { first.dismiss(ending) }
         var relaunched = inbox(file)
         relaunched.observe(endings, at: epoch.addingTimeInterval(3), retention: 0)
