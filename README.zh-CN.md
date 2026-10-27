@@ -22,7 +22,7 @@
   &nbsp;·&nbsp; <a href="README.md">English</a>
 </p>
 
-![Codex Pacer 在刘海处（演示数据）：悬停展开三个运行中的 Codex 与 Claude 任务和额度圆环，审批请求排到最前，收起后徽标保持琥珀色直到处理完成](docs/assets/demo.zh-CN.webp)
+![Codex Pacer 在刘海处（演示数据）：悬停展开三个运行中的 Codex 与 Claude 任务，各自显示模型和推理强度，下方是 5 小时与 7 天额度圆环；审批请求排到最前，收起后徽标保持琥珀色直到处理完成](docs/assets/demo.zh-CN.webp)
 
 ## 一眼看清
 
@@ -83,7 +83,7 @@ Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 
 
 ## 隐私
 
-- **本地优先。** Pacer 没有账号，也不做任何统计上报。它读取 Codex 和 Claude Code 本来就会写下的会话日志，只保留灵动岛需要显示的内容：任务标题、阶段、时间和 token 数，从不保存你的提示词或回复内容。
+- **本地优先。** Pacer 没有账号，也不做任何统计上报。它读取 Codex 和 Claude Code 本来就会写下的会话日志，只保留灵动岛需要显示的内容：任务标题、阶段、模型、时间和 token 数，从不保存你的提示词或回复内容。
 - **用你自己的登录。** Codex 额度通过你的 Codex CLI 读取；Claude 额度来自 Claude Code 的状态栏数据，或 Pacer 专用窗口中的 claude.ai 会话。Pacer 不读取其他应用的钥匙串条目或浏览器 Cookie。
 - **配置可以撤回。** 对于 Claude Code，Pacer 会在你现有设置旁追加自己的 hooks 和仅限本机的遥测端点；关闭 Claude 模块时会移除这些内容。
 - **很少的网络请求。** Pacer 只连接你的 SSH 主机、各服务自己的额度接口，以及用于检查更新的 GitHub。
