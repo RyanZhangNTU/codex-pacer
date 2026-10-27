@@ -158,6 +158,12 @@ enum RealtimeProbe {
             status=p.get('status') or {}
             e['status']=str(status.get('type',''))[:32]
             e['flags']=[f for f in status.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]
+        elif method=='thread/settings/updated':
+            # A model or effort change mid-thread reuses the metadata path.
+            s=p.get('threadSettings') or {}
+            if not isinstance(s,dict) or not isinstance(s.get('model'),str):return None
+            e['method']='metadata';e['model']=s['model'][:256]
+            if 'effort' in s:e['reasoningEffort']=s['effort'][:32] if isinstance(s['effort'],str) else None
         elif method=='thread/name/updated':
             if 'threadName' not in p:return None
             name=p.get('threadName')
@@ -286,6 +292,8 @@ enum RealtimeProbe {
                         self.queue_thread(parent,priority=True)
                     for k,bound in (('name',240),('cwd',2048),('model',256)):
                         if isinstance(thread.get(k),str):meta[k]=thread[k][:bound]
+                    if 'model' in meta and 'reasoningEffort' in thread:
+                        meta['reasoningEffort']=thread['reasoningEffort'][:32] if isinstance(thread['reasoningEffort'],str) else None
                     self.queue_event(meta)
                     status=self.known[tid]
                     self.queue_event({'method':'thread/observed','threadId':tid.lower(),'at':time.time(),

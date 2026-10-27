@@ -117,8 +117,8 @@ private struct IslandExpandedContent: View {
         if model.visibleActivities.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0") { IslandPanelControls(model: model) }
-                HStack(spacing: 12) {
-                    StatusTile(symbol: StatusSymbols.idle, tint: PacerPalette.secondary)
+                HStack(spacing: 10) {
+                    StatusGlyph(symbol: StatusSymbols.idle, tint: PacerPalette.secondary)
                     Text(L10n.text("activity.no_tasks")).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.secondary)
                 }
                 .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)

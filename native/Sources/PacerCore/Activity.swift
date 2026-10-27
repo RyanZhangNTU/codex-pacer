@@ -74,7 +74,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var isHistoricalCompletion = false
     public private(set) var waitingForApproval = false
     public private(set) var modelName: String?
+    /// The latest turn's reasoning effort as the source names it, e.g. `xhigh`.
+    public private(set) var reasoningEffort: String?
     public private(set) var isInternalReview = false
+    /// A source that reports a model without its effort keeps the known effort
+    /// only while the model is unchanged; an explicit null clears it.
+    mutating func updateModel(in values: [String: Any], model key: String = "model", effort effortKey: String) {
+        guard let model = ModelDisplay.sanitizedModel(values[key]) else { return }
+        if values.keys.contains(effortKey) { reasoningEffort = ModelDisplay.sanitizedEffort(values[effortKey]) }
+        else if model != modelName { reasoningEffort = nil }
+        modelName = model
+    }
     public private(set) var parentThreadID: String?
     public struct SubagentEvidence: Equatable, Sendable {
         public let parentThreadID: String
@@ -172,6 +182,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
         if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
         if rolloutURL == nil { rolloutURL = other.rolloutURL }
+        if modelName == nil { modelName = other.modelName }
+        if reasoningEffort == nil, modelName == other.modelName { reasoningEffort = other.reasoningEffort }
         if let origin = other.codexOrigin,
            codexOrigin == nil || (other.codexOriginAt ?? .distantPast) > (codexOriginAt ?? .distantPast) {
             setCodexOrigin(origin, at: other.codexOriginAt)
@@ -399,7 +411,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if value["type"] as? String == "turn_context" {
             guard let timestamp = value["timestamp"] as? String, let date = Self.parseDate(timestamp),
                   date >= (lastObserved ?? .distantPast) else { return }
-            modelName = payload["model"] as? String ?? modelName
+            updateModel(in: payload, effort: "effort")
             if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
             // A current turn context is an explicit anchor when the start lies
             // outside the initial tail, or when the app attached mid-turn.
@@ -648,7 +660,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
             }
-            modelName = event["model"] as? String ?? modelName
+            updateModel(in: event, effort: "reasoningEffort")
             if let cwd = event["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
             if provider == .codex {

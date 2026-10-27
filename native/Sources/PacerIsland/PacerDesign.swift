@@ -70,27 +70,19 @@ struct QuotaVerdictChip: View {
     }
 }
 
-/// One status language for rows and the collapsed bar: a tinted tile carries
-/// color and shape, so the text beside it can stay quiet.
-struct StatusTile: View {
+/// One status language for the expanded rows: an outline symbol in the
+/// provider or alert color, with no tile behind it.
+struct StatusGlyph: View {
     let symbol: String
     let tint: Color
-    var size: CGFloat = 30
+    var size: CGFloat = 20
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-        Image(systemName: Self.tileSymbol(symbol))
-            .font(.system(size: size * 0.43, weight: .semibold))
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .regular))
             .foregroundStyle(tint)
-            .frame(width: size, height: size)
-            .background(tint.opacity(0.15), in: shape)
-            .overlay(shape.strokeBorder(tint.opacity(0.2), lineWidth: 0.5))
+            .frame(width: size + 8, height: size + 8)
             .accessibilityHidden(true)
-    }
-
-    /// A tile already encloses the glyph; drop a redundant outer circle.
-    static func tileSymbol(_ name: String) -> String {
-        name.hasSuffix(".circle") ? String(name.dropLast(".circle".count)) : name
     }
 }
 

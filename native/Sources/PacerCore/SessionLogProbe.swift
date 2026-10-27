@@ -54,6 +54,7 @@ enum SessionLogProbe {
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
+            if 'effort' in p: q['effort'] = p['effort'][:32] if isinstance(p['effort'],str) else None
         elif outer == 'event_msg' and kind == 'item_completed':
             item=p.get('item') or {}
             if not isinstance(item,dict) or item.get('type') not in ('AgentMessage','Reasoning','agentMessage','reasoning'):return None

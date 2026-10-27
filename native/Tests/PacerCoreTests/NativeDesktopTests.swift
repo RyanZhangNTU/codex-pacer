@@ -126,6 +126,17 @@ final class NativeDesktopTests: XCTestCase {
         XCTAssertEqual(events.first { $0["method"] as? String == "thread/tokenUsage/updated" }?["outputTokens"] as? Int, 20)
         XCTAssertFalse(String(describing: projection).contains("PRIVATE"))
     }
+    func testModelAndEffortReachMetadataWithoutOtherState() throws {
+        var projection = DesktopWireProjection(threadID: thread)
+        var raw = state(); raw["latestReasoningEffort"] = "xhigh"; raw["latestThreadSettings"] = ["cwd": "/PRIVATE"]
+        let initial = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": raw]), owner: "owner", at: epoch)
+        let metadata = try XCTUnwrap(initial.first { $0["method"] as? String == "metadata" })
+        XCTAssertEqual(metadata["model"] as? String, "model"); XCTAssertEqual(metadata["reasoningEffort"] as? String, "xhigh")
+        let changed = try projection.consume(view(["type": "patches", "baseRevision": 0, "revision": 1,
+            "patches": [["op": "replace", "path": ["latestReasoningEffort"], "value": "low"]]]), owner: "owner", at: epoch)
+        XCTAssertEqual(changed.filter { $0["method"] as? String == "metadata" }.compactMap { $0["reasoningEffort"] as? String }, ["low"])
+        XCTAssertFalse(String(describing: projection).contains("PRIVATE"))
+    }
     func testTextPatchesAdvanceRevisionAndMalformedBatchesRollbackAtomically() throws {
         var projection = DesktopWireProjection(threadID: thread)
         _ = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": state()]), owner: "owner", at: epoch)

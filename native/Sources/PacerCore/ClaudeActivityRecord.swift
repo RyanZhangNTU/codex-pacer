@@ -6,7 +6,7 @@ struct ClaudeTranscriptFields {
     let values: [String: JSONFieldView]
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort"]) else { return nil }
         self.values = values
     }
 }
@@ -52,7 +52,11 @@ enum ClaudeActivityRecord {
         if let cwd = fields["cwd"]?.string(limit: 4096) { metadata["project"] = URL(fileURLWithPath: cwd).lastPathComponent; metadata["localDirectory"] = cwd }
         if let title = fields["sessionTitle"]?.string(limit: 240) { metadata["title"] = title }
         let message = fields["message"].flatMap { try? $0.fields(["role", "id", "model", "content", "usage", "stop_reason"]) } ?? [:]
-        if let model = message["model"]?.string() { metadata["model"] = model }
+        // `<synthetic>` marks locally generated records, not the working model.
+        if let model = message["model"]?.string(limit: 256), !model.hasPrefix("<") {
+            metadata["model"] = model
+            if let effort = fields["perTurnEffort"]?.string(limit: 32) ?? fields["effort"]?.string(limit: 32) { metadata["effort"] = effort }
+        }
         // Apps that embed Claude Code through the Agent SDK launch it as `sdk-*`.
         if let entrypoint = fields["entrypoint"]?.string(limit: 64) { metadata["embedded"] = entrypoint.hasPrefix("sdk-") }
         result.append(metadata)
@@ -307,6 +311,7 @@ struct ClaudeActivityState: Sendable {
             if let project = record["project"] as? String, !project.isEmpty { event["cwd"] = String(project.prefix(240)) }
             if let title = record["title"] as? String { event["name"] = String(title.prefix(240)) }
             if let model = record["model"] as? String { event["model"] = String(model.prefix(256)) }
+            if let effort = record["effort"] as? String { event["reasoningEffort"] = String(effort.prefix(32)) }
             if let parent = ClaudeActivityRecord.identifier(record["parentId"] as? String) { event["parentThreadId"] = parent }
             value.applyRuntime(event)
             if sourceID == nil, let path = record["localDirectory"] as? String { value.setClaudeNavigation(directory: URL(fileURLWithPath: path), desktopSessionID: nil) }

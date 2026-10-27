@@ -374,6 +374,34 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertNil(ActivitySourceMerger.merge(logged: [otherHost], streamed: state.activities).first { $0.sourceHostID == host }?.title)
     }
 
+    func testRemoteAndDesktopModelSettingsCrossAsBoundedMetadata() throws {
+        let script = #"""
+        class Fake:
+            def __init__(self):self.sent=[]
+            def send(self,v):self.sent.append(v)
+        tid='019a0000-0000-7000-8000-000000000002'
+        ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
+        s.request('thread/read',{'threadId':tid},'read',tid);rid=ws.sent[-1]['id']
+        s.receive({'id':rid,'result':{'thread':{'id':tid,'status':{'type':'idle'},'model':'gpt-6.1-sol','reasoningEffort':'xhigh','preview':'PRIVATE'}}})
+        meta=[e for e in s.queue if e['method']=='metadata'][-1]
+        assert meta['model']=='gpt-6.1-sol' and meta['reasoningEffort']=='xhigh'
+        s.receive({'method':'thread/settings/updated','params':{'threadId':tid,'threadSettings':{'model':'gpt-6.1-terra','effort':None,'cwd':'/PRIVATE'}}})
+        e=s.queue[-1]
+        assert e['method']=='metadata' and e['model']=='gpt-6.1-terra' and e['reasoningEffort'] is None and 'cwd' not in e
+        before=len(s.queue)
+        s.receive({'method':'thread/settings/updated','params':{'threadId':tid,'threadSettings':{'effort':'low'}}})
+        assert len(s.queue)==before,'an effort without its model is not attributed'
+        assert 'PRIVATE' not in repr(s.queue)
+        p=Projection(tid)
+        events=p.consume({'type':'snapshot','revision':0,'conversationState':{'turns':[],'latestModel':'gpt-6.1-sol','latestReasoningEffort':'high'}},'owner')
+        assert [e.get('reasoningEffort') for e in events if e['method']=='metadata']==['high']
+        events=p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['latestReasoningEffort'],'value':'max'}]},'owner')
+        assert [e.get('reasoningEffort') for e in events if e['method']=='metadata']==['max']
+        print('model settings passed')
+        """#
+        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + script).contains("model settings passed"))
+    }
+
     func testRemoteNameNotificationsAndEphemeralThreadsStayWithinTheSanitizedProtocol() throws {
         let script = #"""
         class Fake:
