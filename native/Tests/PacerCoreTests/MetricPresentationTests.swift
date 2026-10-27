@@ -105,7 +105,7 @@ final class MetricPresentationTests: XCTestCase {
         began=1800000000
         with tempfile.TemporaryFile() as f:
             rows=[{'type':'event_msg','timestamp':datetime.datetime.fromtimestamp(began,datetime.timezone.utc).isoformat(),'payload':{'type':'task_started','turn_id':'turn'}},
-                  {'type':'turn_context','timestamp':datetime.datetime.fromtimestamp(began+1,datetime.timezone.utc).isoformat(),'payload':{'turn_id':'turn'}},
+                  {'type':'turn_context','timestamp':datetime.datetime.fromtimestamp(began+1,datetime.timezone.utc).isoformat(),'payload':{'turn_id':'turn','model':'gpt-fixture','effort':None,'instructions':'PRIVATE'}},
                   {'type':'event_msg','timestamp':datetime.datetime.fromtimestamp(began+4,datetime.timezone.utc).isoformat(),'payload':{'type':'item_completed','thread_id':tid,'turn_id':'turn','started_at_ms':(began+3.123)*1000,'completed_at_ms':(began+4)*1000,'item':{'type':'AgentMessage','content':['PRIVATE']}}},
                   {'type':'ignored','payload':{'padding':'x'*600000}}]
             # A header keeps the first turn-start line away from the initial fragment boundary.
@@ -113,6 +113,7 @@ final class MetricPresentationTests: XCTestCase {
             for row in rows:f.write((json.dumps(row)+'\n').encode())
             size=f.tell();seed=anchor(f,size,tid)
             assert seed['payload']['type']=='task_started' and abs(seed['payload']['first_output_latency_ms']-3123)<.001
+            assert seed['payload']['_model_context']=={'model':'gpt-fixture','effort':None}
             assert 'PRIVATE' not in repr(seed)
         invalid=sanitize({'type':'event_msg','payload':{'type':'task_complete','time_to_first_token_ms':True,'duration_ms':-1}})
         assert 'time_to_first_token_ms' not in invalid['payload'] and 'duration_ms' not in invalid['payload']

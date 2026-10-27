@@ -29,6 +29,7 @@ enum DesktopEventProbe {
         return {'type':text(v.get('type'),32),'activeFlags':[f for f in v.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]}
     def snapshot_projection(v):
         out={k:text(v[k],2048 if k=='cwd' else 256) for k in ('title','cwd','latestModel','latestReasoningEffort','threadSource') if isinstance(v.get(k),str)}
+        if 'latestReasoningEffort' in v and not isinstance(v['latestReasoningEffort'],str):out['latestReasoningEffort']=None
         if v.get('ephemeral') is True:out['ephemeral']=True
         out['latestTokenUsageInfo']=usage_projection(v.get('latestTokenUsageInfo'))
         out['threadRuntimeStatus']=runtime_projection(v.get('threadRuntimeStatus'))
@@ -152,6 +153,10 @@ enum DesktopEventProbe {
             meta={'method':'metadata','threadId':self.tid,'at':now}
             for src,dst in (('title','name'),('cwd','cwd'),('latestModel','model'),('latestReasoningEffort','reasoningEffort'),('threadSource','source')):
                 if isinstance(self.tree.get(src),str):meta[dst]=self.tree[src]
+            if 'latestReasoningEffort' in self.tree and self.tree['latestReasoningEffort'] is None:
+                meta['reasoningEffort']=None
+            elif not snapshot and 'latestReasoningEffort' not in self.tree and any(p.get('path')==['latestReasoningEffort'] for p in (change.get('patches') or [])):
+                meta['reasoningEffort']=None
             if snapshot or any(p.get('path',[None])[0] in ('title','cwd','latestModel','latestReasoningEffort') for p in change.get('patches',[]) if p.get('path')):events.append(meta)
             current=self.current()
             if current is None:return events

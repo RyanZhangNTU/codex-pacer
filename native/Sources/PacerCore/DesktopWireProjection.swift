@@ -607,6 +607,14 @@ struct DesktopWireProjection {
             if snapshot || reconnecting || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("latestReasoningEffort"), .key("threadSource"), .key("source"), .key("parentThreadId")].contains($0.first ?? .key("")) }) {
                 var meta: [String: Any] = [:]
                 for (source, target) in [("title", "name"), ("cwd", "cwd"), ("latestModel", "model"), ("latestReasoningEffort", "reasoningEffort"), ("threadSource", "source")] { meta[target] = staged.tree[source]?.text }
+                if case .null? = staged.tree["latestReasoningEffort"] {
+                    meta["reasoningEffort"] = NSNull()
+                } else if staged.tree["latestReasoningEffort"] == nil,
+                          rawPaths.contains(where: { $0 == [.key("latestReasoningEffort")] }) {
+                    // Removing the field is also an explicit clear; an absent
+                    // field in a snapshot remains an unreported value.
+                    meta["reasoningEffort"] = NSNull()
+                }
                 let source = staged.tree["source"]
                 let sub = source?["subAgent"] ?? source?["subagent"]
                 let spawn = sub?["thread_spawn"] ?? sub?["threadSpawn"]

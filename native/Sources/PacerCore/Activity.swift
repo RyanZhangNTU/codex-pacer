@@ -76,13 +76,26 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var modelName: String?
     /// The latest turn's reasoning effort as the source names it, e.g. `xhigh`.
     public private(set) var reasoningEffort: String?
+    // A reported null is different from a source that never reported effort.
+    private var reasoningEffortReported = false
+    private var reasoningEffortReportedAt: Date?
+    // App-server thread settings describe configuration for future turns, not
+    // the model used by the active turn.
+    private var modelFromThreadConfiguration = false
     public private(set) var isInternalReview = false
     /// A source that reports a model without its effort keeps the known effort
     /// only while the model is unchanged; an explicit null clears it.
-    mutating func updateModel(in values: [String: Any], model key: String = "model", effort effortKey: String) {
+    mutating func updateModel(in values: [String: Any], model key: String = "model", effort effortKey: String, at date: Date) {
         guard let model = ModelDisplay.sanitizedModel(values[key]) else { return }
-        if values.keys.contains(effortKey) { reasoningEffort = ModelDisplay.sanitizedEffort(values[effortKey]) }
-        else if model != modelName { reasoningEffort = nil }
+        if values.keys.contains(effortKey), model != modelName || date >= (reasoningEffortReportedAt ?? .distantPast) {
+            reasoningEffort = ModelDisplay.sanitizedEffort(values[effortKey])
+            reasoningEffortReported = true
+            reasoningEffortReportedAt = date
+        } else if model != modelName {
+            reasoningEffort = nil
+            reasoningEffortReported = false
+            reasoningEffortReportedAt = nil
+        }
         modelName = model
     }
     public private(set) var parentThreadID: String?
@@ -182,8 +195,22 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
         if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
         if rolloutURL == nil { rolloutURL = other.rolloutURL }
-        if modelName == nil { modelName = other.modelName }
-        if reasoningEffort == nil, modelName == other.modelName { reasoningEffort = other.reasoningEffort }
+        // Model metadata belongs to a turn. An older card or another source's
+        // previous turn must not supply a model for the current one.
+        let sameTurn = turnID != nil && turnID == other.turnID
+        let bothUnattached = turnID == nil && other.turnID == nil && phase == .unknown && other.phase == .unknown
+        if sameTurn || bothUnattached {
+            if modelName == nil { modelName = other.modelName }
+            let ownEffortAt = reasoningEffortReportedAt ?? .distantPast
+            let otherEffortAt = other.reasoningEffortReportedAt ?? .distantPast
+            if modelName != nil, modelName == other.modelName, other.reasoningEffortReported,
+               !reasoningEffortReported || otherEffortAt > ownEffortAt ||
+                (otherEffortAt == ownEffortAt && other.reasoningEffort == nil && reasoningEffort != nil) {
+                reasoningEffort = other.reasoningEffort
+                reasoningEffortReported = true
+                reasoningEffortReportedAt = other.reasoningEffortReportedAt
+            }
+        }
         if let origin = other.codexOrigin,
            codexOrigin == nil || (other.codexOriginAt ?? .distantPast) > (codexOriginAt ?? .distantPast) {
             setCodexOrigin(origin, at: other.codexOriginAt)
@@ -411,13 +438,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if value["type"] as? String == "turn_context" {
             guard let timestamp = value["timestamp"] as? String, let date = Self.parseDate(timestamp),
                   date >= (lastObserved ?? .distantPast) else { return }
-            updateModel(in: payload, effort: "effort")
-            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
             // A current turn context is an explicit anchor when the start lies
             // outside the initial tail, or when the app attached mid-turn.
             if let contextTurn = payload["turn_id"] as? String, contextTurn != turnID {
                 beginTurn(contextTurn, at: date)
             }
+            updateModel(in: payload, effort: "effort", at: date)
+            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
             return
         }
         if value["type"] as? String == "token_usage_record" {
@@ -469,6 +496,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         switch kind {
         case "task_started":
             beginTurn(eventTurn, at: date)
+            if let context = payload["_model_context"] as? [String: Any] {
+                updateModel(in: context, effort: "effort", at: date)
+                if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+            }
             logTurnStart = date
             if retainedLatency == nil, let ms = payload["first_output_latency_ms"] as? Double,
                ms.isFinite, ms >= 0, ms <= 3_600_000 {
@@ -500,6 +531,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     private mutating func beginTurn(_ id: String?, at date: Date, observed: Bool = true) {
         rememberRate()
+        if modelFromThreadConfiguration, id == nil || id != turnID {
+            modelName = nil; reasoningEffort = nil; reasoningEffortReported = false; reasoningEffortReportedAt = nil
+        }
         isHistoricalCompletion = false
         logTurnStart = nil
         if (id != nil && id != latencyTurnID) || (id == nil && [.completed, .interrupted].contains(phase)) {
@@ -660,7 +694,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
             }
-            updateModel(in: event, effort: "reasoningEffort")
+            if event["modelScope"] as? String == "threadConfiguration" {
+                modelFromThreadConfiguration = true
+            } else {
+                updateModel(in: event, effort: "reasoningEffort", at: date)
+            }
             if let cwd = event["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
             if provider == .codex {
@@ -1080,6 +1118,13 @@ public actor LocalActivityReader {
                         fallback = Data(line); latestTurn = turn
                     } else if value["type"] as? String == "event_msg", payload["type"] as? String == "task_started",
                               latestTurn == nil || latestTurn == turn {
+                        if let fallback, let context = (try? JSONSerialization.jsonObject(with: fallback) as? [String: Any])?["payload"] as? [String: Any],
+                           context["turn_id"] as? String == turn, let model = ModelDisplay.sanitizedModel(context["model"]) {
+                            var recovered: [String: Any] = ["model": model]
+                            if let effort = context["effort"] { recovered["effort"] = (ModelDisplay.sanitizedEffort(effort) as Any?) ?? NSNull() }
+                            payload["_model_context"] = recovered
+                            value["payload"] = payload
+                        }
                         if let ms = firstTimes[turn], let stamp = value["timestamp"] as? String,
                            let began = SessionActivity.parseDate(stamp) {
                             let duration = ms - began.timeIntervalSince1970 * 1000

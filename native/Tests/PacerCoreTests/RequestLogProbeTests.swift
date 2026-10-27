@@ -52,6 +52,17 @@ final class RequestLogProbeTests: XCTestCase {
     tail.dirty.add(tid);tail.due=.6;tail.read(.6,.1)
     assert len(emitted)==2 and all(len(frame['sessions'][0]['records'])<=512 for frame in emitted)
     assert sum(len(frame['sessions'][0]['records']) for frame in emitted)==600
+    # A newly attached long turn can be outside the 512 KiB tail. Its bounded
+    # anchor retains the same turn's model without forwarding other fields.
+    tail.close();emitted.clear()
+    path.write_text(record('session_meta',{'id':tid,'instructions':'PRIVATE'})+
+        record('event_msg',{'type':'task_started','turn_id':'long'})+
+        record('turn_context',{'turn_id':'long','model':'gpt-fixture','effort':'high','instructions':'PRIVATE'})+
+        record('ignored',{'padding':'x'*600000}))
+    tail=RequestLogTailer();tail.sync({tid:(str(path),float('inf'))},2,.1);tail.read(2.1,.1)
+    seeds=[r for frame in emitted for row in frame['sessions'] for r in row['records'] if r['payload'].get('_model_context')]
+    assert len(seeds)==1 and seeds[0]['payload']['_model_context']=={'model':'gpt-fixture','effort':'high'}
+    assert 'PRIVATE' not in json.dumps(emitted)
     outside=home/('rollout-'+tid+'.jsonl');outside.write_text(initial)
     tail.sync({tid:(str(outside),float('inf'))},1,.1);assert not tail.entries
     tail.sync({tid:(str(path),.5)},1,.1);assert not tail.entries

@@ -52,7 +52,12 @@ struct RuntimeEventState: Sendable {
                 ($0.hasLiveEvidence && [.completed, .interrupted].contains($0.phase))
             }).map { value in
                 var value = value
-                if let logged = metricLogs[value.id] { value.mergePerformance(from: logged) }
+                if let logged = metricLogs[value.id] {
+                    value.mergePerformance(from: logged)
+                    // The rollout's turn_context is execution evidence; unlike
+                    // thread settings it can name the matching active turn.
+                    if let turn = value.turnID, turn == logged.turnID { value.mergeDisplayMetadata(from: logged) }
+                }
                 return value
             }.filter { value in
                 guard let idle = confirmedIdle[value.id], ![.completed, .interrupted].contains(value.phase) else { return true }

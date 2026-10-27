@@ -90,6 +90,36 @@ final class ModelDisplayTests: XCTestCase {
         var unnamed = SessionActivity(id: session, sessionID: session)
         unnamed.mergeDisplayMetadata(from: logged)
         XCTAssertEqual(unnamed.modelName, "gpt-6.1-sol"); XCTAssertEqual(unnamed.reasoningEffort, "high")
+        var unidentified = SessionActivity(id: session, sessionID: session)
+        unidentified.applyRuntime(["method": "thread/observed", "threadId": session, "at": 1_800_000_000.0, "status": "active"])
+        unidentified.mergeDisplayMetadata(from: logged)
+        XCTAssertNil(unidentified.modelName, "Two missing turn IDs cannot establish that metadata belongs to the active turn")
+        var oldTurn = logged
+        oldTurn.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "old", "at": 1_800_000_001.0])
+        var newTurn = SessionActivity(id: session, sessionID: session)
+        newTurn.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "new", "at": 1_800_000_002.0])
+        newTurn.mergeDisplayMetadata(from: oldTurn)
+        XCTAssertNil(newTurn.modelName, "A previous turn's model cannot fill an unidentified new turn")
+
+        var cleared = logged
+        cleared.applyRuntime(["method": "metadata", "threadId": session, "at": 1_800_000_001.0, "model": "gpt-6.1-sol", "reasoningEffort": NSNull()])
+        cleared.mergeDisplayMetadata(from: logged)
+        XCTAssertNil(cleared.reasoningEffort, "An explicitly cleared effort must not return from an older source")
+        cleared.applyRuntime(["method": "metadata", "threadId": session, "at": 1_800_000_002.0, "model": "gpt-6.1-sol"])
+        cleared.mergeDisplayMetadata(from: logged)
+        XCTAssertNil(cleared.reasoningEffort, "A later omission must not undo the clear")
+        var olderSource = logged
+        olderSource.mergeDisplayMetadata(from: cleared)
+        XCTAssertNil(olderSource.reasoningEffort, "A newer clear from another source replaces an older value")
+        var tiedClear = logged
+        tiedClear.applyRuntime(["method": "metadata", "threadId": session, "at": 1_800_000_000.0, "model": "gpt-6.1-sol", "reasoningEffort": NSNull()])
+        var tiedValue = logged
+        tiedValue.mergeDisplayMetadata(from: tiedClear)
+        XCTAssertNil(tiedValue.reasoningEffort, "An explicit clear wins when source timestamps have equal precision")
+        cleared.applyRuntime(["method": "metadata", "threadId": session, "at": 1_800_000_003.0, "model": "gpt-6.1-sol", "reasoningEffort": "low"])
+        XCTAssertEqual(cleared.reasoningEffort, "low", "A new reported effort replaces the clear")
+        cleared.mergeDisplayMetadata(from: olderSource)
+        XCTAssertEqual(cleared.reasoningEffort, "low", "An older clear cannot erase a newer explicit value")
     }
 
     private func python(_ script: String) throws -> String {
