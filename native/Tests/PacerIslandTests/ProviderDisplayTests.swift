@@ -410,7 +410,7 @@ final class ProviderDisplayTests: XCTestCase {
     }
 
     func testDisablingEitherModulePreservesOtherQuotaAndUnreadCompletion() async throws {
-        for disabled in AgentProvider.allCases {
+        for disabled in [AgentProvider.codex, .claude] {
             let fixture = try fixture(), model = fixture.model, now = Date()
             defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
             let session = "019a0000-0000-7000-8000-000000000022"
@@ -418,7 +418,7 @@ final class ProviderDisplayTests: XCTestCase {
             let claude = activity(.claude, session: session, at: now, completed: true)
             model.receiveRemoteUpdate([codex], statuses: ["local": connected], unavailable: [], requests: [], names: [])
             model.receiveClaudeUpdate([claude], statuses: ["local": connected], requests: [])
-            for provider in AgentProvider.allCases {
+            for provider in [AgentProvider.codex, .claude] {
                 model.selectProvider(provider)
                 let snapshot = try quota(provider, used: 30, at: now)
                 model.quota = snapshot; model.history.record(snapshot)

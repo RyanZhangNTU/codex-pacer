@@ -13,6 +13,8 @@ struct TaskRowView: View {
     let enabled: Bool
     let unread: Bool
     let accent: Color
+    /// DeepSeek's estimated cost of this turn, when shown.
+    var cost: Double? = nil
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -127,6 +129,7 @@ struct TaskRowView: View {
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + ", " + performanceText
+            + (cost.map { ", " + L10n.text("deepseek.turn_cost_accessibility", DeepSeekWallet.turnAmount($0)) } ?? "")
     }
 
     private func rowContent(measuring: Bool) -> some View {
@@ -203,6 +206,10 @@ struct TaskRowView: View {
 
     private var modelLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let cost {
+                Text(DeepSeekWallet.turnAmount(cost)).foregroundStyle(PacerPalette.primary.opacity(0.86)).padding(.trailing, 3)
+                    .help(L10n.text("deepseek.turn_cost_row_help"))
+            }
             Text(modelLabel)
             if let effortLabel { Text(effortLabel).opacity(0.62) }
         }

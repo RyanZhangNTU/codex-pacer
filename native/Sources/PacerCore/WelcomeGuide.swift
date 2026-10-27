@@ -5,7 +5,7 @@ import Foundation
 /// version. Closing it records the line so later updates within it stay quiet.
 public enum WelcomeGuide {
     public static let defaultsKey = "welcomeGuideVersion"
-    public static let currentMajor = 3
+    public static let currentMajor = 4
 
     public static func shouldShow(defaults: UserDefaults = .standard) -> Bool {
         defaults.integer(forKey: defaultsKey) < currentMajor

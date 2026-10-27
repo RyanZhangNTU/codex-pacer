@@ -137,7 +137,9 @@ private struct IslandExpandedContent: View {
     private var quotaContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
-            IslandSectionHeader(title: L10n.text("layout.group.quota"), detail: single?.displayName,
+            let title = single == .deepseek ? "layout.group.balance"
+                : model.enabledProviders.contains(.deepseek) ? "layout.group.quota_balance" : "layout.group.quota"
+            IslandSectionHeader(title: L10n.text(title), detail: single?.displayName,
                 detailColor: single?.tint ?? PacerPalette.tertiary)
             if model.enabledProviders.isEmpty {
                 HStack(spacing: 12) {

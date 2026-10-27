@@ -17,10 +17,22 @@ enum PacerPalette {
 
 extension AgentProvider {
     var tint: Color {
-        self == .codex ? Color(red: 0.49, green: 0.84, blue: 0.77) : Color(red: 0.95, green: 0.61, blue: 0.42)
+        switch self {
+        case .codex: Color(red: 0.49, green: 0.84, blue: 0.77)
+        case .claude: Color(red: 0.95, green: 0.61, blue: 0.42)
+        case .deepseek: color
+        }
     }
+    /// DeepSeek's blue (#7B93FF) reads at the same weight as the other two on black.
+    var color: Color { Color(red: 0x7B / 255, green: 0x93 / 255, blue: 0xFF / 255) }
     /// Generic glyph for settings navigation and app buttons; never a vendor logo.
-    var glyph: String { self == .codex ? "chevron.left.forwardslash.chevron.right" : "asterisk" }
+    var glyph: String {
+        switch self {
+        case .codex: "chevron.left.forwardslash.chevron.right"
+        case .claude: "asterisk"
+        case .deepseek: "water.waves"
+        }
+    }
 }
 
 /// Expanded content aligns with the collapsed header: sections sit `edgeInset`

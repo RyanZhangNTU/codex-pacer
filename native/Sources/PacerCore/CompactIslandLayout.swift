@@ -11,10 +11,13 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.component." + rawValue) }
         public var shortLabel: String { L10n.text("layout.short." + rawValue) }
         public var detail: String { L10n.text("layout.detail." + rawValue) }
-        /// Quota components combine every enabled provider, so they need at least one.
+        /// Quota components combine every enabled provider, so they need at
+        /// least one. A balance has no window, so the gauge, its label and time
+        /// remaining need Codex or Claude.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
             switch self {
-            case .quota, .quotaGauge, .quotaLabel, .timeRemaining: return !providers.isEmpty
+            case .quota: return !providers.isEmpty
+            case .quotaGauge, .quotaLabel, .timeRemaining: return !providers.subtracting([.deepseek]).isEmpty
             default: return true
             }
         }
@@ -74,8 +77,14 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     }
     /// What the warnings component can show, in display order.
     public enum Warning: String, CaseIterable, Codable, Sendable {
-        case fiveHour, ssh, quotaDelay
+        case fiveHour, ssh, quotaDelay, lowBalance, peakPrice
         public var label: String { L10n.text("warning." + rawValue) }
+        /// The doubled-price capsule repeats the dial's peak bezel, so it starts off.
+        public static let defaults: Set<Self> = Set(allCases).subtracting([.peakPrice])
+        /// DeepSeek's wallet warnings need its module; the others need nothing.
+        public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
+            [.lowBalance, .peakPrice].contains(self) ? providers.contains(.deepseek) : true
+        }
         /// Schemas before 7 had one component per warning.
         fileprivate init?(legacyComponent name: String) {
             switch name {
@@ -91,11 +100,11 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 7
+    public let version = 8
     public var leading: [Component]
     public var trailing: [Component]
     public var warnings: Set<Warning>
-    public init(leading: [Component] = [], trailing: [Component] = [], warnings: Set<Warning> = Set(Warning.allCases)) {
+    public init(leading: [Component] = [], trailing: [Component] = [], warnings: Set<Warning> = Warning.defaults) {
         self.leading = leading; self.trailing = trailing; self.warnings = warnings
     }
     public static let standard = Self(leading: [.activity, .tps], trailing: [.warnings, .quotaGauge, .quota])
@@ -145,7 +154,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...7).contains(schema) else {
+        guard (1...8).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
         var leadingNames = try values.decode([String].self, forKey: .leading)
@@ -166,15 +175,17 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         }
         if schema < 6 { Self.mergeProviderQuotas(&leadingNames, &trailingNames) }
         // Schema 7 merges the separate warnings into one slot at the first
-        // one's position; the kinds that were shown stay enabled.
-        let enabled: Set<Warning>
+        // one's position; the kinds that were shown stay enabled. Schema 8
+        // adds DeepSeek's warnings in their default state.
+        var enabled: Set<Warning>
         if schema < 7 {
             let shown = Set((leadingNames + trailingNames).compactMap(Warning.init(legacyComponent:)))
-            enabled = shown.isEmpty ? Set(Warning.allCases) : shown
+            enabled = shown.isEmpty ? Warning.defaults : shown
         } else {
             enabled = try values.decodeIfPresent([String].self, forKey: .warnings).map { Set($0.compactMap(Warning.init(rawValue:))) }
-                ?? Set(Warning.allCases)
+                ?? Warning.defaults
         }
+        if schema < 8 { enabled.insert(.lowBalance) }
         let decoded = Self(leading: leadingNames.flatMap(Component.saved), trailing: trailingNames.flatMap(Component.saved),
             warnings: enabled).normalized
         leading = decoded.leading; trailing = decoded.trailing; warnings = decoded.warnings

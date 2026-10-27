@@ -37,12 +37,18 @@ public enum ModelDisplay {
             let suffix = parts.dropFirst(2).map { ["mini", "nano"].contains($0) || $0.contains(where: \.isNumber) ? $0 : $0.capitalized }
             return (["GPT-" + parts[1]] + suffix).joined(separator: " ")
         }
+        if parts.first == "deepseek", parts.count >= 2 {
+            // `deepseek-v4-pro` → V4 Pro, `deepseek-flash` → Flash.
+            return parts.dropFirst().map { $0.first == "v" && $0.dropFirst().allSatisfy(\.isNumber) ? $0.uppercased() : $0.capitalized }
+                .joined(separator: " ")
+        }
         return id
     }
 
     /// `none` means the model reasons by default and has nothing to show.
     public static func effortLabel(_ raw: String, language: AppLanguage? = nil) -> String? {
-        guard raw != "none" else { return nil }
+        // DeepSeek Harness writes `off` for a model asked not to reason.
+        guard raw != "none", raw != "off" else { return nil }
         let known = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"]
         return known.contains(raw) ? L10n.text("model.effort." + raw, language: language) : raw
     }

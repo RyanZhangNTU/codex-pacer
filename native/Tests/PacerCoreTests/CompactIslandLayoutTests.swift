@@ -38,7 +38,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         for component in layout.components { layout.hide(component) }
         layout.save(to: defaults)
         XCTAssertTrue(CompactIslandLayout.load(from: defaults).components.isEmpty, "Hiding everything is intentional")
-        for invalid in [Data("broken".utf8), Data(#"{"version":8,"leading":[],"trailing":[]}"#.utf8), Data(repeating: 0, count: 8193)] {
+        for invalid in [Data("broken".utf8), Data(#"{"version":9,"leading":[],"trailing":[]}"#.utf8), Data(repeating: 0, count: 8193)] {
             defaults.set(invalid, forKey: CompactIslandLayout.defaultsKey)
             XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         }
@@ -57,7 +57,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         layout.save(to: defaults)
         let saved = try XCTUnwrap(defaults.data(forKey: CompactIslandLayout.defaultsKey))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
-        XCTAssertEqual(object["version"] as? Int, 7)
+        XCTAssertEqual(object["version"] as? Int, 8)
         XCTAssertNil(object["center"])
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
     }
@@ -74,7 +74,8 @@ final class CompactIslandLayoutTests: XCTestCase {
         let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
         XCTAssertEqual(layout.leading, [.activity], "The merged badge replaces both former task components once")
         XCTAssertEqual(layout.trailing, [.quotaGauge, .quota, .quotaLabel, .timeRemaining, .warnings])
-        XCTAssertEqual(layout.warnings, [.fiveHour, .quotaDelay], "Only the warnings that were shown stay enabled")
+        XCTAssertEqual(layout.warnings, [.fiveHour, .quotaDelay, .lowBalance],
+            "Only the warnings that were shown stay enabled, plus DeepSeek's low balance, which no earlier schema offered")
         let standard = Data(#"{"version":2,"leading":["statusIcon","status","tps"],"trailing":["quotaWarning","quotaMetric","quotaWindow","freshness"]}"#.utf8)
         XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: standard), .standard)
         let empty = Data(#"{"version":2,"leading":[],"trailing":[]}"#.utf8)
@@ -107,7 +108,7 @@ final class CompactIslandLayoutTests: XCTestCase {
             XCTAssertEqual(layout.trailing, [.timeRemaining, .warnings], "Duplicated legacy quota must not create extra values")
             let hidden = try JSONSerialization.data(withJSONObject: ["version": version, "leading": ["tps"], "trailing": ["sshWarning"]])
             XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: hidden),
-                CompactIslandLayout(leading: [.tps], trailing: [.warnings], warnings: [.ssh]))
+                CompactIslandLayout(leading: [.tps], trailing: [.warnings], warnings: [.ssh, .lowBalance]))
         }
     }
     func testProviderQuotaValuesMergeIntoRingsAndOneAlternatingValue() throws {
@@ -121,7 +122,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertEqual(try decode(["activity", "tps"], ["lowQuotaWarning", "codexQuota", "claudeQuota", "quotaLabel", "quotaDelayWarning", "sshWarning"], version: 5),
             .standard, "The untouched former default adopts the new default without the label")
         XCTAssertEqual(try decode(["activity"], ["claudeQuota", "sshWarning"], version: 5),
-            CompactIslandLayout(leading: [.activity], trailing: [.quota, .warnings], warnings: [.ssh]),
+            CompactIslandLayout(leading: [.activity], trailing: [.quota, .warnings], warnings: [.ssh, .lowBalance]),
             "A single provider value becomes the value alone")
         XCTAssertEqual(try decode(["codexQuota", "tps"], ["claudeQuota"], version: 5),
             CompactIslandLayout(leading: [.quotaGauge, .quota, .tps]), "Values split across lanes merge at the first position")
@@ -129,28 +130,33 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertEqual(CompactIslandLayout.Group.quota.components, [.quota, .quotaGauge, .quotaLabel, .timeRemaining])
         XCTAssertTrue(CompactIslandLayout.standard.components.isSuperset(of: [.quotaGauge, .quota, .warnings]),
             "Rings, the alternating value and the warnings slot are on by default")
-        XCTAssertEqual(CompactIslandLayout.standard.warnings, Set(CompactIslandLayout.Warning.allCases))
+        XCTAssertEqual(CompactIslandLayout.standard.warnings, Set(CompactIslandLayout.Warning.allCases).subtracting([.peakPrice]))
     }
     func testSeparateWarningsMergeIntoOneSlotAndKeepTheirChoices() throws {
         func decode(_ object: [String: Any]) throws -> CompactIslandLayout {
             try JSONDecoder().decode(CompactIslandLayout.self, from: JSONSerialization.data(withJSONObject: object))
         }
         XCTAssertEqual(try decode(["version": 6, "leading": ["activity"], "trailing": ["quotaGauge", "sshWarning", "quota", "lowQuotaWarning"]]),
-            CompactIslandLayout(leading: [.activity], trailing: [.quotaGauge, .warnings, .quota], warnings: [.ssh, .fiveHour]),
-            "The slot takes the first warning's position; hidden kinds stay off")
+            CompactIslandLayout(leading: [.activity], trailing: [.quotaGauge, .warnings, .quota], warnings: [.ssh, .fiveHour, .lowBalance]),
+            "The slot takes the first warning's position; hidden kinds stay off and DeepSeek's low balance starts on")
         XCTAssertEqual(try decode(["version": 6, "leading": ["activity", "tps"],
             "trailing": ["lowQuotaWarning", "quotaGauge", "quota", "quotaDelayWarning", "sshWarning"]]), .standard,
             "The former default adopts the new default")
         let none = try decode(["version": 6, "leading": ["tps"], "trailing": ["quota"]])
         XCTAssertFalse(none.components.contains(.warnings), "A bar without warnings gains none")
-        XCTAssertEqual(none.warnings, Set(CompactIslandLayout.Warning.allCases), "Adding the slot later starts with every warning")
+        XCTAssertEqual(none.warnings, CompactIslandLayout.Warning.defaults, "Adding the slot later starts with the default warnings")
         var custom = CompactIslandLayout(leading: [.tps], trailing: [.warnings], warnings: [.quotaDelay])
         XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: JSONEncoder().encode(custom)), custom)
         custom.warnings = []
         XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: JSONEncoder().encode(custom)).warnings, [],
             "Turning every warning off is kept")
         XCTAssertEqual(try decode(["version": 7, "leading": [], "trailing": ["warnings"]]).warnings,
-            Set(CompactIslandLayout.Warning.allCases))
+            CompactIslandLayout.Warning.defaults)
+        XCTAssertEqual(try decode(["version": 7, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings, [.ssh, .lowBalance],
+            "Schema 8 adds the low-balance warning to a saved choice; the doubled-price capsule stays off")
+        XCTAssertEqual(try decode(["version": 8, "leading": [], "trailing": ["warnings"], "warnings": ["peakPrice"]]).warnings, [.peakPrice])
+        XCTAssertFalse(CompactIslandLayout.Warning.lowBalance.isAvailable(for: [.codex, .claude]))
+        XCTAssertTrue(CompactIslandLayout.Warning.peakPrice.isAvailable(for: [.deepseek]))
         XCTAssertTrue(try decode(["version": 7, "leading": [], "trailing": ["sshWarning"]]).components.isEmpty == false,
             "A stray former name still lands in the single slot")
         XCTAssertEqual(CompactIslandLayout.Group.warnings.components, [.warnings])

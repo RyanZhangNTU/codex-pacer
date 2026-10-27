@@ -43,6 +43,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var rolloutURL: URL?
     public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
     public var threadURL: URL? {
+        if provider == .deepseek { return nil }
         if provider == .claude {
             guard sourceHostID == nil, let desktopSessionID else { return nil }
             var url = URLComponents()
@@ -80,6 +81,15 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var reasoningEffortReported = false
     private var reasoningEffortReportedAt: Date?
     public private(set) var isInternalReview = false
+    /// DeepSeek's estimated cost of the current turn in CNY, from local token
+    /// counts and the published price list; the platform bill is authoritative.
+    public var turnCost: Double? { costTurnID != nil && costTurnID == turnID ? estimatedCost : nil }
+    private var estimatedCost: Double?
+    private var costTurnID: String?
+    mutating func setTurnCost(_ value: Double, turnID: String) {
+        guard provider == .deepseek, value.isFinite, value >= 0, self.turnID == turnID else { return }
+        estimatedCost = value; costTurnID = turnID
+    }
     /// A source that reports a model without its effort keeps the known effort
     /// only while the model is unchanged; an explicit null clears it.
     mutating func updateModel(in values: [String: Any], model key: String = "model", effort effortKey: String, at date: Date) {
@@ -196,6 +206,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         // previous turn must not supply a model for the current one.
         let sameTurn = turnID != nil && turnID == other.turnID
         let bothUnattached = turnID == nil && other.turnID == nil && phase == .unknown && other.phase == .unknown
+        if sameTurn, turnCost == nil, other.turnCost != nil { estimatedCost = other.estimatedCost; costTurnID = other.costTurnID }
         if sameTurn || bothUnattached {
             if modelName == nil { modelName = other.modelName }
             let ownEffortAt = reasoningEffortReportedAt ?? .distantPast
@@ -852,7 +863,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     /// An initial log/spool baseline is historical even when it contains live-shaped events.
     public mutating func suppressHistoricalCompletionNotifications() {
-        guard provider == .claude else { return }
+        guard provider != .codex else { return }
         liveTurnStarted = false
         isHistoricalCompletion = [.completed, .interrupted].contains(phase)
     }

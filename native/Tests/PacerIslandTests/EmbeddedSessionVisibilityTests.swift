@@ -9,9 +9,10 @@ final class EmbeddedSessionVisibilityTests: XCTestCase {
     private var child: String { provider == .claude ? "retained-agent" : "019a0000-0000-7000-8000-0000000000d2" }
     private var settingKey: String { provider == .claude ? IslandModel.showsEmbeddedClaudeSessionsKey : IslandModel.showsEmbeddedCodexSessionsKey }
     private let remote = "remote-ssh-discovered:visibility-fixture"
+    // Only Codex and Claude sessions can be started by another app; DeepSeek has no embedded switch.
 
     func testHidingAndShowingRetainedFamiliesSurvivesEitherOrderOfReaderEviction() async throws {
-        for current in AgentProvider.allCases {
+        for current in [AgentProvider.codex, .claude] {
             provider = current
             for host in [nil, remote] as [String?] {
                 for hideFirst in [false, true] {
@@ -56,7 +57,7 @@ final class EmbeddedSessionVisibilityTests: XCTestCase {
     }
 
     func testHiddenCompletionIsRetainedAndOnlySuccessfulOpenDismissesIt() async throws {
-        for current in AgentProvider.allCases {
+        for current in [AgentProvider.codex, .claude] {
             provider = current
             let (model, defaults, dismissals) = try fixture()
             defaults.set(false, forKey: settingKey)
@@ -88,7 +89,7 @@ final class EmbeddedSessionVisibilityTests: XCTestCase {
     }
 
     func testHiddenRetainedCompletionStillExpires() async throws {
-        for current in AgentProvider.allCases {
+        for current in [AgentProvider.codex, .claude] {
             provider = current
             let (model, defaults, dismissals) = try fixture()
             defaults.set(5, forKey: "completedRetentionMinutes")
@@ -107,7 +108,7 @@ final class EmbeddedSessionVisibilityTests: XCTestCase {
     }
 
     func testCurrentCliResumeOverridesTheRetainedEmbeddedLaunch() async throws {
-        for current in AgentProvider.allCases {
+        for current in [AgentProvider.codex, .claude] {
             provider = current
             let (model, defaults, _) = try fixture()
             var ended = activity(parent, completed: true)

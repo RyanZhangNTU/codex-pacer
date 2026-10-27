@@ -13,6 +13,10 @@ struct SettingsView: View {
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var modules = ProviderModules.load()
     @State private var claudeHome = UserDefaults.standard.string(forKey: "claudeHome") ?? ""
+    @State private var deepseekHome = UserDefaults.standard.string(forKey: "deepseekHome") ?? ""
+    @State private var deepseekSource = DeepSeekBalanceSource.load()
+    @State private var deepseekLowBalance = UserDefaults.standard.object(forKey: IslandModel.deepseekLowBalanceKey) as? Double ?? 10
+    @AppStorage(IslandModel.deepseekTurnCostKey) private var showsDeepSeekTurnCost = true
     @State private var showsResetExpiryDetails: Set<AgentProvider> = []
     @State private var displayMode = IslandDisplayMode.load()
     /// Nil until chosen, so an unrelated change never stores the center.
@@ -111,7 +115,7 @@ struct SettingsView: View {
             ForEach([SettingsPane.general, .appearance, .collapsedBar, .reminders]) { sidebarRow($0) }
             Text(L10n.text("provider.modules")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
-            ForEach([SettingsPane.codex, .claude, .connections]) { sidebarRow($0) }
+            ForEach([SettingsPane.codex, .claude, .deepseek, .connections]) { sidebarRow($0) }
             Spacer(minLength: 0)
             sidebarRow(.whatsNew)
             sidebarRow(.help)
@@ -210,6 +214,10 @@ struct SettingsView: View {
                 warningRow(.fiveHour) { FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint) }
                 warningRow(.ssh) { Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)) }
                 warningRow(.quotaDelay) { Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)) }
+                if moduleEnabled(.deepseek) {
+                    warningRow(.lowBalance) { WalletAlertGlyph(exhausted: false) }
+                    warningRow(.peakPrice) { PeakPriceGlyph() }
+                }
             }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
@@ -238,7 +246,7 @@ struct SettingsView: View {
                     Text(L10n.text("settings.until_clicked")).tag(0)
                 }
             }
-        case .codex, .claude:
+        case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .whatsNew:
             SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
@@ -268,13 +276,16 @@ struct SettingsView: View {
             if moduleMode(provider) != .automatic {
                 HStack {
                     Spacer()
-                    Button(L10n.text("provider.restore_automatic")) {
-                        if provider == .codex { modules.codexMode = .automatic } else { modules.claudeMode = .automatic }
-                    }.font(.system(size: 11)).buttonStyle(.link)
+                    Button(L10n.text("provider.restore_automatic")) { modules.setMode(.automatic, for: provider) }
+                        .font(.system(size: 11)).buttonStyle(.link)
                 }
             }
         }
-        if moduleEnabled(provider) {
+        if moduleEnabled(provider), provider == .deepseek {
+            SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, lowBalance: $deepseekLowBalance,
+                showsTurnCost: $showsDeepSeekTurnCost, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
+                commitHome: { commit(.deepseekHome) }, chooseHome: chooseDeepSeekHome)
+        } else if moduleEnabled(provider) {
             localSection(provider)
             if model.enabledProviders.contains(provider) { quotaHistorySection(provider) }
         }
@@ -553,9 +564,7 @@ struct SettingsView: View {
         }
     }
 
-    private func moduleMode(_ provider: AgentProvider) -> ProviderModuleMode {
-        provider == .codex ? modules.codexMode : modules.claudeMode
-    }
+    private func moduleMode(_ provider: AgentProvider) -> ProviderModuleMode { modules.mode(for: provider) }
     private func moduleEnabled(_ provider: AgentProvider) -> Bool {
         switch moduleMode(provider) {
         case .automatic: return model.providerDetected(provider)
@@ -564,10 +573,7 @@ struct SettingsView: View {
         }
     }
     private func moduleBinding(_ provider: AgentProvider) -> Binding<Bool> {
-        Binding(get: { moduleEnabled(provider) }, set: { value in
-            if provider == .codex { modules.codexMode = value ? .enabled : .disabled }
-            else { modules.claudeMode = value ? .enabled : .disabled }
-        })
+        Binding(get: { moduleEnabled(provider) }, set: { modules.setMode($0 ? .enabled : .disabled, for: provider) })
     }
     private var resolvedClaudeHome: String {
         let configured = claudeHome.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -581,6 +587,13 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false; panel.showsHiddenFiles = true
         panel.message = L10n.text("provider.choose_claude_home")
         if panel.runModal() == .OK, let path = panel.url?.path { claudeHome = path; commit(.claudeHome) }
+    }
+    private func chooseDeepSeekHome() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false; panel.showsHiddenFiles = true
+        panel.message = L10n.text("deepseek.choose_home")
+        if panel.runModal() == .OK, let path = panel.url?.path { deepseekHome = path; commit(.deepseekHome) }
     }
     private func choose(directory: Bool) {
         let panel = NSOpenPanel()
@@ -600,7 +613,8 @@ struct SettingsView: View {
             quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
-            showEmbeddedCodexSessions: showEmbeddedCodexSessions)
+            showEmbeddedCodexSessions: showEmbeddedCodexSessions, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            showsDeepSeekTurnCost: showsDeepSeekTurnCost)
     }
 
     private func scheduleApply() {
@@ -638,6 +652,8 @@ struct SettingsView: View {
         defaults.set(claudeWindowID, forKey: "claudeQuotaWindowID")
         defaults.set(completedRetention, forKey: "completedRetentionMinutes")
         defaults.set(hideProjects, forKey: "hideProjects")
+        defaults.set(deepseekSource.rawValue, forKey: DeepSeekBalanceSource.defaultsKey)
+        if deepseekLowBalance.isFinite, deepseekLowBalance >= 0 { defaults.set(deepseekLowBalance, forKey: IslandModel.deepseekLowBalanceKey) }
         model.applySettings(sourceChanged: false)
     }
 
@@ -668,6 +684,13 @@ struct SettingsView: View {
                 textIssues[field] = L10n.text("provider.invalid_claude_home"); return
             }
             defaults.set(directory, forKey: "claudeHome")
+        case .deepseekHome:
+            let directory = deepseekHome.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard directory != (defaults.string(forKey: "deepseekHome") ?? "") else { textIssues[field] = nil; return }
+            guard directory.isEmpty || directoryExists((directory as NSString).expandingTildeInPath) else {
+                textIssues[field] = L10n.text("deepseek.invalid_home"); return
+            }
+            defaults.set(directory, forKey: "deepseekHome")
         }
         textIssues[field] = nil
         applyNow()
@@ -686,7 +709,7 @@ struct SettingsView: View {
     }
 }
 
-enum TextSetting: Hashable { case cli, codexHome, claudeHome }
+enum TextSetting: Hashable { case cli, codexHome, claudeHome, deepseekHome }
 
 private struct LiveSettings: Equatable {
     var modules: ProviderModules
@@ -708,13 +731,30 @@ private struct LiveSettings: Equatable {
     var monitorRemoteControl: Bool
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool
+    var deepseekSource: DeepSeekBalanceSource
+    var deepseekLowBalance: Double
+    var showsDeepSeekTurnCost: Bool
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, appearance, collapsedBar, reminders, codex, claude, connections, whatsNew, help
+    case general, appearance, collapsedBar, reminders, codex, claude, deepseek, connections, whatsNew, help
     static let defaultsKey = "settingsPane"
     var id: String { rawValue }
-    var provider: AgentProvider? { self == .codex ? .codex : self == .claude ? .claude : nil }
+    init(provider: AgentProvider) {
+        switch provider {
+        case .codex: self = .codex
+        case .claude: self = .claude
+        case .deepseek: self = .deepseek
+        }
+    }
+    var provider: AgentProvider? {
+        switch self {
+        case .codex: .codex
+        case .claude: .claude
+        case .deepseek: .deepseek
+        default: nil
+        }
+    }
     var title: String {
         switch self {
         case .general: return L10n.text("settings.pane.general")
@@ -723,6 +763,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .reminders: return L10n.text("settings.reminders")
         case .codex: return AgentProvider.codex.displayName
         case .claude: return AgentProvider.claude.displayName
+        case .deepseek: return AgentProvider.deepseek.displayName
         case .connections: return L10n.text("settings.pane.connections")
         case .whatsNew: return L10n.text("whats_new.window_title")
         case .help: return L10n.text("settings.pane.help")
@@ -736,6 +777,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .reminders: return "bell.badge.fill"
         case .codex: return AgentProvider.codex.glyph
         case .claude: return AgentProvider.claude.glyph
+        case .deepseek: return AgentProvider.deepseek.glyph
         case .connections: return "point.3.connected.trianglepath.dotted"
         case .whatsNew: return "sparkles"
         case .help: return "questionmark"
@@ -749,6 +791,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .reminders: return Color(red: 1, green: 0.3, blue: 0.29)
         case .codex: return AgentProvider.codex.tint
         case .claude: return AgentProvider.claude.tint
+        case .deepseek: return AgentProvider.deepseek.tint
         case .connections: return Color(red: 0.16, green: 0.5, blue: 1)
         case .whatsNew: return Color(red: 0.93, green: 0.29, blue: 0.6)
         case .help: return Color(white: 0.52)

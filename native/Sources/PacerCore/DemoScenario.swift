@@ -75,6 +75,46 @@ public enum DemoScenario {
         return state.activities[0]
     }
 
+    /// A DeepSeek Harness task beside the others, with a settled response so
+    /// its speed, first-output time and estimated cost appear.
+    public static func deepseekTask(stage: DemoTaskStage, at now: Date) -> SessionActivity {
+        var state = DeepSeekActivityState()
+        let session = "00000000-0000-4000-8000-000000000004"
+        func record(_ ago: Double, _ event: DeepSeekLogEvent, seq: Int) -> DeepSeekLogRecord {
+            DeepSeekLogRecord(seq: seq, at: now.addingTimeInterval(ago), event: event)
+        }
+        var records = [record(-50, .header(.init(session: session, createdAt: now.addingTimeInterval(-50), project: L10n.text("demo.deepseek_project"), parent: nil)), seq: 0),
+            record(-50, .title(L10n.text("demo.deepseek_task")), seq: 1),
+            record(-50, .model("deepseek-v4-pro", effort: "high", reported: true, provider: "deepseek-account"), seq: 2),
+            record(-48, .turnStart(1), seq: 3), record(-47, .stepStart(turn: 1, step: 1), seq: 4),
+            record(-20, .response(.init(turn: 1, step: 1, model: "deepseek-v4-pro", usage: DeepSeekUsage(input: 18_000, cacheRead: 96_000, output: 2_400),
+                firstChunkAt: now.addingTimeInterval(-45.6), lastChunkAt: now.addingTimeInterval(-20), hasText: false, hasReasoning: true, toolCalls: 1)), seq: 5),
+            record(-20, .toolCall(turn: 1, call: "demo-call", kind: .other), seq: 6)]
+        if stage != .tool { records += [record(-12, .toolResult(call: "demo-call"), seq: 7), record(-12, .stepStart(turn: 1, step: 2), seq: 8)] }
+        if stage == .completed {
+            records += [record(-1, .response(.init(turn: 1, step: 2, model: "deepseek-v4-pro", usage: DeepSeekUsage(input: 1_200, cacheRead: 116_000, output: 900),
+                firstChunkAt: now.addingTimeInterval(-10.8), lastChunkAt: now.addingTimeInterval(-1), hasText: true, hasReasoning: true, toolCalls: 0)), seq: 9),
+                record(0, .turnEnd(turn: 1, outcome: .completed), seq: 10)]
+        }
+        for value in records { state.consume(value, session: session, attaching: false, now: now) }
+        return state.activities[0]
+    }
+
+    /// A week of uneven spending with peak-hour work on weekdays.
+    public static func deepseekUsage(at now: Date, calendar: Calendar = .current) -> DeepSeekLocalUsage {
+        var ledger = DeepSeekSpendLedger()
+        let hours: [(Int, Double)] = [(9, 0.9), (10, 2.4), (11, 1.6), (14, 1.1), (15, 2.8), (16, 1.9), (17, 0.7), (20, 1.4), (21, 2.2), (22, 0.8)]
+        for offset in 0...7 {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: calendar.startOfDay(for: now)) else { continue }
+            let scale = [1.0, 0.7, 1.3, 0.5, 0.9, 1.1, 0.4, 0.8][offset]
+            for (hour, cost) in hours {
+                guard let at = calendar.date(bySettingHour: hour, minute: 20, second: 0, of: day), at < now else { continue }
+                ledger.record(id: "demo:\(offset):\(hour)", at: at, cost: cost * scale)
+            }
+        }
+        return DeepSeekLocalUsage(ledger: ledger, provider: "deepseek-account")
+    }
+
     /// Bounded synthetic graph for native grouping/retained-rate UI acceptance.
     public static func subagentTasks(stage: DemoTaskStage, at now: Date) -> [SessionActivity] {
         let parent = "019a0000-0000-7000-8000-000000000101"

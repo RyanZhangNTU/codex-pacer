@@ -8,11 +8,16 @@ public enum ProviderModuleMode: String, CaseIterable, Codable, Sendable {
 public struct ProviderInstallationDetection: Equatable, Sendable {
     public let codexInstalled: Bool
     public let claudeInstalled: Bool
-    public init(codexInstalled: Bool, claudeInstalled: Bool) {
-        self.codexInstalled = codexInstalled; self.claudeInstalled = claudeInstalled
+    public let deepseekInstalled: Bool
+    public init(codexInstalled: Bool, claudeInstalled: Bool, deepseekInstalled: Bool = false) {
+        self.codexInstalled = codexInstalled; self.claudeInstalled = claudeInstalled; self.deepseekInstalled = deepseekInstalled
     }
     public func isInstalled(_ provider: AgentProvider) -> Bool {
-        provider == .codex ? codexInstalled : claudeInstalled
+        switch provider {
+        case .codex: codexInstalled
+        case .claude: claudeInstalled
+        case .deepseek: deepseekInstalled
+        }
     }
 
     /// Detect known app/CLI locations without launching either app or reading authentication.
@@ -39,7 +44,11 @@ public struct ProviderInstallationDetection: Equatable, Sendable {
         }
         let codex = appInstalled(.codex, bundleID: "com.openai.codex", name: "Codex") || cliInstalled("codex")
         let claude = appInstalled(.claude, bundleID: "com.anthropic.claudefordesktop", name: "Claude") || cliInstalled("claude")
-        return Self(codexInstalled: codex, claudeInstalled: claude)
+        // Harness keeps its sessions in `$DSH_HOME` or `~/.dsh`; the app bundles `dsh`.
+        let deepseek = appInstalled(.deepseek, bundleID: "com.deepseek.dsh", name: "DeepSeek Harness") || cliInstalled("dsh") ||
+            FileManager.default.fileExists(atPath: DeepSeekHome.resolve(environment: environment, userHome: userHome)
+                .appendingPathComponent("sessions").path)
+        return Self(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek)
     }
 }
 
@@ -47,12 +56,24 @@ public struct ProviderInstallationDetection: Equatable, Sendable {
 public struct ProviderModules: Equatable, Sendable {
     public var codexMode: ProviderModuleMode
     public var claudeMode: ProviderModuleMode
-    public init(codexMode: ProviderModuleMode = .automatic, claudeMode: ProviderModuleMode = .automatic) {
-        self.codexMode = codexMode; self.claudeMode = claudeMode
+    public var deepseekMode: ProviderModuleMode
+    public init(codexMode: ProviderModuleMode = .automatic, claudeMode: ProviderModuleMode = .automatic,
+                deepseekMode: ProviderModuleMode = .automatic) {
+        self.codexMode = codexMode; self.claudeMode = claudeMode; self.deepseekMode = deepseekMode
     }
-    public func mode(for provider: AgentProvider) -> ProviderModuleMode { provider == .codex ? codexMode : claudeMode }
+    public func mode(for provider: AgentProvider) -> ProviderModuleMode {
+        switch provider {
+        case .codex: codexMode
+        case .claude: claudeMode
+        case .deepseek: deepseekMode
+        }
+    }
     public mutating func setMode(_ mode: ProviderModuleMode, for provider: AgentProvider) {
-        if provider == .codex { codexMode = mode } else { claudeMode = mode }
+        switch provider {
+        case .codex: codexMode = mode
+        case .claude: claudeMode = mode
+        case .deepseek: deepseekMode = mode
+        }
     }
     public func enabledProviders(detection: ProviderInstallationDetection = .detect()) -> Set<AgentProvider> {
         Set(AgentProvider.allCases.filter { provider in
@@ -67,7 +88,7 @@ public struct ProviderModules: Equatable, Sendable {
         func mode(_ provider: AgentProvider) -> ProviderModuleMode {
             defaults.string(forKey: key(provider)).flatMap(ProviderModuleMode.init(rawValue:)) ?? .automatic
         }
-        return Self(codexMode: mode(.codex), claudeMode: mode(.claude))
+        return Self(codexMode: mode(.codex), claudeMode: mode(.claude), deepseekMode: mode(.deepseek))
     }
     public func save(to defaults: UserDefaults = .standard) {
         for provider in AgentProvider.allCases { defaults.set(mode(for: provider).rawValue, forKey: Self.key(provider)) }

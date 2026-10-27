@@ -11,7 +11,10 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")
     ],
     targets: [
-        .target(name: "PacerCore", resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
+        // Decompression-only Zstandard for DeepSeek Harness session logs.
+        .target(name: "CZstd", exclude: ["README.md", "LICENSE"],
+            cSettings: [.define("ZSTD_DISABLE_ASM"), .define("ZSTD_LEGACY_SUPPORT", to: "0"), .define("ZSTD_NO_TRACE")]),
+        .target(name: "PacerCore", dependencies: ["CZstd"], resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
         .executableTarget(name: "PacerRelaunch"),
         .executableTarget(name: "PacerIsland", dependencies: ["PacerCore", .product(name: "Sparkle", package: "Sparkle")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
