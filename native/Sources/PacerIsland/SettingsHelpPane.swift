@@ -12,6 +12,7 @@ struct SettingsHelpPane: View {
         Section(L10n.text("help.section.colors")) {
             row("help.codex") { ProviderColorSample(provider: .codex) }
             row("help.claude") { ProviderColorSample(provider: .claude) }
+            row("help.deepseek") { ProviderColorSample(provider: .deepseek) }
             row("help.alert") {
                 ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [:], attention: .input))
                 StatusGlyph(symbol: StatusSymbols.failed, tint: PacerPalette.danger, size: 14)
@@ -39,6 +40,11 @@ struct SettingsHelpPane: View {
                 FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint)
                 FiveHourAlertGlyph(alert: .exhausted, tint: AgentProvider.claude.tint)
             }
+            row("help.wallet") {
+                WalletAlertGlyph(exhausted: false)
+                WalletAlertGlyph(exhausted: true)
+                PeakPriceGlyph()
+            }
             row("help.status") {
                 Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold))
                 Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold))
@@ -48,6 +54,12 @@ struct SettingsHelpPane: View {
             row("help.pace") {
                 PaceTickSample()
                 QuotaVerdictChip(verdict: .spare)
+            }
+            row("help.day_dial") {
+                // A Tuesday morning: spend through 10:40, peak bezels at 9–12 and 14–18.
+                DeepSeekDialFace(hourly: [0.2, 0, 0, 0, 0, 0, 0, 0, 0.2, 0.9, 1.7] + Array(repeating: 0, count: 13),
+                    peak: [135...180, 210...270], now: 160)
+                    .frame(width: 30, height: 30)
             }
             row("help.rows") {
                 StatusGlyph(symbol: StatusSymbols.thinking, tint: AgentProvider.codex.tint, size: 14)
@@ -123,7 +135,7 @@ private struct ProviderColorSample: View {
             .foregroundStyle(Color.black.opacity(0.72))
             .frame(width: 18, height: 18)
             .background(provider.tint, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        Text("58%").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(provider.tint)
+        Text(provider == .deepseek ? "¥86" : "58%").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(provider.tint)
     }
 }
 

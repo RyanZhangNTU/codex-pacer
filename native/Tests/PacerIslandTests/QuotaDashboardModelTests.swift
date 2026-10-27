@@ -84,7 +84,7 @@ final class QuotaDashboardModelTests: XCTestCase {
 
     func testWeeklyOnlyProRequiresActualPrimaryBucketFreshUsageAndKnownFutureReset() throws {
         let (model, _) = try fixture()
-        for provider in AgentProvider.allCases {
+        for provider in [AgentProvider.codex, .claude] {
             let weekly = window(provider.rawValue + "/week", minutes: 10080)
             publish(snapshot([bucket(provider.rawValue, [weekly])]), for: provider, to: model)
             XCTAssertEqual(model.dashboardQuota(provider: provider, period: .fiveHour).availability, .proOnly)

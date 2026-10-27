@@ -20,7 +20,7 @@ public final class ActivityLogWatcher: @unchecked Sendable {
             let previous = self.interval
             self.interval = min(5, max(0.1, interval))
             let directories = urls.filter { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.type] as? FileAttributeType) == .typeDirectory }.prefix(maximumDirectoryWatches)
-            let desired = Set(urls.filter { $0.pathExtension == "jsonl" }.prefix(32)).union(directories)
+            let desired = Set(urls.filter { ["jsonl", "zstd"].contains($0.pathExtension) }.prefix(32)).union(directories)
             for (url, source) in sources where !desired.contains(url) { source.cancel(); sources.removeValue(forKey: url) }
             for url in desired where sources[url] == nil {
                 let fd = Darwin.open(url.path, O_EVTONLY | O_CLOEXEC)

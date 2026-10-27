@@ -11,7 +11,7 @@ final class ConnectionSummaryTests: XCTestCase {
     }
     private func summary(_ statuses: [AgentProvider: [String: RuntimeStreamStatus]], aliases: [String] = [],
                          configured: Set<String> = [], configuring: Set<String> = [], failed: Set<String> = [],
-                         unavailable: [String] = [], enabled: [AgentProvider] = AgentProvider.allCases) -> ConnectionSummary {
+                         unavailable: [String] = [], enabled: [AgentProvider] = [.codex, .claude]) -> ConnectionSummary {
         ConnectionSummary(enabledProviders: enabled,
             sources: ConnectionSource.sources(statuses: statuses, unavailableSSH: unavailable, names: [:]),
             hosts: SSHHost.hosts(codex: enabled.contains(.codex) ? statuses[.codex] ?? [:] : nil, unavailableCodex: unavailable,
@@ -49,6 +49,11 @@ final class ConnectionSummaryTests: XCTestCase {
         let missing = summary([.codex: ["local": status(true)]])
         XCTAssertEqual(missing.state, .connecting(1), "A missing enabled local provider must be included")
         XCTAssertEqual(missing.sources, 2)
+        let deepseek = summary([.codex: ["local": status(true)], .claude: ["local": status(true)]], enabled: AgentProvider.allCases)
+        XCTAssertEqual(deepseek.state, .connecting(1), "DeepSeek's local sessions count like the other modules'")
+        XCTAssertEqual(deepseek.sources, 3)
+        XCTAssertEqual(summary([.codex: ["local": status(true)], .claude: ["local": status(true)], .deepseek: ["local": status(true, sessions: 4)]],
+            enabled: AgentProvider.allCases).sessions, 4)
         XCTAssertEqual(summary([:]).state, .checking)
         let disabled = summary(statuses, aliases: ["no-claude"], enabled: [])
         XCTAssertEqual(disabled.state, .disabled)

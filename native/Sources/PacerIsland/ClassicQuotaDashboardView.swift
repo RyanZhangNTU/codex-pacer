@@ -36,6 +36,7 @@ struct ClassicQuotaDashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 16) {
                 ForEach(slots) { slot in
+                    if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 88) } else {
                     VStack(spacing: 6) {
                         ClassicQuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: slot.period),
                             title: slot.title, identifiesProvider: slot.identifiesProvider,
@@ -46,6 +47,7 @@ struct ClassicQuotaDashboardView: View {
                             QuotaProviderStatusView(model: model, provider: slot.provider)
                         }
                     }.frame(maxWidth: .infinity, alignment: .top)
+                    }
                 }
             }
             if model.enabledProviders.count == 1, let provider = model.enabledProviders.first {

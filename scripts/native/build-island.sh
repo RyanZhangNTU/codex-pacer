@@ -16,6 +16,7 @@ cp -X "$task_bin/PacerRelaunch" "$task_app/Contents/MacOS/PacerRelaunch"
 ditto --norsrc --noextattr "$task_bin/CodexPacerIsland_PacerCore.bundle" "$task_app/Contents/Resources/CodexPacerIsland_PacerCore.bundle"
 cp -X "$task_root/native/Resources/Pacer.icns" "$task_app/Contents/Resources/Pacer.icns"
 cp -X "$task_root/native/Resources/Sparkle-LICENSE.txt" "$task_app/Contents/Resources/Sparkle-LICENSE.txt"
+cp -X "$task_root/native/Sources/CZstd/LICENSE" "$task_app/Contents/Resources/Zstandard-LICENSE.txt"
 cp -X "$task_root/native/Info.plist" "$task_app/Contents/Info.plist"
 if [[ "${PACER_UNIVERSAL:-0}" == 1 ]]; then
     for task_executable in CodexPacerIsland PacerRelaunch; do

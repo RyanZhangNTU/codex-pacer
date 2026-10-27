@@ -107,7 +107,9 @@ struct WelcomeView: View {
             HStack(spacing: 10) {
                 moduleCard(.codex)
                 moduleCard(.claude)
+                moduleCard(.deepseek)
             }
+            .fixedSize(horizontal: false, vertical: true)
             Text(L10n.text("welcome.modules_note")).font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.horizontal, 10).padding(.top, 8)
             stepTitle("welcome.section.personalize").padding(.top, 6)
@@ -165,22 +167,40 @@ struct WelcomeView: View {
             }
             Text(provider.displayName).font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(enabled ? .primary : .secondary).padding(.top, 9)
-            HStack(spacing: 6) {
-                if status.ready {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityHidden(true)
+            // Three cards can leave too little room for a status beside its button;
+            // it then wraps and the button moves below it.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    statusLabel(status, lines: 1)
+                    Spacer(minLength: 4)
+                    statusAction(status)
                 }
-                Text(status.text).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.85)
-                Spacer(minLength: 4)
-                if let action = status.action {
-                    Button(action.title, action: action.perform).controlSize(.small)
+                VStack(alignment: .leading, spacing: 6) {
+                    statusLabel(status, lines: 2)
+                    statusAction(status)
                 }
             }
             .font(.system(size: 11))
             .frame(minHeight: 22).padding(.top, 3)
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .welcomeGroup()
+    }
+
+    private func statusLabel(_ status: ModuleStatus, lines: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if status.ready {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityHidden(true)
+            }
+            Text(status.text).foregroundStyle(.secondary).lineLimit(lines).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private func statusAction(_ status: ModuleStatus) -> some View {
+        if let action = status.action {
+            Button(action.title, action: action.perform).controlSize(.small)
+        }
     }
 
     private struct ModuleStatus {
@@ -193,13 +213,13 @@ struct WelcomeView: View {
     private func moduleStatus(_ provider: AgentProvider, enabled: Bool) -> ModuleStatus {
         guard enabled else { return ModuleStatus(text: L10n.text("welcome.module.off", provider.displayName)) }
         let settings: (title: String, perform: () -> Void) = (L10n.text("welcome.module.settings"),
-            { onOpenSettings(provider == .codex ? .codex : .claude) })
+            { onOpenSettings(SettingsPane(provider: provider)) })
         guard model.providerDetected(provider) else {
-            return ModuleStatus(text: L10n.text(provider == .codex ? "welcome.module.codex_missing" : "welcome.module.claude_missing"),
-                                action: settings)
+            return ModuleStatus(text: L10n.text("welcome.module.\(provider.rawValue)_missing"), action: settings)
         }
         let ready = ModuleStatus(text: L10n.text("welcome.module.ready") +
             (modules.mode(for: provider) == .automatic ? " · " + L10n.text("welcome.module.automatic") : ""), ready: true)
+        if provider == .deepseek { return deepseekStatus(ready: ready) }
         guard provider == .claude else { return ready }
         if model.claudeNeedsOrganizationSelection {
             return ModuleStatus(text: L10n.text("claude.account.workspace_needed"),
@@ -211,6 +231,18 @@ struct WelcomeView: View {
         }
         return ModuleStatus(text: L10n.text("welcome.module.sign_in_detail"),
                             action: (L10n.text("welcome.module.sign_in"), { model.signInClaudeQuota() }))
+    }
+
+    /// The card's action follows how Harness bills: sign in, or paste a key.
+    private func deepseekStatus(ready: ModuleStatus) -> ModuleStatus {
+        if model.deepseekBalance != nil { return ready }
+        if model.deepseekRefreshing { return ModuleStatus(text: L10n.text("claude.account.checking")) }
+        if model.deepseekBalanceMode == .apiKey {
+            return ModuleStatus(text: L10n.text("welcome.module.balance_detail"),
+                                action: (L10n.text("deepseek.paste_key_short"), { onOpenSettings(.deepseek) }))
+        }
+        return ModuleStatus(text: L10n.text("welcome.module.balance_detail"),
+                            action: (L10n.text("welcome.module.sign_in"), { model.connectDeepSeek() }))
     }
 
     private func personalizeRow<Control: View>(_ pane: SettingsPane, title: String, detail: String, detailTint: Color = .secondary,
