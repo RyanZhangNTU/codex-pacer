@@ -592,6 +592,10 @@
 "whats_new.mark_all_read_detail" = "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。";
 "whats_new.app_buttons" = "从灵动岛打开 Codex 或 Claude";
 "whats_new.app_buttons_detail" = "展开后“全部标为已读”旁的按钮可直接打开各服务的桌面版，没有任务时也可用。可在这里或“设置 > 通用”中关闭。";
+"whats_new.task_models" = "每个任务都显示模型和推理强度";
+"whats_new.task_models_detail" = "展开后的任务行在输出速度下方显示本轮使用的模型和推理强度，Codex 和 Claude Code 都支持。将指针停在模型上可查看完整标识。";
+"whats_new.task_rows" = "更清爽的任务行";
+"whats_new.task_rows_detail" = "每行在速度旁显示本轮用时，结束后显示总耗时。状态图标改为线稿，已查看的结束任务会变淡，运行中和等你处理的任务更醒目。";
 "whats_new.split_quota" = "一个圆环，同时查看两段额度";
 "whats_new.split_quota_detail" = "展开灵动岛后，较短的上弧显示 5 小时额度，较长的下弧显示 7 天额度，各自保留百分比、重置倒计时和配速刻度。只开启一个服务时，配速、重置时刻和预计显示在圆环右侧。可随时在“设置 → 外观”切回经典样式。";
 "whats_new.dual_orbit" = "两个服务同时运行时徽标更顺滑";
