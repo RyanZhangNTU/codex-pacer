@@ -596,6 +596,10 @@
 "whats_new.task_models_detail" = "任务行在速度下方显示模型和推理强度。";
 "whats_new.task_rows" = "更清爽的任务行";
 "whats_new.task_rows_detail" = "速度旁显示本轮用时，状态图标改为线稿，已查看的结束任务会变淡。";
+"whats_new.deepseek" = "追踪 DeepSeek Harness 任务";
+"whats_new.deepseek_detail" = "DeepSeek Harness 与 Codex、Claude 并列显示：阶段、速度、审批、提问和完成，并附上每个回合的估算花费。";
+"whats_new.day_dial" = "DeepSeek 余额日环";
+"whats_new.day_dial_detail" = "一个环里看今天的分时花费、单价翻倍的时段和余额。按 Harness 的登录方式，用网页登录或粘贴 API Key 连接。";
 "whats_new.split_quota" = "一个圆环，同时查看两段额度";
 "whats_new.split_quota_detail" = "展开灵动岛后，较短的上弧显示 5 小时额度，较长的下弧显示 7 天额度，各自保留百分比、重置倒计时和配速刻度。只开启一个服务时，配速、重置时刻和预计显示在圆环右侧。可随时在“设置 → 外观”切回经典样式。";
 "whats_new.dual_orbit" = "两个服务同时运行时徽标更顺滑";

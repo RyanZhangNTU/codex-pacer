@@ -596,6 +596,10 @@
 "whats_new.task_models_detail" = "Each task row shows its model and reasoning effort below the speed.";
 "whats_new.task_rows" = "Tidier task rows";
 "whats_new.task_rows_detail" = "Turn time sits beside the speed, status icons are outlines, and endings you have seen fade back.";
+"whats_new.deepseek" = "DeepSeek Harness tasks";
+"whats_new.deepseek_detail" = "DeepSeek Harness joins Codex and Claude: stages, speed, approvals, questions and endings, with each turn's estimated cost.";
+"whats_new.day_dial" = "A day dial for the DeepSeek balance";
+"whats_new.day_dial_detail" = "Today's spend by hour, the doubled-price hours and the balance in one ring. Sign in on the web or paste an API key, matching how Harness signs in.";
 "whats_new.split_quota" = "Both quota windows in one ring";
 "whats_new.split_quota_detail" = "The expanded island puts 5-hour quota in a shorter upper arc and 7-day quota in a longer lower arc, each with its own percentage, reset countdown and pace tick. With one service on, its pace, reset time and forecast sit beside the ring. Switch to Classic anytime in Settings > Appearance.";
 "whats_new.dual_orbit" = "A smoother badge with both services";
