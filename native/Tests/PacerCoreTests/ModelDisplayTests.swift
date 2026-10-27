@@ -120,6 +120,13 @@ final class ModelDisplayTests: XCTestCase {
         XCTAssertEqual(cleared.reasoningEffort, "low", "A new reported effort replaces the clear")
         cleared.mergeDisplayMetadata(from: olderSource)
         XCTAssertEqual(cleared.reasoningEffort, "low", "An older clear cannot erase a newer explicit value")
+
+        var configured = SessionActivity(id: session, sessionID: session)
+        configured.applyRuntime(["method": "metadata", "threadId": session, "at": 1_800_000_000.0,
+                                 "modelScope": "threadConfiguration", "model": "codex-auto-review-1", "reasoningEffort": "high"])
+        XCTAssertNil(configured.modelName, "Thread configuration does not name the active turn's model")
+        XCTAssertNil(configured.reasoningEffort)
+        XCTAssertTrue(configured.isInternalReview, "A configured review model still marks the thread as a review")
     }
 
     private func python(_ script: String) throws -> String {

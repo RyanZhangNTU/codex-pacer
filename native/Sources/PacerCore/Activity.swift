@@ -79,9 +79,6 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     // A reported null is different from a source that never reported effort.
     private var reasoningEffortReported = false
     private var reasoningEffortReportedAt: Date?
-    // App-server thread settings describe configuration for future turns, not
-    // the model used by the active turn.
-    private var modelFromThreadConfiguration = false
     public private(set) var isInternalReview = false
     /// A source that reports a model without its effort keeps the known effort
     /// only while the model is unchanged; an explicit null clears it.
@@ -531,9 +528,6 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
 
     private mutating func beginTurn(_ id: String?, at date: Date, observed: Bool = true) {
         rememberRate()
-        if modelFromThreadConfiguration, id == nil || id != turnID {
-            modelName = nil; reasoningEffort = nil; reasoningEffortReported = false; reasoningEffortReportedAt = nil
-        }
         isHistoricalCompletion = false
         logTurnStart = nil
         if (id != nil && id != latencyTurnID) || (id == nil && [.completed, .interrupted].contains(phase)) {
@@ -694,16 +688,16 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
             }
-            if event["modelScope"] as? String == "threadConfiguration" {
-                modelFromThreadConfiguration = true
-            } else {
-                updateModel(in: event, effort: "reasoningEffort", at: date)
-            }
+            // App-server thread settings describe configuration for future
+            // turns, not the model of the active one; they still mark a review.
+            let configured = event["modelScope"] as? String == "threadConfiguration"
+            if !configured { updateModel(in: event, effort: "reasoningEffort", at: date) }
             if let cwd = event["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
             if provider == .codex {
+                let model = configured ? event["model"] as? String : modelName
                 isInternalReview = isInternalReview || ["guardianreview", "autoreview", "subagentreview"].contains(source) ||
-                    modelName?.lowercased().hasPrefix("codex-auto-review") == true
+                    model?.lowercased().hasPrefix("codex-auto-review") == true
             }
             return
         }
