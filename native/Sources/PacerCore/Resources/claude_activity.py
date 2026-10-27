@@ -96,7 +96,11 @@ def transcript_record(value, owner, parent=None, prompt=None):
     message = value.get('message'); message = message if isinstance(message, dict) else {}
     meta = dict(base, kind='metadata')
     model = message.get('model')
-    if isinstance(model, str): meta['model'] = model[:256]
+    # `<synthetic>` marks locally generated records, not the working model.
+    if isinstance(model, str) and not model.startswith('<'):
+        meta['model'] = model[:256]
+        effort = value.get('perTurnEffort') if isinstance(value.get('perTurnEffort'), str) else value.get('effort')
+        if isinstance(effort, str): meta['effort'] = effort[:32]
     title = value.get('sessionTitle')
     if isinstance(title, str): meta['title'] = title[:240]
     entry = value.get('entrypoint')
@@ -151,7 +155,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
 
-ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded'}
+ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request'}
 
 def sanitized(raw):
@@ -164,7 +168,7 @@ def sanitized(raw):
             valid = ident(out[key])
             if valid: out[key] = valid
             else: out.pop(key)
-    for key in ('project','title','model'):
+    for key in ('project','title','model','effort'):
         if key in out:
             if isinstance(out[key], str): out[key] = out[key][:256]
             else: out.pop(key)

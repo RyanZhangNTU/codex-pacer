@@ -75,7 +75,7 @@ struct DesktopFrameDecoder {
             case "threadRuntimeStatus": return .runtime
             case "requests": return .requests
             case "source", "parentThreadId": return .relationship
-            default: return ["title", "cwd", "latestModel", "threadSource", "ephemeral", "resumeState"].contains(key) ? .generic : nil
+            default: return ["title", "cwd", "latestModel", "latestReasoningEffort", "threadSource", "ephemeral", "resumeState"].contains(key) ? .generic : nil
             }
         case .history: return key == "kind" ? .generic : key == "history" ? .historyContainer : nil
         case .historyContainer: return key == "entitiesByKey" ? .canonicalTurns : nil
@@ -215,7 +215,7 @@ struct DesktopFrameDecoder {
         guard case .array(let path)? = patch["path"] else { return patch }
         let keys = path.compactMap(\.text)
         guard let root = keys.first else { return patch }
-        let scalarRoots = ["title", "cwd", "latestModel", "threadSource", "resumeState", "ephemeral"]
+        let scalarRoots = ["title", "cwd", "latestModel", "latestReasoningEffort", "threadSource", "resumeState", "ephemeral"]
         func metadata() -> Value { patch.replacing("value", with: resolveStrings(patch["value"] ?? .null)) }
         if scalarRoots.contains(root) { return path.count == 1 ? metadata() : patch.replacing("value", with: .null) }
         if root == "parentThreadId" { return path.count == 1 ? metadata() : patch.replacing("value", with: .null) }

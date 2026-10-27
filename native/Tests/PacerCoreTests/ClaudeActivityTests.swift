@@ -568,6 +568,16 @@ final class ClaudeActivityTests: XCTestCase {
             ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-1", "timestamp": "2027-01-15T08:00:02Z", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-1", "content": "PRIVATE output"]]]],
             ["type": "user", "sessionId": session, "promptId": turn, "uuid": "result-2", "timestamp": "2027-01-15T08:00:03Z", "mcpMeta": ["_meta": ["claude/endTurn": true]], "toolUseResult": [["type": "text", "text": "PRIVATE box"]], "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "tool-2", "content": "PRIVATE recap"]]]]
         ]
+        let (expected, actual, bytes) = try nativeAndSshRows(fixtures)
+        XCTAssertTrue(NSArray(array: actual).isEqual(to: expected))
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
+        XCTAssertTrue(actual.contains { $0["kind"] as? String == "modelBlock" })
+        XCTAssertTrue(actual.contains { $0["kind"] as? String == "toolEnd" })
+        XCTAssertEqual(actual.filter { $0["kind"] as? String == "stopVerified" }.compactMap { $0["awaitsReply"] as? Bool }, [true])
+        XCTAssertEqual(actual.compactMap { $0["embedded"] as? Bool }, [true, false])
+    }
+    /// Projects the same transcript lines with the native reader and the SSH helper.
+    private func nativeAndSshRows(_ fixtures: [[String: Any]]) throws -> ([[String: Any]], [[String: Any]], Data) {
         let native = fixtures.flatMap { fixture in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(fixture)!, sessionID: session, promptID: turn) }
         let expected = try native.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
         let fixtureData = try JSONSerialization.data(withJSONObject: fixtures)
@@ -580,13 +590,27 @@ final class ClaudeActivityTests: XCTestCase {
         child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = FileHandle.nullDevice
         try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
         XCTAssertEqual(child.terminationStatus, 0)
-        let actual = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]])
+        return (expected, try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]), bytes)
+    }
+    func testTranscriptModelAndEffortSkipSyntheticRecordsInBothReaders() throws {
+        func answer(_ id: String, at second: Int, model: String, effort: [String: Any]) -> [String: Any] {
+            ["type": "assistant", "sessionId": session, "promptId": turn, "uuid": id, "timestamp": "2027-01-15T08:00:0\(second)Z",
+             "message": ["id": "msg-" + id, "role": "assistant", "model": model, "content": [["type": "text", "text": "PRIVATE"]]]].merging(effort) { old, _ in old }
+        }
+        let fixtures = [answer("a", at: 1, model: "claude-opus-5-5", effort: ["perTurnEffort": "xhigh", "effort": "high"]),
+                        answer("b", at: 2, model: "<synthetic>", effort: ["effort": "low"]),
+                        answer("c", at: 3, model: "claude-opus-5-5", effort: [:])]
+        let (expected, actual, bytes) = try nativeAndSshRows(fixtures)
         XCTAssertTrue(NSArray(array: actual).isEqual(to: expected))
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
-        XCTAssertTrue(actual.contains { $0["kind"] as? String == "modelBlock" })
-        XCTAssertTrue(actual.contains { $0["kind"] as? String == "toolEnd" })
-        XCTAssertEqual(actual.filter { $0["kind"] as? String == "stopVerified" }.compactMap { $0["awaitsReply"] as? Bool }, [true])
-        XCTAssertEqual(actual.compactMap { $0["embedded"] as? Bool }, [true, false])
+        let metadata = actual.filter { $0["kind"] as? String == "metadata" }
+        XCTAssertEqual(metadata.compactMap { $0["model"] as? String }, ["claude-opus-5-5", "claude-opus-5-5"])
+        XCTAssertEqual(metadata.compactMap { $0["effort"] as? String }, ["xhigh"], "The turn's own effort wins over the session default")
+        var state = ClaudeActivityState()
+        for row in expected { state.consume(try JSONSerialization.data(withJSONObject: row), now: now.addingTimeInterval(10)) }
+        let value = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(value.modelName, "claude-opus-5-5")
+        XCTAssertEqual(value.reasoningEffort, "xhigh", "Older records without an effort keep the same model's known effort")
     }
     func testOnlyAgentSDKEntrypointsMarkASessionAsEmbedded() throws {
         func launch(_ entrypoints: [String?]) throws -> Bool {

@@ -56,9 +56,11 @@ Until you choose otherwise, the bar sits around the camera on a display with a n
 
 Tasks from both services share one list: tasks that need you come first, then running tasks, then ended ones, most recent first within each group. Each row shows:
 
-- the task title and its current stage (thinking, running a tool, responding, waiting for you, ended);
-- how long the current turn has run, which service it belongs to, and the SSH host or Remote Control source when it is not local;
-- the latest output speed and time to first output. White numbers were updated in the last 15 seconds; gray numbers are older.
+- the task title and, below it, its current stage (thinking, running a tool, responding, waiting for you, ended), the number of running agents it spawned and the SSH host or Remote Control source when it is not local;
+- on the right, the latest output speed and the turn's time: how long it has run, or how long it took once it ended. White numbers were updated in the last 15 seconds; gray numbers are older. Hover the speed for the time to first output;
+- below the speed, the model and its reasoning effort in the service's color. Until the model is known, the service name appears there.
+
+The icon shows the stage in the service's color, amber when a task needs you and red when it failed. Ended tasks you have opened or marked as read turn gray; unread ones keep their color.
 
 Agents that a task spawns are grouped under it with their running count and combined speed. With more than three tasks, use the arrows beside the page number or Option + ← / → to page through them.
 

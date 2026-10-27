@@ -24,6 +24,23 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertTrue(result.activities.contains { $0.threadID == ids[0] })
     }
 
+    func testLongCoveredRolloutRecoversItsMatchingTurnModel() async throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + formatter.string(from: now))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let id = UUID().uuidString.lowercased(), file = day.appendingPathComponent("rollout-" + id + ".jsonl")
+        var bytes = try record("session_meta", payload: ["id": id], at: now)
+        bytes += try record("event_msg", payload: ["type": "task_started", "turn_id": "turn"], at: now)
+        bytes += try record("turn_context", payload: ["turn_id": "turn", "model": "gpt-fixture", "effort": NSNull()], at: now)
+        bytes += try record("ignored", payload: ["padding": String(repeating: "x", count: 600_000)], at: now)
+        try bytes.write(to: file)
+        let result = await LocalActivityReader().read(home: home, now: now, excludingThreads: [id], includeCoveredMetrics: true)
+        XCTAssertEqual(result.activities.first?.turnID, "turn")
+        XCTAssertEqual(result.activities.first?.modelName, "gpt-fixture")
+        XCTAssertNil(result.activities.first?.reasoningEffort)
+    }
+
     func testRemovedRunningLogBecomesUnconfirmedAndFreesItsCursor() async throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"

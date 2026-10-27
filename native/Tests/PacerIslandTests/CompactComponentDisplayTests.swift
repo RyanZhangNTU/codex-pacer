@@ -14,18 +14,37 @@ final class CompactComponentDisplayTests: XCTestCase {
         }
         return value
     }
-    func testExpandedHeaderQuietsOnlyQuotaValuesAndRowsShowElapsedRunningTurns() {
+    func testExpandedHeaderQuietsOnlyQuotaValuesAndRowsShowTurnTime() {
         let quieted = CompactIslandLayout.Component.allCases.filter(CompactIslandComponent.dimsWhenExpanded)
         XCTAssertEqual(Set(quieted), [.quota, .quotaGauge, .quotaLabel, .timeRemaining],
             "Status, rate and warnings stay at full strength while the rings repeat quota below")
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let running = activity("019a0000-0000-7000-8000-00000000e1a9", start: start, first: start.addingTimeInterval(2))
-        XCTAssertEqual(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(95)),
+        XCTAssertEqual(TaskRowView.turnTimeText(running, phase: .running, now: start.addingTimeInterval(95)),
             L10n.text("dashboard.countdown_minutes", 1))
-        XCTAssertEqual(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(30)),
+        XCTAssertEqual(TaskRowView.turnTimeText(running, phase: .running, now: start.addingTimeInterval(30)),
             L10n.text("dashboard.countdown_soon"))
-        XCTAssertNil(TaskRowView.elapsedText(running, phase: .completed, now: start.addingTimeInterval(95)), "Only running turns count up")
-        XCTAssertNil(TaskRowView.elapsedText(running, phase: .running, now: start.addingTimeInterval(-5)), "A future start is never shown")
+        XCTAssertNil(TaskRowView.turnTimeText(running, phase: .completed, now: start.addingTimeInterval(95)),
+            "A turn that has not ended has no total yet")
+        XCTAssertNil(TaskRowView.turnTimeText(running, phase: .running, now: start.addingTimeInterval(-5)), "A future start is never shown")
+        var ended = running
+        ended.consumeLive(["method": "turn/completed", "threadId": ended.id, "turnId": "turn", "status": "completed",
+            "at": start.addingTimeInterval(3_725).timeIntervalSince1970])
+        XCTAssertEqual(ended.phase, .completed)
+        XCTAssertEqual(TaskRowView.turnTimeText(ended, phase: .completed, now: start.addingTimeInterval(90_000)),
+            L10n.text("dashboard.countdown_hours", 1, 2), "An ended turn keeps how long it took, not how long ago it ended")
+    }
+    func testReadEndingsDimWhileUnreadWaitingAndFailedRowsKeepTheirColor() {
+        XCTAssertTrue(TaskRowView.isDimmed(phase: .completed, unread: false, attention: false, failed: false))
+        XCTAssertTrue(TaskRowView.isDimmed(phase: .interrupted, unread: false, attention: false, failed: false))
+        XCTAssertFalse(TaskRowView.isDimmed(phase: .completed, unread: true, attention: false, failed: false))
+        XCTAssertFalse(TaskRowView.isDimmed(phase: .interrupted, unread: false, attention: false, failed: true))
+        XCTAssertFalse(TaskRowView.isDimmed(phase: .completed, unread: false, attention: true, failed: false))
+        XCTAssertFalse(TaskRowView.isDimmed(phase: .running, unread: false, attention: false, failed: false))
+        XCTAssertFalse(TaskRowView.isDimmed(phase: .waitingForInput, unread: false, attention: false, failed: false))
+        XCTAssertEqual(TaskRowView.middleTruncated("devbox-gpu-03.lab", limit: 16), "devbox-…u-03.lab")
+        XCTAssertEqual(TaskRowView.middleTruncated("devbox", limit: 16), "devbox")
+        XCTAssertEqual(TaskRowView.shortened("qwen3-coder-480b-a35b-instruct", limit: 22), "qwen3-coder-480b-a35b…")
     }
     func testActivityOrbitKeepsEachProviderSlotAndAHardEdgedHead() {
         func stops(codex: Int, claude: Int, animates: Bool = true) -> [String] {

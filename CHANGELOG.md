@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.3.0
+
+- Show each task's model and reasoning effort in the expanded island, right-aligned below the output speed in the service's color, for example **GPT-6.1 Sol High** or **Opus 5.5 XHigh**. Known Codex and Claude model identifiers are shortened, the full identifier appears when you hover, and effort levels are translated. Codex reads them from the turn's session log or the Codex app, and Claude Code from its conversation records, on this Mac, SSH hosts and Remote Control. A model is shown only for the turn that used it: a model change in the middle of a turn waits for the next one, and the row shows the service name until the model is known.
+- Rework the task row's two lines without making it taller. The first line holds the title, limited so a long one can no longer widen the panel, then the speed and the turn time: counting up while the turn runs and showing how long it took once it ends. The second line holds the status, running agents and source, with a server icon for remote hosts. Time to first output moves to the speed's tooltip.
+- Draw status icons as plain outlines without a tile. Endings you have already seen fade back, while unread endings, tasks waiting for you and failures keep their color, so the unread dot is no longer needed.
+
 ## 3.2.4
 
 - Fix Claude tasks that could stay marked as running after Codex Pacer restarted, such as after an update. On restart Pacer reads its hook records in batches, and could reach a conversation's ending while an older batch still named the previous turn; it dropped that ending, and the next batch reopened the finished turn. Hook records are now read in full first, as they already were for SSH hosts. A task that was actually cut off shortly before a restart is checked again once its last activity is 15 minutes old instead of staying running.

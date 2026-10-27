@@ -25,6 +25,10 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "3.3.0", items: [
+            Item(symbol: "cpu", titleKey: "whats_new.task_models", detailKey: "whats_new.task_models_detail"),
+            Item(symbol: "list.bullet.rectangle", titleKey: "whats_new.task_rows", detailKey: "whats_new.task_rows_detail")
+        ]),
         Release(version: "3.2.3", items: [
             Item(symbol: "circle.bottomhalf.filled", titleKey: "whats_new.split_quota", detailKey: "whats_new.split_quota_detail")
         ]),
