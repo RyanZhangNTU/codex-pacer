@@ -8,8 +8,14 @@ import Foundation
 struct ZstdFrameDecoder {
     enum Failure: Error, Equatable { case corrupt }
     struct Output: Equatable {
+        struct Batch: Equatable {
+            /// Frame start relative to this input, including preceding skipped frames.
+            let compressedOffset: Int
+            let lines: Range<Int>
+        }
         /// Complete lines; each keeps at most `maxLineBytes` of its prefix.
         var lines: [Data] = []
+        var batches: [Batch] = []
         var truncatedLines = 0
         var skippedFrames = 0
         /// Compressed bytes consumed through the last complete frame.
@@ -24,6 +30,8 @@ struct ZstdFrameDecoder {
         var output = Output()
         guard !data.isEmpty, let context = ZSTD_createDCtx() else { return output }
         defer { ZSTD_freeDCtx(context) }
+        // Bound the streaming decoder's own window as well as the retained output.
+        guard ZSTD_isError(ZSTD_DCtx_setParameter(context, ZSTD_d_windowLogMax, 26)) == 0 else { throw Failure.corrupt }
         var decoded = 0
         try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
@@ -37,20 +45,33 @@ struct ZstdFrameDecoder {
                     throw Failure.corrupt
                 }
                 guard output.frames < maxFrames, decoded < maxDecodedBytes else { output.more = true; return }
+                let declared = ZSTD_getFrameContentSize(start, size)
+                if declared != ZSTD_CONTENTSIZE_UNKNOWN, declared != ZSTD_CONTENTSIZE_ERROR {
+                    if declared > UInt64(maxDecodedBytes) {
+                        output.skippedFrames += 1; output.consumed += size; output.frames += 1; continue
+                    }
+                    if declared > UInt64(maxDecodedBytes - decoded) { output.more = true; return }
+                }
                 ZSTD_DCtx_reset(context, ZSTD_reset_session_only)
                 var input = ZSTD_inBuffer(src: start, size: size, pos: 0)
                 var line = Data(), lineBytes = 0, frameLines: [Data] = [], frameTruncated = 0, frameDecoded = 0
-                var finished = false, failed = false
+                var finished = false, failed = false, oversized = false
+                let allowance = maxDecodedBytes - decoded
                 while !finished, !failed {
+                    // At the exact boundary, one byte distinguishes a trailer from
+                    // more output. That probe is never retained or parsed.
+                    let capacity = min(chunk.count, max(1, allowance - frameDecoded))
                     let produced: Int = chunk.withUnsafeMutableBytes { buffer in
-                        var out = ZSTD_outBuffer(dst: buffer.baseAddress, size: buffer.count, pos: 0)
+                        var out = ZSTD_outBuffer(dst: buffer.baseAddress, size: capacity, pos: 0)
                         let result = ZSTD_decompressStream(context, &out, &input)
-                        if ZSTD_isError(result) != 0 { failed = true; return 0 }
+                        failed = ZSTD_isError(result) != 0
                         finished = result == 0
                         return out.pos
                     }
                     if !finished, produced == 0, input.pos >= input.size { failed = true }
                     frameDecoded += produced
+                    if frameDecoded > allowance { oversized = true; break }
+                    if failed { break }
                     var index = 0
                     while index < produced {
                         if let newline = chunk[index..<produced].firstIndex(of: 10) {
@@ -66,12 +87,23 @@ struct ZstdFrameDecoder {
                         }
                     }
                 }
+                if oversized {
+                    // A frame that merely exceeds this pass's remainder gets its
+                    // full allowance next pass. An oversized first frame is skipped
+                    // atomically, without decoding or retaining the rest of its body.
+                    if decoded == 0 { output.skippedFrames += 1; output.consumed += size; output.frames += 1 }
+                    output.more = output.consumed < raw.count
+                    return
+                }
+                decoded += frameDecoded
                 guard !failed, input.pos == size else {
                     output.skippedFrames += 1; output.consumed += size; output.frames += 1; continue
                 }
                 if !line.isEmpty { frameLines.append(line); if lineBytes > maxLineBytes { frameTruncated += 1 } }
+                output.batches.append(.init(compressedOffset: output.consumed,
+                    lines: output.lines.count..<(output.lines.count + frameLines.count)))
                 output.lines += frameLines; output.truncatedLines += frameTruncated
-                output.consumed += size; output.frames += 1; decoded += frameDecoded
+                output.consumed += size; output.frames += 1
             }
         }
         return output

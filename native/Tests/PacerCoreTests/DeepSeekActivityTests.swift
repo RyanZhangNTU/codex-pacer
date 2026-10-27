@@ -176,4 +176,62 @@ final class DeepSeekActivityTests: XCTestCase {
         XCTAssertEqual(lock.lastPathComponent, "session.lock")
         XCTAssertEqual(lock.deletingLastPathComponent().resolvingSymlinksInPath(), directory.resolvingSymlinksInPath())
     }
+
+    func testStartupCatchupKeepsTurnsAppendedAfterItsBaselineLive() throws {
+        let headers = [
+            "KLUv/SCKVQMAEsYVG2Br28NiP9tnLp7uPwAAwWswFrv7O3iAQUjiHIDHmSmaoQxnHfpwK41i6yyWH9okQUoQIOldYLgVZsvvAdzdAarqYmYmIsio3ybGze+IhGqN29N5NfqOBgBSCBKEFpiFy9jnFm1LEw==",
+            "KLUv/SCKXQMAIgYWG2Br28NiP9tnLp7uPwAAwWswFrv7O3iAQUjiHIDHmSmaoQxnHfpwK41i6yyWH9okQUoQIOldYLgVZsvvAdzdAarqYmYmIomM+m1i3PyOSKjWuD2dV6PvCAYAUggShBaYhRvD5xZtSxM="
+        ].map { Data(base64Encoded: $0)! }
+        let live = Data(base64Encoded: "KLUv/SD0zQMAksYVGYC5OX3qZRe3t0+p/AMzAoDsPlkqmDmosejF7jpdb1iJQnA6KaSglIbOfOck9TOMdW3FrkkvaaQo+RDRYOA48AwEJv0EUZ9JH958Voa0ARRDqNNfCfUSDAAnEzCgGUxBsTcWEyAKDV61B2gGZgGSIEGL1lZBAQ==")!
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dsh-catchup-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let logs = ["a", "b"].map { home.appendingPathComponent("sessions/workspace/\($0)/\(DeepSeekSessionReader.logName)") }
+        let now = peak.addingTimeInterval(10)
+        for (index, log) in logs.enumerated() {
+            try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try headers[index].write(to: log)
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(Double(2 - index))], ofItemAtPath: log.path)
+        }
+        var reader = DeepSeekSessionReader()
+        reader.perPassBytes = 1 // Exhaust a pass before the second captured baseline can be read.
+        let first = reader.read(home: home, discover: true, now: now)
+        XCTAssertFalse(first.caughtUp)
+        XCTAssertEqual(first.lines.count, 1)
+        let writer = try FileHandle(forWritingTo: logs[1])
+        try writer.seekToEnd(); try writer.write(contentsOf: live); try writer.close()
+        var lines = first.lines, caughtUp = false
+        for _ in 0..<5 {
+            let next = reader.read(home: home, discover: false, now: now)
+            lines += next.lines
+            if next.caughtUp { caughtUp = true; break }
+        }
+        XCTAssertTrue(caughtUp)
+        let starts = lines.filter { if case .turnStart = $0.record.event { return true }; return false }
+        XCTAssertEqual(starts.count, 1)
+        XCTAssertFalse(try XCTUnwrap(starts.first).attaching)
+        var state = DeepSeekActivityState()
+        for line in lines { state.consume(line.record, session: line.session, attaching: line.attaching, now: now) }
+        let completion = try XCTUnwrap(state.activities.first { $0.phase == .completed })
+        XCTAssertFalse(completion.isHistoricalCompletion, "A post-startup ending must retain its unread reminder")
+    }
+
+    func testStartupTornFrameKeepsItsBaselineButLaterWholeFramesAreLive() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dsh-torn-baseline-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let log = home.appendingPathComponent("sessions/workspace/session/\(DeepSeekSessionReader.logName)")
+        try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try opening.prefix(40).write(to: log)
+        var reader = DeepSeekSessionReader()
+        XCTAssertTrue(reader.read(home: home, discover: true).lines.isEmpty)
+        let writer = try FileHandle(forWritingTo: log)
+        try writer.seekToEnd(); try writer.write(contentsOf: opening.dropFirst(40) + closing); try writer.close()
+        let next = reader.read(home: home, discover: false)
+        XCTAssertTrue(next.caughtUp)
+        XCTAssertEqual(next.lines.count, 5)
+        XCTAssertTrue(next.lines.prefix(3).allSatisfy(\.attaching))
+        XCTAssertFalse(next.lines.suffix(2).contains(where: \.attaching))
+        let response = next.lines.first { if case .response = $0.record.event { return true }; return false }
+        guard case .response(let sample) = try XCTUnwrap(response).record.event else { return XCTFail("Missing response") }
+        XCTAssertNotNil(sample.lastChunkAt, "A live response must keep its performance timing")
+    }
 }

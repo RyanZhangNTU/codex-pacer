@@ -123,4 +123,112 @@ final class DeepSeekIslandTests: XCTestCase {
         XCTAssertEqual(again.map(\.id), ["deepseek:balance:low"], "Crossing again after recovering warns again")
         XCTAssertEqual(again.first?.kind, .lowQuota, "Balance notices stay readable when project names are hidden")
     }
+
+    private func balanceModel(source: DeepSeekBalanceSource) throws -> (IslandModel, UserDefaults) {
+        let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        defaults.set(source.rawValue, forKey: DeepSeekBalanceSource.defaultsKey)
+        let model = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        model.deepseekBalanceReads.apiKey = { "synthetic-balance-test-key" }
+        return (model, defaults)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<200 where !condition() { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(condition(), "The controlled balance read did not start or settle")
+    }
+
+    func testSourceSwitchRejectsCancelledSuccessAndFailureBeforeAndAfterReplacement() async throws {
+        for staleSucceeds in [true, false] {
+            for staleReturnsFirst in [true, false] {
+                let (model, defaults) = try balanceModel(source: .web)
+                var web: CheckedContinuation<Result<DeepSeekBalance, DeepSeekBalanceError>, Never>?
+                var api: CheckedContinuation<DeepSeekBalance, Never>?
+                model.deepseekBalanceReads.web = { try await withCheckedContinuation { web = $0 }.get() }
+                model.deepseekBalanceReads.api = { _ in await withCheckedContinuation { api = $0 } }
+                model.refreshDeepSeekBalance(force: true)
+                await waitUntil { web != nil }
+                let obsolete = try XCTUnwrap(model.deepseekBalanceTask)
+                defaults.set(DeepSeekBalanceSource.apiKey.rawValue, forKey: DeepSeekBalanceSource.defaultsKey)
+                model.applySettings(sourceChanged: false)
+                await waitUntil { api != nil }
+                let replacement = try XCTUnwrap(model.deepseekBalanceTask)
+                let stale: Result<DeepSeekBalance, DeepSeekBalanceError> = staleSucceeds
+                    ? .success(.init(total: 1, capturedAt: Date(), source: .web)) : .failure(.signedOut)
+                let fresh = DeepSeekBalance(total: 80, capturedAt: Date(), source: .apiKey)
+                if staleReturnsFirst {
+                    try XCTUnwrap(web).resume(returning: stale); await obsolete.value
+                    XCTAssertTrue(model.deepseekRefreshing, "An obsolete read cannot release its replacement's slot")
+                    XCTAssertNotNil(model.deepseekBalanceTask)
+                    XCTAssertNil(model.deepseekBalance)
+                    XCTAssertNil(model.deepseekBalanceError)
+                    try XCTUnwrap(api).resume(returning: fresh); await replacement.value
+                } else {
+                    try XCTUnwrap(api).resume(returning: fresh); await replacement.value
+                    try XCTUnwrap(web).resume(returning: stale); await obsolete.value
+                }
+                XCTAssertEqual(model.deepseekBalance, fresh)
+                XCTAssertNil(model.deepseekBalanceError)
+                XCTAssertFalse(model.deepseekRefreshing)
+                XCTAssertEqual(model.deepseekFailureCount, 0)
+                await model.shutdown()
+            }
+        }
+    }
+
+    func testAutomaticBillingChangeClearsOldConnectionErrorInBothDirections() async throws {
+        for startsWithAccount in [true, false] {
+            let (model, _) = try balanceModel(source: .automatic)
+            var webReads = 0, apiReads = 0
+            model.deepseekBalanceReads.web = {
+                webReads += 1
+                if startsWithAccount { throw DeepSeekBalanceError.signedOut }
+                return .init(total: 120, capturedAt: Date(), source: .web)
+            }
+            model.deepseekBalanceReads.api = { _ in
+                apiReads += 1
+                if !startsWithAccount { throw DeepSeekBalanceError.invalidKey }
+                return .init(total: 80, capturedAt: Date(), source: .apiKey)
+            }
+            let first = startsWithAccount ? "deepseek-account" : "deepseek-official"
+            let second = startsWithAccount ? "deepseek-official" : "deepseek-account"
+            model.receiveDeepSeekUpdate([], statuses: [:], requests: [], usage: .init(provider: first))
+            model.refreshDeepSeekBalance(force: true)
+            await model.deepseekBalanceTask?.value
+            XCTAssertEqual(model.deepseekBalanceError, startsWithAccount ? .signedOut : .invalidKey)
+            model.receiveDeepSeekUpdate([], statuses: [:], requests: [], usage: .init(provider: second))
+            await waitUntil { model.deepseekBalance != nil }
+            XCTAssertEqual(webReads, 1)
+            XCTAssertEqual(apiReads, 1)
+            XCTAssertEqual(model.deepseekBalance?.source, startsWithAccount ? .apiKey : .web)
+            XCTAssertNil(model.deepseekBalanceError)
+            XCTAssertEqual(model.deepseekFailureCount, 0)
+            await model.shutdown()
+        }
+    }
+
+    func testProfileChangeDuringSuspendedReadImmediatelyUsesItsNewBillingSource() async throws {
+        let (model, defaults) = try balanceModel(source: .automatic)
+        let home = URL(fileURLWithPath: try XCTUnwrap(defaults.string(forKey: "deepseekHome")))
+        defer { try? FileManager.default.removeItem(at: home) }
+        let profile = home.appendingPathComponent("profiles/desktop/cordis.patch.yml")
+        try FileManager.default.createDirectory(at: profile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "provider: deepseek-account\n".write(to: profile, atomically: true, encoding: .utf8)
+        var web: CheckedContinuation<DeepSeekBalance, Never>?, apiReads = 0
+        model.deepseekBalanceReads.web = { await withCheckedContinuation { web = $0 } }
+        model.deepseekBalanceReads.api = { _ in
+            apiReads += 1
+            return .init(total: 80, capturedAt: Date(), source: .apiKey)
+        }
+        model.refreshDeepSeekBalance(force: true)
+        await waitUntil { web != nil }
+        let obsolete = try XCTUnwrap(model.deepseekBalanceTask)
+        try "provider: deepseek-official\n".write(to: profile, atomically: true, encoding: .utf8)
+        try XCTUnwrap(web).resume(returning: .init(total: 1, capturedAt: Date(), source: .web))
+        await obsolete.value
+        await waitUntil { model.deepseekBalance?.source == .apiKey }
+        XCTAssertEqual(apiReads, 1)
+        XCTAssertEqual(model.deepseekBalance?.total, 80)
+        XCTAssertNil(model.deepseekBalanceError)
+        await model.shutdown()
+    }
 }

@@ -97,6 +97,7 @@ final class IslandModel: ObservableObject {
     var deepseekGeneration = 0
     var deepseekActivityTask: Task<Void, Never>?
     var deepseekBalanceTask: Task<Void, Never>?
+    var deepseekBalanceRequestID: UUID?
     var deepseekReceivedActivities: [SessionActivity] = []
     var deepseekReceivedRequests: [PendingAttentionRequest] = []
     var deepseekAttentionRequests: [PendingAttentionRequest] = []
@@ -105,7 +106,7 @@ final class IslandModel: ObservableObject {
     var deepseekFailureCount = 0
     var lastDeepSeekBalanceAttempt = Date.distantPast
     var deepseekSourceSignature = ""
-    var deepseekBalanceSourceRaw = ""
+    var deepseekBalanceBinding: DeepSeekBalanceBinding?
     var deepseekBalanceReads = DeepSeekBalanceReadDependencies()
     @Published var deepseekStreamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var deepseekUsage = DeepSeekLocalUsage()
@@ -916,7 +917,7 @@ final class IslandModel: ObservableObject {
         codexSourceSignature = currentCodexSourceSignature
         claudeSourceSignature = currentClaudeSourceSignature
         deepseekSourceSignature = currentDeepSeekSourceSignature
-        deepseekBalanceSourceRaw = DeepSeekBalanceSource.load(from: defaults).rawValue
+        deepseekBalanceBinding = currentDeepSeekBalanceBinding
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
         completionInbox = CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault))
         bindCompletionSources(.codex)
@@ -956,7 +957,7 @@ final class IslandModel: ObservableObject {
         claudeQuotaTask?.cancel(); claudeActivityTask?.cancel(); claudeActivityTask = nil
         claudeRefreshing = false
         deepseekGeneration += 1; deepseekActivityTask?.cancel(); deepseekActivityTask = nil
-        deepseekBalanceTask?.cancel(); deepseekBalanceTask = nil; deepseekRefreshing = false
+        cancelDeepSeekBalanceRead()
         _ = await historyStore.flush()
         _ = await claudeHistoryStore.flush()
         await claudeMonitor.shutdown()
@@ -1780,7 +1781,7 @@ final class IslandModel: ObservableObject {
         invalidateWork()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         claudeGeneration += 1; claudeQuotaRestartTask?.cancel(); claudeQuotaTask?.cancel(); claudeActivityTask?.cancel()
-        deepseekGeneration += 1; deepseekActivityTask?.cancel(); deepseekBalanceTask?.cancel()
+        deepseekGeneration += 1; deepseekActivityTask?.cancel(); cancelDeepSeekBalanceRead()
         cancelHostTracking()
         cancelClaudeRemoteSetup()
         _ = await historyStore.flush()

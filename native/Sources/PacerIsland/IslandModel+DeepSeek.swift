@@ -12,6 +12,12 @@ enum DeepSeekBalanceSource: String, CaseIterable, Identifiable {
     }
 }
 
+/// Both the saved choice and its effective billing mode own the wallet state.
+struct DeepSeekBalanceBinding: Equatable {
+    let source: DeepSeekBalanceSource
+    let mode: DeepSeekAuthMode?
+}
+
 @MainActor
 struct DeepSeekBalanceReadDependencies {
     var web: @MainActor () async throws -> DeepSeekBalance = { try await DeepSeekWebBalanceReader().read() }
@@ -41,14 +47,28 @@ extension IslandModel {
     /// Only the data directory restarts collection; a new balance source rereads the wallet.
     var currentDeepSeekSourceSignature: String { deepseekHome.path }
     func applyDeepSeekBalanceSource() {
-        let source = DeepSeekBalanceSource.load(from: defaults).rawValue
-        guard source != deepseekBalanceSourceRaw else { return }
-        let first = deepseekBalanceSourceRaw.isEmpty
-        deepseekBalanceSourceRaw = source
-        guard !first else { return }
+        if synchronizeDeepSeekBalanceSource() { refreshDeepSeekBalance(force: true) }
+    }
+    var currentDeepSeekBalanceBinding: DeepSeekBalanceBinding {
+        DeepSeekBalanceBinding(source: .load(from: defaults), mode: deepseekBalanceMode)
+    }
+    /// Cancellation alone cannot stop a WebKit read from returning late.
+    func cancelDeepSeekBalanceRead() {
+        deepseekBalanceRequestID = nil
         deepseekBalanceTask?.cancel(); deepseekBalanceTask = nil; deepseekRefreshing = false
+    }
+    private func clearDeepSeekBalance() {
+        cancelDeepSeekBalanceRead()
         deepseekBalance = nil; deepseekBalanceError = nil; deepseekFailureCount = 0
-        refreshDeepSeekBalance(force: true)
+        deepseekBalanceAttention = DeepSeekBalanceAttention()
+        lastDeepSeekBalanceAttempt = .distantPast
+    }
+    @discardableResult private func synchronizeDeepSeekBalanceSource() -> Bool {
+        let binding = currentDeepSeekBalanceBinding
+        guard binding != deepseekBalanceBinding else { return false }
+        deepseekBalanceBinding = binding
+        clearDeepSeekBalance()
+        return true
     }
     var deepseekLowBalance: Double {
         let value = defaults.object(forKey: Self.deepseekLowBalanceKey) as? Double ?? 10
@@ -114,29 +134,36 @@ extension IslandModel {
         now = Date(); deepseekReceivedActivities = values; deepseekReceivedRequests = requests
         if deepseekStreamStatuses != statuses { deepseekStreamStatuses = statuses }
         if deepseekUsage != usage { deepseekUsage = usage }
+        let balanceSourceChanged = synchronizeDeepSeekBalanceSource()
         completionInbox.updatePerformance(performance)
         for update in performance { rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt) }
         refilterEmbeddedSessions()
         // A finished turn has spent money; read the wallet soon after.
-        if !endedTurns.isEmpty, now.timeIntervalSince(lastDeepSeekBalanceAttempt) > 20 { refreshDeepSeekBalance() }
+        if balanceSourceChanged { refreshDeepSeekBalance(force: true) }
+        else if !endedTurns.isEmpty, now.timeIntervalSince(lastDeepSeekBalanceAttempt) > 20 { refreshDeepSeekBalance() }
     }
 
     func refreshDeepSeekBalance(force: Bool = false) {
-        guard isModuleEnabled(.deepseek), !deepseekRefreshing, !sleeping, !stopped, !demo else { return }
-        guard force || deepseekBalanceError?.needsConnection != true else { return }
-        let mode = deepseekBalanceMode
+        guard isModuleEnabled(.deepseek), !sleeping, !stopped, !demo else { return }
+        synchronizeDeepSeekBalanceSource()
+        guard !deepseekRefreshing, force || deepseekBalanceError?.needsConnection != true else { return }
+        let mode = deepseekBalanceBinding?.mode
         let key = mode == .apiKey ? deepseekBalanceReads.apiKey() : nil
         guard let mode, mode == .account || key != nil else {
             deepseekBalanceError = mode == .apiKey ? .missingKey : nil; return
         }
         deepseekRefreshing = true; lastDeepSeekBalanceAttempt = Date()
-        let generation = deepseekGeneration, reads = deepseekBalanceReads
+        let generation = deepseekGeneration, reads = deepseekBalanceReads, requestID = UUID()
+        deepseekBalanceRequestID = requestID
         deepseekBalanceTask = Task { [weak self] in
             let result: Result<DeepSeekBalance, Error>
             do { result = .success(mode == .account ? try await reads.web() : try await reads.api(key!)) }
             catch { result = .failure(error) }
-            guard let self, generation == self.deepseekGeneration, !self.stopped else { return }
-            self.deepseekRefreshing = false; self.deepseekBalanceTask = nil
+            guard let self, !Task.isCancelled, generation == self.deepseekGeneration,
+                  requestID == self.deepseekBalanceRequestID, !self.stopped, !self.sleeping, self.isModuleEnabled(.deepseek) else { return }
+            // A profile can change while suspended, before the next collector update.
+            if self.synchronizeDeepSeekBalanceSource() { self.refreshDeepSeekBalance(force: true); return }
+            self.deepseekRefreshing = false; self.deepseekBalanceTask = nil; self.deepseekBalanceRequestID = nil
             switch result {
             case .success(let balance):
                 self.deepseekBalance = balance; self.deepseekBalanceError = nil; self.deepseekFailureCount = 0
@@ -158,17 +185,17 @@ extension IslandModel {
         case .apiKey: openSettings(for: .deepseek)
         default:
             DeepSeekWebLogin.open { [weak self] in
-                self?.deepseekBalanceError = nil; self?.refreshDeepSeekBalance(force: true)
+                self?.clearDeepSeekBalance(); self?.refreshDeepSeekBalance(force: true)
             }
         }
     }
     func saveDeepSeekAPIKey(_ raw: String) -> Bool {
         guard DeepSeekAPIKeyStore.save(raw) else { return false }
-        deepseekBalanceError = nil; refreshDeepSeekBalance(force: true)
+        clearDeepSeekBalance(); refreshDeepSeekBalance(force: true)
         return true
     }
     func removeDeepSeekConnection() {
-        deepseekBalanceTask?.cancel(); deepseekBalanceTask = nil; deepseekRefreshing = false
+        cancelDeepSeekBalanceRead()
         deepseekGeneration += 1
         DeepSeekAPIKeyStore.remove()
         Task { await DeepSeekWebSessionStore.signOut() }
@@ -181,8 +208,7 @@ extension IslandModel {
     func resetDeepSeekSource() {
         deepseekGeneration += 1
         deepseekActivityTask?.cancel(); deepseekActivityTask = nil
-        deepseekBalanceTask?.cancel(); deepseekBalanceTask = nil; deepseekRefreshing = false
-        deepseekBalance = nil; deepseekBalanceError = nil; deepseekFailureCount = 0
+        clearDeepSeekBalance(); deepseekBalanceBinding = nil
         deepseekActivityAttention = AttentionPolicy(); deepseekBalanceAttention = DeepSeekBalanceAttention()
         completionInbox.remove(provider: .deepseek)
         bindCompletionSources(.deepseek)

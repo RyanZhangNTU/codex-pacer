@@ -98,14 +98,18 @@ struct DeepSeekSessionReader {
             if attempt == 1 { cursor.offset = size; return ([], data.count, false) }
             count = Int(min(remaining, 64 << 20))
         }
-        let attaching = cursor.offset < cursor.baselineEnd
         var lines: [Line] = []
-        for raw in output.lines {
-            let truncated = raw.count >= DeepSeekSessionLog.maximumLineBytes
-            guard let record = DeepSeekSessionLog.parse(raw, truncated: truncated, light: attaching) else { continue }
-            if case .header(let header) = record.event { cursor.session = header.session }
-            guard let session = cursor.session else { continue }
-            lines.append(Line(session: session, record: record, attaching: attaching))
+        for batch in output.batches {
+            // A catch-up pass can contain both captured history and frames
+            // appended since startup. A torn baseline frame stays historical.
+            let attaching = start + UInt64(batch.compressedOffset) < cursor.baselineEnd
+            for raw in output.lines[batch.lines] {
+                let truncated = raw.count >= DeepSeekSessionLog.maximumLineBytes
+                guard let record = DeepSeekSessionLog.parse(raw, truncated: truncated, light: attaching) else { continue }
+                if case .header(let header) = record.event { cursor.session = header.session }
+                guard let session = cursor.session else { continue }
+                lines.append(Line(session: session, record: record, attaching: attaching))
+            }
         }
         cursor.offset += UInt64(output.consumed)
         // A torn tail at the end of the file waits for its writer; bytes left
