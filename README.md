@@ -22,13 +22,13 @@
   &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-![Codex Pacer at the notch, with sample data: hovering expands three running Codex and Claude tasks, each with its model and reasoning effort, above the 5-hour and 7-day quota rings; an approval request moves to the top, and the collapsed badge stays amber until it is handled](docs/assets/demo.webp)
+![Codex Pacer at the notch, with sample data: hovering expands three running tasks from DeepSeek Harness, Claude Code and Codex, each with its model and reasoning effort and the DeepSeek turn's estimated cost, above the Codex and Claude quota rings and the DeepSeek day dial; an approval request moves to the top, and the collapsed badge stays amber until it is handled](docs/assets/demo.webp)
 
 ## At a glance
 
 Collapsed, Pacer is a slim bar around the camera that tells you how your agents are doing without opening anything.
 
-![The collapsed bar: a task badge and output speed on the left of the camera, quota rings and value on the right](docs/assets/collapsed-bar.png)
+![The collapsed bar: a task badge and output speed on the left of the camera, quota rings and the DeepSeek balance on the right](docs/assets/collapsed-bar.png)
 
 | | What it tells you |
 | --- | --- |
@@ -46,6 +46,8 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 - **Quota with pace.** Each service has one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own remaining quota, reset countdown and white pace tick. Accounts without a 5-hour limit get a weekly gauge that opens at the bottom. With one service on, its pace, reset time and a forecast sit beside the ring. Switch to the original Classic layout in **Settings → Appearance → Expanded Quota**.
 - **A day dial for DeepSeek.** DeepSeek charges a balance instead of quota windows, so its ring is today on a 24-hour face: what each hour cost, the doubled-price peak hours and the balance in the middle. Each DeepSeek task shows its turn's estimated cost, and with DeepSeek alone the panel adds how long the balance lasts and the last week's spend split by price. The balance comes from a DeepSeek platform sign-in in Pacer's own window or an API key, whichever matches how Harness signs in.
 - **History when you want it.** Settings keeps each service's quota curve for the current cycle, plus credits and banked resets when the service reports them.
+
+![DeepSeek alone, with sample data: the day dial with the balance and today's spend beside the current price, today against a usual day and how long the balance lasts, above a week of spend split into off-peak and peak](docs/assets/deepseek.png)
 
 ## Make it yours
 
