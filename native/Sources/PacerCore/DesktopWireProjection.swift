@@ -303,10 +303,10 @@ struct DesktopWireProjection {
     }
     private mutating func snapshot(_ view: JSONFieldView) throws {
         selectionResolved = false
-        let fields = try view.fields(["title", "cwd", "latestModel", "threadSource", "source", "parentThreadId", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "resumeState", "turns", "turnHistory", "requests"])
+        let fields = try view.fields(["title", "cwd", "latestModel", "latestReasoningEffort", "threadSource", "source", "parentThreadId", "ephemeral", "latestTokenUsageInfo", "threadRuntimeStatus", "resumeState", "turns", "turnHistory", "requests"])
         guard fields["ephemeral"]?.boolean() != true else { throw DesktopProjectionFailure.ephemeral }
         guard !(try Self.review(fields)) else { throw DesktopProjectionFailure.review }
-        var values = fields.filter { ["title", "cwd", "latestModel", "threadSource"].contains($0.key) }
+        var values = fields.filter { ["title", "cwd", "latestModel", "latestReasoningEffort", "threadSource"].contains($0.key) }
             .reduce(into: [String: DesktopValue]()) { $0[$1.key] = Self.string($1.value, limit: $1.key == "cwd" ? 2048 : 256) ?? .null }
         values["source"] = try Self.relationship(fields["source"])
         values["parentThreadId"] = try Self.relationship(fields["parentThreadId"])
@@ -383,7 +383,7 @@ struct DesktopWireProjection {
             return nil
         }
         if op == "remove" {
-            if ["title", "cwd", "latestModel", "threadSource"].contains(root) { return path.count == 1 ? .null : nil }
+            if ["title", "cwd", "latestModel", "latestReasoningEffort", "threadSource"].contains(root) { return path.count == 1 ? .null : nil }
             if root == "latestTokenUsageInfo" {
                 return path.count == 1 || (path.count <= 3 && keys.count == path.count &&
                     ["total", "last"].contains(keys[1]) && (path.count == 2 || ["outputTokens", "reasoningOutputTokens"].contains(keys[2]))) ? .null : nil
@@ -411,7 +411,7 @@ struct DesktopWireProjection {
             }
             return nil
         }
-        if ["title", "cwd", "latestModel", "threadSource"].contains(root), path.count == 1 { return Self.string(view, limit: root == "cwd" ? 2048 : 256) ?? .null }
+        if ["title", "cwd", "latestModel", "latestReasoningEffort", "threadSource"].contains(root), path.count == 1 { return Self.string(view, limit: root == "cwd" ? 2048 : 256) ?? .null }
         if root == "latestTokenUsageInfo" {
             if path.count == 1 { return try Self.usage(view) }
             if path.count == 2 && ["total", "last"].contains(keys.last ?? "") {
@@ -604,9 +604,17 @@ struct DesktopWireProjection {
             ["method": method, "threadId": threadID, "at": now.timeIntervalSince1970].merging(values) { _, new in new }
         }
         if !attentionOnly && staged.runtimeAvailable {
-            if snapshot || reconnecting || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("threadSource"), .key("source"), .key("parentThreadId")].contains($0.first ?? .key("")) }) {
+            if snapshot || reconnecting || rawPaths.contains(where: { [.key("title"), .key("cwd"), .key("latestModel"), .key("latestReasoningEffort"), .key("threadSource"), .key("source"), .key("parentThreadId")].contains($0.first ?? .key("")) }) {
                 var meta: [String: Any] = [:]
-                for (source, target) in [("title", "name"), ("cwd", "cwd"), ("latestModel", "model"), ("threadSource", "source")] { meta[target] = staged.tree[source]?.text }
+                for (source, target) in [("title", "name"), ("cwd", "cwd"), ("latestModel", "model"), ("latestReasoningEffort", "reasoningEffort"), ("threadSource", "source")] { meta[target] = staged.tree[source]?.text }
+                if case .null? = staged.tree["latestReasoningEffort"] {
+                    meta["reasoningEffort"] = NSNull()
+                } else if staged.tree["latestReasoningEffort"] == nil,
+                          rawPaths.contains(where: { $0 == [.key("latestReasoningEffort")] }) {
+                    // Removing the field is also an explicit clear; an absent
+                    // field in a snapshot remains an unreported value.
+                    meta["reasoningEffort"] = NSNull()
+                }
                 let source = staged.tree["source"]
                 let sub = source?["subAgent"] ?? source?["subagent"]
                 let spawn = sub?["thread_spawn"] ?? sub?["threadSpawn"]

@@ -14,7 +14,7 @@ struct SettingsHelpPane: View {
             row("help.claude") { ProviderColorSample(provider: .claude) }
             row("help.alert") {
                 ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [:], attention: .input))
-                StatusTile(symbol: StatusSymbols.failed, tint: PacerPalette.danger, size: 20)
+                StatusGlyph(symbol: StatusSymbols.failed, tint: PacerPalette.danger, size: 14)
                 Circle().fill(PacerPalette.tertiary).frame(width: 6, height: 6)
             }
         }
@@ -50,9 +50,16 @@ struct SettingsHelpPane: View {
                 QuotaVerdictChip(verdict: .spare)
             }
             row("help.rows") {
-                Image(systemName: StatusTile.tileSymbol(StatusSymbols.thinking)).font(.system(size: 11, weight: .semibold))
+                StatusGlyph(symbol: StatusSymbols.thinking, tint: AgentProvider.codex.tint, size: 14)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text("48.2 t/s · " + CompactDuration.text(180)).foregroundStyle(PacerPalette.secondary)
+                    HStack(spacing: 3) {
+                        Text(ModelDisplay.name("gpt-6.1-sol"))
+                        Text(ModelDisplay.effortLabel("xhigh") ?? "").opacity(0.62)
+                    }
                     .foregroundStyle(AgentProvider.codex.tint)
-                Text(CompactDuration.text(180)).font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.secondary)
+                }
+                .font(.system(size: 10, weight: .medium)).monospacedDigit()
             }
         }
         Section(L10n.text("help.section.actions")) {

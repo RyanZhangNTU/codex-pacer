@@ -68,7 +68,7 @@ public enum DemoScenario {
                                         "promptId": "demo-prompt", "at": now.addingTimeInterval(ago).timeIntervalSince1970]
             value.merge(fields) { _, new in new }; return value
         }
-        var records = [record("metadata", -40, ["title": L10n.text("demo.review_notes"), "model": "Claude"]),
+        var records = [record("metadata", -40, ["title": L10n.text("demo.review_notes"), "model": "claude-opus-5-5", "effort": "xhigh"]),
                        record("prompt", -40), record("thinking", -36, ["itemId": "thinking"])]
         if stage == .completed { records.append(record("stopVerified", 0)) }
         state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": records])!, now: now)
@@ -95,7 +95,7 @@ public enum DemoScenario {
             var value: [String: Any] = ["method": method, "threadId": id, "turnId": "demo-turn", "at": now.addingTimeInterval(ago).timeIntervalSince1970]
             value.merge(fields) { _, new in new }; return value
         }
-        var events = [event("metadata", -30, ["name": name, "model": "Codex"]), event("turn/started", -30),
+        var events = [event("metadata", -30, ["name": name, "model": "gpt-6.1-sol", "reasoningEffort": "high"]), event("turn/started", -30),
                       event("item/started", -28, ["itemId": "reasoning", "itemType": "reasoning", "hasText": true]),
                       event("thread/tokenUsage/updated", -25, ["outputTokens": 300]),
                       event("item/completed", -14, ["itemId": "reasoning", "itemType": "reasoning"]),

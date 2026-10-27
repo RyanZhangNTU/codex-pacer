@@ -483,7 +483,7 @@
 "help.attention.title" = "等待你处理";
 "help.attention.detail" = "实心琥珀色表示有任务需要你回复或审批，点击即可打开。";
 "help.endings.title" = "任务结束";
-"help.endings.detail" = "对勾、叉、暂停分别表示完成、失败、中断；右上角圆点表示有未读的结束任务。";
+"help.endings.detail" = "对勾、叉、暂停分别表示完成、失败、中断；右上角圆点表示有未读的结束任务。展开面板中，未读的结束任务保持彩色。";
 "help.quota.title" = "额度";
 "help.quota.detail" = "双环同时显示 Codex（外环）与 Claude（内环）的剩余额度；数值在两者之间交替。";
 "help.five_hour.title" = "5h 额度警告";
@@ -493,7 +493,7 @@
 "help.pace.title" = "配速";
 "help.pace.detail" = "白色刻度是按时间均匀使用时应剩的位置，色弧越过刻度表示用得慢；标签显示充裕、正常或偏快。";
 "help.rows.title" = "任务行";
-"help.rows.detail" = "显示本轮已运行时长、输出速度与首输出时间；点击打开对应会话。";
+"help.rows.detail" = "上行显示输出速度与本轮用时（运行中持续计时，结束后保留总时长），下行显示模型与推理强度；悬停速度可查看首输出时间。已读的结束任务显示为灰色；点击打开对应会话。";
 "help.action.hover" = "悬停展开，移开或按 Esc 收起；点击顶部可固定展开。";
 "help.action.menu" = "右键折叠栏可打开设置或退出；展开后的 ⋯ 菜单可刷新或退出。";
 "help.link.guide" = "使用说明";
@@ -617,3 +617,13 @@
 "appearance.expanded_quota" = "展开态额度";
 "appearance.quota_split" = "分段圆环";
 "appearance.quota_classic" = "经典";
+
+"model.effort.minimal" = "极低";
+"model.effort.low" = "低";
+"model.effort.medium" = "中";
+"model.effort.high" = "高";
+"model.effort.xhigh" = "极高";
+"model.effort.max" = "Max";
+"model.effort.ultra" = "Ultra";
+"model.effort.persistent" = "持续";
+"model.effort_help" = "推理强度 %@";

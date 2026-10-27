@@ -126,6 +126,42 @@ final class NativeDesktopTests: XCTestCase {
         XCTAssertEqual(events.first { $0["method"] as? String == "thread/tokenUsage/updated" }?["outputTokens"] as? Int, 20)
         XCTAssertFalse(String(describing: projection).contains("PRIVATE"))
     }
+    func testModelAndEffortReachMetadataWithoutOtherState() throws {
+        var projection = DesktopWireProjection(threadID: thread)
+        var raw = state(); raw["latestReasoningEffort"] = "xhigh"; raw["latestThreadSettings"] = ["cwd": "/PRIVATE"]
+        let initial = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": raw]), owner: "owner", at: epoch)
+        let metadata = try XCTUnwrap(initial.first { $0["method"] as? String == "metadata" })
+        XCTAssertEqual(metadata["model"] as? String, "model"); XCTAssertEqual(metadata["reasoningEffort"] as? String, "xhigh")
+        let changed = try projection.consume(view(["type": "patches", "baseRevision": 0, "revision": 1,
+            "patches": [["op": "replace", "path": ["latestReasoningEffort"], "value": "low"]]]), owner: "owner", at: epoch)
+        XCTAssertEqual(changed.filter { $0["method"] as? String == "metadata" }.compactMap { $0["reasoningEffort"] as? String }, ["low"])
+        XCTAssertFalse(String(describing: projection).contains("PRIVATE"))
+    }
+    func testDesktopEffortNullAndRemovalClearTheActivity() throws {
+        for operation in ["replace", "remove"] {
+            var projection = DesktopWireProjection(threadID: thread)
+            var activity = SessionActivity(id: thread, sessionID: thread)
+            var raw = state(); raw["latestReasoningEffort"] = "high"
+            let initial = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": raw]), owner: "owner", at: epoch)
+            for event in initial { activity.applyRuntime(event) }
+            XCTAssertEqual(activity.reasoningEffort, "high")
+            let previous = activity
+            let patch: [String: Any] = ["op": operation, "path": ["latestReasoningEffort"], "value": NSNull()]
+            let changed = try projection.consume(view(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [patch]]), owner: "owner", at: epoch.addingTimeInterval(1))
+            let metadata = try XCTUnwrap(changed.first { $0["method"] as? String == "metadata" })
+            XCTAssertTrue(metadata["reasoningEffort"] is NSNull)
+            for event in changed { activity.applyRuntime(event) }
+            activity.mergeDisplayMetadata(from: previous)
+            XCTAssertNil(activity.reasoningEffort, "An explicit Desktop clear survives display merging")
+        }
+        var projection = DesktopWireProjection(threadID: thread)
+        var raw = state(); raw["latestReasoningEffort"] = NSNull()
+        let initial = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": raw]), owner: "owner", at: epoch)
+        XCTAssertTrue(initial.first { $0["method"] as? String == "metadata" }?["reasoningEffort"] is NSNull)
+        var absent = DesktopWireProjection(threadID: thread)
+        let events = try absent.consume(view(["type": "snapshot", "revision": 0, "conversationState": state()]), owner: "owner", at: epoch)
+        XCTAssertNil(events.first { $0["method"] as? String == "metadata" }?["reasoningEffort"], "An absent field is not an explicit clear")
+    }
     func testTextPatchesAdvanceRevisionAndMalformedBatchesRollbackAtomically() throws {
         var projection = DesktopWireProjection(threadID: thread)
         _ = try projection.consume(view(["type": "snapshot", "revision": 0, "conversationState": state()]), owner: "owner", at: epoch)

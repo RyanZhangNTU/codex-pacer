@@ -54,6 +54,7 @@ enum SessionLogProbe {
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
+            if 'effort' in p: q['effort'] = p['effort'][:32] if isinstance(p['effort'],str) else None
         elif outer == 'event_msg' and kind == 'item_completed':
             item=p.get('item') or {}
             if not isinstance(item,dict) or item.get('type') not in ('AgentMessage','Reasoning','agentMessage','reasoning'):return None
@@ -179,6 +180,9 @@ enum SessionLogProbe {
                         if turn in first_times or len(first_times)<64:first_times[turn]=min(first_times.get(turn,p['first_output_at_ms']),p['first_output_at_ms'])
                     elif v['type']=='turn_context' and fallback is None:fallback=v;latest_turn=turn
                     elif p.get('type')=='task_started' and (latest_turn is None or latest_turn==turn):
+                        context=(fallback or {}).get('payload') or {}
+                        if context.get('turn_id')==turn and isinstance(context.get('model'),str):
+                            p['_model_context']={k:context[k] for k in ('model','effort') if k in context}
                         if turn in first_times:
                             began=timestamp_ms(v['timestamp'])
                             if began is not None:

@@ -374,6 +374,68 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertNil(ActivitySourceMerger.merge(logged: [otherHost], streamed: state.activities).first { $0.sourceHostID == host }?.title)
     }
 
+    func testRemoteAndDesktopModelSettingsCrossAsBoundedMetadata() throws {
+        let script = #"""
+        class Fake:
+            def __init__(self):self.sent=[]
+            def send(self,v):self.sent.append(v)
+        tid='019a0000-0000-7000-8000-000000000002'
+        ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
+        s.request('thread/read',{'threadId':tid},'read',tid);rid=ws.sent[-1]['id']
+        s.receive({'id':rid,'result':{'thread':{'id':tid,'status':{'type':'idle'},'model':'gpt-6.1-sol','reasoningEffort':'xhigh','preview':'PRIVATE'}}})
+        meta=[e for e in s.queue if e['method']=='metadata'][-1]
+        assert meta['model']=='gpt-6.1-sol' and meta['reasoningEffort']=='xhigh' and meta['modelScope']=='threadConfiguration'
+        s.receive({'method':'thread/settings/updated','params':{'threadId':tid,'threadSettings':{'model':'gpt-6.1-terra','effort':None,'cwd':'/PRIVATE'}}})
+        e=s.queue[-1]
+        assert e['method']=='metadata' and e['modelScope']=='threadConfiguration' and e['model']=='gpt-6.1-terra' and e['reasoningEffort'] is None and 'cwd' not in e
+        before=len(s.queue)
+        s.receive({'method':'thread/settings/updated','params':{'threadId':tid,'threadSettings':{'effort':'low'}}})
+        assert len(s.queue)==before,'an effort without its model is not attributed'
+        assert 'PRIVATE' not in repr(s.queue)
+        p=Projection(tid)
+        events=p.consume({'type':'snapshot','revision':0,'conversationState':{'turns':[],'latestModel':'gpt-6.1-sol','latestReasoningEffort':'high'}},'owner')
+        assert [e.get('reasoningEffort') for e in events if e['method']=='metadata']==['high']
+        events=p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['latestReasoningEffort'],'value':'max'}]},'owner')
+        assert [e.get('reasoningEffort') for e in events if e['method']=='metadata']==['max']
+        events=p.consume({'type':'patches','baseRevision':1,'revision':2,'patches':[{'op':'replace','path':['latestReasoningEffort'],'value':None}]},'owner')
+        assert any('reasoningEffort' in e and e['reasoningEffort'] is None for e in events if e['method']=='metadata')
+        events=p.consume({'type':'patches','baseRevision':2,'revision':3,'patches':[{'op':'remove','path':['latestReasoningEffort']}]},'owner')
+        assert any('reasoningEffort' in e and e['reasoningEffort'] is None for e in events if e['method']=='metadata')
+        p=Projection(tid)
+        events=p.consume({'type':'snapshot','revision':0,'conversationState':{'turns':[],'latestModel':'gpt-6.1-sol','latestReasoningEffort':None}},'owner')
+        assert any('reasoningEffort' in e and e['reasoningEffort'] is None for e in events if e['method']=='metadata')
+        print('model settings passed')
+        """#
+        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + script).contains("model settings passed"))
+    }
+
+    func testRemoteThreadConfigurationCannotReplaceTheActiveTurnsRolloutModel() {
+        var state = RuntimeEventState(sourceID: "remote-ssh-discovered:synthetic", sourceName: "Synthetic SSH")
+        state.consume(["kind": "status", "connected": true])
+        state.consume(event("metadata", at: 1000, fields: ["modelScope": "threadConfiguration", "model": "gpt-first", "reasoningEffort": "high"]))
+        state.consume(event("turn/started", at: 1000))
+        XCTAssertNil(state.activities.first?.modelName, "Thread configuration alone does not prove which model is executing")
+        func record(_ type: String, _ seconds: Double, _ payload: [String: Any]) -> [String: Any] {
+            ["type": type, "timestamp": ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: seconds)), "payload": payload]
+        }
+        let first = [record("event_msg", 1000, ["type": "task_started", "turn_id": "turn"]),
+                     record("turn_context", 1001, ["turn_id": "turn", "model": "gpt-first", "effort": "high"])]
+        state.consume(["kind": "performance", "sessions": [["threadId": thread, "reset": true, "records": first]]])
+        XCTAssertEqual(state.activities.first?.modelName, "gpt-first")
+        XCTAssertEqual(state.activities.first?.reasoningEffort, "high")
+        state.consume(event("metadata", at: 1002, fields: ["modelScope": "threadConfiguration", "model": "gpt-next", "reasoningEffort": "low"]))
+        XCTAssertEqual(state.activities.first?.modelName, "gpt-first", "Future settings cannot rename the running turn")
+        XCTAssertEqual(state.activities.first?.reasoningEffort, "high")
+        state.consume(event("turn/completed", at: 1003, fields: ["status": "completed"]))
+        state.consume(event("turn/started", at: 1004, fields: ["turnId": "next"]))
+        XCTAssertNil(state.activities.first?.modelName, "The previous turn's rollout cannot name a new turn")
+        let next = [record("event_msg", 1004, ["type": "task_started", "turn_id": "next"]),
+                    record("turn_context", 1005, ["turn_id": "next", "model": "gpt-actual", "effort": "medium"])]
+        state.consume(["kind": "performance", "sessions": [["threadId": thread, "reset": false, "records": next]]])
+        XCTAssertEqual(state.activities.first?.modelName, "gpt-actual", "The new turn's own context wins over configured settings")
+        XCTAssertEqual(state.activities.first?.reasoningEffort, "medium")
+    }
+
     func testRemoteNameNotificationsAndEphemeralThreadsStayWithinTheSanitizedProtocol() throws {
         let script = #"""
         class Fake:

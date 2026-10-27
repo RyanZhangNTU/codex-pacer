@@ -113,7 +113,7 @@ struct ActivityBadge: View {
         case .idle:
             Circle().fill(PacerPalette.tertiary).frame(width: 5, height: 5)
         case .symbol(let name):
-            Image(systemName: StatusTile.tileSymbol(name)).font(.system(size: 9, weight: .bold))
+            Image(systemName: StatusSymbols.enclosed(name)).font(.system(size: 9, weight: .bold))
                 .foregroundStyle(ink).contentTransition(.symbolEffect(.replace))
         case .count(let count):
             Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .bold, design: .rounded))

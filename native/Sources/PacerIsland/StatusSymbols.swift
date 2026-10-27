@@ -18,6 +18,11 @@ enum StatusSymbols {
     static let freshness = "clock.arrow.circlepath"
     static let sshWarning = "network.slash"
 
+    /// A glyph drawn inside a badge drops its own outer circle.
+    static func enclosed(_ name: String) -> String {
+        name.hasSuffix(".circle") ? String(name.dropLast(".circle".count)) : name
+    }
+
     static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil) -> String {
         if let attention { return attention == .approval ? approval : input }
         switch activity.phase {
