@@ -24,7 +24,7 @@ The first time you open Codex Pacer 4, or the first launch after upgrading from 
 1. **Meet the island** labels the parts of the collapsed bar, shows the three badge states and demonstrates hover to expand.
 2. **Choose what to follow** turns the Codex, Claude and DeepSeek modules on or off, shows whether each one is ready, and offers shortcuts to customize the collapsed bar, turn on notifications and open Pacer at login.
 
-![Step 2 of the welcome guide: Codex and Claude cards with their own switches, then Customize the Collapsed Bar, System Notifications and Open at Login](assets/welcome-services.png)
+![Step 2 of the welcome guide: Codex, Claude and DeepSeek cards with their own switches, then Customize the Collapsed Bar, System Notifications and Open at Login](assets/welcome-services.png)
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex**, **Settings → Claude** or **Settings → DeepSeek**, and reopen the guide from **Settings → Help**.
 
@@ -49,7 +49,7 @@ Until you choose otherwise, the bar sits around the camera on a display with a n
 
 ## The expanded island
 
-![The expanded island with two tasks and the Codex and Claude quota rings](assets/hero.png)
+![The expanded island: a Claude task waiting for approval at the top, a DeepSeek task with its estimated cost and a Codex task on SSH, above the Codex and Claude quota rings and the DeepSeek day dial](assets/hero.png)
 
 **Hover** over the bar to expand it and **move away** to collapse it. Click the top, or the pin button, to keep it open; press Esc to close it.
 
@@ -85,6 +85,8 @@ In Split Ring, each service gets one ring. When it reports a 5-hour limit, the s
 DeepSeek has a balance instead of quota windows, so its ring is a **day dial**: today on a 24-hour face with midnight at the top. Each hour's segment gets thicker the more that hour cost, the white tick is now, and amber arcs outside the dial mark the peak hours, when DeepSeek charges double (weekdays 09:00–12:00 and 14:00–18:00 Beijing time, shown in your time zone). The balance sits in the middle, white normally, amber when low, red when used up and gray when it could not be updated, with today's spend below it. **Peak** appears beside the name while prices are doubled, and a short runway such as **~2 d** replaces it when the balance would run out within three days. With two or three services on, the section is called **Quota & Balance**.
 
 With only DeepSeek on, the dial sits on the left and three groups sit beside it: **Now** (the current price and when it changes), **Today** (spend so far against your usual spend by this time) and **Balance** (how many days it lasts at your recent average, and the platform's token estimate when signed in on the web). Below them, one bar per day for the last week splits spend into off-peak and peak, with the dashed line at your daily average and how much moving peak spend off-peak would have saved.
+
+![DeepSeek alone: the day dial beside Now, Today and Balance, above the week of off-peak and peak spend](assets/deepseek.png)
 
 If quota cannot be read, the ring says why and offers a retry. Hover over a ring for the source and last update. Quota history, credits and banked resets are in **Settings → Codex** and **Settings → Claude**.
 

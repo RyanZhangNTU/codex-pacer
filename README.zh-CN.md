@@ -22,13 +22,13 @@
   &nbsp;·&nbsp; <a href="README.md">English</a>
 </p>
 
-![Codex Pacer 在刘海处（演示数据）：悬停展开三个运行中的 Codex 与 Claude 任务，各自显示模型和推理强度，下方是 5 小时与 7 天额度圆环；审批请求排到最前，收起后徽标保持琥珀色直到处理完成](docs/assets/demo.zh-CN.webp)
+![Codex Pacer 在刘海处（演示数据）：悬停展开 DeepSeek Harness、Claude Code 和 Codex 三个运行中的任务，各自显示模型和推理强度，DeepSeek 任务还显示本回合估算花费；下方是 Codex 与 Claude 的额度圆环和 DeepSeek 日环；审批请求排到最前，收起后徽标保持琥珀色直到处理完成](docs/assets/demo.zh-CN.webp)
 
 ## 一眼看清
 
 折叠时，Pacer 是摄像头两侧的一条细栏，不用展开就知道代理们进展如何。
 
-![折叠栏：摄像头左侧是任务徽标和输出速度，右侧是额度圆环和数值](docs/assets/collapsed-bar.zh-CN.png)
+![折叠栏：摄像头左侧是任务徽标和输出速度，右侧是额度圆环和 DeepSeek 余额](docs/assets/collapsed-bar.zh-CN.png)
 
 | | 含义 |
 | --- | --- |
@@ -46,6 +46,8 @@
 - **额度带配速。** 每个服务一个圆环：较短的上弧显示 5 小时，较长的下弧显示 7 天，各自保留剩余额度、重置倒计时和白色配速刻度。没有 5 小时限制时显示底部开口的每周圆环。只开启一个服务时，配速、重置时刻和预计显示在圆环右侧。可在“设置 → 外观 → 展开态额度”切回原版经典样式。
 - **DeepSeek 日环。** DeepSeek 按余额扣费，没有额度窗口，所以它的环是今天的 24 小时钟面：每个小时花了多少、单价翻倍的高峰时段，中间是余额。每个 DeepSeek 任务显示这一回合的估算花费；只开启 DeepSeek 时，面板还会显示余额够用几天，以及按价格拆分的近 7 天花费。余额按 Harness 的登录方式，通过 Pacer 窗口中的 DeepSeek 开放平台登录或 API Key 读取。
 - **需要时再看历史。** 设置里保留每个服务当前周期的额度曲线；服务提供时，还能看到 Credit 和重置券。
+
+![只开启 DeepSeek（演示数据）：日环中间是余额和今日花费，右侧是当前价格、今天与平时相比、余额够用几天，下方是按空闲和高峰拆分的近 7 天花费](docs/assets/deepseek.zh-CN.png)
 
 ## 按你的习惯来
 
