@@ -22,7 +22,7 @@
   &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-![Codex Pacer at the notch, with sample data: hovering expands three running Codex and Claude tasks above the quota rings, an approval request moves to the top, and the collapsed badge stays amber until it is handled](docs/assets/demo.webp)
+![Codex Pacer at the notch, with sample data: hovering expands three running Codex and Claude tasks, each with its model and reasoning effort, above the 5-hour and 7-day quota rings; an approval request moves to the top, and the collapsed badge stays amber until it is handled](docs/assets/demo.webp)
 
 ## At a glance
 
@@ -83,7 +83,7 @@ After that, Pacer updates itself: it checks daily, installs when you choose to a
 
 ## Privacy
 
-- **Local first.** Pacer has no account and no analytics. It reads the session logs that Codex and Claude Code already write and keeps only what the island shows: task titles, stages, timing and token counts, never the content of your prompts or responses.
+- **Local first.** Pacer has no account and no analytics. It reads the session logs that Codex and Claude Code already write and keeps only what the island shows: task titles, stages, models, timing and token counts, never the content of your prompts or responses.
 - **Your own sign-ins.** Codex quota comes from your Codex CLI. Claude quota comes from Claude Code's status line or a claude.ai session in Pacer's own window. Pacer never reads other apps' Keychain items or browser cookies.
 - **Reversible setup.** For Claude Code, Pacer adds its own hooks and a local-only telemetry endpoint next to your existing settings, and removes them when you turn the Claude module off.
 - **Few network requests.** Pacer connects only to your SSH hosts, the services' own quota endpoints and GitHub for updates.
