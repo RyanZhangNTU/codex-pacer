@@ -215,7 +215,7 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, position: $position,
-                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
+                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle,
                 deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
@@ -324,7 +324,8 @@ struct SettingsView: View {
         }
         if moduleEnabled(provider), provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
-                showsTurnCost: $showsDeepSeekTurnCost, speedSource: $deepseekSpeedSource,
+                showsTurnCost: $showsDeepSeekTurnCost, speedSource: $deepseekSpeedSource, panelStyle: $deepseekPanelStyle,
+                alone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek],
                 ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
                 openCollapsedBar: {
                     scrollTarget = Self.gaugeAnchor

@@ -609,9 +609,6 @@
 "appearance.expanded_quota" = "展开态额度";
 "appearance.quota_split" = "分段圆环";
 "appearance.quota_classic" = "经典";
-"appearance.expanded_deepseek" = "展开态显示";
-"appearance.deepseek_simple" = "简洁";
-"appearance.deepseek_detailed" = "详细";
 
 "model.effort.minimal" = "极低";
 "model.effort.low" = "低";
@@ -735,6 +732,11 @@
 "deepseek.section.display" = "任务行";
 "deepseek.section.pricing" = "价格";
 "deepseek.section.mode" = "模式";
+"deepseek.section.panel" = "展开面板";
+"deepseek.panel_style" = "内容";
+"deepseek.panel_style.simple" = "简洁";
+"deepseek.panel_style.detailed" = "详细";
+"deepseek.panel_style_help" = "详细多显示花费去向和近 7 天，近 7 天要等今天之前有两天花费才出现。";
 "deepseek.mode" = "显示";
 "deepseek.mode.balance" = "余额";
 "deepseek.mode.budget" = "预算";

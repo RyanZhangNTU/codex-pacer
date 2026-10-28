@@ -18,7 +18,7 @@ enum DeepSeekPanelStyle: String, CaseIterable, Identifiable {
     case detailed, simple
     static let defaultsKey = "deepseekPanelStyle"
     var id: String { rawValue }
-    var label: String { L10n.text("appearance.deepseek_" + rawValue) }
+    var label: String { L10n.text("deepseek.panel_style." + rawValue) }
 
     static func load(from defaults: UserDefaults = .standard) -> Self {
         defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .detailed

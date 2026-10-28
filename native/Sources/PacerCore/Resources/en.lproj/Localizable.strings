@@ -609,9 +609,6 @@
 "appearance.expanded_quota" = "Expanded Quota";
 "appearance.quota_split" = "Split Ring";
 "appearance.quota_classic" = "Classic";
-"appearance.expanded_deepseek" = "Expanded view";
-"appearance.deepseek_simple" = "Simple";
-"appearance.deepseek_detailed" = "Detailed";
 
 "model.effort.minimal" = "Minimal";
 "model.effort.low" = "Low";
@@ -735,6 +732,11 @@
 "deepseek.section.display" = "Task rows";
 "deepseek.section.pricing" = "Pricing";
 "deepseek.section.mode" = "Mode";
+"deepseek.section.panel" = "Expanded Panel";
+"deepseek.panel_style" = "Content";
+"deepseek.panel_style.simple" = "Simple";
+"deepseek.panel_style.detailed" = "Detailed";
+"deepseek.panel_style_help" = "Detailed adds where the money went and the last 7 days, which appear once two earlier days had spend.";
 "deepseek.mode" = "Show";
 "deepseek.mode.balance" = "Balance";
 "deepseek.mode.budget" = "Budget";

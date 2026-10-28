@@ -64,7 +64,8 @@ struct DeepSeekSettingsSummary: View {
 }
 
 /// DeepSeek's module page below the shared header: the balance connection,
-/// balance or budget mode, how spending shows, the price list and sessions
+/// balance or budget mode, the expanded panel's content when DeepSeek is the
+/// only module, how spending shows, the price list and sessions
 /// found on this Mac. The mode is always offered; the budget amounts appear in
 /// budget mode, filled in from recent spend. The balance source sits in the
 /// connection's menu. A connected wallet shows only its state and time, never
@@ -75,6 +76,9 @@ struct SettingsDeepSeekSections: View {
     @Binding var budgets: DeepSeekBudgetSettings
     @Binding var showsTurnCost: Bool
     @Binding var speedSource: String
+    @Binding var panelStyle: DeepSeekPanelStyle
+    /// DeepSeek is the only module, so the expanded panel is its own dashboard.
+    let alone: Bool
     /// The collapsed ring showing DeepSeek's budget, if any, and the way to choose one.
     let ringSlot: QuotaRingSlot?
     let openCollapsedBar: () -> Void
@@ -127,6 +131,17 @@ struct SettingsDeepSeekSections: View {
             }
         } header: {
             Text(L10n.text("deepseek.section.mode"))
+        }
+        if alone {
+            Section {
+                Picker(L10n.text("deepseek.panel_style"), selection: $panelStyle) {
+                    ForEach([DeepSeekPanelStyle.simple, .detailed]) { style in Text(style.label).tag(style) }
+                }
+                .pickerStyle(.segmented)
+                caption(L10n.text("deepseek.panel_style_help"))
+            } header: {
+                Text(L10n.text("deepseek.section.panel"))
+            }
         }
         Section {
             Picker(L10n.text("deepseek.speed_basis"), selection: $speedSource) {
