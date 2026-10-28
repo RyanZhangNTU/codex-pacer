@@ -47,7 +47,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 - **DeepSeek by balance or budget.** DeepSeek charges a balance instead of quota windows, so its dial is today on a 24-hour face: what each hour cost, the doubled-price peak hours and the balance in the middle. Switch to daily and weekly budgets and the dial paces them like quota. Pacer checks balance changes against its own estimate, so spend not made on this Mac, such as web searches or another device, counts too, and it warns you when 10 minutes cost more than usual. Each task shows its turn's estimated cost, and with DeepSeek alone the panel adds where today's money went and the last 7 days. The balance comes from a DeepSeek platform sign-in in Pacer's own window or an API key, whichever matches how Harness signs in.
 - **History when you want it.** Settings keeps each service's quota curve for the current cycle, plus credits and banked resets when the service reports them.
 
-![DeepSeek alone, with sample data: the day dial with the balance and today's spend beside the current price, today against a usual day and how long the balance lasts, above a week of spend split into off-peak and peak](docs/assets/deepseek.png)
+![DeepSeek alone, with sample data: the day dial with the balance and a ×2 until 6:00 PM chip, beside today's spend, the last two hours' speed and where today's money went, including a hatched Not on this Mac part, above the last 7 days](docs/assets/deepseek.png)
 
 ## Make it yours
 
