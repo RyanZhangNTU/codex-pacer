@@ -5,9 +5,18 @@ public struct DeepSeekLocalUsage: Equatable, Sendable {
     public let ledger: DeepSeekSpendLedger
     /// The billing provider of the newest request, such as `deepseek-account`.
     public let provider: String?
-    public init(ledger: DeepSeekSpendLedger = DeepSeekSpendLedger(), provider: String? = nil) {
-        self.ledger = ledger; self.provider = provider
+    /// Each delegated session's parent session.
+    public let parents: [String: String]
+    /// Session titles from the logs, for tasks whose rows are gone.
+    public let titles: [String: String]
+    public init(ledger: DeepSeekSpendLedger = DeepSeekSpendLedger(), provider: String? = nil, parents: [String: String] = [:],
+                titles: [String: String] = [:]) {
+        self.ledger = ledger; self.provider = provider; self.parents = parents; self.titles = titles
     }
+    /// The task a session's spend counts toward: its root session.
+    public func task(of session: String) -> String { DeepSeekActivityState.root(of: session, parents: parents) }
+    /// Delegated sessions under a root task.
+    public func subagents(of task: String) -> Int { parents.keys.filter { $0 != task && self.task(of: $0) == task }.count }
 }
 
 /// Reads DeepSeek Harness session logs on this Mac. File events drive reads;
@@ -98,7 +107,7 @@ public actor DeepSeekActivityMonitor {
         pendingPublish?.cancel(); pendingPublish = nil
         let statuses = home == nil ? [:] : ["local": state.status]
         await callback?(state.activities, statuses, state.attention, state.performanceUpdates,
-            DeepSeekLocalUsage(ledger: state.ledger, provider: state.latestProvider?.name))
+            DeepSeekLocalUsage(ledger: state.ledger, provider: state.latestProvider?.name, parents: state.parents, titles: state.titles))
     }
     private func schedulePublish(immediate: Bool) async {
         if immediate { await publish(); return }

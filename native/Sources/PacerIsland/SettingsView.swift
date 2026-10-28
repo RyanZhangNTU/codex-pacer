@@ -15,8 +15,15 @@ struct SettingsView: View {
     @State private var claudeHome = UserDefaults.standard.string(forKey: "claudeHome") ?? ""
     @State private var deepseekHome = UserDefaults.standard.string(forKey: "deepseekHome") ?? ""
     @State private var deepseekSource = DeepSeekBalanceSource.load()
-    @State private var deepseekLowBalance = UserDefaults.standard.object(forKey: IslandModel.deepseekLowBalanceKey) as? Double ?? 10
+    /// Nil follows the rules shown in the empty field.
+    @State private var deepseekLowBalance = IslandModel.deepseekLowLine(in: .standard)
+    @State private var deepseekSpikeLimit = DeepSeekBudgetSettings.amount(IslandModel.deepseekSpikeLimitKey, in: .standard)
+    @State private var deepseekPanelStyle = DeepSeekPanelStyle.load()
+    @State private var deepseekBudgets = DeepSeekBudgetSettings.load()
+    /// "" follows the modules; a provider or "none" was chosen.
+    @State private var quotaRings = QuotaRingSlot.allCases.map { UserDefaults.standard.string(forKey: $0.defaultsKey) ?? "" }
     @AppStorage(IslandModel.deepseekTurnCostKey) private var showsDeepSeekTurnCost = true
+    @AppStorage(IslandModel.deepseekSpeedSourceKey) private var deepseekSpeedSource = DeepSeekSpeedSource.local.rawValue
     @State private var showsResetExpiryDetails: Set<AgentProvider> = []
     @State private var displayMode = IslandDisplayMode.load()
     /// Nil until chosen, so an unrelated change never stores the center.
@@ -57,6 +64,9 @@ struct SettingsView: View {
         return result
     }()
     @State private var pane = UserDefaults.standard.string(forKey: SettingsPane.defaultsKey).flatMap(SettingsPane.init(rawValue:)) ?? .general
+    /// A row a link elsewhere asked for, scrolled into view when its pane opens.
+    @State private var scrollTarget: String?
+    private static let gaugeAnchor = "quotaGauge"
     private var languageChanges: Bool { language.resolved() != L10n.language }
 
     var body: some View {
@@ -67,9 +77,17 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(pane.title).font(.system(size: 20, weight: .semibold))
                         .padding(.horizontal, 28).padding(.top, 20)
-                    Form { paneContent }
-                        .formStyle(.grouped)
-                        .id(pane)
+                    ScrollViewReader { proxy in
+                        Form { paneContent }
+                            .formStyle(.grouped)
+                            .task {
+                                guard let target = scrollTarget else { return }
+                                scrollTarget = nil
+                                try? await Task.sleep(nanoseconds: 150_000_000)
+                                withAnimation { proxy.scrollTo(target, anchor: .center) }
+                            }
+                    }
+                    .id(pane)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -197,7 +215,8 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, position: $position,
-                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle)
+                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle,
+                deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
         case .collapsedBar:
             let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
             Section {
@@ -210,13 +229,34 @@ struct SettingsView: View {
         case .reminders:
             // The collapsed bar already shows replies, approvals, endings and
             // quota; only warnings and the system notification are chosen here.
-            Section(L10n.text("reminders.section.warnings")) {
-                warningRow(.fiveHour) { FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint) }
-                warningRow(.ssh) { Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)) }
-                warningRow(.quotaDelay) { Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)) }
+            // With DeepSeek alone, the quota-window and SSH kinds never apply.
+            Section {
+                if AgentProvider.allCases.contains(where: { $0 != .deepseek && moduleEnabled($0) }) {
+                    warningRow(.fiveHour) { FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint) }
+                    warningRow(.ssh) { Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)) }
+                    warningRow(.quotaDelay) { Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)) }
+                }
                 if moduleEnabled(.deepseek) {
-                    warningRow(.lowBalance) { WalletAlertGlyph(exhausted: false) }
-                    warningRow(.peakPrice) { PeakPriceGlyph() }
+                    deepseekWarningRow(.lowBalance, detail: L10n.text("reminders.low_balance_detail"), samples: [.lowBalance, .exhausted]) {
+                        Text(L10n.text("reminders.low_balance"))
+                        amountField($deepseekLowBalance, label: L10n.text("reminders.low_balance"), automatic: model.deepseekAutomaticLowLine)
+                    }
+                    deepseekWarningRow(.spendSpike, detail: L10n.text("reminders.spike_detail"), samples: [.spike]) {
+                        Text(L10n.text("reminders.spike"))
+                        amountField($deepseekSpikeLimit, label: L10n.text("reminders.spike"), automatic: model.deepseekAutomaticSpikeLimit)
+                    }
+                    deepseekWarningRow(.budget, detail: L10n.text("reminders.budget_detail"), samples: [.nearingBudget(.day), .overBudget(.week)]) {
+                        Text(L10n.text("reminders.budget"))
+                    }
+                }
+            } header: {
+                Text(L10n.text("reminders.section.warnings"))
+            } footer: {
+                if moduleEnabled(.deepseek) {
+                    HStack(spacing: 4) {
+                        Text(L10n.text("reminders.one_at_a_time")).foregroundStyle(.secondary)
+                        Button(L10n.text("reminders.budget_link")) { pane = .deepseek }.buttonStyle(.link)
+                    }.font(.system(size: 11))
                 }
             }
             Section {
@@ -251,7 +291,7 @@ struct SettingsView: View {
         case .whatsNew:
             SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
         case .help:
-            SettingsHelpPane(onShowWelcome: onShowWelcome)
+            SettingsHelpPane(module: AgentProvider.allCases.first(where: moduleEnabled) ?? .codex, onShowWelcome: onShowWelcome)
         case .connections:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
@@ -269,6 +309,7 @@ struct SettingsView: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
+                if provider == .deepseek, moduleEnabled(.deepseek) { DeepSeekSettingsSummary(model: model) }
                 Toggle(provider.displayName, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
             }
             .padding(.vertical, 2)
@@ -282,8 +323,14 @@ struct SettingsView: View {
             }
         }
         if moduleEnabled(provider), provider == .deepseek {
-            SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, lowBalance: $deepseekLowBalance,
-                showsTurnCost: $showsDeepSeekTurnCost, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
+            SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
+                showsTurnCost: $showsDeepSeekTurnCost, speedSource: $deepseekSpeedSource, panelStyle: $deepseekPanelStyle,
+                alone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek],
+                ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
+                openCollapsedBar: {
+                    scrollTarget = Self.gaugeAnchor
+                    pane = .collapsedBar
+                }, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
                 commitHome: { commit(.deepseekHome) }, chooseHome: chooseDeepSeekHome)
         } else if moduleEnabled(provider) {
             localSection(provider)
@@ -431,8 +478,9 @@ struct SettingsView: View {
             ForEach(group.components.filter { $0.isAvailable(for: Set(enabled)) }) { component in
                 VStack(alignment: .leading, spacing: 8) {
                     CompactComponentToggle(component: component, layout: $compactLayout)
-                    componentOptions(component)
+                    componentOptions(component, enabled: enabled)
                 }
+                .id(component == .quotaGauge ? Self.gaugeAnchor : component.rawValue)
             }
             if group == .quota {
                 if enabled.isEmpty {
@@ -446,8 +494,9 @@ struct SettingsView: View {
             Text(group.label)
         }
     }
-    /// The value choice follows the quota value, or its label when the value is hidden.
-    @ViewBuilder private func componentOptions(_ component: CompactIslandLayout.Component) -> some View {
+    /// The value choice follows the quota value, or its label when the value is hidden;
+    /// the ring choices sit under the rings.
+    @ViewBuilder private func componentOptions(_ component: CompactIslandLayout.Component, enabled: [AgentProvider]) -> some View {
         let shown = compactLayout.components
         if component == .warnings, shown.contains(.warnings) {
             Button(L10n.text("layout.warnings_choose")) { pane = .reminders }
@@ -465,6 +514,8 @@ struct SettingsView: View {
                 Text(L10n.text("settings.pace_percentage")).tag("pace")
             }
             .padding(.leading, CompactComponentToggle.optionInset)
+        } else if component == .quotaGauge, shown.contains(.quotaGauge), !enabled.isEmpty {
+            ringPickers(enabled)
         }
     }
 
@@ -473,15 +524,73 @@ struct SettingsView: View {
     private func warningRow<Sample: View>(_ warning: CompactIslandLayout.Warning, @ViewBuilder sample: () -> Sample) -> some View {
         HStack(spacing: 12) {
             IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth, content: sample)
-            Toggle(warning.label, isOn: Binding(get: { compactLayout.warnings.contains(warning) && compactLayout.components.contains(.warnings) },
-                set: { on in
-                    if on, !compactLayout.components.contains(.warnings) {
-                        // A removed slot comes back with only the warning just chosen.
-                        compactLayout.warnings = [warning]
-                        compactLayout.move(.warnings, to: .trailing, before: compactLayout.trailing.first)
-                    } else if on { compactLayout.warnings.insert(warning) }
-                    else { compactLayout.warnings.remove(warning) }
-                }))
+            Toggle(warning.label, isOn: warningBinding(warning))
+        }
+    }
+    private func warningBinding(_ warning: CompactIslandLayout.Warning) -> Binding<Bool> {
+        Binding(get: { compactLayout.warnings.contains(warning) && compactLayout.components.contains(.warnings) },
+            set: { on in
+                if on, !compactLayout.components.contains(.warnings) {
+                    // A removed slot comes back with only the warning just chosen.
+                    compactLayout.warnings = [warning]
+                    compactLayout.move(.warnings, to: .trailing, before: compactLayout.trailing.first)
+                } else if on { compactLayout.warnings.insert(warning) }
+                else { compactLayout.warnings.remove(warning) }
+            })
+    }
+    /// DeepSeek's reminders carry their line in the title and both capsule states in the sample.
+    private func deepseekWarningRow<Title: View>(_ warning: CompactIslandLayout.Warning, detail: String, samples: [DeepSeekAlert],
+                                                 @ViewBuilder title: () -> Title) -> some View {
+        HStack(spacing: 12) {
+            IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth) {
+                HStack(spacing: 3) { ForEach(Array(samples.enumerated()), id: \.offset) { DeepSeekAlertGlyph(alert: $0.element) } }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) { title() }
+                caption(detail)
+            }
+            Spacer(minLength: 8)
+            Toggle(warning.label, isOn: warningBinding(warning)).labelsHidden().toggleStyle(.switch)
+        }
+    }
+    /// An empty field follows the rules; its placeholder shows the amount they give now.
+    private func amountField(_ value: Binding<Double?>, label: String, automatic: Double) -> some View {
+        let shown = automatic.rounded() == automatic || automatic >= 100 ? String(Int(automatic.rounded())) : String(format: "%.1f", automatic)
+        return HStack(spacing: 3) {
+            Text("¥").foregroundStyle(.secondary)
+            TextField(label, value: Binding(get: { value.wrappedValue }, set: { value.wrappedValue = $0.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } }),
+                      format: .number.precision(.fractionLength(0...2)), prompt: Text(L10n.text("reminders.amount_auto", shown)))
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 64).labelsHidden()
+        }
+    }
+    /// Which module each collapsed ring shows. Unset follows the modules.
+    @ViewBuilder private func ringPickers(_ enabled: [AgentProvider]) -> some View {
+        let automatic: [AgentProvider] = {
+            var result = Array(enabled.filter { $0 != .deepseek }.prefix(2))
+            if result.count == 1, enabled.contains(.deepseek) { result.append(.deepseek) }
+            return result
+        }()
+        let current = QuotaRingSlot.allCases.map { slot -> String in
+            let saved = quotaRings[slot.rawValue]
+            if saved.isEmpty, quotaRings.allSatisfy(\.isEmpty) { return slot.rawValue < automatic.count ? automatic[slot.rawValue].rawValue : "none" }
+            return saved.isEmpty ? "none" : saved
+        }
+        ForEach(QuotaRingSlot.allCases, id: \.self) { slot in
+            Picker(L10n.text(slot == .outer ? "layout.ring_outer" : "layout.ring_inner"), selection: Binding(get: { current[slot.rawValue] }, set: { value in
+                quotaRings = current; quotaRings[slot.rawValue] = value
+            })) {
+                ForEach(enabled, id: \.self) { Text($0.displayName).tag($0.rawValue) }
+                Text(L10n.text("layout.ring_none")).tag("none")
+            }
+            .padding(.leading, CompactComponentToggle.optionInset)
+        }
+        if current.contains(AgentProvider.deepseek.rawValue), enabled.contains(.deepseek) {
+            caption(L10n.text(deepseekBudgets.isEmpty ? "layout.ring_deepseek_needs_budget" : "layout.ring_deepseek"))
+                .padding(.leading, CompactComponentToggle.optionInset)
+        }
+        if quotaRings.contains(where: { !$0.isEmpty }) {
+            Button(L10n.text("layout.ring_automatic")) { quotaRings = QuotaRingSlot.allCases.map { _ in "" } }
+                .buttonStyle(.link).font(.system(size: 12)).padding(.leading, CompactComponentToggle.optionInset)
         }
     }
 
@@ -610,11 +719,12 @@ struct SettingsView: View {
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance,
-            quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
+            quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
-            showsDeepSeekTurnCost: showsDeepSeekTurnCost)
+            showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
+            quotaRings: quotaRings)
     }
 
     private func scheduleApply() {
@@ -644,6 +754,7 @@ struct SettingsView: View {
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
         quotaStyle.save(to: defaults)
+        deepseekPanelStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
         defaults.set(displayID, forKey: "displayID")
         defaults.set(metric, forKey: "compactMetric")
@@ -653,7 +764,15 @@ struct SettingsView: View {
         defaults.set(completedRetention, forKey: "completedRetentionMinutes")
         defaults.set(hideProjects, forKey: "hideProjects")
         defaults.set(deepseekSource.rawValue, forKey: DeepSeekBalanceSource.defaultsKey)
-        if deepseekLowBalance.isFinite, deepseekLowBalance >= 0 { defaults.set(deepseekLowBalance, forKey: IslandModel.deepseekLowBalanceKey) }
+        for (key, value) in [(IslandModel.deepseekLowBalanceKey, deepseekLowBalance), (IslandModel.deepseekSpikeLimitKey, deepseekSpikeLimit)] {
+            if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        defaults.removeObject(forKey: IslandModel.legacyDeepSeekLowBalanceKey)
+        deepseekBudgets.save(to: defaults)
+        for slot in QuotaRingSlot.allCases {
+            let value = quotaRings[slot.rawValue]
+            if value.isEmpty { defaults.removeObject(forKey: slot.defaultsKey) } else { defaults.set(value, forKey: slot.defaultsKey) }
+        }
         model.applySettings(sourceChanged: false)
     }
 
@@ -718,6 +837,7 @@ private struct LiveSettings: Equatable {
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
     var quotaStyle: ExpandedQuotaStyle
+    var deepseekPanelStyle: DeepSeekPanelStyle
     var fullscreen: Bool
     var displayID: Int
     var metric: String
@@ -732,8 +852,12 @@ private struct LiveSettings: Equatable {
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool
     var deepseekSource: DeepSeekBalanceSource
-    var deepseekLowBalance: Double
+    var deepseekLowBalance: Double?
     var showsDeepSeekTurnCost: Bool
+    var deepseekSpeedSource: String
+    var deepseekSpikeLimit: Double?
+    var deepseekBudgets: DeepSeekBudgetSettings
+    var quotaRings: [String]
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {

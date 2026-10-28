@@ -261,6 +261,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             return await self.openDesktopApplication(provider, at: application)
         }
         UNUserNotificationCenter.current().delegate = self
+        NotificationDelivery.registerCategories()
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu()
@@ -411,7 +412,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        Task { @MainActor [weak self] in self?.panel.show() }
+        let action = response.actionIdentifier
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            switch action {
+            case NotificationDelivery.openHarnessAction: self.model.openDeepSeekApp()
+            case NotificationDelivery.snoozeSpikeAction: self.model.snoozeDeepSeekSpike()
+            case NotificationDelivery.topUpAction: NSWorkspace.shared.open(IslandModel.deepseekTopUpURL)
+            default: self.panel.show()
+            }
+        }
         completionHandler()
     }
 

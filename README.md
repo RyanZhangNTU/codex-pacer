@@ -34,8 +34,8 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 | --- | --- |
 | **Task badge** | How many tasks are running. An orbit turns while they work, teal for Codex, orange for Claude and blue for DeepSeek. Solid amber means a task is waiting for your reply or approval; a check marks a task that just ended. |
 | **Speed** | Combined output of the running tasks, in tokens per second. |
-| **Quota** | Remaining quota for Codex and Claude, and the DeepSeek balance. The rings show both quotas; the number alternates between the services. |
-| **Warnings** | Appear only when needed: the 5-hour quota is low, an SSH host is disconnected, quota has not updated, or the DeepSeek balance is low. |
+| **Quota** | Remaining quota for Codex and Claude, and the DeepSeek balance or budget. Two rings show the modules you choose; the number alternates between the services. |
+| **Warnings** | Appear only when needed: the 5-hour quota is low, an SSH host is disconnected, quota has not updated, or DeepSeek's balance is low, spending spikes or a budget runs out. |
 
 **Hover** to expand, **move away** to collapse, and click the top to keep it open.
 
@@ -44,20 +44,20 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 - **Every task in one list.** Codex and Claude Code tasks on this Mac, on your SSH hosts and through Codex Remote Control, and DeepSeek Harness tasks on this Mac, each with its current stage, model and reasoning effort, turn time and output speed. Agents a task spawns are grouped under it.
 - **Jump back in.** Click a task to open its conversation. An ended task stays as a card until you open it or its retention time passes, so nothing finishes unnoticed.
 - **Quota with pace.** Each service has one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own remaining quota, reset countdown and white pace tick. Accounts without a 5-hour limit get a weekly gauge that opens at the bottom. With one service on, its pace, reset time and a forecast sit beside the ring. Switch to the original Classic layout in **Settings → Appearance → Expanded Quota**.
-- **A day dial for DeepSeek.** DeepSeek charges a balance instead of quota windows, so its ring is today on a 24-hour face: what each hour cost, the doubled-price peak hours and the balance in the middle. Each DeepSeek task shows its turn's estimated cost, and with DeepSeek alone the panel adds how long the balance lasts and the last week's spend split by price. The balance comes from a DeepSeek platform sign-in in Pacer's own window or an API key, whichever matches how Harness signs in.
+- **DeepSeek by balance or budget.** DeepSeek charges a balance instead of quota windows, so its dial is today on a 24-hour face: what each hour cost, the doubled-price peak hours and the balance in the middle. Switch to daily and weekly budgets and the dial paces them like quota. Pacer checks balance changes against its own estimate, so spend not made on this Mac, such as web searches or another device, counts too, and it warns you when 10 minutes cost more than usual. Each task shows its turn's estimated cost, and with DeepSeek alone the panel adds where today's money went and the last 7 days. The balance comes from a DeepSeek platform sign-in in Pacer's own window or an API key, whichever matches how Harness signs in.
 - **History when you want it.** Settings keeps each service's quota curve for the current cycle, plus credits and banked resets when the service reports them.
 
-![DeepSeek alone, with sample data: the day dial with the balance and today's spend beside the current price, today against a usual day and how long the balance lasts, above a week of spend split into off-peak and peak](docs/assets/deepseek.png)
+![DeepSeek alone, with sample data: the day dial with the balance and a ×2 until 6:00 PM chip, beside today's spend, the last two hours' speed and where today's money went, including a hatched Not on this Mac part, above the last 7 days](docs/assets/deepseek.png)
 
 ## Make it yours
 
 ![Collapsed Bar settings: drag components between the left and right of the camera and toggle each one](docs/assets/settings-collapsed-bar.png)
 
-- **Arrange the bar.** Drag components between the left and right of the camera, hide what you don't need, and pick 5 hours or 7 days for each service's quota.
+- **Arrange the bar.** Drag components between the left and right of the camera, hide what you don't need, choose which module each quota ring shows, and pick 5 hours or 7 days for each service's quota. With DeepSeek alone, a price clock shows the peak hours at a glance.
 - **Black or Liquid Glass.** On macOS 26 and later the island can use Liquid Glass, and its clarity follows the system setting.
 - **Notch or custom.** Around the notch, or placed yourself on any display: centered below the menu bar or as a narrow strip against the side of the screen in any corner. Full-screen spaces too, if you like.
 - **Only what you use.** Turn the Codex, Claude and DeepSeek modules on or off independently.
-- **Notifications, if you want them.** macOS notifications when a task needs you, ends, or quota or the balance runs low.
+- **Notifications, if you want them.** macOS notifications when a task needs you or ends, quota or the balance runs low, DeepSeek spending spikes or a budget runs out.
 - **In your language.** English and Simplified Chinese.
 
 ## Get started

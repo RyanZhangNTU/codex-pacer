@@ -6,21 +6,43 @@ import PacerCore
 @MainActor
 final class NotificationDelivery {
     private let defaults: UserDefaults
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    private let authorizationStatus: @MainActor () async -> UNAuthorizationStatus
+    private let addRequest: @MainActor (UNNotificationRequest) async throws -> Void
+    init(defaults: UserDefaults = .standard,
+         authorizationStatus: @escaping @MainActor () async -> UNAuthorizationStatus = {
+             await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+         }, addRequest: @escaping @MainActor (UNNotificationRequest) async throws -> Void = {
+             try await UNUserNotificationCenter.current().add($0)
+         }) {
+        self.defaults = defaults; self.authorizationStatus = authorizationStatus; self.addRequest = addRequest
+    }
 
     func deliver(_ notice: IslandNotice) {
         guard defaults.bool(forKey: "systemNotifications") else { return }
         let hidden = defaults.bool(forKey: "hideProjects") && notice.kind != .lowQuota
         Task {
-            let center = UNUserNotificationCenter.current()
-            let settings = await center.notificationSettings()
-            guard [.authorized, .provisional].contains(settings.authorizationStatus) else { return }
+            guard [.authorized, .provisional].contains(await authorizationStatus()) else { return }
             let content = UNMutableNotificationContent()
             content.title = "Codex Pacer"
             let detail = hidden ? L10n.text("activity.hidden_local_name") : notice.detail
             content.body = L10n.text("notice.body", notice.title, detail)
-            try? await center.add(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
+            if let category = notice.category { content.categoryIdentifier = category }
+            try? await addRequest(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
         }
+    }
+    static let openHarnessAction = "deepseek.open-harness"
+    static let snoozeSpikeAction = "deepseek.snooze-spike"
+    static let topUpAction = "deepseek.top-up"
+    /// DeepSeek's spend and balance notices offer their next step as buttons.
+    static func registerCategories() {
+        let spike = UNNotificationCategory(identifier: DeepSeekBalanceAttention.spikeCategory, actions: [
+            UNNotificationAction(identifier: openHarnessAction, title: L10n.text("deepseek.notice.open_harness"), options: [.foreground]),
+            UNNotificationAction(identifier: snoozeSpikeAction, title: L10n.text("deepseek.notice.snooze"), options: [])
+        ], intentIdentifiers: [])
+        let balance = UNNotificationCategory(identifier: DeepSeekBalanceAttention.balanceCategory, actions: [
+            UNNotificationAction(identifier: topUpAction, title: L10n.text("deepseek.notice.top_up"), options: [.foreground])
+        ], intentIdentifiers: [])
+        UNUserNotificationCenter.current().setNotificationCategories([spike, balance])
     }
     static func requestPermission() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert])) ?? false

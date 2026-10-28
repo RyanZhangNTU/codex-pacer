@@ -42,7 +42,7 @@ struct TaskPagerView: View {
                     ForEach(pageTasks) { activity in
                         TaskRowView(attention: model.attentionKind(for: activity), group: model.taskGroup(for: activity), activity: activity, name: model.projectName(activity), sourceName: model.taskSourceName(activity), now: model.now,
                             enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.taskAccent,
-                            cost: model.displayedTurnCost(activity)) {
+                            cost: model.displayedTurnCost(activity), costDetail: model.deepseekCostDetail(activity)) {
                                 model.open(activity)
                             }
                             .frame(height: rowHeight)

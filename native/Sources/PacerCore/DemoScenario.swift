@@ -77,9 +77,11 @@ public enum DemoScenario {
 
     /// A DeepSeek Harness task beside the others, with a settled response so
     /// its speed, first-output time and estimated cost appear.
+    static let demoDeepSeekSession = "00000000-0000-4000-8000-000000000004"
+    static let demoDeepSeekSecondSession = "00000000-0000-4000-8000-000000000005"
     public static func deepseekTask(stage: DemoTaskStage, at now: Date) -> SessionActivity {
         var state = DeepSeekActivityState()
-        let session = "00000000-0000-4000-8000-000000000004"
+        let session = demoDeepSeekSession
         func record(_ ago: Double, _ event: DeepSeekLogEvent, seq: Int) -> DeepSeekLogRecord {
             DeepSeekLogRecord(seq: seq, at: now.addingTimeInterval(ago), event: event)
         }
@@ -109,10 +111,19 @@ public enum DemoScenario {
             let scale = [1.0, 0.7, 1.3, 0.5, 0.9, 1.1, 0.4, 0.8][offset]
             for (hour, cost) in hours {
                 guard let at = calendar.date(bySettingHour: hour, minute: 20, second: 0, of: day), at < now else { continue }
-                ledger.record(id: "demo:\(offset):\(hour)", at: at, cost: cost * scale)
+                // Today's morning belongs to the demo task, the afternoon to a second one.
+                let task = offset > 0 ? nil : hour < 12 ? demoDeepSeekSession : hour < 17 ? demoDeepSeekSecondSession : nil
+                ledger.record(id: "demo:\(offset):\(hour)", at: at, cost: cost * scale, task: task)
             }
         }
-        return DeepSeekLocalUsage(ledger: ledger, provider: "deepseek-account")
+        for span in 0..<12 {
+            let at = now.addingTimeInterval(-Double(span * 600 + 180))
+            guard calendar.isDate(at, inSameDayAs: now) else { continue }
+            ledger.record(id: "demo:recent:\(span)", at: at, cost: [0.32, 0.18, 0.4, 0.22][span % 4], task: demoDeepSeekSession)
+        }
+        return DeepSeekLocalUsage(ledger: ledger, provider: "deepseek-account",
+            parents: ["00000000-0000-4000-8000-0000000000a1": demoDeepSeekSession, "00000000-0000-4000-8000-0000000000a2": demoDeepSeekSession],
+            titles: [demoDeepSeekSession: L10n.text("demo.deepseek_task"), demoDeepSeekSecondSession: L10n.text("demo.deepseek_task_second")])
     }
 
     /// Bounded synthetic graph for native grouping/retained-rate UI acceptance.

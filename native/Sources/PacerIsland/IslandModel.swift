@@ -103,6 +103,10 @@ final class IslandModel: ObservableObject {
     var deepseekAttentionRequests: [PendingAttentionRequest] = []
     var deepseekActivityAttention = AttentionPolicy()
     var deepseekBalanceAttention = DeepSeekBalanceAttention()
+    /// Successive balance readings, for what the account was charged beyond this Mac.
+    var deepseekHistory = DeepSeekBalanceHistory()
+    /// Spend-spike notices stay quiet until this moment after "Not for an hour".
+    var deepseekSpikeSnoozedUntil = Date.distantPast
     var deepseekFailureCount = 0
     var lastDeepSeekBalanceAttempt = Date.distantPast
     var deepseekSourceSignature = ""
@@ -849,7 +853,7 @@ final class IslandModel: ObservableObject {
         compactQuotaValue(provider, metric: metric, selection: selection).map { "\(Int($0.rounded()))" }
     }
     func compactQuotaText(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String {
-        if provider == .deepseek { return deepseekBalance.map { DeepSeekWallet.compactAmount($0.total) } ?? "—" }
+        if provider == .deepseek { return deepseekCompactText }
         return compactQuotaNumber(provider, metric: metric, selection: selection).map { $0 + "%" } ?? "—"
     }
     func compactTimeRemainingNumber(_ provider: AgentProvider, selection: String? = nil) -> String? {
@@ -918,6 +922,7 @@ final class IslandModel: ObservableObject {
         claudeSourceSignature = currentClaudeSourceSignature
         deepseekSourceSignature = currentDeepSeekSourceSignature
         deepseekBalanceBinding = currentDeepSeekBalanceBinding
+        if !demo { restoreDeepSeekHistory() }
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
         completionInbox = CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault))
         bindCompletionSources(.codex)
@@ -1679,7 +1684,9 @@ final class IslandModel: ObservableObject {
         modules = .load(from: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
-        compactLayout = .load(from: defaults); measuredCompactWidth = 0; settingsRevision += 1
+        // The header reports its width only when it changes, so the last measurement
+        // stays: clearing it would leave the bar at the wider estimate after any setting.
+        compactLayout = .load(from: defaults); settingsRevision += 1
         if clock != nil { scheduleClock() }
         pruneCompletions()
         let newCodex = currentCodexSourceSignature, newClaude = currentClaudeSourceSignature, newDeepSeek = currentDeepSeekSourceSignature
@@ -1849,7 +1856,9 @@ final class IslandModel: ObservableObject {
         if now.timeIntervalSince(lastDiscovery) >= (streamStatuses["local"]?.connected == true ? 120 : 60) { refreshActivity() }
         if now.timeIntervalSince(lastRemoteDiscovery) >= 30 { refreshRemote() }
         if isModuleEnabled(.claude), now.timeIntervalSince(lastClaudeDiscovery) >= 30 { discoverClaudeRemoteTargets() }
-        let deepseekInterval = (expanded ? 60.0 : 300.0) * pow(2, Double(min(deepseekFailureCount, 3)))
+        // A running task reads every minute too, so a spend spike shows within minutes.
+        let deepseekActive = expanded || running.contains { $0.provider == .deepseek }
+        let deepseekInterval = (deepseekActive ? 60.0 : 300.0) * pow(2, Double(min(deepseekFailureCount, 3)))
         if now.timeIntervalSince(lastDeepSeekBalanceAttempt) >= deepseekInterval { refreshDeepSeekBalance() }
         onStatusChange?()
     }
@@ -1865,8 +1874,8 @@ final class IslandModel: ObservableObject {
     /// The collapsed bar already shows each of these states while it lasts, so
     /// a moment only leaves the island as a system notification, when chosen.
     func present(_ notices: [IslandNotice]) {
-        guard !demo, let newest = notices.last else { return }
-        notifications.deliver(newest)
+        guard !demo else { return }
+        for notice in notices { notifications.deliver(notice) }
     }
     /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {

@@ -16,7 +16,7 @@ final class CompactComponentDisplayTests: XCTestCase {
     }
     func testExpandedHeaderQuietsOnlyQuotaValuesAndRowsShowTurnTime() {
         let quieted = CompactIslandLayout.Component.allCases.filter(CompactIslandComponent.dimsWhenExpanded)
-        XCTAssertEqual(Set(quieted), [.quota, .quotaGauge, .quotaLabel, .timeRemaining],
+        XCTAssertEqual(Set(quieted), [.quota, .quotaGauge, .priceClock, .quotaLabel, .timeRemaining],
             "Status, rate and warnings stay at full strength while the rings repeat quota below")
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let running = activity("019a0000-0000-7000-8000-00000000e1a9", start: start, first: start.addingTimeInterval(2))
@@ -46,36 +46,53 @@ final class CompactComponentDisplayTests: XCTestCase {
         XCTAssertEqual(TaskRowView.middleTruncated("devbox", limit: 16), "devbox")
         XCTAssertEqual(TaskRowView.shortened("qwen3-coder-480b-a35b-instruct", limit: 22), "qwen3-coder-480b-a35b…")
     }
-    func testActivityOrbitKeepsEachProviderSlotAndAHardEdgedHead() {
-        func stops(codex: Int, claude: Int, animates: Bool = true) -> [String] {
-            ActivityOrbit.stops(for: [.init(color: NSColor(srgbRed: 0.49, green: 0.84, blue: 0.77, alpha: 1), weight: codex),
-                                      .init(color: NSColor(srgbRed: 0.95, green: 0.61, blue: 0.42, alpha: 1), weight: claude)],
+    func testActivityOrbitSpreadsRunningProvidersEvenlyWithHardEdgedHeads() {
+        func stops(_ weights: [Int], animates: Bool = true) -> [String] {
+            ActivityOrbit.stops(for: zip(AgentProvider.allCases, weights).map { .init(color: NSColor($0.0.tint), weight: $0.1) },
                                 animates: animates)
                 .map { String(format: "%.3f@%.2f", $0.location, $0.color.alphaComponent) }
         }
-        XCTAssertEqual(stops(codex: 1, claude: 1),
-            ["0.000@0.00", "0.000@1.00", "0.250@0.00", "0.500@0.00", "0.500@1.00", "0.750@0.00"],
-            "Both heads are hard edges; the gap before the second head stays transparent")
-        XCTAssertEqual(stops(codex: 3, claude: 1),
+        let idle = { (location: String) in Array(repeating: location + "@0.00", count: 3) }
+        XCTAssertEqual(stops([1, 1, 0]),
+            ["0.000@0.00", "0.000@1.00", "0.250@0.00", "0.500@0.00", "0.500@1.00", "0.750@0.00"] + idle("0.750"),
+            "Two services take opposite halves; heads are hard edges and the gaps stay transparent")
+        XCTAssertEqual(stops([1, 0, 1]),
+            ["0.000@0.00", "0.000@1.00", "0.250@0.00"] + idle("0.250") + ["0.500@0.00", "0.500@1.00", "0.750@0.00"],
+            "Any two running services split the circle in halves, whichever they are")
+        XCTAssertEqual(stops([1, 1, 1]),
+            ["0.000@0.00", "0.000@1.00", "0.167@0.00", "0.333@0.00", "0.333@1.00", "0.500@0.00", "0.667@0.00", "0.667@1.00", "0.833@0.00"],
+            "Three take thirds")
+        XCTAssertEqual(stops([3, 1, 0]).prefix(6),
             ["0.000@0.00", "0.000@1.00", "0.375@0.00", "0.500@0.00", "0.500@1.00", "0.625@0.00"],
             "Lengths follow the share of running tasks")
-        XCTAssertEqual(stops(codex: 1, claude: 0),
-            ["0.000@0.00", "0.000@1.00", "0.340@0.00", "0.500@0.00", "0.500@0.00", "0.500@0.00"])
-        XCTAssertEqual(stops(codex: 0, claude: 2),
-            ["0.000@0.00", "0.000@0.00", "0.000@0.00", "0.500@0.00", "0.500@1.00", "0.840@0.00"],
-            "A provider alone keeps its slot, so the other starting or stopping never moves its comet")
-        for (codex, claude) in [(0, 0), (1, 0), (0, 1), (1, 1), (9, 1), (1, 9)] {
-            let locations = stops(codex: codex, claude: claude).map { Double($0.prefix(5))! }
-            XCTAssertEqual(locations.count, 6, "Equal stop counts let a change ease")
+        XCTAssertEqual(stops([0, 2, 0]), idle("0.000") + ["0.000@0.00", "0.000@1.00", "0.340@0.00"] + idle("0.340"),
+            "A service alone starts at the top")
+        for weights in [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 1, 0], [9, 1, 0], [1, 9, 1], [5, 1, 1], [0, 1, 9]] {
+            let locations = stops(weights).map { Double($0.prefix(5))! }
+            XCTAssertEqual(locations.count, 9, "Equal stop counts let a change ease")
             XCTAssertEqual(locations, locations.sorted()); XCTAssertLessThanOrEqual(locations.last!, 1)
+            let heads = stride(from: 0, to: 9, by: 3).map { stops(weights)[$0 + 1] }.filter { $0.hasSuffix("@1.00") }
+            XCTAssertEqual(heads.count, weights.filter { $0 > 0 }.count)
         }
-        XCTAssertEqual(stops(codex: 3, claude: 1, animates: false), ["0.000@0.75", "0.750@0.75", "0.750@0.75", "1.000@0.75"],
+        XCTAssertEqual(stops([3, 1, 0], animates: false), ["0.000@0.75", "0.750@0.75", "0.750@0.75", "1.000@0.75"],
             "Without motion the running shares fill the ring")
-        XCTAssertEqual(stops(codex: 0, claude: 1, animates: false), ["0.000@0.75", "1.000@0.75"])
+        XCTAssertEqual(stops([0, 1, 0], animates: false), ["0.000@0.75", "1.000@0.75"])
         // --demo-claude shows both providers' comets, and its completion stage leaves Codex alone.
         let now = Date(timeIntervalSince1970: 1_800_000_000), claude = DemoScenario.claudeTask(stage: .thinking, at: now)
         XCTAssertEqual(claude.provider, .claude); XCTAssertEqual(claude.phase, .running)
         XCTAssertEqual(DemoScenario.claudeTask(stage: .completed, at: now).phase, .completed)
+    }
+    func testAlternatingQuotaTextStaysSharpWhenValuesArriveAfterItIsOnScreen() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 80, height: 24), styleMask: .borderless, backing: .buffered, defer: false)
+        let view = AlternatingQuotaView(frame: NSRect(x: 0, y: 0, width: 60, height: 16))
+        window.contentView?.addSubview(view)
+        view.update(entries: [.init(text: "58%", color: .white)], animates: false)
+        view.update(entries: [.init(text: "58%", color: .white), .init(text: "81%", color: .white)], animates: false)
+        let layers = view.layer?.sublayers ?? []
+        XCTAssertEqual(layers.count, 2)
+        for layer in layers {
+            XCTAssertEqual(layer.contentsScale, window.backingScaleFactor, "Text layers made after joining the window draw at the screen's scale")
+        }
     }
     func testLatestTTFTUsesMeasurementTimeAndSurvivesToolsNewTurnsAndRemovedCards() async throws {
         let model = IslandModel(), now = Date()

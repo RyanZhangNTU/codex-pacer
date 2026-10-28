@@ -25,4 +25,17 @@ final class WidthMeasurementTests: XCTestCase {
         XCTAssertEqual(model.measuredContentWidth, 0)
         await model.shutdown()
     }
+
+    func testApplyingSettingsKeepsTheMeasuredBarWidth() async {
+        let name = "WidthMeasurementTests-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = IslandModel(demo: true, defaults: defaults)
+        model.updateMeasuredCompactWidth(212)
+        defaults.set(false, forKey: "showAppButtons")
+        model.applySettings(sourceChanged: false)
+        XCTAssertEqual(model.measuredCompactWidth, 212,
+            "A setting that leaves the bar unchanged brings no new measurement, so the last one must stay")
+        await model.shutdown()
+    }
 }
