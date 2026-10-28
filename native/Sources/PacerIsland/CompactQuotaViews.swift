@@ -59,6 +59,9 @@ final class AlternatingQuotaView: NSView {
                 let text = CATextLayer()
                 text.alignmentMode = .center
                 text.truncationMode = .none
+                // A text layer draws at 1x unless told otherwise; layers made after the
+                // view joined its window would otherwise stay blurry on Retina screens.
+                text.contentsScale = backingScale
                 layer?.addSublayer(text)
                 return text
             }
@@ -82,8 +85,10 @@ final class AlternatingQuotaView: NSView {
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        layers.forEach { $0.contentsScale = window?.backingScaleFactor ?? 2 }
+        layers.forEach { $0.contentsScale = backingScale }
     }
+
+    private var backingScale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -94,14 +99,15 @@ final class AlternatingQuotaView: NSView {
                     Task { @MainActor in self?.refreshAnimation() }
                 }
         }
-        layers.forEach { $0.contentsScale = window?.backingScaleFactor ?? 2 }
+        layers.forEach { $0.contentsScale = backingScale }
         refreshAnimation()
     }
 
     private func layoutLayers() {
         let height = ceil(font.ascender - font.descender)
         for text in layers {
-            text.frame = CGRect(x: 0, y: (bounds.height - height) / 2, width: bounds.width, height: height)
+            text.frame = backingAlignedRect(CGRect(x: 0, y: (bounds.height - height) / 2, width: bounds.width, height: height),
+                options: .alignAllEdgesNearest)
         }
     }
 
@@ -138,8 +144,9 @@ final class AlternatingQuotaView: NSView {
     }
 }
 
-/// Both providers' remaining quota in one glyph: Codex outside, Claude inside,
-/// echoing the expanded rings. A single provider gets one heavier ring.
+/// Two providers' remaining quota in one glyph, outer and inner as chosen in
+/// Collapsed Bar settings (Codex outside and Claude inside by default). DeepSeek
+/// joins with its budget left. A single provider gets one heavier ring.
 struct QuotaRingsGlyph: View {
     struct Ring: Equatable {
         let tint: Color
@@ -196,24 +203,6 @@ struct FiveHourAlertGlyph: View {
     }
 }
 
-/// The wallet when DeepSeek is the only module: the balance, then today's
-/// estimated spend, amber when it runs ahead of a usual day.
-struct DeepSeekCompactWallet: View {
-    let wallet: DeepSeekWallet
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(wallet.balance.map { DeepSeekWallet.compactAmount($0.total) } ?? "¥—")
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(balanceColor)
-            Text(L10n.text("deepseek.today_short", DeepSeekWallet.compactSpend(wallet.today)))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(wallet.spendingFast ? PacerPalette.attention : PacerPalette.secondary)
-        }
-        .monospacedDigit().fixedSize(horizontal: true, vertical: false)
-    }
-    private var balanceColor: Color { DeepSeekWalletColors.balance(wallet.state) }
-}
-
 enum DeepSeekWalletColors {
     static func balance(_ state: DeepSeekWallet.State) -> Color {
         switch state {
@@ -225,34 +214,72 @@ enum DeepSeekWalletColors {
     }
 }
 
-/// The low-balance pair, matching the 5h capsule: outlined when low, solid
-/// when the wallet can no longer pay.
-struct WalletAlertGlyph: View {
-    let exhausted: Bool
+/// DeepSeek's one alert, shaped like the 5h capsule and always in DeepSeek's
+/// blue: ¥ for the balance, a flame for a spend spike, 日/周 for a budget.
+/// Outlined means take note, solid means act now.
+struct DeepSeekAlertGlyph: View {
+    let alert: DeepSeekAlert
     private let tint = AgentProvider.deepseek.tint
 
     var body: some View {
-        Text("¥")
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundStyle(exhausted ? Color.black.opacity(0.82) : tint)
-            .padding(.horizontal, 4).frame(height: 13)
-            .background {
-                if exhausted { Capsule().fill(tint) } else { Capsule().strokeBorder(tint, lineWidth: 1) }
+        let ink = alert.solid ? Color.black.opacity(0.82) : tint
+        Group {
+            switch alert {
+            case .spike: Image(systemName: "flame.fill").font(.system(size: 7.5, weight: .bold))
+            case .overBudget(let kind), .nearingBudget(let kind): Text(L10n.text("deepseek.alert." + kind.rawValue))
+            case .exhausted, .lowBalance: Text("¥")
             }
-            .fixedSize()
-            .accessibilityHidden(true)
+        }
+        .font(.system(size: 9, weight: .bold, design: .rounded))
+        .foregroundStyle(ink)
+        .padding(.horizontal, 3.5).frame(minWidth: 13).frame(height: 13)
+        .background {
+            if alert.solid { Capsule().fill(tint) } else { Capsule().strokeBorder(tint, lineWidth: 1) }
+        }
+        .fixedSize()
+        .accessibilityHidden(true)
     }
 }
 
-/// Doubled peak prices while a DeepSeek task runs; off unless chosen.
-struct PeakPriceGlyph: View {
+/// DeepSeek's price clock at ring size: today on a 24-hour face with
+/// midnight at the top, amber arcs outside for the doubled-price hours, blue
+/// inside for hours that spent, and a white hand at now.
+struct PriceClockGlyph: View {
+    let hourly: [Double]
+    /// Today's doubled-price spans in degrees clockwise from midnight.
+    let peaks: [ClosedRange<Double>]
+    let now: Double
+    var dimmed = false
+    var side: CGFloat = 18
+
     var body: some View {
-        Text("×2")
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundStyle(AgentProvider.deepseek.tint)
-            .padding(.horizontal, 3.5).frame(height: 13)
-            .background(Capsule().fill(AgentProvider.deepseek.tint.opacity(0.18)))
-            .fixedSize()
+        Canvas { context, size in draw(in: &context, side: min(size.width, size.height)) }
+            .frame(width: side, height: side)
+            .opacity(dimmed ? 0.45 : 1)
             .accessibilityHidden(true)
+    }
+
+    private func draw(in context: inout GraphicsContext, side: CGFloat) {
+        let k = side / 108, centre = CGPoint(x: side / 2, y: side / 2)
+        context.stroke(Path(ellipseIn: CGRect(x: centre.x - 38 * k, y: centre.y - 38 * k, width: 76 * k, height: 76 * k)),
+            with: .color(.white.opacity(0.16)), lineWidth: 11 * k)
+        let currentHour = Int(now / 15)
+        for hour in 0..<min(24, hourly.count) where hourly[hour] >= 0.0005 && hour <= currentHour {
+            let start = Double(hour) * 15, end = hour == currentHour ? max(start + 4, now) : start + 15
+            context.stroke(arc(centre, 38 * k, start, end), with: .color(AgentProvider.deepseek.tint), style: StrokeStyle(lineWidth: 11 * k))
+        }
+        for span in peaks where span.upperBound - span.lowerBound > 1 {
+            context.stroke(arc(centre, 50 * k, span.lowerBound + 2, span.upperBound - 2), with: .color(PacerPalette.attention),
+                style: StrokeStyle(lineWidth: 6 * k, lineCap: .round))
+        }
+        let radians = (now - 90) * .pi / 180
+        var hand = Path()
+        hand.move(to: CGPoint(x: centre.x + 26 * k * cos(radians), y: centre.y + 26 * k * sin(radians)))
+        hand.addLine(to: CGPoint(x: centre.x + 51 * k * cos(radians), y: centre.y + 51 * k * sin(radians)))
+        context.stroke(hand, with: .color(.black.opacity(0.8)), style: StrokeStyle(lineWidth: 13 * k, lineCap: .round))
+        context.stroke(hand, with: .color(.white), style: StrokeStyle(lineWidth: 7 * k, lineCap: .round))
+    }
+    private func arc(_ centre: CGPoint, _ radius: CGFloat, _ start: Double, _ end: Double) -> Path {
+        Path { $0.addArc(center: centre, radius: radius, startAngle: .degrees(start - 90), endAngle: .degrees(end - 90), clockwise: false) }
     }
 }

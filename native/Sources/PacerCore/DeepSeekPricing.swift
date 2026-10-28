@@ -14,8 +14,9 @@ public struct DeepSeekUsage: Equatable, Sendable {
 }
 
 /// The published CNY price list (2026-10-27). Weekday 09–12 and 14–18 in
-/// Beijing are peak hours at twice the off-peak price. Public holidays are
-/// off-peak, but Pacer has no holiday calendar and counts them as weekdays.
+/// Beijing are peak hours at twice the off-peak price. Weekends and public
+/// holidays are off-peak; the calendar covers 2026, and make-up working days
+/// on weekends are treated as weekends, so peak hours are an estimate.
 public enum DeepSeekPricing {
     struct Rate: Equatable { let cacheHit: Double; let cacheMiss: Double; let output: Double }
     static let offPeak: [String: Rate] = [
@@ -24,6 +25,25 @@ public enum DeepSeekPricing {
     ]
     public static let beijing = TimeZone(identifier: "Asia/Shanghai")!
     private static let peakHours: [Range<Int>] = [9..<12, 14..<18]
+    /// Weekday public holidays in the State Council's 2026 schedule (Beijing dates).
+    static let holidays: Set<String> = [
+        "2026-01-01", "2026-01-02", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-23",
+        "2026-04-06", "2026-05-01", "2026-05-04", "2026-05-05", "2026-06-19", "2026-09-25",
+        "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"
+    ]
+    /// The last Beijing year whose holidays are known.
+    public static let calendarYear = 2026
+    /// Search and fetch tool calls cost ¥5 per 1,000 from 2026-11-01 in Beijing.
+    public static let searchCallPrice = 0.005
+    static let searchBillingStart = Date(timeIntervalSince1970: 1_793_462_400)
+    static let searchTools: Set<String> = ["web_search", "web_fetch", "search", "fetch"]
+    /// Harness's own DeepSeek providers; third-party channels bill differently and get no estimate.
+    static let officialProviders: Set<String> = ["deepseek", "deepseek-account", "deepseek-official", "deepseek-api-key"]
+    public static func isOfficial(provider: String?) -> Bool { provider.map { officialProviders.contains($0.lowercased()) } ?? true }
+    /// The price of one search or fetch call, or nil for other tools and before billing starts.
+    public static func toolCost(_ name: String, at date: Date) -> Double? {
+        searchTools.contains(name.lowercased()) && date >= searchBillingStart ? searchCallPrice : nil
+    }
 
     public static func knowsModel(_ model: String?) -> Bool { model.map { rate(for: $0) != nil } ?? false }
     static func rate(for model: String) -> Rate? {
@@ -44,8 +64,14 @@ public enum DeepSeekPricing {
     public static func isPeak(at date: Date) -> Bool {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = beijing
         let parts = calendar.dateComponents([.weekday, .hour], from: date)
-        guard let weekday = parts.weekday, let hour = parts.hour, (2...6).contains(weekday) else { return false }
-        return peakHours.contains { $0.contains(hour) }
+        guard let weekday = parts.weekday, let hour = parts.hour, (2...6).contains(weekday),
+              peakHours.contains(where: { $0.contains(hour) }) else { return false }
+        return !isHoliday(date, calendar: calendar)
+    }
+    static func isHoliday(_ date: Date, calendar: Calendar) -> Bool {
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = day.year, let month = day.month, let value = day.day else { return false }
+        return holidays.contains(String(format: "%04d-%02d-%02d", year, month, value))
     }
 
     /// The next instant the price multiplier changes, at most eight days ahead.

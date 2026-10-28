@@ -168,9 +168,10 @@ struct ActivityOrbit: NSViewRepresentable {
     let segments: [Segment]
     let animates: Bool
 
-    /// Each provider's comet starts at its own slot, evenly spaced, so one
-    /// provider starting or stopping never moves the other's comet. Comet
-    /// length follows the share of running tasks. A conic gradient's location
+    /// The running providers' comets start evenly spaced, in provider order:
+    /// one at the top, two opposite, three a third apart; a provider starting
+    /// or stopping eases the others to their new places. Comet length follows
+    /// the share of running tasks. A conic gradient's location
     /// grows counterclockwise, so each opaque head is a hard edge after a
     /// transparent stop at the same location and leads the clockwise orbit;
     /// without that edge, the gap before a later comet would brighten into
@@ -187,13 +188,15 @@ struct ActivityOrbit: NSViewRepresentable {
                 return [Stop(color: color, location: start), Stop(color: color, location: end)]
             }
         }
-        let span = running.count > 1 ? 0.5 : 0.34
-        return segments.enumerated().flatMap { index, segment -> [Stop] in
-            let head = Double(index) / Double(segments.count), clear = segment.color.withAlphaComponent(0)
-            let tail = head + span * Double(max(0, segment.weight)) / total
-            return [Stop(color: clear, location: head),
-                    Stop(color: segment.weight > 0 ? segment.color : clear, location: head),
-                    Stop(color: clear, location: tail)]
+        let span = running.count > 1 ? 0.5 : 0.34, slot = 1 / Double(max(1, running.count))
+        var rank = 0, last = 0.0
+        return segments.flatMap { segment -> [Stop] in
+            let clear = segment.color.withAlphaComponent(0)
+            // An idle provider keeps its three stops, collapsed where the last comet ended.
+            guard segment.weight > 0 else { return Array(repeating: Stop(color: clear, location: last), count: 3) }
+            let head = Double(rank) * slot, tail = head + min(span * Double(segment.weight) / total, slot * 0.9)
+            rank += 1; last = tail
+            return [Stop(color: clear, location: head), Stop(color: segment.color, location: head), Stop(color: clear, location: tail)]
         }
     }
 

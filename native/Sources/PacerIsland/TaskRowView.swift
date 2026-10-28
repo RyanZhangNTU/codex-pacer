@@ -15,6 +15,8 @@ struct TaskRowView: View {
     let accent: Color
     /// DeepSeek's estimated cost of this turn, when shown.
     var cost: Double? = nil
+    /// The turn was billed at the doubled peak price, and the task's spend today.
+    var costDetail: (peak: Bool, help: String)? = nil
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -207,8 +209,14 @@ struct TaskRowView: View {
     private var modelLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if let cost {
-                Text(DeepSeekWallet.turnAmount(cost)).foregroundStyle(PacerPalette.primary.opacity(0.86)).padding(.trailing, 3)
-                    .help(L10n.text("deepseek.turn_cost_row_help"))
+                HStack(alignment: .center, spacing: 4) {
+                    if costDetail?.peak == true {
+                        Circle().fill(PacerPalette.attention).frame(width: 5, height: 5).accessibilityHidden(true)
+                    }
+                    Text(DeepSeekWallet.turnAmount(cost)).foregroundStyle(PacerPalette.primary.opacity(0.86))
+                }
+                .padding(.trailing, 3)
+                .help(costDetail?.help ?? L10n.text("deepseek.turn_cost_row_help"))
             }
             Text(modelLabel)
             if let effortLabel { Text(effortLabel).opacity(0.62) }
