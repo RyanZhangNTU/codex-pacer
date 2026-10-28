@@ -922,7 +922,7 @@ final class IslandModel: ObservableObject {
         claudeSourceSignature = currentClaudeSourceSignature
         deepseekSourceSignature = currentDeepSeekSourceSignature
         deepseekBalanceBinding = currentDeepSeekBalanceBinding
-        if !demo { deepseekHistory = .load(from: defaults) }
+        if !demo { restoreDeepSeekHistory() }
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
         completionInbox = CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault))
         bindCompletionSources(.codex)
@@ -1874,8 +1874,8 @@ final class IslandModel: ObservableObject {
     /// The collapsed bar already shows each of these states while it lasts, so
     /// a moment only leaves the island as a system notification, when chosen.
     func present(_ notices: [IslandNotice]) {
-        guard !demo, let newest = notices.last else { return }
-        notifications.deliver(newest)
+        guard !demo else { return }
+        for notice in notices { notifications.deliver(notice) }
     }
     /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {

@@ -9,6 +9,9 @@ public struct DeepSeekSpendLedger: Equatable, Sendable {
         public let cost: Double
         public let peak: Bool
         public let task: String?
+        /// The session that incurred the charge, before resolving its root task.
+        let session: String?
+        let turnID: String?
     }
     /// One task's share of a period.
     public struct TaskSpend: Equatable, Sendable {
@@ -25,13 +28,37 @@ public struct DeepSeekSpendLedger: Equatable, Sendable {
     private var entries: [String: Entry] = [:]
     public init() {}
     public var isEmpty: Bool { entries.isEmpty }
+    var earliestEntryAt: Date? { entries.values.map(\.at).min() }
     /// The root sessions with spend still kept.
     public var taskIDs: Set<String> { Set(entries.values.compactMap(\.task)) }
 
-    mutating func record(id: String, at date: Date, cost: Double, task: String? = nil) {
-        guard cost.isFinite, cost >= 0, cost < 100_000, entries[id] == nil else { return }
-        entries[id] = Entry(at: date, cost: cost, peak: DeepSeekPricing.isPeak(at: date), task: task)
+    @discardableResult mutating func record(id: String, at date: Date, cost: Double, task: String? = nil, session: String? = nil,
+                                          turnID: String? = nil) -> Bool {
+        guard cost.isFinite, cost >= 0, cost < 100_000, entries[id] == nil else { return false }
+        entries[id] = Entry(at: date, cost: cost, peak: DeepSeekPricing.isPeak(at: date), task: task, session: session ?? task, turnID: turnID)
         if entries.count > 100_000, let oldest = entries.min(by: { $0.value.at < $1.value.at })?.key { entries.removeValue(forKey: oldest) }
+        return true
+    }
+    /// A parent's header can arrive after its descendants' responses during replay.
+    mutating func resolveTasks(parents: [String: String]) {
+        for (id, entry) in entries {
+            guard let session = entry.session else { continue }
+            let root = DeepSeekActivityState.root(of: session, parents: parents)
+            if root != entry.task {
+                entries[id] = Entry(at: entry.at, cost: entry.cost, peak: entry.peak, task: root, session: session, turnID: entry.turnID)
+            }
+        }
+    }
+    /// Own responses match the turn ID; delegated charges match its time bounds.
+    func turnSpend(session: String, turnID: String, from start: Date, through end: Date?) -> (total: Double, peak: Double, observed: Bool) {
+        entries.values.reduce(into: (0.0, 0.0, false)) { sum, entry in
+            if entry.session == session {
+                guard entry.turnID == turnID else { return }
+            } else {
+                guard entry.task == session, entry.at >= start, end.map({ entry.at <= $0 }) ?? true else { return }
+            }
+            sum.0 += entry.cost; if entry.peak { sum.1 += entry.cost }; sum.2 = true
+        }
     }
     mutating func prune(now: Date) {
         let cutoff = now.addingTimeInterval(-Self.retention)

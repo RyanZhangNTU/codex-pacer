@@ -205,6 +205,44 @@ final class DeepSeekActivityTests: XCTestCase {
         XCTAssertEqual(state.titles[session], "Fixture task", "A session still known keeps its title after its spend ages out")
     }
 
+    func testSubagentReplayResolvesLateAncestorsAndKeepsChargesWithinTheParentTurn() throws {
+        let child = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", grandchild = "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff"
+        func consume(_ state: inout DeepSeekActivityState, session id: String, event: DeepSeekLogEvent, seq: Int, offset: Double) {
+            state.consume(.init(seq: seq, at: peak.addingTimeInterval(offset), event: event), session: id,
+                attaching: true, now: peak.addingTimeInterval(120))
+        }
+        func replay(_ state: inout DeepSeekActivityState, session id: String, parent: String?, output: Int) {
+            let events: [DeepSeekLogEvent] = [
+                .header(.init(session: id, createdAt: peak, project: "Fixture", parent: parent)),
+                .model("deepseek-flash", effort: nil, reported: false, provider: "deepseek-account"), .turnStart(1),
+                .response(.init(turn: 1, step: 1, model: "deepseek-flash", usage: .init(input: 0, cacheRead: 0, output: output),
+                    firstChunkAt: nil, lastChunkAt: nil, hasText: true, hasReasoning: false, toolCalls: 0))
+            ]
+            for (seq, event) in events.enumerated() { consume(&state, session: id, event: event, seq: seq, offset: Double(seq)) }
+        }
+        for order in [[session, child, grandchild], [grandchild, child, session], [child, session, grandchild]] {
+            var state = DeepSeekActivityState()
+            for id in order { replay(&state, session: id, parent: id == session ? nil : id == child ? session : child, output: 100) }
+            let parent = try XCTUnwrap(state.activities.first { $0.threadID == session })
+            XCTAssertEqual(parent.turnCost ?? 0, 0.0024, accuracy: 1e-9, "Replay order must not change the parent's sum")
+            XCTAssertEqual(parent.turnPeakCost ?? 0, 0.0024, accuracy: 1e-9)
+            let interval = DateInterval(start: peak, duration: 120)
+            XCTAssertEqual(state.ledger.tasks(in: interval).map(\.task), [session])
+            XCTAssertEqual(state.ledger.total(in: interval).total, 0.0024, accuracy: 1e-9)
+            replay(&state, session: session, parent: nil, output: 100)
+            XCTAssertEqual(state.activities.first { $0.threadID == session }?.turnCost ?? 0, 0.0024, accuracy: 1e-9,
+                "Replaying the same turn keeps its costs without adding its responses twice")
+            consume(&state, session: session, event: .turnEnd(turn: 1, outcome: .completed), seq: 4, offset: 5)
+            // An older child's later reply cannot enrich this already-ended parent turn.
+            consume(&state, session: grandchild, event: .response(.init(turn: 1, step: 2, model: "deepseek-flash",
+                usage: .init(input: 0, cacheRead: 0, output: 100), firstChunkAt: nil, lastChunkAt: nil,
+                hasText: true, hasReasoning: false, toolCalls: 0)), seq: 5, offset: 7)
+            XCTAssertEqual(state.activities.first { $0.threadID == session }?.turnCost ?? 0, 0.0024, accuracy: 1e-9)
+            consume(&state, session: session, event: .turnStart(2), seq: 6, offset: 10)
+            XCTAssertNil(state.activities.first { $0.threadID == session }?.turnCost, "The next turn starts without old delegated charges")
+        }
+    }
+
     func testReaderAttachesExistingLogAndReadsLaterFramesLive() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dsh-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: home) }

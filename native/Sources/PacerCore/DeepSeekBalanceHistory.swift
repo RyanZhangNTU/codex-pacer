@@ -30,7 +30,7 @@ public struct DeepSeekBalanceHistory: Codable, Equatable, Sendable {
         if let last, date <= last.at { return }
         if let last {
             let drop = last.total - total
-            if drop > 0.000_5 { charge(drop, from: last.at, to: date, calendar: calendar) }
+            if drop > 0 { charge(drop, from: last.at, to: date, calendar: calendar) }
         } else { since = date }
         samples.append(Sample(at: date, total: total))
         let keep = date.addingTimeInterval(-Self.sampleRetention)
@@ -69,7 +69,7 @@ public struct DeepSeekBalanceHistory: Codable, Equatable, Sendable {
         let start = now.addingTimeInterval(-span * Double(result.count))
         for (previous, next) in zip(samples, samples.dropFirst()) {
             let drop = previous.total - next.total, length = next.at.timeIntervalSince(previous.at)
-            guard drop > 0.000_5, length > 0, next.at > start, previous.at < now else { continue }
+            guard drop > 0, length > 0, next.at > start, previous.at < now else { continue }
             for index in result.indices {
                 let from = start.addingTimeInterval(span * Double(index))
                 let overlap = min(from.addingTimeInterval(span), next.at).timeIntervalSince(max(from, previous.at))

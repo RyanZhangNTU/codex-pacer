@@ -105,7 +105,6 @@ public struct DeepSeekWallet: Equatable, Sendable {
         today = spent.total; todayPeak = spent.peak
         hourly = ledger.hourly(on: now, calendar: calendar)
         typicalByNow = ledger.typicalByThisTime(now, calendar: calendar)
-        averageDaily = ledger.averageDaily(endingAt: now, calendar: calendar)
         days = ledger.days(7, endingAt: now, calendar: calendar)
         // The account is compared with the local estimate over the same span:
         // from the first reading (or midnight) to the latest reading.
@@ -115,6 +114,15 @@ public struct DeepSeekWallet: Equatable, Sendable {
         }
         elsewhereToday = elsewhere(day.start)
         dayTotals = days.map { $0.total + elsewhere($0.start) }
+        // Use the same reconciled spend for the average, runway and suggested
+        // budgets. The first partial day starts with the earliest observed source.
+        if let earliest = [ledger.earliestEntryAt, history.since].compactMap({ $0 }).min() {
+            let start = max(earliest, calendar.date(byAdding: .day, value: -7, to: day.start) ?? earliest)
+            let observedDays = max(1, now.timeIntervalSince(start) / 86_400)
+            let extra = ledger.days(8, endingAt: now, calendar: calendar)
+                .filter { $0.start >= calendar.startOfDay(for: start) }.reduce(0) { $0 + elsewhere($1.start) }
+            averageDaily = (ledger.total(in: DateInterval(start: start, end: max(start, now))).total + extra) / observedDays
+        } else { averageDaily = nil }
         tasks = ledger.tasks(in: DateInterval(start: day.start, end: max(day.start, now)))
         speed = speedSource == .account ? history.spent(12, of: 600, endingAt: now) : ledger.recent(12, of: 600, endingAt: now)
         self.speedSource = speedSource

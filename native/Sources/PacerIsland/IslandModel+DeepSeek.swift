@@ -16,6 +16,9 @@ enum DeepSeekBalanceSource: String, CaseIterable, Identifiable {
 struct DeepSeekBalanceBinding: Equatable {
     let source: DeepSeekBalanceSource
     let mode: DeepSeekAuthMode?
+    var historySource: String? {
+        mode.map { $0 == .account ? DeepSeekBalance.Source.web.rawValue : DeepSeekBalance.Source.apiKey.rawValue }
+    }
 }
 
 @MainActor
@@ -123,9 +126,20 @@ extension IslandModel {
     @discardableResult private func synchronizeDeepSeekBalanceSource() -> Bool {
         let binding = currentDeepSeekBalanceBinding
         guard binding != deepseekBalanceBinding else { return false }
+        // An unresolved automatic source can recover its matching saved history;
+        // switching billing modes invalidates it before a replacement read succeeds.
+        let sameHistory = deepseekHistory.source == binding.historySource &&
+            (deepseekBalanceBinding?.mode == nil || deepseekBalanceBinding?.mode == binding.mode)
         deepseekBalanceBinding = binding
+        if !sameHistory { forgetDeepSeekHistory() }
         clearDeepSeekBalance()
         return true
+    }
+    func restoreDeepSeekHistory() {
+        deepseekHistory = .load(from: defaults)
+        if let expected = deepseekBalanceBinding?.historySource, let saved = deepseekHistory.source, expected != saved {
+            forgetDeepSeekHistory()
+        }
     }
     nonisolated static func deepseekLowLine(in defaults: UserDefaults) -> Double? {
         if defaults.object(forKey: deepseekLowBalanceKey) != nil { return DeepSeekBudgetSettings.amount(deepseekLowBalanceKey, in: defaults) }
@@ -166,7 +180,8 @@ extension IslandModel {
     var deepseekWallet: DeepSeekWallet {
         DeepSeekWallet(balance: deepseekBalance, connected: deepseekBalanceError == nil || deepseekBalance != nil,
             ledger: deepseekUsage.ledger, now: now, lowLine: Self.deepseekLowLine(in: defaults),
-            history: deepseekHistory, budgets: deepseekBudgets, spikeLimit: amount(Self.deepseekSpikeLimitKey),
+            history: demo || deepseekBalanceBinding?.historySource == deepseekHistory.source ? deepseekHistory : DeepSeekBalanceHistory(),
+            budgets: deepseekBudgets, spikeLimit: amount(Self.deepseekSpikeLimitKey),
             speedSource: deepseekSpeedSource)
     }
     /// The wallet cannot be read: the collapsed bar dims rather than recolors.

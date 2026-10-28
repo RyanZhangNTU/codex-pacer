@@ -6,21 +6,28 @@ import PacerCore
 @MainActor
 final class NotificationDelivery {
     private let defaults: UserDefaults
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    private let authorizationStatus: @MainActor () async -> UNAuthorizationStatus
+    private let addRequest: @MainActor (UNNotificationRequest) async throws -> Void
+    init(defaults: UserDefaults = .standard,
+         authorizationStatus: @escaping @MainActor () async -> UNAuthorizationStatus = {
+             await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+         }, addRequest: @escaping @MainActor (UNNotificationRequest) async throws -> Void = {
+             try await UNUserNotificationCenter.current().add($0)
+         }) {
+        self.defaults = defaults; self.authorizationStatus = authorizationStatus; self.addRequest = addRequest
+    }
 
     func deliver(_ notice: IslandNotice) {
         guard defaults.bool(forKey: "systemNotifications") else { return }
         let hidden = defaults.bool(forKey: "hideProjects") && notice.kind != .lowQuota
         Task {
-            let center = UNUserNotificationCenter.current()
-            let settings = await center.notificationSettings()
-            guard [.authorized, .provisional].contains(settings.authorizationStatus) else { return }
+            guard [.authorized, .provisional].contains(await authorizationStatus()) else { return }
             let content = UNMutableNotificationContent()
             content.title = "Codex Pacer"
             let detail = hidden ? L10n.text("activity.hidden_local_name") : notice.detail
             content.body = L10n.text("notice.body", notice.title, detail)
             if let category = notice.category { content.categoryIdentifier = category }
-            try? await center.add(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
+            try? await addRequest(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
         }
     }
     static let openHarnessAction = "deepseek.open-harness"

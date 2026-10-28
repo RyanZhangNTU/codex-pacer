@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import PacerCore
 @testable import PacerIsland
 
@@ -178,6 +179,83 @@ final class DeepSeekIslandTests: XCTestCase {
         XCTAssertTrue(model.compactRingProviders.isEmpty, "DeepSeek alone keeps the price clock until a ring is chosen")
         XCTAssertTrue(model.compactGaugeShowsPriceClock)
         XCTAssertEqual(model.compactQuotaText(.deepseek), "¥86")
+        await model.shutdown()
+    }
+
+    func testSimultaneousSpikeAndBudgetCrossingsDeliverEveryNotificationOnce() async throws {
+        let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        defaults.set(true, forKey: "systemNotifications")
+        let model = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        var delivered: [UNNotificationRequest] = []
+        model.notifications = NotificationDelivery(defaults: defaults, authorizationStatus: { .authorized }, addRequest: { delivered.append($0) })
+        let now = Date()
+        var ledger = DeepSeekSpendLedger(), attention = DeepSeekBalanceAttention()
+        func wallet() -> DeepSeekWallet {
+            DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web), connected: true,
+                ledger: ledger, now: now, budgets: .init(daily: 5, weekly: 5), spikeLimit: 5)
+        }
+        XCTAssertTrue(attention.spendNotices(wallet(), spike: true, budget: true, snoozedUntil: .distantPast, now: now).isEmpty)
+        ledger.record(id: "burst", at: now.addingTimeInterval(-1), cost: 6)
+        let notices = attention.spendNotices(wallet(), spike: true, budget: true, snoozedUntil: .distantPast, now: now)
+        model.present(notices)
+        await waitUntil { delivered.count == 3 }
+        XCTAssertEqual(Set(delivered.map(\.identifier)), Set(notices.map { "pacer-" + $0.id }))
+        XCTAssertEqual(delivered.filter { $0.content.categoryIdentifier == DeepSeekBalanceAttention.spikeCategory }.count, 1,
+            "The spike retains its Open Harness and Not for an Hour actions beside both budgets")
+        XCTAssertTrue(attention.spendNotices(wallet(), spike: true, budget: true, snoozedUntil: .distantPast, now: now).isEmpty)
+        await model.shutdown()
+    }
+
+    func testBalanceHistoryIsClearedBeforeAChangedSourceCanReadAndCheckedOnRelaunch() async throws {
+        let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        defaults.set("web", forKey: DeepSeekBalanceSource.defaultsKey)
+        defaults.set("budget", forKey: IslandModel.deepseekModeKey)
+        defaults.set(10, forKey: IslandModel.deepseekDailyBudgetKey)
+        let start = Calendar.current.startOfDay(for: Date()), now = start.addingTimeInterval(3600)
+        var history = DeepSeekBalanceHistory()
+        history.record(total: 100, at: start, source: "web")
+        history.record(total: 50, at: now, source: "web")
+        history.save(to: defaults)
+        let model = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        model.now = now
+        XCTAssertEqual(model.deepseekWallet.elsewhereToday, 50, accuracy: 1e-9)
+        model.deepseekBalanceReads.apiKey = { nil }
+        defaults.set("apiKey", forKey: DeepSeekBalanceSource.defaultsKey)
+        model.applyDeepSeekBalanceSource()
+        XCTAssertEqual(model.deepseekBalanceError, .missingKey)
+        XCTAssertNil(model.deepseekHistory.since)
+        XCTAssertNil(defaults.data(forKey: DeepSeekBalanceHistory.defaultsKey))
+        XCTAssertEqual(model.deepseekWallet.daily?.spent ?? 0, 0, accuracy: 1e-9)
+        await model.shutdown()
+        history.save(to: defaults)
+        let relaunched = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        XCTAssertNil(relaunched.deepseekHistory.since, "A persisted history from the other source is rejected before any balance read")
+        await relaunched.shutdown()
+        defaults.set("web", forKey: DeepSeekBalanceSource.defaultsKey)
+        history.save(to: defaults)
+        let matching = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        matching.now = now
+        XCTAssertEqual(matching.deepseekWallet.elsewhereToday, 50, accuracy: 1e-9, "Relaunch retains the matching source's history")
+        await matching.shutdown()
+    }
+
+    func testAutomaticBillingOnlyUsesSavedChargesAfterItsSourceIsKnown() async throws {
+        let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        let start = Calendar.current.startOfDay(for: Date()), now = start.addingTimeInterval(3600)
+        var history = DeepSeekBalanceHistory()
+        history.record(total: 100, at: start, source: "web")
+        history.record(total: 50, at: now, source: "web")
+        history.save(to: defaults)
+        let model = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        model.now = now
+        XCTAssertNil(model.deepseekBalanceMode)
+        XCTAssertEqual(model.deepseekHistory, history, "Unresolved startup detection does not delete the saved readings")
+        XCTAssertEqual(model.deepseekWallet.elsewhereToday, 0, accuracy: 1e-9, "Unverified readings cannot affect budgets")
+        model.deepseekBalanceReads.web = { throw DeepSeekBalanceError.connectionFailed }
+        model.deepseekUsage = DeepSeekLocalUsage(provider: "deepseek-account")
+        model.applyDeepSeekBalanceSource()
+        await waitUntil { !model.deepseekRefreshing }
+        XCTAssertEqual(model.deepseekWallet.elsewhereToday, 50, accuracy: 1e-9, "Matching billing restores the saved history even when offline")
         await model.shutdown()
     }
 

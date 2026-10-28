@@ -208,6 +208,39 @@ final class DeepSeekWalletTests: XCTestCase {
         XCTAssertEqual(light.automaticSpikeLimit(before: calendar.startOfDay(for: now)), 5, "Light use keeps the ¥5 floor")
     }
 
+    func testAccountSpendAlsoSetsTheAverageRunwayAndSuggestedBudgetsWithoutDoubleCounting() {
+        let calendar = beijing, now = date(28, 0)
+        var history = DeepSeekBalanceHistory()
+        for day in 25...28 { history.record(total: 100 - Double(day - 25) * 20, at: date(day, 0), source: "web", calendar: calendar) }
+        var ledger = DeepSeekSpendLedger()
+        func wallet() -> DeepSeekWallet {
+            DeepSeekWallet(balance: .init(total: 40, capturedAt: now, source: .web), connected: true,
+                ledger: ledger, now: now, history: history, calendar: calendar)
+        }
+        XCTAssertEqual(wallet().dayTotals.reduce(0, +), 60, accuracy: 1e-9)
+        XCTAssertEqual(wallet().averageDaily ?? 0, 20, accuracy: 1e-9)
+        XCTAssertEqual(wallet().runwayDays ?? 0, 2, accuracy: 1e-9)
+        XCTAssertEqual(DeepSeekBudgets.suggested(averageDaily: wallet().averageDaily), .init(daily: 25, weekly: 170))
+        for day in 25...27 { ledger.record(id: "local-\(day)", at: date(day, 12), cost: 10) }
+        XCTAssertEqual(wallet().averageDaily ?? 0, 20, accuracy: 1e-9, "This Mac's share is already inside the account's ¥60")
+        XCTAssertEqual(wallet().runwayDays ?? 0, 2, accuracy: 1e-9)
+    }
+
+    func testSmallBalanceDropsAccumulateInDailyChargesAndAccountSpeed() {
+        let calendar = beijing, start = date(28, 15)
+        var history = DeepSeekBalanceHistory()
+        for minute in 0...120 {
+            history.record(total: 10 - Double(minute) * 0.0004, at: start.addingTimeInterval(Double(minute) * 60),
+                source: "web", calendar: calendar)
+        }
+        XCTAssertEqual(history.charged(onDayStarting: calendar.startOfDay(for: start)), 0.048, accuracy: 1e-9)
+        XCTAssertEqual(history.spent(12, of: 600, endingAt: date(28, 17)).reduce(0, +), 0.048, accuracy: 1e-9)
+        history.record(total: 20, at: date(28, 17, 1), source: "web", calendar: calendar)
+        history.record(total: 19.9996, at: date(28, 17, 2), source: "web", calendar: calendar)
+        XCTAssertEqual(history.charged(onDayStarting: calendar.startOfDay(for: start)), 0.0484, accuracy: 1e-9,
+            "Top-ups remain excluded without discarding the following small charge")
+    }
+
     func testAmountsKeepTheirColumnWidths() {
         XCTAssertEqual(DeepSeekWallet.compactAmount(8.4), "¥8.40")
         XCTAssertEqual(DeepSeekWallet.compactAmount(86.4), "¥86")
