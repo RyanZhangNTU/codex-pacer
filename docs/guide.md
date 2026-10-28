@@ -95,7 +95,7 @@ With only DeepSeek on, the dial sits on the left; during peak hours a chip under
 
 **Settings → DeepSeek → Expanded Panel** chooses **Detailed**, the default, or **Simple**, which keeps the dial and what sits beside it but leaves out Where it went and 7 days.
 
-![DeepSeek alone: the day dial beside Now, Today and Balance, above the week of off-peak and peak spend](assets/deepseek.png)
+![DeepSeek alone: the day dial with its ×2 until 6:00 PM chip, beside Today, Speed and Where it went with its hatched Not on this Mac part, above 7 days](assets/deepseek.png)
 
 If quota cannot be read, the ring says why and offers a retry. Hover over a ring for the source and last update. Quota history, credits and banked resets are in **Settings → Codex** and **Settings → Claude**.
 
