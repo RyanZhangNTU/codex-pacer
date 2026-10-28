@@ -137,10 +137,12 @@ private struct IslandExpandedContent: View {
     private var quotaContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
-            let title = single == .deepseek ? "layout.group.balance"
+            let title = single == .deepseek ? (model.deepseekShowsBudgetDial ? "layout.group.budget" : "layout.group.balance")
                 : model.enabledProviders.contains(.deepseek) ? "layout.group.quota_balance" : "layout.group.quota"
             IslandSectionHeader(title: L10n.text(title), detail: single?.displayName,
-                detailColor: single?.tint ?? PacerPalette.tertiary)
+                detailColor: single?.tint ?? PacerPalette.tertiary) {
+                if single == .deepseek { DeepSeekSectionStatus(model: model) }
+            }
             if model.enabledProviders.isEmpty {
                 HStack(spacing: 12) {
                     Text(L10n.text("provider.none_enabled")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)

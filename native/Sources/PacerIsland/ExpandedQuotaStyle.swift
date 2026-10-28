@@ -12,3 +12,16 @@ enum ExpandedQuotaStyle: String, CaseIterable, Identifiable {
     }
     func save(to defaults: UserDefaults = .standard) { defaults.set(rawValue, forKey: Self.defaultsKey) }
 }
+
+/// DeepSeek alone: the full dashboard, or only the dial and what sits beside it.
+enum DeepSeekPanelStyle: String, CaseIterable, Identifiable {
+    case detailed, simple
+    static let defaultsKey = "deepseekPanelStyle"
+    var id: String { rawValue }
+    var label: String { L10n.text("appearance.deepseek_" + rawValue) }
+
+    static func load(from defaults: UserDefaults = .standard) -> Self {
+        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .detailed
+    }
+    func save(to defaults: UserDefaults = .standard) { defaults.set(rawValue, forKey: Self.defaultsKey) }
+}

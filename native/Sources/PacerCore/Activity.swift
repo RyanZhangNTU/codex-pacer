@@ -84,11 +84,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     /// DeepSeek's estimated cost of the current turn in CNY, from local token
     /// counts and the published price list; the platform bill is authoritative.
     public var turnCost: Double? { costTurnID != nil && costTurnID == turnID ? estimatedCost : nil }
+    /// The part of `turnCost` billed at the doubled peak price.
+    public var turnPeakCost: Double? { turnCost == nil ? nil : estimatedPeakCost }
     private var estimatedCost: Double?
+    private var estimatedPeakCost = 0.0
     private var costTurnID: String?
-    mutating func setTurnCost(_ value: Double, turnID: String) {
+    mutating func setTurnCost(_ value: Double, peak: Double = 0, turnID: String) {
         guard provider == .deepseek, value.isFinite, value >= 0, self.turnID == turnID else { return }
-        estimatedCost = value; costTurnID = turnID
+        estimatedCost = value; estimatedPeakCost = peak.isFinite ? min(value, max(0, peak)) : 0; costTurnID = turnID
     }
     /// A source that reports a model without its effort keeps the known effort
     /// only while the model is unchanged; an explicit null clears it.
@@ -206,7 +209,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         // previous turn must not supply a model for the current one.
         let sameTurn = turnID != nil && turnID == other.turnID
         let bothUnattached = turnID == nil && other.turnID == nil && phase == .unknown && other.phase == .unknown
-        if sameTurn, turnCost == nil, other.turnCost != nil { estimatedCost = other.estimatedCost; costTurnID = other.costTurnID }
+        if sameTurn, turnCost == nil, other.turnCost != nil {
+            estimatedCost = other.estimatedCost; estimatedPeakCost = other.estimatedPeakCost; costTurnID = other.costTurnID
+        }
         if sameTurn || bothUnattached {
             if modelName == nil { modelName = other.modelName }
             let ownEffortAt = reasoningEffortReportedAt ?? .distantPast

@@ -35,7 +35,8 @@ enum DeepSeekLogEvent: Equatable, Sendable {
     case approvalDecided(id: String)
     case turnEnd(turn: Int, outcome: Outcome)
 
-    enum ToolKind: Equatable, Sendable { case other, question }
+    /// A search or fetch call is billed per call; `name` is kept only for its price.
+    enum ToolKind: Equatable, Sendable { case other, question, search(String) }
     enum Outcome: Equatable, Sendable { case completed, failed, interrupted }
 }
 
@@ -106,7 +107,8 @@ enum DeepSeekSessionLog {
         case "tool/call":
             guard let turn, let call = identifier(data["callId"]) else { return nil }
             let name = (data["name"] as? String ?? "").lowercased()
-            let kind: DeepSeekLogEvent.ToolKind = ["ask_user_question", "ask_user", "question"].contains(name) ? .question : .other
+            let kind: DeepSeekLogEvent.ToolKind = ["ask_user_question", "ask_user", "question"].contains(name) ? .question
+                : DeepSeekPricing.searchTools.contains(name) ? .search(name) : .other
             return record(.toolCall(turn: turn, call: call, kind: kind))
         case "approval/asked":
             return identifier(data["id"]).map { record(.approvalAsked(id: $0, call: identifier(data["callId"]))) }

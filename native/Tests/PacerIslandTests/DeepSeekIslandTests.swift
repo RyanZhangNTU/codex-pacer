@@ -110,7 +110,7 @@ final class DeepSeekIslandTests: XCTestCase {
         let now = Date()
         func wallet(_ total: Double) -> DeepSeekWallet {
             DeepSeekWallet(balance: DeepSeekBalance(total: total, capturedAt: now, source: .web), connected: true,
-                ledger: DeepSeekSpendLedger(), now: now, lowThreshold: 10)
+                ledger: DeepSeekSpendLedger(), now: now)
         }
         var attention = DeepSeekBalanceAttention()
         XCTAssertTrue(attention.notices(wallet(50)).isEmpty)
@@ -122,6 +122,95 @@ final class DeepSeekIslandTests: XCTestCase {
         let again = attention.notices(wallet(9))
         XCTAssertEqual(again.map(\.id), ["deepseek:balance:low"], "Crossing again after recovering warns again")
         XCTAssertEqual(again.first?.kind, .lowQuota, "Balance notices stay readable when project names are hidden")
+    }
+
+    func testSpikeAndBudgetNoticesTakeABaselineThenFireOncePerCrossing() {
+        let now = Date()
+        var ledger = DeepSeekSpendLedger()
+        func wallet(_ spent: Double, recent: Bool = false) -> DeepSeekWallet {
+            ledger = DeepSeekSpendLedger()
+            ledger.record(id: "early", at: Calendar.current.startOfDay(for: now).addingTimeInterval(1), cost: spent)
+            if recent { ledger.record(id: "recent", at: now.addingTimeInterval(-60), cost: 6) }
+            return DeepSeekWallet(balance: DeepSeekBalance(total: 80, capturedAt: now, source: .web), connected: true,
+                ledger: ledger, now: now, budgets: DeepSeekBudgets(daily: 10), spikeLimit: 5)
+        }
+        var attention = DeepSeekBalanceAttention()
+        func ids(_ wallet: DeepSeekWallet, snoozed: Date = .distantPast) -> [String] {
+            attention.spendNotices(wallet, spike: true, budget: true, snoozedUntil: snoozed, now: now).map { $0.id.components(separatedBy: ":").prefix(2).joined(separator: ":") }
+        }
+        XCTAssertTrue(ids(wallet(9)).isEmpty, "A relaunch already past a line does not notify again")
+        XCTAssertEqual(ids(wallet(11)), ["deepseek:budget"], "Exceeding is a new crossing")
+        XCTAssertTrue(ids(wallet(12)).isEmpty)
+        XCTAssertEqual(ids(wallet(1, recent: true)), ["deepseek:spike"])
+        XCTAssertTrue(ids(wallet(1, recent: true)).isEmpty, "A spike that continues does not repeat")
+        XCTAssertTrue(ids(wallet(1)).isEmpty)
+        XCTAssertTrue(ids(wallet(1, recent: true), snoozed: now.addingTimeInterval(60)).isEmpty, "Not for an hour quiets a new spike")
+        let spike = attention.spendNotices(wallet(1), spike: true, budget: true, snoozedUntil: .distantPast, now: now)
+        XCTAssertTrue(spike.isEmpty)
+        let notice = attention.spendNotices(wallet(1, recent: true), spike: true, budget: true, snoozedUntil: .distantPast, now: now).first
+        XCTAssertEqual(notice?.category, DeepSeekBalanceAttention.spikeCategory, "A spike offers Open Harness and Not for an Hour")
+    }
+
+    func testRingsFollowTheModulesAndDeepSeekJoinsOnlyWithABudget() async throws {
+        let (defaults, _) = try defaults(ProviderModules(codexMode: .enabled, claudeMode: .disabled, deepseekMode: .enabled))
+        let model = IslandModel(demo: true, defaults: defaults, installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
+        model.deepseekUsage = DeepSeekLocalUsage(); model.deepseekHistory = DeepSeekBalanceHistory()
+        XCTAssertEqual(model.compactRingProviders, [.codex], "Without a budget DeepSeek has no ring")
+        XCTAssertEqual(model.compactQuotaText(.deepseek), "¥86", "Its value is then the balance")
+        defaults.set(15.0, forKey: IslandModel.deepseekDailyBudgetKey)
+        XCTAssertEqual(model.compactRingProviders, [.codex], "An amount alone does nothing in balance mode")
+        XCTAssertFalse(model.deepseekShowsBudgetDial)
+        defaults.set("budget", forKey: IslandModel.deepseekModeKey)
+        XCTAssertEqual(model.compactRingProviders, [.codex, .deepseek], "DeepSeek takes the free inner ring")
+        XCTAssertEqual(model.compactQuotaText(.deepseek), "¥15", "The value follows the ring: the budget left")
+        XCTAssertTrue(model.deepseekShowsBudgetDial, "Budget mode shows the budget dial")
+        defaults.set("deepseek", forKey: QuotaRingSlot.outer.defaultsKey)
+        defaults.set("none", forKey: QuotaRingSlot.inner.defaultsKey)
+        XCTAssertEqual(model.compactRingProviders, [.deepseek])
+        defaults.set("claude", forKey: QuotaRingSlot.inner.defaultsKey)
+        XCTAssertEqual(model.compactRingProviders, [.deepseek], "A disabled module's ring is skipped")
+        XCTAssertFalse(model.compactGaugeShowsPriceClock)
+        defaults.removeObject(forKey: QuotaRingSlot.outer.defaultsKey); defaults.removeObject(forKey: QuotaRingSlot.inner.defaultsKey)
+        var modules = ProviderModules.load(from: defaults)
+        modules.setMode(.disabled, for: .codex); modules.save(to: defaults)
+        model.applySettings(sourceChanged: false)
+        XCTAssertEqual(model.enabledProviders, [.deepseek])
+        XCTAssertTrue(model.compactRingProviders.isEmpty, "DeepSeek alone keeps the price clock until a ring is chosen")
+        XCTAssertTrue(model.compactGaugeShowsPriceClock)
+        XCTAssertEqual(model.compactQuotaText(.deepseek), "¥86")
+        await model.shutdown()
+    }
+
+    func testBudgetModeFillsInSuggestionsOnceAndKeepsAmountsWhenSwitchedOff() throws {
+        let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        var settings = DeepSeekBudgetSettings.load(from: defaults)
+        XCTAssertFalse(settings.budgetMode, "Balance mode is the default")
+        XCTAssertTrue(settings.isEmpty)
+        let suggestion = DeepSeekBudgets(daily: 20, weekly: 120)
+        settings.setBudgetMode(true, suggestion: suggestion)
+        XCTAssertEqual(settings.active, suggestion, "Switching to budgets fills in the suggestion")
+        settings.daily = 30; settings.weekly = nil
+        settings.setBudgetMode(false, suggestion: suggestion)
+        XCTAssertTrue(settings.isEmpty, "Balance mode counts no budget")
+        settings.save(to: defaults)
+        settings = DeepSeekBudgetSettings.load(from: defaults)
+        XCTAssertEqual(settings.daily, 30, "The amounts are kept for the next switch")
+        settings.setBudgetMode(true, suggestion: suggestion)
+        XCTAssertEqual(settings.active, DeepSeekBudgets(daily: 30), "An amount already chosen is not replaced, nor a cleared one refilled")
+    }
+
+    func testEmptyAmountsFollowTheRulesAndOnlyAChosenLowLineCarriesOver() throws {
+        let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        XCTAssertNil(IslandModel.deepseekLowLine(in: defaults))
+        defaults.set(10.0, forKey: IslandModel.legacyDeepSeekLowBalanceKey)
+        XCTAssertNil(IslandModel.deepseekLowLine(in: defaults), "4.0 stored its ¥10 default whenever Settings changed")
+        defaults.set(1.0, forKey: IslandModel.legacyDeepSeekLowBalanceKey)
+        XCTAssertEqual(IslandModel.deepseekLowLine(in: defaults), 1, "Another 4.0 amount was chosen and carries over")
+        defaults.set(25.0, forKey: IslandModel.deepseekLowBalanceKey)
+        XCTAssertEqual(IslandModel.deepseekLowLine(in: defaults), 25, "A line saved by this version wins")
+        defaults.set(0.0, forKey: IslandModel.deepseekLowBalanceKey)
+        XCTAssertNil(IslandModel.deepseekLowLine(in: defaults), "Zero follows the rules rather than turning the reminder off")
+        XCTAssertEqual(DeepSeekPanelStyle.load(from: defaults), .detailed)
     }
 
     private func balanceModel(source: DeepSeekBalanceSource) throws -> (IslandModel, UserDefaults) {

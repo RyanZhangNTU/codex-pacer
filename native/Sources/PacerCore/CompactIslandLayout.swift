@@ -5,6 +5,8 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
         case activity, status, tps, firstOutput
         case quota, quotaGauge, quotaLabel, timeRemaining
+        /// DeepSeek's day: amber peak hours outside, hours with spend inside, a hand for now.
+        case priceClock
         /// One slot for every enabled warning; Reminders chooses which kinds it shows.
         case warnings
         public var id: String { rawValue }
@@ -12,12 +14,13 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var shortLabel: String { L10n.text("layout.short." + rawValue) }
         public var detail: String { L10n.text("layout.detail." + rawValue) }
         /// Quota components combine every enabled provider, so they need at
-        /// least one. A balance has no window, so the gauge, its label and time
-        /// remaining need Codex or Claude.
+        /// least one. DeepSeek joins the rings with a budget; a balance has no
+        /// window, so the label and time remaining need Codex or Claude.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
             switch self {
-            case .quota: return !providers.isEmpty
-            case .quotaGauge, .quotaLabel, .timeRemaining: return !providers.subtracting([.deepseek]).isEmpty
+            case .quota, .quotaGauge: return !providers.isEmpty
+            case .priceClock: return providers.contains(.deepseek)
+            case .quotaLabel, .timeRemaining: return !providers.subtracting([.deepseek]).isEmpty
             default: return true
             }
         }
@@ -41,6 +44,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             case .quotaGauge: "circle.circle"
             case .quotaLabel: "tag"
             case .timeRemaining: "hourglass"
+            case .priceClock: "clock"
             case .warnings: "exclamationmark.triangle"
             }
         }
@@ -70,20 +74,21 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             switch self {
             case .tasks: [.activity, .status]
             case .performance: [.tps, .firstOutput]
-            case .quota: [.quota, .quotaGauge, .quotaLabel, .timeRemaining]
+            case .quota: [.quota, .quotaGauge, .priceClock, .quotaLabel, .timeRemaining]
             case .warnings: [.warnings]
             }
         }
     }
-    /// What the warnings component can show, in display order.
+    /// What the warnings component can show, in display order. DeepSeek's
+    /// kinds share one capsule that shows the most urgent of them.
     public enum Warning: String, CaseIterable, Codable, Sendable {
-        case fiveHour, ssh, quotaDelay, lowBalance, peakPrice
+        case fiveHour, ssh, quotaDelay, lowBalance, spendSpike, budget
         public var label: String { L10n.text("warning." + rawValue) }
-        /// The doubled-price capsule repeats the dial's peak bezel, so it starts off.
-        public static let defaults: Set<Self> = Set(allCases).subtracting([.peakPrice])
+        public static let defaults: Set<Self> = Set(allCases)
+        public static let deepseek: Set<Self> = [.lowBalance, .spendSpike, .budget]
         /// DeepSeek's wallet warnings need its module; the others need nothing.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
-            [.lowBalance, .peakPrice].contains(self) ? providers.contains(.deepseek) : true
+            Self.deepseek.contains(self) ? providers.contains(.deepseek) : true
         }
         /// Schemas before 7 had one component per warning.
         fileprivate init?(legacyComponent name: String) {
@@ -100,7 +105,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 8
+    public let version = 9
     public var leading: [Component]
     public var trailing: [Component]
     public var warnings: Set<Warning>
@@ -154,7 +159,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...8).contains(schema) else {
+        guard (1...9).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
         var leadingNames = try values.decode([String].self, forKey: .leading)
@@ -176,7 +181,8 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         if schema < 6 { Self.mergeProviderQuotas(&leadingNames, &trailingNames) }
         // Schema 7 merges the separate warnings into one slot at the first
         // one's position; the kinds that were shown stay enabled. Schema 8
-        // adds DeepSeek's warnings in their default state.
+        // adds DeepSeek's low balance and schema 9 its spend and budget
+        // reminders, all on; the former doubled-price kind is dropped.
         var enabled: Set<Warning>
         if schema < 7 {
             let shown = Set((leadingNames + trailingNames).compactMap(Warning.init(legacyComponent:)))
@@ -186,6 +192,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
                 ?? Warning.defaults
         }
         if schema < 8 { enabled.insert(.lowBalance) }
+        if schema < 9 { enabled.formUnion([.spendSpike, .budget]) }
         let decoded = Self(leading: leadingNames.flatMap(Component.saved), trailing: trailingNames.flatMap(Component.saved),
             warnings: enabled).normalized
         leading = decoded.leading; trailing = decoded.trailing; warnings = decoded.warnings

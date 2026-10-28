@@ -6,8 +6,10 @@ public struct IslandNotice: Equatable, Sendable, Identifiable {
     public let kind: Kind
     public let title: String
     public let detail: String
-    public init(id: String, kind: Kind, title: String, detail: String) {
-        self.id = id; self.kind = kind; self.title = title; self.detail = detail
+    /// The system notification category, for notices that offer actions.
+    public let category: String?
+    public init(id: String, kind: Kind, title: String, detail: String, category: String? = nil) {
+        self.id = id; self.kind = kind; self.title = title; self.detail = detail; self.category = category
     }
 }
 

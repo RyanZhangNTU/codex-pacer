@@ -10,9 +10,12 @@ struct DeepSeekActivityState: Sendable {
         var requestAt: Date?
         var measuredLatency = false
         var model: String?
+        /// The billing provider of the latest request; only official ones are priced.
+        var provider: String?
         var calls: [String: DeepSeekLogEvent.ToolKind] = [:]
         var approvals: Set<String> = []
         var cost = 0.0
+        var peakCost = 0.0
         var costKnown = true
     }
     private var sessions: [String: SessionActivity] = [:]
@@ -21,6 +24,10 @@ struct DeepSeekActivityState: Sendable {
     private var metrics: [String: SessionPerformanceUpdate] = [:]
     private var historicalRunning: Set<String> = []
     private(set) var ledger = DeepSeekSpendLedger()
+    /// Each delegated session's parent, so sub-agent spend counts toward its root task.
+    private(set) var parents: [String: String] = [:]
+    /// Each session's title, kept after its row is gone so its spend still has a name.
+    private(set) var titles: [String: String] = [:]
     private(set) var status = RuntimeStreamStatus()
     /// The billing provider of the newest request, for choosing a balance source.
     private(set) var latestProvider: (at: Date, name: String)?
@@ -60,7 +67,28 @@ struct DeepSeekActivityState: Sendable {
         requests = requests.filter { $0.value.threadID != session }
         progress[key]?.calls.removeAll(); progress[key]?.approvals.removeAll(); progress[key]?.turn = nil
     }
-    mutating func pruneLedger(now: Date = Date()) { ledger.prune(now: now) }
+    mutating func pruneLedger(now: Date = Date()) {
+        ledger.prune(now: now)
+        let named = ledger.taskIDs.union(sessions.values.compactMap(\.threadID))
+        titles = titles.filter { named.contains($0.key) }
+    }
+    static func root(of session: String, parents: [String: String]) -> String {
+        var current = session
+        for _ in 0..<8 { guard let parent = parents[current], parent != session else { break }; current = parent }
+        return current
+    }
+    /// Adds spend to the session's turn and, for a sub-agent, to its root's open turn.
+    private mutating func charge(_ cost: Double, id: String, session: String, at date: Date, state: inout Progress, value: inout SessionActivity) {
+        let peak = DeepSeekPricing.isPeak(at: date), root = Self.root(of: session, parents: parents)
+        ledger.record(id: id, at: date, cost: cost, task: root)
+        state.cost += cost; if peak { state.peakCost += cost }
+        if state.costKnown, let turn = state.turnID { value.setTurnCost(state.cost, peak: state.peakCost, turnID: turn) }
+        let rootKey = AgentProvider.deepseek.activityID(sessionID: root)
+        guard root != session, var parent = progress[rootKey], parent.turn != nil, let turn = parent.turnID else { return }
+        parent.cost += cost; if peak { parent.peakCost += cost }
+        progress[rootKey] = parent
+        if parent.costKnown { sessions[rootKey]?.setTurnCost(parent.cost, peak: parent.peakCost, turnID: turn) }
+    }
 
     mutating func consume(_ record: DeepSeekLogRecord, session: String, attaching: Bool, now: Date = Date()) {
         guard record.at.timeIntervalSince(now) <= 300 else { return }
@@ -76,19 +104,24 @@ struct DeepSeekActivityState: Sendable {
         case .header(let header):
             var fields: [String: Any] = [:]
             if let project = header.project { fields["cwd"] = project }
-            if let parent = header.parent { fields["parentThreadId"] = parent }
+            if let parent = header.parent {
+                fields["parentThreadId"] = parent
+                if parents.count < 1024 || parents[session] != nil { parents[session] = parent }
+            }
             metadata(fields); lifecycle = false
         case .title(let title):
+            if titles.count < 1024 || titles[session] != nil { titles[session] = title }
             metadata(["name": title]); lifecycle = false
         case let .model(model, effort, reported, provider):
             state.model = model
+            if let provider { state.provider = provider }
             if let provider, latestProvider.map({ record.at >= $0.at }) ?? true { latestProvider = (record.at, provider) }
             var fields: [String: Any] = ["model": model]
             if reported { fields["reasoningEffort"] = effort.map { $0 as Any } ?? NSNull() }
             metadata(fields); lifecycle = false
         case .turnStart(let turn):
             let id = String(turn) + "." + String(record.seq ?? Int(seconds * 1000))
-            state = Progress(turn: turn, turnID: id, model: state.model)
+            state = Progress(turn: turn, turnID: id, model: state.model, provider: state.provider)
             requests = requests.filter { $0.value.threadID != session }
             value.applyRuntime(event(attaching ? "turn/attached" : "turn/started"))
         case let .stepStart(turn, step):
@@ -99,10 +132,10 @@ struct DeepSeekActivityState: Sendable {
             guard response.turn == state.turn, let turn = state.turnID else { break }
             if let usage = response.usage {
                 let id = session + ":" + String(record.seq ?? Int(seconds * 1000))
-                if let cost = DeepSeekPricing.cost(model: response.model ?? state.model, usage: usage, at: record.at) {
-                    state.cost += cost; ledger.record(id: id, at: record.at, cost: cost)
+                if DeepSeekPricing.isOfficial(provider: state.provider),
+                   let cost = DeepSeekPricing.cost(model: response.model ?? state.model, usage: usage, at: record.at) {
+                    charge(cost, id: id, session: session, at: record.at, state: &state, value: &value)
                 } else { state.costKnown = false }
-                if state.costKnown { value.setTurnCost(state.cost, turnID: turn) }
                 if let start = state.requestAt, let end = response.lastChunkAt, end > start,
                    let sample = ResponsePerformance(responseID: id, turnID: turn, outputTokens: usage.output,
                        startedAt: start, completedAt: end, source: .requestUsage) {
@@ -121,6 +154,10 @@ struct DeepSeekActivityState: Sendable {
         case let .toolCall(turn, call, kind):
             guard turn == state.turn else { break }
             if state.calls.count < 128 { state.calls[call] = kind }
+            if case .search(let name) = kind, DeepSeekPricing.isOfficial(provider: state.provider),
+               let cost = DeepSeekPricing.toolCost(name, at: record.at) {
+                charge(cost, id: session + ":tool:" + call, session: session, at: record.at, state: &state, value: &value)
+            }
             value.applyRuntime(event("item/started", ["itemId": call, "itemType": "commandExecution"]))
             if kind == .question { ask(.input, session: session, item: call, at: record.at, value: &value, event: event) }
         case .toolResult(let call):

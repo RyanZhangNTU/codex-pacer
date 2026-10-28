@@ -28,7 +28,8 @@ final class CompactLayoutEditorTests: XCTestCase {
         let pane = SettingsAppearancePane(model: model, appearance: .constant(.classic),
             displayMode: Binding(get: { mode }, set: { mode = $0 }),
             position: Binding(get: { position }, set: { position = $0 }),
-            displayID: .constant(0), fullscreen: .constant(false), quotaStyle: .constant(.split))
+            displayID: .constant(0), fullscreen: .constant(false), quotaStyle: .constant(.split),
+            deepseekPanelStyle: .constant(.detailed), deepseekAlone: false)
         model.screenNotchSize = .zero
         XCTAssertEqual(pane.customBinding.wrappedValue, .center)
         XCTAssertNil(position, "Showing the legacy Automatic choice must not save a position")

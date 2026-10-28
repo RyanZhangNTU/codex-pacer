@@ -14,6 +14,9 @@ struct SettingsAppearancePane: View {
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
     @Binding var quotaStyle: ExpandedQuotaStyle
+    @Binding var deepseekPanelStyle: DeepSeekPanelStyle
+    /// DeepSeek alone has its own dashboard, where ring styles do not apply.
+    let deepseekAlone: Bool
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
@@ -68,9 +71,15 @@ struct SettingsAppearancePane: View {
             Text(L10n.text("appearance.style"))
         }
         Section {
-            Picker(L10n.text("appearance.expanded_quota"), selection: $quotaStyle) {
-                ForEach(ExpandedQuotaStyle.allCases) { style in Text(style.label).tag(style) }
-            }.pickerStyle(.segmented)
+            if deepseekAlone {
+                Picker(L10n.text("appearance.expanded_deepseek"), selection: $deepseekPanelStyle) {
+                    ForEach([DeepSeekPanelStyle.simple, .detailed]) { style in Text(style.label).tag(style) }
+                }.pickerStyle(.segmented)
+            } else {
+                Picker(L10n.text("appearance.expanded_quota"), selection: $quotaStyle) {
+                    ForEach(ExpandedQuotaStyle.allCases) { style in Text(style.label).tag(style) }
+                }.pickerStyle(.segmented)
+            }
         }
         Section(L10n.text("appearance.position")) {
             HStack(spacing: 10) {
