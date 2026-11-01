@@ -116,10 +116,14 @@ public struct ClaudeCloudContext: Equatable, Sendable {
     public let readInClaude: Bool
     /// The turn stopped without finishing, so the next move is the user's.
     public let awaitsReply: Bool
+    /// The server's latest reply marker for this ending. It can advance while
+    /// an idle ending settles into resolved, without starting another turn.
+    public let completionMark: Date?
     public init(projectID: String, projectName: String, role: Role, status: ClaudeCloudThreadStatus? = nil,
-                additionalWorkers: Int = 0, readInClaude: Bool = false, awaitsReply: Bool = false) {
+                additionalWorkers: Int = 0, readInClaude: Bool = false, awaitsReply: Bool = false, completionMark: Date? = nil) {
         self.projectID = projectID; self.projectName = projectName; self.role = role; self.status = status
         self.additionalWorkers = additionalWorkers; self.readInClaude = readInClaude; self.awaitsReply = awaitsReply
+        self.completionMark = completionMark
     }
 
     /// Opens the project, and the thread when the row is one. A browser needs

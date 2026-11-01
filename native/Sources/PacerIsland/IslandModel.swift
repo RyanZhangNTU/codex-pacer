@@ -520,6 +520,7 @@ final class IslandModel: ObservableObject {
     /// Set by the app, so tests and demos never reach claude.ai.
     var makeClaudeCloudMonitor: (@MainActor () -> ClaudeCloudProjectMonitor)?
     private var claudeCloudMonitor: ClaudeCloudProjectMonitor?
+    private var claudeCloudGeneration = 0
     private let claudeRemoteSetup: ClaudeRemoteSetup
     private var claudeDiscoveryTask: Task<Void, Never>?
     private var claudeDiscoveryRevision = 0
@@ -1449,21 +1450,24 @@ final class IslandModel: ObservableObject {
     private func syncClaudeCloudMonitor() {
         guard isModuleEnabled(.claude), showsClaudeCloudProjects, !sleeping, !stopped, !demo else { stopClaudeCloudMonitor(); return }
         guard let monitor = claudeCloudMonitor ?? makeClaudeCloudMonitor?() else { return }
+        if claudeCloudMonitor == nil { claudeCloudGeneration += 1 }
         claudeCloudMonitor = monitor
-        let generation = claudeGeneration, expanded = expanded, target = claudeMonitor
+        let generation = claudeGeneration, cloudGeneration = claudeCloudGeneration, expanded = expanded, target = claudeMonitor
         Task { [weak self] in
+            guard self?.claudeCloudGeneration == cloudGeneration else { return }
             await monitor.start(expanded: expanded) { [weak self] values, status, requests in
-                guard await self?.claudeGeneration == generation else { return }
+                guard await self?.claudeGeneration == generation, await self?.claudeCloudGeneration == cloudGeneration else { return }
                 await target.updateCloud(activities: values, status: status, attention: requests)
             }
         }
     }
     private func stopClaudeCloudMonitor() {
         guard let monitor = claudeCloudMonitor else { return }
-        claudeCloudMonitor = nil
-        let target = claudeMonitor
-        Task {
+        claudeCloudMonitor = nil; claudeCloudGeneration += 1
+        let target = claudeMonitor, cloudGeneration = claudeCloudGeneration
+        Task { [weak self] in
             await monitor.shutdown()
+            guard self?.claudeCloudGeneration == cloudGeneration else { return }
             await target.updateCloud(activities: [], status: nil, attention: [])
         }
     }
@@ -1508,6 +1512,10 @@ final class IslandModel: ObservableObject {
     }
     private var hiddenEmbeddedActivityIDs: Set<String> {
         var hidden = ignoredCodexActivityIDs
+        if !showsClaudeCloudProjects {
+            hidden.formUnion(knownActivities(for: .claude).filter { $0.claudeCloud != nil }.map(\.id))
+            hidden.formUnion(claudeReceivedRequests.filter { $0.claudeCloud != nil }.map { $0.activity.id })
+        }
         for provider in AgentProvider.allCases where !showsEmbeddedSessions(for: provider) {
             hidden.formUnion(Self.embeddedActivityIDs(knownActivities(for: provider)))
         }

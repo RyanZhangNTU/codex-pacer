@@ -26,7 +26,7 @@ public struct ClaudeCloudProjectState: Sendable {
     /// read past this was read as it happened.
     static let readGrace: TimeInterval = 90
     /// `idle` can come just before `resolved` for the same run.
-    private static let settlingTime: TimeInterval = 300
+    static let settlingTime: TimeInterval = 300
     private static let baselineAge: TimeInterval = 7 * 24 * 3600
     /// A notice needs a recent ending; a late look reports when it was noticed.
     private static let exactEndingAge: TimeInterval = 45
@@ -68,6 +68,8 @@ public struct ClaudeCloudProjectState: Sendable {
     private var tracked: [String: Tracked] = [:]
     private var projectMarks: [String: Date] = [:]
     private var lastPass: Date?
+    private var sessionReadAttempts: [String: UInt64] = [:]
+    private var nextReadAttempt: UInt64 = 0
 
     public init() {}
 
@@ -107,7 +109,7 @@ public struct ClaudeCloudProjectState: Sendable {
     /// waits or just moved, an idle thread that may have been answered, the first
     /// look at each coordinator, and one that may be working because its project
     /// just changed or whose ending may have been read.
-    public func sessionsToRead(projects: [ClaudeCloudProject], threads: [String: [ClaudeCloudThread]], at now: Date,
+    public mutating func sessionsToRead(projects: [ClaudeCloudProject], threads: [String: [ClaudeCloudThread]], at now: Date,
                                local: Set<String> = [], limit: Int = 16) -> [String] {
         var urgent: [String] = [], coordinators: [String] = [], later: [String] = []
         for project in projects {
@@ -115,9 +117,9 @@ public struct ClaudeCloudProjectState: Sendable {
                 let entry = tracked[thread.id]
                 let firstLook = entry == nil && thread.status == .needsInput
                 if isOpen(entry?.activity) || entry?.activity?.phase == .unknown || thread.isActive || thread.openDecisions > 0 || firstLook {
-                    urgent += thread.sessionIDs.prefix(3)
+                    urgent += thread.sessionIDs
                 } else if isRecent(thread, at: now), entry?.signature != thread.signature || wantsAnotherLook(entry, thread, at: now) {
-                    later += thread.sessionIDs.prefix(3)
+                    later += thread.sessionIDs
                 }
             }
             guard let coordinator = project.coordinatorSessionID else { continue }
@@ -129,7 +131,16 @@ public struct ClaudeCloudProjectState: Sendable {
             else if lastPass == nil || changed || recent || unreadEnding { coordinators.append(coordinator) }
         }
         var seen = Set<String>()
-        return (urgent + coordinators + later).filter { seen.insert($0).inserted }.prefix(limit).map { $0 }
+        let candidates = (urgent + coordinators + later).filter { seen.insert($0).inserted }
+        // Priority breaks ties, but a recently read session cannot permanently
+        // occupy a slot ahead of work that the bounded pass has not checked.
+        let selected = candidates.enumerated().sorted {
+            let left = sessionReadAttempts[$0.element] ?? 0, right = sessionReadAttempts[$1.element] ?? 0
+            return left == right ? $0.offset < $1.offset : left < right
+        }.prefix(max(0, limit)).map(\.element)
+        sessionReadAttempts = sessionReadAttempts.filter { seen.contains($0.key) }
+        for id in selected { nextReadAttempt &+= 1; sessionReadAttempts[id] = nextReadAttempt }
+        return selected
     }
 
     /// Endings still without a speed, the ones that can still remind first.
@@ -221,8 +232,9 @@ public struct ClaudeCloudProjectState: Sendable {
         let confirmed = thread.isActive || sessions.contains(where: \.isRunning)
         if confirmed { entry.confirmedAt = now }
         // Not read this pass: an idle row says nothing about a run in progress.
-        let unconfirmed = isOpen(entry.activity) && thread.status == .idle && sessions.isEmpty && !thread.sessionIDs.isEmpty
-            && now.timeIntervalSince(entry.confirmedAt ?? now) < Self.unconfirmedRunTime
+        let missingSession = thread.status == .idle && !thread.sessionIDs.isEmpty
+            && !thread.sessionIDs.allSatisfy { id in sessions.contains { $0.id == id } }
+        let unconfirmed = missingSession && (isOpen(entry.activity) || entry.activity?.phase == .unknown)
         if !sessions.isEmpty { entry.sessionReadAt = now; entry.signature = thread.signature }
         else if !isRecent(thread, at: now) { entry.signature = thread.signature }
         if thread.status != .idle { entry.awaitsReply = false }
@@ -232,8 +244,14 @@ public struct ClaudeCloudProjectState: Sendable {
         // A question that was read and left unanswered is the user's call, so it stops asking.
         if !confirmed, attention == .input, pending == nil, isSettledQuestion(thread, entry, at: now) {
             entry.activity = nil; entry.request = nil; entry.settledQuestion = thread.signature
-        } else if confirmed || unconfirmed || attention != nil {
+        } else if confirmed || attention != nil {
             open(&entry, id: thread.id, project: project, role: .thread, attention: attention, at: now)
+        } else if unconfirmed {
+            if now.timeIntervalSince(entry.confirmedAt ?? now) < Self.unconfirmedRunTime {
+                open(&entry, id: thread.id, project: project, role: .thread, attention: nil, at: now)
+            } else {
+                entry.activity?.markSourceUnavailable(); entry.request = nil
+            }
         } else if isOpen(entry.activity) || entry.activity?.phase == .unknown {
             finish(&entry, id: thread.id, project: project, failed: failed, mark: thread.lastReplyAt, at: now)
         } else if lastPass == nil {
@@ -371,7 +389,8 @@ public struct ClaudeCloudProjectState: Sendable {
         let canSettleUnseen = status != .idle
         activity.setClaudeCloud(ClaudeCloudContext(projectID: project.id, projectName: project.name, role: role,
             status: status ?? activity.claudeCloud?.status, additionalWorkers: max(0, workers - 1),
-            readInClaude: ended && !unread && (entry.sawUnread || (graceOver && canSettleUnseen)), awaitsReply: ended && entry.awaitsReply))
+            readInClaude: ended && !unread && (entry.sawUnread || (graceOver && canSettleUnseen)), awaitsReply: ended && entry.awaitsReply,
+            completionMark: ended ? entry.mark : nil))
         entry.activity = activity
     }
 }

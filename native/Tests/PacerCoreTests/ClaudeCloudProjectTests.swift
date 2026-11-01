@@ -174,7 +174,25 @@ final class ClaudeCloudProjectTests: XCTestCase {
         state.apply(snapshot([thread(.idle)]), at: at(299))
         XCTAssertEqual(row(state)?.phase, .running)
         state.apply(snapshot([thread(.idle)]), at: at(301))
-        XCTAssertEqual(row(state)?.phase, .completed, "an unreadable session cannot hold a row forever")
+        XCTAssertEqual(row(state)?.phase, .unknown, "missing evidence cannot prove an ending")
+        XCTAssertTrue(state.turnResultsToRead().isEmpty)
+        state.apply(snapshot([thread(.idle)]), at: at(340))
+        XCTAssertEqual(row(state)?.phase, .unknown)
+        state.apply(snapshot([thread(.idle)], sessions: [worker(.working)]), at: at(360))
+        XCTAssertEqual(row(state)?.phase, .running, "fresh evidence recovers the run")
+        state.apply(snapshot([thread(.resolved, unread: true, reply: 380)]), at: at(400))
+        XCTAssertEqual(row(state)?.phase, .completed)
+    }
+
+    func testAnUnreadBoundSessionCannotBeReplacedByAnotherSessionsIdleState() {
+        var state = ClaudeCloudProjectState()
+        let ids = ["cse_worker1", "cse_worker2"]
+        state.apply(snapshot([thread(.working, working: true, sessions: ids)]), at: at(0))
+        state.apply(snapshot([thread(.idle, sessions: ids)], sessions: [worker(.completed)]), at: at(301))
+        XCTAssertEqual(row(state)?.phase, .unknown)
+        state.apply(snapshot([thread(.idle, sessions: ids)], sessions: [worker(.completed),
+            ClaudeCloudSession(id: "cse_worker2", worker: .idle, bucket: .working)]), at: at(320))
+        XCTAssertEqual(row(state)?.phase, .running)
     }
 
     func testATurnStoppedWithoutFinishingAsksForAReplyAndKeepsItsCard() throws {
@@ -601,6 +619,34 @@ final class ClaudeCloudProjectTests: XCTestCase {
                        "a session Desktop runs here is not read")
     }
 
+    func testSessionReadBudgetRotatesWithoutInventingAnEnding() {
+        var state = ClaudeCloudProjectState()
+        let active = (0..<17).map { index in
+            thread(.working, working: true, sessions: ["cse_worker\(index)x"], id: "cmsg_thread\(index)x")
+        }
+        state.apply(snapshot(active), at: at(0))
+        let idle = (0..<17).map { index in
+            thread(.idle, sessions: ["cse_worker\(index)x"], id: "cmsg_thread\(index)x")
+        }
+        var read = Set<String>()
+        for offset in stride(from: 20, through: 320, by: 20) {
+            let wanted = state.sessionsToRead(projects: [project], threads: [project.id: idle], at: at(Double(offset)))
+            XCTAssertLessThanOrEqual(wanted.count, 16)
+            read.formUnion(wanted)
+            state.apply(snapshot(idle, sessions: wanted.map { ClaudeCloudSession(id: $0, worker: .idle, bucket: .working) }), at: at(Double(offset)))
+            XCTAssertTrue(state.activities.filter { $0.claudeCloud?.role == .thread }.allSatisfy { $0.phase == .running })
+        }
+        XCTAssertTrue(Set(idle.flatMap(\.sessionIDs)).isSubset(of: read))
+
+        let bound = (0..<5).map { "cse_bound\($0)x" }
+        let shared = thread(.working, working: true, sessions: bound)
+        var sharedRead = Set<String>()
+        for step in 0..<3 {
+            sharedRead.formUnion(state.sessionsToRead(projects: [project], threads: [project.id: [shared]], at: at(Double(step)), limit: 2))
+        }
+        XCTAssertTrue(Set(bound).isSubset(of: sharedRead), "the fourth bound session must get a turn too")
+    }
+
     func testPollingFollowsWhatIsHappening() {
         XCTAssertEqual(ClaudeCloudPolling.delay(running: true, waiting: false, recentlyActive: false, expanded: false, failures: 0), 20)
         XCTAssertEqual(ClaudeCloudPolling.delay(running: false, waiting: false, recentlyActive: false, expanded: true, failures: 0), 30)
@@ -745,6 +791,20 @@ final class ClaudeCloudProjectTests: XCTestCase {
     private actor Requests {
         var paths: [String] = []
         func add(_ path: String) { paths.append(path) }
+    }
+    private actor ReplyGate {
+        private var reached = false
+        private var released = false
+        private var ready: CheckedContinuation<Void, Never>?
+        private var reply: CheckedContinuation<Void, Never>?
+        func pause() async {
+            reached = true; ready?.resume(); ready = nil
+            if !released { await withCheckedContinuation { reply = $0 } }
+        }
+        func waitUntilReached() async {
+            if !reached { await withCheckedContinuation { ready = $0 } }
+        }
+        func release() { released = true; reply?.resume(); reply = nil }
     }
     private final class Box: @unchecked Sendable {
         private let lock = NSLock(); private var value: Date
@@ -915,5 +975,98 @@ final class ClaudeCloudProjectTests: XCTestCase {
         session.value = nil
         _ = await monitor.pollOnce()
         XCTAssertTrue(sink.activities.isEmpty)
+    }
+
+    func testSessionAndOrganizationChangesDiscardInFlightRepliesAndResults() async throws {
+        final class Binding: @unchecked Sendable {
+            var cookies: ClaudeWebSession? = ClaudeCloudProjectTests.cookies()
+            var organization: String?
+            var ended = false
+            var changed = false
+        }
+        final class Sink: @unchecked Sendable { var activities: [SessionActivity] = [] }
+        for path in ["/threads", "/events"] {
+            for change in 0..<3 {
+                let binding = Binding(), sink = Sink(), clock = Box(base)
+                let monitor = ClaudeCloudProjectMonitor(cookieProvider: { binding.cookies }, selectedOrganization: { binding.organization }, transport: { [self] request in
+                    let target = request.url!.path
+                    let stamp = ISO8601DateFormatter().string(from: clock.date)
+                    if binding.ended, target.hasSuffix(path), !binding.changed {
+                        binding.changed = true
+                        switch change {
+                        case 0: binding.cookies = nil
+                        case 1:
+                            let token = "sk-ant-sid01-abcdefghijklmnop2"
+                            binding.cookies = ClaudeWebSession(cookieHeader: "sessionKey=" + token, sessionHash: ClaudeQuotaDecoder.digest(token), organizationID: Self.cookies().organizationID)
+                        default: binding.organization = "00000000-0000-4000-8000-000000000002"
+                        }
+                    }
+                    let body: [String: Any]
+                    if target == "/v1/code/channels" { body = ["channels": [["id": "chan_project1", "name": "Launch plan"]]] }
+                    else if target.hasSuffix("/threads") {
+                        body = ["sections": [["data": [["id": "cmsg_thread1", "thread_status": binding.ended ? "resolved" : "working",
+                            "has_unread": binding.ended, "last_reply_at": stamp, "bound_sessions": [["id": "cse_worker1"]]]]]]]
+                    } else if target.hasSuffix("/events") {
+                        body = ["data": [["event_type": "result", "sequence_num": 3, "event_id": "event3", "created_at": stamp,
+                            "payload": ["usage": ["output_tokens": 1200], "process_wall_ms_streaming": 20000]]]]
+                    } else { body = ["session": ["id": "cse_worker1", "worker_status": binding.ended ? "idle" : "running"]] }
+                    return (try JSONSerialization.data(withJSONObject: body), self.response(request.url, 200))
+                }, now: { clock.date })
+                await monitor.observe { values, _, _ in sink.activities = values }
+                _ = await monitor.pollOnce()
+                XCTAssertEqual(sink.activities.first?.phase, .running)
+                binding.ended = true; clock.date = at(20)
+                _ = await monitor.pollOnce()
+                XCTAssertTrue(binding.changed)
+                XCTAssertTrue(sink.activities.isEmpty, "a changed binding discards \(path), including an already projected ending")
+                await monitor.shutdown()
+            }
+        }
+    }
+
+    func testChangingAccountsDoesNotInheritThePreviousAccountsNotEnabledBackoff() async throws {
+        final class Binding: @unchecked Sendable {
+            var cookies = ClaudeCloudProjectTests.cookies()
+            var enabled = false
+        }
+        final class Sink: @unchecked Sendable { var status: RuntimeStreamStatus? }
+        let binding = Binding(), sink = Sink()
+        let monitor = ClaudeCloudProjectMonitor(cookieProvider: { binding.cookies }, transport: { [self] request in
+            let data = try JSONSerialization.data(withJSONObject: ["channels": []])
+            return (data, self.response(request.url, binding.enabled ? 200 : 404))
+        }, now: { [base] in base })
+        await monitor.observe { _, status, _ in sink.status = status }
+        let first = await monitor.pollOnce()
+        XCTAssertEqual(first, 1800)
+        let token = "sk-ant-sid01-abcdefghijklmnop2"
+        binding.cookies = ClaudeWebSession(cookieHeader: "sessionKey=" + token, sessionHash: ClaudeQuotaDecoder.digest(token), organizationID: Self.cookies().organizationID)
+        binding.enabled = true
+        _ = await monitor.pollOnce()
+        XCTAssertEqual(sink.status?.connected, true)
+        await monitor.shutdown()
+    }
+
+    func testRefreshAndSuspendInvalidateAnOutstandingPoll() async throws {
+        final class Sink: @unchecked Sendable { var publications = 0 }
+        for suspend in [false, true] {
+            let gate = ReplyGate(), sink = Sink()
+            let monitor = ClaudeCloudProjectMonitor(cookieProvider: { Self.cookies() }, transport: { [self] request in
+                let body: [String: Any]
+                if request.url!.path == "/v1/code/channels" { body = ["channels": [["id": "chan_project1", "name": "Launch plan"]]] }
+                else {
+                    await gate.pause()
+                    body = ["sections": [["data": [["id": "cmsg_thread1", "thread_status": "working"]]]]]
+                }
+                return (try JSONSerialization.data(withJSONObject: body), self.response(request.url, 200))
+            }, now: { [base] in base })
+            await monitor.observe { _, _, _ in sink.publications += 1 }
+            let poll = Task { await monitor.pollOnce() }
+            await gate.waitUntilReached()
+            if suspend { await monitor.suspend() } else { await monitor.refresh() }
+            await gate.release()
+            _ = await poll.value
+            XCTAssertEqual(sink.publications, 0, "a replaced poll must not publish or report a connection failure")
+            await monitor.shutdown()
+        }
     }
 }

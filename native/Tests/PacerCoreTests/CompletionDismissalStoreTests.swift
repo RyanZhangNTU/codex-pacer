@@ -55,6 +55,35 @@ final class CompletionDismissalStoreTests: XCTestCase {
         XCTAssertEqual(permissions.intValue & 0o777, 0o600)
     }
 
+    func testCloudSettlementRecordsAreBoundedValidatedAndKeepNoIdentifiers() throws {
+        let file = try fixture(), store = CompletionDismissalStore(fileURL: file)
+        let digest = CompletionDismissalStore.digest(["synthetic-turn"])
+        let endings = (0..<140).map { index in
+            CompletionDismissalStore.CloudEnding(source: CompletionDismissalStore.digest(["chan_private-project", "cmsg_private-thread", String(index)]),
+                mark: epoch.addingTimeInterval(Double(index)))
+        }
+        let bounded = CompletionDismissalStore.boundedCloudEndings(endings)
+        XCTAssertLessThan(bounded.count, endings.count)
+        XCTAssertTrue(store.saveDigests([digest], cloudEndings: bounded))
+        XCTAssertEqual(store.load().cloudEndings, bounded)
+        let data = try Data(contentsOf: file), text = String(decoding: data, as: UTF8.self)
+        XCTAssertFalse(text.contains("private-project"))
+        XCTAssertFalse(text.contains("private-thread"))
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let rows = try XCTUnwrap(envelope["cloudEndings"] as? [[String: Any]])
+        XCTAssertTrue(rows.allSatisfy { Set($0.keys) == ["source", "mark"] && ($0["source"] as? String)?.count == 64 })
+
+        XCTAssertFalse(store.saveDigests([digest], cloudEndings: endings))
+        XCTAssertFalse(store.saveDigests([digest], cloudEndings: [bounded[0], bounded[0]]))
+        XCTAssertFalse(store.saveDigests([digest], cloudEndings: [.init(source: "cmsg_unhashed", mark: epoch)]))
+        XCTAssertEqual(store.load().cloudEndings, bounded, "invalid writes preserve the last valid file")
+
+        let invalid: [String: Any] = ["version": 1, "digests": [digest], "cloudEndings": [["source": "cmsg_unhashed", "mark": 0]]]
+        try JSONSerialization.data(withJSONObject: invalid).write(to: file)
+        XCTAssertTrue(store.load().digests.isEmpty)
+        XCTAssertTrue(store.load().cloudEndings.isEmpty)
+    }
+
     func testExplicitTurnAcknowledgmentIgnoresReplayDatesAndLateMetadataButNotNewEnding() throws {
         let file = try fixture()
         for provider in AgentProvider.allCases {

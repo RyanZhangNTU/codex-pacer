@@ -123,6 +123,87 @@ final class ClaudeCloudDisplayTests: XCTestCase {
         XCTAssertTrue(model.pendingCompletions.isEmpty)
     }
 
+    func testCloudSwitchHidesRetainedEndingsAndRequestsWithoutAcknowledgingThem() async throws {
+        let fixture = try fixture(), model = fixture.model
+        let start = Date().addingTimeInterval(-30), ended = start.addingTimeInterval(20)
+        var state = ClaudeCloudProjectState()
+        publish(&state, to: model, [thread(.working, working: true, reply: start)], at: start)
+        publish(&state, to: model, [thread(.resolved, unread: true, reply: ended)], at: ended)
+        let card = try XCTUnwrap(row(model))
+        XCTAssertEqual(model.pendingCompletions.count, 1)
+
+        fixture.defaults.set(false, forKey: IslandModel.showsClaudeCloudProjectsKey)
+        model.applySettings(sourceChanged: false)
+        model.receiveClaudeUpdate([], statuses: [:], requests: [])
+        XCTAssertFalse(model.visibleActivities.contains { $0.claudeCloud != nil })
+        XCTAssertTrue(model.pendingCompletions.isEmpty)
+        XCTAssertTrue(model.completionInbox.isUnread(card), "hiding is not acknowledgment")
+
+        // Even a final callback racing the switch cannot put a request back.
+        let request = PendingAttentionRequest(id: "cloud-decision", threadID: "cmsg_decision1", sourceHostID: source,
+            sourceName: project.name, kind: .decision, detectedAt: Date(), provider: .claude,
+            claudeCloud: ClaudeCloudContext(projectID: project.id, projectName: project.name, role: .thread))
+        model.receiveClaudeUpdate(state.activities, statuses: [:], requests: [request])
+        XCTAssertTrue(model.pendingInputRequests.isEmpty)
+        XCTAssertTrue(model.visibleActivities.isEmpty)
+
+        fixture.defaults.set(true, forKey: IslandModel.showsClaudeCloudProjectsKey)
+        model.applySettings(sourceChanged: false)
+        var replay = ClaudeCloudProjectState()
+        replay.apply(ClaudeCloudSnapshot(projects: [project], threads: [project.id: [thread(.resolved, unread: true, reply: ended)]]), at: Date())
+        model.receiveClaudeUpdate(replay.activities, statuses: [:], requests: [])
+        XCTAssertTrue(model.visibleActivities.contains { $0.id == card.id })
+        XCTAssertTrue(model.isUnreadCompletion(card))
+        XCTAssertEqual(row(model)?.turnStartedAt, card.turnStartedAt, "a baseline cannot replace the observed duration or extend retention")
+        await model.shutdown()
+    }
+
+    func testDismissalSurvivesIdleSettlingIntoResolvedBeforeOrAfterARelaunch() throws {
+        for dismissBeforeSettling in [false, true] {
+            for relaunchBeforeSettling in [false, true] where dismissBeforeSettling || !relaunchBeforeSettling {
+                let fixture = try fixture(), model = fixture.model
+                let start = Date().addingTimeInterval(-120), ended = start.addingTimeInterval(20), resolved = ended.addingTimeInterval(24)
+                var state = ClaudeCloudProjectState()
+                publish(&state, to: model, [thread(.working, working: true, reply: start)], at: start)
+                publish(&state, to: model, [thread(.idle, reply: ended)], at: ended,
+                    sessions: [ClaudeCloudSession(id: "cse_worker1", worker: .idle, bucket: .reviewReady, turnCategory: .reviewReady)])
+                let initialTurn = try XCTUnwrap(row(model)?.turnID)
+                if dismissBeforeSettling { model.markAllRead(); XCTAssertNil(row(model)) }
+                if !relaunchBeforeSettling {
+                    publish(&state, to: model, [thread(.resolved, unread: true, reply: resolved)], at: resolved)
+                    XCTAssertEqual(state.activities.first { $0.threadID == threadID }?.turnID, initialTurn, "settling cannot replay a notice")
+                    if !dismissBeforeSettling { model.markAllRead() }
+                    XCTAssertNil(row(model))
+                }
+                var replay = ClaudeCloudProjectState()
+                replay.apply(ClaudeCloudSnapshot(projects: [project], threads: [project.id: [thread(.resolved, unread: true, reply: resolved)]]), at: Date())
+                let relaunched = self.model(fixture.defaults, fixture.store)
+                relaunched.receiveClaudeUpdate(replay.activities, statuses: [:], requests: replay.attention)
+                XCTAssertNil(row(relaunched), "a dismissal holds even when resolved arrives while the app is closed")
+                XCTAssertTrue(relaunched.pendingCompletions.isEmpty)
+            }
+        }
+    }
+
+    func testAnObservedNewRunRevokesAnIdleSettlementsAcknowledgment() throws {
+        let fixture = try fixture(), model = fixture.model
+        let start = Date().addingTimeInterval(-150), ended = start.addingTimeInterval(20), next = ended.addingTimeInterval(60)
+        var state = ClaudeCloudProjectState()
+        publish(&state, to: model, [thread(.working, working: true, reply: start)], at: start)
+        publish(&state, to: model, [thread(.idle, reply: ended)], at: ended,
+            sessions: [ClaudeCloudSession(id: "cse_worker1", worker: .idle, bucket: .reviewReady)])
+        model.markAllRead()
+        publish(&state, to: model, [thread(.working, working: true, reply: ended)], at: next)
+        publish(&state, to: model, [thread(.resolved, unread: true, reply: next.addingTimeInterval(20))], at: next.addingTimeInterval(20))
+        XCTAssertEqual(model.pendingCompletions.count, 1, "the earlier idle dismissal cannot acknowledge another run")
+
+        var replay = ClaudeCloudProjectState()
+        replay.apply(ClaudeCloudSnapshot(projects: [project], threads: [project.id: [thread(.resolved, unread: true, reply: next.addingTimeInterval(20))]]), at: Date())
+        let relaunched = self.model(fixture.defaults, fixture.store)
+        relaunched.receiveClaudeUpdate(replay.activities, statuses: [:], requests: [])
+        XCTAssertNotNil(row(relaunched), "the revoked settlement stays revoked on disk")
+    }
+
     func testAnEndedCardCarriesItsSpeedButTheHeaderTotalDoesNot() throws {
         let fixture = try fixture(), model = fixture.model
         let start = Date().addingTimeInterval(-300), ended = start.addingTimeInterval(60)
