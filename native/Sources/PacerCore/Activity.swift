@@ -14,13 +14,16 @@ public enum ActivityPhase: String, Codable, Sendable {
 }
 
 public enum ActivityStage: String, Sendable {
-    case starting, thinking, tool, responding
+    /// `working` and `coordinating` are all a poll of a cloud Project can tell.
+    case starting, thinking, tool, responding, working, coordinating
     public var label: String {
         switch self {
         case .starting: return L10n.text("activity.starting")
         case .thinking: return L10n.text("activity.thinking")
         case .tool: return L10n.text("activity.tool")
         case .responding: return L10n.text("activity.responding")
+        case .working: return L10n.text("activity.working")
+        case .coordinating: return L10n.text("activity.coordinating")
         }
     }
 }
@@ -42,9 +45,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var codexOriginAt: Date?
     public private(set) var rolloutURL: URL?
     public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
+    /// Set on tasks that run in a Claude cloud Project.
+    public private(set) var claudeCloud: ClaudeCloudContext?
+    /// The same place on claude.ai, for when Claude Desktop cannot open it.
+    public var claudeCloudWebURL: URL? { claudeCloud?.url(session: threadID, web: true) }
     public var threadURL: URL? {
         if provider == .deepseek { return nil }
         if provider == .claude {
+            if let claudeCloud { return claudeCloud.url(session: threadID, web: false) }
             guard sourceHostID == nil, let desktopSessionID else { return nil }
             var url = URLComponents()
             url.scheme = "claude"; url.host = "code"; url.path = "/continue"
@@ -65,6 +73,19 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         return url.url
     }
+    /// A cloud thread can say more than a turn ending does.
+    public var endingLabel: String {
+        if claudeCloud?.status == .resolved { return L10n.text("activity.resolved") }
+        return L10n.text(claudeCloud?.awaitsReply == true ? "attention.input" : "activity.turn_finished")
+    }
+    mutating func setClaudeCloud(_ context: ClaudeCloudContext) {
+        guard provider == .claude, sourceHostID == ClaudeCloudProjectState.sourceID else { return }
+        claudeCloud = context; project = context.projectName
+        if phase == .running { stage = context.role == .coordinator ? .coordinating : .working }
+    }
+    /// An estimate from the reply a cloud thread is writing, shown only while it runs.
+    private var cloudReplyRate: OutputEstimate?
+    mutating func setCloudReplyRate(_ rate: OutputEstimate?) { cloudReplyRate = rate }
     public private(set) var phase: ActivityPhase = .unknown
     public private(set) var turnID: String?
     public private(set) var turnStartedAt: Date?
@@ -191,11 +212,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     /// Display continuity is independent of the new turn's accounting baseline.
     public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
-        guard let sample = lastMeasuredRate, now >= sample.reportedAt else { return nil }
+        // A cloud run reports no usage, only the reply it is writing, and an earlier turn's speed would read as live.
+        let measured = claudeCloud != nil && phase == .running ? cloudReplyRate : lastMeasuredRate
+        guard let sample = measured, now >= sample.reportedAt else { return nil }
         let fresh = now < sample.expiresAt
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
     public func displayedRateIsEstimated(at now: Date) -> Bool {
+        (claudeCloud != nil && phase == .running) ||
         !lastMeasuredExact || projectedRate || lastMeasuredTurnID != turnID || stage == .tool ||
             performanceMeter.hasPendingOutput || displayedOutputEstimate(at: now)?.isFresh != true
     }
@@ -205,6 +229,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
         if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
         if rolloutURL == nil { rolloutURL = other.rolloutURL }
+        if claudeCloud == nil { claudeCloud = other.claudeCloud }
         // Model metadata belongs to a turn. An older card or another source's
         // previous turn must not supply a model for the current one.
         let sameTurn = turnID != nil && turnID == other.turnID
@@ -383,6 +408,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     public func outputEstimate(at now: Date) -> OutputEstimate? {
         guard phase == .running else { return nil }
+        if claudeCloud != nil { return displayedOutputEstimate(at: now) }
         let legacy = phaseAwareRate ? generationRate.estimate(at: now) : outputRate.estimate(at: now)
         if legacy?.value == 0 { return legacy }
         if let sample = responsePerformance, now >= sample.completedAt {
@@ -392,6 +418,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return legacy
     }
     public var rateExpiresAt: Date? {
+        if claudeCloud != nil, phase == .running { return cloudReplyRate?.expiresAt }
         if let sample = lastMeasuredRate { return sample.expiresAt }
         guard phase == .running else { return nil }
         if let sample = responsePerformance { return sample.completedAt.addingTimeInterval(OutputEstimate.freshnessInterval) }

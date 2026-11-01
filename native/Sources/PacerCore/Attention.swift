@@ -42,7 +42,7 @@ public struct AttentionPolicy: Sendable {
             return !pendingRequests.contains(identity) && emitted.insert(identity).inserted
         }.map { request in
             IslandNotice(id: "request:" + request.id, kind: .waitingForInput,
-                title: L10n.text(request.kind == .approval ? "attention.approval" : "attention.input"),
+                title: request.kind.label,
                 detail: request.sourceName ?? L10n.text("activity.local_task"))
         }
     }
@@ -107,7 +107,7 @@ public struct AttentionPolicy: Sendable {
             default: return nil
             }
             return IslandNotice(id: "\(activity.id):\(activity.turnID ?? ""):\(kind.rawValue):\(changed.timeIntervalSince1970)",
-                kind: kind, title: activity.turnFailed ? L10n.text("activity.failed") : kind == .completed ? L10n.text("activity.turn_finished") : activity.phase.label, detail: activity.project)
+                kind: kind, title: activity.turnFailed ? L10n.text("activity.failed") : kind == .completed ? activity.endingLabel : activity.phase.label, detail: activity.project)
         }
     }
 }

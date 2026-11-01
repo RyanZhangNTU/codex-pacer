@@ -109,6 +109,8 @@ Codex quota comes from your own Codex sign-in through the CLI. API-key or Amazon
 
 **Sessions from other apps.** Apps that embed Codex, such as a Zotero plugin, show their sessions with the app's name. To hide those sessions and their reminders, turn off **Settings → Codex → Show Codex Sessions from Other Apps**. Codex app, Terminal and VS Code sessions always show. Translations from the Zotero Agent plugin are never shown.
 
+**Cloud Projects.** Threads and coordinators in your Claude Projects run in the cloud, so Pacer reads their status with the claude.ai session above. A thread appears as its own task with a cloud icon and the project's name: **Working**, with a count when more sessions share it, then **Decision needed**, **Reply needed** or **Approval needed** while it waits, and **Resolved**, **Turn finished** or **Task failed** at the end. The coordinator appears as **Project coordinator** while it answers; handing work to threads or reporting on one that just ended doesn't count as an ending, so you are reminded once, by the thread. Reading a resolved thread in Claude clears its card here. A **Reply needed** card stays until you click it or the thread runs again, because Claude marks nothing as read for a thread that stopped to ask you. Click a row to open it in Claude Desktop, or on claude.ai without it. Pacer checks every 20 seconds while something runs and up to every 2 minutes otherwise, so most changes can take that long to appear; a new run in a recently active Project shows up within about 10 seconds. While a thread writes a reply, its row shows an estimated speed, which does not update during thinking or tool calls. A thread's ending card shows that turn's real speed and time to first output, and the coordinator has neither. To stop following Projects, turn off **Settings → Claude → Show Claude cloud Projects**. This also hides retained cards and reminders without marking them read.
+
 ## Claude Code
 
 Pacer uses `~/.claude`, or `CLAUDE_CONFIG_DIR` when set; choose another folder under **Settings → Claude → Custom locations**.
@@ -155,10 +157,11 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Appearance | Solid black or Liquid Glass, Notch or Custom with its screen position (center or a corner strip), which display, and whether to show in full-screen spaces. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, which module each quota ring shows, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings with DeepSeek's balance, spike and budget lines, system notifications, and how long ended tasks stay. |
-| Codex, Claude, DeepSeek | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in, each service's sessions from other apps, quota history and details; for DeepSeek, sign-in or API key and the balance source, Balance or Budget mode, the expanded panel, what speed counts, the turn-cost estimate and the peak hours of the next working day in your time zone. |
+| Codex, Claude, DeepSeek | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in and cloud Projects, each service's sessions from other apps, quota history and details; for DeepSeek, sign-in or API key and the balance source, Balance or Budget mode, the expanded panel, what speed counts, the turn-cost estimate and the peak hours of the next working day in your time zone. |
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
 | What's New | The highlights of every update since 3.1, newest first, with the same switches as the update note and a link to the full release notes. |
 | Help | One sentence on each mark of the island, with a switch for each module's details, the welcome guide, and links to this guide and the issue tracker. |
+| Support Pacer | A thank-you, a link to star Pacer, feature-request and bug-report forms (we look first at those from people who've starred it), sharing, and a WeChat code or Buy Me a Coffee link to buy us a coffee. |
 
 **Open at Login** uses the macOS login item, so it also appears in **System Settings → General → Login Items**. If Pacer is switched off there, Settings says so and offers a **Login Items** button to allow it again.
 
@@ -168,7 +171,7 @@ Everything that needs attention already shows on the collapsed bar. Turn on **Se
 
 ## Privacy and stored data
 
-- Pacer has no account and sends no analytics. It connects only to your SSH hosts, the services' quota endpoints (Codex through your CLI, Claude at claude.ai, DeepSeek at platform.deepseek.com or api.deepseek.com) and GitHub for updates.
+- Pacer has no account and sends no analytics. It connects only to your SSH hosts, the services' quota endpoints (Codex through your CLI, Claude at claude.ai, which also supplies cloud Project status, DeepSeek at platform.deepseek.com or api.deepseek.com) and GitHub for updates.
 - From session logs it keeps task titles, stages, timing and token counts, never the content of prompts, responses or tool output.
 - Preferences are stored under `com.codexpacer.app`, including eight days of DeepSeek balance readings (amounts and times only). Quota history and a short record of the ended tasks you have opened live in `~/Library/Application Support/CodexPacerIsland`.
 - *Hide Project Names* replaces task titles on the island and in notifications, which helps when sharing your screen.

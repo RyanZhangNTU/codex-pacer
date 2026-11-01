@@ -24,6 +24,7 @@ enum ClaudeConversationOpener {
                                 recordedHost: HostApplication? = nil) async -> ActivityOpenOutcome {
         guard activity.provider == .claude, let session = activity.threadID,
               AgentProvider.claude.validatedSessionID(session) != nil else { return .failed(L10n.text("activity.open_failed")) }
+        if activity.claudeCloud != nil { return await openCloud(activity) }
         guard let source = activity.sourceHostID else {
             // The process holding the session now outranks an earlier record.
             let live = await Task.detached(priority: .userInitiated) {
@@ -62,6 +63,13 @@ enum ClaudeConversationOpener {
             }
             return .dispatchedTerminal
         } catch { return .failed(L10n.text("activity.open_failed")) }
+    }
+
+    /// A cloud Project opens in Claude Desktop, or on claude.ai without it.
+    @MainActor private static func openCloud(_ activity: SessionActivity) async -> ActivityOpenOutcome {
+        if let destination = activity.threadURL, await openDesktop(destination) == .openedConversation { return .openedConversation }
+        guard let page = activity.claudeCloudWebURL, NSWorkspace.shared.open(page) else { return .failed(L10n.text("activity.open_failed")) }
+        return .openedConversation
     }
 
     @MainActor static func activate(_ host: HostApplication) async -> ActivityOpenOutcome {

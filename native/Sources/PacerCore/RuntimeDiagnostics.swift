@@ -33,6 +33,8 @@ public enum RuntimeDiagnostics {
             var entry: [String: Any] = ["phase": value.phase.rawValue, "live": value.hasLiveEvidence,
                 "started": value.liveTurnStarted]
             entry["thread"] = identifier(value.threadID); entry["turn"] = identifier(value.turnID)
+            entry["rate"] = value.displayedOutputEstimate(at: Date())?.value
+            entry["firstOutput"] = value.firstTokenLatency
             entry["changedAt"] = value.phaseChangedAt?.timeIntervalSince1970
             entry["observedAt"] = value.lastObserved?.timeIntervalSince1970
             return entry

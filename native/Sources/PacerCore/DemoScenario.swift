@@ -75,6 +75,41 @@ public enum DemoScenario {
         return state.activities[0]
     }
 
+    /// A cloud Project's coordinator and threads, through the same projection as real polls.
+    public static func claudeCloud(stage: DemoTaskStage, at now: Date) -> (activities: [SessionActivity], attention: [PendingAttentionRequest]) {
+        let project = ClaudeCloudProject(id: "chan_demoproject", name: L10n.text("demo.cloud_project"), coordinatorSessionID: "cse_democoordinator")
+        func thread(_ id: String, _ title: String, _ status: ClaudeCloudThreadStatus, decisions: Int = 0, workers: Int = 1, ended: Bool = false) -> ClaudeCloudThread {
+            ClaudeCloudThread(id: id, projectID: project.id, status: status, isWorking: status == .working, hasUnread: ended,
+                lastReplyAt: now.addingTimeInterval(ended ? -1 : -300), title: L10n.text(title), sessionIDs: ["cse_" + id.dropFirst(5)],
+                openDecisions: decisions, workingSessions: status == .working ? workers : 0)
+        }
+        let first = "cmsg_demothread1", second = "cmsg_demothread2", title = "demo.cloud_announcement", other = "demo.cloud_changelog"
+        var threads = [thread(first, title, .working), thread(second, other, .working, workers: 2)]
+        var coordinator = ClaudeCloudSession.Worker.idle
+        switch stage {
+        case .thinking: coordinator = .running; threads[1] = thread(second, other, .idle)
+        case .tool: coordinator = .running; threads[0] = thread(first, title, .needsInput, decisions: 1)
+        case .responding: break
+        case .completed: threads[0] = thread(first, title, .resolved, ended: true)
+        }
+        func sessions(_ worker: ClaudeCloudSession.Worker) -> [String: ClaudeCloudSession] {
+            var values = [project.coordinatorSessionID!: ClaudeCloudSession(id: project.coordinatorSessionID!, worker: worker, lastEventAt: now, modelName: "claude-opus-5-5", effort: "high")]
+            for id in threads.flatMap(\.sessionIDs) { values[id] = ClaudeCloudSession(id: id, worker: .running, modelName: "claude-sonnet-5-5", effort: "medium") }
+            return values
+        }
+        var state = ClaudeCloudProjectState()
+        state.apply(ClaudeCloudSnapshot(projects: [project], threads: [project.id: [thread(first, title, .working), thread(second, other, .working)]], sessions: sessions(.idle)),
+                    at: now.addingTimeInterval(-40))
+        state.apply(ClaudeCloudSnapshot(projects: [project], threads: [project.id: threads], sessions: sessions(coordinator)), at: now)
+        state.applyTurnResult(ClaudeCloudTurnResult(id: "demo", completedAt: now, outputTokens: 1860, streaming: 27.8, firstOutput: 2), thread: first, at: now)
+        // Whichever thread is still running is writing its reply.
+        let writer = stage == .tool || stage == .completed ? second : first
+        for step in 0...8 {
+            state.applyReplyProgress(thread: writer, block: "demo", tokens: Double(step) * 40, sentAt: now.addingTimeInterval(Double(step - 8) / 2), at: now)
+        }
+        return (state.activities, state.attention)
+    }
+
     /// A DeepSeek Harness task beside the others, with a settled response so
     /// its speed, first-output time and estimated cost appear.
     static let demoDeepSeekSession = "00000000-0000-4000-8000-000000000004"
