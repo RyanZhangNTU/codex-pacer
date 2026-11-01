@@ -136,12 +136,22 @@ public enum ClaudeApplicationResolver {
         private enum Keys: String, CodingKey { case distribution }
         init(from decoder: Decoder) throws { _ = try decoder.container(keyedBy: Keys.self) }
     }
+    private struct DesktopRemoteSpawn: Decodable, Sendable { let ccrSessionId: String? }
     private struct DesktopSessionMetadata: Decodable, Sendable {
         let sessionId: String
         let cliSessionId: String?
         let sshConfig: DesktopSSHConfig?
         let wslConfig: DesktopContextMarker?
+        let bridgeSessionIds: [String]?
+        let remoteControlSpawn: DesktopRemoteSpawn?
         var canonicalCLI: String? { cliSessionId.flatMap(UUID.init(uuidString:))?.uuidString.lowercased() }
+    }
+
+    /// Cloud IDs of the sessions Desktop runs on this Mac, without their type
+    /// prefix: a Project thread bound to one is already followed as a local task.
+    public static func desktopCloudSessionIDs(userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> Set<String> {
+        Set(desktopMetadata(userHome: userHome).flatMap { ($0.bridgeSessionIds ?? []) + [$0.remoteControlSpawn?.ccrSessionId].compactMap { $0 } }
+            .map(ClaudeCloudProjectState.bareID))
     }
 
     private static func desktopMetadata(userHome: URL) -> [DesktopSessionMetadata] {

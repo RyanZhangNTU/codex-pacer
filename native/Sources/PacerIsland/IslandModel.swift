@@ -185,6 +185,7 @@ final class IslandModel: ObservableObject {
         }
     }
     func taskSourceName(_ activity: SessionActivity) -> String? {
+        if let cloud = activity.claudeCloud { return hideProjects ? L10n.text("connections.kind.claude_cloud") : cloud.projectName }
         if activity.sourceHostID == nil, activity.provider == .claude || activity.launchedByEmbeddingApp {
             return hostApplication(for: activity).flatMap { activity.provider == .claude && $0.isClaudeDesktop ? nil : $0.name }
         }
@@ -450,6 +451,7 @@ final class IslandModel: ObservableObject {
             return conversationTarget(for: activity)?.threadID.flatMap(UUID.init(uuidString:)) != nil
         }
         if activity.provider == .claude {
+            if activity.claudeCloud != nil { return true }
             guard let target = conversationTarget(for: activity) else { return false }
             // A local session whose app is unknown still opens, to report that.
             return demo || target.threadID.flatMap(UUID.init(uuidString:)) != nil ||
@@ -515,6 +517,9 @@ final class IslandModel: ObservableObject {
     private let historyStore: QuotaHistoryStore
     private let claudeHistoryStore: QuotaHistoryStore
     private let claudeMonitor: ClaudeActivityMonitor
+    /// Set by the app, so tests and demos never reach claude.ai.
+    var makeClaudeCloudMonitor: (@MainActor () -> ClaudeCloudProjectMonitor)?
+    private var claudeCloudMonitor: ClaudeCloudProjectMonitor?
     private let claudeRemoteSetup: ClaudeRemoteSetup
     private var claudeDiscoveryTask: Task<Void, Never>?
     private var claudeDiscoveryRevision = 0
@@ -732,7 +737,7 @@ final class IslandModel: ObservableObject {
     var pendingInputRequests: [PendingAttentionRequest] { attentionRequests }
     var headerStatus: String {
         if let first = pendingInputRequests.first {
-            return L10n.text(first.kind == .approval ? "attention.approval" : "attention.input")
+            return first.kind.label
         }
         if !pendingCompletions.isEmpty { return completionSummary }
         if let first = waiting.first { return L10n.text(first.waitingForApproval ? "attention.approval" : "attention.input") }
@@ -744,7 +749,7 @@ final class IslandModel: ObservableObject {
             switch task.stage {
             case .tool: return L10n.text("activity.tool_compact")
             case .responding: return L10n.text("activity.responding_compact")
-            case .thinking, .starting: return task.stage.label
+            case .thinking, .starting, .working, .coordinating: return task.stage.label
             }
         }
         return count == 0 ? L10n.text("activity.idle") : L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact", count > 99 ? "99+" : String(count))
@@ -755,7 +760,7 @@ final class IslandModel: ObservableObject {
         switch latest.stage {
         case .tool: return L10n.text("activity.tool_compact")
         case .responding: return L10n.text("activity.responding_compact")
-        case .thinking, .starting: return latest.stage.label
+        case .thinking, .starting, .working, .coordinating: return latest.stage.label
         }
     }
     private var latestRunningTask: SessionActivity? {
@@ -794,6 +799,7 @@ final class IslandModel: ObservableObject {
         let ids = Set(group?.members.map(\.id) ?? [activity.id])
         let matching = pendingInputRequests.filter { ids.contains($0.activity.id) }
         if matching.contains(where: { $0.kind == .approval }) { return .approval }
+        if matching.contains(where: { $0.kind == .decision }) { return .decision }
         if !matching.isEmpty { return .input }
         let waiting = group?.members.first { $0.phase == .waitingForInput } ?? (activity.phase == .waitingForInput ? activity : nil)
         return waiting.map { $0.waitingForApproval ? .approval : .input }
@@ -868,6 +874,10 @@ final class IslandModel: ObservableObject {
     var showsRate: Bool { !running.isEmpty }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.object(forKey: "monitorRemoteControl") == nil || defaults.bool(forKey: "monitorRemoteControl") }
+    static let showsClaudeCloudProjectsKey = "showClaudeCloudProjects"
+    var showsClaudeCloudProjects: Bool {
+        defaults.object(forKey: Self.showsClaudeCloudProjectsKey) == nil || defaults.bool(forKey: Self.showsClaudeCloudProjectsKey)
+    }
     static let showsEmbeddedClaudeSessionsKey = "showEmbeddedClaudeSessions"
     static let showsEmbeddedCodexSessionsKey = "showEmbeddedCodexSessions"
     func showsEmbeddedSessions(for provider: AgentProvider) -> Bool {
@@ -965,6 +975,7 @@ final class IslandModel: ObservableObject {
         cancelDeepSeekBalanceRead()
         _ = await historyStore.flush()
         _ = await claudeHistoryStore.flush()
+        await claudeCloudMonitor?.suspend()
         await claudeMonitor.shutdown()
         await deepseekMonitor.shutdown()
         await realtimeMonitor.shutdown()
@@ -990,6 +1001,7 @@ final class IslandModel: ObservableObject {
                 guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped else { return }
                 await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
                 await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+                await self.claudeCloudMonitor?.setExpanded(self.expanded)
                 await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
             }
             if value { refreshActivity(metricsOnly: true) }
@@ -1284,6 +1296,7 @@ final class IslandModel: ObservableObject {
         if let organizationID, UUID(uuidString: organizationID) != nil {
             defaults.set(organizationID, forKey: "claudeWebOrganizationID")
         }
+        if let cloud = claudeCloudMonitor { Task { await cloud.refresh() } }
         guard claudeQuotaRestartTask == nil, isModuleEnabled(.claude), !sleeping, !stopped else { return }
         let generation = claudeGeneration
         let pending = claudeQuotaTask
@@ -1424,10 +1437,34 @@ final class IslandModel: ObservableObject {
                     model.receiveClaudeUpdate(values, statuses: statuses, requests: requests, performance: performance, excludedLocalIDs: excluded)
                 }
             }
+            self.syncClaudeCloudMonitor()
             let targets = self.monitorsSSH ? await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: sourceHome) : []
             guard !Task.isCancelled, generation == self.claudeGeneration, !self.stopped, !self.sleeping else { return }
             self.reconcileClaudeRemoteTargets(targets)
             await self.claudeMonitor.updateRemoteTargets(targets)
+        }
+    }
+    /// Pausing for sleep keeps the monitor, because what was running can end
+    /// meanwhile. Stopping the source forgets it.
+    private func syncClaudeCloudMonitor() {
+        guard isModuleEnabled(.claude), showsClaudeCloudProjects, !sleeping, !stopped, !demo else { stopClaudeCloudMonitor(); return }
+        guard let monitor = claudeCloudMonitor ?? makeClaudeCloudMonitor?() else { return }
+        claudeCloudMonitor = monitor
+        let generation = claudeGeneration, expanded = expanded, target = claudeMonitor
+        Task { [weak self] in
+            await monitor.start(expanded: expanded) { [weak self] values, status, requests in
+                guard await self?.claudeGeneration == generation else { return }
+                await target.updateCloud(activities: values, status: status, attention: requests)
+            }
+        }
+    }
+    private func stopClaudeCloudMonitor() {
+        guard let monitor = claudeCloudMonitor else { return }
+        claudeCloudMonitor = nil
+        let target = claudeMonitor
+        Task {
+            await monitor.shutdown()
+            await target.updateCloud(activities: [], status: nil, attention: [])
         }
     }
     func receiveClaudeUpdate(_ values: [SessionActivity], statuses: [String: RuntimeStreamStatus], requests: [PendingAttentionRequest], performance: [SessionPerformanceUpdate] = [], excludedLocalIDs: Set<String> = []) {
@@ -1526,6 +1563,7 @@ final class IslandModel: ObservableObject {
             guard let self else { return }
             await self.realtimeMonitor.invalidateRemoteControlCatalog()
             self.refreshRemote()
+            await self.claudeCloudMonitor?.refresh()
         }
         discoverClaudeRemoteTargets(refresh: true)
     }
@@ -1641,6 +1679,8 @@ final class IslandModel: ObservableObject {
         }
         let grouped = ActivityTaskGroup.make(merged).flatMap(\.members)
         let observed = completionInbox.observe(grouped, at: now, retention: completedRetention)
+        // An ending read in Claude needs no reminder here either.
+        for ending in completionInbox.activities where ending.claudeCloud?.readInClaude == true { completionInbox.dismiss(ending) }
         let hidden = hiddenEmbeddedActivityIDs
         let shown = observed.filter { !hidden.contains($0.id) }
         observeFirstOutputs(shown)
@@ -1704,6 +1744,7 @@ final class IslandModel: ObservableObject {
         else { logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval); refreshRemote() }
         if claudeChanged { resetClaudeSource() }
         else { startClaudeActivity() }
+        syncClaudeCloudMonitor()
         deepseekSourceSignature = newDeepSeek
         if deepseekChanged { resetDeepSeekSource() }
         else { startDeepSeekActivity() }
@@ -1736,6 +1777,7 @@ final class IslandModel: ObservableObject {
     }
     private func resetClaudeSource() {
         claudeGeneration += 1
+        stopClaudeCloudMonitor()
         cancelClaudeRemoteSetup()
         claudeRemoteSetupStatus.removeAll(); claudeRemoteSetupFailures.removeAll(); claudeRemoteSetupFailedAt.removeAll()
         claudeQuotaRestartTask?.cancel(); claudeQuotaRestartTask = nil
@@ -1772,7 +1814,8 @@ final class IslandModel: ObservableObject {
     func bindCompletionSources(_ provider: AgentProvider) {
         guard provider != .deepseek else { completionInbox.bindSourceHomes(provider: provider, localHome: deepseekHome); return }
         let targets = provider == .codex ? (monitorsSSH ? RemoteActivityTarget.configured(home: home) : []) : claudeRemoteTargets
-        let remoteHomes = Dictionary(targets.map { ($0.id, $0.home) }, uniquingKeysWith: { _, latest in latest })
+        var remoteHomes = Dictionary(targets.map { ($0.id, $0.home) }, uniquingKeysWith: { _, latest in latest })
+        if provider == .claude { remoteHomes[ClaudeCloudProjectState.sourceID] = "cloud" }
         let controls = provider == .codex && isModuleEnabled(.codex) && monitorsRemoteControl
             ? remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id)) : []
         completionInbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? home : claudeHome,
@@ -1793,6 +1836,7 @@ final class IslandModel: ObservableObject {
         cancelClaudeRemoteSetup()
         _ = await historyStore.flush()
         _ = await claudeHistoryStore.flush()
+        await claudeCloudMonitor?.shutdown()
         await claudeMonitor.shutdown()
         await deepseekMonitor.shutdown()
         await claudeRemoteSetup.shutdown()
@@ -1882,7 +1926,7 @@ final class IslandModel: ObservableObject {
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         makeDeepSeekDemo()
-        setDemoStage(.thinking)
+        setDemoStage(CommandLine.arguments.contains("--demo-cloud") ? .tool : .thinking)
         if CommandLine.arguments.contains("--demo-completion") { setDemoStage(.completed) }
     }
     func setDemoStage(_ stage: DemoTaskStage) {
@@ -1891,6 +1935,11 @@ final class IslandModel: ObservableObject {
         var observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
         if CommandLine.arguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
         if CommandLine.arguments.contains("--demo-deepseek") { observed.append(DemoScenario.deepseekTask(stage: stage, at: now)) }
+        if CommandLine.arguments.contains("--demo-cloud") {
+            let cloud = DemoScenario.claudeCloud(stage: stage, at: now)
+            observed += cloud.activities
+            observeAttentionRequests(cloud.attention)
+        }
         completionInbox.observe(observed, at: now, retention: completedRetention)
         activities = observed
         var status = RuntimeStreamStatus()

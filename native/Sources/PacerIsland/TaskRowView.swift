@@ -25,10 +25,10 @@ struct TaskRowView: View {
     static let measuredTitleWidth: CGFloat = 200
     private var phase: ActivityPhase { group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now) }
     private var status: String {
-        var base = phase == .completed ? L10n.text("activity.turn_finished") : activity.detail(at: now)
+        var base = phase == .completed ? activity.endingLabel : activity.detail(at: now)
         if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { base = L10n.text("activity.running_long") }
         guard let attention else { return base }
-        let prompt = L10n.text(attention == .approval ? "attention.approval" : "attention.input")
+        let prompt = attention.label
         guard phase == .running else { return prompt }
         switch activity.phase == .running ? activity.stage : nil {
         case .tool?: return prompt + " · " + L10n.text("activity.tool_compact")
@@ -36,7 +36,11 @@ struct TaskRowView: View {
         default: return prompt + " · " + base
         }
     }
-    private var subagents: Int { group?.runningSubagentCount ?? 0 }
+    private var subagents: Int { (group?.runningSubagentCount ?? 0) + (phase == .running ? activity.claudeCloud?.additionalWorkers ?? 0 : 0) }
+    private var subagentText: String {
+        if activity.claudeCloud != nil { return L10n.text("claude.cloud.workers_help", subagents) }
+        return L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents)
+    }
     private var rate: OutputEstimate? { group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now) }
     private var turnTime: String? { Self.turnTimeText(activity, phase: phase, now: now) }
     /// A running turn counts up; an ended turn keeps how long it took.
@@ -63,9 +67,16 @@ struct TaskRowView: View {
         L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.1f s", $0) } ?? "—")
     }
     private var performanceText: String {
-        (rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")) + "  ·  " + latencyText
+        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
+        // A cloud run's first output is only known when its turn ends.
+        return activity.claudeCloud != nil && phase == .running ? speed : speed + "  ·  " + latencyText
     }
     private var performanceHelp: String {
+        if activity.claudeCloud != nil {
+            if phase == .running { return L10n.text("claude.cloud.live_performance_help") }
+            let definition = L10n.text("claude.cloud.performance_help")
+            return rate == nil ? definition : latencyText + "\n" + definition
+        }
         let definition: String
         if activity.provider == .claude {
             definition = L10n.text("claude.performance.rate_help") + "\n" + L10n.text("claude.performance.ttft_help")
@@ -126,11 +137,10 @@ struct TaskRowView: View {
     }
 
     private var accessibilityText: String {
-        let state = [unread ? L10n.text("common.not_viewed") : nil, status, turnTime,
-                     subagents > 0 ? L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents) : nil]
+        let state = [unread ? L10n.text("common.not_viewed") : nil, status, turnTime, subagents > 0 ? subagentText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
-            state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + ", " + performanceText
+            state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
             + (cost.map { ", " + L10n.text("deepseek.turn_cost_accessibility", DeepSeekWallet.turnAmount($0)) } ?? "")
     }
 
@@ -155,6 +165,7 @@ struct TaskRowView: View {
 
     /// Local SDK/ACP rows name the app that started their session.
     private var openHelp: String {
+        if activity.claudeCloud != nil { return L10n.text("claude.cloud.open_help") }
         if activity.sourceHostID != nil {
             return L10n.text(activity.provider == .claude ? "claude.open_remote_help" : "common.open_chat")
         }
@@ -171,12 +182,14 @@ struct TaskRowView: View {
                     Text(String(subagents)).monospacedDigit()
                 }
                 .foregroundStyle(PacerPalette.secondary).fixedSize()
-                .help(L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents))
+                .help(subagentText)
             }
             if let source = sourceName {
                 HStack(spacing: 3) {
                     // Remote hosts get a server glyph; a local app is named as is.
-                    if activity.sourceHostID != nil { Image(systemName: "server.rack").font(.system(size: 9, weight: .semibold)) }
+                    if activity.sourceHostID != nil {
+                        Image(systemName: activity.claudeCloud != nil ? "cloud" : "server.rack").font(.system(size: 9, weight: .semibold))
+                    }
                     Text(Self.middleTruncated(source, limit: 16))
                 }
                 .foregroundStyle(PacerPalette.secondary).lineLimit(1).fixedSize()
@@ -192,12 +205,14 @@ struct TaskRowView: View {
                 Text(String(format: "%.1f", rate.value)).font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(rate.isFresh && !dimmed ? PacerPalette.primary : PacerPalette.secondary)
                 Text(" t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
-            } else {
+            } else if activity.claudeCloud == nil {
                 Text(L10n.text("performance.awaiting_usage")).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PacerPalette.tertiary)
             }
             if let turnTime {
-                Text(" · ").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+                if rate != nil || activity.claudeCloud == nil {
+                    Text(" · ").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
+                }
                 Text(turnTime).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(phase == .running ? PacerPalette.primary.opacity(0.78) : PacerPalette.secondary)
             }

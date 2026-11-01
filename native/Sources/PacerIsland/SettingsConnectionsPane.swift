@@ -34,6 +34,8 @@ struct ConnectionSource: Equatable, Identifiable {
                 let name: String, kind: String
                 if key == "local" {
                     name = L10n.text("common.local"); kind = provider.displayName
+                } else if key == ClaudeCloudProjectState.sourceID {
+                    name = L10n.text("connections.kind.claude_cloud"); kind = provider.displayName
                 } else if key.hasPrefix(sshPrefix) {
                     name = String(key.dropFirst(sshPrefix.count)); kind = L10n.text("connections.kind.ssh")
                 } else if key.hasPrefix(controlPrefix) {
@@ -134,6 +136,8 @@ struct ConnectionSummary: Equatable {
         let enabled = Set(enabledProviders)
         var entries: [String: (state: EntryState, sessions: Int)] = [:]
         for source in sources where enabled.contains(source.provider) {
+            // Signing in to claude.ai is optional; without it nothing is wrong.
+            if source.key == ClaudeCloudProjectState.sourceID, source.state == .paused { continue }
             let state: EntryState = switch source.state {
             case .retrying: .retrying
             case .paused: .paused
@@ -276,7 +280,8 @@ struct SettingsConnectionsPane: View {
         let (tint, state): (Color, String) = switch source.state {
         case .connected: (.green, L10n.text("connections.state.connected"))
         case .retrying: (.orange, L10n.text("connections.state.retrying"))
-        case .paused: (.secondary, L10n.text("connections.state.paused", source.provider.displayName))
+        case .paused: (.secondary, source.key == ClaudeCloudProjectState.sourceID ? L10n.text("connections.state.cloud_signed_out")
+            : L10n.text("connections.state.paused", source.provider.displayName))
         case .idle: (.secondary, L10n.text("connections.state.idle"))
         case .offline: (.secondary, L10n.text("connections.state.offline"))
         }

@@ -15,6 +15,16 @@ enum PacerMain {
                let text = String(data: data, encoding: .utf8) { print(text) }
             return
         }
+        if CommandLine.arguments.contains("--diagnose-claude-cloud") {
+            // The WebKit cookie store needs a real main run loop.
+            NSApplication.shared.setActivationPolicy(.prohibited)
+            Task { @MainActor in
+                let monitor = makeClaudeCloudMonitor()
+                for line in await monitor.diagnostics() { print(line) }
+                exit(0)
+            }
+            RunLoop.main.run()
+        }
         if CommandLine.arguments.contains("--diagnose-claude") {
             Task.detached { await diagnoseClaude(); exit(0) }
             dispatchMain()
@@ -57,6 +67,11 @@ enum PacerMain {
     }
 
     /// Read-only protocol/counter checks; no identities, titles or transcripts.
+    @MainActor static func makeClaudeCloudMonitor() -> ClaudeCloudProjectMonitor {
+        ClaudeCloudProjectMonitor(cookieProvider: { await ClaudeWebSessionStore.session() },
+            selectedOrganization: { UserDefaults.standard.string(forKey: "claudeWebOrganizationID") })
+    }
+
     private static func diagnoseClaude() async {
         let defaults = UserDefaults.standard
         let configured = defaults.string(forKey: "claudeHome") ?? ""
@@ -227,6 +242,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         UserDefaults.standard.register(defaults: ["completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": QuotaWindowSelection.weekly.rawValue])
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
+        model.makeClaudeCloudMonitor = { PacerMain.makeClaudeCloudMonitor() }
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
         updater.onPresentationChange = { [weak self] active in
