@@ -138,6 +138,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
             sidebarRow(.whatsNew)
             sidebarRow(.help)
+            sidebarRow(.support)
             Button { model.onQuit?() } label: {
                 Label(L10n.text("common.quit"), systemImage: "power").font(.system(size: 12)).foregroundStyle(.secondary)
                     .padding(.horizontal, 8).frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
@@ -293,6 +294,8 @@ struct SettingsView: View {
             SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
         case .help:
             SettingsHelpPane(module: AgentProvider.allCases.first(where: moduleEnabled) ?? .codex, onShowWelcome: onShowWelcome)
+        case .support:
+            SettingsSupportPane()
         case .connections:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
@@ -867,7 +870,7 @@ private struct LiveSettings: Equatable {
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, appearance, collapsedBar, reminders, codex, claude, deepseek, connections, whatsNew, help
+    case general, appearance, collapsedBar, reminders, codex, claude, deepseek, connections, whatsNew, help, support
     static let defaultsKey = "settingsPane"
     var id: String { rawValue }
     init(provider: AgentProvider) {
@@ -897,6 +900,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .connections: return L10n.text("settings.pane.connections")
         case .whatsNew: return L10n.text("whats_new.window_title")
         case .help: return L10n.text("settings.pane.help")
+        case .support: return L10n.text("settings.pane.support")
         }
     }
     var symbol: String {
@@ -911,6 +915,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .connections: return "point.3.connected.trianglepath.dotted"
         case .whatsNew: return "sparkles"
         case .help: return "questionmark"
+        case .support: return "heart.fill"
         }
     }
     var tint: Color {
@@ -925,6 +930,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .connections: return Color(red: 0.16, green: 0.5, blue: 1)
         case .whatsNew: return Color(red: 0.93, green: 0.29, blue: 0.6)
         case .help: return Color(white: 0.52)
+        case .support: return Color(red: 0.96, green: 0.36, blue: 0.42)
         }
     }
     var glyphColor: Color { provider == nil ? .white : Color.black.opacity(0.72) }
