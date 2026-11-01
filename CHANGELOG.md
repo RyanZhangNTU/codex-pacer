@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.0
+
+- Show Claude's cloud Projects in the task list. Each thread that is working, waiting for you or just ended gets its own row with a cloud icon and the project's name, and the project's coordinator gets a **Project coordinator** row while it answers. Pacer reads them with the claude.ai session in its own window, the one Claude quota already uses, and **Settings → Claude → Show Claude cloud Projects** turns them off. **Settings → Connections** lists the source, paused without that sign-in.
+- Word these rows the way Projects work: **Working** while a thread runs, with a count when more sessions share it; **Coordinating**; **Decision needed**, **Reply needed** and **Approval needed**; **Resolved** or **Turn finished** at the end, and **Task failed**.
+- Remind when a thread or coordinator ends, including a run too short for Pacer to see working and one that ended while the Mac slept. A thread stays **Working** through a long tool call. A coordinator that hands work to threads or reports on one that just ended stays quiet, so each run reminds once. A resolved thread you read in Claude clears its card here, and a question you read and leave unanswered stops asking.
+- Click a row to open that thread or Project in Claude Desktop, or on claude.ai without it. A thread Desktop runs on this Mac stays the ordinary local task it already was.
+- Pacer checks Projects every 20 seconds while something runs and up to every 2 minutes otherwise, and a new run in a recently active Project appears within about 10 seconds. While a thread writes a reply, its row shows an estimated speed, which does not update during thinking or tool calls. A thread's ending card shows that turn's real speed and time to first output; the coordinator has neither.
+
 ## 4.1.0
 
 - Add daily and weekly DeepSeek budgets. **Settings → DeepSeek → Mode** switches between **Balance** and **Budget**; Budget fills in both amounts from the last seven days' daily average plus a fifth (¥10 and ¥50 before there is any spend), and switching back keeps them without counting them. In Budget mode the expanded dial splits like Codex's 5 hours and week: today on the upper arc and this week on the lower one, each with the amount left, a pace tick, reset and forecast. Budgets count from midnight and from Monday 00:00. Pacer only reminds; it never blocks a request.
