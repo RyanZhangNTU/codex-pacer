@@ -9,6 +9,8 @@ enum StatusSymbols {
     static let tool = "terminal"
     static let replying = "text.bubble"
     static let starting = "hourglass"
+    static let cloudWork = "cloud"
+    static let coordinating = "arrow.triangle.branch"
     static let idle = "moon"
     static let input = "ellipsis.bubble"
     static let approval = "hand.raised"
@@ -36,6 +38,8 @@ enum StatusSymbols {
             case .tool: return tool
             case .responding: return replying
             case .starting: return starting
+            case .working: return cloudWork
+            case .coordinating: return coordinating
             }
         }
     }

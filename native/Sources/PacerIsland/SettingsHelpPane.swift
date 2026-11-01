@@ -100,6 +100,7 @@ struct SettingsHelpPane: View {
     @ViewBuilder private var claudeRows: some View {
         quotaRow("help.claude.quota", provider: .claude, remaining: 81)
         fiveHourRow("help.claude.windows", provider: .claude)
+        row("help.claude.cloud", symbol: "cloud", tint: AgentProvider.claude.tint)
         row("help.claude.remote", symbol: "network", tint: AgentProvider.claude.tint)
         row("help.claude.apps", symbol: "square.on.square", tint: AgentProvider.claude.tint)
     }

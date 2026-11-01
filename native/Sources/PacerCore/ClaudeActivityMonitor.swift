@@ -35,6 +35,9 @@ public actor ClaudeActivityMonitor {
     private var disconnected: [String: ClaudeActivityState] = [:]
     private var wanted: [String: RemoteActivityTarget] = [:]
     private var retry: [String: Date] = [:]
+    /// Polled separately, published with everything else. It outlives this
+    /// actor's shutdown because cloud work continues while the Mac sleeps.
+    private var cloud: (activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) = ([], nil, [])
     public init() { sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh") }
     init(sshExecutable: URL) { self.sshExecutable = sshExecutable }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
@@ -83,12 +86,17 @@ public actor ClaudeActivityMonitor {
         }
         await publish()
     }
-    public func activities() -> [SessionActivity] { local.activities + connections.values.flatMap { $0.state.activities } + disconnected.values.flatMap { $0.activities } }
+    public func activities() -> [SessionActivity] { local.activities + connections.values.flatMap { $0.state.activities } + disconnected.values.flatMap { $0.activities } + cloud.activities }
+    public func updateCloud(activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) async {
+        cloud = (activities, status, attention)
+        if home != nil { await publish() }
+    }
     /// Cached source-scoped exclusions; reading these never scans metadata.
     public func excludedLocalActivityIDs() -> Set<String> { local.excludedActivityIDs }
     func localWatchCount() async -> Int { await watcher?.activeWatchCount() ?? 0 }
     public func statuses() -> [String: RuntimeStreamStatus] {
         var result = disconnected.mapValues { $0.status }; result.merge(connections.mapValues { $0.state.status }) { _, new in new }; result["local"] = local.status
+        if let status = cloud.status { result[ClaudeCloudProjectState.sourceID] = status }
         return result
     }
     /// Numeric transport diagnostics only; no bodies, paths or identifiers.
@@ -252,7 +260,7 @@ public actor ClaudeActivityMonitor {
     }
     private func publish() async {
         pendingPublish?.cancel(); pendingPublish = nil
-        let attention = local.attention + connections.values.flatMap { $0.state.attention }
+        let attention = local.attention + connections.values.flatMap { $0.state.attention } + cloud.attention
         let performance = local.performanceUpdates + connections.values.flatMap { $0.state.performanceUpdates }
         await callback?(activities(), statuses(), attention, performance)
     }

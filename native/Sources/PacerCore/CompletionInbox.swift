@@ -41,11 +41,14 @@ public struct CompletionInbox: Sendable {
     private let dismissalStore: CompletionDismissalStore?
     private var persistedDigests: [String]
     private var persistedDigestSet: Set<String>
+    private var persistedCloudEndings: [CompletionDismissalStore.CloudEnding]
     private var sourceNamespaces: [AgentProvider: [String: String]] = [:]
     public init(dismissalStore: CompletionDismissalStore? = nil) {
         self.dismissalStore = dismissalStore
-        persistedDigests = dismissalStore?.loadDigests() ?? []
+        let saved = dismissalStore?.load()
+        persistedDigests = saved?.digests ?? []
         persistedDigestSet = Set(persistedDigests)
+        persistedCloudEndings = saved?.cloudEndings ?? []
     }
 
     /// Rebinding only changes lookup scope; it never deletes another profile's acknowledgments.
@@ -79,7 +82,14 @@ public struct CompletionInbox: Sendable {
                       activity.canonicalized().id, activity.phase.rawValue, activity.turnFailed ? "failed" : "ok"]
         if let turn = activity.turnID {
             // Runtime and historical logs can timestamp the same explicit turn differently.
-            fields += ["identified", turn]
+            let settled: String?
+            if activity.claudeCloud?.role == .thread, let mark = activity.claudeCloud?.completionMark,
+               turn.split(separator: "-").count == 2 {
+                let value = mark.timeIntervalSince1970 * 1000
+                guard value.isFinite, value >= Double(Int64.min), value < Double(Int64.max) else { return nil }
+                settled = "cloud-" + String(Int64(value))
+            } else { settled = nil }
+            fields += ["identified", settled ?? turn]
         } else {
             func milliseconds(_ date: Date?) -> String? {
                 guard let date else { return "absent" }
@@ -94,11 +104,67 @@ public struct CompletionInbox: Sendable {
     }
 
     private mutating func persistDismissal(_ activity: SessionActivity) {
-        guard let dismissalStore, let digest = persistentDigest(activity), !persistedDigestSet.contains(digest) else { return }
-        persistedDigests = CompletionDismissalStore.bounded(persistedDigests + [digest])
-        persistedDigestSet = Set(persistedDigests)
+        guard let dismissalStore, let digest = persistentDigest(activity) else { return }
+        var changed = false
+        if !persistedDigestSet.contains(digest) {
+            persistedDigests = CompletionDismissalStore.bounded(persistedDigests + [digest])
+            persistedDigestSet = Set(persistedDigests); changed = true
+        }
+        if let source = cloudSourceDigest(activity) {
+            let desired: CompletionDismissalStore.CloudEnding?
+            if activity.claudeCloud?.status == .idle, let mark = activity.claudeCloud?.completionMark {
+                desired = .init(source: source, mark: mark)
+            } else { desired = nil }
+            if persistedCloudEndings.first(where: { $0.source == source }) != desired {
+                persistedCloudEndings.removeAll { $0.source == source }
+                if let desired { persistedCloudEndings.append(desired) }
+                persistedCloudEndings = CompletionDismissalStore.boundedCloudEndings(persistedCloudEndings)
+                changed = true
+            }
+        }
+        guard changed else { return }
         // A failed save still preserves the current process's normal in-memory acknowledgment.
-        dismissalStore.saveDigests(persistedDigests)
+        dismissalStore.saveDigests(persistedDigests, cloudEndings: persistedCloudEndings)
+    }
+
+    private func cloudSourceDigest(_ activity: SessionActivity) -> String? {
+        guard activity.claudeCloud?.role == .thread,
+              let namespace = sourceNamespaces[activity.provider]?[activity.sourceHostID ?? "local"] else { return nil }
+        return CompletionDismissalStore.digest(["cloud-ending-v1", namespace, activity.canonicalized().id])
+    }
+
+    private func isAcknowledgedCloudSettlement(_ activity: SessionActivity) -> Bool {
+        guard activity.claudeCloud?.status == .resolved, let mark = activity.claudeCloud?.completionMark,
+              let source = cloudSourceDigest(activity), let old = persistedCloudEndings.first(where: { $0.source == source }) else { return false }
+        let elapsed = mark.timeIntervalSince(old.mark)
+        return elapsed >= 0 && elapsed < ClaudeCloudProjectState.settlingTime
+    }
+
+    private mutating func forgetCloudSettlement(_ activity: SessionActivity) {
+        guard let source = cloudSourceDigest(activity), persistedCloudEndings.contains(where: { $0.source == source }) else { return }
+        persistedCloudEndings.removeAll { $0.source == source }
+        dismissalStore?.saveDigests(persistedDigests, cloudEndings: persistedCloudEndings)
+    }
+
+    /// Re-enabling cloud monitoring replays a baseline. The same retained
+    /// ending keeps its original unread state, duration, metrics and expiry.
+    private func retainingCloudEnding(_ activity: SessionActivity) -> SessionActivity {
+        guard activity.isHistoricalCompletion, let cloud = activity.claudeCloud, cloud.role == .thread,
+              let old = entries[activity.id]?.activity, let previousCloud = old.claudeCloud,
+              old.phase == activity.phase, old.turnFailed == activity.turnFailed else { return activity }
+        let sameTurn = old.turnID != nil && old.turnID == activity.turnID
+        let sameMark = previousCloud.completionMark != nil && previousCloud.completionMark == cloud.completionMark
+        let settlement: Bool
+        if previousCloud.status == .idle, cloud.status == .resolved,
+           let previous = previousCloud.completionMark, let current = cloud.completionMark {
+            let elapsed = current.timeIntervalSince(previous)
+            settlement = elapsed >= 0 && elapsed < ClaudeCloudProjectState.settlingTime
+        } else { settlement = false }
+        guard sameTurn || sameMark || settlement else { return activity }
+        var retained = old
+        retained.setClaudeCloud(cloud)
+        retained.mergeDisplayMetadata(from: activity)
+        return retained
     }
 
     /// Disabling one module must not dismiss the other module's unread endings.
@@ -171,7 +237,7 @@ public struct CompletionInbox: Sendable {
     public mutating func observe(_ activities: [SessionActivity], at now: Date, retention: TimeInterval) -> [SessionActivity] {
         // A released stream may be followed by an older log baseline. Only a
         // newer state/new live turn can supersede a retained or dismissed ending.
-        let current = Dictionary(activities.filter { activity in
+        let current = Dictionary(activities.map(retainingCloudEnding).filter { activity in
             let ended = entries[activity.id].map { Identity($0.activity) } ?? dismissed[activity.id]
             guard let ended, let endedAt = ended.changedAt else { return true }
             if activity.hasLiveEvidence, activity.liveTurnStarted, activity.turnID != ended.turnID { return true }
@@ -188,16 +254,21 @@ public struct CompletionInbox: Sendable {
             guard !activity.isInternalReview, [.completed, .interrupted].contains(activity.phase),
                   let changedAt = activity.phaseChangedAt else {
                 entries.removeValue(forKey: activity.id); dismissed.removeValue(forKey: activity.id)
+                if [.running, .waitingForInput].contains(activity.phase) { forgetCloudSettlement(activity) }
                 continue
             }
             let identity = Identity(activity)
             if let old = entries[activity.id], Identity(old.activity) != identity { entries.removeValue(forKey: activity.id) }
-            if let digest = persistentDigest(activity), persistedDigestSet.contains(digest) {
+            if (persistentDigest(activity).map { persistedDigestSet.contains($0) } ?? false) || isAcknowledgedCloudSettlement(activity) {
+                persistDismissal(activity)
                 dismissed[activity.id] = identity
                 entries.removeValue(forKey: activity.id)
                 continue
             }
-            guard dismissed[activity.id] != identity else { continue }
+            guard dismissed[activity.id] != identity else {
+                persistDismissal(activity)
+                continue
+            }
             let age = now.timeIntervalSince(changedAt)
             // Converting Date through Unix seconds can round the same instant
             // slightly forward. Do not lose a just-delivered ending to that
