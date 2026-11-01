@@ -161,6 +161,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Connections | Status of every task source and quota, SSH hosts and Remote Control. |
 | What's New | The highlights of every update since 3.1, newest first, with the same switches as the update note and a link to the full release notes. |
 | Help | One sentence on each mark of the island, with a switch for each module's details, the welcome guide, and links to this guide and the issue tracker. |
+| Support Pacer | A thank-you, a link to star Pacer, feature-request and bug-report forms (we look first at those from people who've starred it), sharing, and a WeChat code or Buy Me a Coffee link to buy us a coffee. |
 
 **Open at Login** uses the macOS login item, so it also appears in **System Settings → General → Login Items**. If Pacer is switched off there, Settings says so and offers a **Login Items** button to allow it again.
 
