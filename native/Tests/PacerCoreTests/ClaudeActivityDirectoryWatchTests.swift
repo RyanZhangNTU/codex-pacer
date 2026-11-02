@@ -10,7 +10,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
     private let newSession = "cccccccc-3333-4333-8333-333333333333"
 
     private func fixture() throws -> (home: URL, alpha: URL, beta: URL, sessionDirectory: URL) {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-directory-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("pacer-claude-directory-" + UUID().uuidString)
         let alpha = home.appendingPathComponent("projects/alpha"), beta = home.appendingPathComponent("projects/beta")
         let sessionDirectory = alpha.appendingPathComponent(rootSession)
         try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
