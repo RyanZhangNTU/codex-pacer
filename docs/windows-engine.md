@@ -1,8 +1,8 @@
 # Windows engine development
 
-C1 builds `PacerEngine` and its platform adapters. The WPF host belongs to C2. The shipping Mac app still uses `native/Package.swift`; its CI jobs continue to run the full native tests and app build.
+C1 builds `PacerEngine` and its platform adapters. The C2 WPF host and its unsigned CI package are described in [windows-shell.md](windows-shell.md). The shipping Mac app still uses `native/Package.swift`; its CI jobs continue to run the full native tests and app build.
 
-Use Windows x64, Visual Studio C++ build tools and a Windows SDK. `windows/toolchain-lock.json` pins Swift 6.4.2 and .NET SDK 10.0.403. The .NET SDK builds synthetic process/pipe fixtures, without a desktop shell. `setup-swift.ps1` installs the pinned, verified Swift toolchain under ignored `output/toolchains` when needed.
+Use Windows x64, Visual Studio C++ build tools and a Windows SDK. `windows/toolchain-lock.json` pins Swift 6.4.2 and .NET SDK 10.0.403. The .NET SDK builds the shell and synthetic process/pipe fixtures. `setup-swift.ps1` installs the pinned, verified Swift toolchain under ignored `output/toolchains` when needed.
 
 ```powershell
 ./scripts/windows/setup-swift.ps1

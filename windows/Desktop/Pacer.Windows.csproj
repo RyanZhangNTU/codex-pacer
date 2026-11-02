@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../desktop-platform.props"/>
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <OutputPath>bin/$(Configuration)/net10.0-windows/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>CodexPacer</AssemblyName>
+    <RootNamespace>CodexPacer.Windows</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/Pacer.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="[2.6.4]"/>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="[1.0.4314.35]"/>
+    <Resource Include="Assets/Fonts/*.ttf"/>
+    <!-- WPF reads these from its pack resources. The SDK's default image
+         content glob must not also export nonexistent loose output files. -->
+    <EmbeddedResource Include="Assets/Localization/*.json"/>
+    <EmbeddedResource Include="Assets/Web/*.json"/>
+    <Content Include="Assets/Fonts/LICENSE.txt" CopyToOutputDirectory="PreserveNewest"/>
+    <Content Include="Assets/Pacer.ico" CopyToOutputDirectory="PreserveNewest"/>
+    <Content Include="../ThirdParty/WindowsAppSDK/*.txt" Link="Licenses/WindowsAppSDK/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
+    <Content Include="../ThirdParty/WebView2/*.txt" Link="Licenses/WebView2/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
+  </ItemGroup>
+</Project>

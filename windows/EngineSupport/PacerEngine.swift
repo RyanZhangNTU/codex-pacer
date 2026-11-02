@@ -329,6 +329,11 @@ actor EngineRuntime {
         guard initialized || command.method == "initialize" || command.method == "shutdown" else {
             failure(id: command.id, code: "initializeRequired"); return true
         }
+        if EngineShellProjection.methods.contains(command.method) {
+            if let bytes = EngineShellProjection.reply(command) { output(bytes + Data([10])) }
+            else { failure(id: command.id, code: "invalidPresentation") }
+            return true
+        }
         switch command.method {
         case "prepareActivityOpen":
             guard let context = command.params?.context, context.utf8.count <= 128,

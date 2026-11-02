@@ -83,15 +83,18 @@ def check(engine, seconds, output, real_data=False):
             time.sleep(5)
             started, cpu_started = time.monotonic(), cpu_seconds(process)
             print(f"Measuring initialized engine for {seconds} seconds; protocol bodies are discarded.", flush=True)
-            time.sleep(seconds)
+            until = time.monotonic() + seconds
+            while time.monotonic() < until:
+                time.sleep(min(10, max(0, until - time.monotonic())))
             elapsed, cpu = time.monotonic() - started, cpu_seconds(process) - cpu_started
             if process.poll() is not None:
                 raise RuntimeError("Engine exited during idle measurement")
-            # Exercise an actual source change before bounded process shutdown.
-            replacement = root / "codex-replacement"
-            (replacement / "sessions").mkdir(parents=True)
-            send("configure", {"codexHome": str(replacement)})
-            time.sleep(1)
+            if not real_data:
+                # Only the isolated empty-home check changes a source.
+                replacement = root / "codex-replacement"
+                (replacement / "sessions").mkdir(parents=True)
+                send("configure", {"codexHome": str(replacement)})
+                time.sleep(1)
             shutdown = time.monotonic()
             send("shutdown")
             process.wait(timeout=3)
@@ -102,7 +105,8 @@ def check(engine, seconds, output, real_data=False):
                 "oneCorePercent": round(cpu / elapsed * 100, 3),
                 "hostPercent": round(cpu / elapsed / (os.cpu_count() or 1) * 100, 3),
                 "logicalProcessors": os.cpu_count(), "shutdownSeconds": round(shutdown, 4),
-                "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data, **counts}
+                "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data,
+                "sourceMutationsRequested": not real_data, **counts}
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

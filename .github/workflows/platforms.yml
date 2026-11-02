@@ -61,7 +61,7 @@ jobs:
   windows:
     name: Windows (x86_64)
     runs-on: windows-2025
-    timeout-minutes: 35
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
@@ -92,6 +92,23 @@ jobs:
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
             throw 'Compiler warnings in Windows build.'
           }
+      - name: Build Windows desktop
+        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+      - name: Desktop integration tests
+        run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
+      - name: Functional presentation tests
+        run: ./scripts/windows/test-presentation.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
+      - name: Package unsigned Windows application
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
+      - name: Upload unsigned Windows application
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-app-x64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/*-windows-x64-preview-*.zip
+            output/windows/*-windows-x64-preview-*.zip.sha256
+          retention-days: 7
       - name: Engine idle and shutdown protocol
         run: |
           . ./scripts/windows/environment.ps1
@@ -108,4 +125,8 @@ jobs:
             ${{ runner.temp }}/pacer-windows-build.log
             ${{ runner.temp }}/pacer-windows-idle.log
             ${{ runner.temp }}/pacer-windows-idle.json
+            ${{ runner.temp }}/pacer-desktop-build.log
+            ${{ runner.temp }}/pacer-desktop-tests.log
+            ${{ runner.temp }}/pacer-presentation-tests.log
+            ${{ runner.temp }}/pacer-windows-package.log
           retention-days: 7

@@ -64,5 +64,7 @@
   "windows.claude.runtime_required": "网页登录需要 Microsoft Edge WebView2 运行时。",
   "windows.claude.sign_out": "退出登录",
   "windows.claude.connection_failed": "未能连接 Claude，请重试。",
-  "windows.claude.disconnect_failed": "未能清除 Claude 登录数据。额度更新已暂停，请再次退出登录。"
+  "windows.claude.disconnect_failed": "未能清除 Claude 登录数据。额度更新已暂停，请再次退出登录。",
+  "windows.claude.login.instructions": "在下方登录，然后点击“继续”或按 Ctrl+Enter。",
+  "windows.deepseek.login.instructions": "在下方登录，然后点击“继续”或按 Ctrl+Enter。"
 }

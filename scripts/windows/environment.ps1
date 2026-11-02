@@ -33,8 +33,9 @@ if (Test-Path -LiteralPath $taskSwiftRoot) {
     $env:SDKROOT = Join-Path $taskPlatform.FullName 'Windows.platform/Developer/SDKs/Windows.sdk'
 }
 # A workspace SDK can be used without installing or replacing the system SDK.
-$taskSdk = Join-Path $taskRoot 'output/toolchains/microsoft.windows.sdk.cpp/c'
-$taskSdkLibraries = Join-Path $taskRoot 'output/toolchains/microsoft.windows.sdk.cpp.x64/c'
+$taskSdkRoot = if ($env:PACER_WINDOWS_SDK_ROOT) { $env:PACER_WINDOWS_SDK_ROOT } else { Join-Path $taskRoot 'output/toolchains' }
+$taskSdk = Join-Path $taskSdkRoot 'microsoft.windows.sdk.cpp/c'
+$taskSdkLibraries = Join-Path $taskSdkRoot 'microsoft.windows.sdk.cpp.x64/c'
 $taskSwiftFlags = @()
 if (Test-Path -LiteralPath $taskSdk) {
     $taskSdkVersion = Get-ChildItem -LiteralPath (Join-Path $taskSdk 'Include') -Directory | Sort-Object Name -Descending | Select-Object -First 1
@@ -58,7 +59,7 @@ if (Test-Path -LiteralPath $taskSdk) {
 # Match the pinned SDK's ownership of Clang builtin typedefs (not SwiftShims).
 $taskSwiftFlags += @('-Xswiftc','-Xcc','-Xswiftc','-fno-builtin-headers-in-system-modules',
     '-Xbuild-tools-swiftc','-Xcc','-Xbuild-tools-swiftc','-fno-builtin-headers-in-system-modules')
-$taskDotnet = Join-Path $taskRoot 'output/toolchains/dotnet'
+$taskDotnet = if ($env:PACER_DOTNET_ROOT) { $env:PACER_DOTNET_ROOT } else { Join-Path $taskRoot 'output/toolchains/dotnet' }
 if (Test-Path -LiteralPath (Join-Path $taskDotnet 'dotnet.exe')) {
     Set-PacerEnvironmentPrefix 'Path' @($taskDotnet)
     $env:DOTNET_ROOT = $taskDotnet

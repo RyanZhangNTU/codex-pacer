@@ -1,0 +1,78 @@
+using System.Linq;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+
+namespace CodexPacer.Windows;
+
+internal sealed partial class SettingsWindow
+{
+    private CheckBox? claudeEnabled, claudeCloudProjects;
+    private Button? claudeAutomatic;
+    private TextBlock? claudeDetection, claudeLocalState;
+    private StackPanel? claudeSections;
+
+    private void ClearClaude()
+    {
+        ClearClaudeConnection();
+        claudeEnabled = claudeCloudProjects = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
+    }
+    private void BuildClaude()
+    {
+        var tile = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(9.88),
+            Background = new SolidColorBrush(Color.FromRgb(255, 164, 119)), Margin = new Thickness(0, 0, 12, 0),
+            Child = new IconGlyph { Symbol = "asterisk", Width = 25, Height = 25, Ink = new SolidColorBrush(Color.FromArgb(184, 0, 0, 0)) } };
+        var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        name.Children.Add(Label("Claude", 14, FontWeights.SemiBold)); claudeDetection = Detail(""); name.Children.Add(claudeDetection);
+        var identity = new StackPanel { Orientation = Orientation.Horizontal }; identity.Children.Add(tile); identity.Children.Add(name);
+        claudeEnabled = new CheckBox { Style = (Style)FindResource("SettingsSwitch") };
+        Identify(claudeEnabled, "settings.claude.enabled", "Claude"); editors.Add(claudeEnabled);
+        BindToggle(claudeEnabled, (p, value) => p with { ProviderModes = new(p.ProviderModes) { ["claude"] = value ? "enabled" : "disabled" } });
+        form.Children.Add(Card(Row(identity, claudeEnabled, 62)));
+        claudeAutomatic = new Button { Content = ui.Text("provider.restore_automatic"), Style = (Style)FindResource("SettingsLink"),
+            HorizontalAlignment = HorizontalAlignment.Right, FontSize = 11, Margin = new Thickness(0, 0, 10, 16) };
+        Identify(claudeAutomatic, "settings.claude.automatic", ui.Text("provider.restore_automatic")); editors.Add(claudeAutomatic);
+        claudeAutomatic.Click += async (_, _) => await Change(p => p with { ProviderModes = new(p.ProviderModes) { ["claude"] = "automatic" } });
+        form.Children.Add(claudeAutomatic);
+        claudeSections = new StackPanel(); form.Children.Add(claudeSections);
+        claudeSections.Children.Add(SectionHeader("windows.provider.local", 10));
+        claudeLocalState = Detail(""); Identify(claudeLocalState, "settings.claude.local_state", "");
+        var help = Detail(ui.Text("windows.claude.local_help")); help.Margin = new Thickness(10, 0, 10, 10);
+        var cloud = Toggle("claude.cloud_projects", "claude.cloud_projects_help", "settings.claude.cloud_projects", out var cloudSwitch);
+        claudeCloudProjects = cloudSwitch; editors.Add(cloudSwitch);
+        RoutedEventHandler cloudChanged = async (_, _) =>
+        {
+            if (synchronizing || sourceClosed || providerConnectionClosed || activePane != "claude" || busy || claudeAccountBusy ||
+                !ReferenceEquals(claudeCloudProjects, cloudSwitch) || !cloudSwitch.IsEnabled || !cloudSwitch.IsVisible) return;
+            bool value = cloudSwitch.IsChecked == true;
+            await Change(p => p with { ShowClaudeCloudProjects = value });
+        };
+        cloudSwitch.Checked += cloudChanged; cloudSwitch.Unchecked += cloudChanged;
+        var embedded = Toggle("claude.embedded_sessions", "windows.claude.embedded_pending", "settings.claude.embedded", out var embeddedSwitch);
+        embeddedSwitch.IsEnabled = false;
+        // Unsupported actions stay outside editors so a successful preference change cannot enable them.
+        claudeSections.Children.Add(Card(Row(Label(ui.Text("windows.claude.local_logs")), claudeLocalState), help,
+            BuildClaudeConnection(), cloud, embedded, ProviderHomeEditor("claude")));
+        BuildClaudeHistory(claudeSections);
+    }
+    private void RefreshClaude()
+    {
+        if (claudeEnabled == null || engine == null) return;
+        var snapshot = engine.LatestSnapshot;
+        var module = snapshot?.Modules?.FirstOrDefault(value => value.Provider == "claude");
+        string mode = session.Current.ProviderModes["claude"];
+        bool enabled = module?.Enabled == true, connected = !providerConnectionClosed && !engine.IsConnectionClosed;
+        claudeEnabled.IsChecked = enabled;
+        claudeEnabled.IsEnabled = !busy && !session.RequiresRestart && connected && snapshot != null;
+        claudeDetection!.Text = ui.Text(module?.Installed == true ? "windows.provider.detected" : module?.Installed == false ? "windows.provider.not_detected" : "provider.state.searching")
+            + (mode == "automatic" ? " · " + ui.Text("provider.automatic") : "");
+        claudeAutomatic!.Visibility = mode == "automatic" ? Visibility.Collapsed : Visibility.Visible;
+        claudeAutomatic.IsEnabled = claudeEnabled.IsEnabled;
+        claudeSections!.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        claudeCloudProjects!.IsChecked = session.Current.ShowClaudeCloudProjects;
+        claudeCloudProjects.IsEnabled = enabled && connected && !busy && !claudeAccountBusy && !session.RequiresRestart;
+        claudeLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>
+            (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true ? "provider.state.found" : "provider.state.no_home");
+        RefreshClaudeConnection(connected && enabled);
+    }
+}

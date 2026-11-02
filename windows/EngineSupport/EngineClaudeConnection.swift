@@ -23,11 +23,15 @@ struct EngineClaudeConnection: Codable, Equatable {
 
 /// Workspace names/IDs are returned only for the explicit account settings query.
 struct EngineClaudeAccountReport: Encodable {
-    struct Organization: Encodable { let id: String; let name: String? }
+    struct Organization: Encodable { let id: String; let name: String?; let label: String }
     let context: String, selectedOrganization: String
     let organizations: [Organization]
     init(_ state: ClaudeQuotaState, selected: String) {
         context = state.connectionContext; selectedOrganization = selected
-        organizations = state.organizations.prefix(64).map { .init(id: $0.id, name: $0.name) }
+        organizations = state.organizations.prefix(64).enumerated().map { index, value in
+            let label = value.name.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                ?? L10n.text("claude.login.organization_number", index + 1)
+            return .init(id: value.id, name: value.name, label: label)
+        }
     }
 }

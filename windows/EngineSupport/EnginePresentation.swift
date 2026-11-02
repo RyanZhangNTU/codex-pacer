@@ -4,6 +4,7 @@ import Foundation
 /// task families or rate estimates from strings or from raw event payloads.
 struct EnginePresentation: Codable, Equatable {
     let rows: [EngineTaskRow]
+    let taskCountText: String
     let pageSize: Int
     let rowCapacity: Int
     let pageCount: Int
@@ -46,6 +47,7 @@ struct EnginePresentation: Codable, Equatable {
             return lhs == rhs ? $0.primary.id < $1.primary.id : lhs > rhs
         }
         rows = displayed.map { EngineTaskRow(group: $0, attention: attention($0), inbox: inbox, hideProjects: hideProjects, at: now, showsDeepSeekTurnCost: showsDeepSeekTurnCost) }
+        taskCountText = String(rows.count)
         let pagination = TaskPagination(itemCount: rows.count)
         pageSize = pagination.pageSize; rowCapacity = pagination.rowCapacity; pageCount = pagination.pageCount
         header = EngineHeader(groups: groups, requests: requests, inbox: inbox, at: now)
@@ -66,6 +68,8 @@ struct EngineTaskRow: Codable, Equatable {
     let model: String
     let effort: String?
     let tokensPerSecond: Double?
+    let rateText: String?
+    let subagentText: String
     let rateIsFresh: Bool
     let ratePlaceholder: String?
     let turnTime: String?
@@ -88,7 +92,9 @@ struct EngineTaskRow: Codable, Equatable {
         dimmed = !unread && attention == nil && !activity.turnFailed && [.completed, .interrupted].contains(phase)
         let estimate = group.displayedRate(at: now)
         tokensPerSecond = estimate?.value; rateIsFresh = estimate?.isFresh == true
+        rateText = estimate.map { String(format: "%.1f", $0.value) }
         subagents = group.runningSubagentCount + (phase == .running ? activity.claudeCloud?.additionalWorkers ?? 0 : 0)
+        subagentText = String(subagents)
         let name = activity.modelName.map(ModelDisplay.name) ?? activity.provider.displayName
         model = name.count > 22 ? String(name.prefix(21)) + "…" : name
         effort = activity.modelName == nil ? nil : activity.reasoningEffort.flatMap { ModelDisplay.effortLabel($0) }
@@ -154,6 +160,7 @@ struct EngineTaskRow: Codable, Equatable {
 
 struct EngineHeader: Codable, Equatable {
     let activeCount: Int
+    let activeCountText: String
     let coreSymbol: String?
     let orbit: [String: Int]
     let attention: String?
@@ -164,6 +171,7 @@ struct EngineHeader: Codable, Equatable {
     init(groups: [ActivityTaskGroup], requests: [PendingAttentionRequest], inbox: CompletionInbox, at now: Date) {
         let overview = ActivityOverview(groups: groups, at: now)
         activeCount = overview.running.count + overview.waiting.count
+        activeCountText = activeCount > 99 ? "99+" : String(activeCount)
         let attention = requests.first?.kind ?? overview.waiting.first.map { $0.waitingForApproval ? .approval : .input }
         self.attention = attention?.rawValue
         var orbit: [String: Int] = [:]

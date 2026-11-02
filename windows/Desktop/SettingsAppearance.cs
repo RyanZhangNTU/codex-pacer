@@ -1,0 +1,168 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
+namespace CodexPacer.Windows;
+
+internal sealed partial class SettingsWindow
+{
+    private static readonly string[] PositionNames = ["center", "topLeft", "bottomLeft", "topRight", "bottomRight"];
+    private RadioButton? notchChoice, customChoice;
+    private FrameworkElement? positionRow;
+    private Border? positionSeparator;
+    private readonly Dictionary<string, (RadioButton Button, PositionSpot Art)> positionChoices = new();
+    private NativeLayout? appearanceLayout;
+    private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
+
+    private void ClearAppearance()
+    { notchChoice = customChoice = null; positionRow = null; positionSeparator = null; positionChoices.Clear(); quotaStyleChoices.Clear(); }
+    private TextBlock SectionHeader(string key, double top = 2)
+    {
+        var text = Label(ui.Text(key), 13, FontWeights.SemiBold); text.Margin = new Thickness(10, top, 0, 8); return text;
+    }
+    private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true)
+    {
+        var choice = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = group, IsEnabled = enabled };
+        var content = new StackPanel();
+        var artHost = new Grid { Height = 44 }; artHost.Children.Add(art); content.Children.Add(artHost);
+        var title = Label(name, 12); title.HorizontalAlignment = HorizontalAlignment.Center; title.Margin = new Thickness(0, 7, 0, 0);
+        title.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = choice });
+        title.SetBinding(TextBlock.FontWeightProperty, new System.Windows.Data.Binding(nameof(FontWeight)) { Source = choice });
+        content.Children.Add(title); choice.Content = content; Identify(choice, id, name); return choice;
+    }
+    private static Grid Pair(UIElement left, UIElement right)
+    {
+        var grid = new Grid { Margin = new Thickness(10) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) }); grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.Children.Add(left); Grid.SetColumn(right, 2); grid.Children.Add(right); return grid;
+    }
+    private void Pending(FrameworkElement element, string key)
+    { element.IsEnabled = false; element.ToolTip = ui.Text(key); ToolTipService.SetShowOnDisabled(element, true); }
+    private void BuildAppearance()
+    {
+        appearanceLayout ??= new NativeLayout(Path.Combine(AppContext.BaseDirectory, "Engine"));
+        form.Children.Add(SectionHeader("appearance.style"));
+        var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch(false)); solid.IsChecked = true;
+        var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch(true), false);
+        Pending(glass, "windows.appearance.glass_pending"); form.Children.Add(Card(Pair(solid, glass)));
+
+        var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (string style in new[] { "split", "classic" })
+        {
+            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), Content = ui.Text("appearance.quota_" + style), GroupName = "appearance.quota", VerticalAlignment = VerticalAlignment.Center };
+            Identify(choice, "appearance.quota." + style, ui.Text("appearance.quota_" + style));
+            choice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { ExpandedQuotaStyle = style }); };
+            quotaStyleChoices[style] = choice; editors.Add(choice); quotaChoices.Children.Add(choice);
+        }
+        var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
+        segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
+        form.Children.Add(Card(Row(Label(ui.Text("appearance.expanded_quota")), segments, 40)));
+        form.Children.Add(SectionHeader("appearance.position", 20));
+        notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", PositionSwatch(null));
+        customChoice = ArtChoice("appearance.mode.custom", ui.Text("settings.custom"), "appearance.modes", PositionSwatch(session.Current.Position));
+        notchChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "notch" }); };
+        customChoice.Checked += async (_, _) =>
+        {
+            if (synchronizing) return;
+            var current = session.Current;
+            int index = appearanceLayout.ResolveCustomPosition(current.HasChosenPosition ? Array.IndexOf(PositionNames, current.Position) : null, current.DisplayMode == "notch");
+            await Change(p => p with { DisplayMode = "floating", Position = PositionNames[index], PositionChosen = true });
+        };
+        editors.Add(notchChoice); editors.Add(customChoice);
+        var caption = new StackPanel { VerticalAlignment = VerticalAlignment.Top }; caption.Children.Add(Label(ui.Text("appearance.screen_position")));
+        var positionDetail = Detail(""); positionDetail.Name = "PositionDetail"; caption.Children.Add(positionDetail);
+        positionRow = Row(caption, PositionPicker(), 124); caption.Margin = new Thickness(0, 11, 8, 11);
+        var display = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 150 };
+        display.Items.Add(new ComboBoxItem { Content = ui.Text("settings.main_display") }); display.SelectedIndex = 0;
+        Identify(display, "appearance.display", ui.Text("settings.display_picker")); Pending(display, "windows.appearance.display_pending");
+        var fullscreen = Toggle("settings.fullscreen", null, "appearance.fullscreen", out var full); Pending(full, "windows.appearance.fullscreen_pending");
+        var positionCard = Card(Pair(notchChoice, customChoice), positionRow, Row(Label(ui.Text("settings.display_picker")), display, 40), fullscreen);
+        positionSeparator = (Border)((Panel)positionCard.Child).Children[1]; form.Children.Add(positionCard);
+    }
+    private Canvas PositionPicker()
+    {
+        var screen = Wallpaper(168, 104, 7);
+        screen.Children.Add(new Border { Width = 168, Height = 9, Background = new SolidColorBrush(Color.FromArgb(56, 0, 0, 0)) });
+        var dock = new Border { Width = 56, Height = 8, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)) };
+        Canvas.SetLeft(dock, 56); Canvas.SetTop(dock, 93); screen.Children.Add(dock);
+        Identify(screen, "appearance.positions", ui.Text("appearance.screen_position"));
+        foreach (string name in PositionNames)
+        {
+            bool center = name == "center", left = name.EndsWith("Left", StringComparison.Ordinal), bottom = name.StartsWith("bottom", StringComparison.Ordinal);
+            double width = center ? 40 : 11, height = center ? 11 : 32;
+            double x = center ? 84 : left ? width / 2 : 168 - width / 2;
+            double y = center ? 19 : bottom ? 104 - 18 - height / 2 : 13 + height / 2;
+            var art = new PositionSpot(name) { Width = width, Height = height };
+            var choice = new RadioButton { Style = (Style)FindResource("SettingsPositionChoice"), GroupName = "appearance.positions", Width = width + 10, Height = height + 10, Content = art };
+            Canvas.SetLeft(choice, x - choice.Width / 2); Canvas.SetTop(choice, y - choice.Height / 2);
+            string title = ui.Text("position." + name); choice.ToolTip = title; Identify(choice, "appearance.position." + name, title);
+            choice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { Position = name, PositionChosen = true, DisplayMode = "floating" }); };
+            choice.IsKeyboardFocusedChanged += (_, _) => { art.Focused = choice.IsKeyboardFocused; art.InvalidateVisual(); };
+            positionChoices[name] = (choice, art); screen.Children.Add(choice); editors.Add(choice);
+        }
+        return screen;
+    }
+    private void RefreshAppearance()
+    {
+        foreach (var item in quotaStyleChoices) item.Value.IsChecked = item.Key == session.Current.ExpandedQuotaStyle;
+        if (notchChoice == null || customChoice == null || positionRow == null) return;
+        bool attached = session.Current.DisplayMode == "notch";
+        notchChoice.IsChecked = attached; customChoice.IsChecked = !attached;
+        positionRow.Visibility = positionSeparator!.Visibility = attached ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var item in positionChoices)
+        { item.Value.Button.IsChecked = item.Key == session.Current.Position; item.Value.Art.Selected = item.Key == session.Current.Position; item.Value.Art.InvalidateVisual(); }
+        if (positionRow is Grid grid && grid.Children[0] is StackPanel caption)
+            ((TextBlock)caption.Children[1]).Text = ui.Text(session.Current.Position == "center" ? "windows.appearance.position_center_note" : "appearance.position_side_note");
+        if (customChoice.Content is StackPanel content && content.Children[0] is Grid art)
+        { art.Children.Clear(); art.Children.Add(PositionSwatch(session.Current.Position)); }
+    }
+    private static Canvas Wallpaper(double width, double height, double radius = 6)
+    {
+        var screen = new Canvas { Width = width, Height = height, Clip = new RectangleGeometry(new Rect(0, 0, width, height), radius, radius), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var background = new SolidColorBrush(Color.FromRgb(48, 54, 64)); background.Freeze();
+        screen.Background = background; return screen;
+    }
+    private static UIElement StyleSwatch(bool glass)
+    {
+        var art = Wallpaper(112, 40);
+        var capsule = new Border { Width = 64, Height = 16, CornerRadius = new CornerRadius(8), Background = glass ? new SolidColorBrush(Color.FromArgb(77, 0, 0, 0)) : new SolidColorBrush(Color.FromRgb(11, 12, 14)), BorderThickness = new Thickness(0.5), BorderBrush = new SolidColorBrush(Color.FromArgb(glass ? (byte)102 : (byte)15, 255, 255, 255)) };
+        Canvas.SetLeft(capsule, 24); Canvas.SetTop(capsule, 12); art.Children.Add(capsule); return art;
+    }
+    private static UIElement PositionSwatch(string? position)
+    {
+        var art = Wallpaper(112, 40); art.Children.Add(new Border { Width = 112, Height = 9, Background = new SolidColorBrush(Color.FromArgb(56, 0, 0, 0)) });
+        bool attached = position == null, center = position == "center", left = position?.EndsWith("Left", StringComparison.Ordinal) == true, bottom = position?.StartsWith("bottom", StringComparison.Ordinal) == true;
+        var island = new Border { Width = attached ? 52 : center ? 52 : 8, Height = attached ? 12 : center ? 11 : 18, Background = Brushes.Black,
+            CornerRadius = attached ? new CornerRadius(0, 0, 6, 6) : center ? new CornerRadius(5.5) : left ? new CornerRadius(0, 4, 4, 0) : new CornerRadius(4, 0, 0, 4) };
+        Canvas.SetLeft(island, attached || center ? 30 : left ? 0 : 104); Canvas.SetTop(island, attached ? 0 : center ? 14 : bottom ? 19 : 12); art.Children.Add(island); return art;
+    }
+    private sealed class PositionSpot(string position) : FrameworkElement
+    {
+        internal bool Selected, Focused;
+        protected override void OnRender(DrawingContext drawing)
+        {
+            bool left = position.EndsWith("Left", StringComparison.Ordinal), right = position.EndsWith("Right", StringComparison.Ordinal);
+            double radius = 5;
+            var path = new StreamGeometry(); using (var shape = path.Open())
+            {
+                double tl = left ? 0 : radius, tr = right ? 0 : radius, bl = tl, br = tr;
+                shape.BeginFigure(new Point(tl, 0), true, true); shape.LineTo(new Point(ActualWidth - tr, 0), true, false);
+                if (tr > 0) shape.ArcTo(new Point(ActualWidth, tr), new Size(tr, tr), 0, false, SweepDirection.Clockwise, true, false);
+                shape.LineTo(new Point(ActualWidth, ActualHeight - br), true, false);
+                if (br > 0) shape.ArcTo(new Point(ActualWidth - br, ActualHeight), new Size(br, br), 0, false, SweepDirection.Clockwise, true, false);
+                shape.LineTo(new Point(bl, ActualHeight), true, false);
+                if (bl > 0) shape.ArcTo(new Point(0, ActualHeight - bl), new Size(bl, bl), 0, false, SweepDirection.Clockwise, true, false);
+                shape.LineTo(new Point(0, tl), true, false);
+                if (tl > 0) shape.ArcTo(new Point(tl, 0), new Size(tl, tl), 0, false, SweepDirection.Clockwise, true, false);
+            }
+            var pen = new Pen(Selected || Focused ? new SolidColorBrush(Color.FromRgb(0, 122, 255)) : new SolidColorBrush(Color.FromArgb(204, 255, 255, 255)), Selected || Focused ? 1.5 : 1);
+            if (!Selected && !Focused) pen.DashStyle = new DashStyle([3.0, 2.0], 0);
+            drawing.DrawGeometry(Selected ? Brushes.Black : new SolidColorBrush(Color.FromArgb(38, 0, 0, 0)), pen, path);
+        }
+    }
+}

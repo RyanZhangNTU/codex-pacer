@@ -32,3 +32,6 @@ __pycache__/
 .vscode/
 .idea/
 *.sw?
+
+# Optional short workspace build/test root on Windows
+/out/
