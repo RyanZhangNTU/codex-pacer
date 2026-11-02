@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 import XCTest
 import PacerCore
@@ -23,28 +24,47 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
         }
     }
 
-    private func accessibleElements(in root: any NSAccessibilityProtocol) -> [any NSAccessibilityProtocol] {
-        var seen = Set<ObjectIdentifier>(), result: [any NSAccessibilityProtocol] = []
-        func visit(_ element: any NSAccessibilityProtocol) {
-            guard seen.insert(ObjectIdentifier(element as AnyObject)).inserted else { return }
+    private func accessibleElements(in root: AnyObject) -> [AnyObject] {
+        var seen = Set<ObjectIdentifier>(), result: [AnyObject] = []
+        func visit(_ element: AnyObject) {
+            guard seen.insert(ObjectIdentifier(element)).inserted else { return }
             result.append(element)
-            let children = (element.accessibilityChildren() ?? []) + ((element as? NSView)?.subviews ?? [])
+            // SwiftUI virtual nodes expose the public Objective-C getters
+            // without adopting the complete NSAccessibilityProtocol.
+            let children = (element.accessibilityChildren?() ?? []) + ((element as? NSView)?.subviews ?? [])
             for child in children {
-                if let accessible = child as? any NSAccessibilityProtocol { visit(accessible) }
+                visit(child as AnyObject)
             }
         }
         visit(root)
         return result
     }
 
-    private func disclosureButton(in host: NSView, title: String) async throws -> (any NSAccessibilityProtocol)? {
+    private func accessibilityTitle(of element: AnyObject) -> String? {
+        let selector = NSSelectorFromString("accessibilityTitle")
+        guard let object = element as? NSObject, object.responds(to: selector) else { return nil }
+        return object.perform(selector)?.takeUnretainedValue() as? String
+    }
+
+    private func materializeAccessibilityTree() async {
+        // Query this test process while leaving its main thread available to
+        // serve the request. This enables the hosted view's lazy AX nodes.
+        let result = await Task.detached {
+            let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+            var windows: CFTypeRef?
+            return AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windows)
+        }.value
+        XCTAssertEqual(result, .success)
+    }
+
+    private func disclosureButton(in host: NSView, title: String) async throws -> AnyObject? {
         let deadline = Date().addingTimeInterval(2)
         repeat {
             host.layoutSubtreeIfNeeded()
             if let button = accessibleElements(in: host).first(where: {
-                let role = $0.accessibilityRole()
+                let role = $0.accessibilityRole?()
                 return (role == .button || role == .disclosureTriangle) &&
-                    ($0.accessibilityIdentifier() == "quota.details.disclosure" || $0.accessibilityLabel() == title || $0.accessibilityTitle() == title)
+                    ($0.accessibilityIdentifier?() == "quota.details.disclosure" || $0.accessibilityLabel?() == title || accessibilityTitle(of: $0) == title)
             }) { return button }
             try await Task.sleep(nanoseconds: 20_000_000)
         } while Date() < deadline
@@ -60,24 +80,27 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
             let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 360, height: 160),
                 styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
-            defer { window.orderOut(nil); window.close() }
+            defer { window.orderOut(nil); window.contentView = nil; window.close() }
             host.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await materializeAccessibilityTree()
             try await Task.sleep(nanoseconds: 50_000_000)
             let candidate = try await disclosureButton(in: host, title: title)
-            let roles = accessibleElements(in: host).map { $0.accessibilityRole()?.rawValue ?? "none" }
+            let roles = accessibleElements(in: host).map { $0.accessibilityRole?()?.rawValue ?? "none" }
             let button = try XCTUnwrap(candidate, "Hosting subtree accessibility roles: \(roles)")
-            XCTAssertTrue(button.isAccessibilityEnabled())
-            XCTAssertEqual(button.accessibilityLabel() ?? button.accessibilityTitle(), title)
-            XCTAssertGreaterThanOrEqual(button.accessibilityFrame().width, 359,
+            XCTAssertTrue(button.isAccessibilityEnabled?() ?? false)
+            XCTAssertEqual(button.accessibilityLabel?() ?? accessibilityTitle(of: button), title)
+            let frame = try XCTUnwrap(button.accessibilityFrame?())
+            XCTAssertGreaterThanOrEqual(frame.width, 359,
                 "The title and space after it must belong to the button, along with the chevron")
-            XCTAssertEqual(button.accessibilityValue() as? String, L10n.text("account.expiries_collapsed"))
-            XCTAssertTrue(button.accessibilityPerformPress())
+            XCTAssertEqual(button.accessibilityValue?() as? String, L10n.text("account.expiries_collapsed"))
+            XCTAssertTrue(button.accessibilityPerformPress?() ?? false)
             XCTAssertTrue(state.expanded)
             try await Task.sleep(nanoseconds: 50_000_000)
             let openCandidate = try await disclosureButton(in: host, title: title)
             let openButton = try XCTUnwrap(openCandidate)
-            XCTAssertEqual(openButton.accessibilityValue() as? String, L10n.text("account.expiries_expanded"))
-            XCTAssertTrue(openButton.accessibilityPerformPress())
+            XCTAssertEqual(openButton.accessibilityValue?() as? String, L10n.text("account.expiries_expanded"))
+            XCTAssertTrue(openButton.accessibilityPerformPress?() ?? false)
             XCTAssertFalse(state.expanded)
         }
     }
