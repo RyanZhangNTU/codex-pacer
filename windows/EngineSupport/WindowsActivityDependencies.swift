@@ -9,7 +9,7 @@ extension ClaudeActivityMonitor {
                     defaultClaudeHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude"),
                     directories: WindowsClaudeAccountBinding.locations(environment: ProcessInfo.processInfo.environment).map { $0.deletingLastPathComponent() },
                     files: WindowsFileSystem())
-            }, files: WindowsFileSystem(), clock: clock)
+            }, files: WindowsFileSystem(), clock: clock, sshArguments: { $0.sshArguments() })
     }
 }
 

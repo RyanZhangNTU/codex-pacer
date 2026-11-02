@@ -80,6 +80,30 @@ extension ClaudeDesktopRecords {
     static func load(configFiles: [URL]) -> [Record] { load(configFiles: configFiles, files: WindowsFileSystem()) }
 }
 
+extension RemoteActivityTarget {
+    public func sshArguments(terminal: Bool = false) -> [String]? {
+        sshArguments(terminal: terminal, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+    public static func claudeConfigured(codexHome: URL, claudeHome: URL,
+                                        userHome: URL = FileManager.default.homeDirectoryForCurrentUser) async -> [RemoteActivityTarget] {
+        await claudeConfigured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome, discovery: ClaudeSSHDiscovery.shared)
+    }
+}
+extension ClaudeRemoteSetup {
+    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false) throws -> [String] {
+        try arguments(target: target, requireHome: requireHome, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+}
+
+extension ClaudeSSHDiscovery {
+    public static let shared = ClaudeSSHDiscovery()
+    public init(resolve: @escaping @Sendable (String, Int?) async -> ClaudeSSHRoute? = {
+        await ClaudeSSHRouteResolver.resolve(host: $0, port: $1)
+    }) {
+        self.init(resolve: resolve, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+}
+
 extension ClaudeSSHRouteResolver {
     static func parse(_ data: Data) -> ClaudeSSHRoute? { ClaudeSSHRouteRules.parse(data, normalizeIPv6: WindowsIP.normalizedIPv6) }
     static func validDestination(_ value: String) -> Bool { ClaudeSSHRouteRules.validDestination(value, normalizeIPv6: WindowsIP.normalizedIPv6) }

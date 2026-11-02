@@ -8,7 +8,7 @@ extension ClaudeActivityMonitor {
         self.init(sshExecutable: sshExecutable, processes: MacHelperProcessLauncher(),
             fileEvents: MacActivityFileEvents(), telemetryTransport: MacTelemetryTransport(),
             remoteMirrorSessionIDs: { ClaudeApplicationResolver.remoteMirrorSessionIDs(claudeHome: $0) },
-            files: MacFileSystem(), clock: clock)
+            files: MacFileSystem(), clock: clock, sshArguments: { $0.sshArguments() })
     }
 }
 

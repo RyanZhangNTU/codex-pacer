@@ -52,7 +52,9 @@ final class SharedActivityMonitorTests: XCTestCase {
     }
     private func monitor(_ launcher: Launcher) -> ClaudeActivityMonitor {
         ClaudeActivityMonitor(sshExecutable: FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-ssh"), processes: launcher,
-            fileEvents: NoEvents(), telemetryTransport: NoTelemetry(), remoteMirrorSessionIDs: { _ in [] }, files: TestFileSystem(), clock: { Date() })
+            fileEvents: NoEvents(), telemetryTransport: NoTelemetry(), remoteMirrorSessionIDs: { _ in [] }, files: TestFileSystem(), clock: { Date() }, sshArguments: {
+                $0.sshArguments(validDestination: { ClaudeSSHRouteResolver.validDestination($0, normalizeIPv6: { _ in nil }) })
+            })
     }
     private func target(_ id: String = "fixture") -> RemoteActivityTarget {
         RemoteActivityTarget(id: "remote-ssh-discovered:" + id, name: "Synthetic SSH", alias: id, home: "~/.claude")

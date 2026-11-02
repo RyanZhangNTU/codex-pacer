@@ -2,6 +2,25 @@ import Foundation
 import Darwin
 import PacerCore
 
+extension ClaudeSSHDiscovery {
+    public static let shared = ClaudeSSHDiscovery()
+    public init(resolve: @escaping @Sendable (String, Int?) async -> ClaudeSSHRoute? = {
+        await ClaudeSSHRouteResolver.resolve(host: $0, port: $1)
+    }) {
+        self.init(resolve: resolve, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+}
+
+extension RemoteActivityTarget {
+    public func sshArguments(terminal: Bool = false) -> [String]? {
+        sshArguments(terminal: terminal, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+    public static func claudeConfigured(codexHome: URL, claudeHome: URL,
+                                        userHome: URL = FileManager.default.homeDirectoryForCurrentUser) async -> [RemoteActivityTarget] {
+        await claudeConfigured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome, discovery: ClaudeSSHDiscovery.shared)
+    }
+}
+
 extension ClaudeSSHRouteResolver {
     public static func resolve(host: String, port: Int? = nil,
                         executable: URL = URL(fileURLWithPath: "/usr/bin/ssh"),

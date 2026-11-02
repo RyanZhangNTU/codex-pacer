@@ -1,3 +1,6 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#endif
 import Foundation
 import XCTest
 @testable import PacerCore

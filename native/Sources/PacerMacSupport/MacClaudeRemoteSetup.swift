@@ -4,7 +4,11 @@ import PacerCore
 
 extension ClaudeRemoteSetup {
     public init(executable: URL = URL(fileURLWithPath: "/usr/bin/ssh"), timeout: TimeInterval = 15) {
-        self.init(executable: executable, timeout: timeout, makeOperation: { MacClaudeRemoteSetupOperation(executable: $0, arguments: $1) })
+        self.init(executable: executable, timeout: timeout, makeOperation: { MacClaudeRemoteSetupOperation(executable: $0, arguments: $1) },
+            validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false) throws -> [String] {
+        try arguments(target: target, requireHome: requireHome, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
     }
 }
 
