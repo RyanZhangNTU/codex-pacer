@@ -26,6 +26,7 @@ public actor RealtimeActivityMonitor {
     private struct Connection {
         var source: Source
         let process: Process
+        let ownership: OwnedProcessTermination
         let output: FileHandle
         let input: FileHandle?
         let reader: PipeChunkReader
@@ -196,7 +197,8 @@ public actor RealtimeActivityMonitor {
         if localUnavailable || (primaryLocalIsDesktop && desktop == nil) { result["local"] = RuntimeStreamStatus() }
         return result
     }
-    public func shutdown() async {
+    public func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        let children = connections.values.map(\.process)
         startGeneration += 1
         callback = nil
         if let current = desktop { desktop = nil; current.collector.stop(); current.continuation.finish(); current.delivery?.cancel() }
@@ -205,8 +207,16 @@ public actor RealtimeActivityMonitor {
         failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
         knownControls = nil
         remoteControlBindings = .init(hostIDs: [], authoritative: false)
-        await controlCatalog.shutdown()
-        try? await Task.sleep(nanoseconds: 650_000_000)
+        let catalog = controlCatalog
+        await deadline.perform([
+            { await catalog.shutdown(deadline: deadline) },
+            {
+                while !Task.isCancelled && children.contains(where: \.isRunning) {
+                    do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }
+                }
+            }
+        ])
+        for child in children where child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
     }
     public func invalidateRemoteControlCatalog() async { await controlCatalog.invalidate() }
     private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) {
@@ -348,7 +358,10 @@ public actor RealtimeActivityMonitor {
             reader.stop(); output.fileHandleForReading.readabilityHandler = nil; channel.continuation.finish()
             failed[source.id] = source; retryAfter[source.id] = Date().addingTimeInterval(30); return
         }
-        var connection = Connection(source: source, process: process, output: output.fileHandleForReading,
+        let ownership = OwnedProcessTermination { [weak process] in
+            if let process, process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+        }
+        var connection = Connection(source: source, process: process, ownership: ownership, output: output.fileHandleForReading,
             input: input.fileHandleForWriting,
             reader: reader, continuation: channel.continuation, readHandler: readHandler,
             state: RuntimeEventState(sourceID: source.alias == nil ? nil : source.id, sourceName: source.name))

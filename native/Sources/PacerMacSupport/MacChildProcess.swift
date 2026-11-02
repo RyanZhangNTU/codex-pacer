@@ -44,17 +44,18 @@ private final class MacChildProcess: ChildProcessConnection, @unchecked Sendable
     private let collector: ProcessErrorCollector
     private let lock = NSLock()
     private var closed = false
-    private let exited: Task<Void, Never>
+    let exited = ShutdownSignal()
+    let ioClosed = ShutdownSignal()
+    private let closeQueue = DispatchQueue(label: "pacer.child.close", qos: .utility)
+    private var ownership: OwnedProcessTermination?
 
     init(_ request: ChildProcessRequest, output receive: @escaping @Sendable (Data) -> Void,
          ended: @escaping @Sendable () -> Void) throws {
         let child = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
         let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
         let collector = ProcessErrorCollector(reader: PipeChunkReader(descriptor: errors.fileHandleForReading.fileDescriptor))
-        let completion = AsyncStream<Void>.makeStream()
         self.child = child; self.input = input; self.output = output; self.errors = errors
         self.reader = reader; self.collector = collector
-        exited = Task { for await _ in completion.stream {} }
         child.executableURL = request.executable; child.arguments = request.arguments; child.environment = request.environment
         child.standardInput = input; child.standardOutput = output; child.standardError = errors
         errors.fileHandleForReading.readabilityHandler = { handle in
@@ -64,38 +65,43 @@ private final class MacChildProcess: ChildProcessConnection, @unchecked Sendable
             guard let data = reader.read() else { return }
             if data.isEmpty { ended() } else { receive(data) }
         }
-        // Establish the awaitable exit before launch; waiting never occupies a cooperative worker.
-        child.terminationHandler = { _ in completion.continuation.finish() }
+        let exited = self.exited
+        child.terminationHandler = { _ in exited.finish() }
         do { try child.run() }
         catch {
-            completion.continuation.finish()
+            exited.finish(); ioClosed.finish()
             reader.stop(); collector.stop()
             output.fileHandleForReading.readabilityHandler = nil
             errors.fileHandleForReading.readabilityHandler = nil
             throw CodexClientError.launchFailed(path: request.executable.path, reason: CodexDiagnosticText.description(of: error))
         }
+        ownership = OwnedProcessTermination { [weak self] in self?.terminateImmediately() }
     }
     var isRunning: Bool { child.isRunning }
     var terminationStatus: Int32? { child.isRunning ? nil : child.terminationStatus }
     func errorMessage() -> String { collector.message() }
     func write(_ data: Data) throws { try input.fileHandleForWriting.write(contentsOf: data) }
     func close() {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed else { return }; closed = true
-        reader.stop(); collector.stop()
-        output.fileHandleForReading.readabilityHandler = nil
-        errors.fileHandleForReading.readabilityHandler = nil
-        try? input.fileHandleForWriting.close()
-        try? output.fileHandleForReading.close(); try? errors.fileHandleForReading.close()
-        if child.isRunning {
-            child.terminate()
-            let child = self.child
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
-                if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
-            }
+        lock.lock()
+        guard !closed else { lock.unlock(); return }; closed = true
+        lock.unlock()
+        let child = self.child
+        DispatchQueue.global(qos: .userInitiated).async { if child.isRunning { child.terminate() } }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.5) { [self] in
+            terminateImmediately()
+        }
+        closeQueue.async { [self] in
+            reader.stop(); collector.stop()
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+            try? input.fileHandleForWriting.close()
+            try? output.fileHandleForReading.close(); try? errors.fileHandleForReading.close()
+            ioClosed.finish()
         }
     }
-    func waitForExit() async { await exited.value }
+    func terminateImmediately() {
+        if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
+    }
 }
 
 extension CodexClient {

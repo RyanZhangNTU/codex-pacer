@@ -22,6 +22,7 @@ public actor ClaudeActivityMonitor {
     private struct Connection {
         let target: RemoteActivityTarget
         let process: Process
+        let ownership: OwnedProcessTermination
         let input: FileHandle
         let output: FileHandle
         let reader: PipeChunkReader
@@ -121,10 +122,17 @@ public actor ClaudeActivityMonitor {
         }
         if flushPending { Task { await readLocal(discover: false); await publish() } }
     }
-    public func shutdown() async {
+    public func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        let children = connections.values.map(\.process)
         callback = nil; stopLocal(); home = nil
         for id in Array(connections.keys) { stopRemote(id) }
         wanted.removeAll(); disconnected.removeAll(); retry.removeAll(); localReader.reset(); local = ClaudeActivityState()
+        await deadline.perform([{
+            while !Task.isCancelled && children.contains(where: \.isRunning) {
+                do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }
+            }
+        }])
+        for child in children where child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
     }
     private func stopLocal() {
         localGeneration = UUID()
@@ -204,7 +212,10 @@ public actor ClaudeActivityMonitor {
             try? input.fileHandleForWriting.close(); try? output.fileHandleForReading.close()
             retry[target.id] = Date().addingTimeInterval(30); disconnected[target.id] = ClaudeActivityState(sourceID: target.id, sourceName: target.name); return
         }
-        var connection = Connection(target: target, process: process, input: input.fileHandleForWriting, output: output.fileHandleForReading,
+        let ownership = OwnedProcessTermination { [weak process] in
+            if let process, process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+        }
+        var connection = Connection(target: target, process: process, ownership: ownership, input: input.fileHandleForWriting, output: output.fileHandleForReading,
             reader: reader, continuation: channel.continuation, readHandler: readHandler,
             state: disconnected.removeValue(forKey: target.id) ?? ClaudeActivityState(sourceID: target.id, sourceName: target.name))
         connection.task = Task { [weak self] in
@@ -255,8 +266,11 @@ public actor ClaudeActivityMonitor {
         try? connection.input.close(); connection.reader.stop(); connection.output.readabilityHandler = nil
         connection.continuation.finish(); connection.task?.cancel(); try? connection.output.close()
         if connection.process.isRunning {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
                 if connection.process.isRunning { connection.process.terminate() }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                if connection.process.isRunning { _ = Darwin.kill(connection.process.processIdentifier, SIGKILL) }
             }
         }
     }

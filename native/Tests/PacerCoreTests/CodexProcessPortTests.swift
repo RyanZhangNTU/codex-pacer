@@ -23,8 +23,11 @@ final class CodexProcessPortTests: XCTestCase {
         private var running = true
         private var events: [String] = []
         private var methods: [String] = []
+        let exited = ShutdownSignal()
+        let ioClosed = ShutdownSignal()
+        private let stubborn: Bool
         let output: @Sendable (Data) -> Void
-        init(output: @escaping @Sendable (Data) -> Void) { self.output = output }
+        init(output: @escaping @Sendable (Data) -> Void, stubborn: Bool) { self.output = output; self.stubborn = stubborn }
         var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
         var terminationStatus: Int32? { isRunning ? nil : 0 }
         func errorMessage() -> String { "" }
@@ -43,9 +46,15 @@ final class CodexProcessPortTests: XCTestCase {
             var reply = try JSONSerialization.data(withJSONObject: ["id": id, "result": result]); reply.append(10)
             output(reply)
         }
-        func close() { lock.lock(); events.append("close"); lock.unlock() }
-        private func finish() { lock.lock(); events.append("wait"); running = false; lock.unlock() }
-        func waitForExit() async { finish() }
+        func close() {
+            lock.lock(); events.append("close"); if !stubborn { running = false }; lock.unlock()
+            guard !stubborn else { return }
+            exited.finish(); ioClosed.finish()
+        }
+        func terminateImmediately() {
+            lock.lock(); events.append("kill"); running = false; lock.unlock()
+            exited.finish()
+        }
         func snapshot() -> (events: [String], methods: [String]) {
             lock.lock(); defer { lock.unlock() }; return (events, methods)
         }
@@ -53,9 +62,11 @@ final class CodexProcessPortTests: XCTestCase {
     private final class Launcher: ChildProcessLauncher, @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [(ChildProcessRequest, Connection)] = []
+        private let stubborn: Bool
+        init(stubborn: Bool = false) { self.stubborn = stubborn }
         func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) -> Void,
                     ended: @escaping @Sendable () -> Void) throws -> any ChildProcessConnection {
-            let connection = Connection(output: output)
+            let connection = Connection(output: output, stubborn: stubborn)
             lock.lock(); entries.append((request, connection)); lock.unlock()
             return connection
         }
@@ -78,9 +89,27 @@ final class CodexProcessPortTests: XCTestCase {
         for (request, connection) in entries {
             XCTAssertEqual(request.environment["CODEX_HOME"], home.path)
             XCTAssertEqual(request.environment["FIXTURE"], "kept")
-            XCTAssertEqual(connection.snapshot().events, ["close", "wait"])
+            XCTAssertEqual(connection.snapshot().events, ["close"])
             XCTAssertTrue(connection.snapshot().methods.allSatisfy { ["initialize", "initialized", "account/read", "account/rateLimits/read"].contains($0) })
             XCTAssertFalse(connection.isRunning)
         }
+    }
+
+    func testClientShutdownBoundsStalledIOAndChildExitAndCannotRelaunch() async throws {
+        let launcher = Launcher(stubborn: true), home = FileManager.default.temporaryDirectory.appendingPathComponent("fixture-home")
+        let client = CodexClient(executable: home.appendingPathComponent("codex"), home: home, timeout: 1,
+            processes: launcher, executables: Executables(), files: Files())
+        _ = try await client.readQuota()
+        let connection = try XCTUnwrap(launcher.snapshot().first?.1)
+        let started = Date()
+        await client.shutdown()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.9)
+        XCTAssertTrue(connection.snapshot().events.contains("close"))
+        XCTAssertTrue(connection.snapshot().events.contains("kill"))
+        XCTAssertFalse(connection.ioClosed.isFinished, "The IO worker deliberately ignores cancellation")
+        XCTAssertFalse(connection.isRunning)
+        do { _ = try await client.readQuota(); XCTFail("A shut-down client cannot launch another child") }
+        catch CodexClientError.disconnected {} catch { XCTFail("Unexpected shutdown result") }
+        XCTAssertEqual(launcher.snapshot().count, 1)
     }
 }

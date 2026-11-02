@@ -72,10 +72,18 @@ public protocol ChildProcessConnection: AnyObject, Sendable {
     var isRunning: Bool { get }
     var terminationStatus: Int32? { get }
     func errorMessage() -> String
+    var exited: ShutdownSignal { get }
+    var ioClosed: ShutdownSignal { get }
     /// Stops IO and terminates only the owned child. Repeated closes are harmless.
     func close()
-    /// Completes after the owned child exits, including termination escalation.
-    func waitForExit() async
+    /// Escalates only the owned child, independently of blocked IO cleanup.
+    func terminateImmediately()
+}
+
+extension ChildProcessConnection {
+    @discardableResult public func waitForExit(until deadline: ShutdownDeadline = ShutdownDeadline()) async -> Bool {
+        await exited.wait(until: deadline)
+    }
 }
 
 public protocol ChildProcessLauncher: Sendable {

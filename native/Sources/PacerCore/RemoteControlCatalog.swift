@@ -169,10 +169,13 @@ public actor RemoteControlCatalog {
     func invalidate() {
         if let cache { self.cache = .init(key: cache.key, targets: cache.targets, expires: .distantPast) }
     }
-    func shutdown() async {
+    func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
         desiredKey = nil
         cache = nil
-        if let current = pending { pending = nil; current.task.cancel(); await current.client.shutdown() }
+        if let current = pending {
+            pending = nil; current.task.cancel()
+            await deadline.perform([{ await current.client.shutdown(deadline: deadline) }])
+        }
     }
     static func readTargets(authorization: RemoteControlCatalogAuthorization, clientID: String,
                             identity: RemoteControlCatalogIdentity,

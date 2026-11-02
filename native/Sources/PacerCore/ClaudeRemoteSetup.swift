@@ -146,6 +146,7 @@ private final class ClaudeRemoteSetupOperation: @unchecked Sendable {
     private var closed = false
     private var stopped: ClaudeRemoteSetup.Failure?
     private var stopping = false
+    private var ownership: OwnedProcessTermination?
 
     init(executable: URL, arguments: [String]) {
         process.executableURL = executable
@@ -164,6 +165,10 @@ private final class ClaudeRemoteSetupOperation: @unchecked Sendable {
         if let stopped { throw stopped }
         do { try process.run() }
         catch { throw ClaudeRemoteSetup.Failure.connectionFailed }
+        let child = process
+        ownership = OwnedProcessTermination { [weak child] in
+            if let child, child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
+        }
         started = true
         try? input.fileHandleForWriting.close()
         try? output.fileHandleForWriting.close()
@@ -206,9 +211,9 @@ private final class ClaudeRemoteSetupOperation: @unchecked Sendable {
             process.terminate()
             // A peer ignoring EOF/SIGTERM cannot leave Pacer's SSH process
             // alive. This targets the exact Process created by this operation.
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) { [self] in
-                lock.lock(); defer { lock.unlock() }
-                if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+            let child = process
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) {
+                if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
             }
         }
         closeLocked()

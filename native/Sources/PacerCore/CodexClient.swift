@@ -59,6 +59,10 @@ public enum CodexClientError: Error, LocalizedError {
 public actor CodexClient {
     private var process: (any ChildProcessConnection)?
     private var closingProcesses: [any ChildProcessConnection] = []
+    private var closingReaders: [ShutdownSignal] = []
+    private var readerFinished: ShutdownSignal?
+    private nonisolated let shutdownRequested = ShutdownSignal()
+    private nonisolated let ownedChildren = OwnedChildProcesses()
     private let processes: any ChildProcessLauncher
     private let executables: any ExecutablePlatform
     private let files: any PlatformFileSystem
@@ -98,6 +102,7 @@ public actor CodexClient {
     }
 
     public func readQuota() async throws -> QuotaSnapshot {
+        guard !shutdownRequested.isFinished else { throw CodexClientError.disconnected }
         if let quotaTask { return try await quotaTask.value }
         let task = Task { try await fetchQuota() }
         quotaTask = task
@@ -106,14 +111,18 @@ public actor CodexClient {
     }
     public func currentAccountScope() -> String? { verifiedAccountScope }
     public func usesLegacyRateLimitRequest() -> Bool { legacyRateLimitGeneration == generation }
-    public func shutdown() async {
+    public nonisolated func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        shutdownRequested.finish()
+        let completed = await deadline.perform([{ await self.finishShutdown(deadline: deadline) }])
+        if !completed { ownedChildren.terminate() }
+    }
+    private func finishShutdown(deadline: ShutdownDeadline) async {
         quotaTask?.cancel()
-        let reading = readTask
         disconnect()
-        await reading?.value
         let children = closingProcesses
-        for child in children { await child.waitForExit() }
-        closingProcesses.removeAll { !$0.isRunning }
+        let readers = closingReaders
+        closingProcesses.removeAll(); closingReaders.removeAll()
+        await deadline.finish(readers: readers, children: children)
     }
 
     private func fetchQuota() async throws -> QuotaSnapshot {
@@ -179,6 +188,7 @@ public actor CodexClient {
         }
     }
     private func prepareReadConnection() async throws {
+        guard !shutdownRequested.isFinished, !Task.isCancelled else { throw CodexClientError.disconnected }
         let fingerprint = Self.authenticationFingerprint(home: home, files: files)
         if fingerprint != authFingerprint { disconnect(); authFingerprint = fingerprint }
         if !ready {
@@ -217,7 +227,9 @@ public actor CodexClient {
         streamContinuation = nil
         readTask?.cancel()
         readTask = nil
-        closingProcesses.removeAll { !$0.isRunning }
+        closingReaders.removeAll { $0.isFinished }
+        if let readerFinished { closingReaders.append(readerFinished); self.readerFinished = nil }
+        closingProcesses.removeAll { $0.exited.isFinished && $0.ioClosed.isFinished }
         if let child = process {
             child.close()
             closingProcesses.append(child)
@@ -243,8 +255,11 @@ public actor CodexClient {
         generation += 1
         let currentGeneration = generation
         let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
+        let finished = ShutdownSignal()
+        readerFinished = finished
         streamContinuation = channel.continuation
         readTask = Task { [weak self] in
+            defer { finished.finish() }
             for await data in channel.stream {
                 guard !Task.isCancelled else { return }
                 await self?.receive(data, generation: currentGeneration)
@@ -255,6 +270,13 @@ public actor CodexClient {
             output: { data in
                 if case .dropped = channel.continuation.yield(data) { channel.continuation.finish() }
             }, ended: { channel.continuation.finish() })
+        if let process {
+            ownedChildren.add(process)
+            if shutdownRequested.isFinished {
+                process.close(); process.terminateImmediately()
+                throw CodexClientError.disconnected
+            }
+        }
     }
 
     private func request(_ method: String, params: [String: Any]?) async throws -> Data {
