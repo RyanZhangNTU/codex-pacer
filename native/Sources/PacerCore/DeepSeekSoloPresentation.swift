@@ -48,7 +48,7 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
         public let timeFraction: Double?
         public let pacePercent: Double?
         public let paceText: String
-        public let verdict: String?
+        public let verdict: QuotaDashboardPresentation.Verdict?
         public let verdictText: String?
         public let exceeded: Bool
         public let pressing: Bool
@@ -144,8 +144,8 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
     }
     public static func budget(_ period: DeepSeekBudgetPeriod, at now: Date) -> Budget {
         func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
-            let pace = period.window.pacePercent(at: now), verdict = period.exceeded ? nil : pace.map { QuotaDashboardPresentation.Verdict(pace: $0).rawValue }
-            let pressing = !period.exceeded && (period.remaining / period.limit <= 0.15 || verdict == "fast")
+            let pace = period.window.pacePercent(at: now), verdict = period.exceeded ? nil : pace.map(QuotaDashboardPresentation.Verdict.init(pace:))
+            let pressing = !period.exceeded && (period.remaining / period.limit <= 0.15 || verdict == .fast)
             let parts = String(format: "%.2f", abs(period.remaining)).split(separator: ".")
             let countdown = Self.duration(max(0, period.interval.end.timeIntervalSince(now)))
             let label = L10n.text(period.kind == .day ? "deepseek.budget.day" : "deepseek.budget.week")
@@ -161,7 +161,7 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
             }
             return Budget(kind: period.kind.rawValue, label: label, fraction: min(1, max(0, period.remaining / period.limit)),
                 timeFraction: period.window.remainingTimePercent(at: now).map { $0 / 100 }, pacePercent: pace, paceText: pace.map { "\(Int($0.rounded()))%" } ?? "—",
-                verdict: verdict, verdictText: verdict.map { L10n.text("quota.verdict." + $0) }, exceeded: period.exceeded, pressing: pressing,
+                verdict: verdict, verdictText: verdict?.label, exceeded: period.exceeded, pressing: pressing,
                 whole: (period.exceeded && abs(period.remaining) >= 0.005 ? "−¥" : "¥") + String(parts.first ?? "0"), cents: "." + String(parts.last ?? "00"),
                 countdown: countdown, resetText: L10n.text(period.kind == .day ? "deepseek.reset_day" : "deepseek.reset_week"), projectionText: projection, projectionWarns: warns,
                 help: [label, L10n.text("deepseek.resets_in", countdown), projection].compactMap { $0 }.joined(separator: "\n"),

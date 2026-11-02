@@ -39,7 +39,8 @@ final class DeepSeekScenarioTableTests: XCTestCase {
 
     private struct Mode: Decodable {
         let detected: String?, source: DeepSeekBalanceSelection, effective: String?, keyEditor: Bool, showDetection: Bool
-        let title: String, action: String?, rejectedAction: String, detectedKey: String
+        let title: String, detectedKey: String
+        let action: DeepSeekConnectionPresentation.Action?, rejectedAction: DeepSeekConnectionPresentation.Action
     }
     private struct ConnectionTable: Decodable { let modes: [Mode], ages: [Age] }
     func testEveryProfileSourceAndAgePairKeepsKnownBalancesAndRejectsInvalidConnections() throws {
@@ -62,7 +63,7 @@ final class DeepSeekScenarioTableTests: XCTestCase {
                 let value = DeepSeekConnectionPresentation(source: mode.source, detected: detected, balance: balance,
                     error: .connectionFailed, refreshing: true, now: F.now)
                 XCTAssertTrue(value.connected); XCTAssertEqual(value.text, L10n.text("deepseek.connected", age.freshness.render()))
-                XCTAssertEqual(value.color, "green"); XCTAssertEqual(value.title, L10n.text(mode.title))
+                XCTAssertEqual(value.color, .green); XCTAssertEqual(value.title, L10n.text(mode.title))
                 XCTAssertEqual(value.keyEditor, mode.keyEditor); XCTAssertEqual(value.showDetection, mode.showDetection)
                 XCTAssertEqual(value.action, mode.action)
                 let found = L10n.text(mode.detectedKey)
@@ -71,7 +72,7 @@ final class DeepSeekScenarioTableTests: XCTestCase {
             }
             let rejected = DeepSeekConnectionPresentation(source: mode.source, detected: detected,
                 balance: .init(total: 86.4, capturedAt: F.now.addingTimeInterval(-601), source: .apiKey), error: .invalidKey, refreshing: false, now: F.now)
-            XCTAssertFalse(rejected.connected); XCTAssertEqual(rejected.color, "orange"); XCTAssertEqual(rejected.action, mode.rejectedAction)
+            XCTAssertFalse(rejected.connected); XCTAssertEqual(rejected.color, .orange); XCTAssertEqual(rejected.action, mode.rejectedAction)
         }
         XCTAssertEqual(checked, 54)
     }

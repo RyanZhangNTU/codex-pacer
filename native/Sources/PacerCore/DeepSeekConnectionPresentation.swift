@@ -11,9 +11,13 @@ public enum DeepSeekBalanceSelection: String, Codable, CaseIterable, Identifiabl
 
 /// The original connection row, without a key, account identity or source path.
 public struct DeepSeekConnectionPresentation: Codable, Equatable, Sendable {
-    public let title: String, text: String, color: String, detectedText: String
+    public enum Action: String, Codable, CaseIterable, Sendable { case signIn, refresh }
+    public enum Color: String, Codable, CaseIterable, Sendable { case green, secondary, orange }
+    public let title: String, text: String, detectedText: String
+    public let color: Color
     public let connected: Bool, keyEditor: Bool, showDetection: Bool
-    public let action: String?, actionLabel: String?
+    public let action: Action?
+    public let actionLabel: String?
     public init(source: DeepSeekBalanceSelection, detected: DeepSeekAuthMode?, balance: DeepSeekBalance?,
                 error: DeepSeekBalanceError?, refreshing: Bool, now: Date) {
         let mode = source.mode(detected: detected), web = mode != .apiKey
@@ -22,14 +26,14 @@ public struct DeepSeekConnectionPresentation: Codable, Equatable, Sendable {
         title = L10n.text(web ? "deepseek.platform_account" : "deepseek.api_key")
         let age = max(0, Int(now.timeIntervalSince(balance?.capturedAt ?? now)))
         let freshness = age < 10 ? L10n.text("quota.just_updated") : age < 60 ? L10n.text("quota.seconds_ago", age) : L10n.text("quota.minutes_ago", age / 60)
-        if connected { text = L10n.text("deepseek.connected", freshness); color = "green" }
-        else if refreshing { text = L10n.text("claude.account.checking"); color = "secondary" }
-        else if error?.needsConnection == true || error == nil { text = L10n.text(web ? "deepseek.signed_out" : "deepseek.no_key"); color = "orange" }
-        else { text = error?.localizedDescription ?? L10n.text("deepseek.balance.unavailable"); color = "orange" }
+        if connected { text = L10n.text("deepseek.connected", freshness); color = .green }
+        else if refreshing { text = L10n.text("claude.account.checking"); color = .secondary }
+        else if error?.needsConnection == true || error == nil { text = L10n.text(web ? "deepseek.signed_out" : "deepseek.no_key"); color = .orange }
+        else { text = error?.localizedDescription ?? L10n.text("deepseek.balance.unavailable"); color = .orange }
         let found = detected.map { L10n.text($0 == .account ? "deepseek.detected.account" : "deepseek.detected.api") } ?? L10n.text("deepseek.detected.unknown")
         detectedText = source == .automatic ? found : L10n.text("deepseek.detected.overridden", found)
-        if web && !connected { action = "signIn"; actionLabel = L10n.text("deepseek.sign_in") }
-        else if !web && (error != nil || connected) { action = "refresh"; actionLabel = L10n.text("common.refresh") }
+        if web && !connected { action = .signIn; actionLabel = L10n.text("deepseek.sign_in") }
+        else if !web && (error != nil || connected) { action = .refresh; actionLabel = L10n.text("common.refresh") }
         else { action = nil; actionLabel = nil }
     }
 }

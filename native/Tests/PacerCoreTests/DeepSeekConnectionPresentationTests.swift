@@ -29,10 +29,10 @@ final class DeepSeekConnectionPresentationTests: XCTestCase {
                     let value = DeepSeekConnectionPresentation(source: source, detected: detected, balance: balance,
                         error: .connectionFailed, refreshing: true, now: now)
                     XCTAssertTrue(value.connected)
-                    XCTAssertEqual(value.color, "green", "The last known balance takes precedence over a transient read failure")
+                    XCTAssertEqual(value.color, .green, "The last known balance takes precedence over a transient read failure")
                     XCTAssertEqual(value.keyEditor, source.mode(detected: detected) == .apiKey)
                     XCTAssertEqual(value.showDetection, source != .automatic)
-                    XCTAssertEqual(value.action, value.keyEditor ? "refresh" : nil)
+                    XCTAssertEqual(value.action, value.keyEditor ? .refresh : nil)
                 }
             }
         }
@@ -42,10 +42,10 @@ final class DeepSeekConnectionPresentationTests: XCTestCase {
         for error in [DeepSeekBalanceError.missingKey, .invalidKey, .signedOut, .challenge] {
             let value = DeepSeekConnectionPresentation(source: .apiKey, detected: .account,
                 balance: DeepSeekBalance(total: 10, capturedAt: now, source: .apiKey), error: error, refreshing: false, now: now)
-            XCTAssertFalse(value.connected); XCTAssertEqual(value.color, "orange"); XCTAssertEqual(value.action, "refresh")
+            XCTAssertFalse(value.connected); XCTAssertEqual(value.color, .orange); XCTAssertEqual(value.action, .refresh)
         }
         let checking = DeepSeekConnectionPresentation(source: .web, detected: nil, balance: nil, error: nil, refreshing: true, now: now)
-        XCTAssertFalse(checking.connected); XCTAssertEqual(checking.color, "secondary"); XCTAssertEqual(checking.action, "signIn")
+        XCTAssertFalse(checking.connected); XCTAssertEqual(checking.color, .secondary); XCTAssertEqual(checking.action, .signIn)
         let idle = DeepSeekConnectionPresentation(source: .automatic, detected: nil, balance: nil, error: nil, refreshing: false, now: now)
         XCTAssertTrue(idle.showDetection); XCTAssertFalse(idle.keyEditor)
         let text = String(decoding: try JSONEncoder().encode(idle), as: UTF8.self)

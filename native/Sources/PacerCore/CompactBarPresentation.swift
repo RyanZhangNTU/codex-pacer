@@ -3,6 +3,31 @@ import Foundation
 /// Edits use CompactIslandLayout's migration, ordering and provider rules.
 /// Platform views arrange the returned components and draw their live values.
 public enum CompactBarPresentation {
+    public enum SingleTask: String, Codable, CaseIterable, Sendable { case stage, count }
+    public enum Metric: String, Codable, CaseIterable, Sendable {
+        case remaining, pace
+        public var labelKey: String {
+            switch self { case .remaining: "layout.quota_label"; case .pace: "quota.pace" }
+        }
+    }
+    public enum RingChoice: String, Codable, CaseIterable, Sendable {
+        case automatic = "", none, codex, claude, deepseek
+        public init(provider: AgentProvider) {
+            switch provider {
+            case .codex: self = .codex
+            case .claude: self = .claude
+            case .deepseek: self = .deepseek
+            }
+        }
+        public var provider: AgentProvider? {
+            switch self {
+            case .automatic, .none: nil
+            case .codex: .codex
+            case .claude: .claude
+            case .deepseek: .deepseek
+            }
+        }
+    }
     public static let dimDuration = 0.2
     public static let expandedOpacity = 0.3
     public static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
@@ -12,18 +37,17 @@ public enum CompactBarPresentation {
         context.running && context.rate != nil && (!showsStatus || strip || !attached || language != .english || !context.attention)
     }
     public struct Options: Codable, Equatable, Sendable {
-        public var singleTask: String
-        public var metric: String
+        public var singleTask: SingleTask
+        public var metric: Metric
         public var codexWindow: String
         public var claudeWindow: String
-        public var rings: [String]
-        public init(singleTask: String = "stage", metric: String = "remaining", codexWindow: String = "auto",
-                    claudeWindow: String = "auto", rings: [String] = ["", ""]) {
+        public var rings: [RingChoice]
+        public init(singleTask: SingleTask = .stage, metric: Metric = .remaining, codexWindow: String = "auto",
+                    claudeWindow: String = "auto", rings: [RingChoice] = [.automatic, .automatic]) {
             self.singleTask = singleTask; self.metric = metric; self.codexWindow = codexWindow; self.claudeWindow = claudeWindow; self.rings = rings
         }
         public var valid: Bool {
-            ["stage", "count"].contains(singleTask) && ["remaining", "pace"].contains(metric) && rings.count == 2 &&
-                rings.allSatisfy { ["", "none", "codex", "claude", "deepseek"].contains($0) } &&
+            rings.count == 2 &&
                 [codexWindow, claudeWindow].allSatisfy { $0.utf8.count <= 1024 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
         }
     }
@@ -55,11 +79,12 @@ public enum CompactBarPresentation {
         }
     }
     public struct Entry: Codable, Equatable, Sendable {
-        public let provider: String, text: String, stripText: String
+        public let provider: AgentProvider
+        public let text: String, stripText: String
         public let dimmed: Bool
     }
     public struct Ring: Codable, Equatable, Sendable {
-        public let provider: String
+        public let provider: AgentProvider
         public let remaining: Double?
         public let dimmed: Bool
     }
@@ -69,9 +94,22 @@ public enum CompactBarPresentation {
         public let text: String?, stripText: String?, unit: String?, stripUnit: String?
         public let help: String, accessibility: String
         public let entries: [Entry]
+
+        public static func hidden(_ component: CompactIslandLayout.Component) -> Self {
+            .init(id: component.rawValue, label: component.label, shortLabel: component.shortLabel,
+                detail: component.detail, symbol: component.symbol,
+                hideLabel: L10n.text("layout.hide_component", component.label),
+                available: false, shown: false, visible: false, stripEligible: component.showsInStrip,
+                dimsExpanded: dimsWhenExpanded(component), text: nil, stripText: nil, unit: nil, stripUnit: nil,
+                help: "", accessibility: "", entries: [])
+        }
     }
     public struct Group: Codable, Equatable, Sendable { public let id: String, label: String; public let components: [String] }
-    public struct Window: Codable, Equatable, Sendable { public let provider: String, label: String, selection: String; public let weeklyOnly: Bool }
+    public struct Window: Codable, Equatable, Sendable {
+        public let provider: AgentProvider
+        public let label: String, selection: String
+        public let weeklyOnly: Bool
+    }
     public struct Output: Codable, Equatable, Sendable {
         public let version: Int
         public let layoutJSON: String
@@ -82,6 +120,22 @@ public enum CompactBarPresentation {
         public let ringChoices: [String]
         public let gaugeClock: Bool, singleTaskCount: Bool
         public let dimDuration: Double, expandedOpacity: Double
+
+        /// Invalid native input hides the bar's components until a valid projection arrives.
+        public static let empty: Self = {
+            let layout = CompactIslandLayout(warnings: [])
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let layoutJSON = (try? encoder.encode(layout)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"leading":[],"trailing":[],"version":\#(layout.version),"warnings":[]}"#
+            return Self(version: 1, layoutJSON: layoutJSON, warnings: [],
+                editorLeading: [], editorTrailing: [], leading: [], trailing: [], components: [], groups: [], windows: [],
+                rings: [], ringChoices: ["none", "none"], gaugeClock: false, singleTaskCount: false,
+                dimDuration: CompactBarPresentation.dimDuration, expandedOpacity: CompactBarPresentation.expandedOpacity)
+        }()
+
+        public func component(_ component: CompactIslandLayout.Component) -> Component {
+            components.first { $0.id == component.rawValue } ?? .hidden(component)
+        }
     }
 
     public static func project(_ request: Request, layout suppliedLayout: CompactIslandLayout? = nil) -> Output? {
@@ -129,25 +183,25 @@ public enum CompactBarPresentation {
                 selection: provider == .codex ? request.options.codexWindow : request.options.claudeWindow)
         }
         let wallet = context?.wallet
-        let automatic = request.options.rings.allSatisfy(\.isEmpty)
-        let ringChoices: [String]
+        let automatic = request.options.rings.allSatisfy { $0 == .automatic }
+        let ringChoices: [RingChoice]
         if automatic {
-            var values = Array(ordered.filter { $0 != .deepseek }.prefix(2)).map(\.rawValue)
+            var values = Array(ordered.filter { $0 != .deepseek }.prefix(2)).map(RingChoice.init(provider:))
             // Settings names an enabled wallet even before it has a budget;
             // the drawing below independently excludes undrawable rings.
-            if values.count == 1, providers.contains(.deepseek) { values.append("deepseek") }
-            ringChoices = values + Array(repeating: "none", count: 2 - values.count)
-        } else { ringChoices = request.options.rings.map { $0.isEmpty ? "none" : $0 } }
+            if values.count == 1, providers.contains(.deepseek) { values.append(.deepseek) }
+            ringChoices = values + Array(repeating: .none, count: 2 - values.count)
+        } else { ringChoices = request.options.rings.map { $0 == .automatic ? .none : $0 } }
         var ringProviders: [AgentProvider] = []
-        for raw in ringChoices {
-            guard let provider = AgentProvider(rawValue: raw), providers.contains(provider),
+        for choice in ringChoices {
+            guard let provider = choice.provider, providers.contains(provider),
                   provider != .deepseek || wallet?.hasBudget == true, !ringProviders.contains(provider) else { continue }
             ringProviders.append(provider)
         }
         let rings: [Ring] = ringProviders.map { provider in
-            if provider == .deepseek { return .init(provider: provider.rawValue, remaining: wallet?.budgetPercent, dimmed: wallet?.dimmed == true) }
+            if provider == .deepseek { return .init(provider: provider, remaining: wallet?.budgetPercent, dimmed: wallet?.dimmed == true) }
             let input = source(provider), window = selected(provider)
-            return .init(provider: provider.rawValue, remaining: input?.failed == true ? nil : window?.remainingPercent,
+            return .init(provider: provider, remaining: input?.failed == true ? nil : window?.remainingPercent,
                 dimmed: input?.snapshot?.isStale(at: date) == true || window?.resetsAt.map { $0 <= date } == true)
         }
         let clock = rings.isEmpty && providers.contains(.deepseek) && !layout.components.contains(.priceClock)
@@ -161,22 +215,22 @@ public enum CompactBarPresentation {
         func percent(_ value: Double?) -> String { value.map { String(Int($0.rounded())) } ?? "—" }
         func entry(_ provider: AgentProvider) -> Entry {
             if provider == .deepseek {
-                return .init(provider: provider.rawValue, text: usesBudget ? wallet?.budget ?? "¥—" : wallet?.balance ?? "¥—",
+                return .init(provider: provider, text: usesBudget ? wallet?.budget ?? "¥—" : wallet?.balance ?? "¥—",
                     stripText: usesBudget ? wallet?.stripBudget ?? "¥—" : wallet?.stripBalance ?? "¥—", dimmed: wallet?.dimmed == true)
             }
             let number = percent(value(provider))
-            return .init(provider: provider.rawValue, text: number == "—" ? number : number + "%",
+            return .init(provider: provider, text: number == "—" ? number : number + "%",
                 stripText: number == "—" || !alternating.contains(.deepseek) ? number : number + "%", dimmed: false)
         }
         let entries = alternating.map(entry)
         let times: [Entry] = ordered.filter { $0 != .deepseek }.map { provider in
             let number = percent(selected(provider)?.elapsedTimePercent(at: date).map { 100 - $0 })
-            return .init(provider: provider.rawValue, text: number == "—" ? number : number + "%", stripText: number, dimmed: false)
+            return .init(provider: provider, text: number == "—" ? number : number + "%", stripText: number, dimmed: false)
         }
-        let quotaHelp = ordered.map(entry).map { entry in L10n.text("provider.compact_quota", AgentProvider(rawValue: entry.provider)!.displayName, entry.text, language: language) }.joined(separator: " · ")
+        let quotaHelp = ordered.map(entry).map { entry in L10n.text("provider.compact_quota", entry.provider.displayName, entry.text, language: language) }.joined(separator: " · ")
         let gaugeHelp = ringProviders.map { provider in L10n.text("provider.compact_quota", provider.displayName,
             provider == .deepseek ? wallet?.budget ?? "—" : selected(provider)?.remainingPercent.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—", language: language) }.joined(separator: " · ")
-        let timeHelp = times.map { entry in L10n.text("provider.compact_time", AgentProvider(rawValue: entry.provider)!.displayName, entry.text, language: language) }.joined(separator: " · ")
+        let timeHelp = times.map { entry in L10n.text("provider.compact_time", entry.provider.displayName, entry.text, language: language) }.joined(separator: " · ")
         let clockSummary = L10n.text("deepseek.clock_accessibility", L10n.text(wallet?.peakNow == true ? "deepseek.now.peak" : "deepseek.now.offpeak", language: language),
             DeepSeekDialPresentation.amount(wallet?.todayTotal ?? 0), language: language)
         let componentValues = CompactIslandLayout.Component.allCases.map { component -> Component in
@@ -184,7 +238,7 @@ public enum CompactBarPresentation {
             var help = "", accessibility = "", visible = component.isAvailable(for: providers), values: [Entry] = []
             switch component {
             case .activity: help = context?.activitySummary(language: language) ?? L10n.text("activity.idle", language: language)
-            case .status: text = context?.statusText(language: language) ?? L10n.text("activity.idle", language: language); help = text!
+            case .status: help = context?.statusText(language: language) ?? L10n.text("activity.idle", language: language); text = help
             case .tps:
                 let compact = request.attached || request.strip
                 text = context?.rate.map { rate in compact && rate >= 1_000_000 ? String(format: "%.1fM", rate / 1_000_000) : compact && rate >= 1000 ? String(format: "%.1fk", rate / 1000) : String(format: "%.0f", rate) } ?? "—"
@@ -200,7 +254,7 @@ public enum CompactBarPresentation {
             case .quota: values = entries; stripUnit = alternating.contains(.deepseek) ? nil : "%"; help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
             case .quotaGauge: visible = !rings.isEmpty || clock; help = clock ? "" : gaugeHelp + "\n" + L10n.text("layout.gauge_help", language: language)
             case .priceClock: break
-            case .quotaLabel: text = L10n.text(request.options.metric == "pace" ? "quota.pace" : "layout.quota_label", language: language); help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
+            case .quotaLabel: text = L10n.text(request.options.metric.labelKey, language: language); help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
             case .timeRemaining: values = times; stripUnit = "%"; help = timeHelp + "\n" + L10n.text("layout.time_remaining_help", language: language)
             }
             switch component {
@@ -227,24 +281,25 @@ public enum CompactBarPresentation {
             let snapshot = source(provider)?.snapshot
             let own = snapshot.flatMap { $0.buckets.first { $0.id == provider.rawValue } ?? $0.buckets.first }
             let weeklyOnly = own?.windows.contains(where: { $0.durationMinutes == 10080 }) == true && own?.windows.contains(where: { $0.durationMinutes == 300 }) == false
-            return .init(provider: provider.rawValue, label: L10n.text("provider.window_selection", provider.displayName, language: language),
+            return .init(provider: provider, label: L10n.text("provider.window_selection", provider.displayName, language: language),
                 selection: weeklyOnly ? "7d" : selection(provider).rawValue, weeklyOnly: weeklyOnly)
         }
         return .init(version: 1, layoutJSON: canonical, warnings: CompactIslandLayout.Warning.allCases.filter(layout.warnings.contains).map(\.rawValue),
             editorLeading: layout.visibleComponents(in: .leading, providers: providers).map(\.rawValue), editorTrailing: layout.visibleComponents(in: .trailing, providers: providers).map(\.rawValue),
             leading: runtime(.leading), trailing: runtime(.trailing), components: componentValues,
             groups: CompactIslandLayout.Group.allCases.map { .init(id: $0.rawValue, label: L10n.text("layout.group." + $0.rawValue, language: language), components: $0.components.map(\.rawValue)) },
-            windows: windows, rings: rings, ringChoices: ringChoices, gaugeClock: clock, singleTaskCount: request.options.singleTask == "count",
+            windows: windows, rings: rings, ringChoices: ringChoices.map(\.rawValue), gaugeClock: clock, singleTaskCount: request.options.singleTask == .count,
             dimDuration: dimDuration, expandedOpacity: expandedOpacity)
     }
     public static func quotaValue(provider: AgentProvider, snapshot: QuotaSnapshot?, failed: Bool,
-                                  metric: String, selection: String?, now: Date) -> Double? {
+                                  metric: Metric, selection: String?, now: Date) -> Double? {
         let window = QuotaDashboardPresentation.selectedWindow(provider: provider, snapshot: snapshot, selection: selection)
-        if metric == "pace" {
+        switch metric {
+        case .pace:
             guard !failed, snapshot?.isStale(at: now) == false else { return nil }
             return window?.pacePercent(at: now)
+        case .remaining: return window?.remainingPercent
         }
-        return window?.remainingPercent
     }
     public static func timeRemainingNumber(provider: AgentProvider, snapshot: QuotaSnapshot?, selection: String?, now: Date) -> String? {
         QuotaDashboardPresentation.selectedWindow(provider: provider, snapshot: snapshot, selection: selection)?

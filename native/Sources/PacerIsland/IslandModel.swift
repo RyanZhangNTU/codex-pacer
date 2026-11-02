@@ -32,7 +32,7 @@ final class IslandModel: ObservableObject {
             observeFirstOutputs(activities); scheduleRateExpiry()
         }
     }
-    var compactPresentationCache: (layout: CompactIslandLayout, request: CompactBarPresentation.Request, output: CompactBarPresentation.Output)?
+    var compactPresentationCache: [Bool: (layout: CompactIslandLayout, request: CompactBarPresentation.Request, output: CompactBarPresentation.Output)] = [:]
     private var cachedTaskGroups: [ActivityTaskGroup]?
     private var cachedOverview: (at: Date, value: ActivityOverview)?
     private(set) var taskGroupingComputations = 0
@@ -256,7 +256,7 @@ final class IslandModel: ObservableObject {
     }
     func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
         CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider), failed: providerQuotaError(provider) != nil,
-            metric: "pace", selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
+            metric: .pace, selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     var claudeHome: URL {
         let configured = defaults.string(forKey: "claudeHome") ?? ""
@@ -765,11 +765,12 @@ final class IslandModel: ObservableObject {
     var selectedWindow: QuotaWindow? { providerSelectedWindow(selectedProvider) }
     var stale: Bool { (quota?.isStale(at: now) ?? false) || (selectedWindow?.resetsAt.map { $0 <= now } ?? false) }
     var compactMetricLabel: String {
-        L10n.text(defaults.string(forKey: "compactMetric") == "pace" ? "quota.pace" : "layout.quota_label")
+        L10n.text((defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining).labelKey)
     }
     func compactQuotaValue(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> Double? {
         CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider),
-            failed: providerQuotaError(provider) != nil, metric: metric ?? defaults.string(forKey: "compactMetric") ?? "remaining",
+            failed: providerQuotaError(provider) != nil,
+            metric: (metric ?? defaults.string(forKey: "compactMetric")).flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining,
             selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     /// The percentage without its sign, for the docked strip's stacked units.

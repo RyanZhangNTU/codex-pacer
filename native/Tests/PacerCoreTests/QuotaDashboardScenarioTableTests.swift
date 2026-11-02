@@ -7,7 +7,8 @@ final class QuotaDashboardScenarioTableTests: XCTestCase {
     private typealias P = QuotaDashboardPresentation
     private struct ReadingRow: Decodable {
         let name: String, provider: String, bucket: String?, windows: [F.Window], age: Double, failed: Bool, period: String
-        let availability: String, window: String?, remaining: Double?, time: Double?, pace: Double?, verdict: String?
+        let availability: String, window: String?, remaining: Double?, time: Double?, pace: Double?
+        let verdict: P.Verdict?
         let pressing: Bool, value: String, timeText: String, reset: Double?
         let freshness: F.Text, countdown: F.Text, projection: F.Text?, inline: F.Text?, warns: Bool, helpTokens: [String]
     }
@@ -40,7 +41,7 @@ final class QuotaDashboardScenarioTableTests: XCTestCase {
             XCTAssertEqual(reading.projectionInline, row.inline?.render(substitutions: substitutions), label)
             XCTAssertEqual(reading.projectionWarns, row.warns, label); XCTAssertFalse(reading.projectionEarly, label)
             let periodName = row.period == "5h" ? L10n.text("quota.hours", 5) : L10n.text("quota.days", 7)
-            let verdict = row.verdict.map { L10n.text("quota.verdict." + $0) }
+            let verdict = row.verdict?.label
             let tokens = ["rings": L10n.text("dashboard.rings_help"), "bucket": row.bucket ?? "",
                 "missing": L10n.text("dashboard.period_unavailable", periodName),
                 "time": L10n.text("dashboard.time_remaining", row.timeText), "reset": reset,

@@ -41,7 +41,7 @@ final class QuotaDashboardPresentationTests: XCTestCase {
         let fresh = snapshot([("codex", [window("five", minutes: 300)])])
         let available = P.Reading(provider: .codex, period: .fiveHour, snapshot: fresh, now: now)
         XCTAssertEqual(available.remainingPercent, 80); XCTAssertEqual(available.remainingTimePercent, 50)
-        XCTAssertEqual(available.pacePercent, 160); XCTAssertEqual(available.verdict, "spare")
+        XCTAssertEqual(available.pacePercent, 160); XCTAssertEqual(available.verdict, .spare)
         XCTAssertEqual(available.paceText, "160%")
         for sample in [snapshot([("codex", [window("expired", minutes: 300, reset: now)])]),
                        snapshot([("codex", [window("five", minutes: 300)])], age: 301)] {

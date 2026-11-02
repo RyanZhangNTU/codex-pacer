@@ -30,9 +30,9 @@ final class NoticeScenarioTableTests: XCTestCase {
             let values = CompactWarningPresentation.items(enabled: [.codex, .claude], warnings: [.fiveHour, .ssh, .quotaDelay],
                 snapshots: snapshots, failed: failed, sshIssue: false, now: F.now)
             let label = "\(row.provider)/\(row.remaining)/\(row.age)/expired=\(row.expired)/failed=\(row.failed)"
-            XCTAssertEqual(values.map(\.kind), row.kinds, label)
-            XCTAssertEqual(values.first { $0.kind == "quotaDelay" }?.affectedProviders ?? [], row.delayed, label)
-            let mark = values.first { $0.kind == "fiveHour" && $0.provider == row.provider }
+            XCTAssertEqual(values.map(\.kind.rawValue), row.kinds, label)
+            XCTAssertEqual(values.first { $0.kind == .quotaDelay }?.affectedProviders ?? [], row.delayed, label)
+            let mark = values.first { $0.kind == .fiveHour && $0.provider == row.provider }
             if row.kinds.contains("fiveHour") {
                 XCTAssertEqual(try XCTUnwrap(mark).solid, row.solid, label)
                 XCTAssertEqual(mark?.label, "5h", label)

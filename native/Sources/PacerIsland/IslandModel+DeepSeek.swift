@@ -153,7 +153,7 @@ extension IslandModel {
     }
     /// The providers in the collapsed rings, outer first. DeepSeek draws only with a budget.
     var compactRingProviders: [AgentProvider] {
-        compactPresentation().rings.compactMap { AgentProvider(rawValue: $0.provider) }
+        compactPresentation().rings.map(\.provider)
     }
     /// With no ring to draw for DeepSeek alone, the gauge shows the price clock.
     var compactGaugeShowsPriceClock: Bool { compactPresentation().gaugeClock }

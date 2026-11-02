@@ -141,7 +141,7 @@ struct QuotaRingReading {
     var fraction: Double? { reading.fraction }
     var timeFraction: Double? { reading.timeFraction }
     var stale: Bool { reading.availability == .stale }
-    var verdict: QuotaPaceVerdict? { reading.verdict.flatMap(QuotaPaceVerdict.init(rawValue:)) }
+    var verdict: QuotaPaceVerdict? { reading.verdict }
     var pressing: Bool { reading.pressing }
     var tint: Color { quota.period == .fiveHour && pressing ? PacerPalette.attention : quota.provider.tint }
     var labelColor: Color { pressing ? PacerPalette.attention : PacerPalette.tertiary }

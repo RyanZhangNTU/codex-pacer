@@ -67,7 +67,7 @@ struct ClassicQuotaDashboardRingView: View {
     private static let stroke: CGFloat = 6
     /// Pace needs fresh quota; a stale value against the live clock would mislead.
     private var reading: QuotaDashboardPresentation.Reading { quota.at(now) }
-    private var verdict: QuotaPaceVerdict? { reading.verdict.flatMap(QuotaPaceVerdict.init(rawValue:)) }
+    private var verdict: QuotaPaceVerdict? { reading.verdict }
 
     var body: some View {
         VStack(spacing: 8) {

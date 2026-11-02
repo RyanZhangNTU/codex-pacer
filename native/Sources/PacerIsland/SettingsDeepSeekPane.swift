@@ -212,12 +212,18 @@ struct SettingsDeepSeekSections: View {
 
     @ViewBuilder private var connectionRow: some View {
         let presentation = connection
-        let tint: Color = presentation.color == "green" ? .green : presentation.color == "orange" ? .orange : .secondary
+        let tint: Color = switch presentation.color {
+        case .green: .green
+        case .orange: .orange
+        case .secondary: .secondary
+        }
         row(presentation.title, state: presentation.text, tint: tint) {
-            if presentation.action == "signIn" {
+            switch presentation.action {
+            case .signIn:
                 Button(presentation.actionLabel ?? "") { model.connectDeepSeek() }
-            } else if presentation.action == "refresh" {
+            case .refresh:
                 Button(presentation.actionLabel ?? "") { model.refreshDeepSeekBalance(force: true) }.disabled(model.deepseekRefreshing)
+            case nil: EmptyView()
             }
             Menu {
                 Picker(L10n.text("deepseek.balance_source"), selection: $balanceSource) {

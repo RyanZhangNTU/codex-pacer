@@ -35,26 +35,27 @@ extension IslandModel {
     func compactPresentation(showsStatus: Bool = true) -> CompactBarPresentation.Output {
         var layout = compactLayout
         if !showsStatus { layout.hide(.status) }
-        let options = CompactBarPresentation.Options(singleTask: ActivityBadgeSingleTask(defaults: defaults).rawValue,
-            metric: defaults.string(forKey: "compactMetric") == "pace" ? "pace" : "remaining",
+        let options = CompactBarPresentation.Options(singleTask: ActivityBadgeSingleTask(defaults: defaults),
+            metric: defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining,
             codexWindow: QuotaWindowSelection(saved: defaults.string(forKey: "quotaWindowID"), snapshot: providerQuota(.codex)).rawValue,
             claudeWindow: QuotaWindowSelection(saved: defaults.string(forKey: "claudeQuotaWindowID"), snapshot: providerQuota(.claude)).rawValue,
             rings: QuotaRingSlot.allCases.map { slot in
-                guard let saved = defaults.string(forKey: slot.defaultsKey) else { return "" }
-                return AgentProvider(rawValue: saved)?.rawValue ?? "none"
+                guard let saved = defaults.string(forKey: slot.defaultsKey) else { return .automatic }
+                // A present empty or unknown preference previously meant no ring.
+                return AgentProvider(rawValue: saved).map(CompactBarPresentation.RingChoice.init(provider:)) ?? .none
             })
         let request = CompactBarPresentation.Request(providers: enabledProviders, options: options,
             context: compactContext, attached: isAttached, strip: sideDock != nil)
-        if let cached = compactPresentationCache, cached.layout == layout, cached.request == request { return cached.output }
+        if let cached = compactPresentationCache[showsStatus], cached.layout == layout, cached.request == request { return cached.output }
         guard let output = CompactBarPresentation.project(request, layout: layout) else {
-            preconditionFailure("The native compact presentation inputs must be normalized")
+            return .empty
         }
-        compactPresentationCache = (layout, request, output)
+        compactPresentationCache[showsStatus] = (layout, request, output)
         return output
     }
 
     func compactComponent(_ component: CompactIslandLayout.Component, showsStatus: Bool = true) -> CompactBarPresentation.Component {
-        compactPresentation(showsStatus: showsStatus).components.first { $0.id == component.rawValue }!
+        compactPresentation(showsStatus: showsStatus).component(component)
     }
 
     var deepseekSoloPresentation: DeepSeekSoloPresentation {
