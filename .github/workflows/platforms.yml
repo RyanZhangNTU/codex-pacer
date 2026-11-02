@@ -2,7 +2,7 @@ name: Platforms
 
 on:
   push:
-    branches: [main, develop, 'codex/**']
+    branches: [main, develop]
   pull_request:
     branches: [develop, main]
   workflow_dispatch:
