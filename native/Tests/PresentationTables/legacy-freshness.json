@@ -1,0 +1,1262 @@
+[
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": null,
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      60
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": "5h",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      60
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": "7d",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      60
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": "eight",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      60
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 0,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": null,
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": "5h",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": "7d",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": "eight",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": false,
+    "age": 301,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": null,
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": "5h",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": "7d",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": "eight",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 0,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": null,
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": "5h",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": "7d",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": "eight",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": false,
+    "expired": true,
+    "age": 301,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.expired"
+    },
+    "remaining": [
+      30
+    ],
+    "pace": [
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": null,
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      60,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": "5h",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      60,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": "7d",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      60,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": "eight",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      60,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 0,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": null,
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": "5h",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": "7d",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": "eight",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": false,
+    "age": 301,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": null,
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": "5h",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": "7d",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": "eight",
+    "failed": false,
+    "fresh": true,
+    "freshness": {
+      "key": "quota.just_updated"
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      160
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 0,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        1
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": null,
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": null,
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": "5h",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": "5h",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": "7d",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": "7d",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": "eight",
+    "failed": false,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  },
+  {
+    "weekly": true,
+    "expired": true,
+    "age": 301,
+    "selection": "eight",
+    "failed": true,
+    "fresh": false,
+    "freshness": {
+      "key": "quota.age",
+      "numbers": [
+        5
+      ]
+    },
+    "remaining": [
+      30,
+      80
+    ],
+    "pace": [
+      null,
+      null
+    ]
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "origin": "https://platform.deepseek.com/",
+  "scripts": [
+    {
+      "name": "summaryScript",
+      "sha256": "0e857f5338907a6bb85327a9019e9182839d4c839fefcf236900d787d96f7528"
+    },
+    {
+      "name": "sessionFingerprintScript",
+      "sha256": "d5433a2913b82573eaeb1b8225a87a636d8f809519184b6efa0cfd24a9836ab2"
+    }
+  ]
+}

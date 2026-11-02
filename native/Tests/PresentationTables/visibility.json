@@ -1,0 +1,202 @@
+[
+  {
+    "provider": "codex",
+    "host": null,
+    "embedded": false,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "codex",
+    "host": null,
+    "embedded": false,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "codex",
+    "host": null,
+    "embedded": true,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "codex",
+    "host": null,
+    "embedded": true,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "codex",
+    "host": "remote-ssh-discovered:example",
+    "embedded": false,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "codex",
+    "host": "remote-ssh-discovered:example",
+    "embedded": false,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "codex",
+    "host": "remote-ssh-discovered:example",
+    "embedded": true,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "codex",
+    "host": "remote-ssh-discovered:example",
+    "embedded": true,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "claude",
+    "host": null,
+    "embedded": false,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "claude",
+    "host": null,
+    "embedded": false,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "claude",
+    "host": null,
+    "embedded": true,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "claude",
+    "host": null,
+    "embedded": true,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "claude",
+    "host": "remote-ssh-discovered:example",
+    "embedded": false,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "claude",
+    "host": "remote-ssh-discovered:example",
+    "embedded": false,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": []
+  },
+  {
+    "provider": "claude",
+    "host": "remote-ssh-discovered:example",
+    "embedded": true,
+    "order": [
+      "child",
+      "root",
+      "other"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  },
+  {
+    "provider": "claude",
+    "host": "remote-ssh-discovered:example",
+    "embedded": true,
+    "order": [
+      "root",
+      "other",
+      "child"
+    ],
+    "hidden": [
+      "root",
+      "child"
+    ]
+  }
+]

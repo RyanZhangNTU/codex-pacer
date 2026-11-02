@@ -1,0 +1,88 @@
+{
+  "ages": [
+    {
+      "age": 0,
+      "freshness": {
+        "key": "quota.just_updated"
+      }
+    },
+    {
+      "age": 30,
+      "freshness": {
+        "key": "quota.seconds_ago",
+        "numbers": [
+          30
+        ]
+      }
+    },
+    {
+      "age": 301,
+      "freshness": {
+        "key": "quota.minutes_ago",
+        "numbers": [
+          5
+        ]
+      }
+    },
+    {
+      "age": 601,
+      "freshness": {
+        "key": "quota.minutes_ago",
+        "numbers": [
+          10
+        ]
+      }
+    },
+    {
+      "age": 3600,
+      "freshness": {
+        "key": "quota.minutes_ago",
+        "numbers": [
+          60
+        ]
+      }
+    }
+  ],
+  "amounts": [
+    {
+      "total": 0,
+      "amount": "¥0.00",
+      "whole": "0",
+      "cents": ".00",
+      "state": "exhausted",
+      "balance": "danger",
+      "subtitle": "danger",
+      "segment": "danger"
+    },
+    {
+      "total": 2,
+      "amount": "¥2.00",
+      "whole": "2",
+      "cents": ".00",
+      "state": "low",
+      "balance": "attention",
+      "subtitle": "attention",
+      "segment": "provider"
+    },
+    {
+      "total": 86.4,
+      "amount": "¥86.40",
+      "whole": "86",
+      "cents": ".40",
+      "state": "normal",
+      "balance": "primary",
+      "subtitle": "secondary",
+      "segment": "provider"
+    },
+    {
+      "total": 1250,
+      "amount": "¥1.2k",
+      "whole": "1250",
+      "cents": ".00",
+      "state": "normal",
+      "balance": "primary",
+      "subtitle": "secondary",
+      "segment": "provider"
+    }
+  ]
+}

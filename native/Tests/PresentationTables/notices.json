@@ -1,0 +1,441 @@
+{
+  "warnings": [
+    {
+      "provider": "codex",
+      "remaining": 20,
+      "age": 0,
+      "expired": false,
+      "failed": false,
+      "delayed": [],
+      "kinds": [],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 20,
+      "age": 301,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 20,
+      "age": 0,
+      "expired": true,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 20,
+      "age": 0,
+      "expired": false,
+      "failed": true,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 19.9,
+      "age": 0,
+      "expired": false,
+      "failed": false,
+      "delayed": [],
+      "kinds": [
+        "fiveHour"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 19.9,
+      "age": 301,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 19.9,
+      "age": 0,
+      "expired": true,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 19.9,
+      "age": 0,
+      "expired": false,
+      "failed": true,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 0,
+      "age": 0,
+      "expired": false,
+      "failed": false,
+      "delayed": [],
+      "kinds": [
+        "fiveHour"
+      ],
+      "solid": true
+    },
+    {
+      "provider": "codex",
+      "remaining": 0,
+      "age": 301,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 0,
+      "age": 0,
+      "expired": true,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "codex",
+      "remaining": 0,
+      "age": 0,
+      "expired": false,
+      "failed": true,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 20,
+      "age": 0,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 20,
+      "age": 301,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 20,
+      "age": 0,
+      "expired": true,
+      "failed": false,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 20,
+      "age": 0,
+      "expired": false,
+      "failed": true,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 19.9,
+      "age": 0,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "fiveHour",
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 19.9,
+      "age": 301,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 19.9,
+      "age": 0,
+      "expired": true,
+      "failed": false,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 19.9,
+      "age": 0,
+      "expired": false,
+      "failed": true,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 0,
+      "age": 0,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex"
+      ],
+      "kinds": [
+        "fiveHour",
+        "quotaDelay"
+      ],
+      "solid": true
+    },
+    {
+      "provider": "claude",
+      "remaining": 0,
+      "age": 301,
+      "expired": false,
+      "failed": false,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 0,
+      "age": 0,
+      "expired": true,
+      "failed": false,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    },
+    {
+      "provider": "claude",
+      "remaining": 0,
+      "age": 0,
+      "expired": false,
+      "failed": true,
+      "delayed": [
+        "codex",
+        "claude"
+      ],
+      "kinds": [
+        "quotaDelay"
+      ],
+      "solid": false
+    }
+  ],
+  "transitions": [
+    {
+      "balance": 20,
+      "spent": 2,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [],
+      "spendIDs": []
+    },
+    {
+      "balance": 9,
+      "spent": 9,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [
+        "low"
+      ],
+      "spendIDs": [
+        "day:1"
+      ]
+    },
+    {
+      "balance": 8,
+      "spent": 10.1,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [],
+      "spendIDs": [
+        "day:2"
+      ]
+    },
+    {
+      "balance": 0,
+      "spent": 11,
+      "stale": false,
+      "low": false,
+      "budget": false,
+      "balanceIDs": [
+        "exhausted"
+      ],
+      "spendIDs": []
+    },
+    {
+      "balance": 5,
+      "spent": 2,
+      "stale": true,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [],
+      "spendIDs": []
+    },
+    {
+      "balance": 20,
+      "spent": 2,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [],
+      "spendIDs": []
+    },
+    {
+      "balance": 5,
+      "spent": 9,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [
+        "low"
+      ],
+      "spendIDs": [
+        "spike",
+        "day:1"
+      ]
+    },
+    {
+      "balance": 5,
+      "spent": 2,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [],
+      "spendIDs": []
+    },
+    {
+      "balance": 5,
+      "spent": 6,
+      "stale": false,
+      "low": true,
+      "budget": true,
+      "balanceIDs": [],
+      "spendIDs": [
+        "spike"
+      ]
+    }
+  ]
+}
