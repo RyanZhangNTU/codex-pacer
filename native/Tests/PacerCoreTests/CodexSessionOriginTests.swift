@@ -5,6 +5,20 @@ final class CodexSessionOriginTests: XCTestCase {
     private let session = "019a0000-0000-7000-8000-0000000000a1"
     private let child = "019a0000-0000-7000-8000-0000000000a2"
 
+    func testPathSyntaxDeterminesCaseAndSeparatorsOnEveryHost() throws {
+        let paths = [#"C:\Fixture\ZOTERO-CHAT\TRANSLATE"#, "C:/Fixture/Zotero-Chat/Translate",
+            #"\\server\share\ZOTERO-CHAT-CATALOG.fixture"#, "/fixture/zotero-chat/translate",
+            "/fixture/Zotero-Chat/Translate", "/fixture/ZOTERO-CHAT-CATALOG.fixture"]
+        let expected = [true, true, true, true, false, false]
+        let input = try JSONSerialization.data(withJSONObject: paths).base64EncodedString()
+        let output = try python("import json,base64\n" + CodexSessionOrigin.python + "\npaths=json.loads(base64.b64decode('" + input + "').decode())\nprint(json.dumps([codex_origin('fixture-client',p)['ignoredSession'] for p in paths]))")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [Bool], expected)
+        for (path, ignored) in zip(paths, expected) {
+            XCTAssertEqual(CodexSessionOrigin.classify(originator: "fixture-client", cwd: path)?.ignored, ignored)
+            XCTAssertEqual(CodexSessionOrigin.classify(originator: "codex-tui", cwd: path)?.ignored, false)
+        }
+    }
+
     func testOriginClassificationAndSanitizedSshParity() throws {
         let fixtures: [[String: Any]] = (CodexSessionOrigin.officialClients + ["@agentclientprotocol/codex-acp", "private-client-name"]).flatMap { origin in
             ["/fixture/Zotero-Agent", "/fixture/zotero-chat/translate", "/tmp/zotero-chat-catalog.synthetic"].map {

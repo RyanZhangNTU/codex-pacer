@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import PacerCore
 import SwiftUI
@@ -359,7 +360,8 @@ extension IslandModel {
         let generation = deepseekGeneration
         Task { [weak self] in
             guard let self else { return }
-            await self.deepseekMonitor.shutdown()
+            let monitor = self.deepseekMonitor
+            await ShutdownDeadline().perform([{ await monitor.shutdown() }])
             guard generation == self.deepseekGeneration else { return }
             self.startDeepSeekActivity(); self.refreshDeepSeekBalance()
         }

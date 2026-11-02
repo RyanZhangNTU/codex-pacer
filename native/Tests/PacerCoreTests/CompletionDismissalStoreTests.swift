@@ -1,3 +1,4 @@
+import PacerMacSupport
 import XCTest
 @testable import PacerCore
 
@@ -193,6 +194,19 @@ final class CompletionDismissalStoreTests: XCTestCase {
         var oldest = inbox(file)
         oldest.observe([completion(turn: "synthetic-0")], at: epoch.addingTimeInterval(1026), retention: 0)
         XCTAssertEqual(oldest.activities.count, 1, "Bound eviction fails open for old cards")
+    }
+
+    func testSymbolicLinkToAValidStoreDoesNotLoadAcknowledgments() throws {
+        let target = try fixture(), link = target.deletingLastPathComponent().appendingPathComponent("linked.json")
+        let store = CompletionDismissalStore(fileURL: target), digest = CompletionDismissalStore.digest(["synthetic-ending"])
+        XCTAssertTrue(store.saveDigests([digest]))
+        let saved = try Data(contentsOf: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        XCTAssertEqual(store.loadDigests(), [digest])
+        let linked = CompletionDismissalStore(fileURL: link).load()
+        XCTAssertTrue(linked.digests.isEmpty)
+        XCTAssertTrue(linked.cloudEndings.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: target), saved)
     }
 
     func testCorruptUnsupportedOrOversizedStoreFailsOpen() throws {

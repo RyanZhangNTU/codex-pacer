@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import SwiftUI
 import XCTest

@@ -58,52 +58,39 @@ public enum L10n {
     public static let language = LanguagePreference.load().resolved()
     public static var locale: Locale { language.locale }
 
-    public static let resourceBundle: Bundle = {
-        // Resolve the packaged copy explicitly before SwiftPM's bundle lookup.
-        if let url = Bundle.main.url(forResource: "CodexPacerIsland_PacerCore", withExtension: "bundle"),
-           let bundle = Bundle(url: url) { return bundle }
-        return Bundle.module
-    }()
-    private static let bundles: [AppLanguage: Bundle] = Dictionary(uniqueKeysWithValues: AppLanguage.allCases.compactMap {
-        let language = $0
-        guard let root = resourceBundle.resourceURL else { return nil }
-        // SwiftPM may lowercase localization directories. Resolve the explicit
-        // catalog even when the test host advertises only its default language.
-        for name in [language.rawValue, language.rawValue.lowercased()] {
-            let url = root.appendingPathComponent(name + ".lproj", isDirectory: true)
-            if let bundle = Bundle(url: url) { return (language, bundle) }
+    public static let sharedResourceBundle: Bundle = Bundle.module
+    private final class Snapshot: @unchecked Sendable {
+        let bundle: Bundle
+        let catalog: BundleLocalizationCatalog
+        let resources: LocalizationResources
+        init(bundle: Bundle, platform: (any LocalizationCatalog)? = nil) {
+            self.bundle = bundle
+            catalog = BundleLocalizationCatalog(bundle: bundle)
+            resources = LocalizationResources(shared: catalog, platform: platform)
         }
-        return nil
-    })
-    static func localizationResourceURL(for language: AppLanguage) -> URL? { bundles[language]?.resourceURL }
-
-    /// Views resolve the same keys on every render; bundle lookups and locale
-    /// construction are cached per language for the life of the process.
-    private final class Resolved: @unchecked Sendable {
-        let lock = NSLock()
-        var formats: [String: String] = [:]
-        var locales: [AppLanguage: Locale] = [:]
     }
-    private static let resolved = Resolved()
+    private final class ResourceState: @unchecked Sendable {
+        let lock = NSLock()
+        var snapshot: Snapshot?
+    }
+    private static let state = ResourceState()
+    private static var current: Snapshot {
+        state.lock.lock(); defer { state.lock.unlock() }
+        if let snapshot = state.snapshot { return snapshot }
+        let snapshot = Snapshot(bundle: sharedResourceBundle)
+        state.snapshot = snapshot
+        return snapshot
+    }
+    /// Hosts configure packaged resources before creating clients or views.
+    public static func configureResources(bundle: Bundle, platform: (any LocalizationCatalog)? = nil) {
+        let snapshot = Snapshot(bundle: bundle, platform: platform)
+        state.lock.lock(); state.snapshot = snapshot; state.lock.unlock()
+    }
+    public static var resourceBundle: Bundle { current.bundle }
+    static func localizationResourceURL(for language: AppLanguage) -> URL? { current.catalog.resourceURL(for: language) }
 
     public static func text(_ key: String, _ arguments: CVarArg..., language selected: AppLanguage? = nil) -> String {
-        let selected = selected ?? language
-        let cacheKey = selected.rawValue + "\u{1}" + key
-        resolved.lock.lock()
-        let cached = resolved.formats[cacheKey]
-        resolved.lock.unlock()
-        let format: String
-        if let cached { format = cached } else {
-            let fallback = bundles[.english]?.localizedString(forKey: key, value: key, table: nil) ?? key
-            format = bundles[selected]?.localizedString(forKey: key, value: fallback, table: nil) ?? fallback
-            resolved.lock.lock(); resolved.formats[cacheKey] = format; resolved.lock.unlock()
-        }
-        guard !arguments.isEmpty else { return format }
-        resolved.lock.lock()
-        let locale = resolved.locales[selected] ?? selected.locale
-        resolved.locales[selected] = locale
-        resolved.lock.unlock()
-        return String(format: format, locale: locale, arguments: arguments)
+        current.resources.text(key, arguments: arguments, language: selected ?? language)
     }
 
     public static func date(_ value: Date, date dateStyle: Date.FormatStyle.DateStyle = .abbreviated,

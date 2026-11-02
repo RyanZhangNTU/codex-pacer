@@ -4,6 +4,7 @@ import Darwin
 /// Each source gets one persistent helper connection; no
 /// daemon is started and only our own helper/SSH children are terminated.
 public actor RealtimeActivityMonitor {
+    private let makePipeReader: @Sendable (Int32) -> PipeChunkReader
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String]) -> Void
     public typealias AttentionUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest]) -> Void
     public typealias MetadataUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate]) -> Void
@@ -25,6 +26,7 @@ public actor RealtimeActivityMonitor {
     private struct Connection {
         var source: Source
         let process: Process
+        let ownership: OwnedProcessTermination
         let output: FileHandle
         let input: FileHandle?
         let reader: PipeChunkReader
@@ -62,8 +64,9 @@ public actor RealtimeActivityMonitor {
     private var startGeneration = 0
     private var knownControls: [String: RemoteControlActivityTarget]?
     private var remoteControlBindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
-    public init() { controlCatalog = RemoteControlCatalog() }
-    init(controlCatalog: RemoteControlCatalog) { self.controlCatalog = controlCatalog }
+    public init(controlCatalog: RemoteControlCatalog, makePipeReader: @escaping @Sendable (Int32) -> PipeChunkReader) {
+        self.controlCatalog = controlCatalog; self.makePipeReader = makePipeReader
+    }
 
     public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true, update: @escaping Update) async {
         await start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback) { activities, status, unavailable, _ in update(activities, status, unavailable) }
@@ -194,7 +197,8 @@ public actor RealtimeActivityMonitor {
         if localUnavailable || (primaryLocalIsDesktop && desktop == nil) { result["local"] = RuntimeStreamStatus() }
         return result
     }
-    public func shutdown() async {
+    public func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        let children = connections.values.map(\.process)
         startGeneration += 1
         callback = nil
         if let current = desktop { desktop = nil; current.collector.stop(); current.continuation.finish(); current.delivery?.cancel() }
@@ -203,8 +207,16 @@ public actor RealtimeActivityMonitor {
         failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
         knownControls = nil
         remoteControlBindings = .init(hostIDs: [], authoritative: false)
-        await controlCatalog.shutdown()
-        try? await Task.sleep(nanoseconds: 650_000_000)
+        let catalog = controlCatalog
+        await deadline.perform([
+            { await catalog.shutdown(deadline: deadline) },
+            {
+                while !Task.isCancelled && children.contains(where: \.isRunning) {
+                    do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }
+                }
+            }
+        ])
+        for child in children where child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
     }
     public func invalidateRemoteControlCatalog() async { await controlCatalog.invalidate() }
     private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) {
@@ -336,7 +348,7 @@ public actor RealtimeActivityMonitor {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
+        let reader = makePipeReader(output.fileHandleForReading.fileDescriptor)
         let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let readHandler = reader.pausingHandler(channel.continuation)
         output.fileHandleForReading.readabilityHandler = readHandler
@@ -346,7 +358,10 @@ public actor RealtimeActivityMonitor {
             reader.stop(); output.fileHandleForReading.readabilityHandler = nil; channel.continuation.finish()
             failed[source.id] = source; retryAfter[source.id] = Date().addingTimeInterval(30); return
         }
-        var connection = Connection(source: source, process: process, output: output.fileHandleForReading,
+        let ownership = OwnedProcessTermination { [weak process] in
+            if let process, process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+        }
+        var connection = Connection(source: source, process: process, ownership: ownership, output: output.fileHandleForReading,
             input: input.fileHandleForWriting,
             reader: reader, continuation: channel.continuation, readHandler: readHandler,
             state: RuntimeEventState(sourceID: source.alias == nil ? nil : source.id, sourceName: source.name))

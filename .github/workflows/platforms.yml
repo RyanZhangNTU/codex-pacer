@@ -39,7 +39,7 @@ jobs:
       - name: Full tests
         run: |
           set -o pipefail
-          make test 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
+          python3 -u scripts/native/ci-test.py --timeout-seconds 1200 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
       - name: Build app
         run: |
           set -o pipefail
@@ -54,5 +54,6 @@ jobs:
           path: |
             ${{ runner.temp }}/Codex-Pacer-*.zip
             ${{ runner.temp }}/pacer-tests.log
+            ${{ runner.temp }}/pacer-test-sample-*.txt
             ${{ runner.temp }}/pacer-build.log
           retention-days: 7

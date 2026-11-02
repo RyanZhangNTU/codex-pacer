@@ -103,6 +103,7 @@ enum ClaudeSSHRouteResolver {
         private var status: Int32?
         private var outputEnded = false
         private var finished = false
+        private var ownership: OwnedProcessTermination?
 
         init(executable: URL, arguments: [String], timeout: TimeInterval) {
             self.timeout = timeout
@@ -136,6 +137,10 @@ enum ClaudeSSHRouteResolver {
                 }
                 do { try process.run() }
                 catch { reader.resume(); finish(nil); return }
+                let child = process
+                ownership = OwnedProcessTermination { [weak child] in
+                    if let child, child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
+                }
                 // Only the child owns the writing end after spawn; parent EOF
                 // must not depend on this Pipe object's lifetime.
                 try? output.fileHandleForWriting.close()
@@ -180,8 +185,9 @@ enum ClaudeSSHRouteResolver {
             bytes.removeAll(keepingCapacity: false)
             if process.isRunning {
                 process.terminate()
-                let child = process
+                let child = process, ownership = ownership
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) {
+                    _ = ownership
                     if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
                 }
             }

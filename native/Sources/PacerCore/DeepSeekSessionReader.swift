@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// Incremental, bounded reads of `sessions/<workspace>/<session>/session.v4.jsonl.zstd`.
@@ -32,6 +31,8 @@ struct DeepSeekSessionReader {
     private var startedAt: Date?
     private(set) var scans = 0
     var perPassBytes = 32 << 20
+    private let files: any PlatformFileSystem
+    init(files: any PlatformFileSystem) { self.files = files }
 
     mutating func reset() { cursors.removeAll(); startedAt = nil; scans = 0 }
 
@@ -52,11 +53,11 @@ struct DeepSeekSessionReader {
         if initial { startedAt = now }
         if discover || initial {
             scans += 1
-            let found = Self.discover(root: root, now: now)
+            let found = Self.discover(root: root, now: now, files: files)
             result.awaitingLog = found.awaitingLog
             for (path, file) in found.files where cursors[path] == nil {
                 // A log that existed before Pacer started replays as history.
-                let created = (try? file.url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+                let created = files.metadata(file.url)?.created ?? .distantPast
                 cursors[path] = Cursor(url: file.url, baselineEnd: initial || created < startedAt! ? file.size : 0, modified: file.modified)
             }
             for path in cursors.keys where found.files[path] == nil { cursors.removeValue(forKey: path) }
@@ -65,7 +66,7 @@ struct DeepSeekSessionReader {
         for path in cursors.keys.sorted(by: { cursors[$0]!.modified > cursors[$1]!.modified }) {
             guard budget > 0 else { result.caughtUp = false; break }
             guard var cursor = cursors[path] else { continue }
-            let (lines, read, more) = Self.readFrames(&cursor, budget: budget)
+            let (lines, read, more) = Self.readFrames(&cursor, budget: budget, files: files)
             budget -= read
             result.lines += lines; result.caughtUp = result.caughtUp && !more
             cursors[path] = cursor
@@ -75,22 +76,19 @@ struct DeepSeekSessionReader {
         return result
     }
 
-    private static func readFrames(_ cursor: inout Cursor, budget: Int) -> (lines: [Line], read: Int, more: Bool) {
-        // `stat` rather than URL resource values, which a reused URL caches.
-        var info = stat()
-        guard stat(cursor.url.path, &info) == 0, info.st_size >= 0 else { return ([], 0, false) }
-        let size = UInt64(info.st_size)
-        cursor.modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec))
+    private static func readFrames(_ cursor: inout Cursor, budget: Int, files: any PlatformFileSystem) -> (lines: [Line], read: Int, more: Bool) {
+        guard let metadata = files.metadata(cursor.url, followingSymbolicLinks: true) else { return ([], 0, false) }
+        let size = metadata.size
+        cursor.modified = metadata.modified
         if size < cursor.offset { cursor.offset = 0; cursor.session = nil; cursor.baselineEnd = size }
-        guard size > cursor.offset, let handle = try? FileHandle(forReadingFrom: cursor.url) else { return ([], 0, false) }
+        guard size > cursor.offset else { return ([], 0, false) }
         let start = cursor.offset
-        defer { try? handle.close() }
         // One append is one frame. A frame larger than this pass's allowance
         // is read again whole, up to a bound beyond which the log is left.
         let remaining = size - start
         var count = Int(min(remaining, UInt64(max(budget, 1 << 20)))), data = Data(), output = ZstdFrameDecoder.Output()
         for attempt in 0..<2 {
-            guard (try? handle.seek(toOffset: start)) != nil, let read = try? handle.read(upToCount: count), !read.isEmpty else { return ([], 0, false) }
+            guard let read = try? files.read(cursor.url, offset: start, maximumBytes: count), !read.isEmpty, read.count <= count else { return ([], 0, false) }
             data = read
             do { output = try ZstdFrameDecoder.decode(data, maxLineBytes: DeepSeekSessionLog.maximumLineBytes) }
             catch { cursor.offset = size; return ([], data.count, false) } // Not a Harness log; do not reread it each pass.
@@ -118,7 +116,7 @@ struct DeepSeekSessionReader {
     }
 
     private struct Found { let url: URL; let size: UInt64; let modified: Date }
-    private static func discover(root: URL, now: Date) -> (files: [String: Found], awaitingLog: Bool) {
+    private static func discover(root: URL, now: Date, files: any PlatformFileSystem) -> (files: [String: Found], awaitingLog: Bool) {
         var found: [Found] = [], awaiting = false
         let keys: [URLResourceKey] = [.isDirectoryKey, .contentModificationDateKey, .fileSizeKey]
         for workspace in workspaces(root: root, limit: 64) {
@@ -126,14 +124,13 @@ struct DeepSeekSessionReader {
                 options: [.skipsHiddenFiles])) ?? []
             for directory in entries.prefix(2048) {
                 let log = directory.appendingPathComponent(logName)
-                guard let values = try? log.resourceValues(forKeys: Set(keys)), let modified = values.contentModificationDate,
-                      let size = values.fileSize else {
+                guard let metadata = files.metadata(log) else {
                     let created = (try? directory.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
                     if let created, now.timeIntervalSince(created) < 10 { awaiting = true }
                     continue
                 }
-                guard now.timeIntervalSince(modified) <= window, size > 0 else { continue }
-                found.append(Found(url: log, size: UInt64(size), modified: modified))
+                guard now.timeIntervalSince(metadata.modified) <= window, metadata.size > 0 else { continue }
+                found.append(Found(url: log, size: metadata.size, modified: metadata.modified))
             }
         }
         let kept = found.sorted { $0.modified > $1.modified }.prefix(maximumFiles)
@@ -148,14 +145,5 @@ struct DeepSeekSessionReader {
     }
     private static func modified(_ url: URL) -> Date {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-    }
-}
-
-/// Harness holds each open session's `session.lock` for writing, even while idle.
-enum DeepSeekSessionLocks {
-    static func held(_ locks: [String: URL], processes: () -> [pid_t] = CodexRolloutOwners.userProcesses,
-                     files: (pid_t) -> [URL] = { pid in CodexRolloutOwners.openFiles(pid) { $0 == "session.lock" } }) -> Set<String> {
-        guard !locks.isEmpty else { return [] }
-        return Set(CodexRolloutOwners.holders(rollouts: locks, processes: processes, files: files).keys)
     }
 }

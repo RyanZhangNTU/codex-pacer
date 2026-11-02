@@ -14,7 +14,10 @@ public struct CodexSessionOrigin: Equatable, Sendable {
     public static func classify(originator: String?, cwd: String?) -> Self? {
         guard let originator, !originator.isEmpty, originator.utf8.count <= 256 else { return nil }
         let embedded = !officialClients.contains(originator)
-        let parts = (cwd ?? "").split(separator: "/")
+        let path = cwd ?? ""
+        let windows = path.hasPrefix("\\\\") || path.range(of: #"^[A-Za-z]:[\\/]"#, options: .regularExpression) != nil
+        let normalized = windows ? path.replacingOccurrences(of: "\\", with: "/").lowercased() : path
+        let parts = normalized.split(separator: "/")
         // Zotero Agent 0.14.0 uses these dedicated translation/catalog folders.
         // Its Codex ACP adapter ignores ephemeral, so these rollouts exist.
         let translation = parts.suffix(2).map(String.init) == ["zotero-chat", "translate"]
@@ -54,7 +57,10 @@ public struct CodexSessionOrigin: Equatable, Sendable {
     def codex_origin(originator,cwd):
         if not isinstance(originator,str) or not originator or len(originator.encode('utf-8'))>256:return None
         embedded=originator not in CODEX_OFFICIAL_CLIENTS
-        parts=[v for v in (cwd if isinstance(cwd,str) else '').split('/') if v]
+        path=cwd if isinstance(cwd,str) else ''
+        windows=path.startswith(chr(92)*2) or (len(path)>2 and ('A'<=path[0]<='Z' or 'a'<=path[0]<='z') and path[1]==':' and path[2] in ('/',chr(92)))
+        path=path.replace(chr(92),'/').lower() if windows else path
+        parts=[v for v in path.split('/') if v]
         ignored=embedded and (parts[-2:]==['zotero-chat','translate'] or bool(parts and parts[-1].startswith('zotero-chat-catalog.')))
         return {'embedded':embedded,'ignoredSession':ignored}
     """

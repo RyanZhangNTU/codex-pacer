@@ -1,4 +1,3 @@
-import CoreServices
 import Foundation
 
 /// DeepSeek Harness keeps its data in `$DSH_HOME`, otherwise `~/.dsh`.
@@ -45,21 +44,9 @@ public enum DeepSeekAuthMode: String, CaseIterable, Codable, Sendable {
 
 public enum DeepSeekApplicationResolver {
     public static let bundleIdentifier = "com.deepseek.dsh"
-    private final class Located: @unchecked Sendable {
-        let lock = NSLock(); var application: (url: URL?, at: Date)?
-    }
-    private static let located = Located()
-    /// Task rows ask on every render; reuse a lookup for a minute.
-    public static func cachedApplication(now: Date = Date()) -> URL? {
-        located.lock.lock(); defer { located.lock.unlock() }
-        if let value = located.application, now.timeIntervalSince(value.at) < 60 { return value.url }
-        let url = find(); located.application = (url, now); return url
-    }
-    public static func find(applicationURLs: [URL]? = nil,
-                            userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL? {
-        let registered = LSCopyApplicationURLsForBundleIdentifier(bundleIdentifier as CFString, nil)?.takeRetainedValue() as? [URL] ?? []
-        let urls = applicationURLs ?? ([URL(fileURLWithPath: "/Applications/DeepSeek Harness.app"),
-            userHome.appendingPathComponent("Applications/DeepSeek Harness.app")] + registered)
-        return urls.prefix(12).first { $0.pathExtension.lowercased() == "app" && Bundle(url: $0)?.bundleIdentifier == bundleIdentifier }
+    public static func find(applicationURLs: [URL]? = nil, userHome: URL,
+                            catalog: any ApplicationCatalog) -> URL? {
+        let urls = applicationURLs ?? catalog.locations(for: .deepseek, userHome: userHome)
+        return urls.prefix(12).first { catalog.isApplication($0, provider: .deepseek) }
     }
 }

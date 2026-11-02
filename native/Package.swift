@@ -15,10 +15,11 @@ let package = Package(
         .target(name: "CZstd", exclude: ["README.md", "LICENSE"],
             cSettings: [.define("ZSTD_DISABLE_ASM"), .define("ZSTD_LEGACY_SUPPORT", to: "0"), .define("ZSTD_NO_TRACE")]),
         .target(name: "PacerCore", dependencies: ["CZstd"], resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
+        .target(name: "PacerMacSupport", dependencies: ["PacerCore"]),
         .executableTarget(name: "PacerRelaunch"),
-        .executableTarget(name: "PacerIsland", dependencies: ["PacerCore", .product(name: "Sparkle", package: "Sparkle")],
+        .executableTarget(name: "PacerIsland", dependencies: ["PacerCore", "PacerMacSupport", .product(name: "Sparkle", package: "Sparkle")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
-        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore"]),
-        .testTarget(name: "PacerIslandTests", dependencies: ["PacerIsland", "PacerCore"])
+        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport"]),
+        .testTarget(name: "PacerIslandTests", dependencies: ["PacerIsland", "PacerCore", "PacerMacSupport"])
     ]
 )

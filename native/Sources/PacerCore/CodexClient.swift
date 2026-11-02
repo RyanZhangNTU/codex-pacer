@@ -1,6 +1,5 @@
 import Foundation
 import CryptoKit
-import Darwin
 
 public enum CodexClientError: Error, LocalizedError {
     case missingExecutable, disconnected, invalidResponse, accountMismatch, notLoggedIn
@@ -58,12 +57,16 @@ public enum CodexClientError: Error, LocalizedError {
 
 /// A dedicated read-only app-server connection. It never starts or resumes a turn.
 public actor CodexClient {
-    private var process: Process?
-    private var input: FileHandle?
-    private var output: FileHandle?
-    private var errorOutput: FileHandle?
-    private var errorCollector: ProcessErrorCollector?
-    private var pipeReader: PipeChunkReader?
+    private var process: (any ChildProcessConnection)?
+    private var closingProcesses: [any ChildProcessConnection] = []
+    private var closingReaders: [ShutdownSignal] = []
+    private var readerFinished: ShutdownSignal?
+    private nonisolated let shutdownRequested = ShutdownSignal()
+    private nonisolated let ownedChildren = OwnedChildProcesses()
+    private let processes: any ChildProcessLauncher
+    private let executables: any ExecutablePlatform
+    private let files: any PlatformFileSystem
+    private let clientVersion: String
     private var readTask: Task<Void, Never>?
     private var streamContinuation: AsyncStream<Data>.Continuation?
     private var buffer = Data()
@@ -87,7 +90,10 @@ public actor CodexClient {
     private let inheritedEnvironment: [String: String]
 
     public init(executable: URL, home: URL, arguments: [String] = ["-s", "read-only", "-a", "never", "app-server", "--listen", "stdio://"], timeout: TimeInterval = 12,
-                environment: [String: String] = ProcessInfo.processInfo.environment) {
+                environment: [String: String] = ProcessInfo.processInfo.environment,
+                processes: any ChildProcessLauncher, executables: any ExecutablePlatform,
+                files: any PlatformFileSystem, clientVersion: String = "development") {
+        self.processes = processes; self.executables = executables; self.files = files; self.clientVersion = clientVersion
         self.executable = executable
         self.arguments = arguments
         self.home = home
@@ -95,11 +101,8 @@ public actor CodexClient {
         self.inheritedEnvironment = environment
     }
 
-    public static func findExecutable(customPath: String = "") -> URL? {
-        CodexExecutableResolver.discover(customPath: customPath).selected?.url
-    }
-
     public func readQuota() async throws -> QuotaSnapshot {
+        guard !shutdownRequested.isFinished else { throw CodexClientError.disconnected }
         if let quotaTask { return try await quotaTask.value }
         let task = Task { try await fetchQuota() }
         quotaTask = task
@@ -108,10 +111,18 @@ public actor CodexClient {
     }
     public func currentAccountScope() -> String? { verifiedAccountScope }
     public func usesLegacyRateLimitRequest() -> Bool { legacyRateLimitGeneration == generation }
-    public func shutdown() async {
+    public nonisolated func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        shutdownRequested.finish()
+        let completed = await deadline.perform([{ await self.finishShutdown(deadline: deadline) }])
+        if !completed { ownedChildren.terminate() }
+    }
+    private func finishShutdown(deadline: ShutdownDeadline) async {
+        quotaTask?.cancel()
         disconnect()
-        // Allow the bounded child-termination fallback to run before application exit.
-        try? await Task.sleep(nanoseconds: 650_000_000)
+        let children = closingProcesses
+        let readers = closingReaders
+        closingProcesses.removeAll(); closingReaders.removeAll()
+        await deadline.finish(readers: readers, children: children)
     }
 
     private func fetchQuota() async throws -> QuotaSnapshot {
@@ -177,11 +188,12 @@ public actor CodexClient {
         }
     }
     private func prepareReadConnection() async throws {
-        let fingerprint = Self.authenticationFingerprint(home: home)
+        guard !shutdownRequested.isFinished, !Task.isCancelled else { throw CodexClientError.disconnected }
+        let fingerprint = Self.authenticationFingerprint(home: home, files: files)
         if fingerprint != authFingerprint { disconnect(); authFingerprint = fingerprint }
         if !ready {
             try start()
-            _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"], "capabilities": ["experimentalApi": true]])
+            _ = try await request("initialize", params: ["clientInfo": ["name": "codex-pacer-island", "version": clientVersion], "capabilities": ["experimentalApi": true]])
             try write(["method": "initialized", "params": [:]])
             ready = true
         }
@@ -196,10 +208,9 @@ public actor CodexClient {
             return try RemoteControlCatalogAuthorization(account: account, auth: auth)
         } catch { disconnect(); throw error }
     }
-    static func authenticationFingerprint(home: URL) -> String? {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: home.appendingPathComponent("auth.json").path) else { return nil }
-        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        return "\(attrs[.systemFileNumber] ?? "")|\(modified)|\(attrs[.size] ?? "")"
+    static func authenticationFingerprint(home: URL, files: any PlatformFileSystem) -> String? {
+        guard let metadata = files.metadata(home.appendingPathComponent("auth.json")) else { return nil }
+        return "\(metadata.identity)|\(metadata.modified.timeIntervalSince1970)|\(metadata.size)"
     }
     /// Serde's unit-params mismatch, not its distinct unit variant/struct errors.
     private static func rejectsParamObject(_ message: String) -> Bool {
@@ -212,31 +223,16 @@ public actor CodexClient {
     private func disconnect(reason: CodexClientError) {
         generation += 1
         ready = false
-        pipeReader?.stop()
-        pipeReader = nil
-        output?.readabilityHandler = nil
-        errorOutput?.readabilityHandler = nil
-        errorCollector?.stop()
-        errorCollector = nil
         streamContinuation?.finish()
         streamContinuation = nil
         readTask?.cancel()
         readTask = nil
-        try? input?.close()
-        try? output?.close()
-        try? errorOutput?.close()
-        input = nil
-        output = nil
-        errorOutput = nil
+        closingReaders.removeAll { $0.isFinished }
+        if let readerFinished { closingReaders.append(readerFinished); self.readerFinished = nil }
+        closingProcesses.removeAll { $0.exited.isFinished && $0.ioClosed.isFinished }
         if let child = process {
-            child.terminationHandler = nil
-            if child.isRunning {
-                child.terminate()
-                // Reap only our own child; a stuck process must not outlive the app.
-                DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
-                    if child.isRunning { kill(child.processIdentifier, SIGKILL) }
-                }
-            }
+            child.close()
+            closingProcesses.append(child)
         }
         process = nil
         buffer.removeAll()
@@ -250,61 +246,37 @@ public actor CodexClient {
 
     private func start() throws {
         guard process == nil else { return }
-        guard CodexExecutableResolver.isExecutableFile(executable) else {
+        guard executables.isExecutableFile(executable) else {
             throw CodexClientError.executableNotFound(L10n.text("cli.missing_at_start", executable.path))
         }
-        let child = Process()
-        let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
-        child.executableURL = executable
-        child.arguments = arguments
-        var environment = CodexExecutableResolver.launchEnvironment(for: executable, inherited: inheritedEnvironment)
+        var environment = executables.launchEnvironment(for: executable, inherited: inheritedEnvironment,
+            userHome: FileManager.default.homeDirectoryForCurrentUser)
         environment["CODEX_HOME"] = home.path
-        child.environment = environment
-        child.standardInput = stdin
-        child.standardOutput = stdout
-        child.standardError = stderr
-        let collector = ProcessErrorCollector(handle: stderr.fileHandleForReading)
-        errorOutput = stderr.fileHandleForReading
-        errorCollector = collector
-        stderr.fileHandleForReading.readabilityHandler = { handle in
-            if !collector.drain() { handle.readabilityHandler = nil }
-        }
         generation += 1
         let currentGeneration = generation
-        let reader = PipeChunkReader(descriptor: stdout.fileHandleForReading.fileDescriptor)
-        pipeReader = reader
         let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
+        let finished = ShutdownSignal()
+        readerFinished = finished
         streamContinuation = channel.continuation
         readTask = Task { [weak self] in
+            defer { finished.finish() }
             for await data in channel.stream {
                 guard !Task.isCancelled else { return }
                 await self?.receive(data, generation: currentGeneration)
             }
             await self?.closed(generation: currentGeneration)
         }
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] _ in
-            // One POSIX read returns the available pipe bytes. Foundation's
-            // read(upToCount:) can wait for the requested size on a live pipe.
-            guard let data = reader.read() else { return }
-            if !data.isEmpty {
-                if case .dropped = channel.continuation.yield(data) {
-                    channel.continuation.finish()
-                    Task { await self?.closed(generation: currentGeneration) }
-                }
-            } else {
-                channel.continuation.finish()
+        process = try processes.launch(.init(executable: executable, arguments: arguments, environment: environment),
+            output: { data in
+                if case .dropped = channel.continuation.yield(data) { channel.continuation.finish() }
+            }, ended: { channel.continuation.finish() })
+        if let process {
+            ownedChildren.add(process)
+            if shutdownRequested.isFinished {
+                process.close(); process.terminateImmediately()
+                throw CodexClientError.disconnected
             }
         }
-        // EOF drains the ordered stream before closing pending requests.
-        do { try child.run() }
-        catch {
-            stdout.fileHandleForReading.readabilityHandler = nil
-            child.terminationHandler = nil
-            throw CodexClientError.launchFailed(path: executable.path, reason: CodexDiagnosticText.description(of: error))
-        }
-        process = child
-        input = stdin.fileHandleForWriting
-        output = stdout.fileHandleForReading
     }
 
     private func request(_ method: String, params: [String: Any]?) async throws -> Data {
@@ -329,10 +301,10 @@ public actor CodexClient {
     }
 
     private func write(_ message: [String: Any]) throws {
-        guard let input else { throw CodexClientError.disconnected }
+        guard let process else { throw CodexClientError.disconnected }
         var data = try JSONSerialization.data(withJSONObject: message, options: .withoutEscapingSlashes)
         data.append(10)
-        try input.write(contentsOf: data)
+        try process.write(data)
     }
 
     private func receive(_ data: Data, generation: Int) {
@@ -383,67 +355,8 @@ public actor CodexClient {
             try? await Task.sleep(nanoseconds: 10_000_000)
             guard generation == self.generation else { return }
         }
-        let status = process.flatMap { $0.isRunning ? nil : $0.terminationStatus }
-        let detail = errorCollector?.message() ?? ""
+        let status = process?.terminationStatus
+        let detail = process?.errorMessage() ?? ""
         disconnect(reason: .processExited(status: status, detail: detail))
-    }
-}
-
-/// stderr is collected synchronously in a bounded buffer, so EOF cannot outrun its diagnostics.
-private final class ProcessErrorCollector: @unchecked Sendable {
-    private let reader: PipeChunkReader
-    private let lock = NSLock()
-    private var tail = Data()
-    init(handle: FileHandle) { reader = PipeChunkReader(descriptor: handle.fileDescriptor) }
-    @discardableResult func drain() -> Bool {
-        for _ in 0..<4 {
-            guard let data = reader.read() else { return true }
-            guard !data.isEmpty else { return false }
-            lock.lock()
-            tail.append(data)
-            if tail.count > 8192 { tail = Data(tail.suffix(8192)) }
-            lock.unlock()
-        }
-        return true
-    }
-    func message() -> String {
-        drain()
-        lock.lock(); defer { lock.unlock() }
-        let sanitized = CodexDiagnosticText.sanitized(String(decoding: tail, as: UTF8.self), limit: 32768)
-        return sanitized.count > 1200 ? L10n.text("diagnostic.older_omitted", String(sanitized.suffix(1200))) : sanitized
-    }
-    func stop() { reader.stop() }
-}
-
-/// Synchronizes cancellation with callbacks, so an old callback cannot consume
-/// bytes from a newly opened pipe that reused the same descriptor number.
-final class PipeChunkReader: @unchecked Sendable {
-    private let lock = NSLock()
-    private let descriptor: Int32
-    private var active = true
-    init(descriptor: Int32) {
-        self.descriptor = descriptor
-        let flags = fcntl(descriptor, F_GETFL)
-        if flags >= 0 { _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) }
-    }
-    func read() -> Data? {
-        lock.lock(); defer { lock.unlock() }
-        guard active else { return nil }
-        var bytes = [UInt8](repeating: 0, count: 65536)
-        let count = Darwin.read(descriptor, &bytes, 65536)
-        if count > 0 { return Data(bytes.prefix(count)) }
-        return count == 0 ? Data() : nil
-    }
-    func stop() { lock.lock(); active = false; lock.unlock() }
-
-    /// Pause the OS reader after one chunk. The actor rearms it after consuming
-    /// that chunk, so a large fallback cannot overrun the bounded AsyncStream.
-    func pausingHandler(_ continuation: AsyncStream<Data>.Continuation) -> @Sendable (FileHandle) -> Void {
-        { [self] handle in
-            guard let data = read() else { return }
-            handle.readabilityHandler = nil
-            if data.isEmpty { continuation.finish() }
-            else if case .dropped = continuation.yield(data) { continuation.finish() }
-        }
     }
 }

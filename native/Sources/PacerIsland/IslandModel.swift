@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import SwiftUI
 import PacerCore
@@ -891,13 +892,15 @@ final class IslandModel: ObservableObject {
         claudeRefreshing = false
         deepseekGeneration += 1; deepseekActivityTask?.cancel(); deepseekActivityTask = nil
         cancelDeepSeekBalanceRead()
-        _ = await historyStore.flush()
-        _ = await claudeHistoryStore.flush()
-        await claudeCloudMonitor?.suspend()
-        await claudeMonitor.shutdown()
-        await deepseekMonitor.shutdown()
-        await realtimeMonitor.shutdown()
-        if let client { await client.disconnect() }
+        let deadline = ShutdownDeadline()
+        let history = historyStore, claudeHistory = claudeHistoryStore, cloud = claudeCloudMonitor
+        let claude = claudeMonitor, deepseek = deepseekMonitor, realtime = realtimeMonitor, client = client
+        await deadline.perform([
+            { _ = await history.flush() }, { _ = await claudeHistory.flush() },
+            { await cloud?.suspend() }, { await claude.shutdown(deadline: deadline) },
+            { await deepseek.shutdown() }, { await realtime.shutdown(deadline: deadline) },
+            { await client?.disconnect() }
+        ])
     }
     func resumeAfterSleep() {
         guard !stopped else { return }
@@ -1187,9 +1190,12 @@ final class IslandModel: ObservableObject {
         guard !codexRefreshing else { return }
         let previous = client
         client = nil
+        let generation = sourceGeneration
         Task { [weak self] in
-            await previous?.disconnect()
-            self?.refreshCodexQuota()
+            let deadline = ShutdownDeadline()
+            await deadline.perform([{ await previous?.shutdown(deadline: deadline) }])
+            guard let self, generation == self.sourceGeneration else { return }
+            self.refreshCodexQuota()
         }
     }
 
@@ -1220,13 +1226,13 @@ final class IslandModel: ObservableObject {
         let pending = claudeQuotaTask
         pending?.cancel()
         claudeQuotaRestartTask = Task { [weak self] in
-            await pending?.value
             guard let self, self.isCurrentClaudeQuotaRead(generation) else { return }
             defer { if generation == self.claudeGeneration { self.claudeQuotaRestartTask = nil } }
             let previous = self.claudeWebClient, previousLegacy = self.claudeClient
             self.claudeWebClient = nil; self.claudeClient = nil
-            await previous?.shutdown()
-            await previousLegacy?.shutdown()
+            await ShutdownDeadline().perform([
+                { await pending?.value }, { await previous?.shutdown() }, { await previousLegacy?.shutdown() }
+            ])
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
             self.claudeQuotaRestartTask = nil
             self.claudeRefreshing = false
@@ -1248,7 +1254,7 @@ final class IslandModel: ObservableObject {
         claudeQuotaTask = Task { [weak self] in
             guard let self, self.isCurrentClaudeQuotaRead(generation) else { return }
             defer {
-                if generation == self.claudeGeneration {
+                if generation == self.claudeGeneration, !Task.isCancelled {
                     self.claudeRefreshing = false
                 }
             }
@@ -1383,9 +1389,10 @@ final class IslandModel: ObservableObject {
         claudeCloudMonitor = nil; claudeCloudGeneration += 1
         let target = claudeMonitor, cloudGeneration = claudeCloudGeneration
         Task { [weak self] in
-            await monitor.shutdown()
+            let deadline = ShutdownDeadline()
+            await deadline.perform([{ await monitor.shutdown() }])
             guard self?.claudeCloudGeneration == cloudGeneration else { return }
-            await target.updateCloud(activities: [], status: nil, attention: [])
+            await deadline.perform([{ await target.updateCloud(activities: [], status: nil, attention: []) }])
         }
     }
     func receiveClaudeUpdate(_ values: [SessionActivity], statuses: [String: RuntimeStreamStatus], requests: [PendingAttentionRequest], performance: [SessionPerformanceUpdate] = [], excludedLocalIDs: Set<String> = []) {
@@ -1685,7 +1692,14 @@ final class IslandModel: ObservableObject {
         let generation = sourceGeneration
         Task { [weak self, reader] in
             guard let self, generation == self.sourceGeneration else { return }
-            _ = await self.historyStore.flush(); await previous?.disconnect(); await self.realtimeMonitor.shutdown(); await reader.reset()
+            let deadline = ShutdownDeadline()
+            let history = self.historyStore, realtime = self.realtimeMonitor
+            await deadline.perform([
+                { _ = await history.flush() },
+                { await previous?.shutdown(deadline: deadline) },
+                { await realtime.shutdown(deadline: deadline) },
+                { await reader.reset() }
+            ])
             guard generation == self.sourceGeneration else { return }
             self.refreshCodexQuota(); self.refreshActivity(); self.refreshRemote()
         }
@@ -1715,7 +1729,12 @@ final class IslandModel: ObservableObject {
         let generation = claudeGeneration
         Task { [weak self] in
             guard let self, generation == self.claudeGeneration else { return }
-            _ = await self.claudeHistoryStore.flush(); await previous?.shutdown(); await previousWeb?.shutdown(); await self.claudeMonitor.shutdown()
+            let deadline = ShutdownDeadline()
+            let history = self.claudeHistoryStore, monitor = self.claudeMonitor
+            await deadline.perform([
+                { _ = await history.flush() }, { await previous?.shutdown() },
+                { await previousWeb?.shutdown() }, { await monitor.shutdown(deadline: deadline) }
+            ])
             guard generation == self.claudeGeneration else { return }
             self.refreshClaudeQuota(); self.startClaudeActivity()
         }
@@ -1749,16 +1768,18 @@ final class IslandModel: ObservableObject {
         deepseekGeneration += 1; deepseekActivityTask?.cancel(); cancelDeepSeekBalanceRead()
         cancelHostTracking()
         cancelClaudeRemoteSetup()
-        _ = await historyStore.flush()
-        _ = await claudeHistoryStore.flush()
-        await claudeCloudMonitor?.shutdown()
-        await claudeMonitor.shutdown()
-        await deepseekMonitor.shutdown()
-        await claudeRemoteSetup.shutdown()
-        await claudeClient?.shutdown()
-        await claudeWebClient?.shutdown()
-        await realtimeMonitor.shutdown()
-        await client?.shutdown()
+        let deadline = ShutdownDeadline()
+        let history = historyStore, claudeHistory = claudeHistoryStore, cloud = claudeCloudMonitor
+        let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup
+        let legacy = claudeClient, web = claudeWebClient, realtime = realtimeMonitor, client = client
+        let completed = await deadline.perform([
+            { _ = await history.flush() }, { _ = await claudeHistory.flush() },
+            { await cloud?.shutdown() }, { await claude.shutdown(deadline: deadline) },
+            { await deepseek.shutdown() }, { await setup.shutdown() },
+            { await legacy?.shutdown() }, { await web?.shutdown() },
+            { await realtime.shutdown(deadline: deadline) }, { await client?.shutdown(deadline: deadline) }
+        ])
+        if !completed { OwnedProcessTermination.terminateAll() }
     }
 
     private func invalidateWork() {
