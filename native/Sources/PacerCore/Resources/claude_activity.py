@@ -16,6 +16,15 @@ def ident(value):
     try: return str(uuid.UUID(value))
     except ValueError: return value
 
+AGENT_TOOLS = ('Agent', 'Skill')
+
+def agent_status(response):
+    # A forked Skill such as /code-review runs in a sub-agent and reports
+    # 'forked'; 'background' marks a launch whose outcome arrives later.
+    status = response.get('status')
+    if status == 'forked': return 'async_launched' if response.get('background') is True else 'completed' if response.get('success') is True else None
+    return status if status in ('completed', 'async_launched') else None
+
 def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
@@ -132,9 +141,10 @@ def transcript_record(value, owner, parent=None, prompt=None):
         if prompt: rows.append(dict(base, kind='prompt', promptId=prompt))
     for item in ends: rows.append(dict(base, kind='toolEnd', itemId=item))
     response=value.get('toolUseResult')
-    if kind=='user' and len(ends)==1 and isinstance(response,dict) and response.get('status') in ('completed','async_launched'):
+    status=agent_status(response) if isinstance(response,dict) else None
+    if kind=='user' and len(ends)==1 and status:
         child=ident(response.get('agentId'))
-        if child and child!=owner:rows.append(dict(base,kind='agentResult',itemId=ends[0],agentId=child,agentStatus=response['status']))
+        if child and child!=owner:rows.append(dict(base,kind='agentResult',itemId=ends[0],agentId=child,agentStatus=status))
     # Claude Desktop's next-step box ends the turn from its tool result; only
     # the engine's boolean is read, never the box's text.
     mcp=value.get('mcpMeta');mcp=mcp.get('_meta') if isinstance(mcp,dict) else None
@@ -147,7 +157,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
         for model_kind in sorted(model_kinds): rows.append(dict(base, kind='thinking' if model_kind == 'thinking' else 'response', itemId=item))
         for item, name in starts:
             row=dict(base, kind='toolStart', itemId=item, attention='input' if name == 'AskUserQuestion' else 'approval' if name == 'ExitPlanMode' else 'none')
-            if name=='Agent':row['agentTool']=True
+            if name in AGENT_TOOLS:row['agentTool']=True
             rows.append(row)
         if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'): rows.append(dict(base, kind='stopRequested'))
     if kind == 'result' and value.get('subtype') in ('success', 'error_during_execution', 'error_max_turns', 'interrupted'):

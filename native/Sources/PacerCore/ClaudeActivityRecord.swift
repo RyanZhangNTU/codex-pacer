@@ -23,6 +23,15 @@ enum ClaudeActivityRecord {
         return UUID(uuidString: value)?.uuidString.lowercased() ?? value
     }
     static func encode(_ value: [String: Any]) -> Data? { try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) }
+    /// Tools whose typed result can name the sub-agent they ran.
+    static let agentTools: Set<String> = ["Agent", "Skill"]
+    /// A forked Skill such as `/code-review` runs in a sub-agent and reports
+    /// `forked` (Claude Code 2.1.309). `background` marks a launch whose outcome
+    /// arrives later as a task notification; otherwise the fork has ended.
+    static func agentStatus(_ status: String?, background: Bool?, success: Bool?) -> String? {
+        if status == "forked" { return background == true ? "async_launched" : success == true ? "completed" : nil }
+        return status.flatMap { ["completed", "async_launched"].contains($0) ? $0 : nil }
+    }
 
     static func transcript(_ bytes: Data, sessionID: String, parentID: String? = nil, promptID: String? = nil) -> [Data] {
         guard let fields = ClaudeTranscriptFields(bytes) else { return [] }
@@ -109,8 +118,8 @@ enum ClaudeActivityRecord {
         }
         for id in toolEnds { var value = base; value["kind"] = "toolEnd"; value["itemId"] = id; result.append(value) }
         if kind == "user", toolEnds.count == 1,
-           let response = fields["toolUseResult"].flatMap({ try? $0.fields(["status", "agentId"]) }),
-           let status = response["status"]?.string(limit: 24), ["completed", "async_launched"].contains(status),
+           let response = fields["toolUseResult"].flatMap({ try? $0.fields(["status", "agentId", "background", "success"]) }),
+           let status = agentStatus(response["status"]?.string(limit: 24), background: response["background"]?.boolean(), success: response["success"]?.boolean()),
            let agent = identifier(response["agentId"]?.string()), agent != thread {
             var value = base; value["kind"] = "agentResult"; value["itemId"] = toolEnds[0]
             value["agentId"] = agent; value["agentStatus"] = status; result.append(value)
@@ -142,7 +151,7 @@ enum ClaudeActivityRecord {
                 var value = base; value["kind"] = "toolStart"; value["itemId"] = id
                 // Closed enum only: tool names/arguments never leave the host.
                 value["attention"] = name == "AskUserQuestion" ? "input" : name == "ExitPlanMode" ? "approval" : "none"
-                if name == "Agent" { value["agentTool"] = true }
+                if agentTools.contains(name) { value["agentTool"] = true }
                 result.append(value)
             }
             if ["end_turn", "stop_sequence", "refusal"].contains(message["stop_reason"]?.string() ?? fields["stop_reason"]?.string() ?? "") {

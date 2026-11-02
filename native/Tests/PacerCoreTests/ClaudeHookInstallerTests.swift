@@ -570,16 +570,23 @@ final class ClaudeHookInstallerTests: XCTestCase {
         for input: [String: Any] in [["hook_event_name": "SubagentStart", "agent_id": "internal-agent"],
                                     ["hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_use_id": "agent-tool"],
                                     ["hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_use_id": "agent-tool", "tool_response": ["status": "async_launched", "agentId": "internal-agent", "outputFile": "/PRIVATE/output"]],
-                                    ["hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_use_id": "agent-tool", "tool_response": ["status": "completed", "agentId": "internal-agent", "content": "PRIVATE response", "prompt": "PRIVATE prompt"]]] {
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_use_id": "agent-tool", "tool_response": ["status": "completed", "agentId": "internal-agent", "content": "PRIVATE response", "prompt": "PRIVATE prompt"]],
+                                    // A forked Skill (`/code-review`) reports its sub-agent the same way.
+                                    ["hook_event_name": "PreToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool"],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "inline"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": false, "commandName": "PRIVATE skill", "status": "forked", "agentId": "internal-agent", "result": "PRIVATE result"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "forked", "background": true, "agentId": "internal-agent", "result": "PRIVATE launch"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "forked", "agentId": "internal-agent", "result": "PRIVATE result"]]] {
             let result = try runScript(home: fixture.home, mode: "hook", input: common.merging(input) { _, new in new })
             XCTAssertTrue(result.stdout.isEmpty); XCTAssertTrue(result.stderr.isEmpty)
         }
         let bytes = try Data(contentsOf: spool)
         let rows = try bytes.split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
         let results = rows.filter { $0["kind"] as? String == "agentResult" }
-        XCTAssertEqual(results.compactMap { $0["agentStatus"] as? String }, ["async_launched", "completed"])
-        XCTAssertTrue(results.allSatisfy { $0["agentId"] as? String == "internal-agent" && $0["itemId"] as? String == "agent-tool" && $0["promptId"] as? String == "owned-prompt" })
-        XCTAssertTrue(rows.contains { $0["kind"] as? String == "toolStart" && $0["agentTool"] as? Bool == true })
+        XCTAssertEqual(results.compactMap { $0["agentStatus"] as? String }, ["async_launched", "completed", "async_launched", "completed"])
+        XCTAssertEqual(results.compactMap { $0["itemId"] as? String }, ["agent-tool", "agent-tool", "skill-tool", "skill-tool"])
+        XCTAssertTrue(results.allSatisfy { $0["agentId"] as? String == "internal-agent" && $0["promptId"] as? String == "owned-prompt" })
+        XCTAssertEqual(rows.filter { $0["kind"] as? String == "toolStart" && $0["agentTool"] as? Bool == true }.count, 2)
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
     }
 }
