@@ -1,7 +1,5 @@
 import Foundation
-import CoreFoundation
 import CryptoKit
-import Darwin
 
 /// Installs Pacer's additive Claude hooks on an SSH host. The island runs it
 /// automatically for reachable hosts that already have Claude (see
@@ -31,25 +29,21 @@ public actor ClaudeRemoteSetup {
 
     private let executable: URL
     private let timeout: TimeInterval
-    private var operations: [UUID: ClaudeRemoteSetupOperation] = [:]
+    private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
+    private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
-    public init() {
-        executable = URL(fileURLWithPath: "/usr/bin/ssh")
-        timeout = 15
-    }
-
-    // The test executable receives the same SSH arguments, without contacting a
-    // host or changing its home directory.
-    init(executable: URL, timeout: TimeInterval) {
+    public init(executable: URL, timeout: TimeInterval = 15,
+                makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation) {
         self.executable = executable
-        self.timeout = min(15, max(0.05, timeout))
+        self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
+        self.makeOperation = makeOperation
     }
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false) async throws -> ClaudeHookInstaller.Status {
         let arguments = try Self.arguments(target: target, requireHome: requireHome)
         let identifier = UUID()
-        let operation = ClaudeRemoteSetupOperation(executable: executable, arguments: arguments)
+        let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
         defer { operations.removeValue(forKey: identifier); operation.close() }
         return try await withTaskCancellationHandler {
@@ -94,9 +88,8 @@ public actor ClaudeRemoteSetup {
     /// older digest is brought current automatically after an update.
     public static func adapterDigest() throws -> String {
         let (installer, hook) = try resources()
-        var hash = SHA256()
-        hash.update(data: installer); hash.update(data: Data([0])); hash.update(data: hook)
-        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+        var bytes = installer; bytes.append(0); bytes.append(hook)
+        return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
 
     static func resources() throws -> (installer: Data, hook: Data) {
@@ -123,113 +116,18 @@ public actor ClaudeRemoteSetup {
         }
         guard exitStatus == 0 else { throw Failure.connectionFailed }
         let keys = ["hooksConfigured", "telemetryConfigured", "statusLineConfigured", "telemetryConflict"]
-        guard Set(value.keys) == Set(keys), keys.allSatisfy({ key in
-            guard let number = value[key] as? NSNumber else { return false }
-            return CFGetTypeID(number) == CFBooleanGetTypeID()
-        }),
-              let hooks = value["hooksConfigured"] as? Bool, let telemetry = value["telemetryConfigured"] as? Bool,
-              let line = value["statusLineConfigured"] as? Bool, let conflict = value["telemetryConflict"] as? Bool else { throw Failure.invalidResponse }
+        let fields = try? JSONFieldView.document(data).fields(Set(keys))
+        guard Set(value.keys) == Set(keys),
+              let hooks = fields?["hooksConfigured"]?.boolean(), let telemetry = fields?["telemetryConfigured"]?.boolean(),
+              let line = fields?["statusLineConfigured"]?.boolean(), let conflict = fields?["telemetryConflict"]?.boolean() else { throw Failure.invalidResponse }
         return ClaudeHookInstaller.Status(hooksConfigured: hooks, telemetryConfigured: telemetry, statusLineConfigured: line, telemetryConflict: conflict)
     }
 }
 
-/// Nonblocking output keeps the actor responsive to cancellation, shutdown and
-/// the fixed timeout even when an SSH peer never closes its output pipe.
-private final class ClaudeRemoteSetupOperation: @unchecked Sendable {
-    private let lock = NSLock()
-    private let process = Process()
-    private let input = Pipe()
-    private let output = Pipe()
-    private var bytes = Data()
-    private var eof = false
-    private var started = false
-    private var closed = false
-    private var stopped: ClaudeRemoteSetup.Failure?
-    private var stopping = false
-    private var ownership: OwnedProcessTermination?
-
-    init(executable: URL, arguments: [String]) {
-        process.executableURL = executable
-        process.arguments = arguments
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-    }
-
-    var failure: ClaudeRemoteSetup.Failure? {
-        lock.lock(); defer { lock.unlock() }; return stopped
-    }
-
-    func start() throws {
-        lock.lock(); defer { lock.unlock() }
-        if let stopped { throw stopped }
-        do { try process.run() }
-        catch { throw ClaudeRemoteSetup.Failure.connectionFailed }
-        let child = process
-        ownership = OwnedProcessTermination { [weak child] in
-            if let child, child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
-        }
-        started = true
-        try? input.fileHandleForWriting.close()
-        try? output.fileHandleForWriting.close()
-        let descriptor = output.fileHandleForReading.fileDescriptor
-        let flags = fcntl(descriptor, F_GETFL)
-        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else {
-            stopLocked(.setupFailed); throw ClaudeRemoteSetup.Failure.setupFailed
-        }
-    }
-
-    func result() throws -> (data: Data, exitStatus: Int32)? {
-        lock.lock(); defer { lock.unlock() }
-        if let stopped { throw stopped }
-        guard started, !closed else { throw ClaudeRemoteSetup.Failure.cancelled }
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while !eof {
-            let count = buffer.withUnsafeMutableBytes {
-                Darwin.read(output.fileHandleForReading.fileDescriptor, $0.baseAddress!, $0.count)
-            }
-            if count > 0 {
-                bytes.append(contentsOf: buffer.prefix(count))
-                if bytes.count > 4096 { stopLocked(.invalidResponse); throw ClaudeRemoteSetup.Failure.invalidResponse }
-            } else if count == 0 { eof = true }
-            else if errno == EINTR { continue }
-            else if errno == EAGAIN || errno == EWOULDBLOCK { break }
-            else { stopLocked(.invalidResponse); throw ClaudeRemoteSetup.Failure.invalidResponse }
-        }
-        guard !process.isRunning, eof else { return nil }
-        return (bytes, process.terminationStatus)
-    }
-
-    func abort(_ failure: ClaudeRemoteSetup.Failure) {
-        lock.lock(); defer { lock.unlock() }; stopLocked(failure)
-    }
-
-    private func stopLocked(_ failure: ClaudeRemoteSetup.Failure) {
-        if stopped == nil { stopped = failure }
-        if started, process.isRunning, !stopping {
-            stopping = true
-            process.terminate()
-            // A peer ignoring EOF/SIGTERM cannot leave Pacer's SSH process
-            // alive. This targets the exact Process created by this operation.
-            let child = process, ownership = ownership
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) {
-                _ = ownership
-                if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
-            }
-        }
-        closeLocked()
-    }
-
-    func close() {
-        lock.lock(); defer { lock.unlock() }
-        if started, process.isRunning { stopLocked(.cancelled) }
-        else { closeLocked() }
-    }
-
-    private func closeLocked() {
-        guard !closed else { return }
-        closed = true
-        try? input.fileHandleForWriting.close(); try? input.fileHandleForReading.close()
-        try? output.fileHandleForReading.close(); try? output.fileHandleForWriting.close()
-    }
+public protocol ClaudeRemoteSetupOperation: Sendable {
+    var failure: ClaudeRemoteSetup.Failure? { get }
+    func start() throws
+    func result() throws -> (data: Data, exitStatus: Int32)?
+    func abort(_ failure: ClaudeRemoteSetup.Failure)
+    func close()
 }

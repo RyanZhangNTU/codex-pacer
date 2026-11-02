@@ -213,9 +213,7 @@ actor EngineRuntime {
     private var desktopState: CodexDesktopState?
     private var pendingDesktopEndings: [String: SessionActivity] = [:]
     private var latestFirstOutput: (at: Date, seconds: Double)?
-    private lazy var desktopMonitor: CodexDesktopMonitor? = desktopServices.map { services in
-        CodexDesktopMonitor(services: services) { [weak self] state in await self?.receiveDesktop(state) }
-    }
+    private lazy var desktopMonitor: RealtimeActivityMonitor? = desktopServices?.makeMonitor()
     private var quota: [AgentProvider: QuotaSnapshot] = [:]
     private var codexQuota: QuotaSnapshot?
     private var codexQuotaFailed = false
@@ -557,7 +555,7 @@ actor EngineRuntime {
                 await claudeActivityMonitor.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: true)
                 await deepseekActivityMonitor.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: true)
             }
-            await desktopMonitor?.setExpanded(value)
+            await desktopMonitor?.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: value)
             await claudeCloudMonitor?.setExpanded(value)
             await updateSourceWatches(flushPending: value)
             if !demo {
@@ -692,8 +690,7 @@ actor EngineRuntime {
         await claudeQuotaMonitor?.configure(home: claudeHome, organization: claudeOrganization,
             enabled: usesClaudeWeb && enabled.contains(.claude) && !claudeWebPaused, context: generation)
         await bindClaudeCloudMonitor()
-        await desktopMonitor?.configure(home: codexHome, enabled: !demo && enabled.contains(.codex),
-            expanded: expanded, context: generation)
+        await bindDesktopMonitor()
         await bindBalanceMonitor()
     }
 
@@ -921,6 +918,19 @@ actor EngineRuntime {
     private func sendClaudeHostMessage(_ message: ClaudeWebHostMessage) {
         guard initialized, let bytes = try? JSONEncoder().encode(message), bytes.count <= EngineProtocol.maximumCommandBytes else { return }
         output(bytes + Data([10]))
+    }
+
+    private func bindDesktopMonitor() async {
+        let context = generation
+        guard !demo, enabled.contains(.codex) else {
+            desktopState = nil; await desktopMonitor?.shutdown(); return
+        }
+        await desktopMonitor?.startAsync(home: codexHome, includeSSH: false, includeRemoteControl: false,
+            useSSHFallback: false, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] value in
+                await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
+                    attention: value.localDesktopAttention, attentionThreads: value.attentionThreads, names: value.names,
+                    performance: value.performance, status: value.localDesktopStatus))
+            }
     }
 
     private func receiveDesktop(_ state: CodexDesktopState) {
@@ -1203,7 +1213,7 @@ actor EngineRuntime {
         let deadline = ShutdownDeadline(), claudeActivity = claudeActivityMonitor, deepseekActivity = deepseekActivityMonitor
         await deadline.perform([
             { await quota?.stop() }, { await claude?.stop() }, { await cloud?.stop() },
-            { await desktop?.stop() }, { await balance?.stop() },
+            { await desktop?.shutdown() }, { await balance?.stop() },
             { await claudeActivity.shutdown(deadline: deadline) }, { await deepseekActivity.shutdown() },
             { await web.setAvailable(false) }, { await claudeWeb.setAvailable(false) },
             { if stopWatching { watcher.stop(); _ = await watcher.activeWatchCount() } }

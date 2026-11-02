@@ -1,27 +1,29 @@
 import Foundation
-import Darwin
 
 /// Routing metadata is only a discovery hint, never task or completion evidence.
 /// Desktop owners can already have followers and omit a new following broadcast.
 /// Watch the small host/thread index instead of scanning conversation logs.
-struct DesktopRouteHints {
+public struct DesktopRouteHints {
+    private let files: any PlatformFileSystem
+    private let owned: (URL) -> Bool
+    public init(files: any PlatformFileSystem, owned: @escaping (URL) -> Bool) {
+        self.files = files; self.owned = owned
+    }
     private struct Stamp: Equatable {
-        let inode: UInt64
+        let identity: String
         let modified: Date
-        let size: Int
+        let size: UInt64
     }
     private var stamp: Stamp?
     private var seen: Set<NativeDesktopSession.Key> = []
 
-    mutating func changed(home: URL, hosts: Set<String>) -> [NativeDesktopSession.Key] {
+    public mutating func changed(home: URL, hosts: Set<String>) -> [NativeDesktopSession.Key] {
         let file = home.appendingPathComponent(".codex-global-state.json")
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
-              attributes[.type] as? FileAttributeType == .typeRegular,
-              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
-              let size = (attributes[.size] as? NSNumber)?.intValue, size <= 8 * 1024 * 1024,
-              let date = attributes[.modificationDate] as? Date else { return [] }
-        let next = Stamp(inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0, modified: date, size: size)
-        guard next != stamp, let bytes = try? Data(contentsOf: file),
+        guard let metadata = files.metadata(file), metadata.isRegularFile, owned(file),
+              metadata.size <= 8 * 1024 * 1024 else { return [] }
+        let next = Stamp(identity: metadata.identity, modified: metadata.modified, size: metadata.size)
+        guard next != stamp, let bytes = try? files.read(file, offset: 0, maximumBytes: 8 * 1024 * 1024 + 1),
+              bytes.count <= 8 * 1024 * 1024,
               let fields = try? JSONFieldView.document(bytes).fields([
                 "thread-project-membership-host-ids", "app-server-migrated-pinned-thread-ids-by-host"
               ]) else { return [] }

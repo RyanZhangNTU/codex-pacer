@@ -1,5 +1,6 @@
 import AppKit
 import PacerCore
+import PacerMacSupport
 
 /// The first regular app above a provider process. Shared by the Claude
 /// registry and Codex open-rollout adapters; retained after the process exits.

@@ -4,6 +4,16 @@ import Subprocess
 import CWindowsSupport
 
 enum WindowsExecutables {
+    // A local Python runtime is only used when the host enables helper features.
+    // Windows local Desktop collection uses the native authenticated pipe.
+    static var python: URL {
+        let environment = ProcessInfo.processInfo.environment
+        for directory in (environment["PATH"] ?? environment["Path"] ?? "").split(separator: ";") {
+            let url = URL(fileURLWithPath: String(directory)).appendingPathComponent("python.exe")
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        return URL(fileURLWithPath: "C:/Windows/System32/python.exe")
+    }
     static var ssh: URL {
         let system = ProcessInfo.processInfo.environment["SystemRoot"] ?? "C:\\Windows"
         return URL(fileURLWithPath: system).appendingPathComponent("System32/OpenSSH/ssh.exe")

@@ -13,7 +13,8 @@ private actor DesktopTestConnection: CodexDesktopConnection {
     }
     func start() {}
     func discover(_ threads: [String]) {}
-    func setInterval(_ seconds: TimeInterval, flushPending: Bool) { interval = seconds; if flushPending { flushes += 1 } }
+    func setHosts(_ hosts: Set<String>) {}
+    func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) { interval = seconds; if flushPending { flushes += 1 } }
     func stop() { stopped = true }
     // Deliberately permits callbacks after stop to exercise generation guards.
     func send(_ bytes: Data) async { await frame(bytes) }
@@ -29,10 +30,6 @@ private final class DesktopTestFactory: @unchecked Sendable {
         }
     }
     func all() -> [DesktopTestConnection] { lock.lock(); defer { lock.unlock() }; return created }
-}
-private actor DesktopMonitorStates {
-    var values: [CodexDesktopState] = []
-    func append(_ value: CodexDesktopState) { values.append(value) }
 }
 private final class DesktopEngineSnapshots: @unchecked Sendable {
     private let lock = NSLock()
@@ -56,47 +53,6 @@ final class CodexDesktopMonitorTests: XCTestCase {
     }
     private func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
-    }
-    func testTransportReadinessDoesNotSupplyActivityAndOldSourceCallbacksAreRevoked() async throws {
-        let factory = DesktopTestFactory(), capture = DesktopMonitorStates()
-        let monitor = CodexDesktopMonitor(services: factory.services) { await capture.append($0) }
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-monitor-first")
-        await monitor.configure(home: home, enabled: true, expanded: false, context: 1)
-        await monitor.discover([thread])
-        let first = try XCTUnwrap(factory.all().first)
-        try await first.send(frame("status", ["connected": true]))
-        var latest = await capture.values.last
-        XCTAssertTrue(latest?.activities.isEmpty == true); XCTAssertEqual(latest?.status.sourceAvailable, false)
-        let now = Date()
-        try await first.send(frame("runtimeBatch", ["events": [event("turn/started", at: now)]]))
-        latest = await capture.values.last
-        XCTAssertEqual(latest?.activities.first?.phase, .running); XCTAssertEqual(latest?.status.sourceAvailable, true)
-        let request = try frame("attention", ["threadId": thread, "requests": [["id": "permission", "kind": "approval"]]])
-        await first.send(request)
-        let detected = await capture.values.last?.attention.first?.detectedAt
-        await first.send(request)
-        latest = await capture.values.last
-        XCTAssertEqual(latest?.attention.first?.detectedAt, detected)
-        await monitor.setExpanded(true)
-        let interval = await first.interval, flushes = await first.flushes
-        XCTAssertEqual(interval, 1); XCTAssertGreaterThan(flushes, 0)
-
-        await monitor.configure(home: home.appendingPathComponent("second"), enabled: true, expanded: true, context: 2)
-        await monitor.discover([thread])
-        let count = await capture.values.count
-        try await first.send(frame("runtimeBatch", ["events": [event("turn/completed", at: now, ["status": "completed"])]]))
-        await first.disconnect()
-        let after = await capture.values.count, stopped = await first.stopped
-        XCTAssertEqual(after, count); XCTAssertTrue(stopped)
-        latest = await capture.values.last
-        XCTAssertEqual(latest?.context, 2); XCTAssertTrue(latest?.activities.isEmpty == true)
-        let second = try XCTUnwrap(factory.all().last)
-        try await second.send(frame("runtimeBatch", ["events": [event("turn/started", at: now)]]))
-        await monitor.configure(home: home.appendingPathComponent("second"), enabled: false, expanded: false, context: 3)
-        let disabled = await capture.values.count
-        try await second.send(frame("runtimeBatch", ["events": [event("turn/completed", at: now, ["status": "completed"])]]))
-        let final = await capture.values.count; XCTAssertEqual(final, disabled)
-        await monitor.stop()
     }
     func testEngineRetainsUnreadEndingAcrossReleaseEofAndOlderLogReplay() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-desktop-engine-" + UUID().uuidString)
@@ -141,27 +97,5 @@ final class CodexDesktopMonitorTests: XCTestCase {
         try await connection.send(frame("runtimeBatch", ["events": [event("turn/started", at: now.addingTimeInterval(2))]]))
         XCTAssertEqual(snapshots.all().count, stopped)
     }
-    func testReconnectNeedsNewRuntimeEvidenceAndRejectsThePreviousPipeCallbacks() async throws {
-        let factory = DesktopTestFactory(), capture = DesktopMonitorStates()
-        let monitor = CodexDesktopMonitor(services: factory.services, retryInterval: 0.02) { await capture.append($0) }
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-reconnect")
-        await monitor.configure(home: home, enabled: true, expanded: false, context: 1)
-        await monitor.discover([thread])
-        let first = try XCTUnwrap(factory.all().first), now = Date()
-        try await first.send(frame("runtimeBatch", ["events": [event("turn/started", at: now),
-            event("turn/completed", at: now.addingTimeInterval(1), ["status": "completed"])]]))
-        await first.disconnect()
-        let limit = ProcessInfo.processInfo.systemUptime + 1
-        while factory.all().count < 2, ProcessInfo.processInfo.systemUptime < limit { try await Task.sleep(nanoseconds: 10_000_000) }
-        XCTAssertEqual(factory.all().count, 2)
-        let second = try XCTUnwrap(factory.all().last)
-        try await second.send(frame("status", ["connected": true]))
-        let latest = await capture.values.last
-        XCTAssertEqual(latest?.status.sourceAvailable, false); XCTAssertTrue(latest?.activities.isEmpty == true)
-        let count = await capture.values.count
-        try await first.send(frame("runtimeBatch", ["events": [event("turn/started", at: now.addingTimeInterval(2))]]))
-        await first.disconnect()
-        let after = await capture.values.count; XCTAssertEqual(after, count)
-        await monitor.stop()
-    }
+
 }

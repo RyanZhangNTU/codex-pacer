@@ -20,7 +20,7 @@
       ],
       "previewNote": "One source for provider identity, lifecycle, rates, quota and cost calculations; Windows shared suites pass. A deterministic shared concurrency check covers stderr read/append ordering; the original Mac early-exit, recovery and redaction assertions remain.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B4",
+      "cleanupOwner": "B5a",
       "deferredEvidence": [
         "native/Tests/PacerCoreTests/ProcessErrorCollectorTests.swift"
       ]
@@ -38,7 +38,7 @@
       ],
       "previewNote": "Local read-only SQLite and rollout parsing with event-driven Windows log updates; synthetic live append/discovery and source switching pass. A live metadata-only probe verifies the selected rollout writer in the authenticated Desktop peer tree. Broader installation, lifecycle and navigation acceptance remain.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B4",
+      "cleanupOwner": "P1",
       "deferredEvidence": []
     },
     {
@@ -52,11 +52,14 @@
         "windows/Native/CWindowsSupport/WindowsFileOwners.c",
         "windows/Native/CWindowsSupport/WindowsProcess.c",
         "windows/EngineSupport/WindowsDesktopCollector.swift",
-        "windows/EngineSupport/CodexDesktopMonitor.swift",
+        "native/Sources/PacerCore/RealtimeActivityMonitor.swift",
         "windows/Tests/EngineTests/WindowsDesktopTransportTests.swift",
         "windows/Tests/EngineTests/WindowsProcessOwnershipTests.swift",
         "windows/Tests/EngineTests/WindowsDesktopCollectorTests.swift",
-        "windows/Tests/EngineTests/CodexDesktopMonitorTests.swift"
+        "windows/Tests/EngineTests/CodexDesktopMonitorTests.swift",
+        "native/Sources/PacerCore/NativeDesktopCollector.swift",
+        "native/Tests/PacerCoreTests/SharedRealtimeMonitorTests.swift",
+        "native/Tests/PacerCoreTests/DesktopCollectionSessionTests.swift"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -66,8 +69,8 @@
         "EOF/断开/重连、初始化超时、睡眠/唤醒、迟到回调与模块关闭；保留未读结束"
       ],
       "previewNote": "Authenticated named-pipe collection uses the shared Desktop session, projection and runtime state. Binding checks the selected physical home/file, writing process instances, user/session ancestry and peer identity. Read-only handles, reused PIDs and replaced files are rejected. Fixtures cover immediate approval, unread endings across EOF and older logs, profile/module changes, stale callbacks, idle initialization timeout, bounded header retries and transcript filtering. The installed MSIX passed a metadata ownership probe and an eight-second observer subscription, with 14 projected events and no task mutation or retained conversation text. Full event/lifecycle acceptance, SSH, WSL and Remote Control remain.",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B4",
+      "note": "B4b shares Realtime reconciliation, retries, refresh, session service and EOF rules on both hosts. Windows retains authenticated IO and writer proofs. Full installed-app and remote-source acceptance remains pending.",
+      "cleanupOwner": "P1",
       "deferredEvidence": [
         "windows/References/codex-desktop-transport-provenance.json"
       ]
@@ -119,7 +122,7 @@
       ],
       "previewNote": "Shared transcript parsing now drains Windows Desktop's initial metadata within an 8 MiB backlog limit, preserving prompt ownership with the original per-read budgets. Newly created files require post-observation creation and event times before their first records count as live; copied history and excluded-file reattachment remain historical. Actual process checks cover first-file notification, completion/unread evidence and IPC redaction. Settled projections prevent partial historical baselines from flashing as active, and source/module resets clear the observation boundary. Module/source Settings remain connected. Hooks, telemetry, embedded-session filtering, owner navigation and broader real-session acceptance remain.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B4",
+      "cleanupOwner": "P1",
       "deferredEvidence": [
         "windows/Desktop/SettingsClaude.cs",
         "windows/Tests/EngineTests/WindowsClaudeInitialBacklogTests.swift",
@@ -228,7 +231,7 @@
       ],
       "previewNote": "Incremental zstd reads, directory notifications and non-mutating Windows semaphore checks pass fixtures. Shared desktop discovery validates the published Harness PE metadata without executing it. Actual installed Harness sessions and lifecycle acceptance remain.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B4",
+      "cleanupOwner": "P1",
       "deferredEvidence": [
         "windows/References/harness-desktop-provenance.json"
       ]
@@ -1135,23 +1138,7 @@
     }
   ],
   "remainingCoreSources": {
-    "ClaudeLiveSessionRegistry.swift": "claude-local",
-    "ClaudeRemoteAutoSetup.swift": "claude-remote",
-    "ClaudeRemoteResume.swift": "claude-remote",
-    "ClaudeRemoteSetup.swift": "claude-remote",
-    "CodexRolloutOwners.swift": "navigation",
-    "DesktopEventProbe.swift": "codex-runtime",
-    "DesktopRouteHints.swift": "codex-runtime",
-    "IslandInstanceLock.swift": "lifecycle",
-    "NativeDesktopCollector.swift": "codex-runtime",
-    "ProcessOwnership.swift": "navigation",
-    "RealtimeActivityMonitor.swift": "codex-runtime",
-    "RealtimeProbe.swift": "codex-runtime",
-    "RemoteControlCatalog.swift": "codex-runtime",
-    "RequestLogProbe.swift": "codex-runtime",
-    "RuntimeDiagnostics.swift": "codex-quota",
-    "SessionLogProbe.swift": "codex-runtime",
-    "ClaudeSSHRouteResolver.swift": "shared-model"
+    "IslandInstanceLock.swift": "lifecycle"
   },
   "remainingCoreTests": {
     "ClaudeActivityMonitorTests.swift": "claude-local",
@@ -1184,12 +1171,10 @@
     "MetricPresentationTests.swift": "shared-model",
     "ModelDisplayTests.swift": "shared-model",
     "NativeDesktopSocketTests.swift": "codex-runtime",
-    "NativeDesktopTests.swift": "codex-runtime",
     "ProjectSupportTests.swift": "shared-model",
     "RealtimeTests.swift": "codex-runtime",
     "RealtimeTransportTests.swift": "codex-runtime",
     "RemoteControlCatalogTests.swift": "codex-runtime",
-    "RemoteControlTests.swift": "codex-runtime",
     "RequestLogProbeTests.swift": "codex-runtime",
     "RuntimeLifecycleTests.swift": "shared-model",
     "SelectionAndApplicationTests.swift": "shared-model",
