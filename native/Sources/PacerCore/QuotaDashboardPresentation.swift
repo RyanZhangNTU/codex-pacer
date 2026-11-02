@@ -131,7 +131,7 @@ public enum QuotaDashboardPresentation {
             if let snapshot {
                 let elapsed = max(0, Int(now.timeIntervalSince(snapshot.capturedAt)))
                 if expired { freshness = L10n.text("quota.expired") }
-                else if stale { freshness = L10n.text("quota.age", max(1, elapsed / 60)) }
+                else if snapshot.isStale(at: now) { freshness = L10n.text("quota.age", max(1, elapsed / 60)) }
                 else { freshness = elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60) }
             } else { freshness = L10n.text(refreshing ? "quota.reading" : "quota.not_read") }
             self.init(provider: provider, period: period, window: window, availability: availability,

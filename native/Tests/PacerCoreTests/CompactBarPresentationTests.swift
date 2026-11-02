@@ -73,7 +73,7 @@ final class CompactBarPresentationTests: XCTestCase {
         request.context = context(snapshot: snapshot, failed: true)
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, "—")
-        XCTAssertEqual(value.rings.first?.remaining, 80, "A failed refresh retains the valid cached ring")
+        XCTAssertNil(value.rings.first?.remaining, "The collapsed ring hides the value after a failed refresh")
         XCTAssertFalse(try XCTUnwrap(value.rings.first).dimmed)
         request.options.metric = "remaining"
         XCTAssertEqual(try component("quota", in: XCTUnwrap(CompactBarPresentation.project(request))).entries.first?.text, "80%")

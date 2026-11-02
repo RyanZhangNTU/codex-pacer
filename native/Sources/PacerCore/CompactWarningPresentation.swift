@@ -1,7 +1,7 @@
 import Foundation
 
 /// The warning slot keeps quota marks in provider order and appends at most
-/// one wallet capsule. Native compatibility tests cover the shipping rules.
+/// one wallet capsule.
 public enum CompactWarningPresentation {
     public enum FiveHourAlert: Equatable, Sendable { case low(Double), exhausted }
     public static func fiveHourAlert(provider: AgentProvider, snapshot: QuotaSnapshot?, failed: Bool, now: Date) -> FiveHourAlert? {
@@ -19,6 +19,11 @@ public enum CompactWarningPresentation {
         public let symbol: String?
         public let help: String
         public var affectedProviders: [String] = []
+    }
+    public static func summary(_ items: [Item]) -> String {
+        let fiveHour = items.filter { $0.kind == "fiveHour" }.map(\.help).joined(separator: " · ")
+        return ([fiveHour] + items.filter { $0.kind != "fiveHour" }.map(\.help))
+            .filter { !$0.isEmpty }.joined(separator: "\n")
     }
     public static func items(enabled: Set<AgentProvider>, warnings: Set<CompactIslandLayout.Warning>,
                              snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],

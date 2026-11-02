@@ -144,7 +144,7 @@ public enum CompactBarPresentation {
         let rings: [Ring] = ringProviders.map { provider in
             if provider == .deepseek { return .init(provider: provider.rawValue, remaining: wallet?.budgetPercent, dimmed: wallet?.dimmed == true) }
             let input = source(provider), window = selected(provider)
-            return .init(provider: provider.rawValue, remaining: window?.remainingPercent,
+            return .init(provider: provider.rawValue, remaining: input?.failed == true ? nil : window?.remainingPercent,
                 dimmed: input?.snapshot?.isStale(at: date) == true || window?.resetsAt.map { $0 <= date } == true)
         }
         let clock = rings.isEmpty && providers.contains(.deepseek) && !layout.components.contains(.priceClock)
@@ -193,7 +193,7 @@ public enum CompactBarPresentation {
                 text = context?.firstOutput.map { String(format: "%.2f s", $0) } ?? "—"
                 stripText = context?.firstOutput.map { String(format: $0 < 10 ? "%.1f" : "%.0f", $0) } ?? "—"; stripUnit = "s"
                 help = L10n.text("layout.latest_ttft_help", language: language)
-            case .warnings: visible = context?.warnings.isEmpty == false; help = context?.warnings.map(\.help).joined(separator: "\n") ?? ""
+            case .warnings: visible = context?.warnings.isEmpty == false; help = CompactWarningPresentation.summary(context?.warnings ?? [])
             case .quota: values = entries; stripUnit = alternating.contains(.deepseek) ? nil : "%"; help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
             case .quotaGauge: visible = !rings.isEmpty || clock; help = clock ? "" : gaugeHelp + "\n" + L10n.text("layout.gauge_help", language: language)
             case .priceClock: break

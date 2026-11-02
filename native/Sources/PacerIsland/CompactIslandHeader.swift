@@ -354,7 +354,7 @@ struct CompactIslandComponent: View {
             }
         }
     }
-    private var warningSummary: String { model.compactWarningItems.map(\.help).joined(separator: "\n") }
+    private var warningSummary: String { CompactWarningPresentation.summary(model.compactWarningItems) }
     private var gaugeSummary: String {
         model.compactRingProviders.map { provider in
             if provider == .deepseek {

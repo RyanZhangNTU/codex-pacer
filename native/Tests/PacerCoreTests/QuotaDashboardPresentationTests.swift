@@ -40,6 +40,8 @@ final class QuotaDashboardPresentationTests: XCTestCase {
         }
         let failed = P.Reading(provider: .codex, period: .fiveHour, snapshot: fresh, failed: true, now: now)
         XCTAssertEqual(failed.availability, .stale); XCTAssertNil(failed.verdict)
+        XCTAssertEqual(failed.remainingPercent, 80, "The expanded ring keeps its cached value on failure")
+        XCTAssertEqual(failed.freshnessText, L10n.text("quota.just_updated"), "Failure does not change the age of a fresh cached sample")
     }
     func testLayoutsPreserveSinglePeriodsAndLegacyCodexExceptions() throws {
         typealias P = QuotaDashboardPresentation

@@ -1170,7 +1170,7 @@ public actor LocalActivityReader {
                         return try? JSONSerialization.data(withJSONObject: value)
                     }
                 }
-                fragment = lines.first.map(Data.init) ?? Data()
+                fragment = lines.first.map { Data($0) } ?? Data()
                 if fragment.count > 1024 * 1024 { fragment.removeAll() }
                 offset = start
             } catch { return nil }
