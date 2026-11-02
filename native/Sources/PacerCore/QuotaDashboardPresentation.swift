@@ -41,6 +41,23 @@ public enum QuotaDashboardPresentation {
     public static func bucket(provider: AgentProvider, snapshot: QuotaSnapshot?) -> QuotaBucket? {
         snapshot.flatMap { value in value.buckets.first { $0.id == provider.rawValue } ?? value.buckets.first }
     }
+    public static func window(provider: AgentProvider, snapshot: QuotaSnapshot?, period: Period) -> QuotaWindow? {
+        bucket(provider: provider, snapshot: snapshot)?.windows.first { $0.durationMinutes == period.minutes }
+    }
+    public static func isWeeklyOnly(provider: AgentProvider, snapshot: QuotaSnapshot?) -> Bool {
+        window(provider: provider, snapshot: snapshot, period: .weekly) != nil && window(provider: provider, snapshot: snapshot, period: .fiveHour) == nil
+    }
+    public static func isStale(snapshot: QuotaSnapshot?, window: QuotaWindow?, now: Date) -> Bool {
+        guard let snapshot else { return false }
+        return snapshot.isStale(at: now) || window?.resetsAt.map { $0 <= now } == true
+    }
+    public static func freshness(snapshot: QuotaSnapshot?, window: QuotaWindow?, failed: Bool = false, refreshing: Bool = false, now: Date) -> String {
+        guard let snapshot else { return L10n.text(refreshing ? "quota.reading" : "quota.not_read") }
+        if window?.resetsAt.map({ $0 <= now }) == true { return L10n.text("quota.expired") }
+        let elapsed = max(0, Int(now.timeIntervalSince(snapshot.capturedAt)))
+        if isStale(snapshot: snapshot, window: window, now: now) || failed { return L10n.text("quota.age", max(1, elapsed / 60)) }
+        return elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60)
+    }
     public static func selectedWindow(provider: AgentProvider, snapshot: QuotaSnapshot?, selection: String?) -> QuotaWindow? {
         guard let snapshot else { return nil }
         let windows = bucket(provider: provider, snapshot: snapshot)?.windows ?? []
@@ -127,13 +144,7 @@ public enum QuotaDashboardPresentation {
                     weekly.remainingPercent != nil, weekly.resetsAt.map({ $0 > now }) == true,
                     bucket?.windows.allSatisfy({ $0.durationMinutes == 10080 }) == true { availability = .proOnly }
             else { availability = .missingPeriod }
-            let freshness: String
-            if let snapshot {
-                let elapsed = max(0, Int(now.timeIntervalSince(snapshot.capturedAt)))
-                if expired { freshness = L10n.text("quota.expired") }
-                else if snapshot.isStale(at: now) { freshness = L10n.text("quota.age", max(1, elapsed / 60)) }
-                else { freshness = elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60) }
-            } else { freshness = L10n.text(refreshing ? "quota.reading" : "quota.not_read") }
+            let freshness = QuotaDashboardPresentation.freshness(snapshot: snapshot, window: window, failed: failed, refreshing: refreshing, now: now)
             self.init(provider: provider, period: period, window: window, availability: availability,
                 remainingQuotaPercent: window?.remainingPercent, remainingTimePercent: window?.remainingTimePercent(at: now),
                 capturedAt: snapshot?.capturedAt, freshnessText: freshness, sourceText: sourceText,
@@ -154,7 +165,7 @@ public enum QuotaDashboardPresentation {
             paceText = pacePercent.map { "\(Int($0.rounded()))%" } ?? "—"
             verdict = pacePercent.map { Verdict(pace: $0).rawValue }
             verdictText = verdict.map { L10n.text("quota.verdict." + $0) }
-            pressing = availability == .available && (remainingPercent.map { $0 <= 15 } == true || verdict == "fast")
+            pressing = availability == .available && (remainingPercent.map { $0.isFinite && $0 <= 15 } == true || verdict == "fast")
             valueText = Self.percent(remainingPercent).replacingOccurrences(of: "%", with: "")
             timeText = Self.percent(remainingTimePercent)
             countdown = window?.remainingSeconds(at: now).map { $0 <= 0 ? L10n.text("dashboard.countdown_waiting") : Self.duration($0) } ?? "—"
@@ -185,8 +196,8 @@ public enum QuotaDashboardPresentation {
             let name = bucketName.map { provider.displayName + " " + $0 } ?? provider.displayName
             let summary = [resetDate, verdictText, freshnessText].compactMap { $0 }.joined(separator: ". ")
             accessibilityLabel = L10n.text("dashboard.rings_accessibility", name, period.accessibilityLabel,
-                remainingPercent == nil ? L10n.text("common.unknown") : Self.percent(remainingPercent),
-                remainingTimePercent == nil ? L10n.text("common.unknown") : Self.percent(remainingTimePercent), summary)
+                remainingPercent?.isFinite != true ? L10n.text("common.unknown") : Self.percent(remainingPercent),
+                remainingTimePercent?.isFinite != true ? L10n.text("common.unknown") : Self.percent(remainingTimePercent), summary)
             classicAccessibilityLabel = proOnly ? name + ", " + period.accessibilityLabel + ". " + L10n.text("dashboard.pro_help") : accessibilityLabel
         }
         public var remainingQuotaPercent: Double? { remainingPercent }

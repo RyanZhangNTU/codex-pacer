@@ -23,24 +23,23 @@ enum QuotaDashboardLayout {
 
 struct QuotaDashboardView: View {
     @ObservedObject var model: IslandModel
-    private var slots: [QuotaDashboardSlot] {
-        QuotaDashboardLayout.slots(providers: model.enabledProviders)
+    private var layout: QuotaDashboardPresentation.Layout {
+        QuotaDashboardPresentation.layout(providers: model.enabledProviders,
+            snapshots: Dictionary(uniqueKeysWithValues: model.enabledProviders.compactMap { provider in
+                model.providerQuota(provider).map { (provider, $0) }
+            }), style: model.expandedQuotaStyle, now: model.now)
     }
+    private var slots: [QuotaDashboardPresentation.Slot] { layout.slots }
 
     var body: some View {
-        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: model.enabledProviders, snapshot: model.providerQuota(.codex),
-                                                       style: model.expandedQuotaStyle),
-           let snapshot = model.providerQuota(.codex) {
-            LegacyCodexQuotaView(model: model, snapshot: snapshot)
-        } else if slots == [QuotaDashboardSlot(provider: .deepseek)] {
-            DeepSeekSoloDashboard(model: model)
-        } else if model.expandedQuotaStyle == .classic {
-            ClassicQuotaDashboardView(model: model)
-        } else if slots.count == 1, let provider = slots.first?.provider,
-                  model.dashboardQuota(provider: provider, period: .weekly).availability != .unavailable {
-            single(provider)
-        } else {
-            rings
+        switch layout.kind {
+        case .legacyCodex:
+            if let snapshot = model.providerQuota(.codex) { LegacyCodexQuotaView(model: model, snapshot: snapshot) }
+        case .deepseekSolo: DeepSeekSoloDashboard(model: model)
+        case .classicRings: ClassicQuotaDashboardView(model: model)
+        case .splitSingle:
+            if let provider = layout.slots.first?.provider { single(provider) }
+        case .splitRings: rings
         }
     }
 
@@ -146,7 +145,7 @@ struct QuotaRingReading {
     var pressing: Bool { reading.pressing }
     var tint: Color { quota.period == .fiveHour && pressing ? PacerPalette.attention : quota.provider.tint }
     var labelColor: Color { pressing ? PacerPalette.attention : PacerPalette.tertiary }
-    var valueColor: Color { pressing ? PacerPalette.attention : PacerPalette.primary }
+    var valueColor: Color { fraction == nil ? PacerPalette.tertiary : pressing ? PacerPalette.attention : PacerPalette.primary }
     var paceText: String { reading.paceText }
     var projection: QuotaProjection? { reading.projection }
     var projectionWarns: Bool { reading.projectionWarns }

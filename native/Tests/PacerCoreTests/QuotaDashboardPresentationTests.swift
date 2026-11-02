@@ -2,6 +2,18 @@ import XCTest
 @testable import PacerCore
 
 final class QuotaDashboardPresentationTests: XCTestCase {
+    func testTypedReadingsKeepUnknownTimeSeparateFromMeasuredZero() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func reading(_ time: Double?) -> QuotaDashboardPresentation.Reading {
+            .init(provider: .codex, period: .weekly, window: nil, availability: .available,
+                remainingQuotaPercent: 75, remainingTimePercent: time, capturedAt: now,
+                freshnessText: "Synthetic", sourceText: nil, bucketName: nil, now: now)
+        }
+        let unknown = reading(nil).at(now), zero = reading(0).at(now)
+        XCTAssertEqual(unknown.fraction, 0.75); XCTAssertEqual(zero.fraction, 0.75)
+        XCTAssertNil(unknown.timeFraction); XCTAssertEqual(zero.timeFraction, 0)
+        XCTAssertNotEqual(unknown.accessibilityLabel, zero.accessibilityLabel)
+    }
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private func window(_ id: String, minutes: Int?, used: Double? = 20, reset: Date? = nil) -> QuotaWindow {
         QuotaWindow(id: id, usedPercent: used, durationMinutes: minutes,
@@ -41,7 +53,7 @@ final class QuotaDashboardPresentationTests: XCTestCase {
         let failed = P.Reading(provider: .codex, period: .fiveHour, snapshot: fresh, failed: true, now: now)
         XCTAssertEqual(failed.availability, .stale); XCTAssertNil(failed.verdict)
         XCTAssertEqual(failed.remainingPercent, 80, "The expanded ring keeps its cached value on failure")
-        XCTAssertEqual(failed.freshnessText, L10n.text("quota.just_updated"), "Failure does not change the age of a fresh cached sample")
+        XCTAssertEqual(failed.freshnessText, L10n.text("quota.age", 1), "A failed refresh uses the existing cached-age wording")
     }
     func testLayoutsPreserveSinglePeriodsAndLegacyCodexExceptions() throws {
         typealias P = QuotaDashboardPresentation

@@ -188,17 +188,12 @@ final class IslandModel: ObservableObject {
         case .deepseek: deepseekBalanceError?.errorDescription
         }
     }
-    /// The provider's own service bucket; model-scoped buckets stay in Settings details.
-    private func providerDashboardBucket(_ provider: AgentProvider) -> QuotaBucket? {
-        guard let snapshot = providerQuota(provider) else { return nil }
-        return snapshot.buckets.first(where: { $0.id == provider.rawValue }) ?? snapshot.buckets.first
-    }
     func providerWindow(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaWindow? {
-        providerDashboardBucket(provider)?.windows.first { $0.durationMinutes == period.durationMinutes }
+        QuotaDashboardPresentation.window(provider: provider, snapshot: providerQuota(provider), period: period)
     }
     /// A weekly-only account, such as Codex Pro, has no 5-hour window to choose.
     func providerIsWeeklyOnly(_ provider: AgentProvider) -> Bool {
-        providerWindow(provider, period: .weekly) != nil && providerWindow(provider, period: .fiveHour) == nil
+        QuotaDashboardPresentation.isWeeklyOnly(provider: provider, snapshot: providerQuota(provider))
     }
     func providerHistory(_ provider: AgentProvider) -> QuotaCycleHistory {
         switch provider {
@@ -225,21 +220,13 @@ final class IslandModel: ObservableObject {
         }
     }
     func providerQuotaIsStale(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> Bool {
-        guard let snapshot = providerQuota(provider) else { return false }
         let window = period.map { providerWindow(provider, period: $0) } ?? providerSelectedWindow(provider)
-        return snapshot.isStale(at: now) || (window?.resetsAt.map { $0 <= now } ?? false)
+        return QuotaDashboardPresentation.isStale(snapshot: providerQuota(provider), window: window, now: now)
     }
     func providerFreshnessText(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> String {
-        guard let snapshot = providerQuota(provider) else {
-            return providerRefreshing(provider) ? L10n.text("quota.reading") : L10n.text("quota.not_read")
-        }
         let window = period.map { providerWindow(provider, period: $0) } ?? providerSelectedWindow(provider)
-        if window?.resetsAt.map({ $0 <= now }) == true { return L10n.text("quota.expired") }
-        let elapsed = max(0, Int(now.timeIntervalSince(snapshot.capturedAt)))
-        if providerQuotaIsStale(provider, period: period) || providerQuotaError(provider) != nil {
-            return L10n.text("quota.age", max(1, elapsed / 60))
-        }
-        return elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60)
+        return QuotaDashboardPresentation.freshness(snapshot: providerQuota(provider), window: window,
+            failed: providerQuotaError(provider) != nil, refreshing: providerRefreshing(provider), now: now)
     }
     func dashboardQuota(provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaDashboardQuota {
         QuotaDashboardPresentation.Reading(provider: provider, period: period, snapshot: providerQuota(provider),
@@ -267,8 +254,8 @@ final class IslandModel: ObservableObject {
             failed: providerQuotaError(provider) != nil, now: now)
     }
     func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
-        guard let snapshot = providerQuota(provider), !snapshot.isStale(at: now), providerQuotaError(provider) == nil else { return nil }
-        return providerSelectedWindow(provider, selection: selection)?.pacePercent(at: now)
+        CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider), failed: providerQuotaError(provider) != nil,
+            metric: "pace", selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     var claudeHome: URL {
         let configured = defaults.string(forKey: "claudeHome") ?? ""

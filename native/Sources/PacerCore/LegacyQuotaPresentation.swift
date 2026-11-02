@@ -20,7 +20,7 @@ extension QuotaDashboardPresentation {
             self.fresh = fresh
             let elapsed = max(0, Int(now.timeIntervalSince(snapshot.capturedAt)))
             if expired { freshnessText = L10n.text("quota.expired") }
-            else if snapshot.isStale(at: now) { freshnessText = L10n.text("quota.age", max(1, elapsed / 60)) }
+            else if !fresh { freshnessText = L10n.text("quota.age", max(1, elapsed / 60)) }
             else { freshnessText = elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60) }
             help = [L10n.text("quota.source_codex"), freshnessText].joined(separator: "\n")
             buckets = snapshot.buckets.filter { !$0.windows.isEmpty }.map { bucket in
