@@ -211,8 +211,9 @@ private final class ClaudeRemoteSetupOperation: @unchecked Sendable {
             process.terminate()
             // A peer ignoring EOF/SIGTERM cannot leave Pacer's SSH process
             // alive. This targets the exact Process created by this operation.
-            let child = process
+            let child = process, ownership = ownership
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) {
+                _ = ownership
                 if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
             }
         }

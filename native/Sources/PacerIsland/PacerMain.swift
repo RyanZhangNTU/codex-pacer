@@ -542,9 +542,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         ClaudeWebLogin.close()
         if let reopenObserver { DistributedNotificationCenter.default().removeObserver(reopenObserver) }
         panel.stop()
-        let deadline = ShutdownDeadline(), model = model
+        let deadline = ShutdownDeadline(), model = self.model
         Task { @MainActor in
-            await deadline.perform([{ await model.shutdown() }])
+            await deadline.perform([{ await model?.shutdown() }])
             OwnedProcessTermination.terminateAll()
             sender.reply(toApplicationShouldTerminate: true)
         }

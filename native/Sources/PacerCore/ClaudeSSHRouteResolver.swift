@@ -185,8 +185,9 @@ enum ClaudeSSHRouteResolver {
             bytes.removeAll(keepingCapacity: false)
             if process.isRunning {
                 process.terminate()
-                let child = process
+                let child = process, ownership = ownership
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) {
+                    _ = ownership
                     if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
                 }
             }
