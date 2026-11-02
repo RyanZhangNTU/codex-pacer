@@ -7,6 +7,13 @@ import PacerCore
 
 @MainActor
 final class QuotaDetailsDisclosureTests: XCTestCase {
+    private static let application: NSApplication = {
+        let application = NSApplication.shared
+        _ = application.setActivationPolicy(.accessory)
+        application.finishLaunching()
+        return application
+    }()
+
     @MainActor private final class DisclosureState: ObservableObject {
         @Published var expanded = false
     }
@@ -43,7 +50,9 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
     private func accessibilityTitle(of element: AnyObject) -> String? {
         let selector = NSSelectorFromString("accessibilityTitle")
         guard let object = element as? NSObject, object.responds(to: selector) else { return nil }
-        return object.perform(selector)?.takeUnretainedValue() as? String
+        let value = object.perform(selector)?.takeUnretainedValue()
+        if let attributed = value as? NSAttributedString { return attributed.string }
+        return value as? String
     }
 
     private func materializeAccessibilityTree() async {
@@ -51,28 +60,32 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
         // serve the request. This enables the hosted view's lazy AX nodes.
         let result = await Task.detached {
             let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
-            var windows: CFTypeRef?
-            return AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windows)
+            var role: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(application, kAXRoleAttribute as CFString, &role)
+            return (error, role as? String)
         }.value
-        XCTAssertEqual(result, .success)
+        XCTAssertEqual(result.0, .success)
+        XCTAssertEqual(result.1, kAXApplicationRole as String)
     }
 
     private func disclosureButton(in host: NSView, title: String) async throws -> AnyObject? {
         let deadline = Date().addingTimeInterval(2)
         repeat {
             host.layoutSubtreeIfNeeded()
-            if let button = accessibleElements(in: host).first(where: {
+            let controls = accessibleElements(in: host).filter {
                 let role = $0.accessibilityRole?()
-                return (role == .button || role == .disclosureTriangle) &&
-                    ($0.accessibilityIdentifier?() == "quota.details.disclosure" || $0.accessibilityLabel?() == title || accessibilityTitle(of: $0) == title)
-            }) { return button }
+                return role == .button || role == .disclosureTriangle
+            }
+            if let button = controls.first(where: { $0.accessibilityIdentifier?() == "quota.details.disclosure" }) { return button }
+            if let button = controls.first(where: { $0.accessibilityLabel?() == title || accessibilityTitle(of: $0) == title }) { return button }
             try await Task.sleep(nanoseconds: 20_000_000)
         } while Date() < deadline
         return nil
     }
 
     func testFullRowIsOneAccessibleButtonThatExpandsAndCollapses() async throws {
-        _ = NSApplication.shared
+        let application = Self.application
+        XCTAssertEqual(application.activationPolicy(), .accessory)
         for language in AppLanguage.allCases {
             let state = DisclosureState()
             let title = L10n.text("settings.quota_details", language: language)
