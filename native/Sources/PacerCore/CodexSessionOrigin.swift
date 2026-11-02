@@ -83,12 +83,12 @@ public struct CodexRolloutMetadata: Sendable {
                 head.append(chunk)
             }
         }
-        var rows = head.split(separator: 10).map(Data.init)
+        var rows: [Data] = head.split(separator: UInt8(10)).map { Data($0) }
         if size > UInt64(head.count), head.last != 10 { rows.removeLast() }
         if size > UInt64(head.count) {
             try? handle.seek(toOffset: size - min(size, 128 * 1024))
             let tail = (try? handle.read(upToCount: 128 * 1024)) ?? Data()
-            rows += tail.split(separator: 10).dropFirst().map(Data.init)
+            rows += tail.split(separator: UInt8(10)).dropFirst().map { Data($0) }
         }
         var found: Self?
         for row in rows {

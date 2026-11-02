@@ -135,7 +135,10 @@ struct QuotaRingGeometry {
 struct QuotaRingReading {
     let quota: QuotaDashboardQuota
     let now: Date
-    private var reading: QuotaDashboardPresentation.Reading { quota.at(now) }
+    private let reading: QuotaDashboardPresentation.Reading
+    init(quota: QuotaDashboardQuota, now: Date) {
+        self.quota = quota; self.now = now; self.reading = quota.at(now)
+    }
     var fraction: Double? { reading.fraction }
     var timeFraction: Double? { reading.timeFraction }
     var stale: Bool { reading.availability == .stale }

@@ -696,8 +696,8 @@ final class IslandModel: ObservableObject {
         return completionInbox.unreadActivities.filter { roots.contains($0.id) }
     }
     var pendingInputRequests: [PendingAttentionRequest] { attentionRequests }
-    var headerStatus: String { compactContext.headerStatusText(language: L10n.language) }
-    var headerDisplayStatus: String { compactContext.statusText(language: L10n.language) }
+    var headerStatus: String { compactTaskContext.headerStatusText(language: L10n.language) }
+    var headerDisplayStatus: String { compactTaskContext.statusText(language: L10n.language) }
     private var latestRunningTask: SessionActivity? {
         running.max {
             let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast

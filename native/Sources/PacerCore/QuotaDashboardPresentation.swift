@@ -195,7 +195,8 @@ public enum QuotaDashboardPresentation {
         public var projection: QuotaProjection? { availability == .available ? window?.projection(at: readingDate) : nil }
         private var readingDate: Date { date }
         public func at(_ now: Date) -> Self {
-            Self(provider: provider, period: period, window: window, availability: availability,
+            guard now != date else { return self }
+            return Self(provider: provider, period: period, window: window, availability: availability,
                 remainingQuotaPercent: remainingPercent, remainingTimePercent: remainingTimePercent,
                 capturedAt: capturedAt.map(Date.init(timeIntervalSince1970:)), freshnessText: freshnessText,
                 sourceText: sourceText, bucketName: bucketName, extraHelp: extraHelp, now: now)

@@ -2,6 +2,10 @@ import Foundation
 import PacerCore
 
 extension IslandModel {
+    var compactTaskContext: CompactBarContext {
+        CompactBarContext(activities: activities, requests: pendingInputRequests, completions: pendingCompletions,
+            sources: [], firstOutput: latestFirstOutputLatency, groups: taskGroups, overview: overview, now: now)
+    }
     var compactWarningItems: [CompactWarningPresentation.Item] { warningItems() }
     func warningItems(warnings supplied: Set<CompactIslandLayout.Warning>? = nil) -> [CompactWarningPresentation.Item] {
         let enabled = Set(enabledProviders), warnings = supplied ?? compactLayout.warnings
