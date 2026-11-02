@@ -1230,5 +1230,60 @@
     ],
     "developmentBaselineForNextPhase": "a58216fdd4b8f49c386ec2ec4399a3f55f5acf56"
   },
-  "sourceCommit": "a1cb185"
+  "sourceCommit": "a1cb185",
+  "c2Acceptance": {
+    "date": "2026-11-03",
+    "developBase": "3d1cb3faf38707c1c768cf03aa49010628fa2d25",
+    "scope": "Local demo shell input, settings rendering and process CPU; broader feature requirements remain pending.",
+    "system": "Windows 11 x64 build 26200, Swift 6.4.2, .NET SDK 10.0.403",
+    "nativeInput": {
+      "languages": [
+        "en",
+        "zh-Hans"
+      ],
+      "method": "Relative SendInput mouse movement/click and Escape; UIA expansion state plus Win32 surface bounds",
+      "checksPerLanguage": 8,
+      "closeGraceSeconds": 0.4,
+      "passed": true,
+      "pointerRestored": true,
+      "ownedWindowsClosed": true
+    },
+    "settings": {
+      "languages": [
+        "en",
+        "zh-Hans"
+      ],
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "renderMode": "SoftwareOnly",
+      "contentClickTabEscape": "Verified on the running English settings window; all language/theme exports inspected.",
+      "layeredIslandRenderMode": "Default; unchanged",
+      "demoScreenshots": "Main checkout output/c2-check (local, ignored)"
+    },
+    "engineRealReadOnly": {
+      "wallSeconds": 300.006,
+      "oneCorePercent": 12.682,
+      "hostPercent": 0.793,
+      "protocolErrors": 0,
+      "shutdownSeconds": 0.0738,
+      "readOnlyRealData": true,
+      "sourceMutationsRequested": false
+    },
+    "wpfDemoIdle": {
+      "wallSeconds": 60.004,
+      "oneCorePercent": 18.722,
+      "hostPercent": 1.17,
+      "scope": "WPF only; completed DeepSeek demo with Settings open, no input or presentation tests"
+    },
+    "evidence": [
+      "docs/windows-shell.md",
+      "windows/Tests/PresentationTests/Program.cs",
+      "windows/Tests/PresentationTests/SlowEngineChecks.cs",
+      "windows/Tests/PresentationTests/SettingsPresentationChecks.cs",
+      "windows/Desktop/WindowRendering.cs"
+    ],
+    "statusPolicy": "No feature status or previewStatus was promoted by C2. Compile and synthetic checks do not establish full parity."
+  }
 }
