@@ -13,6 +13,7 @@ struct EngineCommand: Decodable {
     let params: Parameters?
 
     struct Parameters: Decodable {
+        var shell: EngineShellProjection.Request?
         var expanded: Bool?
         var discover: Bool?
         var demoStage: Int?

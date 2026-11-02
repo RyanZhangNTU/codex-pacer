@@ -64,5 +64,7 @@
   "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
   "windows.claude.sign_out": "Sign Out",
   "windows.claude.connection_failed": "Couldn’t connect Claude. Try again.",
-  "windows.claude.disconnect_failed": "Couldn’t clear Claude’s sign-in data. Quota updates are paused. Try signing out again."
+  "windows.claude.disconnect_failed": "Couldn’t clear Claude’s sign-in data. Quota updates are paused. Try signing out again.",
+  "windows.claude.login.instructions": "Sign in below, then choose Continue or press Ctrl+Enter.",
+  "windows.deepseek.login.instructions": "Sign in below, then choose Continue or press Ctrl+Enter."
 }

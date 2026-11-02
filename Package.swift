@@ -29,7 +29,8 @@ let otherTests = try manager.contentsOfDirectory(atPath: root.appendingPathCompo
     .filter { !shared.tests.contains($0) }
 let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", products: [
     .library(name: "PacerCore", targets: ["PacerCore"]),
-    .executable(name: "PacerEngine", targets: ["PacerEngine"])
+    .executable(name: "PacerEngine", targets: ["PacerEngine"]),
+    .library(name: "PacerWindowsBridge", type: .dynamic, targets: ["PacerWindowsBridge"])
 ], dependencies: [.package(url: "https://github.com/swiftlang/swift-subprocess", exact: "1.0.0")], targets: [
     zstd, gzip,
     .systemLibrary(name: "SQLite3", path: "windows/Native/SQLite3"),
@@ -41,6 +42,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
         sources: shared.sources.map { coreDirectory + "/" + $0 } + ["windows/EngineSupport"],
         resources: [.process("native/Sources/PacerCore/Resources"), .copy("windows/Localization")]),
     .executableTarget(name: "PacerEngine", dependencies: ["PacerCore"], path: "windows/Engine"),
+    .target(name: "PacerWindowsBridge", dependencies: ["PacerCore"], path: "windows/Bridge"),
     .testTarget(name: "PacerPortableTests", dependencies: ["PacerCore"], path: "native/Tests/PacerCoreTests",
         exclude: otherTests, sources: shared.tests),
     .testTarget(name: "PacerEngineTests", dependencies: ["PacerCore"], path: "windows/Tests/EngineTests")

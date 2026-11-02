@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Pacer.DesktopTests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
+    <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
+    <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
+    <Compile Include="../../Desktop/PreferencesSession.cs" Link="PreferencesSession.cs"/>
+    <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>
+    <Compile Include="../../Desktop/NotificationSession.cs" Link="NotificationSession.cs"/>
+    <Compile Include="../../Desktop/NotificationActions.cs" Link="NotificationActions.cs"/>
+    <Compile Include="../../Desktop/WindowsSettingsServices.cs" Link="WindowsSettingsServices.cs"/>
+    <Compile Include="../../Desktop/WindowsConversationApplication.cs" Link="WindowsConversationApplication.cs"/>
+    <Compile Include="../../Desktop/WindowsHarnessApplication.cs" Link="WindowsHarnessApplication.cs"/>
+    <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
+    <Compile Include="../../Desktop/NativeMotion.cs" Link="NativeMotion.cs"/>
+    <Compile Include="../../Desktop/NativeLayout.cs" Link="NativeLayout.cs"/>
+  </ItemGroup>
+</Project>
