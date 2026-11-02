@@ -1094,13 +1094,17 @@ actor EngineRuntime {
         let revision = generation, delay = max(0.01, deadline.timeIntervalSince(date) + 0.01)
         activityDisplayTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(min(86400, delay) * 1_000_000_000)) } catch { return }
-            await self?.expireActivityDisplay(revision: revision)
+            await self?.expireActivityDisplay(revision: revision, deadline: deadline)
         }
     }
-    private func expireActivityDisplay(revision: UInt64) {
-        guard initialized, revision == generation else { return }
+    private func expireActivityDisplay(revision: UInt64, deadline: Date) {
+        guard initialized, revision == generation, activityDisplayDeadline == deadline else { return }
         activityDisplayTask = nil; activityDisplayDeadline = nil
-        activityState.prune(at: now(), retention: retention)
+        // An injected reference clock may be frozen. Its elapsed wall timer
+        // cannot expire display state or re-arm identical snapshots.
+        let date = now()
+        guard date >= deadline else { return }
+        activityState.prune(at: date, retention: retention)
         publish(notices: [])
     }
 
