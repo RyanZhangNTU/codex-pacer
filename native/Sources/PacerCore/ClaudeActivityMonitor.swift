@@ -4,6 +4,7 @@ import Darwin
 /// Claude's local collector stays native; only configured SSH hosts receive an
 /// owned Python helper, whose lifetime is tied to this actor's input pipe.
 public actor ClaudeActivityMonitor {
+    private let makePipeReader: @Sendable (Int32) -> PipeChunkReader
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [PendingAttentionRequest], [SessionPerformanceUpdate]) async -> Void
     private var callback: Update?
     private var home: URL?
@@ -38,8 +39,9 @@ public actor ClaudeActivityMonitor {
     /// Polled separately, published with everything else. It outlives this
     /// actor's shutdown because cloud work continues while the Mac sleeps.
     private var cloud: (activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) = ([], nil, [])
-    public init() { sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh") }
-    init(sshExecutable: URL) { self.sshExecutable = sshExecutable }
+    public init(sshExecutable: URL, makePipeReader: @escaping @Sendable (Int32) -> PipeChunkReader) {
+        self.sshExecutable = sshExecutable; self.makePipeReader = makePipeReader
+    }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
         callback = update; policy = refreshPolicy
         if self.home != home {
@@ -192,7 +194,7 @@ public actor ClaudeActivityMonitor {
         // OS readiness callbacks read available bytes without occupying Swift's
         // cooperative executor while a quiet SSH pipe waits for a heartbeat.
         // Rearming only after actor consumption keeps ordered backpressure.
-        let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
+        let reader = makePipeReader(output.fileHandleForReading.fileDescriptor)
         let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let readHandler = reader.pausingHandler(channel.continuation)
         output.fileHandleForReading.readabilityHandler = readHandler

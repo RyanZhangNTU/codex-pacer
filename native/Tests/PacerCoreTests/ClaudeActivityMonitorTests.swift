@@ -1,3 +1,4 @@
+import PacerMacSupport
 import XCTest
 import Darwin
 @testable import PacerCore

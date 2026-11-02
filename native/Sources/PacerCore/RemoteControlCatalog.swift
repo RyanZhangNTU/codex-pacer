@@ -81,7 +81,7 @@ struct RemoteControlCatalogIdentity: Sendable {
     }
 }
 
-actor RemoteControlCatalog {
+public actor RemoteControlCatalog {
     private enum CatalogError: Error { case status(Int) }
     private struct Refresh { let targets: [RemoteControlActivityTarget]?; let preserveCache: Bool }
     private struct Cache { let key: String; let targets: [RemoteControlActivityTarget]?; let expires: Date }
@@ -90,17 +90,18 @@ actor RemoteControlCatalog {
     private var desiredKey: String?
     private let fetch: @Sendable (URLRequest) async throws -> Data
     private let makeClient: @Sendable (URL) -> CodexClient?
-    init(fetch: @escaping @Sendable (URLRequest) async throws -> Data = { try await RemoteControlCatalog.fetch($0) },
-         makeClient: @escaping @Sendable (URL) -> CodexClient? = { home in
-             guard let executable = CodexClient.findExecutable(customPath: UserDefaults.standard.string(forKey: "codexExecutable") ?? "") else { return nil }
-             return CodexClient(executable: executable, home: home, timeout: 8)
-         }) { self.fetch = fetch; self.makeClient = makeClient }
-
-    private static func bindingKey(home: URL, identity: RemoteControlCatalogIdentity) -> String {
-        home.path + "|" + identity.fingerprint + "|" + (CodexClient.authenticationFingerprint(home: home) ?? "missing")
+    private let files: any PlatformFileSystem
+    public init(fetch: (@Sendable (URLRequest) async throws -> Data)? = nil, files: any PlatformFileSystem,
+                makeClient: @escaping @Sendable (URL) -> CodexClient?) {
+        self.fetch = fetch ?? { try await RemoteControlCatalog.fetch($0) }
+        self.makeClient = makeClient; self.files = files
     }
-    private static func currentIdentity(home: URL, matching key: String) -> RemoteControlCatalogIdentity? {
-        guard let identity = RemoteControlCatalogIdentity.read(home: home), bindingKey(home: home, identity: identity) == key else { return nil }
+
+    private static func bindingKey(home: URL, identity: RemoteControlCatalogIdentity, files: any PlatformFileSystem) -> String {
+        home.path + "|" + identity.fingerprint + "|" + (CodexClient.authenticationFingerprint(home: home, files: files) ?? "missing")
+    }
+    private static func currentIdentity(home: URL, matching key: String, files: any PlatformFileSystem) -> RemoteControlCatalogIdentity? {
+        guard let identity = RemoteControlCatalogIdentity.read(home: home), bindingKey(home: home, identity: identity, files: files) == key else { return nil }
         return identity
     }
     private static func selected(_ targets: [RemoteControlActivityTarget]?, identity: RemoteControlCatalogIdentity) -> [RemoteControlActivityTarget]? {
@@ -116,13 +117,13 @@ actor RemoteControlCatalog {
     /// or HTTP work. The full bounded directory stays cached before selection.
     func cachedTargets(home: URL) -> [RemoteControlActivityTarget]? {
         guard let identity = RemoteControlCatalogIdentity.read(home: home), let cache,
-              cache.key == Self.bindingKey(home: home, identity: identity) else { return nil }
+              cache.key == Self.bindingKey(home: home, identity: identity, files: files) else { return nil }
         return Self.selected(cache.targets, identity: identity)
     }
 
     func targets(home: URL, now: Date = Date()) async -> [RemoteControlActivityTarget]? {
         guard let identity = RemoteControlCatalogIdentity.read(home: home) else { await shutdown(); return nil }
-        let key = Self.bindingKey(home: home, identity: identity)
+        let key = Self.bindingKey(home: home, identity: identity, files: files)
         if desiredKey != key {
             desiredKey = key
             let previous = pending; pending = nil
@@ -132,7 +133,7 @@ actor RemoteControlCatalog {
         if let cache, cache.key == key, now < cache.expires { return Self.selected(cache.targets, identity: identity) }
         if let pending, pending.key == key {
             let result = await pending.task.value
-            guard desiredKey == key, let current = Self.currentIdentity(home: home, matching: key) else { return nil }
+            guard desiredKey == key, let current = Self.currentIdentity(home: home, matching: key, files: files) else { return nil }
             return Self.selected(result.targets ?? (result.preserveCache && cache?.key == key ? cache?.targets : nil), identity: current)
         }
         guard let client = makeClient(home) else {
@@ -144,7 +145,7 @@ actor RemoteControlCatalog {
             do {
                 let auth = try await client.remoteControlCatalogAuthorization()
                 guard let clientID = identity.clientID(for: auth) else { throw CodexClientError.invalidResponse }
-                guard Self.currentIdentity(home: home, matching: key) != nil else { throw CodexClientError.accountMismatch }
+                guard Self.currentIdentity(home: home, matching: key, files: files) != nil else { throw CodexClientError.accountMismatch }
                 result = .init(targets: try await Self.readTargets(authorization: auth, clientID: clientID, identity: identity, fetch: fetch), preserveCache: false)
             } catch CodexClientError.notLoggedIn { result = .init(targets: nil, preserveCache: false) }
             catch CodexClientError.accountMismatch { result = .init(targets: nil, preserveCache: false) }
@@ -157,7 +158,7 @@ actor RemoteControlCatalog {
         let result = await task.value
         guard pending?.id == id else { return nil }
         pending = nil
-        guard let current = Self.currentIdentity(home: home, matching: key) else {
+        guard let current = Self.currentIdentity(home: home, matching: key, files: files) else {
             if cache?.key == key { cache = nil }
             return nil
         }

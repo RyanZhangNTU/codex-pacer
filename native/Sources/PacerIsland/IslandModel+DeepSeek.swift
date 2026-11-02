@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import PacerCore
 import SwiftUI

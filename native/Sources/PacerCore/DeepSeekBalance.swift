@@ -1,5 +1,7 @@
 import Foundation
-import Security
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// The DeepSeek platform wallet in CNY. Granted credit is spent first.
 public struct DeepSeekBalance: Equatable, Sendable {
@@ -82,42 +84,25 @@ public enum DeepSeekBalanceError: Error, LocalizedError, Equatable {
     public var needsConnection: Bool { [.signedOut, .missingKey, .invalidKey, .challenge].contains(self) }
 }
 
-/// A key pasted into Pacer, kept in Pacer's own login-keychain item. It is
-/// sent only to the balance endpoint and never written to preferences or logs.
-public enum DeepSeekAPIKeyStore {
-    static let service = "Codex Pacer DeepSeek balance"
-    static let account = "api-key"
-    private static var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-    }
+/// A user-supplied balance key. Storage is supplied by the host.
+public struct DeepSeekAPIKeyStore: Sendable {
+    private let store: any PlatformCredentialStore
+    public init(store: any PlatformCredentialStore) { self.store = store }
     public static func validated(_ raw: String) -> String? {
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard key.utf8.count >= 16, key.utf8.count <= 256,
               key.range(of: #"^[A-Za-z0-9._-]+\z"#, options: .regularExpression) != nil else { return nil }
         return key
     }
-    public static func read() -> String? {
-        var request = query
-        request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8).flatMap(validated)
+    public func read() -> String? {
+        store.read().flatMap { String(data: $0, encoding: .utf8) }.flatMap(Self.validated)
     }
-    public static var exists: Bool {
-        var request = query; request[kSecReturnAttributes as String] = true
-        return SecItemCopyMatching(request as CFDictionary, nil) == errSecSuccess
+    public var exists: Bool { store.exists }
+    @discardableResult public func save(_ raw: String) -> Bool {
+        guard let key = Self.validated(raw) else { return false }
+        return store.save(Data(key.utf8))
     }
-    @discardableResult public static func save(_ raw: String) -> Bool {
-        guard let key = validated(raw) else { return false }
-        let data = Data(key.utf8)
-        let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if update == errSecSuccess { return true }
-        guard update == errSecItemNotFound else { return false }
-        var item = query
-        item[kSecValueData as String] = data; item[kSecAttrLabel as String] = "Codex Pacer DeepSeek balance key"
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
-    }
-    public static func remove() { _ = SecItemDelete(query as CFDictionary) }
+    public func remove() { store.remove() }
 }
 
 public enum DeepSeekAPIBalanceClient {

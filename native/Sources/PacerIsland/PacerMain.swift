@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import SwiftUI
 import PacerCore
@@ -8,6 +9,7 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 @main
 enum PacerMain {
     @MainActor static func main() {
+        L10n.configureResources(bundle: MacResources.bundle)
         if let index = CommandLine.arguments.firstIndex(of: "--diagnose-claude-cache") {
             let action = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : ""
             let result = ClaudeQuotaClient.credentialCacheDiagnostics(action: action)

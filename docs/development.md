@@ -3,6 +3,7 @@
 ## Structure
 
 - `native/Sources/PacerCore`: quota decoding, task lifecycle, rate estimates, source discovery, transport, completion retention and window geometry.
+- `native/Sources/PacerMacSupport`: Mac child processes and byte readers, file metadata and replacement, application/CLI discovery, Pacer-owned credential storage and packaged resource lookup. Hosts supply these through Core protocols; RPC, read limits, validation, fallback and cancellation policy stay in Core.
 - `AgentProvider` / `ProviderModules`: provider identity, bounded installation detection and automatic or explicit module choices. Claude and DeepSeek collection/quota adapters feed the shared activity, performance and completion model.
 - `native/Sources/CZstd`: the decompression half of the BSD-licensed Zstandard library, built without assembly, legacy formats or tracing, for DeepSeek Harness session logs.
 - `native/Sources/PacerIsland`: SwiftUI/AppKit presentation, settings, notifications and native glass.

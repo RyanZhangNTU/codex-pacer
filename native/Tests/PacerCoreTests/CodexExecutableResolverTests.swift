@@ -1,3 +1,4 @@
+import PacerMacSupport
 import XCTest
 @testable import PacerCore
 

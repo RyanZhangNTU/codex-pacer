@@ -4,6 +4,7 @@ import Darwin
 /// Each source gets one persistent helper connection; no
 /// daemon is started and only our own helper/SSH children are terminated.
 public actor RealtimeActivityMonitor {
+    private let makePipeReader: @Sendable (Int32) -> PipeChunkReader
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String]) -> Void
     public typealias AttentionUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest]) -> Void
     public typealias MetadataUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest], [SessionNameUpdate]) -> Void
@@ -62,8 +63,9 @@ public actor RealtimeActivityMonitor {
     private var startGeneration = 0
     private var knownControls: [String: RemoteControlActivityTarget]?
     private var remoteControlBindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
-    public init() { controlCatalog = RemoteControlCatalog() }
-    init(controlCatalog: RemoteControlCatalog) { self.controlCatalog = controlCatalog }
+    public init(controlCatalog: RemoteControlCatalog, makePipeReader: @escaping @Sendable (Int32) -> PipeChunkReader) {
+        self.controlCatalog = controlCatalog; self.makePipeReader = makePipeReader
+    }
 
     public func start(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true, update: @escaping Update) async {
         await start(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback) { activities, status, unavailable, _ in update(activities, status, unavailable) }
@@ -336,7 +338,7 @@ public actor RealtimeActivityMonitor {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
+        let reader = makePipeReader(output.fileHandleForReading.fileDescriptor)
         let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let readHandler = reader.pausingHandler(channel.continuation)
         output.fileHandleForReading.readabilityHandler = readHandler

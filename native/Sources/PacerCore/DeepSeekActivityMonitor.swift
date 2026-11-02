@@ -26,7 +26,7 @@ public actor DeepSeekActivityMonitor {
                                          [SessionPerformanceUpdate], DeepSeekLocalUsage) async -> Void
     private var callback: Update?
     private var home: URL?
-    private var reader = DeepSeekSessionReader()
+    private var reader: DeepSeekSessionReader
     private var state = DeepSeekActivityState()
     private var baselinePending = false
     private var watcher: ActivityLogWatcher?
@@ -36,8 +36,9 @@ public actor DeepSeekActivityMonitor {
     private var pendingPublish: Task<Void, Never>?
     private var policy: ActivityRefreshPolicy = .collapsed
     private let liveSessions: @Sendable ([String: URL]) -> Set<String>
-    public init() { liveSessions = { DeepSeekSessionLocks.held($0) } }
-    init(liveSessions: @escaping @Sendable ([String: URL]) -> Set<String>) { self.liveSessions = liveSessions }
+    public init(files: any PlatformFileSystem, liveSessions: @escaping @Sendable ([String: URL]) -> Set<String>) {
+        reader = DeepSeekSessionReader(files: files); self.liveSessions = liveSessions
+    }
 
     public func start(home: URL, refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
         callback = update; policy = refreshPolicy
