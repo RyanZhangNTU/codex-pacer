@@ -123,7 +123,7 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
     }
     public static func week(_ wallet: DeepSeekWallet) -> Week? {
         func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
-        
+
         if wallet.dayTotals.dropLast().filter({ $0 >= 0.005 }).count >= 2 {
             let budget = wallet.daily?.limit
             let line = budget ?? wallet.averageDaily.flatMap { $0 >= 0.005 ? $0 : nil }
