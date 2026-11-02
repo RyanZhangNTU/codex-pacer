@@ -33,7 +33,7 @@ final class LocalizationTests: XCTestCase {
 
     func testBothCatalogsAreCompleteAndFormatArgumentsMatch() throws {
         func catalog(_ language: AppLanguage) throws -> [String: String] {
-            let directory = try XCTUnwrap(L10n.resourceBundle.url(forResource: language.rawValue, withExtension: "lproj"))
+            let directory = try XCTUnwrap(L10n.localizationResourceURL(for: language))
             return try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: directory.appendingPathComponent("Localizable.strings")),
                 options: [], format: nil) as? [String: String])
         }

@@ -8,6 +8,9 @@ public enum CompactBarPresentation {
     public static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
         [.quota, .quotaGauge, .quotaLabel, .timeRemaining, .priceClock].contains(component)
     }
+    public static func rateIsVisible(context: CompactBarContext, attached: Bool, strip: Bool, showsStatus: Bool, language: AppLanguage) -> Bool {
+        context.running && context.rate != nil && (!showsStatus || strip || !attached || language != .english || !context.attention)
+    }
     public struct Options: Codable, Equatable, Sendable {
         public var singleTask: String
         public var metric: String
@@ -186,8 +189,8 @@ public enum CompactBarPresentation {
                 let compact = request.attached || request.strip
                 text = context?.rate.map { rate in compact && rate >= 1_000_000 ? String(format: "%.1fM", rate / 1_000_000) : compact && rate >= 1000 ? String(format: "%.1fk", rate / 1000) : String(format: "%.0f", rate) } ?? "—"
                 stripText = text; unit = "t/s"; stripUnit = unit
-                visible = context?.running == true && context?.rate != nil &&
-                    (!layout.components.contains(.status) || request.strip || !request.attached || language != .english || context?.attention != true)
+                visible = context.map { rateIsVisible(context: $0, attached: request.attached, strip: request.strip,
+                    showsStatus: layout.components.contains(.status), language: language) } ?? false
                 help = L10n.text(context?.rateFresh == true ? "performance.total_help" : "performance.partial_total_help", context?.rate ?? 0, language: language)
             case .firstOutput:
                 text = context?.firstOutput.map { String(format: "%.2f s", $0) } ?? "—"

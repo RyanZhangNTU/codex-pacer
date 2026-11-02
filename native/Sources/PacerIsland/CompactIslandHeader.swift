@@ -154,7 +154,11 @@ struct CompactIslandComponent: View {
     private var dimmed: Bool { model.expanded && Self.dimsWhenExpanded(component) }
 
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
-        model.compactComponent(component, showsStatus: showsStatus).visible
+        if component == .tps {
+            return CompactBarPresentation.rateIsVisible(context: model.compactTaskContext, attached: model.isAttached,
+                strip: model.sideDock != nil, showsStatus: showsStatus, language: L10n.language)
+        }
+        return model.compactComponent(component, showsStatus: showsStatus).visible
     }
     /// Alternation skips providers without a value, so an unavailable service
     /// never spends half the time as a dash; with none known, the first shows one.
