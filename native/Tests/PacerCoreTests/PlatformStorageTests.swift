@@ -3,6 +3,7 @@ import XCTest
 
 final class PlatformStorageTests: XCTestCase {
     private final class Files: PlatformFileSystem, @unchecked Sendable {
+        func entries(in directory: URL) throws -> [URL] { [] }
         var data = Data()
         var size: UInt64 = 0
         var identity = "opaque-file-1"

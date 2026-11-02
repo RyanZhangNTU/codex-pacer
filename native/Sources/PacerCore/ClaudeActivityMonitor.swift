@@ -5,6 +5,7 @@ import Darwin
 /// owned Python helper, whose lifetime is tied to this actor's input pipe.
 public actor ClaudeActivityMonitor {
     private let makePipeReader: @Sendable (Int32) -> PipeChunkReader
+    private let remoteMirrorSessionIDs: @Sendable (URL) -> Set<String>
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [PendingAttentionRequest], [SessionPerformanceUpdate]) async -> Void
     private var callback: Update?
     private var home: URL?
@@ -40,8 +41,9 @@ public actor ClaudeActivityMonitor {
     /// Polled separately, published with everything else. It outlives this
     /// actor's shutdown because cloud work continues while the Mac sleeps.
     private var cloud: (activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) = ([], nil, [])
-    public init(sshExecutable: URL, makePipeReader: @escaping @Sendable (Int32) -> PipeChunkReader) {
-        self.sshExecutable = sshExecutable; self.makePipeReader = makePipeReader
+    public init(sshExecutable: URL, makePipeReader: @escaping @Sendable (Int32) -> PipeChunkReader,
+                remoteMirrorSessionIDs: @escaping @Sendable (URL) -> Set<String>) {
+        self.sshExecutable = sshExecutable; self.makePipeReader = makePipeReader; self.remoteMirrorSessionIDs = remoteMirrorSessionIDs
     }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
         callback = update; policy = refreshPolicy
@@ -178,7 +180,7 @@ public actor ClaudeActivityMonitor {
         if result.caughtUp { await schedulePublish(immediate: attaching || result.records.contains(where: Self.urgent)) }
     }
     private func refreshLocalExclusions(home: URL) {
-        localMirrorRoots = ClaudeApplicationResolver.remoteMirrorSessionIDs(claudeHome: home)
+        localMirrorRoots = remoteMirrorSessionIDs(home)
         local.setExcludedSessionIDs(localMirrorRoots)
     }
     private func continueRead() async { catchup = nil; await readLocal(discover: false) }

@@ -3,7 +3,8 @@ import PacerCore
 
 extension ClaudeActivityMonitor {
     public init(sshExecutable: URL = URL(fileURLWithPath: "/usr/bin/ssh")) {
-        self.init(sshExecutable: sshExecutable, makePipeReader: { PipeChunkReader(descriptor: $0) })
+        self.init(sshExecutable: sshExecutable, makePipeReader: { PipeChunkReader(descriptor: $0) },
+            remoteMirrorSessionIDs: { ClaudeApplicationResolver.remoteMirrorSessionIDs(claudeHome: $0) })
     }
 }
 

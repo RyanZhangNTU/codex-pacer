@@ -12,7 +12,10 @@ public struct MacFileSystem: PlatformFileSystem {
         return PlatformFileMetadata(identity: "\(info.st_dev):\(info.st_ino)", size: UInt64(info.st_size),
             modified: Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9),
             created: Date(timeIntervalSince1970: Double(info.st_birthtimespec.tv_sec) + Double(info.st_birthtimespec.tv_nsec) / 1e9),
-            isRegularFile: (info.st_mode & S_IFMT) == S_IFREG)
+            isRegularFile: (info.st_mode & S_IFMT) == S_IFREG, isDirectory: (info.st_mode & S_IFMT) == S_IFDIR)
+    }
+    public func entries(in directory: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
     }
     public func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url)

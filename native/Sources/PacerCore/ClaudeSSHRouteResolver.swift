@@ -1,18 +1,12 @@
 import Foundation
 import Darwin
 
-struct ClaudeSSHRoute: Equatable, Sendable {
-    let hostname: String
-    let user: String
-    let port: Int
-}
-
 /// Reads effective SSH routing only. It never connects, authenticates, writes
 /// SSH configuration or retains any other configuration fields.
-enum ClaudeSSHRouteResolver {
+public enum ClaudeSSHRouteResolver {
     static let maximumOutputBytes = 64 * 1024
 
-    static func resolve(host: String, port: Int? = nil,
+    public static func resolve(host: String, port: Int? = nil,
                         executable: URL = URL(fileURLWithPath: "/usr/bin/ssh"),
                         timeout: TimeInterval = 3) async -> ClaudeSSHRoute? {
         guard validDestination(host), port.map({ (1...65535).contains($0) }) ?? true,

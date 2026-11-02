@@ -4,6 +4,7 @@ import XCTest
 
 final class CodexProcessPortTests: XCTestCase {
     private struct Files: PlatformFileSystem {
+        func entries(in directory: URL) throws -> [URL] { [] }
         func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? { nil }
         func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data { Data() }
         func replace(_ url: URL, with data: Data) -> Bool { false }

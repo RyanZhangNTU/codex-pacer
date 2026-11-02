@@ -1,3 +1,6 @@
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Foundation
 import XCTest
 @testable import PacerCore
