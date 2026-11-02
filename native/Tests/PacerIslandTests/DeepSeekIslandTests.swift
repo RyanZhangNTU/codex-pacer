@@ -54,6 +54,55 @@ final class DeepSeekIslandTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testLiveProjectionPreservesPreDisableCompletionsAndDeepSeekRequests() async throws {
+        let now = Date()
+        let session = "019a0000-0000-7000-8000-000000000a21"
+        var codex = ended(.codex, session: session)
+        codex.setCodexOrigin(.init(embedded: true, ignored: false))
+        let deepseek = ended(.deepseek, session: "019a0000-0000-7000-8000-000000000a22")
+        let request = PendingAttentionRequest(id: "synthetic-pre-disable-request", threadID: session,
+            sourceHostID: nil, sourceName: nil, kind: .input, detectedAt: now.addingTimeInterval(-2), provider: .deepseek)
+        var retained = CompletionInbox()
+        retained.observe([codex], at: now, retention: 0)
+
+        // The inbox and queued update predate these module choices. Source
+        // cleanup owns disabling; the live projection keeps its existing rules.
+        let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .disabled))
+        let root = URL(fileURLWithPath: try XCTUnwrap(defaults.string(forKey: "deepseekHome")))
+        defaults.set(root.appendingPathComponent("codex").path, forKey: "codexHome")
+        defaults.set(root.appendingPathComponent("claude").path, forKey: "claudeHome")
+        defaults.set(false, forKey: "monitorRemoteControl")
+        defaults.set(false, forKey: "systemNotifications")
+        let model = IslandModel(demo: false, defaults: defaults,
+            installation: .init(codexInstalled: false, claudeInstalled: false),
+            completionDismissalStore: CompletionDismissalStore(fileURL: root.appendingPathComponent("dismissals.json")))
+        model.hostApplicationResolver = { _, _, _ in [:] }
+        model.completionInbox = retained
+        model.refilterEmbeddedSessions()
+        XCTAssertFalse(model.isDemo)
+        XCTAssertTrue(model.enabledProviders.isEmpty)
+        XCTAssertEqual(model.visibleActivities.map(\.id), [codex.id])
+        XCTAssertTrue(model.isUnreadCompletion(codex))
+
+        model.receiveDeepSeekUpdate([deepseek], statuses: [:], requests: [request])
+        let endings: Set<String> = [codex.id, deepseek.id]
+        let visible = endings.union([request.activity.id])
+        XCTAssertEqual(Set(model.activities.map(\.id)), endings)
+        XCTAssertEqual(Set(model.visibleActivities.map(\.id)), visible)
+        XCTAssertEqual(Set(model.pendingCompletions.map(\.id)), endings)
+        XCTAssertEqual(model.pendingInputRequests, [request])
+
+        model.receiveDeepSeekUpdate([], statuses: [:], requests: [request])
+        XCTAssertEqual(Set(model.visibleActivities.map(\.id)), visible, "Reader eviction keeps independently retained cards")
+        XCTAssertEqual(model.pendingInputRequests, [request])
+        defaults.set(false, forKey: IslandModel.showsEmbeddedCodexSessionsKey)
+        model.refilterEmbeddedSessions()
+        XCTAssertEqual(Set(model.visibleActivities.map(\.id)), [deepseek.id, request.activity.id])
+        XCTAssertEqual(model.pendingInputRequests, [request], "Hiding a Codex session cannot hide the DeepSeek request with the same UUID")
+        XCTAssertTrue(model.isUnreadCompletion(codex), "Hiding still does not acknowledge the retained ending")
+        await model.shutdown()
+    }
+
     func testBalanceReadsFollowTheChosenSourceAndStopAskingAfterARejectedKey() async throws {
         let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
         defaults.set(DeepSeekBalanceSource.apiKey.rawValue, forKey: DeepSeekBalanceSource.defaultsKey)

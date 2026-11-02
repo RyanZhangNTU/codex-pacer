@@ -50,7 +50,11 @@ final class WidthMeasurementTests: XCTestCase {
                 host.layoutSubtreeIfNeeded()
                 try await Task.sleep(nanoseconds: 50_000_000)
                 let measured = capture.value
-                XCTAssertGreaterThan(measured, oldAvailable, "The paginated toolbar needs more than the old 404-point panel in \(language)")
+                if demo {
+                    XCTAssertGreaterThan(measured, oldAvailable, "The paginated toolbar needs more than the old 404-point panel in \(language)")
+                } else {
+                    XCTAssertLessThanOrEqual(measured, oldAvailable, "Without the demo badge, the toolbar fits the existing minimum")
+                }
                 let title = L10n.text("layout.group.tasks", language: language)
                 XCTAssertEqual(title, language == .english ? "Tasks" : "任务")
                 let titleWidth = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold)]).width
@@ -60,7 +64,11 @@ final class WidthMeasurementTests: XCTestCase {
                 model.updateMeasuredContentWidth(measured + 2 * IslandMetrics.edgeInset)
                 let panel = IslandWidth.desired(expanded: true, notchWidth: 0, leading: 0, trailing: 0,
                     contentWidth: model.measuredContentWidth)
-                XCTAssertGreaterThan(panel, 404)
+                if demo {
+                    XCTAssertGreaterThan(panel, 404)
+                } else {
+                    XCTAssertEqual(panel, 404)
+                }
                 XCTAssertLessThanOrEqual(panel, 680)
                 XCTAssertGreaterThanOrEqual(panel - 2 * IslandMetrics.edgeInset, measured)
                 host.frame.size.width = panel - 2 * IslandMetrics.edgeInset

@@ -1469,8 +1469,7 @@ final class IslandModel: ObservableObject {
             return true
         }
         codexAttentionRequests = (codexReceivedRequests + logged).filter { !hidden.contains($0.activity.id) }
-        let requests = codexAttentionRequests + claudeAttentionRequests + deepseekAttentionRequests
-        observeAttentionRequests(requests.filter { isModuleEnabled($0.provider) && !hidden.contains($0.activity.id) })
+        observeAttentionRequests(codexAttentionRequests + claudeAttentionRequests + deepseekAttentionRequests)
         combineActivities()
         for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
     }
@@ -1601,8 +1600,7 @@ final class IslandModel: ObservableObject {
         let ignored = ignoredCodexActivityIDs
         completionInbox.remove(activityIDs: ignored)
         let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        let received = ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities) + claudeReceivedActivities + deepseekReceivedActivities
-        let merged = received.filter {
+        let merged = (ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities) + claudeReceivedActivities + deepseekReceivedActivities).filter {
             !ignored.contains($0.id)
         }.map { value in
             var value = value
@@ -1614,13 +1612,13 @@ final class IslandModel: ObservableObject {
         // An ending read in Claude needs no reminder here either.
         for ending in completionInbox.activities where ending.claudeCloud?.readInClaude == true { completionInbox.dismiss(ending) }
         let hidden = hiddenEmbeddedActivityIDs
-        let shown = filterDisplayedActivities(observed, hiding: hidden)
+        let shown = observed.filter { !hidden.contains($0.id) }
         observeFirstOutputs(shown)
         let activeRoots = Set(ActivityTaskGroup.make(shown).filter(\.isRunning).map { $0.primary.id })
         let combined = shown.filter {
             !$0.isInternalReview && (activeRoots.contains($0.id) || ![.completed, .interrupted].contains($0.phase)) &&
                 (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
-        } + completionInbox.activities.filter { isModuleEnabled($0.provider) && !activeRoots.contains($0.id) && !hidden.contains($0.id) }
+        } + completionInbox.activities.filter { !activeRoots.contains($0.id) && !hidden.contains($0.id) }
         if activities != combined { activities = combined }
         if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: combined) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
@@ -1876,6 +1874,7 @@ final class IslandModel: ObservableObject {
     }
     /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {
+        now = demoClock()
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         makeDeepSeekDemo()
@@ -1883,12 +1882,9 @@ final class IslandModel: ObservableObject {
         setDemoStage(demoArguments?.contains("--demo-cloud") == true ? .tool : .thinking)
         if demoArguments?.contains("--demo-completion") == true { setDemoStage(.completed) }
     }
-    private func filterDisplayedActivities(_ values: [SessionActivity], hiding hidden: Set<String>) -> [SessionActivity] {
-        values.filter { isModuleEnabled($0.provider) && !hidden.contains($0.id) }
-    }
     private func applyDemoSnapshot() {
         let hidden = hiddenEmbeddedActivityIDs
-        activities = filterDisplayedActivities(demoActivities, hiding: hidden)
+        activities = demoActivities.filter { isModuleEnabled($0.provider) && !hidden.contains($0.id) }
         observeAttentionRequests(demoRequests.filter { isModuleEnabled($0.provider) && !hidden.contains($0.activity.id) })
     }
     func setDemoStage(_ stage: DemoTaskStage) {

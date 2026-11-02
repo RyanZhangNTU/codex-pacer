@@ -46,6 +46,16 @@ final class DemoSettingsTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testSourceFixtureKeepsItsInjectedClockWithoutStartingDemoTasks() async throws {
+        let defaults = try defaults(), clock = now
+        let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: nil, defaults: defaults)
+        XCTAssertEqual(model.now, clock)
+        XCTAssertTrue(model.activities.isEmpty)
+        XCTAssertEqual(model.providerQuota(.codex)?.capturedAt, clock)
+        XCTAssertEqual(model.providerQuota(.claude)?.capturedAt, clock)
+        await model.shutdown()
+    }
+
     func testEveryModuleCombinationFiltersDemoTasksRequestsAndEndings() async throws {
         let clock = now
         for mask in 0..<8 {
