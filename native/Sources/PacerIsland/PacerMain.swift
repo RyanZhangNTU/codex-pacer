@@ -543,10 +543,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if let reopenObserver { DistributedNotificationCenter.default().removeObserver(reopenObserver) }
         panel.stop()
         let deadline = ShutdownDeadline(), model = self.model
-        Task { @MainActor in
-            await deadline.perform([{ await model?.shutdown() }])
+        // This reply also runs if cooperative cleanup tasks never resume.
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShutdownDeadline.maximumWait) {
             OwnedProcessTermination.terminateAll()
             sender.reply(toApplicationShouldTerminate: true)
+        }
+        Task { @MainActor in
+            await deadline.perform([{ await model?.shutdown() }])
         }
         return .terminateLater
     }
