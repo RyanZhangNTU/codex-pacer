@@ -9,7 +9,7 @@ public actor ClaudeActivityMonitor {
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [PendingAttentionRequest], [SessionPerformanceUpdate]) async -> Void
     private var callback: Update?
     private var home: URL?
-    private var localReader = ClaudeActivityReader()
+    private var localReader: ClaudeActivityReader
     private var local = ClaudeActivityState()
     private var localMirrorRoots: Set<String> = []
     private var watcher: ActivityLogWatcher?
@@ -42,8 +42,10 @@ public actor ClaudeActivityMonitor {
     /// actor's shutdown because cloud work continues while the Mac sleeps.
     private var cloud: (activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) = ([], nil, [])
     public init(sshExecutable: URL, makePipeReader: @escaping @Sendable (Int32) -> PipeChunkReader,
-                remoteMirrorSessionIDs: @escaping @Sendable (URL) -> Set<String>) {
+                remoteMirrorSessionIDs: @escaping @Sendable (URL) -> Set<String>,
+                files: any PlatformFileSystem, clock: @escaping @Sendable () -> Date) {
         self.sshExecutable = sshExecutable; self.makePipeReader = makePipeReader; self.remoteMirrorSessionIDs = remoteMirrorSessionIDs
+        localReader = ClaudeActivityReader(files: files, clock: clock)
     }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
         callback = update; policy = refreshPolicy
