@@ -179,12 +179,16 @@ def hook(home,value):
             row['kind']=kind
             if kind=='prompt' and value.get('prompt') in ('[Request interrupted by user]','[Request interrupted by user for tool use]'):row['typedInterruptMarker']=True
             if kind=='toolStart':row['attention']='input' if value.get('tool_name')=='AskUserQuestion' else 'approval' if value.get('tool_name')=='ExitPlanMode' else 'none'
-            if kind=='toolStart' and value.get('tool_name')=='Agent':row['agentTool']=True
+            if kind=='toolStart' and value.get('tool_name') in ('Agent','Skill'):row['agentTool']=True
             rows.append(row)
         response=value.get('tool_response')
-        if event=='PostToolUse' and value.get('tool_name')=='Agent' and ident(value.get('tool_use_id')) and isinstance(response,dict) and response.get('status') in ('completed','async_launched'):
+        # A forked Skill such as /code-review runs in a sub-agent and reports
+        # 'forked'; 'background' marks a launch whose outcome arrives later.
+        status=response.get('status') if isinstance(response,dict) else None
+        if status=='forked':status='async_launched' if response.get('background') is True else 'completed' if response.get('success') is True else None
+        if event=='PostToolUse' and value.get('tool_name') in ('Agent','Skill') and ident(value.get('tool_use_id')) and status in ('completed','async_launched'):
             child=ident(response.get('agentId'))
-            if child and child!=thread:rows.append(dict(row,kind='agentResult',agentId=child,agentStatus=response['status']))
+            if child and child!=thread:rows.append(dict(row,kind='agentResult',agentId=child,agentStatus=status))
         write_locked(statefile,states)
         path=folder/'events.jsonl'
         if path.exists() and path.stat().st_size>2*1024*1024:

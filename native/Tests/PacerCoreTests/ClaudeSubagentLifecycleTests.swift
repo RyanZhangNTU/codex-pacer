@@ -198,6 +198,40 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
         XCTAssertEqual(projected.count, 4)
         XCTAssertTrue(projected.allSatisfy { $0["sessionId"] as? String == child && $0["parentId"] as? String == parent })
     }
+    func testForkedSkillResultEndsItsChildAndBackgroundForkWaitsForNotification() throws {
+        // Claude Code 2.1.309 runs `/code-review` as a forked Skill: its child
+        // ended, but no Agent result ever retired it.
+        let start: [String: Any] = ["type": "assistant", "sessionId": parent, "promptId": turn, "timestamp": "2027-01-15T08:00:01Z", "message": ["content": [["type": "tool_use", "id": "skill-tool", "name": "Skill", "input": ["skill": "PRIVATE skill", "args": "PRIVATE args"]]]]]
+        let forked: [String: Any] = ["success": true, "commandName": "PRIVATE skill", "status": "forked", "agentId": child, "result": "PRIVATE result"]
+        func result(_ response: Any) -> [String: Any] {
+            ["type": "user", "sessionId": parent, "promptId": turn, "timestamp": "2027-01-15T08:00:05Z", "message": ["content": [["type": "tool_result", "tool_use_id": "skill-tool", "content": "PRIVATE result"]]], "toolUseResult": response]
+        }
+        let background = forked.merging(["background": true, "result": "PRIVATE launch"]) { _, new in new }
+        let rejected: [Any] = [["success": true, "commandName": "PRIVATE skill", "status": "inline"], forked.merging(["success": false]) { _, new in new },
+                               forked.filter { $0.key != "success" }, forked.merging(["agentId": "child\n"]) { _, new in new }]
+        let fixtures = [start, result(forked), result(background)] + rejected.map(result)
+        let native = try fixtures.flatMap { ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode($0)!, sessionID: parent, promptID: turn) }.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+        XCTAssertTrue(NSArray(array: try pythonRows(fixtures, owner: parent, parentID: nil)).isEqual(to: native))
+        XCTAssertEqual(native.first { $0["kind"] as? String == "toolStart" }?["agentTool"] as? Bool, true)
+        XCTAssertEqual(native.filter { $0["kind"] as? String == "agentResult" }.compactMap { $0["agentStatus"] as? String }, ["completed", "async_launched"])
+        for (response, launched) in [(forked, false), (background, true)] {
+            for host in [String?.none, "remote-ssh-discovered:fixture"] {
+                var state = ClaudeActivityState(sourceID: host)
+                send("prompt", to: &state, at: 0, extra: ["origin": "transcript"])
+                for row in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(start)!, sessionID: parent, promptID: turn) { state.consume(row, now: now.addingTimeInterval(100)) }
+                send("subagentStart", to: &state, thread: child, at: 2, extra: ["promptId": "child-fork-turn"])
+                send("stopRequested", to: &state, thread: child, at: 4)
+                for row in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(result(response))!, sessionID: parent, promptID: turn) { state.consume(row, now: now.addingTimeInterval(100)) }
+                send("stopVerified", to: &state, at: 6)
+                XCTAssertEqual(state.activities.first { $0.threadID == parent }?.phase, .completed)
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, launched ? .running : .completed)
+                guard launched else { continue }
+                send("agentNotification", to: &state, at: 10, extra: ["origin": "transcript", "promptId": "engine-wake-prompt", "itemId": "skill-tool", "agentId": child, "agentStatus": "completed"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .completed)
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.turnID, "child-fork-turn")
+            }
+        }
+    }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
         let home = URL(fileURLWithPath: "/private/tmp/pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
