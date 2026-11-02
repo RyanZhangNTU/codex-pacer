@@ -61,7 +61,7 @@ final class CompactBarPresentationTests: XCTestCase {
         var value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, "30%")
         XCTAssertEqual(value.rings.first?.remaining, 30)
-        request.options.metric = "pace"
+        request.options.metric = .pace
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, "120%")
         XCTAssertEqual(try component("timeRemaining", in: value).entries.first?.text, "25%")
@@ -75,9 +75,9 @@ final class CompactBarPresentationTests: XCTestCase {
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, "—")
         XCTAssertNil(value.rings.first?.remaining, "The collapsed ring hides the value after a failed refresh")
         XCTAssertFalse(try XCTUnwrap(value.rings.first).dimmed)
-        request.options.metric = "remaining"
+        request.options.metric = .remaining
         XCTAssertEqual(try component("quota", in: XCTUnwrap(CompactBarPresentation.project(request))).entries.first?.text, "80%")
-        request.options.metric = "pace"; request.context = context(snapshot: try quota(captured: now.addingTimeInterval(-301)))
+        request.options.metric = .pace; request.context = context(snapshot: try quota(captured: now.addingTimeInterval(-301)))
         XCTAssertEqual(try component("quota", in: XCTUnwrap(CompactBarPresentation.project(request))).entries.first?.text, "—")
         request.context = context(failed: true)
         XCTAssertNil(CompactBarPresentation.project(request)?.rings.first?.remaining, "A failure without a cached reading has no ring value")
@@ -90,14 +90,14 @@ final class CompactBarPresentationTests: XCTestCase {
         var value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertTrue(value.gaugeClock); XCTAssertTrue(value.rings.isEmpty)
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.balance)
-        request.options.rings = ["deepseek", "deepseek"]
+        request.options.rings = [.deepseek, .deepseek]
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertFalse(value.gaugeClock); XCTAssertEqual(value.rings.count, 1)
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.budget)
         request.layout = value.layoutJSON; request.action = .init(kind: "hide", component: "quotaGauge")
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.balance)
-        request.layout = value.layoutJSON; request.action = .init(kind: "show", component: "priceClock"); request.options.rings = ["none", "none"]
+        request.layout = value.layoutJSON; request.action = .init(kind: "show", component: "priceClock"); request.options.rings = [.none, .none]
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertFalse(value.gaugeClock); XCTAssertTrue(value.trailing.contains("priceClock"))
         XCTAssertFalse(try component("timeRemaining", in: value).available)
@@ -135,7 +135,11 @@ final class CompactBarPresentationTests: XCTestCase {
     func testMalformedBoundedChoicesAreRejectedAndAnUnreadableSavedLayoutUsesDefaults() throws {
         var request = CompactBarPresentation.Request(layout: "broken saved JSON", language: "en", providers: [])
         XCTAssertEqual(CompactBarPresentation.project(request)?.editorLeading, ["activity", "tps"])
-        request.options.rings = ["foreign", "none"]; XCTAssertNil(CompactBarPresentation.project(request))
+        var unknown = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        var options = try XCTUnwrap(unknown["options"] as? [String: Any])
+        options["rings"] = ["foreign", "none"]; unknown["options"] = options
+        XCTAssertNil(CompactBarPresentation.project(try JSONSerialization.data(withJSONObject: unknown)))
+        request.options.rings = [.none]; XCTAssertNil(CompactBarPresentation.project(request))
         request.options = .init(); request.options.codexWindow = "bad\nwindow"; XCTAssertNil(CompactBarPresentation.project(request))
         request.options = .init(); request.action = .init(kind: "move", component: "activity", lane: "center"); XCTAssertNil(CompactBarPresentation.project(request))
         request.action = nil; request.layout = String(repeating: "x", count: 8193); XCTAssertNil(CompactBarPresentation.project(request))

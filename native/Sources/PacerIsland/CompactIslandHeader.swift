@@ -163,7 +163,7 @@ struct CompactIslandComponent: View {
     /// Alternation skips providers without a value, so an unavailable service
     /// never spends half the time as a dash; with none known, the first shows one.
     static func alternatingProviders(_ model: IslandModel) -> [AgentProvider] {
-        model.compactComponent(.quota).entries.compactMap { AgentProvider(rawValue: $0.provider) }
+        model.compactComponent(.quota).entries.map(\.provider)
     }
     /// Enabled warnings whose condition holds now, in display order. DeepSeek
     /// shows only its most urgent alert; an empty wallet shows even when its
@@ -172,12 +172,12 @@ struct CompactIslandComponent: View {
         model.compactWarningItems.reduce(into: []) { result, item in
             let warning: CompactIslandLayout.Warning
             switch item.kind {
-            case "fiveHour": warning = .fiveHour
-            case "ssh": warning = .ssh
-            case "quotaDelay": warning = .quotaDelay
-            case "spike": warning = .spendSpike
-            case "overBudget", "nearingBudget": warning = .budget
-            default: warning = .lowBalance
+            case .fiveHour: warning = .fiveHour
+            case .ssh: warning = .ssh
+            case .quotaDelay: warning = .quotaDelay
+            case .spike: warning = .spendSpike
+            case .overBudget, .nearingBudget: warning = .budget
+            case .exhausted, .lowBalance: warning = .lowBalance
             }
             if !result.contains(warning) { result.append(warning) }
         }
@@ -189,7 +189,7 @@ struct CompactIslandComponent: View {
     }
     /// A late DeepSeek balance dims its ring and value instead of adding a mark.
     private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
-        model.warningItems(warnings: [.quotaDelay]).first { $0.kind == "quotaDelay" }?.affectedProviders.compactMap(AgentProvider.init(rawValue:)) ?? []
+        model.warningItems(warnings: [.quotaDelay]).first { $0.kind == .quotaDelay }?.affectedProviders.compactMap(AgentProvider.init(rawValue:)) ?? []
     }
     var body: some View {
         Button(action: action) {
@@ -239,9 +239,8 @@ struct CompactIslandComponent: View {
             .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
         case .quotaGauge:
             if model.compactGaugeShowsPriceClock { priceClock } else {
-                QuotaRingsGlyph(rings: model.compactPresentation().rings.compactMap { ring in
-                    guard let provider = AgentProvider(rawValue: ring.provider) else { return nil }
-                    return .init(tint: provider.tint, remaining: ring.remaining, stale: ring.dimmed)
+                QuotaRingsGlyph(rings: model.compactPresentation().rings.map { ring in
+                    .init(tint: ring.provider.tint, remaining: ring.remaining, stale: ring.dimmed)
                 })
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(gaugeSummary)

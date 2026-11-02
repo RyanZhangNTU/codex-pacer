@@ -12,7 +12,20 @@ public enum CompactWarningPresentation {
         return remaining <= 0 ? .exhausted : remaining < 20 ? .low(remaining) : nil
     }
     public struct Item: Codable, Equatable, Sendable {
-        public let kind: String
+        public enum Kind: String, Codable, CaseIterable, Sendable {
+            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget
+
+            init(_ wallet: DeepSeekAlertPresentation.Kind) {
+                switch wallet {
+                case .exhausted: self = .exhausted
+                case .lowBalance: self = .lowBalance
+                case .spike: self = .spike
+                case .overBudget: self = .overBudget
+                case .nearingBudget: self = .nearingBudget
+                }
+            }
+        }
+        public let kind: Kind
         public let provider: String?
         public let solid: Bool
         public let label: String?
@@ -21,9 +34,14 @@ public enum CompactWarningPresentation {
         public var affectedProviders: [String] = []
     }
     public static func summary(_ items: [Item]) -> String {
-        let fiveHour = items.filter { $0.kind == "fiveHour" }.map(\.help).joined(separator: " · ")
-        return ([fiveHour] + items.filter { $0.kind != "fiveHour" }.map(\.help))
-            .filter { !$0.isEmpty }.joined(separator: "\n")
+        var fiveHour: [String] = [], other: [String] = []
+        for item in items {
+            switch item.kind {
+            case .fiveHour: fiveHour.append(item.help)
+            case .ssh, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget: other.append(item.help)
+            }
+        }
+        return ([fiveHour.joined(separator: " · ")] + other).filter { !$0.isEmpty }.joined(separator: "\n")
     }
     public static func items(enabled: Set<AgentProvider>, warnings: Set<CompactIslandLayout.Warning>,
                              snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],
@@ -44,11 +62,11 @@ public enum CompactWarningPresentation {
                 case .exhausted: help = L10n.text("quota.five_hour_exhausted", provider.displayName)
                 case .low(let remaining): help = L10n.text("quota.five_hour_low", provider.displayName, "\(Int(remaining.rounded()))%")
                 }
-                result.append(.init(kind: "fiveHour", provider: provider.rawValue, solid: exhausted, label: "5h", symbol: nil, help: help))
+                result.append(.init(kind: .fiveHour, provider: provider.rawValue, solid: exhausted, label: "5h", symbol: nil, help: help))
             }
         }
         if warnings.contains(.ssh), sshIssue {
-            result.append(.init(kind: "ssh", provider: nil, solid: false, label: nil, symbol: "network.slash", help: L10n.text("source.ssh_retrying")))
+            result.append(.init(kind: .ssh, provider: nil, solid: false, label: nil, symbol: "network.slash", help: L10n.text("source.ssh_retrying")))
         }
         if warnings.contains(.quotaDelay) {
             let delayed = ordered.filter { provider in
@@ -59,12 +77,12 @@ public enum CompactWarningPresentation {
                 return failed.contains(provider) || snapshot.isStale(at: now) || selected?.resetsAt.map({ $0 <= now }) == true
             }
             if !delayed.isEmpty {
-                result.append(.init(kind: "quotaDelay", provider: nil, solid: false, label: nil, symbol: "clock.arrow.circlepath",
+                result.append(.init(kind: .quotaDelay, provider: nil, solid: false, label: nil, symbol: "clock.arrow.circlepath",
                     help: delayed.map(\.displayName).joined(separator: " · ") + " · " + L10n.text("warning.quotaDelay"), affectedProviders: delayed.map(\.rawValue)))
             }
         }
         if enabled.contains(.deepseek), let wallet {
-            result.append(.init(kind: wallet.kind, provider: "deepseek", solid: wallet.solid, label: wallet.label, symbol: wallet.symbol, help: wallet.help))
+            result.append(.init(kind: .init(wallet.kind), provider: "deepseek", solid: wallet.solid, label: wallet.label, symbol: wallet.symbol, help: wallet.help))
         }
         return result
     }

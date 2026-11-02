@@ -3,8 +3,8 @@ import PacerCore
 import SwiftUI
 
 /// What the badge core shows while exactly one task is active.
-enum ActivityBadgeSingleTask: String, CaseIterable {
-    case stage, count
+typealias ActivityBadgeSingleTask = CompactBarPresentation.SingleTask
+extension CompactBarPresentation.SingleTask {
     static let defaultsKey = "compactSingleTask"
     init(defaults: UserDefaults = .standard) {
         self = defaults.string(forKey: Self.defaultsKey).flatMap(Self.init(rawValue:)) ?? .stage

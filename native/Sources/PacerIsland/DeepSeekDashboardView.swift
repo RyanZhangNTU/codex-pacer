@@ -166,7 +166,7 @@ struct DeepSeekBudgetReading {
     private var presentation: DeepSeekSoloPresentation.Budget { DeepSeekSoloPresentation.budget(period, at: now) }
     var fraction: Double { presentation.fraction }
     var timeFraction: Double? { presentation.timeFraction }
-    var verdict: QuotaPaceVerdict? { presentation.verdict.flatMap(QuotaPaceVerdict.init(rawValue:)) }
+    var verdict: QuotaPaceVerdict? { presentation.verdict }
     var pressing: Bool { presentation.pressing }
     var tint: Color { presentation.exceeded ? PacerPalette.danger : period.kind == .day && pressing ? PacerPalette.attention : AgentProvider.deepseek.tint }
     var valueColor: Color { presentation.exceeded ? PacerPalette.danger : pressing ? PacerPalette.attention : PacerPalette.primary }

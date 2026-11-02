@@ -116,7 +116,7 @@ public enum QuotaDashboardPresentation {
         public let resetAtText: String
         public let freshnessText: String
         public let sourceText: String?
-        public let verdict: String?
+        public let verdict: Verdict?
         public let verdictText: String?
         public let pressing: Bool
         public let projectionText: String?
@@ -163,9 +163,9 @@ public enum QuotaDashboardPresentation {
             self.remainingTimePercent = remainingTimePercent; self.freshnessText = freshnessText
             pacePercent = availability == .available ? window?.pacePercent(at: now) : nil
             paceText = pacePercent.map { "\(Int($0.rounded()))%" } ?? "—"
-            verdict = pacePercent.map { Verdict(pace: $0).rawValue }
-            verdictText = verdict.map { L10n.text("quota.verdict." + $0) }
-            pressing = availability == .available && (remainingPercent.map { $0.isFinite && $0 <= 15 } == true || verdict == "fast")
+            verdict = pacePercent.map(Verdict.init(pace:))
+            verdictText = verdict?.label
+            pressing = availability == .available && (remainingPercent.map { $0.isFinite && $0 <= 15 } == true || verdict == .fast)
             valueText = Self.percent(remainingPercent).replacingOccurrences(of: "%", with: "")
             timeText = Self.percent(remainingTimePercent)
             countdown = window?.remainingSeconds(at: now).map { $0 <= 0 ? L10n.text("dashboard.countdown_waiting") : Self.duration($0) } ?? "—"

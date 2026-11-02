@@ -13,17 +13,18 @@ final class CompactBarScenarioTableTests: XCTestCase {
     }
     private struct Layout: Decodable { let gauge: Bool, separateClock: Bool }
     private struct Metric: Decodable {
-        let metric: String, selection: String
+        let metric: CompactBarPresentation.Metric, selection: String
         let quota: [String: String], time: [String: String], ring: [String: Double], normalized: [String: String]
     }
     private struct Entry: Decodable { let provider: String, text: String }
     private struct State: Decodable {
-        let provider: String, kind: String, age: Double, failed: Bool, selection: String, metric: String
+        let provider: String, kind: String, age: Double, failed: Bool, selection: String
+        let metric: CompactBarPresentation.Metric
         let entries: [Entry], ring: Double?, dimmed: Bool, time: String, weeklyOnly: Bool, normalized: String
     }
     private struct Live: Decodable { let stage: Int, status: String, rate: String }
     private struct Table: Decodable {
-        let modules: [Module], slots: [[String]], layouts: [Layout], metrics: [Metric], states: [State], dims: [String], live: [Live]
+        let modules: [Module], slots: [[CompactBarPresentation.RingChoice]], layouts: [Layout], metrics: [Metric], states: [State], dims: [String], live: [Live]
     }
     private func component(_ id: String, _ output: CompactBarPresentation.Output) throws -> CompactBarPresentation.Component {
         try XCTUnwrap(output.components.first { $0.id == id })
@@ -52,31 +53,33 @@ final class CompactBarScenarioTableTests: XCTestCase {
                             let output = try XCTUnwrap(CompactBarPresentation.project(.init(providers: providers,
                                 options: .init(metric: metric.metric, codexWindow: metric.selection, claudeWindow: metric.selection, rings: slot),
                                 context: context), layout: layout))
-                            XCTAssertEqual(output.rings.map(\.provider), expected.providers, label)
+                            XCTAssertEqual(output.rings.map(\.provider.rawValue), expected.providers, label)
                             XCTAssertEqual(output.gaugeClock, expected.clock && !layoutRow.separateClock, label)
                             for ring in output.rings {
-                                F.equal(ring.remaining, metric.ring[ring.provider], label)
+                                F.equal(ring.remaining, metric.ring[ring.provider.rawValue], label)
                                 XCTAssertFalse(ring.dimmed, label)
                             }
                             let entries = try component("quota", output).entries
-                            XCTAssertEqual(entries.map(\.provider), row.providers, label)
+                            XCTAssertEqual(entries.map(\.provider.rawValue), row.providers, label)
                             let wallet = layoutRow.gauge ? expected.walletWithGauge : expected.walletWithoutGauge
                             for entry in entries {
                                 let expectedText: String
-                                if entry.provider == "deepseek" { expectedText = wallet }
-                                else { expectedText = try XCTUnwrap(metric.quota[entry.provider]) }
+                                switch entry.provider {
+                                case .deepseek: expectedText = wallet
+                                case .codex, .claude: expectedText = try XCTUnwrap(metric.quota[entry.provider.rawValue])
+                                }
                                 XCTAssertEqual(entry.text, expectedText, label)
-                                let strip = entry.provider == "deepseek" || row.providers.contains("deepseek")
+                                let strip = entry.provider == .deepseek || row.providers.contains("deepseek")
                                     ? expectedText : String(expectedText.dropLast())
                                 XCTAssertEqual(entry.stripText, strip, label)
                                 XCTAssertFalse(entry.dimmed, label)
                             }
                             let times = try component("timeRemaining", output).entries
-                            XCTAssertEqual(times.map(\.provider), row.providers.filter { $0 != "deepseek" }, label)
-                            for entry in times { XCTAssertEqual(entry.text, metric.time[entry.provider], label) }
+                            XCTAssertEqual(times.map(\.provider.rawValue), row.providers.filter { $0 != "deepseek" }, label)
+                            for entry in times { XCTAssertEqual(entry.text, metric.time[entry.provider.rawValue], label) }
                             for window in output.windows {
-                                XCTAssertEqual(window.weeklyOnly, window.provider == "codex", label)
-                                XCTAssertEqual(window.selection, metric.normalized[window.provider], label)
+                                XCTAssertEqual(window.weeklyOnly, window.provider == .codex, label)
+                                XCTAssertEqual(window.selection, metric.normalized[window.provider.rawValue], label)
                             }
                             XCTAssertEqual(Set(output.components.filter(\.available).map(\.id)), Set(row.available), label)
                             XCTAssertEqual(Set(output.components.filter(\.dimsExpanded).map(\.id)), Set(table.dims), label)
@@ -114,14 +117,14 @@ final class CompactBarScenarioTableTests: XCTestCase {
                 context: .init(activities: [], requests: [], completions: [], sources: sources, now: F.now))))
             let label = "\(row.provider)/\(row.kind)/\(row.age)/failed=\(row.failed)/\(row.selection)/\(row.metric)"
             let entries = try component("quota", output).entries
-            XCTAssertEqual(entries.map(\.provider), row.entries.map(\.provider), label)
+            XCTAssertEqual(entries.map(\.provider.rawValue), row.entries.map(\.provider), label)
             XCTAssertEqual(entries.map(\.text), row.entries.map(\.text), label)
             XCTAssertEqual(entries.map(\.stripText), row.entries.map { $0.text == "—" ? "—" : String($0.text.dropLast()) }, label)
-            let ring = try XCTUnwrap(output.rings.first { $0.provider == row.provider })
+            let ring = try XCTUnwrap(output.rings.first { $0.provider == provider })
             F.equal(ring.remaining, row.ring, label); XCTAssertEqual(ring.dimmed, row.dimmed, label)
-            let window = try XCTUnwrap(output.windows.first { $0.provider == row.provider })
+            let window = try XCTUnwrap(output.windows.first { $0.provider == provider })
             XCTAssertEqual(window.weeklyOnly, row.weeklyOnly, label); XCTAssertEqual(window.selection, row.normalized, label)
-            XCTAssertEqual(try component("timeRemaining", output).entries.first { $0.provider == row.provider }?.text, row.time, label)
+            XCTAssertEqual(try component("timeRemaining", output).entries.first { $0.provider == provider }?.text, row.time, label)
         }
     }
 
