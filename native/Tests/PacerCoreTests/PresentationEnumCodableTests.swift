@@ -153,8 +153,12 @@ final class PresentationEnumCodableTests: XCTestCase {
         }
         XCTAssertEqual(decoded.component(.tps), output.component(.tps))
         XCTAssertEqual(try decoder.decode(P.Output.self, from: encoder.encode(P.Output.empty)), .empty)
-        let emptyLayout = try decoder.decode(CompactIslandLayout.self, from: Data(P.Output.empty.layoutJSON.utf8))
+        let emptyLayoutJSON = Data(P.Output.empty.layoutJSON.utf8)
+        let emptyLayout = try decoder.decode(CompactIslandLayout.self, from: emptyLayoutJSON)
         XCTAssertTrue(emptyLayout.components.isEmpty)
+        XCTAssertEqual(emptyLayout, CompactIslandLayout(warnings: []))
+        let emptyLayoutObject = try XCTUnwrap(JSONSerialization.jsonObject(with: emptyLayoutJSON) as? [String: Any])
+        XCTAssertEqual(emptyLayoutObject["version"] as? Int, emptyLayout.version)
         for component in CompactIslandLayout.Component.allCases { XCTAssertFalse(P.Output.empty.component(component).visible) }
     }
 }

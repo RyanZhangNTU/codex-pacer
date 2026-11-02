@@ -122,11 +122,16 @@ public enum CompactBarPresentation {
         public let dimDuration: Double, expandedOpacity: Double
 
         /// Invalid native input hides the bar's components until a valid projection arrives.
-        public static let empty = Self(version: 1,
-            layoutJSON: #"{"leading":[],"trailing":[],"version":9,"warnings":[]}"#, warnings: [],
-            editorLeading: [], editorTrailing: [], leading: [], trailing: [], components: [], groups: [], windows: [],
-            rings: [], ringChoices: ["none", "none"], gaugeClock: false, singleTaskCount: false,
-            dimDuration: CompactBarPresentation.dimDuration, expandedOpacity: CompactBarPresentation.expandedOpacity)
+        public static let empty: Self = {
+            let layout = CompactIslandLayout(warnings: [])
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let layoutJSON = (try? encoder.encode(layout)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"leading":[],"trailing":[],"version":\#(layout.version),"warnings":[]}"#
+            return Self(version: 1, layoutJSON: layoutJSON, warnings: [],
+                editorLeading: [], editorTrailing: [], leading: [], trailing: [], components: [], groups: [], windows: [],
+                rings: [], ringChoices: ["none", "none"], gaugeClock: false, singleTaskCount: false,
+                dimDuration: CompactBarPresentation.dimDuration, expandedOpacity: CompactBarPresentation.expandedOpacity)
+        }()
 
         public func component(_ component: CompactIslandLayout.Component) -> Component {
             components.first { $0.id == component.rawValue } ?? .hidden(component)
