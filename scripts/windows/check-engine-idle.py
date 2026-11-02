@@ -21,7 +21,9 @@ def cpu_seconds(process):
     return sum((value.dwHighDateTime << 32) + value.dwLowDateTime for value in values[2:]) / 10_000_000
 
 
-def check(engine, seconds, output, real_data=False):
+def check(engine, seconds, output, real_data=False, quota=False):
+    if quota and not real_data:
+        raise ValueError("Quota diagnostics require read-only real-data mode")
     if os.name != "nt" or seconds < 120:
         raise ValueError("Run on Windows for at least 120 seconds")
     with tempfile.TemporaryDirectory(prefix="pacer-idle-") as temporary:
@@ -38,10 +40,11 @@ def check(engine, seconds, output, real_data=False):
             homes = {provider + "Home": str(Path(os.environ.get(variable) or user_home / folder))
                      for provider, variable, folder in (("codex", "CODEX_HOME", ".codex"),
                          ("claude", "CLAUDE_CONFIG_DIR", ".claude"), ("deepseek", "DSH_HOME", ".dsh"))}
-        process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data else []) + (["--quota-diagnostics"] if quota else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         hello, ready = threading.Event(), threading.Event()
         counts = {"frames": 0, "stderrBytes": 0, "protocolErrors": 0, "shutdownReplies": 0}
+        quota_counts = {}
 
         def drain():
             for line in process.stdout:
@@ -60,8 +63,18 @@ def check(engine, seconds, output, real_data=False):
                     counts["protocolErrors"] += 1
 
         def discard_stderr():
-            while data := process.stderr.read(4096):
+            for data in process.stderr:
                 counts["stderrBytes"] += len(data)
+                if quota:
+                    try:
+                        message = json.loads(data)
+                        if message.get("type") == "quotaReadDiagnostics":
+                            for category in ("attempts", "successes", "failures", "connections"):
+                                values = message.get(category, {})
+                                quota_counts[category] = {provider: count for provider, count in values.items()
+                                    if provider in ("codex", "claude", "deepseek") and type(count) is int and count >= 0}
+                    except (ValueError, TypeError, AttributeError):
+                        pass
 
         def send(method, params=None):
             message = {"protocolVersion": 1, "id": method, "method": method}
@@ -76,10 +89,17 @@ def check(engine, seconds, output, real_data=False):
         try:
             if not hello.wait(15):
                 raise RuntimeError("Engine hello timed out")
-            send("initialize", dict(homes, enabledProviders=["codex", "claude", "deepseek"], expanded=False,
-                hideProjects=True, webAvailable=False, codexExecutable=str(root / "missing-codex.exe")))
+            parameters = dict(homes, enabledProviders=["codex", "claude", "deepseek"], expanded=False,
+                hideProjects=True, webAvailable=False)
+            if not quota:
+                parameters["codexExecutable"] = str(root / "missing-codex.exe")
+            send("initialize", parameters)
             if not ready.wait(15):
                 raise RuntimeError("Engine initialization timed out")
+            if quota:
+                # Make the injected passive-only Claude client available. It has
+                # no browser bridge, credential provider or HTTP transport.
+                send("setClaudeWebHost", {"webAvailable": True})
             time.sleep(5)
             started, cpu_started = time.monotonic(), cpu_seconds(process)
             print(f"Measuring initialized engine for {seconds} seconds; protocol bodies are discarded.", flush=True)
@@ -107,6 +127,10 @@ def check(engine, seconds, output, real_data=False):
                 "logicalProcessors": os.cpu_count(), "shutdownSeconds": round(shutdown, 4),
                 "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data,
                 "sourceMutationsRequested": not real_data, **counts}
+            if quota:
+                result["quotaReads"] = quota_counts
+                if not quota_counts:
+                    raise RuntimeError("Engine did not return numeric quota diagnostics")
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
@@ -126,6 +150,7 @@ if __name__ == "__main__":
     parser.add_argument("--engine", required=True, type=Path)
     parser.add_argument("--seconds", type=int, default=120)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--real-data", action="store_true", help="Read actual provider homes; disable quota clients and persistence")
+    parser.add_argument("--real-data", action="store_true", help="Read actual provider homes; disable persistence and, unless --quota is set, quota clients")
+    parser.add_argument("--quota", action="store_true", help="Include read-only quota/balance clients, no history or credential writes; record numeric refresh counts")
     args = parser.parse_args()
-    check(args.engine.resolve(), args.seconds, args.output, args.real_data)
+    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota)
