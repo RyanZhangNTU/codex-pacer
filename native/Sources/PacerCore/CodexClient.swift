@@ -256,19 +256,24 @@ public actor CodexClient {
         let currentGeneration = generation
         let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
         let finished = ShutdownSignal()
+        let overflow = ShutdownSignal()
         readerFinished = finished
         streamContinuation = channel.continuation
         readTask = Task { [weak self] in
             defer { finished.finish() }
             for await data in channel.stream {
                 guard !Task.isCancelled else { return }
+                if overflow.isFinished {
+                    await self?.inputOverflow(generation: currentGeneration)
+                    return
+                }
                 await self?.receive(data, generation: currentGeneration)
             }
             await self?.closed(generation: currentGeneration)
         }
         process = try processes.launch(.init(executable: executable, arguments: arguments, environment: environment),
             output: { data in
-                if case .dropped = channel.continuation.yield(data) { channel.continuation.finish() }
+                if case .dropped = channel.continuation.yield(data) { overflow.finish(); channel.continuation.finish() }
             }, ended: { channel.continuation.finish() })
         if let process {
             ownedChildren.add(process)
@@ -341,6 +346,11 @@ public actor CodexClient {
                     reason: L10n.text("cli.missing_result")))
             }
         }
+    }
+
+    private func inputOverflow(generation: Int) {
+        guard generation == self.generation else { return }
+        disconnect(reason: .invalidReply(method: pending.values.first?.method ?? "app-server", reason: L10n.text("cli.too_large")))
     }
 
     private func expired(_ id: Int) {

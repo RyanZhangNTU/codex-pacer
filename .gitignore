@@ -1,5 +1,9 @@
 # Generated builds, exports and local data
 output/
+.build/
+.swiftpm/
+windows/Tests/Fixtures/**/obj/
+windows/Tests/Fixtures/**/bin/
 native/.build/
 native/.swiftpm/
 *.log

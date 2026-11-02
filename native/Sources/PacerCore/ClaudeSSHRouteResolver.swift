@@ -22,67 +22,21 @@ public enum ClaudeSSHRouteResolver {
     }
 
     static func parse(_ data: Data) -> ClaudeSSHRoute? {
-        guard data.count <= maximumOutputBytes, let text = String(data: data, encoding: .utf8) else { return nil }
-        var hostname: String?, user: String?, port: Int?
-        for line in text.split(separator: "\n") {
-            guard let boundary = line.firstIndex(where: { $0.isWhitespace }) else { continue }
-            let key = line[..<boundary].lowercased()
-            let value = line[boundary...].trimmingCharacters(in: .whitespacesAndNewlines)
-            switch key {
-            case "hostname":
-                guard hostname == nil, let normalized = normalizedHostname(value) else { return nil }
-                hostname = normalized
-            case "user":
-                guard user == nil, validUser(value) else { return nil }
-                user = value
-            case "port":
-                guard port == nil, !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) }),
-                      let number = Int(value), (1...65535).contains(number) else { return nil }
-                port = number
-            default: break
-            }
-        }
-        guard let hostname, let user, let port else { return nil }
-        return ClaudeSSHRoute(hostname: hostname, user: user, port: port)
+        ClaudeSSHRouteRules.parse(data, normalizeIPv6: normalizedIPv6)
     }
-
     static func validDestination(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= 512 else { return false }
-        let parts = value.split(separator: "@", omittingEmptySubsequences: false)
-        if parts.count == 2 { return validUser(String(parts[0])) && validHostname(String(parts[1])) }
-        guard parts.count == 1 else { return false }
-        if value.contains(":") { return validHostname(value) }
-        return value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
+        ClaudeSSHRouteRules.validDestination(value, normalizeIPv6: normalizedIPv6)
     }
-
-    private static func validUser(_ value: String) -> Bool {
-        value.utf8.count <= 64 && value.range(of: #"^[A-Za-z0-9_][A-Za-z0-9._-]*\z"#, options: .regularExpression) != nil
-    }
-
-    private static func validHostname(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= 253 else { return false }
-        if value.contains(":") {
-            var address = in6_addr()
-            return value.withCString { inet_pton(AF_INET6, $0, &address) } == 1
+    private static func normalizedIPv6(_ value: String) -> String? {
+        var address = in6_addr()
+        guard value.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
+        var result = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        let capacity = socklen_t(result.count)
+        let converted = result.withUnsafeMutableBufferPointer { destination in
+            withUnsafePointer(to: &address) { inet_ntop(AF_INET6, $0, destination.baseAddress!, capacity) != nil }
         }
-        return value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]*\z"#, options: .regularExpression) != nil
-    }
-
-    private static func normalizedHostname(_ value: String) -> String? {
-        guard validHostname(value) else { return nil }
-        if value.contains(":") {
-            var address = in6_addr()
-            guard value.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
-            var result = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-            let capacity = socklen_t(result.count)
-            let converted = result.withUnsafeMutableBufferPointer { destination in
-                withUnsafePointer(to: &address) { inet_ntop(AF_INET6, $0, destination.baseAddress!, capacity) != nil }
-            }
-            guard converted else { return nil }
-            return String(decoding: result.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        }
-        let lower = value.lowercased()
-        return lower.hasSuffix(".") ? String(lower.dropLast()) : lower
+        guard converted else { return nil }
+        return String(decoding: result.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
     private final class Operation: @unchecked Sendable {

@@ -1,0 +1,10 @@
+{
+  "swiftVersion": "6.4.2",
+  "swiftInstallerSHA256": "8fe5d31ca1153dfe6be3a76de0b93347fd42a27599671e9f9ade23a3648e7184",
+  "dotnetSDK": "10.0.403",
+  "architecture": "x64",
+  "buildSystem": "native",
+  "windowsAppSDKFoundation": "2.6.4",
+  "webView2": "1.0.4314.35",
+  "minimumWindowsBuild": 19041
+}

@@ -11,6 +11,36 @@ public struct ClaudeSSHRoute: Equatable, Sendable {
 
 
 public enum ClaudeDesktopRecords {
+    public struct Record: Equatable, Sendable {
+        public let desktopID: String, cliID: String
+        public let isLocal: Bool
+        public let cloudIDs: Set<String>
+    }
+    /// Hosts may supply several package roots; mixed active accounts cannot
+    /// borrow each other's local mappings or mirror exclusions.
+    public static func load(configFiles: [URL], files: any PlatformFileSystem) -> [Record] {
+        struct Config: Decodable { let lastKnownAccountUuid: String? }
+        var seen = Set<URL>(), bases: [(URL, UUID)] = []
+        for file in configFiles.prefix(16) where seen.insert(file.standardizedFileURL).inserted {
+            guard let bytes = ClaudeCredentialStore.boundedData(at: file, files: files),
+                  let config = try? JSONDecoder().decode(Config.self, from: bytes),
+                  let text = config.lastKnownAccountUuid, let account = UUID(uuidString: text) else { continue }
+            bases.append((file.deletingLastPathComponent(), account))
+        }
+        guard Set(bases.map { $0.1 }).count == 1 else { return [] }
+        return bases.flatMap { desktopMetadata(directory: $0.0, files: files) }.compactMap { row in
+            guard let cli = row.canonicalCLI else { return nil }
+            let cloud = (row.bridgeSessionIds ?? []) + [row.remoteControlSpawn?.ccrSessionId].compactMap { $0 }
+            return Record(desktopID: row.sessionId, cliID: cli, isLocal: row.sshConfig == nil && row.wslConfig == nil,
+                cloudIDs: Set(cloud.map(ClaudeCloudProjectState.bareID)))
+        }
+    }
+    public static func localSessionID(for sessionID: String, records: [Record]) -> String? {
+        guard let uuid = UUID(uuidString: sessionID) else { return nil }
+        let local = records.filter { $0.cliID == uuid.uuidString.lowercased() && $0.isLocal }
+        let ids = Set(local.map(\.desktopID))
+        return ids.count == 1 ? ids.first : nil
+    }
     public struct SourceTarget: Sendable {
         public let id: String
         public let host: String

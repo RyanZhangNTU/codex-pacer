@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 
 /// A critically damped spring shared by both shell dimensions and the reveal.
 /// Retargeting carries the displayed position AND velocity into the next spring.

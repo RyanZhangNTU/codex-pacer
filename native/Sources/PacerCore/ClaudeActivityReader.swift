@@ -24,6 +24,10 @@ struct ClaudeActivityReader {
     private(set) var bytesRead = 0
     private(set) var transcriptDocumentParses = 0
     var attachedTranscriptCount: Int { cursors.values.filter { !$0.sanitized }.count }
+    func transcriptURL(for session: String) -> URL? {
+        let matches = cursors.filter { !$0.value.sanitized && $0.value.session == session }.map(\.key)
+        return matches.count == 1 ? matches.first : nil
+    }
     init(files: any PlatformFileSystem, clock: @escaping @Sendable () -> Date = { Date() }) {
         self.files = files; self.clock = clock
     }

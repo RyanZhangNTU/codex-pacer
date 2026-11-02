@@ -75,16 +75,31 @@ final class CodexProcessPortTests: XCTestCase {
         private var entries: [(ChildProcessRequest, Connection)] = []
         private let stubborn: Bool
         private let blockedWrite: XCTestExpectation?
-        init(stubborn: Bool = false, blockedWrite: XCTestExpectation? = nil) {
+        private let flood: Bool
+        init(stubborn: Bool = false, blockedWrite: XCTestExpectation? = nil, flood: Bool = false) {
             self.stubborn = stubborn; self.blockedWrite = blockedWrite
+            self.flood = flood
         }
         func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) -> Void,
                     ended: @escaping @Sendable () -> Void) throws -> any ChildProcessConnection {
             let connection = Connection(output: output, stubborn: stubborn, blockedWrite: blockedWrite)
             lock.lock(); entries.append((request, connection)); lock.unlock()
+            if flood { for _ in 0..<65 { output(Data(repeating: 120, count: 1024)) } }
             return connection
         }
         func snapshot() -> [(ChildProcessRequest, Connection)] { lock.lock(); defer { lock.unlock() }; return entries }
+    }
+
+    func testTransportOverflowFailsClosedWithoutMisreportingAnOrdinaryExit() async throws {
+        let launcher = Launcher(flood: true), home = FileManager.default.temporaryDirectory
+        let client = CodexClient(executable: home.appendingPathComponent("fixture"), home: home, timeout: 1,
+            processes: launcher, executables: Executables(), files: Files())
+        do { _ = try await client.readQuota(); XCTFail("A dropped input chunk must reject the reply") }
+        catch CodexClientError.invalidReply(let method, _) { XCTAssertEqual(method, "initialize") }
+        catch { XCTFail("Unexpected overflow result: \(error)") }
+        await client.shutdown()
+        XCTAssertEqual(launcher.snapshot().count, 1)
+        XCTAssertFalse(try XCTUnwrap(launcher.snapshot().first?.1).isRunning)
     }
 
     func testDisconnectThenShutdownWaitsForEveryOwnedChildAndIgnoresOldOutput() async throws {

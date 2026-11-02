@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 
 /// The island's width always follows its content. Around a hardware notch the
 /// collapsed bar keeps equal wings sized by the wider side, so it covers no
