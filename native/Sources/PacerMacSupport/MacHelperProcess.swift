@@ -46,8 +46,8 @@ private final class MacHelperProcess: ChildProcessConnection, @unchecked Sendabl
             guard let self, let bytes = self.reader.read() else { return }
             handle.readabilityHandler = nil
             Task { [self] in
-                if bytes.isEmpty { await ended() }
-                else { await receive(bytes); arm() }
+                if bytes.isEmpty { await self.ended() }
+                else { await self.receive(bytes); self.arm() }
             }
         }
     }
