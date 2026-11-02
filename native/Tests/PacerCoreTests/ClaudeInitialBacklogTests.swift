@@ -14,7 +14,16 @@ final class ClaudeInitialBacklogTests: XCTestCase {
     private final class Files: PlatformFileSystem, @unchecked Sendable {
         struct Entry { var bytes: Data; var identity: String; var created: Date?; var modified: Date }
         struct Read { let offset: UInt64; let maximum: Int; let count: Int }
-        var entries: [URL: Entry] = [:]
+        struct Entries {
+            private var values: [String: Entry] = [:]
+            // FileManager can return absolute URLs while fixtures retain a base
+            // URL, or resolve the temporary directory through a symlink.
+            subscript(_ url: URL) -> Entry? {
+                get { values[url.standardizedFileURL.resolvingSymlinksInPath().path] }
+                set { values[url.standardizedFileURL.resolvingSymlinksInPath().path] = newValue }
+            }
+        }
+        var entries = Entries()
         var reads: [Read] = []
         var time = Date(timeIntervalSince1970: 1_800_000_000)
         func entries(in directory: URL) throws -> [URL] {
@@ -96,6 +105,20 @@ final class ClaudeInitialBacklogTests: XCTestCase {
         for marker in ["PRIVATE synthetic prompt", "PRIVATE synthetic reply", "PRIVATE metadata"] {
             XCTAssertFalse(serialized.contains(marker), file: file, line: line)
         }
+    }
+
+    func testFileFactsFollowDiscoveredAndRelativeURLs() throws {
+        let root = try home(), files = Files(), url = file(root)
+        let bytes = Data([1, 2, 3])
+        try files.install(url, bytes: bytes, created: now, modified: now)
+        let relative = try XCTUnwrap(URL(string: "./" + url.lastPathComponent, relativeTo: url.deletingLastPathComponent()))
+        let discovered = try XCTUnwrap(files.entries(in: url.deletingLastPathComponent()).first)
+        for variant in [URL(fileURLWithPath: url.path), relative, discovered] {
+            XCTAssertEqual(files.metadata(variant)?.size, UInt64(bytes.count))
+            XCTAssertEqual(try files.read(variant, offset: 0, maximumBytes: bytes.count), bytes)
+        }
+        files.entries[relative]?.bytes.append(4)
+        XCTAssertEqual(files.metadata(url)?.size, 4)
     }
 
     func testFirstObservedDesktopFileDrainsLargeMetadataWithoutLosingHistoricalPromptOwnership() throws {
