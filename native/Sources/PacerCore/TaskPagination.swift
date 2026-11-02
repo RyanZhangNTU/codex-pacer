@@ -1,7 +1,7 @@
 import Foundation
 
 /// Task pages keep a fixed row capacity so the account section does not move.
-public struct TaskPagination: Equatable {
+public struct TaskPagination: Equatable, Sendable {
     public let itemCount: Int
     public let pageSize: Int
 

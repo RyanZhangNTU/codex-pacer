@@ -90,13 +90,13 @@ final class CodexLogAttentionTests: XCTestCase {
     }
 
     func testActualReaderFindsCoveredQuestionsAndDropsThemOnReplyReplacementAndRemoval() async throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-log-attention-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-log-attention-" + UUID().uuidString)
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
         let directory = home.appendingPathComponent("sessions/" + formatter.string(from: epoch))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = directory.appendingPathComponent("rollout-" + thread + ".jsonl")
-        let now = epoch.addingTimeInterval(100), reader = LocalActivityReader()
+        let now = epoch.addingTimeInterval(100), reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
         try data([start()]).write(to: file)
         _ = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true)
         func append(_ rows: [[String: Any]]) throws {
@@ -115,9 +115,8 @@ final class CodexLogAttentionTests: XCTestCase {
         try append([question("new", second: 4), output("new", second: 5)])
         let next = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(next.requests.count, 1)
-        let replacement = directory.appendingPathComponent("replacement")
-        try data([start("replacement", second: 6), output("new", second: 7)]).write(to: replacement)
-        _ = try FileManager.default.replaceItemAt(file, withItemAt: replacement)
+        let replacement = try data([start("replacement", second: 6), output("new", second: 7)])
+        XCTAssertTrue(TestFileSystem().replace(file, with: replacement))
         let replaced = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertTrue(replaced.requests.isEmpty)
         try FileManager.default.removeItem(at: file)

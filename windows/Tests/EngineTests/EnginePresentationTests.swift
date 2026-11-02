@@ -83,4 +83,26 @@ final class EnginePresentationTests: XCTestCase {
         XCTAssertEqual(wallet.angle, 0)
         XCTAssertTrue(wallet.today.isFinite)
     }
+
+    func testWireKeepsEndingProviderAndMacOrderForAnEndedParentWithRunningChildren() throws {
+        var activities = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        activities[0].consumeLive(["method": "turn/completed", "threadId": activities[0].threadID!, "turnId": "demo-turn",
+                                  "status": "completed", "at": now.timeIntervalSince1970])
+        let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        let ended = DemoScenario.deepseekTask(stage: .completed, at: now)
+        activities += [claude, ended]
+        var inbox = CompletionInbox()
+        inbox.observe(activities, at: now, retention: 300)
+        let presentation = EnginePresentation(activities: activities, requests: [], inbox: inbox, hideProjects: false, at: now)
+        XCTAssertEqual(presentation.rows.count, 3)
+        XCTAssertEqual(presentation.rows.first?.id, claude.id, "Mac sorts by the primary's observed phase, even when its children keep the family running")
+        XCTAssertEqual(presentation.header.endingProvider, "deepseek")
+        XCTAssertEqual(presentation.header.activeCount, 2)
+        XCTAssertFalse(presentation.header.endingIsCore)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(presentation.rows[0])) as? [String: Any])
+        XCTAssertNotNil(fields["phase"])
+        XCTAssertNotNil(fields["symbol"])
+        XCTAssertNotNil(fields["rateIsFresh"])
+        XCTAssertNil(fields["activity"], "Core values do not leak into the version 1 row DTO")
+    }
 }

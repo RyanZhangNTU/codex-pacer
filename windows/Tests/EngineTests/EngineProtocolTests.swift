@@ -157,4 +157,18 @@ final class EngineProtocolTests: XCTestCase {
         XCTAssertTrue(replay.requests.isEmpty)
         await runtime.stop()
     }
+
+    func testMissingMarkReadTargetCannotAcknowledgeAllTasks() async throws {
+        let capture = FrameCapture()
+        let runtime = EngineRuntime(demo: true, now: { Date(timeIntervalSince1970: 1_800_000_000) }, output: { capture.append($0) })
+        _ = await runtime.receive(try command("initialize"))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        let before = try XCTUnwrap(capture.snapshots().last)
+        XCTAssertTrue(before.tasks.contains(where: \.unread))
+        _ = await runtime.receive(try command("markRead", ["snapshotSequence": before.sequence]))
+        let after = try XCTUnwrap(capture.snapshots().last)
+        XCTAssertEqual(after.tasks, before.tasks)
+        XCTAssertEqual(after.requests, before.requests)
+        await runtime.stop()
+    }
 }

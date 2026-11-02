@@ -204,18 +204,21 @@ actor EngineRuntime {
     private lazy var deepseekActivityMonitor = DeepSeekActivityMonitor(clock: now)
     private var claudeLocal = LocalActivitySnapshot(), deepseekLocal = LocalActivitySnapshot()
     private var deepseekUsage = DeepSeekLocalUsage()
-    private var inbox: CompletionInbox
-    private var policy = AttentionPolicy()
-    private var activities: [SessionActivity] = []
-    private var requests: [PendingAttentionRequest] = []
+    private var activityState = ActivityApplicationState()
+    private var inbox: CompletionInbox { get { activityState.inbox } set { activityState.inbox = newValue } }
+    private var policy: AttentionPolicy { get { activityState.codexAttention } set { activityState.codexAttention = newValue } }
+    private var activities: [SessionActivity] { get { activityState.activities } set { activityState.replaceActivities(newValue, at: now()) } }
+    private var requests: [PendingAttentionRequest] { get { activityState.requests } set { activityState.replacePendingRequests(newValue) } }
+    private var activityDisplayTask: Task<Void, Never>?
+    private var activityDisplayDeadline: Date?
     private var sources: [EngineSource] = []
     private var loggedActivities: [SessionActivity] = []
     private var loggedRequests: [PendingAttentionRequest] = []
     private var loggedSources: [EngineSource] = []
     private let desktopServices: CodexDesktopServices?
     private var desktopState: CodexDesktopState?
-    private var pendingDesktopEndings: [String: SessionActivity] = [:]
-    private var latestFirstOutput: (at: Date, seconds: Double)?
+    private var pendingDesktopEndings: [String: SessionActivity] { get { activityState.pendingCodexEndings } set { activityState.pendingCodexEndings = newValue } }
+    private var latestFirstOutput: (at: Date, seconds: Double)? { activityState.latestFirstOutput }
     private lazy var desktopMonitor: RealtimeActivityMonitor? = desktopServices?.makeMonitor()
     private var quota: [AgentProvider: QuotaSnapshot] = [:]
     private var codexQuota: QuotaSnapshot?
@@ -299,7 +302,7 @@ actor EngineRuntime {
         self.navigationServices = navigationServices ?? (demo ? .demo : .live)
         self.claudeWebReference = claudeWebReference && demo
         self.detectInstallation = installationDetection
-        self.inbox = CompletionInbox(dismissalStore: demo ? nil : dismissalStore)
+        self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         #if os(Windows)
         let demoHome = URL(fileURLWithPath: "C:/Users/Demo", isDirectory: true)
         #else
@@ -376,7 +379,7 @@ actor EngineRuntime {
                   navigation.acknowledge(context: context, inbox: &inbox) else {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
-            activities = activities.filter { ![.completed, .interrupted].contains($0.phase) } + inbox.activities
+            activityState.prune(at: now(), retention: retention)
             publish(notices: [])
         case "inspectClaudeLocalState":
             struct Result: Encodable {
@@ -576,18 +579,8 @@ actor EngineRuntime {
             guard command.params?.snapshotSequence == sequence else {
                 failure(id: command.id, code: "staleSnapshot"); return true
             }
-            let hidden = hiddenEmbeddedActivityIDs
-            let grouped = ActivityTaskGroup.make(activities.filter { !hidden.contains($0.id) })
-            let eligible = grouped.filter { !$0.isRunning && !$0.isWaiting }
-            let selected = command.method == "markAllRead" ? eligible : eligible.filter { $0.primary.id == command.params?.activityID }
-            let pending = Set(requests.map { $0.activity.id })
-            let selectedIDs = Set(selected.filter { $0.members.allSatisfy({ !pending.contains($0.id) }) }.flatMap { $0.members.map(\.id) })
-            // Grouping can apply parent evidence to a child's display copy.
-            // Acknowledge the retained source identity, not that display copy.
-            for activity in inbox.unreadActivities where selectedIDs.contains(activity.canonicalized().id) && [.completed, .interrupted].contains(activity.phase) {
-                _ = inbox.dismiss(activity)
-            }
-            activities = activities.filter { ![.completed, .interrupted].contains($0.phase) } + inbox.activities
+            if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
+            else if let id = command.params?.activityID { activityState.markRead(activityID: id, at: now()) }
             publish(notices: [])
         case "demoStage":
             guard demo, let value = command.params?.demoStage, let next = DemoTaskStage(rawValue: value) else {
@@ -653,6 +646,7 @@ actor EngineRuntime {
         if changesCodex || changesClaude { navigation.invalidate() }
         let changesDeepSeek = deepseek.map { $0 != deepseekHome } ?? false
         generation += 1; projectionReady = false
+        activityDisplayTask?.cancel(); activityDisplayTask = nil; activityDisplayDeadline = nil
         desktopState = nil; pendingDesktopEndings = [:]
         if let codex { codexHome = codex }
         if let claude { claudeHome = claude }
@@ -683,7 +677,7 @@ actor EngineRuntime {
             deepseekLocal = LocalActivitySnapshot(); deepseekUsage = DeepSeekLocalUsage()
             deepseekNoticePolicy = .init()
         }
-        if changesCodex || changesClaude || changesDeepSeek { latestFirstOutput = nil }
+        if changesCodex || changesClaude || changesDeepSeek { activityState.clearFirstOutput() }
         inbox.bindSourceHomes(provider: .codex, localHome: codexHome)
         inbox.bindSourceHomes(provider: .claude, localHome: claudeHome)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
@@ -800,6 +794,7 @@ actor EngineRuntime {
                 for provider in enabled.subtracting(next) { inbox.remove(provider: provider) }
                 if enabled.contains(.claude), !next.contains(.claude) { resetClaudeLocalSource() }
                 enabled = next; generation += 1; projectionReady = false
+                activityDisplayTask?.cancel(); activityDisplayTask = nil; activityDisplayDeadline = nil
                 await bindQuotaMonitor()
                 await bindActivityMonitors()
                 await updateSourceWatches()
@@ -949,12 +944,7 @@ actor EngineRuntime {
         else {
             // Initialization/source reads may be awaiting I/O. Keep endings
             // until the first projection; a later EOF can release the stream.
-            for value in state.activities where [.completed, .interrupted].contains(value.phase) { pendingDesktopEndings[value.id] = value }
-            if pendingDesktopEndings.count > 256 {
-                for id in pendingDesktopEndings.keys.sorted(by: {
-                    (pendingDesktopEndings[$0]?.phaseChangedAt ?? .distantPast) > (pendingDesktopEndings[$1]?.phaseChangedAt ?? .distantPast)
-                }).dropFirst(256) { pendingDesktopEndings.removeValue(forKey: id) }
-            }
+            activityState.rememberCodexEndings(state.activities)
         }
     }
 
@@ -1056,44 +1046,62 @@ actor EngineRuntime {
                     transport: "https", reason: nil))
             }
         }
+        if !demo {
+            current = current.filter { enabled.contains($0.provider) }
+            pending = pending.filter { enabled.contains($0.provider) }
+        }
+        activityState.localActivities = current.filter { $0.provider == .codex }
+        activityState.claudeActivities = current.filter { $0.provider == .claude }
+        activityState.deepseekActivities = current.filter { $0.provider == .deepseek }
+        activityState.codexLogRequests = pending.filter { $0.provider == .codex }
+        activityState.claudeReceivedRequests = pending.filter { $0.provider == .claude }
+        activityState.deepseekReceivedRequests = pending.filter { $0.provider == .deepseek }
         if !demo, enabled.contains(.codex), let desktop = desktopState, desktop.context == generation {
-            let streamed = ActivitySourceMerger.merge(logged: Array(pendingDesktopEndings.values), streamed: desktop.activities)
-            current = ActivitySourceMerger.merge(logged: current, streamed: streamed)
-            for index in current.indices {
-                for name in desktop.names where name.id == current[index].id { name.apply(to: &current[index]) }
-                for metrics in desktop.performance where metrics.id == current[index].id { metrics.apply(to: &current[index]) }
-            }
-            let authoritative = desktop.attentionThreads.filter { thread in
-                if desktop.attention.contains(where: { $0.threadID == thread }) { return true }
-                guard desktop.status.connected, let live = desktop.activities.first(where: { $0.threadID == thread && $0.hasLiveEvidence }) else { return false }
-                let logged = loggedActivities.first { $0.provider == .codex && $0.threadID == thread }
-                return logged?.turnID == nil || logged?.turnID == live.turnID
-            }
-            pending.removeAll { $0.provider == .codex && authoritative.contains($0.threadID) }
-            pending += desktop.attention
+            activityState.remoteActivities = desktop.activities
+            activityState.codexReceivedRequests = desktop.attention
+            activityState.codexAttentionThreadIDs = desktop.attentionThreads
+            activityState.codexStreamConnected = desktop.status.connected
+            activityState.applyCodexMetadata(names: desktop.names, performance: desktop.performance)
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
+        } else {
+            activityState.remoteActivities = []; activityState.codexReceivedRequests = []
+            activityState.codexAttentionThreadIDs = []; activityState.codexStreamConnected = false
         }
-        current = current.filter { enabled.contains($0.provider) }
-        pending = pending.filter { enabled.contains($0.provider) }
         sources = status.filter { enabled.contains(AgentProvider(rawValue: $0.provider) ?? .codex) }
-        requests = pending
-        let observed = inbox.observe(current, at: date, retention: retention)
-        pendingDesktopEndings = [:]
-        // The original Mac demo can replay a stage on the same synthetic turn.
-        // Real sources keep the inbox's conservative lifecycle reconciliation.
-        let active = observed.filter { ![.completed, .interrupted].contains($0.phase) }
-        let activeIDs = Set(active.map(\.id))
-        activities = demo ? current : active + inbox.activities.filter { !activeIDs.contains($0.id) }
-        let notices = policy.requestNotices(pending) + policy.activityNotices(current, at: date)
+        let update: ActivityApplicationUpdate
+        if demo {
+            activityState.demoActivities = current; activityState.demoRequests = pending; activityState.includesDemoMetadata = true
+            inbox.observe(current, at: date, retention: retention)
+            update = activityState.applyDemoSnapshot(enabled: enabled, at: date, visibility: activityVisibility)
+        } else {
+            update = activityState.reconcile(at: date, retention: retention, visibility: activityVisibility)
+        }
         projectionReady = true
-        publish(notices: AttentionPolicy.excludingPendingReplies(notices, activityIDs: Set(pending.map { $0.activity.id })))
+        publish(notices: update.notices)
     }
 
-    private var hiddenEmbeddedActivityIDs: Set<String> {
-        var hidden = showEmbeddedCodexSessions ? Set<String>() : EmbeddedSessionVisibility.embeddedActivityIDs(activities.filter { $0.provider == .codex })
-        if !showClaudeCloudProjects { hidden.formUnion(activities.filter { $0.claudeCloud != nil }.map(\.id)) }
-        return hidden
+    private var activityVisibility: ActivityVisibilityOptions {
+        .init(embeddedProviders: showEmbeddedCodexSessions ? Set(AgentProvider.allCases) : [.claude, .deepseek],
+            showsClaudeCloudProjects: showClaudeCloudProjects)
+    }
+    private func scheduleActivityDisplay(at date: Date) {
+        let deadline = activityState.nextDisplayDeadline(at: date, retention: retention)
+        guard deadline != activityDisplayDeadline else { return }
+        activityDisplayTask?.cancel(); activityDisplayTask = nil; activityDisplayDeadline = nil
+        guard initialized, let deadline else { return }
+        activityDisplayDeadline = deadline
+        let revision = generation, delay = max(0.01, deadline.timeIntervalSince(date) + 0.01)
+        activityDisplayTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(min(86400, delay) * 1_000_000_000)) } catch { return }
+            await self?.expireActivityDisplay(revision: revision)
+        }
+    }
+    private func expireActivityDisplay(revision: UInt64) {
+        guard initialized, revision == generation else { return }
+        activityDisplayTask = nil; activityDisplayDeadline = nil
+        activityState.prune(at: now(), retention: retention)
+        publish(notices: [])
     }
 
     private func publish(notices: [IslandNotice]) {
@@ -1109,13 +1117,8 @@ actor EngineRuntime {
                 + deepseekNoticePolicy.spendNotices(reading, spike: reminderSettings.contains(.spendSpike), budget: reminderSettings.contains(.budget),
                     snoozedUntil: spikeSnoozedUntil, now: date)
         }
-        let hidden = hiddenEmbeddedActivityIDs
-        let visibleActivities = activities.filter { !hidden.contains($0.id) }
-        let visibleRequests = requests.filter { !hidden.contains($0.activity.canonicalized().id) }
-        let hiddenRequestNotices = Set(requests.filter { hidden.contains($0.activity.canonicalized().id) }.map { "request:" + $0.id })
-        let visibleNotices = (notices + walletNotices).filter { notice in
-            !hiddenRequestNotices.contains(notice.id) && (notice.kind == .lowQuota || !hidden.contains { notice.id.hasPrefix($0 + ":") })
-        }
+        let visibleActivities = activities, visibleRequests = requests
+        let visibleNotices = activityState.visibleNotices(notices + walletNotices, visibility: activityVisibility)
         var snapshots = quota
         var displayedSources = sources
         if !demo {
@@ -1136,12 +1139,10 @@ actor EngineRuntime {
                 reason: state.error?.localizedDescription))
         }
         snapshots = snapshots.filter { enabled.contains($0.key) }
-        for value in visibleActivities {
-            guard !value.isInternalReview, let latency = value.firstTokenLatency, latency.isFinite, (0...3600).contains(latency),
-                  let reported = value.firstTokenReportedAt, reported <= date,
-                  latestFirstOutput.map({ reported > $0.at }) ?? true else { continue }
-            latestFirstOutput = (reported, latency)
-        }
+        activityState.replaceActivities(visibleActivities, at: date)
+        let taskPresentation = activityState.presentation(at: date,
+            options: .init(hideProjects: hideProjects, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost))
+        scheduleActivityDisplay(at: date)
         var failedProviders = Set<AgentProvider>(), refreshingProviders = Set<AgentProvider>(), quotaErrors: [AgentProvider: String] = [:], sourceTexts: [AgentProvider: String] = [:]
         if !demo {
             if codexQuotaFailed { failedProviders.insert(.codex); quotaErrors[.codex] = quotaSource?.reason }
@@ -1159,7 +1160,7 @@ actor EngineRuntime {
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
             sources: AgentProvider.allCases.filter { enabled.contains($0) }.map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))
-            }, wallet: compactWallet, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, now: date)
+            }, wallet: compactWallet, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview, now: date)
         let displayedQuota = AgentProvider.allCases.compactMap { provider in snapshots[provider].map { EngineQuota($0, provider: provider, at: date) } }
         let weekly = QuotaDashboardPresentation.Reading(provider: .codex, period: .weekly, snapshot: snapshots[.codex],
             failed: !demo && codexQuotaFailed, refreshing: !demo && codexQuotaRefreshing,
@@ -1198,7 +1199,7 @@ actor EngineRuntime {
                 .init(provider: $0.rawValue, mode: moduleSettings.mode(for: $0).rawValue,
                     installed: installation?.isInstalled($0), enabled: enabled.contains($0))
             } : nil, quotaDashboard: dashboard, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-            compactWarnings: compactWarnings, compactContext: compactContext,
+            compactWarnings: compactWarnings, compactContext: compactContext, taskPresentation: taskPresentation,
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [])
@@ -1211,6 +1212,7 @@ actor EngineRuntime {
     func stop() async {
         navigation.invalidate()
         generation += 1; initialized = false; projectionReady = false
+        activityDisplayTask?.cancel(); activityDisplayTask = nil; activityDisplayDeadline = nil
         maintenance?.cancel(); maintenance = nil
         presentationClock?.cancel(); presentationClock = nil
         refreshTask?.cancel(); refreshRequested = false; discoveryRequested = false

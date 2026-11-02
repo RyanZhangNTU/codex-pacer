@@ -12,38 +12,15 @@ extension CompactBarPresentation.SingleTask {
     var label: String { L10n.text("layout.single_task." + rawValue) }
 }
 
-/// One collapsed status: the core says what or how many, the orbit says work
-/// is running, the solid fill says it needs you, and a corner mark keeps an
-/// unread ending visible beside running work.
-struct HeaderActivity: Equatable {
-    enum Core: Equatable { case idle, symbol(String), count(Int) }
-    enum Ending: Equatable {
-        case completed(AgentProvider), interrupted, failed
-        var symbol: String {
-            switch self {
-            case .completed: StatusSymbols.complete
-            case .interrupted: StatusSymbols.interrupted
-            case .failed: StatusSymbols.failed
-            }
-        }
-        var tint: Color {
-            switch self {
-            case .completed(let provider): provider.tint
-            case .interrupted: PacerPalette.paused
-            case .failed: PacerPalette.danger
-            }
+extension HeaderActivity.Ending {
+    var symbol: String { StatusSymbols.symbol(kind) }
+    var tint: Color {
+        switch self {
+        case .completed(let provider): provider.tint
+        case .interrupted: PacerPalette.paused
+        case .failed: PacerPalette.danger
         }
     }
-    var core: Core
-    var activeCount: Int
-    /// Running task counts by provider; empty when nothing is running.
-    var orbit: [AgentProvider: Int]
-    var attention: PendingAttentionRequest.Kind?
-    var ending: Ending?
-
-    /// With nothing active or waiting, the ending itself occupies the core.
-    var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
-    var showsEndingMark: Bool { ending != nil && !endingIsCore }
 }
 
 struct ActivityBadge: View {
