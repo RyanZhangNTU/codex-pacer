@@ -1,12 +1,10 @@
 import Foundation
 import PacerCore
 
-enum ExpandedQuotaStyle: String, CaseIterable, Identifiable {
-    case split, classic
-    static let defaultsKey = "expandedQuotaStyle"
-    var id: String { rawValue }
-    var label: String { L10n.text("appearance.quota_" + rawValue) }
+typealias ExpandedQuotaStyle = QuotaDashboardPresentation.Style
 
+extension QuotaDashboardPresentation.Style {
+    static let defaultsKey = "expandedQuotaStyle"
     static func load(from defaults: UserDefaults = .standard) -> Self {
         defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .split
     }

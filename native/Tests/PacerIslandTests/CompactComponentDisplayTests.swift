@@ -129,7 +129,9 @@ final class CompactComponentDisplayTests: XCTestCase {
             else { defaults.removeObject(forKey: CompactIslandLayout.defaultsKey) }
         }
         defaults.set(true, forKey: "monitorSSH")
-        let model = IslandModel(), now = Date(); model.now = now
+        let now = Date()
+        let model = IslandModel(demo: true, demoClock: { now }, defaults: defaults,
+            installation: .init(codexInstalled: true, claudeInstalled: false))
         model.quota = try snapshot(used: 50, at: now, minutes: 300)
         var status = RuntimeStreamStatus(); status.connected = true
         model.streamStatuses = ["local": RuntimeStreamStatus(), "remote-ssh-discovered:fixture": status]

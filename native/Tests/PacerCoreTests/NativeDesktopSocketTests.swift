@@ -536,9 +536,18 @@ final class NativeDesktopSocketTests: XCTestCase {
             }
         }
         if largeSnapshot {
+            // Keep the fixture server alive through the client's 10-second
+            // delivery assertion and 5-second cleanup deadline. A slow send
+            // must not abort the scenario before the assertion can run.
+            script = script.replacingOccurrences(of: "connection.settimeout(5)", with: "connection.settimeout(15)")
+            let send = "data=json.dumps(v,separators=(',',':')).encode();connection.sendall(struct.pack('<I',len(data))+data)"
+            XCTAssertTrue(script.contains(send))
+            script = script.replacingOccurrences(of: send, with:
+                "encode_start=time.monotonic();data=json.dumps(v,separators=(',',':')).encode();encoded=time.monotonic();connection.sendall(struct.pack('<I',len(data))+data);sent=time.monotonic()\n    if len(data)>16*1024*1024:print('PACER_SOCKET_17M bytes=%d serialize=%.6fs send=%.6fs'%(len(data),encoded-encode_start,sent-encoded),file=sys.stderr,flush=True)")
             let initial = "initialize=read();send({'type':'response','method':'initialize','resultType':'success','result':{'clientId':client}})"
             let giant = """
             \(initial)
+            large_snapshot_started=time.monotonic()
             send({'type':'broadcast','method':'thread-stream-state-changed','version':11,'sourceClientId':owner,
                   'params':{'hostId':'local','conversationId':'019a0000-0000-7000-8000-000000000099',
                             'change':{'type':'snapshot','revision':0,'conversationState':{'ephemeral':True,'unrelatedHistory':'x'*(17*1024*1024)}}}})
@@ -550,6 +559,7 @@ final class NativeDesktopSocketTests: XCTestCase {
             script = script.replacingOccurrences(of: "follow=read();assert follow['params']['following'] is True", with: """
             follow=read()
             while follow.get('params',{}).get('hostId')!='\(host)':follow=read()
+            print('PACER_SOCKET_17M untilHostFollow=%.6fs'%(time.monotonic()-large_snapshot_started),file=sys.stderr,flush=True)
             assert follow['params']['following'] is True
             """)
         }
@@ -562,16 +572,22 @@ final class NativeDesktopSocketTests: XCTestCase {
         for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
         let ending = Ending(), delivered = expectation(description: "ending delivered before disconnect")
         let monitor = RealtimeActivityMonitor()
+        let diagnosticClock = ContinuousClock(), diagnosticStart = diagnosticClock.now
         await monitor.start(home: home, includeSSH: host != "local", useSSHFallback: false) { activities, _, _ in
             XCTAssertTrue(activities.allSatisfy { ($0.sourceHostID ?? "local") == host })
-            if ending.first(activities) { delivered.fulfill() }
+            if ending.first(activities) {
+                if largeSnapshot { print("PACER_SOCKET_17M startToCompletion=\(diagnosticStart.duration(to: diagnosticClock.now))") }
+                delivered.fulfill()
+            }
         }
         await fulfillment(of: [delivered], timeout: largeSnapshot ? 10 : 5)
         await monitor.shutdown()
         XCTAssertEqual(ending.unreadCount(), 1, "The reminder must outlive runtime release, trailing patches and EOF")
         await fulfillment(of: [childEnded], timeout: 5)
         guard !child.isRunning else { XCTFail("EOF fixture did not exit"); return }
-        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        let diagnostic = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        if largeSnapshot { print(diagnostic) }
+        XCTAssertEqual(child.terminationStatus, 0, diagnostic)
     }
     private static let server = #"""
     import socket,struct,json,pathlib,sys,os,time

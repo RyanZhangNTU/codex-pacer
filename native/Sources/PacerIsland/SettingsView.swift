@@ -607,18 +607,19 @@ struct SettingsView: View {
     }
 
     private func quotaHistorySection(_ provider: AgentProvider) -> some View {
-        Section(L10n.text("settings.quota_history", provider.displayName)) {
+        let presentation = model.quotaHistoryPresentation(provider)
+        return Section(presentation.title) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if let source = model.providerSourceText(provider) { Text(source).foregroundStyle(.secondary) }
+                if let source = presentation.sourceText { Text(source).foregroundStyle(.secondary) }
                 Spacer(minLength: 8)
-                Text(model.providerFreshnessText(provider, period: .weekly)).foregroundStyle(.secondary)
+                Text(presentation.freshnessText).foregroundStyle(.secondary)
             }
             .font(.system(size: 11))
-            if model.providerQuotaIsStale(provider, period: .weekly) || model.providerQuotaError(provider) != nil {
+            if presentation.notUpdated {
                 Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness)
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
-            if let error = model.providerQuotaError(provider) {
+            if let error = presentation.errorText {
                 Text(error).font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -626,43 +627,42 @@ struct SettingsView: View {
                 if let cycle = model.providerCurrentCycle(provider) {
                     QuotaCycleChart(data: QuotaChartData(cycle: cycle, resetCredits: snapshot.resetCredits, now: model.now),
                         accent: provider.tint, referenceColor: .primary).equatable().padding(.vertical, 8)
-                } else if model.providerWindow(provider, period: .weekly) != nil {
-                    Text(L10n.text("quota.waiting_sample")).font(.system(size: 12)).foregroundStyle(.secondary)
+                } else if let placeholder = presentation.placeholder {
+                    Text(placeholder).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                if !snapshot.buckets.isEmpty {
+                if !presentation.buckets.isEmpty {
                     DisclosureGroup(L10n.text("settings.quota_details")) {
-                        ForEach(snapshot.buckets) { bucket in
+                        ForEach(presentation.buckets, id: \.id) { bucket in
                             VStack(alignment: .leading, spacing: 12) {
-                                if snapshot.buckets.count > 1 {
-                                    Text(bucket.name ?? bucket.id).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                                if let title = bucket.title {
+                                    Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                                 }
-                                ForEach(bucket.windows) { window in
-                                    QuotaWindowView(window: window, now: model.now,
-                                        allowPace: !snapshot.isStale(at: model.now) && model.providerQuotaError(provider) == nil && window.resetsAt.map({ $0 > model.now }) == true,
+                                ForEach(bucket.windows, id: \.id) { window in
+                                    QuotaWindowView(reading: window,
                                         accent: provider.tint, secondary: .secondary, referenceColor: .primary)
                                 }
                             }.padding(.vertical, 8)
                         }
                     }
                 }
-                if provider == .codex || snapshot.credits != nil || snapshot.resetCredits != nil {
+                if presentation.account != nil {
                     AccountUsageView(snapshot: snapshot, now: model.now, showsExpiryDetails: Binding(
                         get: { showsResetExpiryDetails.contains(provider) },
                         set: { if $0 { showsResetExpiryDetails.insert(provider) } else { showsResetExpiryDetails.remove(provider) } }))
                 }
             } else {
-                Text(model.providerRefreshing(provider) ? L10n.text("quota.loading") : L10n.text("quota.not_connected", provider.displayName))
+                Text(presentation.placeholder ?? "")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            if let warning = model.providerHistoryWarning(provider) {
+            if let warning = presentation.warning {
                 Label(L10n.text("quota.chart_warning"), systemImage: "exclamationmark.circle")
                     .font(.system(size: 11)).foregroundStyle(.secondary).help(warning)
             }
             HStack(spacing: 12) {
-                Button(L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.refresh")) {
+                Button(presentation.refreshTitle) {
                     model.retryQuotaConnection(for: provider)
                 }
-            }.font(.system(size: 11)).disabled(model.providerRefreshing(provider))
+            }.font(.system(size: 11)).disabled(presentation.refreshing)
         }
     }
 

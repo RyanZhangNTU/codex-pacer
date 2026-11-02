@@ -26,8 +26,12 @@ if [[ "${PACER_UNIVERSAL:-0}" == 1 ]]; then
         done
     done
 fi
+task_resources="$task_app/Contents/Resources/CodexPacerIsland_PacerCore.bundle"
+if [[ -d "$task_resources/Contents/Resources" ]]; then
+    task_resources="$task_resources/Contents/Resources"
+fi
 for task_language in en zh-Hans; do
-    [[ -f "$task_app/Contents/Resources/CodexPacerIsland_PacerCore.bundle/Contents/Resources/$task_language.lproj/Localizable.strings" ]] \
+    [[ -f "$task_resources/$task_language.lproj/Localizable.strings" ]] \
         || { echo "Missing localization: $task_language" >&2; exit 1; }
 done
 python3 "$task_root/scripts/native/embed-sparkle.py" "$task_build/.build/artifacts" "$task_app" "$task_identity"

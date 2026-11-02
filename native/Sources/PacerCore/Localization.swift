@@ -65,9 +65,17 @@ public enum L10n {
         return Bundle.module
     }()
     private static let bundles: [AppLanguage: Bundle] = Dictionary(uniqueKeysWithValues: AppLanguage.allCases.compactMap {
-        guard let path = resourceBundle.path(forResource: $0.rawValue, ofType: "lproj"), let bundle = Bundle(path: path) else { return nil }
-        return ($0, bundle)
+        let language = $0
+        guard let root = resourceBundle.resourceURL else { return nil }
+        // SwiftPM may lowercase localization directories. Resolve the explicit
+        // catalog even when the test host advertises only its default language.
+        for name in [language.rawValue, language.rawValue.lowercased()] {
+            let url = root.appendingPathComponent(name + ".lproj", isDirectory: true)
+            if let bundle = Bundle(url: url) { return (language, bundle) }
+        }
+        return nil
     })
+    static func localizationResourceURL(for language: AppLanguage) -> URL? { bundles[language]?.resourceURL }
 
     /// Views resolve the same keys on every render; bundle lookups and locale
     /// construction are cached per language for the life of the process.
