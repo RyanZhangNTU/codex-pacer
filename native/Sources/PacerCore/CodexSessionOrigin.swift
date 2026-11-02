@@ -58,7 +58,7 @@ public struct CodexSessionOrigin: Equatable, Sendable {
         if not isinstance(originator,str) or not originator or len(originator.encode('utf-8'))>256:return None
         embedded=originator not in CODEX_OFFICIAL_CLIENTS
         path=cwd if isinstance(cwd,str) else ''
-        windows=path.startswith(chr(92)*2) or (len(path)>2 and path[0].isascii() and path[0].isalpha() and path[1]==':' and path[2] in ('/',chr(92)))
+        windows=path.startswith(chr(92)*2) or (len(path)>2 and ('A'<=path[0]<='Z' or 'a'<=path[0]<='z') and path[1]==':' and path[2] in ('/',chr(92)))
         path=path.replace(chr(92),'/').lower() if windows else path
         parts=[v for v in path.split('/') if v]
         ignored=embedded and (parts[-2:]==['zotero-chat','translate'] or bool(parts and parts[-1].startswith('zotero-chat-catalog.')))

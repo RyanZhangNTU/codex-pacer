@@ -11,7 +11,7 @@ final class CodexSessionOriginTests: XCTestCase {
             "/fixture/Zotero-Chat/Translate", "/fixture/ZOTERO-CHAT-CATALOG.fixture"]
         let expected = [true, true, true, true, false, false]
         let input = try JSONSerialization.data(withJSONObject: paths).base64EncodedString()
-        let output = try python(CodexSessionOrigin.python + "\npaths=json.loads(base64.b64decode('" + input + "').decode())\nprint(json.dumps([codex_origin('fixture-client',p)['ignoredSession'] for p in paths]))")
+        let output = try python("import json,base64\n" + CodexSessionOrigin.python + "\npaths=json.loads(base64.b64decode('" + input + "').decode())\nprint(json.dumps([codex_origin('fixture-client',p)['ignoredSession'] for p in paths]))")
         XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [Bool], expected)
         for (path, ignored) in zip(paths, expected) {
             XCTAssertEqual(CodexSessionOrigin.classify(originator: "fixture-client", cwd: path)?.ignored, ignored)
