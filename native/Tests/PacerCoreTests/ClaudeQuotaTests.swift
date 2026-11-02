@@ -1,3 +1,7 @@
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+import PacerMacSupport
 import XCTest
 @testable import PacerCore
 
@@ -109,7 +113,7 @@ final class ClaudeQuotaClientTests: XCTestCase {
                         transport: @escaping ClaudeQuotaClient.Transport) -> ClaudeQuotaClient {
         let capturedAt = date, accountScope = scope
         let clock: @Sendable () -> Date = now ?? { capturedAt }
-        return ClaudeQuotaClient(statusLineURL: root.appendingPathComponent("statusline.json"),
+        return ClaudeQuotaClient(statusLineURL: root.appendingPathComponent("statusline.json"), files: MacFileSystem(),
             credentialProvider: credentialProvider ?? {
                 ClaudeOAuthCredential(token: "fixture-token", expiresAt: nil, plan: "pro", scope: accountScope)
             }, desktopCredentialProvider: desktopCredentialProvider,
@@ -155,7 +159,7 @@ final class ClaudeQuotaClientTests: XCTestCase {
         let url = root.appendingPathComponent("statusline.json")
         try JSONSerialization.data(withJSONObject: sample).write(to: url)
         let clock = Box(capturedAt)
-        let value = ClaudeQuotaClient(statusLineURL: url, credentialProvider: {
+        let value = ClaudeQuotaClient(statusLineURL: url, files: MacFileSystem(), credentialProvider: {
             XCTFail("passive samples must not access credentials"); throw ClaudeQuotaError.keychainAccessRequired
         }, identityProvider: { (savedScope, "fixture-org") }, transport: { _ in
             XCTFail("passive samples must not access HTTP"); throw ClaudeQuotaError.connectionFailed
@@ -407,7 +411,7 @@ final class ClaudeQuotaClientTests: XCTestCase {
         let root = try directory(), payload = usage, capturedAt = date, savedScope = scope
         defer { try? FileManager.default.removeItem(at: root) }
         let status = Box(200), writes = Box(0), invalidations = Box(0)
-        let value = ClaudeQuotaClient(statusLineURL: root.appendingPathComponent("absent-statusline.json"), credentialProvider: {
+        let value = ClaudeQuotaClient(statusLineURL: root.appendingPathComponent("absent-statusline.json"), files: MacFileSystem(), credentialProvider: {
             ClaudeOAuthCredential(token: "fixture-token", expiresAt: capturedAt.addingTimeInterval(100), plan: nil, scope: savedScope)
         }, identityProvider: { (savedScope, "fixture-org") }, transport: { request in
             (payload, HTTPURLResponse(url: request.url!, statusCode: status.value, httpVersion: nil, headerFields: nil)!)
@@ -440,7 +444,7 @@ final class ClaudeQuotaClientTests: XCTestCase {
         let file: [String: Any] = ["claudeAiOauth": ["accessToken": "fixture-file-token", "expiresAt": capturedAt.addingTimeInterval(100).timeIntervalSince1970 * 1000]]
         try JSONSerialization.data(withJSONObject: file).write(to: home.appendingPathComponent(".credentials.json"))
         let active = try XCTUnwrap(ClaudeCredentialStore.identity(userHome: userHome, home: home)), writes = Box(0)
-        let value = ClaudeQuotaClient(statusLineURL: root.appendingPathComponent("absent-statusline.json"), credentialProvider: {
+        let value = ClaudeQuotaClient(statusLineURL: root.appendingPathComponent("absent-statusline.json"), files: MacFileSystem(), credentialProvider: {
             try ClaudeCredentialStore.read(userHome: userHome, home: home, environment: [:], cachedCredential: { _ in nil }, now: capturedAt)
         }, identityProvider: { (active.scope, active.organizationID) }, transport: { request in
             (payload, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)

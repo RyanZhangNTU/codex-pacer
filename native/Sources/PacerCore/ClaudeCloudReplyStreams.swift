@@ -1,11 +1,14 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Listens to Claude's message streams for what a poll cannot see. A stream only
 /// carries replies that start after it connects, so each recent project's stream
 /// announces a run early enough to open that thread's stream in time. Polling
 /// still decides every state: losing a stream only loses a speed.
-actor ClaudeCloudReplyStreams {
-    typealias Lines = @Sendable (URLRequest) -> AsyncThrowingStream<Data, Error>
+public actor ClaudeCloudReplyStreams {
+    public typealias Lines = @Sendable (URLRequest) -> AsyncThrowingStream<Data, Error>
     typealias Requests = @Sendable (String) async -> URLRequest?
     typealias Handler = @Sendable (ClaudeCloudStreamEvent, _ project: String) async -> Void
 
@@ -96,26 +99,6 @@ actor ClaudeCloudReplyStreams {
         case .signedOut, .denied, .challenge, .notEnabled: return 900
         case .throttled(let until): return max(60, min(3600, until?.timeIntervalSince(date) ?? 60))
         default: return failures == 0 ? 2 : min(300, 5 * pow(2, Double(min(failures, 8) - 1)))
-        }
-    }
-
-    static func lines(session: URLSession) -> Lines {
-        { request in
-            AsyncThrowingStream { continuation in
-                let task = Task {
-                    do {
-                        let (bytes, response) = try await session.bytes(for: request)
-                        guard let response = response as? HTTPURLResponse else { throw ClaudeCloudFailure.invalidReply }
-                        if let failure = ClaudeCloudFailure(streamResponse: response, at: Date()) { throw failure }
-                        var buffer = ClaudeCloudLineBuffer()
-                        for try await byte in bytes {
-                            if let line = try buffer.append(byte) { continuation.yield(line) }
-                        }
-                        continuation.finish()
-                    } catch { continuation.finish(throwing: error) }
-                }
-                continuation.onTermination = { _ in task.cancel() }
-            }
         }
     }
 }

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Read-only polling of Claude's cloud Projects with Pacer's own claude.ai
 /// session. These endpoints are private and version sensitive. The account's
@@ -8,7 +11,7 @@ public actor ClaudeCloudProjectMonitor {
     /// A nil status means this account is not offered Projects, which is nothing to report.
     public typealias Update = @Sendable (_ activities: [SessionActivity], _ status: RuntimeStreamStatus?,
                                          _ attention: [PendingAttentionRequest]) async -> Void
-    typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     public typealias LocalSessions = @Sendable () -> Set<String>
 
     /// Each project costs a request per pass, so only the most recent are followed.
@@ -25,8 +28,7 @@ public actor ClaudeCloudProjectMonitor {
     private let selectedOrganization: @Sendable () -> String?
     private let localSessions: LocalSessions
     private let transport: Transport
-    private let session: URLSession?
-    private let streamSession: URLSession?
+    private let invalidateTransport: @Sendable () -> Void
     private let streams: ClaudeCloudReplyStreams?
     private let streamLines: ClaudeCloudReplyStreams.Lines?
     private let now: @Sendable () -> Date
@@ -50,38 +52,12 @@ public actor ClaudeCloudProjectMonitor {
     private var loop: Task<Void, Never>?
     private var sleeper: Task<Void, Never>?
 
-    public init(cookieProvider: @escaping ClaudeWebQuotaClient.CookieProvider,
-                selectedOrganization: @escaping @Sendable () -> String? = { nil },
-                localSessions: @escaping LocalSessions = { ClaudeApplicationResolver.desktopCloudSessionIDs() }, timeout: TimeInterval = 12) {
-        self.cookieProvider = cookieProvider; self.selectedOrganization = selectedOrganization; self.localSessions = localSessions
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil; configuration.urlCache = nil; configuration.httpShouldSetCookies = false
-        configuration.timeoutIntervalForRequest = min(30, max(1, timeout))
-        configuration.timeoutIntervalForResource = min(35, max(2, timeout + 3))
-        let session = URLSession(configuration: configuration, delegate: ClaudeCloudRedirectDelegate(), delegateQueue: nil)
-        self.session = session
-        transport = { request in
-            let (data, response) = try await session.data(for: request)
-            guard let response = response as? HTTPURLResponse else { throw ClaudeCloudFailure.invalidReply }
-            return (data, response)
-        }
-        now = { Date() }
-        // A stream sends a keepalive about every 14 seconds, and otherwise lasts until it is closed.
-        let streaming = URLSessionConfiguration.ephemeral
-        streaming.httpCookieStorage = nil; streaming.urlCache = nil; streaming.httpShouldSetCookies = false
-        streaming.timeoutIntervalForRequest = 60; streaming.timeoutIntervalForResource = 24 * 3600
-        let streamSession = URLSession(configuration: streaming, delegate: ClaudeCloudRedirectDelegate(), delegateQueue: nil)
-        self.streamSession = streamSession
-        let lines = ClaudeCloudReplyStreams.lines(session: streamSession)
-        streamLines = lines
-        streams = ClaudeCloudReplyStreams(lines: lines, requests: Self.streamRequests(cookieProvider, selectedOrganization))
-    }
-
-    init(cookieProvider: @escaping ClaudeWebQuotaClient.CookieProvider, selectedOrganization: @escaping @Sendable () -> String? = { nil },
+    public init(cookieProvider: @escaping ClaudeWebQuotaClient.CookieProvider, selectedOrganization: @escaping @Sendable () -> String? = { nil },
          localSessions: @escaping LocalSessions = { [] }, transport: @escaping Transport, streamLines: ClaudeCloudReplyStreams.Lines? = nil,
-         now: @escaping @Sendable () -> Date) {
+         now: @escaping @Sendable () -> Date,
+         invalidateTransport: @escaping @Sendable () -> Void = {}) {
         self.cookieProvider = cookieProvider; self.selectedOrganization = selectedOrganization; self.localSessions = localSessions
-        self.transport = transport; self.now = now; session = nil; streamSession = nil
+        self.transport = transport; self.now = now; self.invalidateTransport = invalidateTransport
         self.streamLines = streamLines
         streams = streamLines.map { ClaudeCloudReplyStreams(lines: $0, requests: Self.streamRequests(cookieProvider, selectedOrganization), now: now) }
     }
@@ -134,7 +110,7 @@ public actor ClaudeCloudProjectMonitor {
     }
     public func shutdown() async {
         await suspend(); callback = nil
-        session?.invalidateAndCancel(); streamSession?.invalidateAndCancel()
+        invalidateTransport()
     }
 
     /// Returns the delay before the next look.
@@ -413,12 +389,5 @@ public actor ClaudeCloudProjectMonitor {
             for try await _ in streamLines(request) { return "open" }
             return "closed"
         } catch { return "unavailable (\(error))" }
-    }
-}
-
-final class ClaudeCloudRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }

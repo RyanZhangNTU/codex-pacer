@@ -43,12 +43,13 @@ struct ClaudeCloudStreamParser: Sendable {
 }
 
 /// Splits a byte stream into non-empty lines, without letting one grow without bound.
-struct ClaudeCloudLineBuffer: Sendable {
+public struct ClaudeCloudLineBuffer: Sendable {
+    public init() {}
     /// A partial reply repeats the whole reply, so this allows a very long one.
     static let maximumLine = 4 * 1024 * 1024
     private var line: [UInt8] = []
 
-    mutating func append(_ byte: UInt8) throws -> Data? {
+    public mutating func append(_ byte: UInt8) throws -> Data? {
         guard byte == 10 else {
             guard line.count < Self.maximumLine else { throw ClaudeCloudFailure.invalidReply }
             line.append(byte)

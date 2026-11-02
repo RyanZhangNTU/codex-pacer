@@ -10,7 +10,7 @@ These tables freeze the inputs and expected results formerly checked against the
 | DeepSeekNoticePolicyCompatibilityTests | NoticeScenarioTableTests | All 24 provider/threshold/failure rows and the full 9-step stateful notice sequence, including exact IDs, titles, details, categories and order |
 | EmbeddedSessionVisibilityCompatibilityTests | VisibilityAndInteractionScenarioTableTests.testEveryOriginalProviderHostEmbeddingAndOrderPermutation | Codex/Claude × local/SSH × embedded/not embedded × both row orders: 16 rows; only root and matching child are hidden |
 | TaskRowInteractionCompatibilityTests | VisibilityAndInteractionScenarioTableTests.testEveryOriginalEaseOutSampleUsesTheFixedNumericTable | All 121 curve samples at the original 0.00001 tolerance; hover 0.12 s, navigation error 30 s; finite bounds and invalid-number handling |
-| DeepSeekWebScriptCompatibilityTests | PacerIslandTests.DeepSeekWebScriptContractTests + browser-scripts.json | Schema 1, fixed origin and compiled-script SHA-256 values. The current login uses sessionFingerprintScript. B3 will move the actual resource assertion into shared tests, as agreed. No second script implementation is stored. |
+| DeepSeekWebScriptCompatibilityTests | PacerCoreTests.DeepSeekWebScriptContractTests + browser-scripts.json | Schema 1, fixed origin and script names. Shared tests load the bundled summary and session-fingerprint resources; the Mac driver evaluates those same resources in its isolated script world. Script hashes do not lock implementation changes. |
 
 ## Collapsed rings and values
 

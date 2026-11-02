@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// A Claude Project is a cloud channel. Its threads run on cloud sessions, and
 /// one coordinator session answers the project's main conversation and routes
@@ -238,11 +241,11 @@ enum ClaudeCloudDecoder {
     }
 }
 
-enum ClaudeCloudFailure: Error, Equatable {
+public enum ClaudeCloudFailure: Error, Equatable {
     case signedOut, denied, challenge, notEnabled, throttled(Date?), connection, invalidReply
 
     /// Nil when the reply can be read.
-    init?(response: HTTPURLResponse, at date: Date) {
+    public init?(response: HTTPURLResponse, at date: Date) {
         guard response.url?.scheme == "https", response.url?.host == "claude.ai" else { self = .invalidReply; return }
         switch response.statusCode {
         case 200: return nil
@@ -255,7 +258,7 @@ enum ClaudeCloudFailure: Error, Equatable {
         }
     }
     /// A stream's body cannot be read for a challenge page, but its type gives one away.
-    init?(streamResponse response: HTTPURLResponse, at date: Date) {
+    public init?(streamResponse response: HTTPURLResponse, at date: Date) {
         if let failure = Self(response: response, at: date) { self = failure; return }
         guard response.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("text/event-stream") != true else { return nil }
         self = .challenge

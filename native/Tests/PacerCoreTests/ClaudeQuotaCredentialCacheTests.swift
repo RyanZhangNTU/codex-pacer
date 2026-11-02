@@ -1,3 +1,4 @@
+import PacerMacSupport
 import XCTest
 import CommonCrypto
 @testable import PacerCore

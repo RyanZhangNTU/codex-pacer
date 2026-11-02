@@ -5,6 +5,8 @@ public protocol PlatformFileSystem: Sendable {
     func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata?
     func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data
     func replace(_ url: URL, with data: Data) -> Bool
+    /// Lists non-hidden entries; callers own validation, sorting and limits.
+    func entries(in directory: URL) throws -> [URL]
 }
 
 extension PlatformFileSystem {
@@ -20,9 +22,10 @@ public struct PlatformFileMetadata: Equatable, Sendable {
     public let modified: Date
     public let created: Date?
     public let isRegularFile: Bool
-    public init(identity: String, size: UInt64, modified: Date, created: Date?, isRegularFile: Bool) {
+    public let isDirectory: Bool
+    public init(identity: String, size: UInt64, modified: Date, created: Date?, isRegularFile: Bool, isDirectory: Bool = false) {
         self.identity = identity; self.size = size; self.modified = modified
-        self.created = created; self.isRegularFile = isRegularFile
+        self.created = created; self.isRegularFile = isRegularFile; self.isDirectory = isDirectory
     }
 }
 
