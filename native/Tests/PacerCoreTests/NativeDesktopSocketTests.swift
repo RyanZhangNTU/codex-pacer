@@ -536,6 +536,10 @@ final class NativeDesktopSocketTests: XCTestCase {
             }
         }
         if largeSnapshot {
+            // Keep the fixture server alive through the client's 10-second
+            // delivery assertion and 5-second cleanup deadline. A slow send
+            // must not abort the scenario before the assertion can run.
+            script = script.replacingOccurrences(of: "connection.settimeout(5)", with: "connection.settimeout(15)")
             let initial = "initialize=read();send({'type':'response','method':'initialize','resultType':'success','result':{'clientId':client}})"
             let giant = """
             \(initial)
