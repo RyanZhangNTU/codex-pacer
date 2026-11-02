@@ -93,13 +93,15 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
             let frame = try XCTUnwrap(button.accessibilityFrame?())
             XCTAssertGreaterThanOrEqual(frame.width, 359,
                 "The title and space after it must belong to the button, along with the chevron")
-            XCTAssertEqual(button.accessibilityValue?() as? String, L10n.text("account.expiries_collapsed"))
+            let collapsedValue: Any? = button.accessibilityValue?()
+            XCTAssertEqual(collapsedValue as? String, L10n.text("account.expiries_collapsed"))
             XCTAssertTrue(button.accessibilityPerformPress?() ?? false)
             XCTAssertTrue(state.expanded)
             try await Task.sleep(nanoseconds: 50_000_000)
             let openCandidate = try await disclosureButton(in: host, title: title)
             let openButton = try XCTUnwrap(openCandidate)
-            XCTAssertEqual(openButton.accessibilityValue?() as? String, L10n.text("account.expiries_expanded"))
+            let expandedValue: Any? = openButton.accessibilityValue?()
+            XCTAssertEqual(expandedValue as? String, L10n.text("account.expiries_expanded"))
             XCTAssertTrue(openButton.accessibilityPerformPress?() ?? false)
             XCTAssertFalse(state.expanded)
         }
