@@ -58,7 +58,7 @@ Live TPS values are 102, 83, 102 and 42 for thinking/tool/responding/completed. 
 
 A failed read makes an existing bucket stale; unread data remains unavailable. Reading rows specify numeric values, countdown, freshness, verdict, forecast, pressing state, help order and accessibility results.
 
-Legacy window-mask bits are 1 = 5h, 2 = 7d, 4 = custom 8h, 8 = untyped. For Codex alone and the primary Codex bucket, Classic is true for masks 2,4,6,8,10,12,14; Split is true for 4,8,12. All other provider/bucket combinations are false. All 512 results are explicit in quota-layout.json. Legacy freshness follows the selected weekly fallback when present, even if the custom 8h window expired.
+Legacy window-mask bits are 1 = 5h, 2 = 7d, 4 = custom 8h, 8 = untyped. For Codex alone and the primary Codex bucket, Classic is true for masks 2,4,6,8,10,12,14; Split is true for 4,8,12. All other provider/bucket combinations are false. The original 256 combinations remain, with another 256 covering the four module sets that include DeepSeek. All 512 results are explicit in quota-layout.json. Legacy freshness follows the selected weekly fallback when present, even if the custom 8h window expired.
 
 ## DeepSeek, history and notices
 

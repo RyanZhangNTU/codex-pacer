@@ -78,6 +78,7 @@ final class QuotaDashboardScenarioTableTests: XCTestCase {
     func testAll512LegacyPolicyCombinationsUseTheFixedTruthTable() throws {
         let table = try F.table("quota-layout", as: LayoutTable.self)
         XCTAssertEqual(table.policies.count, 512)
+        XCTAssertEqual(Set(table.policies.map { "\($0.mask)/\($0.bucket)/\($0.providers.map(\.rawValue).joined(separator: ","))/\($0.style.rawValue)" }).count, 512)
         let windows: [QuotaWindow] = [
             .init(id: "five", usedPercent: 20, durationMinutes: 300, resetsAt: F.now.addingTimeInterval(9000)),
             .init(id: "week", usedPercent: 30, durationMinutes: 10080, resetsAt: F.now.addingTimeInterval(300000)),

@@ -1,153 +1,21 @@
 {
   "modes": [
-    {
-      "detected": null,
-      "source": "automatic",
-      "effective": null,
-      "keyEditor": false,
-      "showDetection": false,
-      "title": "deepseek.platform_account",
-      "action": null,
-      "rejectedAction": "signIn",
-      "detectedKey": "deepseek.detected.unknown"
-    },
-    {
-      "detected": null,
-      "source": "web",
-      "effective": "account",
-      "keyEditor": false,
-      "showDetection": true,
-      "title": "deepseek.platform_account",
-      "action": null,
-      "rejectedAction": "signIn",
-      "detectedKey": "deepseek.detected.unknown"
-    },
-    {
-      "detected": null,
-      "source": "apiKey",
-      "effective": "apiKey",
-      "keyEditor": true,
-      "showDetection": true,
-      "title": "deepseek.api_key",
-      "action": "refresh",
-      "rejectedAction": "refresh",
-      "detectedKey": "deepseek.detected.unknown"
-    },
-    {
-      "detected": "account",
-      "source": "automatic",
-      "effective": "account",
-      "keyEditor": false,
-      "showDetection": false,
-      "title": "deepseek.platform_account",
-      "action": null,
-      "rejectedAction": "signIn",
-      "detectedKey": "deepseek.detected.account"
-    },
-    {
-      "detected": "account",
-      "source": "web",
-      "effective": "account",
-      "keyEditor": false,
-      "showDetection": true,
-      "title": "deepseek.platform_account",
-      "action": null,
-      "rejectedAction": "signIn",
-      "detectedKey": "deepseek.detected.account"
-    },
-    {
-      "detected": "account",
-      "source": "apiKey",
-      "effective": "apiKey",
-      "keyEditor": true,
-      "showDetection": true,
-      "title": "deepseek.api_key",
-      "action": "refresh",
-      "rejectedAction": "refresh",
-      "detectedKey": "deepseek.detected.account"
-    },
-    {
-      "detected": "apiKey",
-      "source": "automatic",
-      "effective": "apiKey",
-      "keyEditor": true,
-      "showDetection": false,
-      "title": "deepseek.api_key",
-      "action": "refresh",
-      "rejectedAction": "refresh",
-      "detectedKey": "deepseek.detected.api"
-    },
-    {
-      "detected": "apiKey",
-      "source": "web",
-      "effective": "account",
-      "keyEditor": false,
-      "showDetection": true,
-      "title": "deepseek.platform_account",
-      "action": null,
-      "rejectedAction": "signIn",
-      "detectedKey": "deepseek.detected.api"
-    },
-    {
-      "detected": "apiKey",
-      "source": "apiKey",
-      "effective": "apiKey",
-      "keyEditor": true,
-      "showDetection": true,
-      "title": "deepseek.api_key",
-      "action": "refresh",
-      "rejectedAction": "refresh",
-      "detectedKey": "deepseek.detected.api"
-    }
+    {"detected": null,"source": "automatic","effective": null,"keyEditor": false,"showDetection": false,"title": "deepseek.platform_account","action": null,"rejectedAction": "signIn","detectedKey": "deepseek.detected.unknown"},
+    {"detected": null,"source": "web","effective": "account","keyEditor": false,"showDetection": true,"title": "deepseek.platform_account","action": null,"rejectedAction": "signIn","detectedKey": "deepseek.detected.unknown"},
+    {"detected": null,"source": "apiKey","effective": "apiKey","keyEditor": true,"showDetection": true,"title": "deepseek.api_key","action": "refresh","rejectedAction": "refresh","detectedKey": "deepseek.detected.unknown"},
+    {"detected": "account","source": "automatic","effective": "account","keyEditor": false,"showDetection": false,"title": "deepseek.platform_account","action": null,"rejectedAction": "signIn","detectedKey": "deepseek.detected.account"},
+    {"detected": "account","source": "web","effective": "account","keyEditor": false,"showDetection": true,"title": "deepseek.platform_account","action": null,"rejectedAction": "signIn","detectedKey": "deepseek.detected.account"},
+    {"detected": "account","source": "apiKey","effective": "apiKey","keyEditor": true,"showDetection": true,"title": "deepseek.api_key","action": "refresh","rejectedAction": "refresh","detectedKey": "deepseek.detected.account"},
+    {"detected": "apiKey","source": "automatic","effective": "apiKey","keyEditor": true,"showDetection": false,"title": "deepseek.api_key","action": "refresh","rejectedAction": "refresh","detectedKey": "deepseek.detected.api"},
+    {"detected": "apiKey","source": "web","effective": "account","keyEditor": false,"showDetection": true,"title": "deepseek.platform_account","action": null,"rejectedAction": "signIn","detectedKey": "deepseek.detected.api"},
+    {"detected": "apiKey","source": "apiKey","effective": "apiKey","keyEditor": true,"showDetection": true,"title": "deepseek.api_key","action": "refresh","rejectedAction": "refresh","detectedKey": "deepseek.detected.api"}
   ],
   "ages": [
-    {
-      "age": 0,
-      "freshness": {
-        "key": "quota.just_updated"
-      }
-    },
-    {
-      "age": 9,
-      "freshness": {
-        "key": "quota.just_updated"
-      }
-    },
-    {
-      "age": 10,
-      "freshness": {
-        "key": "quota.seconds_ago",
-        "numbers": [
-          10
-        ]
-      }
-    },
-    {
-      "age": 59,
-      "freshness": {
-        "key": "quota.seconds_ago",
-        "numbers": [
-          59
-        ]
-      }
-    },
-    {
-      "age": 60,
-      "freshness": {
-        "key": "quota.minutes_ago",
-        "numbers": [
-          1
-        ]
-      }
-    },
-    {
-      "age": 601,
-      "freshness": {
-        "key": "quota.minutes_ago",
-        "numbers": [
-          10
-        ]
-      }
-    }
+    {"age": 0,"freshness": {"key": "quota.just_updated"}},
+    {"age": 9,"freshness": {"key": "quota.just_updated"}},
+    {"age": 10,"freshness": {"key": "quota.seconds_ago","numbers": [10]}},
+    {"age": 59,"freshness": {"key": "quota.seconds_ago","numbers": [59]}},
+    {"age": 60,"freshness": {"key": "quota.minutes_ago","numbers": [1]}},
+    {"age": 601,"freshness": {"key": "quota.minutes_ago","numbers": [10]}}
   ]
 }
