@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.2.1
+
+- Fix Claude Code tasks that stayed marked as running after a skill that runs in its own agent, such as `/code-review`, had finished. Such a skill reports its agent differently from the Agent tool, so Pacer never saw that agent end. It now ends when the skill returns; a skill started in the background ends when Claude reports it finished.
+
 ## 4.2.0
 
 - Show Claude's cloud Projects in the task list. Each thread that is working, waiting for you or just ended gets its own row with a cloud icon and the project's name, and the project's coordinator gets a **Project coordinator** row while it answers. Pacer reads them with the claude.ai session in its own window, the one Claude quota already uses, and **Settings → Claude → Show Claude cloud Projects** turns them off. **Settings → Connections** lists the source, paused without that sign-in.
