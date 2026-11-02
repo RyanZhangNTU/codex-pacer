@@ -77,7 +77,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
                 var runtime = await EnvironmentAsync().WaitAsync(read.Token);
                 var window = new Window { Width = 320, Height = 240, Left = -32000, Top = -32000, Opacity = 0,
                     ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None };
-                page = new(window, provider); window.Content = page.View; window.Show();
+                page = new(window, provider); window.Content = page.View; WindowRendering.Prepare(window); window.Show();
                 await page.Initialize(runtime, read.Token);
             }
             fixture?.Invoke(page.Core);
@@ -114,7 +114,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             if (!Directory.Exists(directory)) return;
             var runtime = await EnvironmentAsync().WaitAsync(cancellation);
             var window = new Window { Width = 1, Height = 1, Left = -32000, Top = -32000, Opacity = 0, ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None };
-            page = new(window, provider); window.Content = page.View; window.Show();
+            page = new(window, provider); window.Content = page.View; WindowRendering.Prepare(window); window.Show();
             await page.Initialize(runtime, cancellation);
             await page.Core.Profile.ClearBrowsingDataAsync().WaitAsync(cancellation);
         }

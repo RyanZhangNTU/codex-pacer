@@ -44,7 +44,7 @@ internal static class Program
             {
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
-                TypographyChecks.Run(); await QuotaChartBridgeChecks.Run();
+                TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
                 if (group is "all" or "responsive") await SlowEngineChecks.Run();
                 bool All(string name) => group == "all" || group == name;
                 if (All("quota"))
@@ -101,6 +101,7 @@ internal static class Program
         try
         {
             window.Show();
+            Check(WindowRendering.Mode(window) == "Default", "The layered island must retain its existing rendering mode");
             window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
             await window.WaitForPresentationAsync();
             Check(double.IsFinite(window.VisibleWidth) && window.VisibleHeight > 38,

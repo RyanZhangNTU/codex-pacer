@@ -53,7 +53,12 @@ internal static class CollapsedLayoutChecks
                 "The real header must reflect the changed lane");
             await Until(() => editor.IsEnabled);
             var moved = Find<FrameworkElement>(window, "compact.chip.tps");
-            PressKey(window, moved, Key.Left); await Until(() => NativeCompactBar.Shared.Read(session.Current, language, ["codex", "claude", "deepseek"]).EditorTrailing.LastOrDefault() is { } last && last != "tps");
+            int beforeKeyboard = saves;
+            Check(PressKey(window, moved, Key.Left), "The enabled current chip must handle keyboard reordering");
+            await session.WaitForChangesAsync();
+            state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
+            Check(saves == beforeKeyboard + 1 && state.EditorTrailing.LastOrDefault() is { } last && last != "tps",
+                "Keyboard ordering must save once and move the shared component left");
             Check(configurations == 0, "Keyboard ordering is a presentation-only edit");
             state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
             foreach (string id in state.Components.Where(value => value.Available && !value.Shown).Select(value => value.Id).ToArray())
@@ -146,8 +151,11 @@ internal static class CollapsedLayoutChecks
     {
         value.SelectedItem = value.Items.Cast<ComboBoxItem>().Single(item => (string)item.Tag == selection);
     }
-    private static void PressKey(Window window, UIElement target, Key key)
-        => target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, key) { RoutedEvent = Keyboard.KeyDownEvent });
+    private static bool PressKey(Window window, UIElement target, Key key)
+    {
+        var input = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, key) { RoutedEvent = Keyboard.KeyDownEvent };
+        target.RaiseEvent(input); return input.Handled;
+    }
     private static async Task Until(Func<bool> condition)
     {
         double end = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency + 5;

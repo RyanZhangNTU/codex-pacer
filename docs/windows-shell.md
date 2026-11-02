@@ -21,6 +21,8 @@ All engine requests are asynchronous. Ordinary commands have a 15-second deadlin
 
 `SlowEngineChecks` tests silent, slow and exiting engines. It checks dispatcher heartbeats, immediate rendering, visible errors, bounded request counts and rejection of late responses. Pipe readers await input; animation subscriptions end when motion settles. There is no request polling loop.
 
+Opaque WPF windows use per-window `HwndTarget.RenderMode = SoftwareOnly`. This covers Settings, login windows and their dialogs, including browser host windows. On the development machine, the default hardware path produced an empty client area in ordinary WPF windows; software rendering restored content and input. The machine has multiple physical and virtual display adapters, but the fault has not been isolated to a driver. The layered Black island keeps its existing rendering mode. This changes WPF client drawing only; it does not change system graphics settings, window materials or WebView2's browser rendering. Settings captures record the actual mode, and presentation tests assert both policies. Software rendering uses CPU for these mostly static windows; measure it with Settings open before extending this policy to animated surfaces.
+
 ## Local acceptance
 
 Use demo data for screenshots and interaction checks:

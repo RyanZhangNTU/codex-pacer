@@ -42,6 +42,7 @@ internal static class SettingsPresentationChecks
         {
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle); window.UpdateLayout();
+            Check(WindowRendering.Mode(window) == "SoftwareOnly", "Opaque Settings must use software rendering in multi-adapter and virtual-display sessions");
             TypographyChecks.Check(window.FontFamily, FontWeights.Normal);
             Check(window.ClientContent.ActualWidth == 780
                 && window.ClientContent.ActualHeight == 600, "Settings must retain the original native client dimensions");

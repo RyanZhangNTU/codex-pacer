@@ -131,6 +131,7 @@ internal sealed partial class SettingsWindow
         if (report.Organizations.Count == 0 || revision != claudeAccountRevision || !CurrentClaudeAccount(report.Context)) return;
         var dialog = new Window { Owner = this, Title = ui.Text("claude.login.organization_title"), WindowStartupLocation = WindowStartupLocation.CenterOwner,
             SizeToContent = SizeToContent.WidthAndHeight, ResizeMode = ResizeMode.NoResize, FontFamily = PacerFonts.Interface, Language = Language };
+        WindowRendering.Prepare(dialog);
         dialog.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) });
         SettingsPalette.Apply(dialog.Resources, darkOverride ?? IsSystemDark(), true); dialog.SetResourceReference(BackgroundProperty, "SettingsBackground");
         var content = new StackPanel { Width = 380, Margin = new Thickness(20) }; dialog.Content = content;

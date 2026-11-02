@@ -40,6 +40,7 @@ internal class ProviderLoginWindow : Window
     internal ProviderLoginWindow(UiText ui, Task<CoreWebView2Environment> environment, Action<CoreWebView2>? fixture, bool? darkOverride, CancellationToken lifetime, ProviderWebDefinition provider)
     {
         this.ui = ui; this.provider = provider; this.environment = environment; this.fixture = fixture; this.darkOverride = darkOverride;
+        WindowRendering.Prepare(this);
         this.lifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime); cancellation = this.lifetime.Token;
         Title = ui.Text(provider.ID + ".login.title"); MinWidth = 420; MinHeight = 400; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
@@ -128,7 +129,7 @@ internal class ProviderLoginWindow : Window
             window.Content = browser.View; SetInitialContentSize(window, browser.View, 620, 740); popups[window] = browser;
             var child = window;
             window.Closed += (_, _) => { if (popups.Remove(child, out var removed)) removed.Dispose(); };
-            window.Show(); await browser.Initialize(await environment.WaitAsync(cancellation), cancellation); fixture?.Invoke(browser.Core);
+            WindowRendering.Prepare(window); window.Show(); await browser.Initialize(await environment.WaitAsync(cancellation), cancellation); fixture?.Invoke(browser.Core);
             if (closed) { window.Close(); return; }
             Configure(browser, window); request.NewWindow = browser.Core;
         }

@@ -729,7 +729,7 @@ public partial class IslandWindow : Window
         var dialog = new Window { Title = ui.Text("demo.chat_title"), Width = 560, Height = 320, Content = content, Owner = this,
             FontFamily = FontFamily, Language = Language, Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromRgb(25, 25, 27)), WindowStartupLocation = WindowStartupLocation.CenterOwner };
         var back = new Button { Content = ui.Text("demo.return"), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 22, 0, 0), Padding = new Thickness(14, 6, 14, 6) };
-        back.Click += (_, _) => { dialog.Close(); Reveal(); }; content.Children.Add(back); dialog.Show();
+        back.Click += (_, _) => { dialog.Close(); Reveal(); }; content.Children.Add(back); WindowRendering.Prepare(dialog); dialog.Show();
         return Task.FromResult(true);
     }
     private async Task OpenHarnessTaskAsync(TaskRow control)

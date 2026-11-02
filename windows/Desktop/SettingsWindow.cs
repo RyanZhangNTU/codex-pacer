@@ -53,6 +53,7 @@ internal sealed partial class SettingsWindow : Window
         DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
+        WindowRendering.Prepare(this);
         this.ui = ui; this.session = session; this.startup = startup; this.demo = demo; this.darkOverride = darkOverride;
         this.engine = engine;
         this.webConnection = webConnection;
@@ -270,7 +271,7 @@ internal sealed partial class SettingsWindow : Window
         File.WriteAllText(Path.ChangeExtension(path, ".json"), JsonSerializer.Serialize(new
         {
             schemaVersion = 1, syntheticOnly = true, acceptance = "pending", pane = activePane, language = ui.Language,
-            dark = darkOverride ?? IsSystemDark(), active = IsActive, clientWidth = client.ActualWidth, clientHeight = client.ActualHeight,
+            dark = darkOverride ?? IsSystemDark(), active = IsActive, renderMode = WindowRendering.Mode(this), clientWidth = client.ActualWidth, clientHeight = client.ActualHeight,
             expandedQuotaStyle = session.Current.ExpandedQuotaStyle,
             deepseekMode = activePane == "deepseek" ? session.Current.DeepSeekMode : null,
             deepseekPanelStyle = activePane == "deepseek" ? session.Current.DeepSeekPanelStyle : null,
