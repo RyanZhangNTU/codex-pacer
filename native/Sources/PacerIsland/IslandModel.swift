@@ -94,6 +94,11 @@ final class IslandModel: ObservableObject {
     var deepseekSourceSignature = ""
     var deepseekBalanceBinding: DeepSeekBalanceBinding?
     var deepseekBalanceReads = DeepSeekBalanceReadDependencies()
+    var deepseekBalanceCoordinator: DeepSeekBalanceCoordinator?
+    var deepseekBalanceCoordinatorID = UUID()
+    var deepseekBalanceState: DeepSeekBalanceState?
+    var deepseekCredentialInput: MacDeepSeekCredentialInput?
+    var deepseekBalanceStarting = false
     @Published var deepseekStreamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var deepseekUsage = DeepSeekLocalUsage()
     @Published var deepseekBalance: DeepSeekBalance?
@@ -429,7 +434,16 @@ final class IslandModel: ObservableObject {
         measuredContentHeight = rounded
         onLayoutChange?()
     }
-    private var client: CodexClient?
+    private var codexQuotaCoordinator: CodexQuotaCoordinator?
+    private var codexQuotaState: CodexQuotaState?
+    private var codexQuotaOwnerID = UUID()
+    private var codexQuotaReceiptID: UUID?
+    private var codexQuotaStarting = false
+    private var claudeQuotaCoordinator: ClaudeQuotaCoordinator?
+    private var claudeQuotaState: ClaudeQuotaState?
+    private var claudeQuotaOwnerID = UUID()
+    private var claudeQuotaReceiptID: UUID?
+    private var claudeQuotaStarting = false
     private let reader = LocalActivityReader()
     private let realtimeMonitor = RealtimeActivityMonitor()
     private var remoteTask: Task<Void, Never>?
@@ -440,7 +454,8 @@ final class IslandModel: ObservableObject {
     private let claudeMonitor: ClaudeActivityMonitor
     /// Set by the app, so tests and demos never reach claude.ai.
     var makeClaudeCloudMonitor: (@MainActor () -> ClaudeCloudProjectMonitor)?
-    private var claudeCloudMonitor: ClaudeCloudProjectMonitor?
+    private var claudeCloudCoordinator: ClaudeCloudCoordinator?
+    private var claudeCloudHistoryBinding = ClaudeCloudHistoryBinding()
     private var claudeCloudGeneration = 0
     private let claudeRemoteSetup: ClaudeRemoteSetup
     private var claudeDiscoveryTask: Task<Void, Never>?
@@ -549,8 +564,6 @@ final class IslandModel: ObservableObject {
             }
         }
     }
-    private var claudeClient: ClaudeQuotaClient?
-    private var claudeWebClient: ClaudeWebQuotaClient?
     private let claudeQuotaReads: ClaudeQuotaReadDependencies
     var onClaudeLogin: (() -> Void)?
     var onClaudeOrganizationSelection: (([ClaudeWebOrganization]) -> Void)?
@@ -571,9 +584,7 @@ final class IslandModel: ObservableObject {
     private var claudeStreamStatuses: [String: RuntimeStreamStatus] = [:]
     private var claudeQuotaAttention = AttentionPolicy()
     private var claudeActivityAttention = AttentionPolicy()
-    private var lastClaudeQuotaAttempt = Date.distantPast
     private var lastClaudeDiscovery = Date.distantPast
-    private var claudeFailureCount = 0
     lazy var notifications = NotificationDelivery(defaults: defaults)
     private var attention = AttentionPolicy()
     var completionInbox = CompletionInbox()
@@ -592,9 +603,7 @@ final class IslandModel: ObservableObject {
     private(set) var sleeping = false
     private(set) var stopped = false
     private(set) var interactionSuspended = false
-    private var lastQuotaAttempt = Date.distantPast
     private var lastDiscovery = Date.distantPast
-    private var failureCount = 0
     private var sourceGeneration = 0
     private var observations: [NSObjectProtocol] = []
     let demo: Bool
@@ -874,13 +883,12 @@ final class IslandModel: ObservableObject {
         deepseekGeneration += 1; deepseekActivityTask?.cancel(); deepseekActivityTask = nil
         cancelDeepSeekBalanceRead()
         let deadline = ShutdownDeadline()
-        let history = historyStore, claudeHistory = claudeHistoryStore, cloud = claudeCloudMonitor
-        let claude = claudeMonitor, deepseek = deepseekMonitor, realtime = realtimeMonitor, client = client
+        let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
+        let claude = claudeMonitor, deepseek = deepseekMonitor, realtime = realtimeMonitor
         await deadline.perform([
-            { _ = await history.flush() }, { _ = await claudeHistory.flush() },
+            { await quota?.stop() }, { await claudeQuota?.stop() },
             { await cloud?.suspend() }, { await claude.shutdown(deadline: deadline) },
-            { await deepseek.shutdown() }, { await realtime.shutdown(deadline: deadline) },
-            { await client?.disconnect() }
+            { await deepseek.shutdown() }, { await realtime.shutdown(deadline: deadline) }
         ])
     }
     func resumeAfterSleep() {
@@ -903,14 +911,14 @@ final class IslandModel: ObservableObject {
                 guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped else { return }
                 await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
                 await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-                await self.claudeCloudMonitor?.setExpanded(self.expanded)
+                await self.claudeCloudCoordinator?.setExpanded(self.expanded)
                 await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
             }
             if value { refreshActivity(metricsOnly: true) }
         }
         if clock != nil { scheduleClock() }
         onLayoutChange?()
-        if value && Date().timeIntervalSince(lastQuotaAttempt) > 30 { refreshQuota() }
+        if value && Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
         if value { refreshDesktopApplications(force: false) }
     }
     func hover(_ entered: Bool) {
@@ -1094,73 +1102,56 @@ final class IslandModel: ObservableObject {
         refreshClaudeQuota()
         refreshDeepSeekBalance()
     }
-    private func refreshCodexQuota() {
-        guard isModuleEnabled(.codex), !codexRefreshing, !sleeping, !stopped, !demo else { return }
-        codexRefreshing = true
-        lastQuotaAttempt = Date()
-        let generation = sourceGeneration
-        let sourceHome = home
+    private func refreshCodexQuota(force: Bool = true) {
+        guard isModuleEnabled(.codex), refreshTask == nil, !sleeping, !stopped, !demo else { return }
+        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: codexQuotaState?.lastAttempt, expanded: expanded,
+            failures: codexQuotaState?.failureCount ?? 0, now: Date(), force: force) else { return }
+        let generation = sourceGeneration, sourceHome = home, custom = defaults.string(forKey: "codexExecutable") ?? ""
+        let owner = codexQuotaOwnerID, receipt = UUID()
+        if codexQuotaCoordinator == nil {
+            let services = CodexQuotaServices(makeClient: { home, custom in
+                let report = await Task.detached(priority: .utility) { CodexExecutableResolver.discover(customPath: custom) }.value
+                try Task.checkCancellation()
+                guard let selected = report.selected else {
+                    throw CodexClientError.executableNotFound(report.issue ?? L10n.text("cli.missing_short"))
+                }
+                return MacCodexQuotaConnection(client: CodexClient(executable: selected.url, home: home), selection: selected)
+            }, history: historyStore)
+            codexQuotaCoordinator = CodexQuotaCoordinator(services: services, seed: codexQuotaState) { [weak self] state in
+                await self?.receiveCodexQuota(state, owner: owner)
+            }
+        }
+        guard let coordinator = codexQuotaCoordinator else { return }
+        codexQuotaReceiptID = receipt
+        codexQuotaStarting = true; codexRefreshing = true
         refreshTask = Task { [weak self] in
             guard let self else { return }
-            defer { if generation == self.sourceGeneration { self.codexRefreshing = false } }
-            do {
-                if self.client == nil {
-                    let custom = defaults.string(forKey: "codexExecutable") ?? ""
-                    let report = await Task.detached(priority: .utility) {
-                        CodexExecutableResolver.discover(customPath: custom)
-                    }.value
-                    guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                    self.quotaCLI = report.selected
-                    guard let selection = report.selected else {
-                        throw CodexClientError.executableNotFound(report.issue ?? L10n.text("cli.missing_short"))
-                    }
-                    self.client = CodexClient(executable: selection.url, home: sourceHome)
-                }
-                let snapshot = try await self.client!.readQuota()
-                guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                if self.codexHistory.accountScope != snapshot.accountScope {
-                    if let scope = snapshot.accountScope {
-                        let restored = await self.historyStore.restore(home: sourceHome, accountScope: scope)
-                        guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                        self.codexHistory = restored?.1 ?? QuotaCycleHistory()
-                    } else { self.codexHistory = QuotaCycleHistory() }
-                }
-                self.codexQuota = snapshot
-                self.codexHistory.record(snapshot)
-                self.codexErrorMessage = snapshot.windows.isEmpty
-                    ? L10n.text("quota.no_windows") : nil
-                self.failureCount = 0
-                self.now = Date()
-                if snapshot.accountScope == nil {
-                    self.codexHistoryWarning = L10n.text("quota.no_identity")
-                } else {
-                    let saved = await self.historyStore.save(home: sourceHome, snapshot: snapshot, history: self.codexHistory)
-                    guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                    self.codexHistoryWarning = saved ? nil : L10n.text("quota.history_unsaved")
-                }
-                self.present(self.attention.quotaNotices(snapshot, at: self.now))
-            } catch {
-                guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                let scope = await self.client?.currentAccountScope()
-                guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                if scope == nil {
-                    self.codexQuota = nil
-                    self.codexHistory = QuotaCycleHistory()
-                } else if let scope, self.codexQuota?.accountScope != scope {
-                    self.codexQuota = nil
-                    self.codexHistory = QuotaCycleHistory()
-                    let restored = await self.historyStore.restore(home: sourceHome, accountScope: scope)
-                    guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-                    self.codexQuota = restored?.0
-                    self.codexHistory = restored?.1 ?? QuotaCycleHistory()
-                }
-                self.codexErrorMessage = CodexDiagnosticText.description(of: error)
-                // A moved/upgraded CLI must be rediscovered on the next attempt.
-                self.client = nil
-                self.failureCount = min(self.failureCount + 1, 4)
-            }
-            self.onStatusChange?()
+            defer { if self.codexQuotaReceiptID == receipt { self.refreshTask = nil; self.codexQuotaReceiptID = nil } }
+            guard generation == self.sourceGeneration, !Task.isCancelled else { return }
+            await coordinator.configure(home: sourceHome, customPath: custom, enabled: true, context: UInt64(generation))
+            guard generation == self.sourceGeneration, !Task.isCancelled else { return }
+            await coordinator.refreshIfDue(expanded: self.expanded, force: force)
+            if self.codexQuotaReceiptID == receipt { self.codexQuotaStarting = false }
+            self.receiveCodexQuota(await coordinator.currentState(), owner: owner)
+            await coordinator.waitForRefresh()
         }
+    }
+    private func receiveCodexQuota(_ state: CodexQuotaState, owner: UUID) {
+        guard owner == codexQuotaOwnerID, state.context == UInt64(sourceGeneration), !stopped, !sleeping, isModuleEnabled(.codex) else { return }
+        let successful = state.successCount > (codexQuotaState?.successCount ?? 0)
+        codexQuotaState = state; codexQuota = state.snapshot; codexHistory = state.history
+        codexErrorMessage = state.error; codexHistoryWarning = state.warning; codexRefreshing = state.refreshing || codexQuotaStarting; quotaCLI = state.executable
+        if successful, let snapshot = state.snapshot {
+            now = Date(); present(attention.quotaNotices(snapshot, at: now))
+        }
+        onStatusChange?()
+    }
+    @discardableResult private func detachCodexQuota(preservingCadence: Bool = true) -> CodexQuotaCoordinator? {
+        let previous = codexQuotaCoordinator; previous?.invalidateSource()
+        codexQuotaCoordinator = nil; codexQuotaOwnerID = UUID(); codexQuotaReceiptID = nil
+        refreshTask?.cancel(); refreshTask = nil; codexRefreshing = false; codexQuotaStarting = false
+        if !preservingCadence { codexQuotaState = nil }
+        return previous
     }
 
     func retryQuotaConnection() {
@@ -1169,12 +1160,9 @@ final class IslandModel: ObservableObject {
     func retryQuotaConnection(for provider: AgentProvider) {
         if provider == .claude { retryClaudeWebConnection(); return }
         guard !codexRefreshing else { return }
-        let previous = client
-        client = nil
-        let generation = sourceGeneration
+        let previous = detachCodexQuota(), generation = sourceGeneration
         Task { [weak self] in
-            let deadline = ShutdownDeadline()
-            await deadline.perform([{ await previous?.shutdown(deadline: deadline) }])
+            await previous?.stop()
             guard let self, generation == self.sourceGeneration else { return }
             self.refreshCodexQuota()
         }
@@ -1197,27 +1185,20 @@ final class IslandModel: ObservableObject {
         else { signInClaudeQuota() }
     }
     func retryClaudeWebConnection(organizationID: String? = nil, afterSignIn: Bool = false) {
+        let previousOrganization = defaults.string(forKey: "claudeWebOrganizationID")
         if afterSignIn { defaults.removeObject(forKey: "claudeWebOrganizationID") }
-        if let organizationID, UUID(uuidString: organizationID) != nil {
-            defaults.set(organizationID, forKey: "claudeWebOrganizationID")
-        }
-        if let cloud = claudeCloudMonitor { Task { await cloud.refresh() } }
+        if let organizationID, UUID(uuidString: organizationID) != nil { defaults.set(organizationID, forKey: "claudeWebOrganizationID") }
+        if afterSignIn || previousOrganization != defaults.string(forKey: "claudeWebOrganizationID") {
+            // Revoke Cloud callbacks now, before either owner awaits browser or
+            // client cleanup. Its history binding still retains the same scope.
+            stopClaudeCloudMonitor(); syncClaudeCloudMonitor()
+        } else if let cloud = claudeCloudCoordinator { Task { await cloud.refresh() } }
         guard claudeQuotaRestartTask == nil, isModuleEnabled(.claude), !sleeping, !stopped else { return }
-        let generation = claudeGeneration
-        let pending = claudeQuotaTask
-        pending?.cancel()
+        let generation = claudeGeneration, previous = detachClaudeQuota()
         claudeQuotaRestartTask = Task { [weak self] in
+            await previous?.stop()
             guard let self, self.isCurrentClaudeQuotaRead(generation) else { return }
-            defer { if generation == self.claudeGeneration { self.claudeQuotaRestartTask = nil } }
-            let previous = self.claudeWebClient, previousLegacy = self.claudeClient
-            self.claudeWebClient = nil; self.claudeClient = nil
-            await ShutdownDeadline().perform([
-                { await pending?.value }, { await previous?.shutdown() }, { await previousLegacy?.shutdown() }
-            ])
-            guard self.isCurrentClaudeQuotaRead(generation) else { return }
-            self.claudeQuotaRestartTask = nil
-            self.claudeRefreshing = false
-            self.refreshClaudeQuota()
+            self.claudeQuotaRestartTask = nil; self.refreshClaudeQuota()
         }
     }
     private func isCurrentClaudeQuotaRead(_ generation: Int) -> Bool {
@@ -1225,102 +1206,75 @@ final class IslandModel: ObservableObject {
     }
     func waitForClaudeQuotaRefresh() async {
         if let restart = claudeQuotaRestartTask { await restart.value }
-        let refresh = claudeQuotaTask
-        await refresh?.value
+        let refresh = claudeQuotaTask; await refresh?.value
     }
-    private func refreshClaudeQuota() {
-        guard isModuleEnabled(.claude), !claudeRefreshing, claudeQuotaRestartTask == nil, !sleeping, !stopped, !demo else { return }
-        claudeRefreshing = true; lastClaudeQuotaAttempt = Date()
+    private func refreshClaudeQuota(force: Bool = true) {
+        guard isModuleEnabled(.claude), claudeQuotaTask == nil, claudeQuotaRestartTask == nil, !sleeping, !stopped, !demo else { return }
+        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: claudeQuotaState?.lastAttempt, expanded: expanded,
+            failures: claudeQuotaState?.failureCount ?? 0, now: Date(), force: force) else { return }
         let generation = claudeGeneration, sourceHome = claudeHome
-        claudeQuotaTask = Task { [weak self] in
-            guard let self, self.isCurrentClaudeQuotaRead(generation) else { return }
-            defer {
-                if generation == self.claudeGeneration, !Task.isCancelled {
-                    self.claudeRefreshing = false
-                }
+        let organization = defaults.string(forKey: "claudeWebOrganizationID") ?? ""
+        let owner = claudeQuotaOwnerID, receipt = UUID()
+        if claudeQuotaCoordinator == nil {
+            let reads = claudeQuotaReads
+            let services = ClaudeQuotaServices(makeClient: { @MainActor home, organization, _ in
+                let legacy = ClaudeQuotaClient(home: home)
+                let compatibility = MacClaudeQuotaConnection(read: { @MainActor in try await reads.compatibility(legacy) },
+                    scope: { await legacy.currentAccountScope() }, source: { await legacy.currentSource() },
+                    retry: { await legacy.nextRetryAt() }, choices: { [] }, close: { await legacy.shutdown() })
+                return PrioritizedClaudeQuotaConnection(services: .init(
+                    passive: { @MainActor in await reads.passive(legacy) },
+                    webAvailable: { @MainActor in await reads.webSession() != nil },
+                    makeWeb: { @MainActor in
+                        let web = ClaudeWebQuotaClient(cookieProvider: { await ClaudeWebSessionStore.session() }, home: home,
+                            selectedOrganizationProvider: { organization.isEmpty ? nil : organization })
+                        return MacClaudeQuotaConnection(read: { @MainActor in try await reads.web(web) },
+                            scope: { await web.currentAccountScope() }, source: { await web.currentSource() },
+                            retry: { await web.nextRetryAt() }, choices: { @MainActor in await reads.organizations(web) },
+                            close: { await web.shutdown() })
+                    }, compatibility: compatibility))
+            }, history: claudeHistoryStore)
+            claudeQuotaCoordinator = ClaudeQuotaCoordinator(services: services, seed: claudeQuotaState, webAvailable: true) { [weak self] state in
+                await self?.receiveClaudeQuota(state, owner: owner)
             }
-            var usesWeb = false
-            var ownedWebClient: ClaudeWebQuotaClient?
-            let legacyClient: ClaudeQuotaClient
-            if let current = self.claudeClient { legacyClient = current }
-            else {
-                legacyClient = ClaudeQuotaClient(home: sourceHome)
-                self.claudeClient = legacyClient
-            }
-            do {
-                let snapshot: QuotaSnapshot
-                let source: ClaudeQuotaSource?
-                let passive = await self.claudeQuotaReads.passive(legacyClient)
-                guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                if let passive {
-                    snapshot = passive; source = .statusLine
-                } else {
-                    let webSession = await self.claudeQuotaReads.webSession()
-                    guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                    if webSession != nil {
-                        usesWeb = true
-                        let webClient: ClaudeWebQuotaClient
-                        if let current = self.claudeWebClient { webClient = current }
-                        else {
-                            let selectedOrganization = self.defaults.string(forKey: "claudeWebOrganizationID")
-                            webClient = ClaudeWebQuotaClient(cookieProvider: { await ClaudeWebSessionStore.session() }, home: sourceHome,
-                                selectedOrganizationProvider: { selectedOrganization })
-                            self.claudeWebClient = webClient
-                        }
-                        ownedWebClient = webClient
-                        snapshot = try await self.claudeQuotaReads.web(webClient)
-                        guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                        source = await webClient.currentSource()
-                    } else {
-                        snapshot = try await self.claudeQuotaReads.compatibility(legacyClient)
-                        guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                        source = await legacyClient.currentSource()
-                    }
-                }
-                guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                if self.claudeHistory.accountScope != snapshot.accountScope {
-                    if let scope = snapshot.accountScope {
-                        let restored = await self.claudeHistoryStore.restore(home: sourceHome, accountScope: scope)
-                        guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                        self.claudeHistory = restored?.1 ?? QuotaCycleHistory()
-                    } else { self.claudeHistory = QuotaCycleHistory() }
-                }
-                self.claudeQuota = snapshot; self.claudeHistory.record(snapshot)
-                self.claudeQuotaSource = source
-                self.claudeErrorMessage = snapshot.windows.isEmpty ? L10n.text("quota.no_windows") : nil
-                self.claudeConnectionNeeded = false
-                self.claudeOrganizationChoices = []
-                self.claudeFailureCount = 0; self.now = Date()
-                if snapshot.accountScope == nil { self.claudeHistoryWarning = L10n.text("quota.no_identity") }
-                else {
-                    let saved = await self.claudeHistoryStore.save(home: sourceHome, snapshot: snapshot, history: self.claudeHistory)
-                    guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                    self.claudeHistoryWarning = saved ? nil : L10n.text("quota.history_unsaved")
-                }
-                self.present(self.claudeQuotaAttention.quotaNotices(snapshot, at: self.now).map {
-                    IslandNotice(id: "claude:" + $0.id, kind: $0.kind, title: "Claude · " + $0.title, detail: $0.detail)
-                })
-            } catch {
-                guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                let scope = usesWeb ? await ownedWebClient?.currentAccountScope() : await legacyClient.currentAccountScope()
-                guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                if scope == nil || self.claudeQuota?.accountScope != scope {
-                    self.claudeQuota = nil; self.claudeHistory = QuotaCycleHistory(); self.claudeQuotaSource = nil
-                }
-                self.claudeErrorMessage = (error as? LocalizedError)?.errorDescription ?? L10n.text("claude.quota.unavailable")
-                self.claudeConnectionNeeded = (error as? ClaudeQuotaError).map {
-                    [ClaudeQuotaError.notLoggedIn, .credentialsExpired, .keychainAccessRequired, .accountChanged, .webChallenge, .organizationSelectionRequired].contains($0)
-                } ?? false
-                if (error as? ClaudeQuotaError) == .organizationSelectionRequired, let ownedWebClient {
-                    let choices = await self.claudeQuotaReads.organizations(ownedWebClient)
-                    guard self.isCurrentClaudeQuotaRead(generation) else { return }
-                    self.claudeOrganizationChoices = choices
-                } else { self.claudeOrganizationChoices = [] }
-                if self.claudeConnectionNeeded { self.claudeConnectionSaved = nil }
-                self.claudeFailureCount = min(self.claudeFailureCount + 1, 4)
-            }
-            self.onLayoutChange?(); self.onStatusChange?()
         }
+        guard let coordinator = claudeQuotaCoordinator else { return }
+        claudeQuotaReceiptID = receipt
+        claudeQuotaStarting = true; claudeRefreshing = true
+        claudeQuotaTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.claudeQuotaReceiptID == receipt { self.claudeQuotaTask = nil; self.claudeQuotaReceiptID = nil } }
+            guard self.isCurrentClaudeQuotaRead(generation) else { return }
+            await coordinator.configure(home: sourceHome, organization: organization, enabled: true, context: UInt64(generation))
+            guard self.isCurrentClaudeQuotaRead(generation) else { return }
+            _ = await coordinator.refreshIfDue(expanded: self.expanded, force: force)
+            if self.claudeQuotaReceiptID == receipt { self.claudeQuotaStarting = false }
+            self.receiveClaudeQuota(await coordinator.currentState(), owner: owner)
+            await coordinator.waitForRefresh()
+        }
+    }
+    private func receiveClaudeQuota(_ state: ClaudeQuotaState, owner: UUID) {
+        guard owner == claudeQuotaOwnerID, state.context == UInt64(claudeGeneration), !stopped, !sleeping, isModuleEnabled(.claude) else { return }
+        let successful = state.successCount > (claudeQuotaState?.successCount ?? 0)
+        claudeQuotaState = state; claudeQuota = state.snapshot; claudeHistory = state.history
+        claudeErrorMessage = state.error; claudeHistoryWarning = state.warning; claudeRefreshing = state.refreshing || claudeQuotaStarting; claudeQuotaSource = state.source
+        claudeConnectionNeeded = state.failure.map { [ClaudeQuotaError.notLoggedIn, .credentialsExpired, .keychainAccessRequired, .accountChanged, .webChallenge, .organizationSelectionRequired].contains($0) } ?? false
+        claudeOrganizationChoices = state.failure == .organizationSelectionRequired ? state.organizations : []
+        if claudeConnectionNeeded { claudeConnectionSaved = nil }
+        if successful, let snapshot = state.snapshot {
+            now = Date()
+            present(claudeQuotaAttention.quotaNotices(snapshot, at: now).map {
+                IslandNotice(id: "claude:" + $0.id, kind: $0.kind, title: "Claude · " + $0.title, detail: $0.detail)
+            })
+        }
+        onLayoutChange?(); onStatusChange?()
+    }
+    @discardableResult private func detachClaudeQuota(preservingCadence: Bool = true) -> ClaudeQuotaCoordinator? {
+        let previous = claudeQuotaCoordinator; previous?.invalidateSource()
+        claudeQuotaCoordinator = nil; claudeQuotaOwnerID = UUID(); claudeQuotaReceiptID = nil
+        claudeQuotaTask?.cancel(); claudeQuotaTask = nil; claudeRefreshing = false; claudeQuotaStarting = false
+        if !preservingCadence { claudeQuotaState = nil }
+        return previous
     }
     private func startClaudeActivity() {
         guard isModuleEnabled(.claude), claudeActivityTask == nil, !sleeping, !stopped, !demo else { return }
@@ -1353,25 +1307,48 @@ final class IslandModel: ObservableObject {
     /// meanwhile. Stopping the source forgets it.
     private func syncClaudeCloudMonitor() {
         guard isModuleEnabled(.claude), showsClaudeCloudProjects, !sleeping, !stopped, !demo else { stopClaudeCloudMonitor(); return }
-        guard let monitor = claudeCloudMonitor ?? makeClaudeCloudMonitor?() else { return }
-        if claudeCloudMonitor == nil { claudeCloudGeneration += 1 }
-        claudeCloudMonitor = monitor
-        let generation = claudeGeneration, cloudGeneration = claudeCloudGeneration, expanded = expanded, target = claudeMonitor
-        Task { [weak self] in
-            guard self?.claudeCloudGeneration == cloudGeneration else { return }
-            await monitor.start(expanded: expanded) { [weak self] values, status, requests in
-                guard await self?.claudeGeneration == generation, await self?.claudeCloudGeneration == cloudGeneration else { return }
-                await target.updateCloud(activities: values, status: status, attention: requests)
+        let generation = claudeGeneration, expanded = expanded
+        if claudeCloudCoordinator == nil {
+            guard let factory = makeClaudeCloudMonitor else { return }
+            let clients = MacClaudeCloudClients(prepared: factory(), factory: factory)
+            claudeCloudGeneration += 1
+            let cloudGeneration = claudeCloudGeneration, target = claudeMonitor
+            claudeCloudCoordinator = ClaudeCloudCoordinator(services: .init(makeClient: { await clients.make($0) })) { [weak self] state in
+                guard let self, await self.acceptsClaudeCloud(state, generation: cloudGeneration) else { return }
+                await target.updateCloud(activities: state.activities, status: state.status, attention: state.attention)
             }
         }
+        guard let coordinator = claudeCloudCoordinator else { return }
+        let cloudGeneration = claudeCloudGeneration
+        let sourceHome = claudeHome, organization = defaults.string(forKey: "claudeWebOrganizationID") ?? ""
+        Task { [weak self] in
+            guard let self, self.isCurrentClaudeQuotaRead(generation), self.claudeCloudGeneration == cloudGeneration else { return }
+            await coordinator.resume(context: UInt64(generation))
+            guard self.isCurrentClaudeQuotaRead(generation), self.claudeCloudGeneration == cloudGeneration else { return }
+            await coordinator.configure(home: sourceHome, organization: organization, enabled: true, webAvailable: true, context: UInt64(generation))
+            guard self.isCurrentClaudeQuotaRead(generation), self.claudeCloudGeneration == cloudGeneration else { return }
+            await coordinator.setExpanded(expanded)
+            guard self.isCurrentClaudeQuotaRead(generation), self.claudeCloudGeneration == cloudGeneration else { return }
+            await coordinator.startAfterPublication()
+        }
+    }
+    private func acceptsClaudeCloud(_ state: ClaudeCloudState, generation: Int) -> Bool {
+        guard generation == claudeCloudGeneration, state.context == UInt64(claudeGeneration), !sleeping, !stopped, isModuleEnabled(.claude) else { return false }
+        if claudeCloudHistoryBinding.observe(state) {
+            let ids = Set((activities + completionInbox.activities).filter { $0.claudeCloud != nil }.map(\.id))
+            completionInbox.remove(activityIDs: ids)
+            claudeReceivedActivities.removeAll { $0.claudeCloud != nil }
+            activities.removeAll { $0.claudeCloud != nil }
+        }
+        return true
     }
     private func stopClaudeCloudMonitor() {
-        guard let monitor = claudeCloudMonitor else { return }
-        claudeCloudMonitor = nil; claudeCloudGeneration += 1
+        guard let coordinator = claudeCloudCoordinator else { return }
+        coordinator.invalidateSource(); claudeCloudCoordinator = nil; claudeCloudGeneration += 1
         let target = claudeMonitor, cloudGeneration = claudeCloudGeneration
         Task { [weak self] in
             let deadline = ShutdownDeadline()
-            await deadline.perform([{ await monitor.shutdown() }])
+            await deadline.perform([{ await coordinator.stop() }])
             guard self?.claudeCloudGeneration == cloudGeneration else { return }
             await deadline.perform([{ await target.updateCloud(activities: [], status: nil, attention: []) }])
         }
@@ -1467,7 +1444,7 @@ final class IslandModel: ObservableObject {
             guard let self else { return }
             await self.realtimeMonitor.invalidateRemoteControlCatalog()
             self.refreshRemote()
-            await self.claudeCloudMonitor?.refresh()
+            await self.claudeCloudCoordinator?.refresh()
         }
         discoverClaudeRemoteTargets(refresh: true)
     }
@@ -1668,9 +1645,9 @@ final class IslandModel: ObservableObject {
         cancelHostTracking(for: .codex); hostApplications[.codex] = [:]
         excludedCodexActivityIDs = []; codexReceivedRequests = []; codexLogRequests = []
         logWatcher.stop(); invalidateWork()
-        let previous = client; client = nil
+        let previous = detachCodexQuota(preservingCadence: false)
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
-        quotaCLI = nil; failureCount = 0; attention = AttentionPolicy()
+        quotaCLI = nil; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
         remoteControlHostIDs = nil
         bindCompletionSources(.codex)
@@ -1682,10 +1659,9 @@ final class IslandModel: ObservableObject {
         Task { [weak self, reader] in
             guard let self, generation == self.sourceGeneration else { return }
             let deadline = ShutdownDeadline()
-            let history = self.historyStore, realtime = self.realtimeMonitor
+            let realtime = self.realtimeMonitor
             await deadline.perform([
-                { _ = await history.flush() },
-                { await previous?.shutdown(deadline: deadline) },
+                { await previous?.stop() },
                 { await realtime.shutdown(deadline: deadline) },
                 { await reader.reset() }
             ])
@@ -1700,11 +1676,10 @@ final class IslandModel: ObservableObject {
         claudeRemoteSetupStatus.removeAll(); claudeRemoteSetupFailures.removeAll(); claudeRemoteSetupFailedAt.removeAll()
         claudeQuotaRestartTask?.cancel(); claudeQuotaRestartTask = nil
         claudeQuotaTask?.cancel(); claudeActivityTask?.cancel(); claudeActivityTask = nil
-        let previous = claudeClient; claudeClient = nil; claudeRefreshing = false
-        let previousWeb = claudeWebClient; claudeWebClient = nil
+        let previous = detachClaudeQuota(preservingCadence: false)
         claudeOrganizationChoices = []
         claudeQuota = nil; claudeHistory = QuotaCycleHistory(); claudeHistoryWarning = nil; claudeErrorMessage = nil
-        claudeQuotaSource = nil; claudeConnectionNeeded = false; claudeConnectionSaved = nil; claudeFailureCount = 0; claudeQuotaAttention = AttentionPolicy(); claudeActivityAttention = AttentionPolicy()
+        claudeQuotaSource = nil; claudeConnectionNeeded = false; claudeConnectionSaved = nil; claudeQuotaAttention = AttentionPolicy(); claudeActivityAttention = AttentionPolicy()
         completionInbox.remove(provider: .claude)
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
         bindCompletionSources(.claude)
@@ -1719,10 +1694,9 @@ final class IslandModel: ObservableObject {
         Task { [weak self] in
             guard let self, generation == self.claudeGeneration else { return }
             let deadline = ShutdownDeadline()
-            let history = self.claudeHistoryStore, monitor = self.claudeMonitor
+            let monitor = self.claudeMonitor
             await deadline.perform([
-                { _ = await history.flush() }, { await previous?.shutdown() },
-                { await previousWeb?.shutdown() }, { await monitor.shutdown(deadline: deadline) }
+                { await previous?.stop() }, { await monitor.shutdown(deadline: deadline) }
             ])
             guard generation == self.claudeGeneration else { return }
             self.refreshClaudeQuota(); self.startClaudeActivity()
@@ -1758,15 +1732,14 @@ final class IslandModel: ObservableObject {
         cancelHostTracking()
         cancelClaudeRemoteSetup()
         let deadline = ShutdownDeadline()
-        let history = historyStore, claudeHistory = claudeHistoryStore, cloud = claudeCloudMonitor
+        let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
         let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup
-        let legacy = claudeClient, web = claudeWebClient, realtime = realtimeMonitor, client = client
+        let realtime = realtimeMonitor
         let completed = await deadline.perform([
-            { _ = await history.flush() }, { _ = await claudeHistory.flush() },
-            { await cloud?.shutdown() }, { await claude.shutdown(deadline: deadline) },
+            { await quota?.stop() }, { await claudeQuota?.stop() },
+            { await cloud?.stop() }, { await claude.shutdown(deadline: deadline) },
             { await deepseek.shutdown() }, { await setup.shutdown() },
-            { await legacy?.shutdown() }, { await web?.shutdown() },
-            { await realtime.shutdown(deadline: deadline) }, { await client?.shutdown(deadline: deadline) }
+            { await realtime.shutdown(deadline: deadline) }
         ])
         if !completed { OwnedProcessTermination.terminateAll() }
     }
@@ -1774,7 +1747,7 @@ final class IslandModel: ObservableObject {
     private func invalidateWork() {
         rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
         sourceGeneration += 1
-        refreshTask?.cancel()
+        codexQuotaCoordinator?.invalidateSource(); refreshTask?.cancel()
         localTask?.cancel()
         remoteTask?.cancel(); remoteTask = nil
         localTask = nil
@@ -1817,18 +1790,13 @@ final class IslandModel: ObservableObject {
         pruneCompletions()
         codexHistory.prune(at: now); claudeHistory.prune(at: now)
         guard !sleeping, !stopped, !demo else { return }
-        let normalInterval: Double = expanded ? 30 : 120
-        let interval = failureCount == 0 ? normalInterval : min(600, normalInterval * pow(2, Double(failureCount)))
-        if now.timeIntervalSince(lastQuotaAttempt) >= interval { refreshCodexQuota() }
-        let claudeInterval = claudeFailureCount == 0 ? normalInterval : min(600, normalInterval * pow(2, Double(claudeFailureCount)))
-        if now.timeIntervalSince(lastClaudeQuotaAttempt) >= claudeInterval { refreshClaudeQuota() }
+        refreshCodexQuota(force: false); refreshClaudeQuota(force: false)
         if now.timeIntervalSince(lastDiscovery) >= (streamStatuses["local"]?.connected == true ? 120 : 60) { refreshActivity() }
         if now.timeIntervalSince(lastRemoteDiscovery) >= 30 { refreshRemote() }
         if isModuleEnabled(.claude), now.timeIntervalSince(lastClaudeDiscovery) >= 30 { discoverClaudeRemoteTargets() }
         // A running task reads every minute too, so a spend spike shows within minutes.
         let deepseekActive = expanded || running.contains { $0.provider == .deepseek }
-        let deepseekInterval = (deepseekActive ? 60.0 : 300.0) * pow(2, Double(min(deepseekFailureCount, 3)))
-        if now.timeIntervalSince(lastDeepSeekBalanceAttempt) >= deepseekInterval { refreshDeepSeekBalance() }
+        refreshDeepSeekBalance(scheduled: true, active: deepseekActive)
         onStatusChange?()
     }
     private func priority(_ phase: ActivityPhase) -> Int {

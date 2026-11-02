@@ -51,6 +51,9 @@ public actor ClaudeCloudProjectMonitor {
     private var callback: Update?
     private var loop: Task<Void, Never>?
     private var sleeper: Task<Void, Never>?
+    private var scopeObserver: (@Sendable (String?) async -> Bool)?
+
+    public func setScopeObserver(_ observer: @escaping @Sendable (String?) async -> Bool) { scopeObserver = observer }
 
     public init(cookieProvider: @escaping ClaudeWebQuotaClient.CookieProvider, selectedOrganization: @escaping @Sendable () -> String? = { nil },
          localSessions: @escaping LocalSessions = { [] }, transport: @escaping Transport, streamLines: ClaudeCloudReplyStreams.Lines? = nil,
@@ -119,16 +122,26 @@ public actor ClaudeCloudProjectMonitor {
         let startedRevision = revision
         guard let cookies = await cookieProvider(), ClaudeWebQuotaDecoder.sessionKey(cookies) != nil else {
             guard revision == startedRevision, !Task.isCancelled else { return 1 }
+            if let scopeObserver, !(await scopeObserver(nil)) { return 1 }
+            guard revision == startedRevision, !Task.isCancelled else { return 1 }
             await reset(); await publish(status: Self.signedOut); return 60
         }
         guard revision == startedRevision, !Task.isCancelled else { return 1 }
         // A rejected session stays rejected until the user signs in again.
-        if rejectedSession == cookies.sessionHash { await publish(status: Self.signedOut); return 60 }
+        if rejectedSession == cookies.sessionHash {
+            if let scopeObserver, !(await scopeObserver(nil)) { return 1 }
+            guard revision == startedRevision, !Task.isCancelled else { return 1 }
+            await publish(status: Self.signedOut); return 60
+        }
         rejectedSession = nil
         guard let organization = ClaudeWebQuotaDecoder.uuid(selectedOrganization() ?? cookies.organizationID) else {
+            if let scopeObserver, !(await scopeObserver(nil)) { return 1 }
+            guard revision == startedRevision, !Task.isCancelled else { return 1 }
             await reset(); await publish(status: Self.signedOut); return 120
         }
         let currentScope = ClaudeQuotaDecoder.digest(cookies.sessionHash + "|" + organization)
+        if let scopeObserver, !(await scopeObserver(currentScope)) { return 1 }
+        guard revision == startedRevision, !Task.isCancelled else { return 1 }
         if scope != currentScope {
             let cleared = await reset()
             guard revision == cleared, !Task.isCancelled else { return 1 }
@@ -164,6 +177,7 @@ public actor ClaudeCloudProjectMonitor {
     private func failed(_ failure: ClaudeCloudFailure, binding: ReadBinding, at date: Date) async -> TimeInterval {
         switch failure {
         case .signedOut:
+            if let scopeObserver, !(await scopeObserver(nil)) { return 1 }
             rejectedSession = binding.cookies.sessionHash; await reset()
             await publish(status: Self.signedOut); return 60
         case .notEnabled:
@@ -204,6 +218,14 @@ public actor ClaudeCloudProjectMonitor {
            current.sessionHash == binding.cookies.sessionHash,
            ClaudeWebQuotaDecoder.uuid(selectedOrganization() ?? current.organizationID) == binding.organization { return }
         let cleared = await reset()
+        if revision == cleared, !Task.isCancelled, let scopeObserver {
+            let nextScope = current.flatMap { cookies -> String? in
+                guard ClaudeWebQuotaDecoder.sessionKey(cookies) != nil,
+                      let organization = ClaudeWebQuotaDecoder.uuid(selectedOrganization() ?? cookies.organizationID) else { return nil }
+                return ClaudeQuotaDecoder.digest(cookies.sessionHash + "|" + organization)
+            }
+            guard await scopeObserver(nextScope) else { throw ReadCancelled.superseded }
+        }
         if revision == cleared, !Task.isCancelled { await publish(status: Self.signedOut) }
         throw ReadCancelled.superseded
     }

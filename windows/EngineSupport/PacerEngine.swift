@@ -75,6 +75,8 @@ public enum PacerEngine {
         }
         let demo = CommandLine.arguments.contains("--demo")
         let readOnly = CommandLine.arguments.contains("--read-only-diagnostics")
+        let quotaDiagnostics = readOnly && CommandLine.arguments.contains("--quota-diagnostics")
+        defer { if quotaDiagnostics { QuotaReadDiagnostics.shared.report() } }
         let reference = demo && CommandLine.arguments.contains("--reference-fixture")
         let claudeReference = CommandLine.arguments.contains("--claude-web-fixture")
         guard !claudeReference || reference else { return }
@@ -82,8 +84,9 @@ public enum PacerEngine {
         let clock: @Sendable () -> Date = { reference ? Date(timeIntervalSince1970: 1_800_000_000) : Date() }
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
-            quotaServices: demo || readOnly ? nil : .live, desktopServices: demo ? nil : .platformLive,
-            balanceServices: readOnly ? nil : demo ? .demo(now: clock) : .live,
+            quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
+            balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
+            claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference)
         await runtime.hello()
         let input = EngineInput()

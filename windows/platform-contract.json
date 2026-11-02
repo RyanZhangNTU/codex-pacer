@@ -52,17 +52,6 @@
       "reason": "Unify activity merge, inbox, task projection and visibility orchestration with IslandModel."
     },
     {
-      "owner": "B5b",
-      "files": [
-        "windows/EngineSupport/CodexQuotaMonitor.swift",
-        "windows/EngineSupport/ClaudeQuotaMonitor.swift",
-        "windows/EngineSupport/ClaudeCloudMonitor.swift",
-        "windows/EngineSupport/DeepSeekBalanceMonitor.swift",
-        "windows/EngineSupport/ProviderQuotaRefreshPolicy.swift"
-      ],
-      "reason": "Replace duplicate Codex/Claude quota, Cloud source and DeepSeek balance/history schedulers on both hosts with one shared coordinator."
-    },
-    {
       "owner": "B5c",
       "files": [
         "windows/EngineSupport/PacerEngine.swift",

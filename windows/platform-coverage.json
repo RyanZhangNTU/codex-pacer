@@ -85,7 +85,8 @@
         "native/Tests/PacerCoreTests/LegacyQuotaPresentationTests.swift",
         "native/Tests/PacerCoreTests/QuotaConnectionPresentationTests.swift",
         "native/Tests/PacerCoreTests/QuotaHistoryPresentationTests.swift",
-        "windows/Tests/EngineTests/EngineQuotaHistoryTests.swift"
+        "windows/Tests/EngineTests/EngineQuotaHistoryTests.swift",
+        "native/Tests/PacerCoreTests/SharedQuotaCoordinationTests.swift"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -96,8 +97,8 @@
         "30/120 秒刷新、失败序列、展开刷新与取消，按最新 Mac 行为统一"
       ],
       "previewNote": "Shared read-only RPC feeds Windows dials and live Settings history with independent scheduling, verified-account history and owned shutdown. Native vector charts use shared samples and capsule layouts; window details and account resets preserve unknown values, expired deadlines and account changes. Recovery states, provider-checked retry and direct Codex source settings work through the real engine. Installed MSIX quota read passed; npm 0.118.0 returned -32603 at rateLimits/read. Paired chart/material acceptance, other-provider recovery, wake and broader CLI acceptance remain.",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B5b",
+      "note": "B5b shares quota, balance and Cloud ownership with Mac; native host and live feature acceptance remain assigned to P1.",
+      "cleanupOwner": "P1",
       "deferredEvidence": [
         "scripts/windows/check-quota.ps1",
         "windows/Tests/PresentationTests/LegacyQuotaChecks.cs",
@@ -195,7 +196,8 @@
         "native/Tests/PacerCoreTests/ClaudeCloudProjectTests.swift",
         "native/Tests/PacerCoreTests/ClaudeCloudReplyStreamTests.swift",
         "windows/Tests/EngineTests/WindowsClaudeCloudStreamTests.swift",
-        "windows/Tests/EngineTests/ClaudeCloudOwnerTests.swift"
+        "windows/Tests/EngineTests/ClaudeCloudOwnerTests.swift",
+        "native/Tests/PacerCoreTests/SharedQuotaCoordinationTests.swift"
       ],
       "priority": "P2",
       "previewStatus": "partial",
@@ -206,8 +208,8 @@
         "Desktop 项目/线程导航，失败时同一网页目标；回复等待不能被协调器误清"
       ],
       "previewNote": "The original cloud monitor, polling, stream parser and speed rules run through a checked derivation; all 85 original cloud tests pass on Windows. A bounded FoundationNetworking stream adapter replaces unavailable AsyncBytes and rejects foreign origins, redirects, HTML and oversized/backlogged streams. Source-scoped/coalesced cookie reads revoke the old graph on account or workspace changes; hiding retains unread endings for the same verified session. Actual EN/ZH light/dark browser/engine checks cover cloud projection, toggles, save rollback, stale controls, account switch and failed clearing. Real Cloud Projects, cloud navigation, sleep/wake and complete visual acceptance remain.",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B5b",
+      "note": "B5b shares quota, balance and Cloud ownership with Mac; native host and live feature acceptance remain assigned to P2.",
+      "cleanupOwner": "P2",
       "deferredEvidence": [
         "scripts/windows/build-claude-core.py",
         "windows/EngineSupport/ClaudeCloudPortable.swift",
