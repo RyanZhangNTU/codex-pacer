@@ -9,7 +9,7 @@ final class PlatformStorageTests: XCTestCase {
         var reads = 0
         var readLimit = 0
         var failReplacement = false
-        func metadata(_ url: URL) -> PlatformFileMetadata? {
+        func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
             .init(identity: identity, size: size, modified: Date(timeIntervalSince1970: 10), created: nil, isRegularFile: true)
         }
         func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {

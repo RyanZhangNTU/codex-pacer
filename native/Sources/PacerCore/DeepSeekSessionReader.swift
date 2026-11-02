@@ -77,7 +77,7 @@ struct DeepSeekSessionReader {
     }
 
     private static func readFrames(_ cursor: inout Cursor, budget: Int, files: any PlatformFileSystem) -> (lines: [Line], read: Int, more: Bool) {
-        guard let metadata = files.metadata(cursor.url) else { return ([], 0, false) }
+        guard let metadata = files.metadata(cursor.url, followingSymbolicLinks: true) else { return ([], 0, false) }
         let size = metadata.size
         cursor.modified = metadata.modified
         if size < cursor.offset { cursor.offset = 0; cursor.session = nil; cursor.baselineEnd = size }

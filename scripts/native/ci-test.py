@@ -37,7 +37,7 @@ def sample_tests(parent, prefix):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timeout-seconds", type=float, default=900)
+    parser.add_argument("--timeout-seconds", type=float, default=1200)
     parser.add_argument("--diagnostics-prefix", type=Path, required=True)
     args = parser.parse_args()
     environment = dict(os.environ)

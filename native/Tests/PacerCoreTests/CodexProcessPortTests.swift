@@ -4,7 +4,7 @@ import XCTest
 
 final class CodexProcessPortTests: XCTestCase {
     private struct Files: PlatformFileSystem {
-        func metadata(_ url: URL) -> PlatformFileMetadata? { nil }
+        func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? { nil }
         func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data { Data() }
         func replace(_ url: URL, with data: Data) -> Bool { false }
     }
@@ -26,12 +26,21 @@ final class CodexProcessPortTests: XCTestCase {
         let exited = ShutdownSignal()
         let ioClosed = ShutdownSignal()
         private let stubborn: Bool
+        private let blockedWrite: XCTestExpectation?
+        private let writeGate = DispatchSemaphore(value: 0)
         let output: @Sendable (Data) -> Void
-        init(output: @escaping @Sendable (Data) -> Void, stubborn: Bool) { self.output = output; self.stubborn = stubborn }
+        init(output: @escaping @Sendable (Data) -> Void, stubborn: Bool, blockedWrite: XCTestExpectation?) {
+            self.output = output; self.stubborn = stubborn; self.blockedWrite = blockedWrite
+        }
         var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
         var terminationStatus: Int32? { isRunning ? nil : 0 }
         func errorMessage() -> String { "" }
         func write(_ data: Data) throws {
+            if let blockedWrite {
+                blockedWrite.fulfill()
+                writeGate.wait()
+                guard isRunning else { throw CodexClientError.disconnected }
+            }
             let request = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             let method = try XCTUnwrap(request["method"] as? String)
             lock.lock(); methods.append(method); lock.unlock()
@@ -58,15 +67,19 @@ final class CodexProcessPortTests: XCTestCase {
         func snapshot() -> (events: [String], methods: [String]) {
             lock.lock(); defer { lock.unlock() }; return (events, methods)
         }
+        func releaseWrite() { writeGate.signal() }
     }
     private final class Launcher: ChildProcessLauncher, @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [(ChildProcessRequest, Connection)] = []
         private let stubborn: Bool
-        init(stubborn: Bool = false) { self.stubborn = stubborn }
+        private let blockedWrite: XCTestExpectation?
+        init(stubborn: Bool = false, blockedWrite: XCTestExpectation? = nil) {
+            self.stubborn = stubborn; self.blockedWrite = blockedWrite
+        }
         func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) -> Void,
                     ended: @escaping @Sendable () -> Void) throws -> any ChildProcessConnection {
-            let connection = Connection(output: output, stubborn: stubborn)
+            let connection = Connection(output: output, stubborn: stubborn, blockedWrite: blockedWrite)
             lock.lock(); entries.append((request, connection)); lock.unlock()
             return connection
         }
@@ -110,6 +123,28 @@ final class CodexProcessPortTests: XCTestCase {
         XCTAssertFalse(connection.isRunning)
         do { _ = try await client.readQuota(); XCTFail("A shut-down client cannot launch another child") }
         catch CodexClientError.disconnected {} catch { XCTFail("Unexpected shutdown result") }
+        XCTAssertEqual(launcher.snapshot().count, 1)
+    }
+
+    func testShutdownReturnsWhileTheClientActorIsBlockedInTransportIO() async throws {
+        let blocked = expectation(description: "Transport IO occupies the client actor")
+        let launcher = Launcher(stubborn: true, blockedWrite: blocked)
+        let home = URL(fileURLWithPath: "/synthetic-home")
+        let client = CodexClient(executable: home.appendingPathComponent("codex"), home: home,
+            processes: launcher, executables: Executables(), files: Files())
+        let reading = Task { try? await client.readQuota() }
+        await fulfillment(of: [blocked], timeout: 3)
+        let connection = try XCTUnwrap(launcher.snapshot().first?.1)
+        defer { connection.releaseWrite() }
+        let started = Date()
+        await client.shutdown()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.9)
+        XCTAssertTrue(connection.snapshot().events.contains("kill"), "Emergency termination must not need the client actor")
+        XCTAssertFalse(connection.isRunning)
+        XCTAssertFalse(connection.ioClosed.isFinished)
+        connection.releaseWrite()
+        let result = await reading.value
+        XCTAssertNil(result)
         XCTAssertEqual(launcher.snapshot().count, 1)
     }
 }

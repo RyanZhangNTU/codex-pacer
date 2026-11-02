@@ -57,11 +57,9 @@ final class ShutdownDeadlineTests: XCTestCase {
         XCTAssertTrue(released)
     }
 
-    func testCompletedSignalsReturnWithoutUsingTheGracePeriod() async {
+    func testCompletedSignalWinsOverExpiredDeadline() async {
         let finished = ShutdownSignal(); finished.finish()
-        let started = Date()
-        let completed = await finished.wait(until: ShutdownDeadline())
+        let completed = await finished.wait(until: ShutdownDeadline(timeout: 0))
         XCTAssertTrue(completed)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1)
     }
 }

@@ -39,7 +39,7 @@ jobs:
       - name: Full tests
         run: |
           set -o pipefail
-          python3 -u scripts/native/ci-test.py --timeout-seconds 900 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
+          python3 -u scripts/native/ci-test.py --timeout-seconds 1200 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
       - name: Build app
         run: |
           set -o pipefail

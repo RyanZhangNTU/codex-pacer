@@ -2,9 +2,16 @@ import Foundation
 
 /// System facts and IO only. Callers retain limits, validation and lifecycle policy.
 public protocol PlatformFileSystem: Sendable {
-    func metadata(_ url: URL) -> PlatformFileMetadata?
+    func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata?
     func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data
     func replace(_ url: URL, with data: Data) -> Bool
+}
+
+extension PlatformFileSystem {
+    /// Describes the directory entry itself, including a symbolic link.
+    public func metadata(_ url: URL) -> PlatformFileMetadata? {
+        metadata(url, followingSymbolicLinks: false)
+    }
 }
 
 public struct PlatformFileMetadata: Equatable, Sendable {

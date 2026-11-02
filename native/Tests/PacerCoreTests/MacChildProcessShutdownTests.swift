@@ -6,11 +6,10 @@ import XCTest
 final class MacChildProcessShutdownTests: XCTestCase {
     func testSIGTERMIgnoringChildAndStalledReaderCannotBlockShutdown() async throws {
         let ready = expectation(description: "Synthetic child has installed its SIGTERM handler")
-        let request = ChildProcessRequest(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: ["-u", "-c", """
-        import signal,time
-        signal.signal(signal.SIGTERM,signal.SIG_IGN)
-        print('ready',flush=True)
-        while True:time.sleep(1)
+        let request = ChildProcessRequest(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", """
+        trap '' TERM
+        printf 'ready\\n'
+        exec /bin/sleep 60
         """], environment: ["PATH": "/usr/bin:/bin"])
         let child = try MacChildProcessLauncher().launch(request, output: { data in
             if String(decoding: data, as: UTF8.self).contains("ready") { ready.fulfill() }

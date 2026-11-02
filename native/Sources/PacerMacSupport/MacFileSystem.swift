@@ -4,9 +4,11 @@ import PacerCore
 
 public struct MacFileSystem: PlatformFileSystem {
     public init() {}
-    public func metadata(_ url: URL) -> PlatformFileMetadata? {
+    public func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
         var info = stat()
-        guard url.isFileURL, stat(url.path, &info) == 0, info.st_size >= 0 else { return nil }
+        guard url.isFileURL else { return nil }
+        let result = followingSymbolicLinks ? stat(url.path, &info) : lstat(url.path, &info)
+        guard result == 0, info.st_size >= 0 else { return nil }
         return PlatformFileMetadata(identity: "\(info.st_dev):\(info.st_ino)", size: UInt64(info.st_size),
             modified: Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9),
             created: Date(timeIntervalSince1970: Double(info.st_birthtimespec.tv_sec) + Double(info.st_birthtimespec.tv_nsec) / 1e9),
@@ -20,7 +22,7 @@ public struct MacFileSystem: PlatformFileSystem {
     }
     public func replace(_ url: URL, with data: Data) -> Bool {
         let directory = url.deletingLastPathComponent()
-        let temporary = directory.appendingPathComponent(".completion-dismissals-" + UUID().uuidString)
+        let temporary = directory.appendingPathComponent("." + url.lastPathComponent + "-" + UUID().uuidString)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
