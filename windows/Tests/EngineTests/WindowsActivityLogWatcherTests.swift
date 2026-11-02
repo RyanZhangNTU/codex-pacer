@@ -9,7 +9,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
-    private func ready(_ watcher: WindowsActivityLogWatcher, count: Int) async throws {
+    private func ready(_ watcher: ActivityLogWatcher, count: Int) async throws {
         for _ in 0..<100 {
             if await watcher.activeWatchCount() == count { return }
             try await Task.sleep(nanoseconds: 10_000_000)
@@ -25,7 +25,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
         let file = nested.appendingPathComponent("fixture.jsonl")
         try Data("first\n".utf8).write(to: file)
         let delivery = expectation(description: "an append under a nested source wakes the reader")
-        let watcher = WindowsActivityLogWatcher { discovery in XCTAssertFalse(discovery); delivery.fulfill() }
+        let watcher = ActivityLogWatcher { discovery in XCTAssertFalse(discovery); delivery.fulfill() }
         watcher.update([root], interval: 0.1)
         try await ready(watcher, count: 1)
         let handle = try FileHandle(forWritingTo: file)
@@ -34,7 +34,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
         watcher.stop(); try await ready(watcher, count: 0)
 
         let replacement = expectation(description: "atomic replacement also wakes the reader")
-        let next = WindowsActivityLogWatcher { discovery in if discovery { replacement.fulfill() } }
+        let next = ActivityLogWatcher { discovery in if discovery { replacement.fulfill() } }
         next.update([root], interval: 0.1)
         try await ready(next, count: 1)
         try Data("replacement\n".utf8).write(to: file, options: .atomic)
@@ -45,7 +45,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let delivery = expectation(description: "expansion flushes a pending five-second change")
-        let watcher = WindowsActivityLogWatcher { _ in delivery.fulfill() }
+        let watcher = ActivityLogWatcher { _ in delivery.fulfill() }
         watcher.update([root], interval: ActivityRefreshPolicy.collapsed.interval)
         try await ready(watcher, count: 1)
         try Data("first\n".utf8).write(to: root.appendingPathComponent("fixture.jsonl"))
@@ -56,7 +56,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
 
         let stopped = expectation(description: "stopped watchers cannot publish delayed changes")
         stopped.isInverted = true
-        let next = WindowsActivityLogWatcher { _ in stopped.fulfill() }
+        let next = ActivityLogWatcher { _ in stopped.fulfill() }
         next.update([root], interval: 0.5)
         try await ready(next, count: 1)
         try Data("next\n".utf8).write(to: root.appendingPathComponent("second.jsonl"))
@@ -69,7 +69,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: first); try? FileManager.default.removeItem(at: second) }
         let silent = expectation(description: "old and idle source roots stay silent")
         silent.isInverted = true
-        let watcher = WindowsActivityLogWatcher { _ in silent.fulfill() }
+        let watcher = ActivityLogWatcher { _ in silent.fulfill() }
         watcher.update([first], interval: 0.1)
         try await ready(watcher, count: 1)
         watcher.update([second], interval: 0.1)
@@ -81,7 +81,7 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
     func testNonexistentDirectoryIsNotRetainedAndRepeatedCloseReleasesHandles() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let watcher = WindowsActivityLogWatcher { _ in }
+        let watcher = ActivityLogWatcher { _ in }
         watcher.update([root.appendingPathComponent("missing")], interval: 0.1)
         try await ready(watcher, count: 0)
         for _ in 0..<40 {

@@ -47,6 +47,17 @@ class CoreBoundaryTests(unittest.TestCase):
         self.assertEqual(contract.native_package_wiring("// Comment only\n" + text), expected)
         self.assertNotEqual(contract.native_package_wiring(text.replace('"PacerCore"', '"WindowsHost"')), expected)
 
+    def test_source_selection_cleanup_cannot_be_postponed_to_feature_prs(self):
+        valid = {"owner": "B5c", "phase": "end-of-C"}
+        contract.selection_contract(valid, {"Remaining.swift"}, {"Shared.swift", "Remaining.swift"}, {"Shared.swift"}, set(), {"SharedTests.swift"})
+        for invalid in ({"owner": "P2", "phase": "end-of-C"}, {"owner": "B5c", "phase": "P2"}, {}):
+            with self.assertRaises(ValueError):
+                contract.selection_contract(invalid, set(), set(), set(), set(), set())
+        with self.assertRaises(ValueError):
+            contract.selection_contract(valid, {"Shared.swift"}, {"Shared.swift"}, {"Shared.swift"}, set(), set())
+        with self.assertRaises(ValueError):
+            contract.selection_contract(valid, set(), set(), set(), {"SharedTests.swift"}, {"SharedTests.swift"})
+
 
 if __name__ == "__main__":
     unittest.main()

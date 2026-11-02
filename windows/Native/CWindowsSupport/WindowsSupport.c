@@ -67,57 +67,6 @@ int pacer_named_semaphore_exists(const uint16_t *name) {
     CloseHandle(handle);
     return 1;
 }
-typedef struct {
-    SRWLOCK lock;
-    HANDLE notification;
-    PTP_WAIT wait;
-    int stopped;
-    void *context;
-    pacer_change_callback callback;
-} PacerDirectoryWatch;
-
-static void CALLBACK pacer_directory_changed(PTP_CALLBACK_INSTANCE instance, void *context, PTP_WAIT wait, TP_WAIT_RESULT result) {
-    (void)instance; (void)wait; (void)result;
-    PacerDirectoryWatch *watch = context;
-    AcquireSRWLockExclusive(&watch->lock);
-    if (watch->stopped) { ReleaseSRWLockExclusive(&watch->lock); return; }
-    int valid = FindNextChangeNotification(watch->notification) != 0;
-    if (valid) SetThreadpoolWait(watch->wait, watch->notification, NULL);
-    ReleaseSRWLockExclusive(&watch->lock);
-    // The Swift callback only queues work. Closing waits for this call to
-    // return before releasing its context; it never closes from this callback.
-    watch->callback(watch->context, valid);
-}
-
-void *pacer_watch_directory(const uint16_t *path, int names_only, void *context, pacer_change_callback callback) {
-    if (path == NULL || context == NULL || callback == NULL) return NULL;
-    DWORD flags = names_only ? FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME
-                            : FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-    HANDLE notification = FindFirstChangeNotificationW((LPCWSTR)path, TRUE, flags);
-    if (notification == INVALID_HANDLE_VALUE) return NULL;
-    PacerDirectoryWatch *watch = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*watch));
-    if (watch == NULL) { FindCloseChangeNotification(notification); return NULL; }
-    InitializeSRWLock(&watch->lock);
-    watch->notification = notification; watch->context = context; watch->callback = callback;
-    watch->wait = CreateThreadpoolWait(pacer_directory_changed, watch, NULL);
-    if (watch->wait == NULL) {
-        FindCloseChangeNotification(notification); HeapFree(GetProcessHeap(), 0, watch); return NULL;
-    }
-    SetThreadpoolWait(watch->wait, notification, NULL);
-    return watch;
-}
-
-void pacer_close_directory_watch(void *value) {
-    if (value == NULL) return;
-    PacerDirectoryWatch *watch = value;
-    AcquireSRWLockExclusive(&watch->lock);
-    watch->stopped = 1; SetThreadpoolWait(watch->wait, NULL, NULL);
-    ReleaseSRWLockExclusive(&watch->lock);
-    WaitForThreadpoolWaitCallbacks(watch->wait, TRUE);
-    CloseThreadpoolWait(watch->wait);
-    FindCloseChangeNotification(watch->notification);
-    HeapFree(GetProcessHeap(), 0, watch);
-}
 int pacer_is_windows_executable(const uint16_t *path) {
     DWORD type = 0;
     return path != NULL && GetBinaryTypeW((LPCWSTR)path, &type) && (type == SCS_32BIT_BINARY || type == SCS_64BIT_BINARY);
@@ -203,8 +152,6 @@ int pacer_remove_credential(const uint16_t *name) { return 0; }
 int pacer_normalize_ipv6(const char *input, char *output, size_t capacity) { return 0; }
 int64_t pacer_read_stdin(uint8_t *bytes, size_t capacity) { return -1; }
 int pacer_named_semaphore_exists(const uint16_t *name) { return 0; }
-void *pacer_watch_directory(const uint16_t *path, int names_only, void *context, pacer_change_callback callback) { return NULL; }
-void pacer_close_directory_watch(void *watch) {}
 int pacer_is_windows_executable(const uint16_t *path) { return 0; }
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company) { return 0; }
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity) { return 0; }

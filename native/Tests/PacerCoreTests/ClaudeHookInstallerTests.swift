@@ -1,4 +1,5 @@
 import XCTest
+import PacerMacSupport
 @testable import PacerCore
 
 final class ClaudeHookInstallerTests: XCTestCase {

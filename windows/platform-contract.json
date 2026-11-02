@@ -34,32 +34,6 @@
   ],
   "macosJobSHA256": "0c75a50e0aa49722731d9b9a87ec72e44c1630875596254e9ace448601aef4a9",
   "coreTransitions": {
-    "ActivityLogWatcher.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "ClaudeActivityMonitor.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "ClaudeActivityTelemetry.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1,
-        "zlib": 1
-      }
-    },
-    "ClaudeHookInstaller.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
-    },
     "ClaudeLiveSessionRegistry.swift": {
       "owner": "B4",
       "reason": "Move remaining collector or host operations behind the shared platform ports.",
@@ -69,30 +43,26 @@
     },
     "ClaudeRemoteAutoSetup.swift": {
       "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
+      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features."
     },
     "ClaudeRemoteResume.swift": {
       "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
+      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features."
     },
     "ClaudeRemoteSetup.swift": {
       "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features.",
       "systemImports": {
         "CoreFoundation": 1,
         "Darwin": 1
       }
     },
     "ClaudeSSHRouteResolver.swift": {
-      "owner": "B5c",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "owner": "B4",
+      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features.",
       "systemImports": {
         "Darwin": 1
       }
-    },
-    "CodexApplicationResolver.swift": {
-      "owner": "B5c",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
     },
     "CodexRolloutOwners.swift": {
       "owner": "B5c",
@@ -101,17 +71,13 @@
         "Darwin": 1
       }
     },
-    "DeepSeekActivityMonitor.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
-    },
     "DesktopEventProbe.swift": {
       "owner": "B4",
       "reason": "Move remaining collector or host operations behind the shared platform ports."
     },
     "DesktopRouteHints.swift": {
-      "owner": "P2",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "owner": "B4",
+      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features.",
       "systemImports": {
         "Darwin": 1
       }
@@ -149,8 +115,8 @@
       "reason": "Move remaining collector or host operations behind the shared platform ports."
     },
     "RemoteControlCatalog.swift": {
-      "owner": "P2",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
+      "owner": "B4",
+      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features."
     },
     "RequestLogProbe.swift": {
       "owner": "B4",
@@ -173,10 +139,9 @@
       "owner": "B4",
       "files": [
         "windows/EngineSupport/PacerEngine.swift",
-        "windows/EngineSupport/CodexDesktopMonitor.swift",
-        "windows/EngineSupport/WindowsActivityLogWatcher.swift"
+        "windows/EngineSupport/CodexDesktopMonitor.swift"
       ],
-      "reason": "Unify Codex/Claude/DeepSeek activity discovery, catch-up, watcher and runtime scheduling with the Mac collectors."
+      "reason": "B4b replaces remaining Codex/Desktop reconcile and helper scheduling with RealtimeActivityMonitor on both hosts. B4a already shares the watcher and Claude/DeepSeek monitors."
     },
     {
       "owner": "B5a",
@@ -215,12 +180,13 @@
       "reason": "Wire the WPF shell to this engine protocol; do not ship the WPF or animation bridge targets in C1."
     },
     {
-      "owner": "P2",
+      "owner": "B5c",
       "files": [
         "Package.swift",
-        "windows/shared-core.json"
+        "windows/shared-core.json",
+        "windows/platform-coverage.json"
       ],
-      "reason": "After B4/B5 and P2 finish porting remaining collectors and remote sources, compile the whole Core on both platforms and remove source/test selection."
+      "reason": "At the end of C after B5c, compile the whole Core and remove per-platform source/test selection, shared-core.json and coverage remainingCoreSources/remainingCoreTests. P2 only wires remote features."
     }
   ],
   "nativeTargets": {
@@ -231,7 +197,8 @@
     "PacerCore": {
       "kind": "target",
       "dependencies": [
-        "CZstd"
+        "CZstd",
+        "CGzip"
       ]
     },
     "PacerMacSupport": {
@@ -266,6 +233,10 @@
         "PacerCore",
         "PacerMacSupport"
       ]
+    },
+    "CGzip": {
+      "kind": "target",
+      "dependencies": []
     }
   },
   "featureIDs": [
@@ -316,5 +287,10 @@
     "accessibility",
     "platform-matrix",
     "cross-platform-delivery"
-  ]
+  ],
+  "sourceSelectionRemoval": {
+    "owner": "B5c",
+    "phase": "end-of-C",
+    "reason": "Remove the root Package Core selection, shared-core.json and both coverage remaining inventories after B5c, before feature PRs P1-P4."
+  }
 }

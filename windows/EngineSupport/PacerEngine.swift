@@ -74,14 +74,17 @@ public enum PacerEngine {
             UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
         }
         let demo = CommandLine.arguments.contains("--demo")
+        let readOnly = CommandLine.arguments.contains("--read-only-diagnostics")
         let reference = demo && CommandLine.arguments.contains("--reference-fixture")
         let claudeReference = CommandLine.arguments.contains("--claude-web-fixture")
         guard !claudeReference || reference else { return }
         if reference { NSTimeZone.default = TimeZone(secondsFromGMT: 0)! }
         let clock: @Sendable () -> Date = { reference ? Date(timeIntervalSince1970: 1_800_000_000) : Date() }
         let runtime = EngineRuntime(demo: demo, now: clock,
-            quotaServices: demo ? nil : .live, desktopServices: demo ? nil : .platformLive,
-            balanceServices: demo ? .demo(now: clock) : .live, allowsLiveClaudeWeb: !demo, claudeWebReference: claudeReference)
+            dismissalStore: readOnly ? nil : .applicationDefault,
+            quotaServices: demo || readOnly ? nil : .live, desktopServices: demo ? nil : .platformLive,
+            balanceServices: readOnly ? nil : demo ? .demo(now: clock) : .live,
+            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -187,15 +190,17 @@ actor EngineRuntime {
     private let defaultDeepseekHome: URL
     private let sourceSettings: CodexSourceSettingsServices
     private var codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
-    private var claudeReader = ClaudeActivityReader(files: WindowsFileSystem())
-    private var claudeState = ClaudeActivityState()
     private var navigation = ActivityNavigationRegistry()
     private let navigationServices: ActivityNavigationServices
-    private var settledClaudeActivities: [SessionActivity] = [], settledClaudeRequests: [PendingAttentionRequest] = []
-    private var deepseekReader = DeepSeekSessionReader()
-    private var deepseekState = DeepSeekActivityState()
-    private var deepseekBaselinePending = true
-    private var lastMaintenance = Date.distantPast
+    private struct LocalActivitySnapshot {
+        var activities: [SessionActivity] = []
+        var requests: [PendingAttentionRequest] = []
+        var available = false
+    }
+    private lazy var claudeActivityMonitor = ClaudeActivityMonitor(clock: now)
+    private lazy var deepseekActivityMonitor = DeepSeekActivityMonitor(clock: now)
+    private var claudeLocal = LocalActivitySnapshot(), deepseekLocal = LocalActivitySnapshot()
+    private var deepseekUsage = DeepSeekLocalUsage()
     private var inbox: CompletionInbox
     private var policy = AttentionPolicy()
     private var activities: [SessionActivity] = []
@@ -261,10 +266,11 @@ actor EngineRuntime {
     private var refreshTask: Task<Void, Never>?
     private var refreshRequested = false
     private var discoveryRequested = false
+    private var refreshActivityMonitorsRequested = false
     private var forceBalanceRequested = false
     #if os(Windows)
-    private lazy var logWatcher = WindowsActivityLogWatcher { [weak self] discover in
-        Task { await self?.refresh(discover: discover) }
+    private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
+        Task { await self?.refresh(discover: discover, refreshActivityMonitors: false) }
     }
     #endif
     private let output: @Sendable (Data) -> Void
@@ -335,7 +341,12 @@ actor EngineRuntime {
             var transcript = target.rolloutURL
             #if os(Windows)
             if target.provider == .claude {
-                transcript = claudeReader.transcriptURL(for: target.threadID ?? "") ?? entry.members.compactMap { $0.thread.flatMap { claudeReader.transcriptURL(for: $0) } }.first
+                transcript = await claudeActivityMonitor.transcriptURL(for: target.threadID ?? "")
+                if transcript == nil {
+                    for member in entry.members {
+                        if let thread = member.thread, let url = await claudeActivityMonitor.transcriptURL(for: thread) { transcript = url; break }
+                    }
+                }
             }
             #endif
             do {
@@ -370,7 +381,7 @@ actor EngineRuntime {
             func counts(_ values: [SessionActivity]) -> [String: Int] {
                 Dictionary(grouping: values.filter { $0.provider == .claude && $0.claudeCloud == nil }, by: { $0.phase.rawValue }).mapValues(\.count)
             }
-            let rows = claudeState.activities
+            let rows = claudeLocal.activities
             var isolated = CompletionInbox(dismissalStore: nil)
             _ = isolated.observe(rows, at: now(), retention: retention)
             let timing = ["missingEnd": rows.filter { $0.phaseChangedAt == nil }.count,
@@ -458,6 +469,7 @@ actor EngineRuntime {
             do { try await configure(command.params) }
             catch { failure(id: command.id, code: "invalidConfiguration"); return true }
             initialized = true
+            await bindActivityMonitors()
             await updateSourceWatches()
             if !demo, presentationClock == nil { restartPresentationClock() }
             if maintenance == nil {
@@ -541,6 +553,10 @@ actor EngineRuntime {
         case "setExpanded":
             guard let value = command.params?.expanded else { failure(id: command.id, code: "invalidCommand"); return true }
             expanded = value
+            if !demo {
+                await claudeActivityMonitor.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: true)
+                await deepseekActivityMonitor.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: true)
+            }
             await desktopMonitor?.setExpanded(value)
             await claudeCloudMonitor?.setExpanded(value)
             await updateSourceWatches(flushPending: value)
@@ -658,7 +674,7 @@ actor EngineRuntime {
         if changesCodex { codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) }) }
         if changesClaude { resetClaudeLocalSource() }
         if changesDeepSeek {
-            deepseekReader.reset(); deepseekState = DeepSeekActivityState(); deepseekBaselinePending = true
+            deepseekLocal = LocalActivitySnapshot(); deepseekUsage = DeepSeekLocalUsage()
             deepseekNoticePolicy = .init()
         }
         if changesCodex || changesClaude || changesDeepSeek { latestFirstOutput = nil }
@@ -682,14 +698,80 @@ actor EngineRuntime {
     }
 
     private func resetClaudeLocalSource() {
-        claudeReader.reset(); claudeState = ClaudeActivityState()
-        settledClaudeActivities = []; settledClaudeRequests = []
+        claudeLocal = LocalActivitySnapshot()
+    }
+
+    private func bindActivityMonitors() async {
+        guard !demo else { return }
+        let context = generation
+        if enabled.contains(.claude) {
+            await claudeActivityMonitor.start(home: claudeHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance in
+                await self?.receiveClaudeLocal(rows, statuses: statuses, attention: attention, performance: performance, context: context)
+            }
+        } else { await claudeActivityMonitor.shutdown(); claudeLocal = LocalActivitySnapshot() }
+        guard initialized, generation == context else { return }
+        if enabled.contains(.deepseek) {
+            await deepseekActivityMonitor.start(home: deepseekHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance, usage in
+                await self?.receiveDeepSeekLocal(rows, statuses: statuses, attention: attention, performance: performance, usage: usage, context: context)
+            }
+        } else {
+            await deepseekActivityMonitor.shutdown(); deepseekLocal = LocalActivitySnapshot(); deepseekUsage = DeepSeekLocalUsage()
+        }
+    }
+    private static func measured(_ rows: [SessionActivity], _ performance: [SessionPerformanceUpdate]) -> [SessionActivity] {
+        var result = rows
+        for index in result.indices { for sample in performance where sample.id == result[index].id { sample.apply(to: &result[index]) } }
+        return result
+    }
+    private func receiveClaudeLocal(_ rows: [SessionActivity], statuses: [String: RuntimeStreamStatus],
+        attention: [PendingAttentionRequest], performance: [SessionPerformanceUpdate], context: UInt64) async {
+        guard initialized, generation == context, enabled.contains(.claude) else { return }
+        let exclusions = await claudeActivityMonitor.excludedLocalActivityIDs()
+        guard initialized, generation == context else { return }
+        inbox.remove(activityIDs: exclusions)
+        let status = statuses["local"]
+        claudeLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance), requests: attention,
+            available: status?.connected == true && status?.sourceAvailable != false)
+        if projectionReady, refreshTask == nil { projectLocal(.claude, snapshot: claudeLocal) }
+    }
+    private func receiveDeepSeekLocal(_ rows: [SessionActivity], statuses: [String: RuntimeStreamStatus],
+        attention: [PendingAttentionRequest], performance: [SessionPerformanceUpdate], usage: DeepSeekLocalUsage, context: UInt64) async {
+        guard initialized, generation == context, enabled.contains(.deepseek) else { return }
+        let previous = Set(deepseekLocal.activities.filter { $0.phase == .running }.map { $0.id + "|" + ($0.turnID ?? "") })
+        deepseekUsage = usage
+        let status = statuses["local"]
+        deepseekLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance), requests: attention,
+            available: status?.connected == true && status?.sourceAvailable != false)
+        updateLocalWallet()
+        if projectionReady, refreshTask == nil {
+            projectLocal(.deepseek, snapshot: deepseekLocal)
+            await bindBalanceMonitor()
+            guard initialized, generation == context else { return }
+            let ended = rows.contains { [.completed, .interrupted].contains($0.phase) && previous.contains($0.id + "|" + ($0.turnID ?? "")) }
+            _ = await balanceMonitor?.refreshIfDue(active: expanded || rows.contains { $0.phase == .running }, turnEnded: ended)
+        }
+    }
+    private func projectLocal(_ provider: AgentProvider, snapshot: LocalActivitySnapshot) {
+        loggedActivities.removeAll { $0.provider == provider }; loggedActivities += snapshot.activities
+        loggedRequests.removeAll { $0.provider == provider }; loggedRequests += snapshot.requests
+        let id = provider.rawValue + ":local-logs"
+        loggedSources.removeAll { $0.id == id }
+        loggedSources.append(.init(id: id, provider: provider.rawValue, available: snapshot.available, transport: "logs", reason: nil))
+        cloudLocalSessions.update(loggedActivities)
+        projectCollected(at: now())
+    }
+    private func updateLocalWallet() {
+        var titles = deepseekUsage.titles
+        for activity in deepseekLocal.activities { if let task = activity.threadID { titles[task] = activity.title ?? activity.project } }
+        walletSource = EngineWalletSource(balance: balanceState?.balance,
+            connected: balanceState.map { $0.error == nil || $0.balance != nil } ?? false,
+            ledger: deepseekUsage.ledger, history: balanceState?.history ?? .init(), titles: titles)
     }
 
     private func bindBalanceMonitor() async {
         guard let monitor = balanceMonitor else { return }
         await monitor.configure(home: deepseekHome, source: deepseekSettings.selection, enabled: enabled.contains(.deepseek),
-            recentProvider: demo ? "deepseek-account" : deepseekState.latestProvider?.name, context: generation)
+            recentProvider: demo ? "deepseek-account" : deepseekUsage.provider, context: generation)
         let state = await monitor.currentState()
         receiveBalance(state)
     }
@@ -714,10 +796,11 @@ actor EngineRuntime {
                 if enabled.contains(.claude), !next.contains(.claude) { resetClaudeLocalSource() }
                 enabled = next; generation += 1; projectionReady = false
                 await bindQuotaMonitor()
+                await bindActivityMonitors()
                 await updateSourceWatches()
             }
         }
-        await refresh(discover: true)
+        await refresh(discover: true, refreshActivityMonitors: false)
         await quotaMonitor?.refreshIfDue(expanded: expanded)
         _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded)
         _ = await balanceMonitor?.refreshIfDue(active: expanded || activities.contains { $0.provider == .deepseek && $0.phase == .running })
@@ -741,9 +824,7 @@ actor EngineRuntime {
         guard !demo else { return }
         var directories: [URL] = []
         for (provider, home, components) in [
-            (AgentProvider.codex, codexHome, ["sessions"]),
-            (.claude, claudeHome, ["projects", "pacer"]),
-            (.deepseek, deepseekHome, ["sessions"])
+            (AgentProvider.codex, codexHome, ["sessions"])
         ] where enabled.contains(provider) {
             for component in components {
                 let target = home.appendingPathComponent(component, isDirectory: true)
@@ -859,9 +940,10 @@ actor EngineRuntime {
         }
     }
 
-    func refresh(discover: Bool) async {
+    func refresh(discover: Bool, refreshActivityMonitors: Bool = true) async {
         guard initialized else { return }
         refreshRequested = true; discoveryRequested = discoveryRequested || discover
+        refreshActivityMonitorsRequested = refreshActivityMonitorsRequested || refreshActivityMonitors
         if let refreshTask { await refreshTask.value; return }
         let task = Task { await self.drainRefreshes() }
         refreshTask = task
@@ -869,18 +951,18 @@ actor EngineRuntime {
     }
     private func drainRefreshes() async {
         while initialized, refreshRequested, !Task.isCancelled {
-            let discover = discoveryRequested
-            refreshRequested = false; discoveryRequested = false
-            await collect(discover: discover)
+            let discover = discoveryRequested, refreshMonitors = refreshActivityMonitorsRequested
+            refreshRequested = false; discoveryRequested = false; refreshActivityMonitorsRequested = false
+            await collect(discover: discover, refreshMonitors: refreshMonitors)
             if refreshRequested { await Task.yield() }
         }
         // Clear inside the actor before the worker completes. A request that
         // arrives afterwards creates a new worker instead of joining a finished one.
         refreshTask = nil
     }
-    private func collect(discover: Bool) async {
+    private func collect(discover: Bool, refreshMonitors: Bool) async {
         let date = now(), revision = generation
-        let previousDeepSeekTurns = deepseekBaselinePending ? Set<String>() : Set(activities.filter {
+        let previousDeepSeekTurns = Set(activities.filter {
             $0.provider == .deepseek && $0.phase == .running
         }.map { $0.id + "|" + ($0.turnID ?? "") })
         var current: [SessionActivity] = [], pending: [PendingAttentionRequest] = [], status: [EngineSource] = []
@@ -910,42 +992,19 @@ actor EngineRuntime {
                     available: FileManager.default.fileExists(atPath: codexHome.appendingPathComponent("sessions").path),
                     transport: "logs", reason: nil))
             }
+            if refreshMonitors {
+                if enabled.contains(.claude) { await claudeActivityMonitor.refresh() }
+                if enabled.contains(.deepseek) { await deepseekActivityMonitor.refresh() }
+                guard initialized, generation == revision else { return }
+            }
             if enabled.contains(.claude) {
-                let result = claudeReader.read(home: claudeHome, discover: discover, now: date)
-                if !result.caughtUp { refreshRequested = true }
-                for row in result.records { claudeState.consume(row, now: date) }
-                if result.caughtUp { claudeState.finalizeHistoricalBaseline(now: date) }
-                if !result.available { claudeState.sourceMissing() }
-                if result.caughtUp {
-                    settledClaudeActivities = claudeState.activities; settledClaudeRequests = claudeState.attention
-                }
-                current += settledClaudeActivities; pending += settledClaudeRequests
-                status.append(.init(id: "claude:local-logs", provider: "claude", available: result.available, transport: "logs", reason: nil))
+                current += claudeLocal.activities; pending += claudeLocal.requests
+                status.append(.init(id: "claude:local-logs", provider: "claude", available: claudeLocal.available, transport: "logs", reason: nil))
             }
             if enabled.contains(.deepseek) {
-                let result = deepseekReader.read(home: deepseekHome, discover: discover, now: date)
-                if !result.caughtUp { refreshRequested = true }
-                for line in result.lines { deepseekState.consume(line.record, session: line.session, attaching: line.attaching, now: date) }
-                deepseekState.setAvailable(result.available, watching: false)
-                if deepseekBaselinePending && result.caughtUp {
-                    deepseekBaselinePending = false
-                    let open = deepseekState.openSessions(now: date)
-                    deepseekState.finalizeHistoricalBaseline(live: DeepSeekSessionLocks.held(deepseekReader.lockURLs(sessions: open)))
-                }
-                if date.timeIntervalSince(lastMaintenance) >= 60 {
-                    deepseekState.pruneLedger(now: date)
-                    let quiet = deepseekState.openSessions(quietFor: 60, now: date)
-                    deepseekState.expire(candidates: quiet, live: DeepSeekSessionLocks.held(deepseekReader.lockURLs(sessions: quiet)))
-                    lastMaintenance = date
-                }
-                current += deepseekState.activities; pending += deepseekState.attention
-                var titles = deepseekState.titles
-                for activity in deepseekState.activities { if let task = activity.threadID { titles[task] = activity.title ?? activity.project } }
-                walletSource = EngineWalletSource(balance: balanceState?.balance,
-                    connected: balanceState.map { $0.error == nil || $0.balance != nil } ?? false,
-                    ledger: deepseekState.ledger, history: balanceState?.history ?? .init(), titles: titles)
-                status.append(.init(id: "deepseek:local-logs", provider: "deepseek", available: result.available,
-                    transport: "logs", reason: nil))
+                current += deepseekLocal.activities; pending += deepseekLocal.requests
+                updateLocalWallet()
+                status.append(.init(id: "deepseek:local-logs", provider: "deepseek", available: deepseekLocal.available, transport: "logs", reason: nil))
             }
         }
         await bindBalanceMonitor()
@@ -1141,9 +1200,11 @@ actor EngineRuntime {
         let quota = quotaMonitor, claude = claudeQuotaMonitor, cloud = claudeCloudMonitor
         let desktop = desktopMonitor, balance = balanceMonitor, web = webBridge, claudeWeb = claudeWebBridge
         let watcher = logWatcher, stopWatching = !demo
-        await ShutdownDeadline().perform([
+        let deadline = ShutdownDeadline(), claudeActivity = claudeActivityMonitor, deepseekActivity = deepseekActivityMonitor
+        await deadline.perform([
             { await quota?.stop() }, { await claude?.stop() }, { await cloud?.stop() },
             { await desktop?.stop() }, { await balance?.stop() },
+            { await claudeActivity.shutdown(deadline: deadline) }, { await deepseekActivity.shutdown() },
             { await web.setAvailable(false) }, { await claudeWeb.setAvailable(false) },
             { if stopWatching { watcher.stop(); _ = await watcher.activeWatchCount() } }
         ])

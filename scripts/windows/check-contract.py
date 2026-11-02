@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEM_MODULES = {"AppKit", "SwiftUI", "Security", "LocalAuthentication", "CoreServices", "Darwin", "WinSDK", "CoreGraphics", "CoreFoundation", "zlib"}
-SHARED_MODULES = {"Foundation", "CryptoKit", "SQLite3", "CZstd"}
+SHARED_MODULES = {"Foundation", "CryptoKit", "SQLite3", "CZstd", "CGzip"}
 AVAILABILITY_MODULES = {"FoundationNetworking", "CoreGraphics"}
 OWNERS = {"B4", "B5a", "B5b", "B5c", "C2", "F1", "P1", "P2", "P3", "P4"}
 IMPORT = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|typealias|let|var|func)\s+)?(\w+)", re.M)
@@ -133,6 +133,15 @@ def native_package_wiring(text):
     return result
 
 
+def selection_contract(selection, remaining_sources, all_sources, sources, remaining_tests, selected_tests):
+    if selection.get("owner") != "B5c" or selection.get("phase") != "end-of-C":
+        raise ValueError("Source/test selection must be removed at the end of C after B5c; P2 only wires remote features")
+    if set(remaining_sources) != all_sources - sources:
+        raise ValueError("remainingCoreSources must describe exactly the Core files not compiled on Windows")
+    if set(remaining_tests) & selected_tests:
+        raise ValueError("Compiled shared tests cannot remain in remainingCoreTests")
+
+
 def check(root=ROOT, require_parity=False):
     read = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     contract = read("windows/platform-contract.json")
@@ -165,6 +174,15 @@ def check(root=ROOT, require_parity=False):
     for item in contract["engineTransitions"]:
         if item["owner"] not in OWNERS or not item["reason"] or any(not (root / name).is_file() for name in item["files"]):
             raise ValueError("Engine transition needs existing files and a cleanup owner")
+    selection = contract.get("sourceSelectionRemoval", {})
+    coverage = read("windows/platform-coverage.json")
+    selection_contract(selection, coverage["remainingCoreSources"], all_sources, sources,
+                       coverage["remainingCoreTests"], set(shared["tests"]))
+    gzip = root / "native/Sources/CGzip"
+    provenance = read("native/Sources/CGzip/provenance.json")
+    for name, digest in provenance["sha256"].items():
+        if sha256((gzip / "vendor" / name).read_bytes()).hexdigest() != digest:
+            raise ValueError("Vendored gzip source differs from its pinned upstream: " + name)
     for name, digest in contract["protectedFiles"].items():
         if content_digest((root / name).read_bytes()) != digest:
             raise ValueError("Protected shipping file differs from develop: " + name)

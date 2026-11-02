@@ -116,6 +116,7 @@ final class WindowsCodexProcess: @unchecked Sendable {
         if case .enqueued = input.yield(data) { return true }
         return false
     }
+    func finishInput() { input.finish() }
     func stop() { input.finish(); worker.cancel(); state.terminateImmediately() }
     func terminateImmediately() { state.terminateImmediately() }
     func waitForExit() async { _ = await exited.wait(until: ShutdownDeadline()) }

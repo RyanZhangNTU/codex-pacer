@@ -14,7 +14,8 @@ let package = Package(
         // Decompression-only Zstandard for DeepSeek Harness session logs.
         .target(name: "CZstd", exclude: ["README.md", "LICENSE"],
             cSettings: [.define("ZSTD_DISABLE_ASM"), .define("ZSTD_LEGACY_SUPPORT", to: "0"), .define("ZSTD_NO_TRACE")]),
-        .target(name: "PacerCore", dependencies: ["CZstd"], resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
+        .target(name: "CGzip", exclude: ["README.md", "provenance.json", "vendor/LICENSE"], cSettings: [.define("Z_PREFIX"), .define("Z_SOLO")]),
+        .target(name: "PacerCore", dependencies: ["CZstd", "CGzip"], resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(name: "PacerMacSupport", dependencies: ["PacerCore"]),
         .executableTarget(name: "PacerRelaunch"),
         .executableTarget(name: "PacerIsland", dependencies: ["PacerCore", "PacerMacSupport", .product(name: "Sparkle", package: "Sparkle")],

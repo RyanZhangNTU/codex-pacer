@@ -69,4 +69,6 @@ $env:DOTNET_CLI_HOME = Join-Path $taskRoot 'output/dotnet-home'
 $env:NUGET_PACKAGES = Join-Path $taskRoot 'output/nuget-packages'
 
 # Sources are immutable snapshots; dependencies and object files reuse one isolated cache.
-$taskScratchPath = Join-Path ([IO.Path]::GetTempPath()) 'codex-pacer-windows/build-6.4.2-x64'
+$taskScratchPath = if ($env:PACER_WINDOWS_SCRATCH_PATH) { [IO.Path]::GetFullPath($env:PACER_WINDOWS_SCRATCH_PATH) } else {
+    Join-Path ([IO.Path]::GetTempPath()) 'codex-pacer-windows/build-6.4.2-x64'
+}
