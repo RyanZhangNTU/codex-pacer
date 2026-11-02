@@ -373,8 +373,10 @@ extension IslandModel {
         switch deepseekBalanceMode {
         case .apiKey: openSettings(for: .deepseek)
         default:
-            DeepSeekWebLogin.open { [weak self] in
-                self?.forgetDeepSeekHistory(); self?.clearDeepSeekBalance(); self?.refreshDeepSeekBalance(force: true)
+            DeepSeekWebLogin.open { [weak self] newSession in
+                // A new sign-in may be another account; the same token keeps its readings.
+                if newSession { self?.forgetDeepSeekHistory(); self?.clearDeepSeekBalance() }
+                self?.refreshDeepSeekBalance(force: true)
             }
         }
     }

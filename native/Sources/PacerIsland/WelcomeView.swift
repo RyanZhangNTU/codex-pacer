@@ -168,16 +168,18 @@ struct WelcomeView: View {
             Text(provider.displayName).font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(enabled ? .primary : .secondary).padding(.top, 9)
             // Three cards can leave too little room for a status beside its button;
-            // it then wraps and the button moves below it.
+            // it then wraps and the button moves to the card's bottom, level
+            // with the other cards' buttons.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
                     statusLabel(status, lines: 1)
                     Spacer(minLength: 4)
-                    statusAction(status)
+                    statusAction(status, provider: provider)
                 }
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 0) {
                     statusLabel(status, lines: 2)
-                    statusAction(status)
+                    Spacer(minLength: 6)
+                    statusAction(status, provider: provider)
                 }
             }
             .font(.system(size: 11))
@@ -197,22 +199,29 @@ struct WelcomeView: View {
         }
     }
 
-    @ViewBuilder private func statusAction(_ status: ModuleStatus) -> some View {
+    /// Connecting is what the card is waiting for, so it takes the provider's
+    /// color; Settings for a missing install stays an ordinary button.
+    @ViewBuilder private func statusAction(_ status: ModuleStatus, provider: AgentProvider) -> some View {
         if let action = status.action {
-            Button(action.title, action: action.perform).controlSize(.small)
+            if action.connects {
+                Button(action.title, action: action.perform)
+                    .buttonStyle(.borderedProminent).tint(provider.tint).controlSize(.small)
+            } else {
+                Button(action.title, action: action.perform).controlSize(.small)
+            }
         }
     }
 
     private struct ModuleStatus {
         var text: String
         var ready = false
-        var action: (title: String, perform: () -> Void)?
+        var action: (title: String, connects: Bool, perform: () -> Void)?
     }
 
     /// Mirrors the module and Claude account states shown in Settings.
     private func moduleStatus(_ provider: AgentProvider, enabled: Bool) -> ModuleStatus {
         guard enabled else { return ModuleStatus(text: L10n.text("welcome.module.off", provider.displayName)) }
-        let settings: (title: String, perform: () -> Void) = (L10n.text("welcome.module.settings"),
+        let settings: (title: String, connects: Bool, perform: () -> Void) = (L10n.text("welcome.module.settings"), false,
             { onOpenSettings(SettingsPane(provider: provider)) })
         guard model.providerDetected(provider) else {
             return ModuleStatus(text: L10n.text("welcome.module.\(provider.rawValue)_missing"), action: settings)
@@ -223,14 +232,14 @@ struct WelcomeView: View {
         guard provider == .claude else { return ready }
         if model.claudeNeedsOrganizationSelection {
             return ModuleStatus(text: L10n.text("claude.account.workspace_needed"),
-                                action: (L10n.text("claude.quota.choose_workspace"), { model.chooseClaudeOrganization() }))
+                                action: (L10n.text("claude.quota.choose_workspace"), true, { model.chooseClaudeOrganization() }))
         }
         if !model.claudeConnectionNeeded && model.claudeQuotaSource != nil { return ready }
         if !model.claudeConnectionNeeded && model.providerRefreshing(.claude) {
             return ModuleStatus(text: L10n.text("claude.account.checking"))
         }
         return ModuleStatus(text: L10n.text("welcome.module.sign_in_detail"),
-                            action: (L10n.text("welcome.module.sign_in"), { model.signInClaudeQuota() }))
+                            action: (L10n.text("welcome.module.sign_in"), true, { model.signInClaudeQuota() }))
     }
 
     /// The card's action follows how Harness bills: sign in, or paste a key.
@@ -239,10 +248,10 @@ struct WelcomeView: View {
         if model.deepseekRefreshing { return ModuleStatus(text: L10n.text("claude.account.checking")) }
         if model.deepseekBalanceMode == .apiKey {
             return ModuleStatus(text: L10n.text("welcome.module.balance_detail"),
-                                action: (L10n.text("deepseek.paste_key_short"), { onOpenSettings(.deepseek) }))
+                                action: (L10n.text("deepseek.paste_key_short"), true, { onOpenSettings(.deepseek) }))
         }
-        return ModuleStatus(text: L10n.text("welcome.module.balance_detail"),
-                            action: (L10n.text("welcome.module.sign_in"), { model.connectDeepSeek() }))
+        return ModuleStatus(text: L10n.text("welcome.module.balance_sign_in_detail"),
+                            action: (L10n.text("welcome.module.sign_in"), true, { model.connectDeepSeek() }))
     }
 
     private func personalizeRow<Control: View>(_ pane: SettingsPane, title: String, detail: String, detailTint: Color = .secondary,

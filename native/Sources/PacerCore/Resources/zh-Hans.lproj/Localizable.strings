@@ -1,8 +1,12 @@
 // Codex Pacer interface strings. Protocol identifiers and user content remain unchanged.
 "claude.login.title" = "登录 Claude";
-"claude.login.instructions" = "请在 claude.ai 完成登录，然后点击“继续”。";
+"claude.login.prompt" = "登录 Claude，显示额度";
+"claude.login.prompt_detail" = "登录完成后，这个窗口会自动关闭。";
+"claude.login.signed_in" = "已登录 Claude";
+"claude.login.signed_in_detail" = "正在显示额度…";
+"login.later" = "稍后";
+"login.done" = "完成";
 "claude.login.continue" = "继续";
-"claude.login.continue_shortcut" = "继续（⌘Return）";
 "claude.login.load_failed" = "登录页面无法加载，请刷新后重试。";
 "claude.login.organization_title" = "选择 Claude 工作区";
 "claude.login.organization_instructions" = "请选择需要在 Pacer 中查看额度的工作区。";
@@ -646,6 +650,7 @@
 "warning.lowBalance" = "DeepSeek 余额低";
 "welcome.module.deepseek_missing" = "未找到 DeepSeek Harness";
 "welcome.module.balance_detail" = "连接后显示余额";
+"welcome.module.balance_sign_in_detail" = "登录后显示余额";
 "deepseek.app_missing" = "未找到 DeepSeek Harness，请确认已安装该应用。";
 "deepseek.sessions" = "本机会话";
 "deepseek.home" = "DeepSeek Harness 数据目录";
@@ -678,7 +683,10 @@
 "deepseek.turn_cost_help" = "显示在 DeepSeek 任务行的模型名前。";
 "deepseek.pricing_note" = "花费由本机按 token 数和 DeepSeek 公布的单价估算：北京时间工作日 09:00–12:00、14:00–18:00 按两倍计算，周末和 2026 年法定节假日按平价（调休上班日也按平价，属估算）；联网搜索自 2026 年 11 月 1 日起每千次 ¥5。只估算 DeepSeek 官方渠道，以开放平台账单为准。";
 "deepseek.login.title" = "登录 DeepSeek 开放平台";
-"deepseek.login.instructions" = "请在此窗口登录 DeepSeek 开放平台，然后点击“继续”。Pacer 只读取余额。";
+"deepseek.login.prompt" = "登录 DeepSeek，显示余额";
+"deepseek.login.prompt_detail" = "登录完成后，这个窗口会自动关闭。Pacer 只读取余额。";
+"deepseek.login.signed_in" = "已登录 DeepSeek";
+"deepseek.login.signed_in_detail" = "正在读取余额…";
 "deepseek.balance.signed_out" = "登录 DeepSeek 开放平台后即可读取余额。";
 "deepseek.balance.missing_key" = "请在设置中粘贴 API Key 以读取余额。";
 "deepseek.balance.invalid_key" = "API Key 被拒绝，请在设置中粘贴新的 Key。";

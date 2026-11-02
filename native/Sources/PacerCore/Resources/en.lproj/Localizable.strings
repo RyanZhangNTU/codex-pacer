@@ -1,8 +1,12 @@
 // Codex Pacer interface strings. Protocol identifiers and user content remain unchanged.
 "claude.login.title" = "Sign in to Claude";
-"claude.login.instructions" = "Complete sign-in on claude.ai, then click Continue.";
+"claude.login.prompt" = "Sign in to show Claude quota";
+"claude.login.prompt_detail" = "This window closes by itself once you’re signed in.";
+"claude.login.signed_in" = "Signed in to Claude";
+"claude.login.signed_in_detail" = "Showing your quota…";
+"login.later" = "Later";
+"login.done" = "Done";
 "claude.login.continue" = "Continue";
-"claude.login.continue_shortcut" = "Continue (⌘Return)";
 "claude.login.load_failed" = "The sign-in page could not be loaded. Refresh to try again.";
 "claude.login.organization_title" = "Choose Claude workspace";
 "claude.login.organization_instructions" = "Select the workspace whose quota Pacer should display.";
@@ -646,6 +650,7 @@
 "warning.lowBalance" = "DeepSeek balance low";
 "welcome.module.deepseek_missing" = "DeepSeek Harness not found";
 "welcome.module.balance_detail" = "Connect to show the balance";
+"welcome.module.balance_sign_in_detail" = "Sign in to show balance";
 "deepseek.app_missing" = "DeepSeek Harness was not found. Make sure the app is installed.";
 "deepseek.sessions" = "Sessions on this Mac";
 "deepseek.home" = "DeepSeek Harness data folder";
@@ -678,7 +683,10 @@
 "deepseek.turn_cost_help" = "Shown before the model name in DeepSeek task rows.";
 "deepseek.pricing_note" = "Costs are estimated on this Mac from token counts and DeepSeek’s published prices: doubled on Beijing weekdays 09:00–12:00 and 14:00–18:00, off-peak on weekends and 2026 public holidays (make-up working days count as weekends, so this is an estimate). Web search costs ¥5 per 1,000 calls from 1 Nov 2026. Only DeepSeek’s own channels are estimated; your platform bill is authoritative.";
 "deepseek.login.title" = "Sign in to DeepSeek Platform";
-"deepseek.login.instructions" = "Sign in to the DeepSeek platform in this window, then click Continue. Pacer reads only the balance.";
+"deepseek.login.prompt" = "Sign in to show your DeepSeek balance";
+"deepseek.login.prompt_detail" = "This window closes by itself once you’re signed in. Pacer reads only the balance.";
+"deepseek.login.signed_in" = "Signed in to DeepSeek";
+"deepseek.login.signed_in_detail" = "Reading your balance…";
 "deepseek.balance.signed_out" = "Sign in to the DeepSeek platform to read the balance.";
 "deepseek.balance.missing_key" = "Paste an API key in Settings to read the balance.";
 "deepseek.balance.invalid_key" = "The API key was rejected. Paste a new one in Settings.";
