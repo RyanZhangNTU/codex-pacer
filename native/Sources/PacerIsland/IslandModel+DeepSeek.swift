@@ -319,6 +319,11 @@ extension IslandModel {
     }
     private func receiveDeepSeekBalance(_ state: DeepSeekBalanceState, owner: UUID) {
         guard owner == deepseekBalanceCoordinatorID, state.context == UInt64(deepseekGeneration), !stopped, !sleeping, isModuleEnabled(.deepseek) else { return }
+        // A profile can switch billing modes while Core is awaiting a read.
+        // Rebind on MainActor so the replacement samples its own credential;
+        // the web-mode input intentionally never reads an API key.
+        if synchronizeDeepSeekBalanceSource() { refreshDeepSeekBalance(force: true); return }
+        guard state.source == deepseekBalanceBinding?.source, state.mode == deepseekBalanceBinding?.mode else { return }
         let successful = state.successCount > (deepseekBalanceState?.successCount ?? 0)
         deepseekBalanceState = state; deepseekBalanceBinding = .init(source: state.source, mode: state.mode)
         deepseekBalance = state.balance; deepseekBalanceError = state.error; deepseekHistory = state.history
