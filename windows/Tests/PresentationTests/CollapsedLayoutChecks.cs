@@ -120,8 +120,10 @@ internal static class CollapsedLayoutChecks
             var warning = Find<CheckBox>(window, "compact.component.warnings"); Toggle(warning);
             await Until(() => warning.IsChecked == false && warning.IsEnabled);
             await window.NavigateAsync("reminders"); await Pump();
-            Check(!Find<CheckBox>(window, "settings.reminders.fiveHour").IsChecked.GetValueOrDefault(), "Removing the warnings slot must make its reminder switches read off");
-            Toggle(Find<CheckBox>(window, "settings.reminders.fiveHour"));
+            var fiveHour = Find<CheckBox>(window, "settings.reminders.fiveHour");
+            await Until(() => fiveHour.IsEnabled);
+            Check(!fiveHour.IsChecked.GetValueOrDefault(), "Removing the warnings slot must make its reminder switches read off");
+            Toggle(fiveHour);
             await Until(() => session.Current.WarningKinds.SequenceEqual(new[] { "fiveHour" }));
             Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).EditorTrailing.First() == "warnings",
                 "Choosing one reminder must restore the slot at the start with only that kind");
