@@ -174,7 +174,10 @@ final class ClaudeInitialBacklogTests: XCTestCase {
         try files.install(file(root), bytes: transcript(size: 64 * 1024, at: date), created: date, modified: date)
         let first = try drain(&reader, root: root, at: date).0
         XCTAssertFalse(try XCTUnwrap(first.activities.first).isHistoricalCompletion)
-        XCTAssertEqual(reader.excludeSessionIDs([session]), [file(root)])
+        let removed = reader.excludeSessionIDs([session])
+        // Temporary-directory URL aliases still identify the same excluded file.
+        XCTAssertEqual(Set(removed.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }),
+                       [file(root).standardizedFileURL.resolvingSymlinksInPath().path])
         let replay = try drain(&reader, root: root, at: date).0
         XCTAssertTrue(try XCTUnwrap(replay.activities.first).isHistoricalCompletion)
         XCTAssertFalse(try XCTUnwrap(replay.activities.first).liveTurnStarted)
