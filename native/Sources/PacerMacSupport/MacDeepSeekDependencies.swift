@@ -12,6 +12,6 @@ public enum DeepSeekSessionLocks {
 
 extension DeepSeekActivityMonitor {
     public init(liveSessions: @escaping @Sendable ([String: URL]) -> Set<String> = { DeepSeekSessionLocks.held($0) }) {
-        self.init(files: MacFileSystem(), liveSessions: liveSessions)
+        self.init(files: MacFileSystem(), fileEvents: MacActivityFileEvents(), liveSessions: liveSessions)
     }
 }

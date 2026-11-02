@@ -16,8 +16,17 @@ int pacer_normalize_ipv6(const char *input, char *output, size_t capacity);
 int64_t pacer_read_stdin(uint8_t *bytes, size_t capacity);
 int pacer_named_semaphore_exists(const uint16_t *name);
 typedef void (*pacer_change_callback)(void *context, int valid);
-void *pacer_watch_directory(const uint16_t *path, int names_only, void *context, pacer_change_callback callback);
+/* flags: 1 invalidated, 2 directory entries changed. closed releases context. */
+void *pacer_watch_directory(const uint16_t *path, int is_directory, void *context,
+                           pacer_change_callback callback, void (*closed)(void *));
 void pacer_close_directory_watch(void *watch);
+void *pacer_telemetry_listen(uint16_t port, int backlog, uint16_t *bound_port, void *context,
+                            void (*accepted)(void *, void *), void (*closed)(void *));
+void pacer_telemetry_stop(void *listener);
+int pacer_telemetry_read(void *client, uint8_t *bytes, size_t capacity, uint32_t timeout_ms);
+int pacer_telemetry_write(void *client, const uint8_t *bytes, size_t count);
+void pacer_telemetry_interrupt(void *client);
+void pacer_telemetry_close(void *client);
 int pacer_is_windows_executable(const uint16_t *path);
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company);
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);

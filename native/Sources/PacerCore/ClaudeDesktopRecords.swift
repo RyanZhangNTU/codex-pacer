@@ -55,8 +55,12 @@ public enum ClaudeDesktopRecords {
     /// from a UUID shared by independently observed local/SSH sessions.
     public static func remoteMirrorSessionIDs(claudeHome: URL,
                                              defaultClaudeHome: URL, directory: URL, files: any PlatformFileSystem) -> Set<String> {
+        remoteMirrorSessionIDs(claudeHome: claudeHome, defaultClaudeHome: defaultClaudeHome, directories: [directory], files: files)
+    }
+    public static func remoteMirrorSessionIDs(claudeHome: URL,
+                                             defaultClaudeHome: URL, directories: [URL], files: any PlatformFileSystem) -> Set<String> {
         guard claudeHome.standardizedFileURL == defaultClaudeHome.standardizedFileURL else { return [] }
-        let records = Dictionary(grouping: desktopMetadata(directory: directory, files: files), by: { $0.canonicalCLI! })
+        let records = Dictionary(grouping: Set(directories.prefix(16)).flatMap { desktopMetadata(directory: $0, files: files) }, by: { $0.canonicalCLI! })
         return Set(records.compactMap { id, contexts in
             guard contexts.count == 1, let context = contexts.first,
                   (context.sshConfig != nil) != (context.wslConfig != nil) else { return nil }

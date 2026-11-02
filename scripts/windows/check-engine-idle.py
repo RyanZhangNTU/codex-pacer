@@ -1,4 +1,4 @@
-"""Measure a live engine with empty provider homes; never record protocol bodies."""
+"""Measure a live engine without recording protocol bodies or source paths."""
 import argparse
 import ctypes
 from ctypes import wintypes
@@ -21,7 +21,7 @@ def cpu_seconds(process):
     return sum((value.dwHighDateTime << 32) + value.dwLowDateTime for value in values[2:]) / 10_000_000
 
 
-def check(engine, seconds, output):
+def check(engine, seconds, output, real_data=False):
     if os.name != "nt" or seconds < 120:
         raise ValueError("Run on Windows for at least 120 seconds")
     with tempfile.TemporaryDirectory(prefix="pacer-idle-") as temporary:
@@ -31,7 +31,14 @@ def check(engine, seconds, output):
             home = root / provider
             (home / folder).mkdir(parents=True)
             homes[provider + "Home"] = str(home)
-        process = subprocess.Popen([str(engine)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        if real_data:
+            if seconds < 300:
+                raise ValueError("Real-data checks run for at least five minutes")
+            user_home = Path.home()
+            homes = {provider + "Home": str(Path(os.environ.get(variable) or user_home / folder))
+                     for provider, variable, folder in (("codex", "CODEX_HOME", ".codex"),
+                         ("claude", "CLAUDE_CONFIG_DIR", ".claude"), ("deepseek", "DSH_HOME", ".dsh"))}
+        process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         hello, ready = threading.Event(), threading.Event()
         counts = {"frames": 0, "stderrBytes": 0, "protocolErrors": 0, "shutdownReplies": 0}
@@ -95,7 +102,7 @@ def check(engine, seconds, output):
                 "oneCorePercent": round(cpu / elapsed * 100, 3),
                 "hostPercent": round(cpu / elapsed / (os.cpu_count() or 1) * 100, 3),
                 "logicalProcessors": os.cpu_count(), "shutdownSeconds": round(shutdown, 4),
-                "exitCode": process.returncode, "isolatedEmptyHomes": True, **counts}
+                "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data, **counts}
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
@@ -115,5 +122,6 @@ if __name__ == "__main__":
     parser.add_argument("--engine", required=True, type=Path)
     parser.add_argument("--seconds", type=int, default=120)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--real-data", action="store_true", help="Read actual provider homes; disable quota clients and persistence")
     args = parser.parse_args()
-    check(args.engine.resolve(), args.seconds, args.output)
+    check(args.engine.resolve(), args.seconds, args.output, args.real_data)
