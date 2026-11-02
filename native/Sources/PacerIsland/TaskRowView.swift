@@ -125,7 +125,7 @@ struct TaskRowView: View {
         .background {
             rowContent(measuring: true).fixedSize(horizontal: true, vertical: false)
                 .background(GeometryReader { geometry in
-                    Color.clear.preference(key: TaskRowIdealWidth.self, value: geometry.size.width)
+                    Color.clear.preference(key: ExpandedContentIdealWidth.self, value: geometry.size.width)
                 })
                 .hidden().allowsHitTesting(false).accessibilityHidden(true)
         }
@@ -253,7 +253,7 @@ struct TaskRowView: View {
     }
 }
 
-struct TaskRowIdealWidth: PreferenceKey {
+struct ExpandedContentIdealWidth: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

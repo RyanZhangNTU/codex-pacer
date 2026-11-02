@@ -645,6 +645,7 @@ struct SettingsView: View {
                             }.padding(.vertical, 8)
                         }
                     }
+                    .disclosureGroupStyle(FullRowDisclosureStyle())
                 }
                 if presentation.account != nil {
                     AccountUsageView(snapshot: snapshot, now: model.now, showsExpiryDetails: Binding(

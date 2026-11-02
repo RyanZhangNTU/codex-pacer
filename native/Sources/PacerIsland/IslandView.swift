@@ -94,7 +94,7 @@ private struct IslandExpandedContent: View {
             guard height > 0 else { return }
             DispatchQueue.main.async { model.updateMeasuredContentHeight(height + Self.bottomInset) }
         }
-        .onPreferenceChange(TaskRowIdealWidth.self) { width in
+        .onPreferenceChange(ExpandedContentIdealWidth.self) { width in
             DispatchQueue.main.async { model.updateMeasuredContentWidth(width > 0 ? width + 2 * IslandMetrics.edgeInset : 0) }
         }
     }
@@ -164,12 +164,13 @@ private struct IslandExpandedContent: View {
 /// moving away, Escape or unpinning closes the panel.
 struct IslandPanelControls: View {
     @ObservedObject var model: IslandModel
+    var language: AppLanguage = L10n.language
     @State private var hovered = false
 
     var body: some View {
         HStack(spacing: 0) {
             if model.isDemo {
-                Text(L10n.text("demo.label")).font(.system(size: 10, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
+                Text(L10n.text("demo.label", language: language)).font(.system(size: 10, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(PacerPalette.fill, in: Capsule())
                     .fixedSize().padding(.trailing, 4)

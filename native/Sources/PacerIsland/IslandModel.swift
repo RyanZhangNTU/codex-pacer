@@ -626,6 +626,10 @@ final class IslandModel: ObservableObject {
     private var observations: [NSObjectProtocol] = []
     let demo: Bool
     private let demoClock: () -> Date
+    /// Source tests pass nil to keep demo's I/O isolation while supplying their own events.
+    private let demoArguments: [String]?
+    private var demoActivities: [SessionActivity] = []
+    private var demoRequests: [PendingAttentionRequest] = []
     var isDemo: Bool { demo }
 
     var home: URL {
@@ -823,6 +827,7 @@ final class IslandModel: ObservableObject {
     }
 
     init(demo: Bool = false, initiallyExpanded: Bool = false, demoClock: @escaping () -> Date = { Date() },
+         demoArguments: [String]? = CommandLine.arguments,
          defaults: UserDefaults = .standard, installation: ProviderInstallationDetection? = nil,
          claudeQuotaReads: ClaudeQuotaReadDependencies? = nil,
          completionDismissalStore: CompletionDismissalStore? = nil,
@@ -836,10 +841,12 @@ final class IslandModel: ObservableObject {
         self.claudeRemoteSetup = claudeRemoteSetup
         self.claudeQuotaReads = claudeQuotaReads ?? ClaudeQuotaReadDependencies()
         self.installationOverride = installation
-        self.installation = installation ?? .detect()
+        self.installation = installation ?? (demo && demoArguments != nil
+            ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         self.modules = .load(from: defaults)
         self.demo = demo
         self.demoClock = demoClock
+        self.demoArguments = demoArguments
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
@@ -859,7 +866,7 @@ final class IslandModel: ObservableObject {
         bindCompletionSources(.claude)
         bindCompletionSources(.deepseek)
         // Demo opens pinned so its content is visible; --demo-collapsed keeps the bar.
-        expanded = (demo && !CommandLine.arguments.contains("--demo-collapsed")) || initiallyExpanded
+        expanded = (demo && demoArguments?.contains("--demo-collapsed") != true) || initiallyExpanded
         pinned = expanded
         if demo { makeDemo() }
     }
@@ -1425,7 +1432,8 @@ final class IslandModel: ObservableObject {
         }
         var values = Dictionary(completionInbox.activities.filter { $0.provider == provider }.map { ($0.canonicalized().id, $0.canonicalized()) },
             uniquingKeysWith: { _, latest in latest })
-        for item in incoming {
+        let samples = demo && demoArguments != nil ? demoActivities.filter { $0.provider == provider } : []
+        for item in samples + incoming {
             var value = item.canonicalized()
             if let old = values[value.id] { value.mergeDisplayMetadata(from: old) }
             values[value.id] = value
@@ -1643,7 +1651,8 @@ final class IslandModel: ObservableObject {
     }
     func applySettings(sourceChanged: Bool) {
         let oldEnabled = Set(enabledProviders)
-        installation = installationOverride ?? .detect()
+        installation = installationOverride ?? (demo && demoArguments != nil
+            ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
@@ -1652,6 +1661,12 @@ final class IslandModel: ObservableObject {
         compactLayout = .load(from: defaults); settingsRevision += 1
         if clock != nil { scheduleClock() }
         pruneCompletions()
+        if demo, demoArguments != nil {
+            applyDemoSnapshot()
+            refreshDesktopApplications()
+            onLayoutChange?(); onStatusChange?()
+            return
+        }
         let newCodex = currentCodexSourceSignature, newClaude = currentClaudeSourceSignature, newDeepSeek = currentDeepSeekSourceSignature
         let codexChanged = oldEnabled.contains(.codex) != isModuleEnabled(.codex) || newCodex != codexSourceSignature
         let claudeChanged = oldEnabled.contains(.claude) != isModuleEnabled(.claude) || newClaude != claudeSourceSignature
@@ -1860,25 +1875,35 @@ final class IslandModel: ObservableObject {
     }
     /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {
+        now = demoClock()
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         makeDeepSeekDemo()
-        setDemoStage(CommandLine.arguments.contains("--demo-cloud") ? .tool : .thinking)
-        if CommandLine.arguments.contains("--demo-completion") { setDemoStage(.completed) }
+        guard demoArguments != nil else { return }
+        setDemoStage(demoArguments?.contains("--demo-cloud") == true ? .tool : .thinking)
+        if demoArguments?.contains("--demo-completion") == true { setDemoStage(.completed) }
+    }
+    private func applyDemoSnapshot() {
+        let hidden = hiddenEmbeddedActivityIDs
+        activities = demoActivities.filter { isModuleEnabled($0.provider) && !hidden.contains($0.id) }
+        observeAttentionRequests(demoRequests.filter { isModuleEnabled($0.provider) && !hidden.contains($0.activity.id) })
     }
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
         now = demoClock()
-        var observed = CommandLine.arguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
-        if CommandLine.arguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
-        if CommandLine.arguments.contains("--demo-deepseek") { observed.append(DemoScenario.deepseekTask(stage: stage, at: now)) }
-        if CommandLine.arguments.contains("--demo-cloud") {
+        let demoArguments = demoArguments ?? []
+        var observed = demoArguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
+        if demoArguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
+        if demoArguments.contains("--demo-deepseek") { observed.append(DemoScenario.deepseekTask(stage: stage, at: now)) }
+        demoRequests = []
+        if demoArguments.contains("--demo-cloud") {
             let cloud = DemoScenario.claudeCloud(stage: stage, at: now)
             observed += cloud.activities
-            observeAttentionRequests(cloud.attention)
+            demoRequests = cloud.attention
         }
+        demoActivities = observed
         completionInbox.observe(observed, at: now, retention: completedRetention)
-        activities = observed
+        applyDemoSnapshot()
         var status = RuntimeStreamStatus()
         status.connected = true; status.attachedThreads = 1; status.notifications = 7 + stage.rawValue
         streamStatuses = ["local": status, "remote-ssh-discovered:demo": status]

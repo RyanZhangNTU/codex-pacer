@@ -15,7 +15,7 @@ final class CompactLayoutEditorTests: XCTestCase {
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.path, forKey: "claudeHome")
         ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
-        let model = IslandModel(demo: true, defaults: defaults,
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
             installation: .init(codexInstalled: false, claudeInstalled: false),
             completionDismissalStore: CompletionDismissalStore(fileURL: directory.appendingPathComponent("dismissals.json")))
         return (model, defaults, name, directory)
