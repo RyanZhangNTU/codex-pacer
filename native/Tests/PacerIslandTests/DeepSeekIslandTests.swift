@@ -342,6 +342,74 @@ final class DeepSeekIslandTests: XCTestCase {
         }
     }
 
+    func testSignInReplacesPendingReadsAndOnlyNewSessionsClearHistory() async throws {
+        for newSession in [false, true] {
+            for staleSucceeds in [true, false] {
+                for staleReturnsFirst in [true, false] {
+                    let (model, defaults) = try balanceModel(source: .web)
+                    let now = Date()
+                    var history = DeepSeekBalanceHistory()
+                    history.record(total: 100, at: now.addingTimeInterval(-600), source: "web")
+                    history.record(total: 95, at: now.addingTimeInterval(-60), source: "web")
+                    history.save(to: defaults); model.deepseekHistory = history
+                    var oldRead: CheckedContinuation<Result<DeepSeekBalance, DeepSeekBalanceError>, Never>?
+                    var newRead: CheckedContinuation<Result<DeepSeekBalance, DeepSeekBalanceError>, Never>?
+                    var reads = 0
+                    defer {
+                        model.cancelDeepSeekBalanceRead()
+                        oldRead?.resume(returning: .failure(.connectionFailed))
+                        newRead?.resume(returning: .failure(.connectionFailed))
+                    }
+                    model.deepseekBalanceReads.web = {
+                        reads += 1
+                        return try await withCheckedContinuation { continuation in
+                            if reads == 1 { oldRead = continuation } else { newRead = continuation }
+                        }.get()
+                    }
+                    model.refreshDeepSeekBalance(force: true)
+                    await waitUntil { oldRead != nil }
+                    let obsolete = try XCTUnwrap(model.deepseekBalanceTask)
+
+                    model.completeDeepSeekSignIn(newSession: newSession)
+                    var expectedHistory = newSession ? DeepSeekBalanceHistory() : history
+                    XCTAssertEqual(model.deepseekHistory, expectedHistory)
+                    XCTAssertEqual(DeepSeekBalanceHistory.load(from: defaults), expectedHistory,
+                        "Only a new session removes saved account readings")
+                    await waitUntil { newRead != nil }
+                    let replacement = try XCTUnwrap(model.deepseekBalanceTask)
+                    let stale: Result<DeepSeekBalance, DeepSeekBalanceError> = staleSucceeds
+                        ? .success(.init(total: 1, capturedAt: now.addingTimeInterval(10), source: .web)) : .failure(.challenge)
+                    let fresh = DeepSeekBalance(total: 80, capturedAt: now, source: .web)
+                    if staleReturnsFirst {
+                        let pending = try XCTUnwrap(oldRead); oldRead = nil
+                        pending.resume(returning: stale); await obsolete.value
+                        XCTAssertTrue(model.deepseekRefreshing, "A pre-sign-in result cannot release the new read's slot")
+                        XCTAssertNotNil(model.deepseekBalanceTask)
+                        XCTAssertNil(model.deepseekBalance)
+                        XCTAssertNil(model.deepseekBalanceError)
+                        let current = try XCTUnwrap(newRead); newRead = nil
+                        current.resume(returning: .success(fresh)); await replacement.value
+                    } else {
+                        let current = try XCTUnwrap(newRead); newRead = nil
+                        current.resume(returning: .success(fresh)); await replacement.value
+                        let pending = try XCTUnwrap(oldRead); oldRead = nil
+                        pending.resume(returning: stale); await obsolete.value
+                    }
+                    expectedHistory.record(total: fresh.total, at: fresh.capturedAt, source: "web")
+                    XCTAssertEqual(reads, 2)
+                    XCTAssertEqual(model.deepseekBalance, fresh)
+                    XCTAssertNil(model.deepseekBalanceError)
+                    XCTAssertFalse(model.deepseekConnectionNeeded)
+                    XCTAssertFalse(model.deepseekRefreshing)
+                    XCTAssertEqual(model.deepseekFailureCount, 0)
+                    XCTAssertEqual(model.deepseekHistory, expectedHistory, "A stale result cannot record a balance drop")
+                    XCTAssertEqual(DeepSeekBalanceHistory.load(from: defaults), expectedHistory)
+                    await model.shutdown()
+                }
+            }
+        }
+    }
+
     func testAutomaticBillingChangeClearsOldConnectionErrorInBothDirections() async throws {
         for startsWithAccount in [true, false] {
             let (model, _) = try balanceModel(source: .automatic)

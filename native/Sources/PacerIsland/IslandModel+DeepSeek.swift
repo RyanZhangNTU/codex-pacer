@@ -373,10 +373,17 @@ extension IslandModel {
         switch deepseekBalanceMode {
         case .apiKey: openSettings(for: .deepseek)
         default:
-            DeepSeekWebLogin.open { [weak self] in
-                self?.forgetDeepSeekHistory(); self?.clearDeepSeekBalance(); self?.refreshDeepSeekBalance(force: true)
+            DeepSeekWebLogin.open { [weak self] newSession in
+                self?.completeDeepSeekSignIn(newSession: newSession)
             }
         }
+    }
+    func completeDeepSeekSignIn(newSession: Bool) {
+        // A challenge may keep the token, but any outstanding read predates
+        // its completion. Only a new token discards the account's history.
+        if newSession { forgetDeepSeekHistory() }
+        clearDeepSeekBalance()
+        refreshDeepSeekBalance(force: true)
     }
     func saveDeepSeekAPIKey(_ raw: String) -> Bool {
         guard DeepSeekAPIKeyStore.save(raw) else { return false }

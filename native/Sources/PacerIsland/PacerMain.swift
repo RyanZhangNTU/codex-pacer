@@ -257,7 +257,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         model.onRelaunch = { [weak self] in self?.relaunchForLanguage() }
         model.onClaudeLogin = { [weak self] in
             self?.model.close()
-            ClaudeWebLogin.open { [weak self] in self?.model.retryClaudeWebConnection(afterSignIn: true) }
+            ClaudeWebLogin.open { [weak self] newSession in self?.model.retryClaudeWebConnection(afterSignIn: newSession) }
         }
         model.onClaudeOrganizationSelection = { [weak self] organizations in
             self?.model.close()
