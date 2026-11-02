@@ -27,7 +27,8 @@ class CoreBoundaryTests(unittest.TestCase):
 
     def test_availability_whitelist_allows_only_the_guarded_import(self):
         self.assertEqual(self.check("#if canImport(FoundationNetworking)\nimport FoundationNetworking\n#endif"), (False, 1, 0))
-        for text in ("import FoundationNetworking", "#if os(Windows)\nlet value = 1\n#endif",
+        self.assertEqual(self.check("#if canImport(CoreGraphics)\nimport CoreGraphics\n#endif"), (False, 1, 0))
+        for text in ("import FoundationNetworking", "import CoreGraphics", "#if os(Windows)\nlet value = 1\n#endif",
                      "#if canImport(FoundationNetworking)\nimport FoundationNetworking\nlet value = 1\n#endif",
                      "#if canImport(FoundationNetworking)\nimport FoundationNetworking\n#else\nlet value = 1\n#endif"):
             with self.assertRaises(ValueError):

@@ -10,7 +10,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEM_MODULES = {"AppKit", "SwiftUI", "Security", "LocalAuthentication", "CoreServices", "Darwin", "WinSDK", "CoreGraphics", "CoreFoundation", "zlib"}
 SHARED_MODULES = {"Foundation", "CryptoKit", "SQLite3", "CZstd"}
-AVAILABILITY_MODULES = {"FoundationNetworking"}
+AVAILABILITY_MODULES = {"FoundationNetworking", "CoreGraphics"}
 OWNERS = {"B4", "B5a", "B5b", "B5c", "C2", "F1", "P1", "P2", "P3", "P4"}
 IMPORT = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|typealias|let|var|func)\s+)?(\w+)", re.M)
 BRANCH = re.compile(r"^\s*#(?:if|elseif)\s+(.+)", re.M)
@@ -72,7 +72,7 @@ def swift_code(text):
 def source_contract(name, text, transition):
     text = swift_code(text)
     modules = Counter(IMPORT.findall(text))
-    system = {module: count for module, count in modules.items() if module in SYSTEM_MODULES}
+    system = {module: count for module, count in modules.items() if module in SYSTEM_MODULES - AVAILABILITY_MODULES}
     expected = transition.get("systemImports", {})
     if system != expected:
         raise ValueError("New or unaccounted system import in PacerCore: " + name)
