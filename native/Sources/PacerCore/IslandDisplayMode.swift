@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// Settings offers Notch and Custom (`floating`, placed by `IslandPosition`).
 /// `automatic` remains only as the state before either is chosen: it attaches

@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 public enum IslandGeometry {
     /// The point of the island that stays put while it opens and closes. The

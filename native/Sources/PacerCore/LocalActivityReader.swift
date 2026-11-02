@@ -7,19 +7,26 @@ public actor LocalActivityReader {
         var offset: UInt64
         var fragment: Data
         var activity: SessionActivity
-        var identity: UInt64
+        var identity: String
         var parentCompletion: SessionActivity.SubagentEvidence?
         var attention = CodexLogAttention()
     }
     private var cursors: [URL: Cursor] = [:]
-    private var metadata: [URL: (identity: UInt64, activity: SessionActivity)] = [:]
+    private var metadata: [URL: (identity: String, activity: SessionActivity)] = [:]
     private var originSizes: [URL: UInt64] = [:]
     private var ignoredIDs: Set<String> = []
     private let maxFiles = 16
     private let maxBytes = 128 * 1024
     private let startupBytes = 512 * 1024
 
-    public init() {}
+    private let fileMetadata: (@Sendable (URL) -> PlatformFileMetadata?)?
+    public init(fileMetadata: (@Sendable (URL) -> PlatformFileMetadata?)? = nil) { self.fileMetadata = fileMetadata }
+    private func signature(_ url: URL) -> (identity: String, size: UInt64)? {
+        if let fileMetadata { return fileMetadata(url).map { ($0.identity, $0.size) } }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
+        return (String((attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), size)
+    }
     public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll() }
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
@@ -96,9 +103,8 @@ public actor LocalActivityReader {
         let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
         if !metricsOnly { for file in candidates {
-            let attributes = try? manager.attributesOfItem(atPath: file.path)
-            let identity = (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
-            let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+            let facts = signature(file)
+            let identity = facts?.identity ?? "0", size = facts?.size ?? 0
             if metadata[file]?.identity != identity || (metadata[file]?.activity.isIgnoredCodexSession == true && originSizes[file] != size) {
                 var activity = SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
                 activity.setCodexRollout(file)
@@ -142,8 +148,7 @@ public actor LocalActivityReader {
         for file in selected {
             let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
             if excludingThreads.contains(id), !includeCoveredMetrics { continue }
-            guard let attributes = try? manager.attributesOfItem(atPath: file.path),
-                  let size = (attributes[.size] as? NSNumber)?.uint64Value else {
+            guard let facts = signature(file) else {
                 if let cursor = cursors.removeValue(forKey: file) {
                     var activity = projected(cursor)
                     if ![.completed, .interrupted].contains(activity.phase) { activity.markUnconfirmed() }
@@ -152,7 +157,7 @@ public actor LocalActivityReader {
                 metadata.removeValue(forKey: file)
                 continue
             }
-            let identity = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+            let identity = facts.identity, size = facts.size
             if var existing = cursors[file], existing.identity == identity, existing.offset == size {
                 if let entry = indexed.first(where: { $0.url == file }) { existing.activity.updateTitle(entry.title); existing.activity.updateParent(entry.parentThreadID); cursors[file] = existing }
                 continue

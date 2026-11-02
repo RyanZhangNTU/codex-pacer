@@ -1,4 +1,6 @@
+#if canImport(PacerMacSupport)
 import PacerMacSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -221,6 +223,7 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(restored.enabledProviders(detection: .init(codexInstalled: true, claudeInstalled: true)), [.codex])
     }
 
+    #if canImport(PacerMacSupport)
     func testInstallationDetectionUsesBoundedExecutableLocationsWithoutLaunching() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("provider-install-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -257,4 +260,5 @@ final class ProviderTests: XCTestCase {
         XCTAssertEqual(modules.enabledProviders(detection: .init(codexInstalled: true, claudeInstalled: false, deepseekInstalled: true)),
             [.codex, .deepseek], "Each detected module turns on by itself")
     }
+    #endif
 }

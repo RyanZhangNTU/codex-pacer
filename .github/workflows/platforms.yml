@@ -57,3 +57,55 @@ jobs:
             ${{ runner.temp }}/pacer-test-sample-*.txt
             ${{ runner.temp }}/pacer-build.log
           retention-days: 7
+
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - name: Platform contract
+        run: |
+          python scripts/windows/test_contract.py
+          if ($LASTEXITCODE -ne 0) { throw 'Platform contract regression failed.' }
+          python scripts/windows/check-contract.py
+          if ($LASTEXITCODE -ne 0) { throw 'Platform contract failed.' }
+          python scripts/windows/build-localization.py --check
+          if ($LASTEXITCODE -ne 0) { throw 'Shared localization differs.' }
+      - name: Pinned Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1
+      - name: Shared source compilation and engine tests
+        run: |
+          ./scripts/windows/test-engine.ps1 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-tests.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-tests.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
+            throw 'Compiler warnings in Windows tests.'
+          }
+      - name: Build engine
+        run: |
+          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
+            throw 'Compiler warnings in Windows build.'
+          }
+      - name: Engine idle and shutdown protocol
+        run: |
+          . ./scripts/windows/environment.ps1
+          $taskEngine = Join-Path $taskScratchPath 'x86_64-unknown-windows-msvc/release/PacerEngine.exe'
+          python scripts/windows/check-engine-idle.py --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check failed.' }
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-engine-validation
+          path: |
+            ${{ runner.temp }}/pacer-windows-tests.log
+            ${{ runner.temp }}/pacer-windows-build.log
+            ${{ runner.temp }}/pacer-windows-idle.log
+            ${{ runner.temp }}/pacer-windows-idle.json
+          retention-days: 7

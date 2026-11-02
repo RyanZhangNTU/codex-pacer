@@ -2,6 +2,8 @@
 
 ## Structure
 
+Windows engine setup, isolated builds, protocol checks and the remaining shared-core work are described in [Windows engine development](windows-engine.md). The root SwiftPM package builds the C1 engine; the shipping Mac app continues to use the native package.
+
 - `native/Sources/PacerCore`: quota decoding, task lifecycle, rate estimates, source discovery, transport, completion retention and window geometry. Claude quota, web and cloud clients receive credentials, account identity, storage callbacks, HTTP, streams and clocks from the host. Their validation, account isolation, retry and cancellation rules stay here.
 - `native/Sources/PacerMacSupport`: Mac child processes and byte readers, file metadata and replacement, application/CLI discovery, Pacer-owned credential storage and packaged resource lookup. It also assembles Claude's production clients, owns Keychain operations and the legacy cipher, and supplies URLSession data and byte-stream factories. Hosts supply these through Core protocols and callbacks.
 - `ClaudeDesktopRecords` reads bounded account/session metadata through injected directory roots and file services. Native application and CLI discovery stay in MacSupport. `Activity.swift` and `RuntimeStreamStatus.swift` hold shared values; the existing local reader and timestamp parser live in separate files.

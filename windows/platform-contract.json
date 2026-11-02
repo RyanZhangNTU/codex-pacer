@@ -1,0 +1,320 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "ad0205575f88ceb24008f606febea162cbd6279b",
+  "sourceCommit": "a1cb185",
+  "protectedFiles": {
+    "native/Info.plist": "546d31708d76a18f9cd97100d0c654a377fbfde853a237a8bbee06382b542b8d",
+    "native/Package.resolved": "7658c033856118a55e157006b40a447836b2a8811568f40e30e353e60c7afdff",
+    "native/Resources/Pacer.icns": "d195e227e260c69536a27356e7d0f507d93b9b643b142ab2ba659ff33eb3db8e",
+    "native/Resources/Pacer.png": "57c0513b4526deed07f9bb3e43446856e6873500d30c56b1736dff2818f81f49",
+    "native/Resources/Pacer.svg": "8bc913d79df8056166fc80d52bedd3ab22fac8d4a5f29d41141c1a02106588fb",
+    "native/Resources/Sparkle-LICENSE.txt": "816be66341dd11b22806862dffd8392b240babaced1cdf24da2ff413ef00c3fd",
+    "native/Sources/PacerRelaunch/RelaunchMain.swift": "5496c9c7fb322984eab15ceb9e73a6a002de0d2a81ada63aac220731d2faf41d",
+    "scripts/native/build-island.sh": "c0b0c13d083675964d8a726ae9f746876e5ba6a7fdeeb44ac68024039e198b7d",
+    "scripts/native/ci-test.py": "f56700cbad4006fb2d06fbc2ec8cd032cbe4705c853864163423b97abbebfa6a",
+    "scripts/native/embed-sparkle.py": "3a64fc650f814236f383e22b77c0bb0aa51606eb0072293d2b6a14dc445afe26",
+    "scripts/native/render-app-icon.swift": "003e374674b47ffc60e1db39199f5eee8d362b759f2425a516c6f7857b54b068",
+    "scripts/native/swiftpm-environment.sh": "14f817c154e77c6f729aef3f73880abb04b37c867354364017c74185b2499d0f",
+    "scripts/native/test-island.sh": "5dbb994707786c95c5101607c0b320d419548aaf9f2991cf50747550e0a19d11",
+    "scripts/release/build-macos-release.sh": "f2e0e72fce0e019b95d4966e381febf59fe982c663bc82e6adc7863a297ec7d8",
+    "scripts/release/dmg-background.swift": "55c3d7639804cecb9fdbcb45f4ee8f11c1bfa1d0ed603a2130b311d099cc364e",
+    "scripts/release/dmg-requirements.txt": "95076c7eba194304f84f0b4e041a35aea7033155343e4ab94c5d25902fdc8eaf",
+    "scripts/release/notarize.py": "eec8af5b27f0cb06e76bcb8d3ef695c38fa92359a1940d6eba0c180e3fb587fd",
+    "scripts/release/package-dmg.py": "e103a5d0825a4faca5b1ffbcb540f5d4789a93acaf6eee57dd58fab2e561cf6c",
+    "scripts/release/prepare-update.py": "42acda3581238084a922280d8a3cbadffa9fcf5b0c0656d7b42c477e6117cadf",
+    "scripts/release/publish-github-release.sh": "a74296bb8b102bf03d9070cd9b0dc9b55b29083fcfc5f061ecd56346be5273a0"
+  },
+  "nativePackageInvariants": [
+    "// swift-tools-version: 5.10",
+    "name: \"CodexPacerIsland\"",
+    "platforms: [.macOS(.v14)]",
+    ".executable(name: \"CodexPacerIsland\", targets: [\"PacerIsland\"])",
+    ".executable(name: \"PacerRelaunch\", targets: [\"PacerRelaunch\"])",
+    "\"-Xlinker\", \"-rpath\", \"-Xlinker\", \"@executable_path/../Frameworks\""
+  ],
+  "macosJobSHA256": "0c75a50e0aa49722731d9b9a87ec72e44c1630875596254e9ace448601aef4a9",
+  "coreTransitions": {
+    "ActivityLogWatcher.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "ClaudeActivityMonitor.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "ClaudeActivityTelemetry.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1,
+        "zlib": 1
+      }
+    },
+    "ClaudeHookInstaller.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "ClaudeLiveSessionRegistry.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "ClaudeRemoteAutoSetup.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "ClaudeRemoteResume.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "ClaudeRemoteSetup.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "CoreFoundation": 1,
+        "Darwin": 1
+      }
+    },
+    "ClaudeSSHRouteResolver.swift": {
+      "owner": "B5c",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "CodexApplicationResolver.swift": {
+      "owner": "B5c",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "CodexRolloutOwners.swift": {
+      "owner": "B5c",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "DeepSeekActivityMonitor.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "DesktopEventProbe.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "DesktopRouteHints.swift": {
+      "owner": "P2",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "IslandInstanceLock.swift": {
+      "owner": "B5c",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "NativeDesktopCollector.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "ProcessOwnership.swift": {
+      "owner": "B5c",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "RealtimeActivityMonitor.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "RealtimeProbe.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "RemoteControlCatalog.swift": {
+      "owner": "P2",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "RequestLogProbe.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    },
+    "RuntimeDiagnostics.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports.",
+      "systemImports": {
+        "Darwin": 1
+      }
+    },
+    "SessionLogProbe.swift": {
+      "owner": "B4",
+      "reason": "Move remaining collector or host operations behind the shared platform ports."
+    }
+  },
+  "engineTransitions": [
+    {
+      "owner": "B4",
+      "files": [
+        "windows/EngineSupport/PacerEngine.swift",
+        "windows/EngineSupport/CodexDesktopMonitor.swift",
+        "windows/EngineSupport/WindowsActivityLogWatcher.swift"
+      ],
+      "reason": "Unify Codex/Claude/DeepSeek activity discovery, catch-up, watcher and runtime scheduling with the Mac collectors."
+    },
+    {
+      "owner": "B5a",
+      "files": [
+        "windows/EngineSupport/PacerEngine.swift",
+        "windows/EngineSupport/EnginePresentation.swift"
+      ],
+      "reason": "Unify activity merge, inbox, task projection and visibility orchestration with IslandModel."
+    },
+    {
+      "owner": "B5b",
+      "files": [
+        "windows/EngineSupport/CodexQuotaMonitor.swift",
+        "windows/EngineSupport/ClaudeQuotaMonitor.swift",
+        "windows/EngineSupport/ClaudeCloudMonitor.swift",
+        "windows/EngineSupport/DeepSeekBalanceMonitor.swift",
+        "windows/EngineSupport/ProviderQuotaRefreshPolicy.swift"
+      ],
+      "reason": "Replace duplicate Codex/Claude quota, Cloud source and DeepSeek balance/history schedulers on both hosts with one shared coordinator."
+    },
+    {
+      "owner": "B5c",
+      "files": [
+        "windows/EngineSupport/PacerEngine.swift",
+        "windows/EngineSupport/EngineActivityNavigation.swift",
+        "windows/EngineSupport/WindowsActivityNavigation.swift"
+      ],
+      "reason": "Unify lifecycle, captured navigation acknowledgments and host-tracking orchestration; keep Windows process/window IO in the host."
+    },
+    {
+      "owner": "C2",
+      "files": [
+        "windows/shared-core.json",
+        "Package.swift"
+      ],
+      "reason": "Wire the WPF shell to this engine protocol; do not ship the WPF or animation bridge targets in C1."
+    },
+    {
+      "owner": "P2",
+      "files": [
+        "Package.swift",
+        "windows/shared-core.json"
+      ],
+      "reason": "After B4/B5 and P2 finish porting remaining collectors and remote sources, compile the whole Core on both platforms and remove source/test selection."
+    }
+  ],
+  "nativeTargets": {
+    "CZstd": {
+      "kind": "target",
+      "dependencies": []
+    },
+    "PacerCore": {
+      "kind": "target",
+      "dependencies": [
+        "CZstd"
+      ]
+    },
+    "PacerMacSupport": {
+      "kind": "target",
+      "dependencies": [
+        "PacerCore"
+      ]
+    },
+    "PacerRelaunch": {
+      "kind": "executableTarget",
+      "dependencies": []
+    },
+    "PacerIsland": {
+      "kind": "executableTarget",
+      "dependencies": [
+        "PacerCore",
+        "PacerMacSupport",
+        "Sparkle"
+      ]
+    },
+    "PacerCoreTests": {
+      "kind": "testTarget",
+      "dependencies": [
+        "PacerCore",
+        "PacerMacSupport"
+      ]
+    },
+    "PacerIslandTests": {
+      "kind": "testTarget",
+      "dependencies": [
+        "PacerIsland",
+        "PacerCore",
+        "PacerMacSupport"
+      ]
+    }
+  },
+  "featureIDs": [
+    "shared-model",
+    "codex-local",
+    "codex-runtime",
+    "codex-quota",
+    "claude-local",
+    "claude-remote",
+    "claude-web",
+    "claude-cloud",
+    "deepseek-local",
+    "deepseek-wallet",
+    "deepseek-spend",
+    "completion",
+    "module-detection",
+    "navigation",
+    "island-ui",
+    "settings",
+    "notifications",
+    "lifecycle",
+    "localization",
+    "onboarding",
+    "release",
+    "ui-parity",
+    "motion-parity",
+    "surface-parity",
+    "quota-history",
+    "deepseek-budgets",
+    "embedded-sessions",
+    "host-application-tracking",
+    "ssh-sources",
+    "wsl-sources",
+    "remote-control",
+    "browser-session-lifecycle",
+    "connections-page",
+    "display-selection",
+    "fullscreen-policy",
+    "whats-new",
+    "help",
+    "support",
+    "startup",
+    "installation",
+    "automatic-updates",
+    "authenticode",
+    "uninstall",
+    "settings-persistence",
+    "accessibility",
+    "platform-matrix",
+    "cross-platform-delivery"
+  ]
+}

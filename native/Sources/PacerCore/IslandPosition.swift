@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// Where a Custom (floating) island sits. Center is the original capsule below
 /// the menu bar. A corner docks the collapsed bar as a vertical strip whose

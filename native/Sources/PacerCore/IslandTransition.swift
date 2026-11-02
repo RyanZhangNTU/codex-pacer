@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// Sequences the physical-notch backing around the shell's spring. Sample in
 /// display-time order; retarget from the last displayed sample on interruption.

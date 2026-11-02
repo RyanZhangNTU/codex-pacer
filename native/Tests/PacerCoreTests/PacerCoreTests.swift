@@ -1,4 +1,6 @@
+#if canImport(PacerMacSupport)
 import PacerMacSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -80,7 +82,7 @@ final class ActivityTests: XCTestCase {
         let file = day.appendingPathComponent("test.jsonl")
         var line = event("task_started", turn: "new", second: 1)
         try line.prefix(line.count - 2).write(to: file)
-        let reader = LocalActivityReader()
+        let reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
         let partial = await reader.read(home: directory)
         XCTAssertEqual(partial.activities.first?.phase, .unknown)
         let handle = try FileHandle(forWritingTo: file)
@@ -99,6 +101,7 @@ final class ActivityTests: XCTestCase {
     }
 }
 
+#if canImport(PacerMacSupport)
 final class ClientTests: XCTestCase {
     func testReusableTransportAndConcurrentRefresh() async throws {
         let (client, directory) = try fixture(timeout: 2, answerQuota: true)
@@ -152,3 +155,5 @@ final class ClientTests: XCTestCase {
         return (CodexClient(executable: URL(fileURLWithPath: "/bin/sh"), home: directory, arguments: [script.path], timeout: timeout), directory)
     }
 }
+
+#endif

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "swiftVersion": "6.4.2",
+  "icuVersion": "76.1",
+  "sourceVersionEvidence": "https://github.com/swiftlang/swift-foundation-icu/blob/swift-6.4.2-RELEASE/icuSources/include/_foundation_unicode/uvernum.h",
+  "normalization": "UTF-8, LF, one final newline",
+  "sources": [
+    {
+      "name": "Swift-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift/swift-6.4.2-RELEASE/LICENSE.txt",
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+    },
+    {
+      "name": "Foundation-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-corelibs-foundation/swift-6.4.2-RELEASE/LICENSE",
+      "sha256": "0ca84095d1de77cad1a866ebbad28f8db98a0826c6055d92b0608c5baa1643e2"
+    },
+    {
+      "name": "FoundationEssentials-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-foundation/swift-6.4.2-RELEASE/LICENSE.md",
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+    },
+    {
+      "name": "FoundationEssentials-NOTICE.txt",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-foundation/swift-6.4.2-RELEASE/NOTICE.txt",
+      "sha256": "c2e757911b86a76230099804831d8d847a865e88b5912171627492a7a49f0456"
+    },
+    {
+      "name": "ICU-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-foundation-icu/swift-6.4.2-RELEASE/LICENSE.md",
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+    },
+    {
+      "name": "ICU-UPSTREAM-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/unicode-org/icu/release-76-1/LICENSE",
+      "sha256": "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"
+    },
+    {
+      "name": "Subprocess-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-subprocess/1.0.0/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "name": "System-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/apple/swift-system/1.8.1/LICENSE.txt",
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+    }
+  ]
+}
