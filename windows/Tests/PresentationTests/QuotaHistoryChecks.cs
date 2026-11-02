@@ -40,7 +40,8 @@ internal static class QuotaHistoryChecks
             var chart = history.Chart!;
             Check(chart.ActualWidth == 509 && chart.InputSurface.ActualHeight == 118 && chart.ActualHeight > 138 && chart.ActualHeight < 145,
                 $"The live chart must preserve the native 509-point width, 118-point plot and footer spacing ({chart.ActualWidth}×{chart.ActualHeight})");
-            Check(chart.Markers.Sum(value => value.Count) == 2 && chart.Markers.All(value => value.X + value.Width / 2 <= chart.PlotWidth), "Shared reset markers must retain their counts and stay inside the plot");
+            Check(chart.Markers.Sum(value => value.Count) == 2 && chart.Markers.Sum(value => value.Count) == data.Chart!.Expiries.Sum(value => value.Count)
+                && chart.Markers.All(value => value.X + value.Width / 2 <= chart.PlotWidth), "Shared reset markers must retain every expiry count and stay inside the plot");
             var plot = chart.InputSurface;
             var peer = UIElementAutomationPeer.CreatePeerForElement(plot);
             var valuePattern = (IValueProvider)peer.GetPattern(PatternInterface.Value);

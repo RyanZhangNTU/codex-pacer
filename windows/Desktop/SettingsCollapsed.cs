@@ -28,9 +28,11 @@ internal sealed partial class SettingsWindow
         if (method.Length > 0 && method != "projectCompactBar") return;
         _ = Dispatcher.InvokeAsync(() =>
         {
-            if (!IsVisible || activePane != "collapsed") return;
+            if (!IsVisible) return;
+            if (activePane == "reminders") { RefreshValues(); return; }
+            if (activePane != "collapsed") return;
             if (compactEditor == null || compactRows.Count == 0) { RebuildPane("collapsed"); RefreshValues(); }
-            else RefreshCollapsed();
+            else RefreshValues();
         });
     }
     private void ClearCollapsed()
@@ -44,7 +46,7 @@ internal sealed partial class SettingsWindow
     private CompactProjection ReadCompact() => NativeCompactBar.Shared.Read(session.Current, ui.Language, CompactProviders(), engine?.LatestSnapshot?.CompactContext);
     private async Task EditCompact(CompactEdit edit)
     {
-        if (sourceClosed || activePane != "collapsed" || busy || compactEditor?.IsVisible != true || !compactEditor.IsEnabled) return;
+        if (sourceClosed || activePane != "collapsed" || busy || compactEditor?.IsVisible != true) return;
         await Change(p => NativeCompactBar.Shared.EditAsync(p, ui.Language, NativeCompactBar.Providers(p, engine?.LatestSnapshot), edit));
     }
     private void BuildCollapsed()

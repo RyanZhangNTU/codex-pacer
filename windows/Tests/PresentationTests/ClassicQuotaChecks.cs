@@ -47,6 +47,17 @@ internal static class ClassicQuotaChecks
         Check(centreInk is >= 145 and <= 165, "A stale DeepSeek face cannot dim the independently styled balance a second time");
         Check(UIElementAutomationPeer.CreatePeerForElement(new QuotaDial("deepseek", null, wallet, classic: true)).GetName() == wallet.Dial!.AccessibilityLabel,
             "The time dial must use the shared localized account-independent accessibility reading");
+        foreach (double size in new[] { 88d, 104d, 132d })
+        {
+            foreach (var state in new[] { wallet, staleWallet, wallet with { Dial = wallet.Dial! with { ConnectTitle = "Connect" } } })
+            {
+                var dial = new QuotaDial("deepseek", null, state, dialSize: size);
+                _ = DrawingInspection.Render(dial, size, size);
+                Check(dial.ActualWidth == size && dial.ActualHeight == size, "Time dials must retain the supported 88/104/132 sizes in every connection state");
+                Check(UIElementAutomationPeer.CreatePeerForElement(dial).GetName() == state.Dial!.AccessibilityLabel,
+                    "Resizing or changing connection state must preserve the shared time-dial accessibility reading");
+            }
+        }
         foreach (var provider in new[] { codex, claude })
         {
             foreach (string period in new[] { "5h", "7d" })
@@ -56,6 +67,8 @@ internal static class ClassicQuotaChecks
                 var peer = UIElementAutomationPeer.CreatePeerForElement(cell.Ring);
                 Check(peer.GetName() == reading.ClassicAccessibilityLabel && peer.GetChildren() is not { Count: > 0 },
                     "A classic reading must be announced once, without repeating its decorative caption or values");
+                Check(cell.Dial.Selected?.RemainingPercent == reading.RemainingPercent,
+                    "Classic readings must preserve the shared selected value, including missing and subscription-only windows");
                 cell.Children.Remove(cell.Ring);
                 await Capture(cell.Ring, Path.Combine(output, "classic-" + provider.Provider + "-" + period + ".png"));
                 Check(cell.Dial.ActualWidth == 88 && cell.Dial.ActualHeight == 88 && cell.Ring.ActualHeight == 111,

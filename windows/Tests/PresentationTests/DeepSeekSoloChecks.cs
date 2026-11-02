@@ -80,6 +80,8 @@ internal static class DeepSeekSoloChecks
         {
             int opened = 0;
             var view = new DeepSeekSoloView(wallet, ui, detailed, () => opened++);
+            Check(Descendants(view).OfType<DeepSeekWeekView>().Count() == (detailed && wallet.Solo!.Week != null ? 1 : 0),
+                "History must appear exactly once when the shared projection supplies it and detailed mode is enabled");
             var host = new Grid { Background = Brushes.Black }; var panel = new Border { Width = 392, VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(10), Child = view }; host.Children.Add(panel);
             var window = new Window { Width = 412, Height = 360, Content = host, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false, IsHitTestVisible = false };
             try

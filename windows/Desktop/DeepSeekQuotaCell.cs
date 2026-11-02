@@ -28,7 +28,7 @@ internal sealed class DeepSeekQuotaCell : StackPanel
         }
         var caption = new QuotaReadingHost { Orientation = Orientation.Horizontal, Height = 15, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 8, 0, 6) };
         AutomationProperties.SetName(caption, budget?.Count > 0 ? "DeepSeek" + (budget[0].Verdict == "fast" ? ", " + budget[0].VerdictText : "")
-            : wallet?.Dial?.StaleCaption == true ? "DeepSeek, " + ui.Text("common.not_updated") : "DeepSeek" + (wallet?.PeakNow == true ? ", ×2" : ""));
+            : wallet?.Dial?.StaleCaption == true ? "DeepSeek, " + ui.Text("common.not_updated") : "DeepSeek" + (wallet?.Dial?.PeakText is string peak ? ", " + peak : ""));
         caption.Children.Add(new TextBlock { Text = "DeepSeek", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center });
         if (budget?.Count > 0)
         {
@@ -40,10 +40,10 @@ internal sealed class DeepSeekQuotaCell : StackPanel
             var stale = new IconGlyph { Symbol = "clock.arrow.circlepath", Width = 9, Height = 9, Ink = PacerPalette.Attention, Margin = new Thickness(5, 0, 0, 0) };
             caption.Children.Add(stale);
         }
-        else if (wallet?.Dial?.PeakText != null || wallet?.PeakNow == true)
+        else if (wallet?.Dial?.PeakText is string peakText)
             caption.Children.Add(new Border { CornerRadius = new CornerRadius(7.5), Height = 15, Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(5, 0, 0, 0),
                 Background = PacerPalette.Ink(255, 189, 97, 36), ToolTip = wallet?.Dial?.PeakHelp,
-                Child = new TextBlock { Text = wallet?.Dial?.PeakText ?? "×2", FontFamily = PacerFonts.Interface, FontSize = 10, FontWeight = FontWeights.Bold, Foreground = PacerPalette.Attention, VerticalAlignment = VerticalAlignment.Center } });
+                Child = new TextBlock { Text = peakText, FontFamily = PacerFonts.Interface, FontSize = 10, FontWeight = FontWeights.Bold, Foreground = PacerPalette.Attention, VerticalAlignment = VerticalAlignment.Center } });
         Children.Add(caption);
         if (balanceStatus != null) Children.Add(balanceStatus);
         string? help = budget?.Count > 0 ? string.Join("\n\n", System.Linq.Enumerable.Select(budget, value => value.Help)) : wallet?.Dial?.Help;

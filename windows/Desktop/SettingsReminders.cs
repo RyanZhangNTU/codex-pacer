@@ -152,8 +152,8 @@ internal sealed partial class SettingsWindow
         bool enabled = !busy && !session.RequiresRestart;
         bool Module(string provider) => snapshot?.Modules?.FirstOrDefault(value => value.Provider == provider)?.Enabled
             ?? snapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == provider) ?? preferences.ProviderModes[provider] != "disabled";
-        bool warningsShown = NativeCompactBar.Shared.Read(preferences, ui.Language, NativeCompactBar.Providers(preferences, snapshot)).Components.Single(value => value.Id == "warnings").Shown;
-        foreach (var pair in reminderKinds) { pair.Value.IsChecked = warningsShown && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && pair.Key != "ssh"; }
+        var warnings = NativeCompactBar.Shared.Read(preferences, ui.Language, NativeCompactBar.Providers(preferences, snapshot)).Components.FirstOrDefault(value => value.Id == "warnings");
+        foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null && pair.Key != "ssh"; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
         reminderWalletRows!.Visibility = reminderFooter!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
         reminderGroupSeparator!.Visibility = reminderQuotaRows.Visibility == Visibility.Visible && reminderWalletRows.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;

@@ -112,6 +112,7 @@ public partial class IslandWindow : Window
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closing += OnClosing;
+        Closed += (_, _) => StopPresentation();
         SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
         IsVisibleChanged += (_, _) =>
         {

@@ -51,7 +51,7 @@ internal static class LegacyQuotaChecks
             using var file = File.Create(Path.Combine(output, "legacy-codex-real-engine.png")); encoder.Save(file);
         }
         finally { window.Close(); }
-        Console.WriteLine("PASS legacy quota: real-engine window projection, original fill/reference pixels, independent unknown/stale values and combined accessibility");
+        Console.WriteLine("PASS legacy quota: real-engine window projection, vector fill and pace marks, independent unknown/stale values and combined accessibility");
     }
     private static System.Collections.Generic.IReadOnlyList<DrawingInspection.Paint> RenderTrack(LegacyQuotaWindow reading, Brush accent)
         => DrawingInspection.Render(new LegacyQuotaTrack(reading, accent), 100, 12);

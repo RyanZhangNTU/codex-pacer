@@ -46,17 +46,19 @@ internal static class CollapsedLayoutChecks
             Point end = new(box.Right - 2, box.Bottom - 2);
             ulong before = engine.LatestSnapshot!.Sequence;
             Check(editor.BeginPointer("tps", start), "The source chip must remain usable"); editor.MovePointer(end, true); await editor.EndPointer(end); await Pump();
-            var state = NativeCompactBar.Shared.Read(session.Current, language, ["codex", "claude", "deepseek"]);
+            var state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
             Check(state.EditorTrailing.Last() == "tps" && !state.EditorLeading.Contains("tps"), "Dropping at the lane end must move the actual shared component");
             Check(configurations == 0 && engine.LatestSnapshot.Sequence == before, "Layout edits cannot configure the engine or request another snapshot");
             Check(((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"),
                 "The real header must reflect the changed lane");
+            await Until(() => editor.IsEnabled);
             var moved = Find<FrameworkElement>(window, "compact.chip.tps");
-            PressKey(window, moved, Key.Left); await Until(() => NativeCompactBar.Shared.Read(session.Current, language, ["codex", "claude", "deepseek"]).EditorTrailing.Last() != "tps");
+            PressKey(window, moved, Key.Left); await Until(() => NativeCompactBar.Shared.Read(session.Current, language, ["codex", "claude", "deepseek"]).EditorTrailing.LastOrDefault() is { } last && last != "tps");
             Check(configurations == 0, "Keyboard ordering is a presentation-only edit");
-            state = NativeCompactBar.Shared.Read(session.Current, language, ["codex", "claude", "deepseek"]);
+            state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
             foreach (string id in state.Components.Where(value => value.Available && !value.Shown).Select(value => value.Id).ToArray())
             {
+                await Until(() => editor.IsEnabled);
                 var check = Find<CheckBox>(window, "compact.component." + id); Toggle(check);
                 await Until(() => check.IsChecked == true && check.IsEnabled);
             }
@@ -105,15 +107,18 @@ internal static class CollapsedLayoutChecks
             PressKey(window, hidden, Key.Right); await Pump();
             Check(session.Current.CompactLayout == old && saves == oldSaves + 1, "Cached handles from a removed pane cannot reorder");
             await window.NavigateAsync("collapsed"); await Pump();
-            Invoke(Find<Button>(window, "compact.restore")); await Until(() => Find<Button>(window, "compact.restore").IsEnabled);
+            string? beforeRestore = session.Current.CompactLayout;
+            Invoke(Find<Button>(window, "compact.restore"));
+            await Until(() => session.Current.CompactLayout != beforeRestore && Find<Button>(window, "compact.restore").IsEnabled);
             Check(session.Current.CompactSingleTask == "count" && session.Current.CompactMetric == "pace" && session.Current.QuotaRingOuter == "deepseek",
                 "Restore Arrangement must retain the independent display choices, like the original");
-            var warning = Find<CheckBox>(window, "compact.component.warnings"); Toggle(warning); await Until(() => warning.IsChecked == false && warning.IsEnabled);
+            var warning = Find<CheckBox>(window, "compact.component.warnings"); Toggle(warning);
+            await Until(() => warning.IsChecked == false && warning.IsEnabled);
             await window.NavigateAsync("reminders"); await Pump();
             Check(!Find<CheckBox>(window, "settings.reminders.fiveHour").IsChecked.GetValueOrDefault(), "Removing the warnings slot must make its reminder switches read off");
             Toggle(Find<CheckBox>(window, "settings.reminders.fiveHour"));
             await Until(() => session.Current.WarningKinds.SequenceEqual(new[] { "fiveHour" }));
-            Check(NativeCompactBar.Shared.Read(session.Current, language, ["codex", "claude", "deepseek"]).EditorTrailing.First() == "warnings",
+            Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).EditorTrailing.First() == "warnings",
                 "Choosing one reminder must restore the slot at the start with only that kind");
             await window.NavigateAsync("collapsed"); await Pump();
             await session.ChangeAsync(p => p with { Position = "bottomLeft", DisplayMode = "floating" }); await island.WaitForPresentationAsync();

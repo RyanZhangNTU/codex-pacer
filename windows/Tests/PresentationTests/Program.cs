@@ -30,7 +30,11 @@ internal static class Program
         int result = 1;
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown,
             Resources = new ResourceDictionary { Source = new Uri("/CodexPacer;component/PacerTheme.xaml", UriKind.Relative) } };
-        app.DispatcherUnhandledException += (_, error) => { Errors.Add(error.Exception.ToString()); error.Handled = true; };
+        app.DispatcherUnhandledException += (_, error) =>
+        {
+            Errors.Add(error.Exception.ToString()); Console.Error.WriteLine(error.Exception);
+            error.Handled = true; app.Shutdown(1);
+        };
         PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Error;
         PresentationTraceSources.DataBindingSource.Listeners.Add(new BindingErrors());
         app.Startup += async (_, _) =>
@@ -151,7 +155,7 @@ internal static class Program
             Check(latest?.CapturedAt == 1_800_000_000 && window.LogicalTarget.Width == 404 && window.LogicalTarget.Height == 440 && window.VisibleSizeMatches(404, 440),
                 "The original synthetic clock and settled 404×440 geometry");
             await IslandSurfaceChecks.Run(window);
-            Console.WriteLine("PASS " + scenario + ": original Mac row order, four states, bindings and reveal accessibility");
+            Console.WriteLine("PASS " + scenario + ": shared row order, four states, bindings and reveal accessibility");
 
             var reversalFrames = new List<MotionFrame>();
             void Frame(MotionFrame value) => reversalFrames.Add(value);
@@ -198,7 +202,7 @@ internal static class Program
             Check(!badge.TransientMotion.Ripple && !badge.TransientMotion.Bloom && badge.TransientMotion.Scale == 1,
                 "Enabling reduced motion must cancel existing transient clocks");
             badge.Update(latest!.Presentation!.Header, motion);
-            Console.WriteLine("PASS " + scenario + ": native badge curves, finite completion, snapshot stability and motion policy");
+            Console.WriteLine("PASS " + scenario + ": finite badge motion, completion, snapshot stability and motion policy");
 
             await engine.SendAsync("demoStage", new { demoStage = 0 }); await Pump();
             var slots = (Grid)window.FindName("QuotaSlots");
