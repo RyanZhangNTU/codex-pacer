@@ -60,9 +60,9 @@ final class PlatformStorageTests: XCTestCase {
         let secrets = Secrets(), store = DeepSeekAPIKeyStore(store: secrets)
         XCTAssertFalse(store.save("short")); XCTAssertEqual(secrets.saves, 0)
         XCTAssertTrue(store.save("  sk-0123456789abcdef0123 \n"))
-        XCTAssertEqual(store.read(), "sk-0123456789abcdef0123"); XCTAssertTrue(store.exists)
+        XCTAssertEqual(store.read(), "sk-0123456789abcdef0123"); XCTAssertTrue(store.hasKey)
         secrets.value = Data("invalid stored value".utf8)
         XCTAssertNil(store.read())
-        store.remove(); XCTAssertFalse(store.exists)
+        store.remove(); XCTAssertFalse(store.hasKey)
     }
 }

@@ -97,7 +97,7 @@ public struct DeepSeekAPIKeyStore: Sendable {
     public func read() -> String? {
         store.read().flatMap { String(data: $0, encoding: .utf8) }.flatMap(Self.validated)
     }
-    public var exists: Bool { store.exists }
+    public var hasKey: Bool { store.exists }
     @discardableResult public func save(_ raw: String) -> Bool {
         guard let key = Self.validated(raw) else { return false }
         return store.save(Data(key.utf8))

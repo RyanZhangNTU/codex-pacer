@@ -41,7 +41,7 @@ extension DeepSeekAPIKeyStore {
             label: "Codex Pacer DeepSeek balance key"))
     }
     public static func read() -> String? { applicationStore.read() }
-    public static var exists: Bool { applicationStore.exists }
+    public static var exists: Bool { applicationStore.hasKey }
     @discardableResult public static func save(_ raw: String) -> Bool { applicationStore.save(raw) }
     public static func remove() { applicationStore.remove() }
 }
