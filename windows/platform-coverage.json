@@ -975,7 +975,7 @@
     {
       "id": "startup",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "启用/停用当前安装位置启动项，升级后指向新版，不修改其他用户或应用",
@@ -986,8 +986,12 @@
         "native/Sources/PacerIsland/LaunchAtLogin.swift",
         "native/Sources/PacerIsland/SettingsView.swift"
       ],
-      "evidence": [],
-      "previewNote": "Open at Login 对等为每用户开机启动。",
+      "evidence": [
+        "scripts/windows/test-installer.ps1",
+        "windows/Tests/DesktopTests/StartupRegistrationChecks.cs",
+        "windows/Tests/PresentationTests/SettingsPresentationChecks.cs"
+      ],
+      "previewNote": "P1a：本机实际启用/停用独立 QA 的当前用户 Run 项，验证带引号安装路径、覆盖安装后指向当前程序，以及真实 StartupApproved 键中 2/3 合成状态的读回与不绕过禁用。UIA 覆盖中英浅深色状态、系统设置入口和失败回滚；故障注入覆盖注册后写入失败。未重新登录，未声称验证过系统登录执行；未知二进制格式显示无法确认。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -995,7 +999,7 @@
     {
       "id": "installation",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "自含 EXE/MSI 安装/升级/修复/快捷方式/运行库检测，无开发工具可运行",
@@ -1006,8 +1010,12 @@
         "README.md",
         "docs/guide.md"
       ],
-      "evidence": [],
-      "previewNote": "先完成不购买签名证书的每用户完整安装流程。",
+      "evidence": [
+        "scripts/windows/test-installer.ps1",
+        "windows/Tests/DesktopTests/InstallationServiceChecks.cs",
+        "docs/windows-installation.md"
+      ],
+      "previewNote": "P1a：Windows 11 x64 build 26200、非管理员会话，实际安装独立 QA 包到中文/空格路径。已验证 HKCU 安装登记与开始菜单、自含运行库离线 demo、损坏 .NET 主程序集后的同版本修复、文件占用时覆盖前失败、运行中覆盖安装，以及合成偏好/已读文件保留。干净系统、其他设备和中途磁盘失败回退仍待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -1058,7 +1066,7 @@
     {
       "id": "uninstall",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "移除 Pacer 自有启动/通知/快捷方式/安装项与当前本机自有 Claude hooks",
@@ -1068,8 +1076,12 @@
       "sourceRefs": [
         "docs/guide.md"
       ],
-      "evidence": [],
-      "previewNote": "卸载是独立的对等功能，不能以删除 ZIP 代替。",
+      "evidence": [
+        "scripts/windows/test-installer.ps1",
+        "windows/Tests/EngineTests/WindowsInstallerHooksTests.swift",
+        "windows/Tests/DesktopTests/InstallationServiceChecks.cs"
+      ],
+      "previewNote": "P1a：本机实际卸载独立 QA 安装。已验证只关闭当前安装、移除自有安装/通知/启动登记和快捷方式，通过共享 ClaudeHookInstaller 清理当前/旧版自有 hooks、status-line 包装及所添加环境值，最终 settings 与原用户配置完全相同。合成偏好/已读保留，测试目录与注册项已清理，既有预览实例未动。用户修改项由所有权回归保护；干净系统和数据清除流程仍待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -1287,5 +1299,38 @@
       "windows/Desktop/WindowRendering.cs"
     ],
     "statusPolicy": "No feature status or previewStatus was promoted by C2. Compile and synthetic checks do not establish full parity."
+  },
+  "p1aLocalAcceptance": {
+    "date": "2026-11-03",
+    "developBase": "56dd512f6abce3cc4c8076b298b3d4510ae05e86",
+    "system": "Windows 11 x64 build 26200, non-elevated current user",
+    "scope": [
+      "installation",
+      "uninstall",
+      "startup"
+    ],
+    "method": "Actual per-user QA installer with isolated application identity, chosen Unicode/space path and synthetic data; production maintenance and shared hook uninstall code.",
+    "passed": [
+      "Install/shortcut/HKCU registration; no machine registration",
+      "Same-version repair after corrupting the installed .NET main assembly",
+      "Locked-file preflight refuses replacement and preserves the installed payload",
+      "Running-demo overwrite upgrade closes only that installation and retains preference/read-state hashes",
+      "Offline installed demo without developer PATH or DOTNET_ROOT",
+      "Current-user startup on/off, quoted command, preserved OS disablement in real StartupApproved fixtures",
+      "Uninstall removes owned application/notification/startup/shortcut registrations",
+      "Shared hook uninstall leaves exactly original user hooks, environment, status-line and other settings",
+      "Retained preference/read-state hashes, other startup values and existing preview process unchanged",
+      "Test installation, processes, registrations and fixture directories cleaned"
+    ],
+    "restarted": false,
+    "realProviderDataModified": false,
+    "remaining": [
+      "Actual login execution",
+      "Clean Windows installation",
+      "Other Windows devices and ARM64",
+      "Mid-install storage failure rollback",
+      "Optional application-data deletion"
+    ],
+    "statusPolicy": "Only these three previewStatus values move from pending to partial. Formal feature statuses and unrelated preview statuses are unchanged."
   }
 }

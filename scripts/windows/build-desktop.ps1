@@ -9,8 +9,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'WPF resources differ.' }
     if (!$SkipEngine) { & (Join-Path $PSScriptRoot 'build-engine.ps1') -Configuration $Configuration.ToLowerInvariant() }
     $taskReceipt = Get-Content output/windows/engine-location.json -Raw | ConvertFrom-Json
-    swift build --build-system native @taskSwiftFlags --package-path $taskReceipt.source --scratch-path $taskReceipt.scratch --configuration $Configuration.ToLowerInvariant() --product PacerWindowsBridge
-    if ($LASTEXITCODE -ne 0) { throw 'Windows UI adapter build failed.' }
+    foreach ($taskProduct in @('PacerWindowsBridge','PacerInstallerHooks')) {
+        swift build --build-system native @taskSwiftFlags --package-path $taskReceipt.source --scratch-path $taskReceipt.scratch --configuration $Configuration.ToLowerInvariant() --product $taskProduct
+        if ($LASTEXITCODE -ne 0) { throw ('Windows adapter build failed: ' + $taskProduct) }
+    }
     $taskVersion = Get-PacerVersion
     dotnet build windows/Desktop/Pacer.Windows.csproj --configuration $Configuration -warnaserror "-p:Version=$($taskVersion.version)" "-p:FileVersion=$($taskVersion.version).$($taskVersion.build)"
     if ($LASTEXITCODE -ne 0) { throw 'Windows desktop build failed.' }
@@ -18,7 +20,7 @@ try {
     $taskDesktop = Join-Path $taskRoot ('windows/Desktop/bin/' + $Configuration + '/net10.0-windows')
     $taskDestination = Join-Path $taskDesktop 'Engine'
     New-Item -ItemType Directory -Path $taskDestination -Force | Out-Null
-    foreach ($taskFile in @('PacerEngine.exe','PacerWindowsBridge.dll')) {
+    foreach ($taskFile in @('PacerEngine.exe','PacerWindowsBridge.dll','PacerInstallerHooks.exe')) {
         Copy-Item -LiteralPath (Join-Path $taskBinary $taskFile) -Destination $taskDestination -Force
     }
     foreach ($taskBundle in Get-ChildItem -LiteralPath $taskBinary -Directory -Filter '*.resources') {
@@ -30,4 +32,5 @@ try {
     }
     if (!$taskRuntime) { throw 'The pinned Swift runtime is required.' }
     Get-ChildItem -LiteralPath (Join-Path $taskRuntime.FullName 'usr/bin') -File -Filter '*.dll' | Copy-Item -Destination $taskDestination -Force
+    & (Join-Path $PSScriptRoot 'build-maintenance.ps1') -Configuration $Configuration
 } finally { Pop-Location }

@@ -9,6 +9,10 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["--startup-only"])
+        { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
+        if (args is ["--installation-only"])
+        { InstallationServiceChecks.Run(); Console.WriteLine("PASS installation identity, repair, ownership, data retention, failure rollback and notification cleanup"); return 0; }
         if (args.Contains("--hold")) { await Task.Delay(Timeout.Infinite); return 0; }
         int fixture = Array.IndexOf(args, "--language");
         if (fixture >= 0) { await Fixture(args[fixture + 1]); return 0; }
@@ -107,6 +111,10 @@ internal static class Program
         {
             SettingsServiceChecks.Run(); return Task.CompletedTask;
         });
+        await Test("startup OS disablement, policy, upgrade ownership and transactional failure recovery", () =>
+        { StartupRegistrationChecks.Run(); return Task.CompletedTask; });
+        await Test("installation, repair and uninstall retain user data and protect foreign registrations", () =>
+        { InstallationServiceChecks.Run(); return Task.CompletedTask; });
         await Test("shared Harness desktop identity, cached availability and fresh activation", () =>
         {
             HarnessApplicationChecks.Run(Path.GetDirectoryName(engine)!); return Task.CompletedTask;

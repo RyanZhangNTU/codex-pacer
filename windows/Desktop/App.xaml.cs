@@ -38,6 +38,25 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args is ["--uninstall-notifications"])
+        {
+            try { _ = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory); Shutdown(await WindowsNotificationCleanup.UninstallAsync() ? 0 : 1); }
+            catch { Shutdown(1); }
+            return;
+        }
+        if (e.Args is ["--qa-register-notifications"])
+        {
+            try
+            {
+                var identity = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory);
+                if (identity.QaScope == null) { Shutdown(2); return; }
+                using var probe = new WindowsSystemNotifications(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), identity.DisplayName, suppressDisplay: true);
+                var availability = await probe.EnableAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                Shutdown(availability is NotificationAvailability.Failed or NotificationAvailability.Unsupported ? 1 : 0);
+            }
+            catch { Shutdown(1); }
+            return;
+        }
         demo = e.Args.Contains("--demo");
         int themeIndex = Array.IndexOf(e.Args, "--theme");
         if (themeIndex >= 0)
@@ -168,9 +187,11 @@ public partial class App : Application
                         settingsVisible = settings?.IsVisible == true }));
                     activationForCapture.TrySetResult(action);
                 }
-            }, activationQa);
+            }, activationQa, Quit);
         if (activationQa != null && capture >= 0) { island.IsHitTestVisible = false; island.ShowActivated = false; }
-        startupRegistration = demo ? new DemoStartupRegistration() : new WindowsStartupRegistration(Environment.ProcessPath!);
+        try { startupRegistration = demo ? new DemoStartupRegistration() : WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory).Startup(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
+        { startupRegistration = new UnavailableStartupRegistration(); }
         settingsSession = new PreferencesSession(preferences, async configuration =>
         {
             await engineReady.Task;

@@ -1,5 +1,7 @@
 # Windows shell development
 
+The per-user installer, startup state, maintenance helpers and lifecycle checks are described in [Windows installation](windows-installation.md). The portable ZIP remains available.
+
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 
 ```powershell

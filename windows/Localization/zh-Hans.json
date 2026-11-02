@@ -10,7 +10,7 @@
   "windows.cli.not_found": "未找到可运行的 Codex CLI，请在设置中选择 codex.exe 或其安装文件夹。",
   "windows.settings.pane_pending": "Windows 预览版尚未提供此设置页。",
   "windows.settings.open_at_login_detail": "登录 Windows 时自动启动 Codex Pacer",
-  "windows.settings.startup_failed": "Windows 未能更改启动项，原设置已保留。",
+  "windows.settings.startup_failed": "无法更改启动项。请在 Windows“启动应用”中检查后重试。",
   "windows.settings.apply_failed": "设置未能生效，已恢复原设置。",
   "windows.settings.save_failed": "设置未能保存，已恢复原设置。",
   "windows.settings.recovery_required": "引擎状态未能恢复，请重启 Codex Pacer 后再修改设置。",
@@ -66,5 +66,11 @@
   "windows.claude.connection_failed": "未能连接 Claude，请重试。",
   "windows.claude.disconnect_failed": "未能清除 Claude 登录数据。额度更新已暂停，请再次退出登录。",
   "windows.claude.login.instructions": "在下方登录，然后点击“继续”或按 Ctrl+Enter。",
-  "windows.deepseek.login.instructions": "在下方登录，然后点击“继续”或按 Ctrl+Enter。"
+  "windows.deepseek.login.instructions": "在下方登录，然后点击“继续”或按 Ctrl+Enter。",
+  "windows.settings.startup_settings": "打开启动应用",
+  "windows.settings.startup_settings_failed": "无法打开 Windows 设置。请前往“设置 > 应用 > 启动”。",
+  "windows.settings.startup_disabled": "Windows 已禁用此启动项。请在“启动应用”中允许启动。",
+  "windows.settings.startup_policy": "Windows 策略阻止了此启动项。",
+  "windows.settings.startup_unknown": "无法确认 Windows 启动状态。请检查“启动应用”。",
+  "windows.settings.startup_other": "另一个安装位置已注册此启动项。请先检查“启动应用”。"
 }
