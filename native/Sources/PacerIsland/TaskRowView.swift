@@ -131,7 +131,7 @@ struct TaskRowView: View {
         }
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
         .help(enabled ? [name, openHelp, modelHelp].compactMap { $0 }.joined(separator: "\n") : L10n.text("activity.no_link"))
         .accessibilityLabel(accessibilityText)
     }

@@ -2,21 +2,27 @@ import SwiftUI
 import PacerCore
 
 struct QuotaWindowView: View {
-    let window: QuotaWindow
-    let now: Date
-    let allowPace: Bool
+    let reading: QuotaDashboardPresentation.LegacyWindow
     let accent: Color
     let secondary: Color
     var referenceColor: Color = .white
 
+    init(window: QuotaWindow, now: Date, allowPace: Bool, accent: Color, secondary: Color, referenceColor: Color = .white) {
+        self.init(reading: .init(window: window, allowPace: allowPace, now: now), accent: accent,
+            secondary: secondary, referenceColor: referenceColor)
+    }
+    init(reading: QuotaDashboardPresentation.LegacyWindow, accent: Color, secondary: Color, referenceColor: Color = .white) {
+        self.reading = reading; self.accent = accent; self.secondary = secondary; self.referenceColor = referenceColor
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(window.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(secondary)
+                Text(reading.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(secondary)
                 Spacer()
-                if let remaining = window.remainingPercent {
+                if let remaining = reading.remainingPercent {
                     HStack(alignment: .firstTextBaseline, spacing: 1) {
-                        Text("\(Int(remaining.rounded()))").font(.system(size: 24, weight: .semibold, design: .rounded))
+                        Text(reading.valueText).font(.system(size: 24, weight: .semibold, design: .rounded))
                         Text("%").font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(secondary)
                     }
                     .monospacedDigit()
@@ -26,22 +32,20 @@ struct QuotaWindowView: View {
             }
             quotaTrack
             HStack(spacing: 8) {
-                Text(countdown).help(resetDate)
+                Text(reading.countdown).help(reading.resetDate)
                 Spacer(minLength: 4)
-                if allowPace, let pace = window.pacePercent(at: now) {
-                    Text(L10n.text("quota.pace_value", Int(pace.rounded()))).foregroundStyle(pace < 85 ? Color.orange : pace > 115 ? accent : secondary)
-                } else { Text(L10n.text("quota.pace_unknown")) }
+                Text(reading.paceText).foregroundStyle(reading.pacePercent.map { $0 < 85 ? Color.orange : $0 > 115 ? accent : secondary } ?? secondary)
             }.font(.system(size: 11)).foregroundStyle(secondary).monospacedDigit()
         }.accessibilityElement(children: .combine)
     }
     private var quotaTrack: some View {
         GeometryReader { geometry in
             Capsule().fill(referenceColor.opacity(0.08)).overlay(alignment: .leading) {
-                if let percent = window.remainingPercent {
+                if let percent = reading.remainingPercent {
                     Capsule().fill(accent).frame(width: geometry.size.width * percent / 100)
                 }
             }.overlay(alignment: .leading) {
-                if allowPace, let expected = window.remainingTimePercent(at: now) {
+                if let expected = reading.remainingTimePercent {
                     Capsule().fill(referenceColor.opacity(0.65)).frame(width: 2, height: 11)
                         .offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * expected / 100 - 1)))
                 }
@@ -49,17 +53,5 @@ struct QuotaWindowView: View {
         }.frame(height: 6).padding(.vertical, 3)
         .help(L10n.text("quota.track_help"))
         .accessibilityHidden(true)
-    }
-    private var countdown: String {
-        guard let seconds = window.remainingSeconds(at: now) else { return L10n.text("quota.reset_unknown") }
-        if seconds <= 0 { return L10n.text("quota.waiting_update") }
-        if seconds < 60 { return L10n.text("quota.reset_soon") }
-        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
-        if days > 0 { return L10n.text("quota.reset_days", days, hours) }
-        if hours > 0 { return L10n.text("quota.reset_hours", hours, minutes) }
-        return L10n.text("quota.reset_minutes", minutes)
-    }
-    private var resetDate: String {
-        window.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? L10n.text("quota.reset_unknown")
     }
 }

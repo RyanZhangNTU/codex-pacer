@@ -1,26 +1,13 @@
 import SwiftUI
 import PacerCore
 
-struct ClassicQuotaDashboardSlot: Equatable, Identifiable, Sendable {
-    let provider: AgentProvider
-    let period: QuotaDashboardPeriod
-    let identifiesProvider: Bool
-    var id: String { provider.rawValue + ":" + period.rawValue }
-    var title: String { identifiesProvider ? provider.displayName : period.rawValue }
-}
+typealias ClassicQuotaDashboardSlot = QuotaDashboardPresentation.Slot
 
 enum ClassicQuotaDashboardLayout {
     /// Two providers share the weekly ring with 5h one line below each; one
     /// provider shows both periods as rings. There is no period switch.
     static func slots(providers: [AgentProvider]) -> [ClassicQuotaDashboardSlot] {
-        let enabled = Set(providers)
-        let ordered = AgentProvider.allCases.filter { enabled.contains($0) }
-        if let provider = ordered.first, ordered.count == 1 {
-            return QuotaDashboardPeriod.allCases.map {
-                ClassicQuotaDashboardSlot(provider: provider, period: $0, identifiesProvider: false)
-            }
-        }
-        return ordered.map { ClassicQuotaDashboardSlot(provider: $0, period: .weekly, identifiesProvider: true) }
+        QuotaDashboardPresentation.slots(providers: providers, style: .classic)
     }
 }
 
@@ -79,10 +66,8 @@ struct ClassicQuotaDashboardRingView: View {
     private static let diameter: CGFloat = 88
     private static let stroke: CGFloat = 6
     /// Pace needs fresh quota; a stale value against the live clock would mislead.
-    private var verdict: QuotaPaceVerdict? {
-        guard quota.availability == .available, let pace = quota.window?.pacePercent(at: now) else { return nil }
-        return QuotaPaceVerdict(pace: pace)
-    }
+    private var reading: QuotaDashboardPresentation.Reading { quota.at(now) }
+    private var verdict: QuotaPaceVerdict? { reading.verdict.flatMap(QuotaPaceVerdict.init(rawValue:)) }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -105,7 +90,7 @@ struct ClassicQuotaDashboardRingView: View {
                     }
                     VStack(spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 1) {
-                            Text(percentText(quota.remainingQuotaPercent).replacingOccurrences(of: "%", with: ""))
+                            Text(reading.valueText)
                                 .font(.system(size: 24, weight: .semibold, design: .rounded))
                                 .foregroundStyle(known ? PacerPalette.primary : PacerPalette.tertiary)
                             if known {
@@ -170,41 +155,11 @@ struct ClassicQuotaDashboardRingView: View {
             .accessibilityHidden(true)
     }
 
-    private func percentText(_ value: Double?) -> String {
-        guard let value, value.isFinite else { return "—" }
-        return "\(Int(min(100, max(0, value)).rounded()))%"
-    }
+    private var accessibilityLabel: String { reading.classicAccessibilityLabel }
+    private var detailsHelp: String { reading.classicHelp(providerHelp: providerHelp) }
+    private var countdown: String { reading.countdown }
+    private var resetDate: String { reading.resetDate }
 
-    private var accessibilityLabel: String {
-        let provider = quota.bucketName.map { quota.provider.displayName + " " + $0 } ?? quota.provider.displayName
-        if proOnly { return provider + ", " + quota.period.accessibilityLabel + ". " + L10n.text("dashboard.pro_help") }
-        let quotaText = quota.remainingQuotaPercent == nil ? L10n.text("common.unknown") : percentText(quota.remainingQuotaPercent)
-        let timeText = quota.remainingTimePercent == nil ? L10n.text("common.unknown") : percentText(quota.remainingTimePercent)
-        return L10n.text("dashboard.rings_accessibility", provider, quota.period.accessibilityLabel,
-            quotaText, timeText, [resetDate, verdict?.label, quota.freshnessText].compactMap { $0 }.joined(separator: ". "))
-    }
-
-    private var detailsHelp: String {
-        var details = [L10n.text(proOnly ? "dashboard.pro_help" : "dashboard.rings_help")]
-        if let name = quota.bucketName { details.append(name) }
-        if quota.availability == .missingPeriod {
-            details.append(L10n.text("dashboard.period_unavailable", quota.period.accessibilityLabel))
-        }
-        if !proOnly {
-            details.append(L10n.text("dashboard.time_remaining", percentText(quota.remainingTimePercent)))
-            details.append(resetDate)
-        }
-        details.append(providerHelp)
-        return details.joined(separator: "\n")
-    }
-
-    private var countdown: String {
-        guard let seconds = quota.window?.remainingSeconds(at: now) else { return "—" }
-        return seconds <= 0 ? L10n.text("dashboard.countdown_waiting") : CompactDuration.text(seconds)
-    }
-    private var resetDate: String {
-        quota.window?.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? L10n.text("quota.reset_unknown")
-    }
 }
 
 /// The period not shown in the ring stays one line away instead of behind
@@ -214,18 +169,13 @@ private struct ClassicQuotaOtherPeriodView: View {
     let now: Date
 
     var body: some View {
-        if [.available, .stale].contains(quota.availability), let remaining = quota.remainingQuotaPercent, remaining.isFinite {
-            let percent = "\(Int(min(100, max(0, remaining)).rounded()))%"
-            let countdown = quota.window?.remainingSeconds(at: now).map {
-                $0 <= 0 ? L10n.text("dashboard.countdown_waiting") : CompactDuration.text($0)
-            }
-            let pressing = quota.availability == .available && (remaining <= 15 ||
-                quota.window?.pacePercent(at: now).map { QuotaPaceVerdict(pace: $0) == .fast } == true)
-            Text([quota.period.rawValue + " " + percent, countdown].compactMap { $0 }.joined(separator: " · "))
+        let reading = quota.at(now)
+        if let text = reading.otherPeriodText {
+            Text(text)
                 .font(.system(size: 10, weight: .medium)).monospacedDigit().lineLimit(1)
-                .foregroundStyle(pressing ? PacerPalette.attention : PacerPalette.tertiary)
-                .accessibilityLabel([quota.provider.displayName, quota.period.accessibilityLabel, percent, countdown]
-                    .compactMap { $0 }.joined(separator: ", "))
+                .foregroundStyle(reading.pressing ? PacerPalette.attention : PacerPalette.tertiary)
+                .accessibilityLabel([quota.provider.displayName, quota.period.accessibilityLabel,
+                    reading.valueText + "%", quota.window == nil ? nil : reading.countdown].compactMap { $0 }.joined(separator: ", "))
         }
     }
 }

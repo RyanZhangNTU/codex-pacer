@@ -11,26 +11,15 @@ enum QuotaDashboardLayout {
     /// Split Ring draws a 7-day window itself, so there only nonstandard or
     /// unspecified limits keep them.
     static func usesLegacyCodexDisplay(providers: [AgentProvider], snapshot: QuotaSnapshot?, style: ExpandedQuotaStyle) -> Bool {
-        guard Set(providers) == [.codex], let primary = snapshot?.buckets.first(where: { $0.id == "codex" }),
-              !primary.windows.contains(where: { $0.durationMinutes == 300 }) else { return false }
-        if style == .split, primary.windows.contains(where: { $0.durationMinutes == 10080 }) { return false }
-        return primary.windows.contains {
-            $0.remainingPercent != nil || ($0.durationMinutes.map { $0 > 0 } ?? false) || $0.resetsAt != nil
-        }
+        QuotaDashboardPresentation.usesLegacyCodexDisplay(providers: providers, snapshot: snapshot, style: style)
     }
 
     /// Each provider keeps one gauge, whether one or both modules are enabled.
     static func slots(providers: [AgentProvider]) -> [QuotaDashboardSlot] {
-        let enabled = Set(providers)
-        return AgentProvider.allCases.filter { enabled.contains($0) }.map { QuotaDashboardSlot(provider: $0) }
+        QuotaDashboardPresentation.slots(providers: providers, style: .split).map { QuotaDashboardSlot(provider: $0.provider) }
     }
 }
 
-extension QuotaDashboardPeriod {
-    var accessibilityLabel: String {
-        self == .fiveHour ? L10n.text("quota.hours", 5) : L10n.text("quota.days", 7)
-    }
-}
 
 struct QuotaDashboardView: View {
     @ObservedObject var model: IslandModel
@@ -99,32 +88,33 @@ struct QuotaDashboardView: View {
 private struct LegacyCodexQuotaView: View {
     @ObservedObject var model: IslandModel
     let snapshot: QuotaSnapshot
-    private var fresh: Bool { !model.providerQuotaIsStale(.codex) && model.providerQuotaError(.codex) == nil }
+    private var presentation: QuotaDashboardPresentation.Legacy {
+        .init(snapshot: snapshot, failed: model.providerQuotaError(.codex) != nil,
+            selectedWindowID: model.defaults.string(forKey: "quotaWindowID"), now: model.now)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !fresh {
+            if !presentation.fresh {
                 Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness)
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.attention)
-                    .help([model.providerSourceText(.codex), model.providerFreshnessText(.codex)].compactMap { $0 }.joined(separator: "\n"))
+                    .help(presentation.help)
             }
-            ForEach(snapshot.buckets) { bucket in
-                if !bucket.windows.isEmpty {
+            ForEach(presentation.buckets, id: \.id) { bucket in
                     VStack(alignment: .leading, spacing: 14) {
-                        if snapshot.buckets.count > 1 {
-                            Text(bucket.name ?? bucket.id).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
+                        if let title = bucket.title {
+                            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
                         }
-                        ForEach(bucket.windows) { window in
-                            QuotaWindowView(window: window, now: model.now, allowPace: fresh,
-                                accent: fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary)
+                        ForEach(bucket.windows, id: \.id) { window in
+                            QuotaWindowView(reading: window,
+                                accent: presentation.fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary)
                         }
                     }
-                }
             }
             QuotaProviderStatusView(model: model, provider: .codex).frame(maxWidth: .infinity)
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.bottom, 4)
-        .help([model.providerSourceText(.codex), model.providerFreshnessText(.codex)].compactMap { $0 }.joined(separator: "\n"))
+        .help(presentation.help)
     }
 }
 
@@ -145,73 +135,25 @@ struct QuotaRingGeometry {
 struct QuotaRingReading {
     let quota: QuotaDashboardQuota
     let now: Date
-    var fraction: Double? { normalized(quota.remainingQuotaPercent) }
-    var timeFraction: Double? { normalized(quota.remainingTimePercent) }
-    var stale: Bool { quota.availability == .stale }
-    var verdict: QuotaPaceVerdict? {
-        guard quota.availability == .available, let pace = quota.window?.pacePercent(at: now) else { return nil }
-        return QuotaPaceVerdict(pace: pace)
-    }
-    var pressing: Bool {
-        quota.availability == .available && (fraction.map { $0 <= 0.15 } == true || verdict == .fast)
-    }
+    private var reading: QuotaDashboardPresentation.Reading { quota.at(now) }
+    var fraction: Double? { reading.fraction }
+    var timeFraction: Double? { reading.timeFraction }
+    var stale: Bool { reading.availability == .stale }
+    var verdict: QuotaPaceVerdict? { reading.verdict.flatMap(QuotaPaceVerdict.init(rawValue:)) }
+    var pressing: Bool { reading.pressing }
     var tint: Color { quota.period == .fiveHour && pressing ? PacerPalette.attention : quota.provider.tint }
-    /// Either period's label and value turn amber together; only the 5h arc does.
     var labelColor: Color { pressing ? PacerPalette.attention : PacerPalette.tertiary }
-    var valueColor: Color { fraction == nil ? PacerPalette.tertiary : (pressing ? PacerPalette.attention : PacerPalette.primary) }
-    /// Pace and forecast, like the verdict, need fresh quota against the live clock.
-    var paceText: String {
-        guard quota.availability == .available, let pace = quota.window?.pacePercent(at: now) else { return "—" }
-        return "\(Int(pace.rounded()))%"
-    }
-    var projection: QuotaProjection? { quota.availability == .available ? quota.window?.projection(at: now) : nil }
-    var projectionWarns: Bool { if case .runsOut = projection { return true } else { return false } }
-    func projectionText(inline: Bool) -> String? {
-        switch projection {
-        case nil: return nil
-        case .tooEarly: return L10n.text("dashboard.projection_early")
-        case .remainingAtReset(let left):
-            return L10n.text(inline ? "dashboard.projection_left_inline" : "dashboard.projection_left", "\(Int(left.rounded()))%")
-        case .runsOut(let seconds):
-            guard seconds > 0 else { return L10n.text("dashboard.projection_used_up") }
-            return L10n.text(inline ? "dashboard.projection_out_inline" : "dashboard.projection_out", CompactDuration.text(seconds))
-        }
-    }
-    var resetMoment: String? { quota.window?.resetsAt.map { L10n.moment($0, relativeTo: now) } }
-    var valueText: String { percentText(quota.remainingQuotaPercent).replacingOccurrences(of: "%", with: "") }
-    var countdown: String {
-        guard let seconds = quota.window?.remainingSeconds(at: now) else { return "—" }
-        return seconds <= 0 ? L10n.text("dashboard.countdown_waiting") : CompactDuration.text(seconds)
-    }
-    var resetDate: String {
-        quota.window?.resetsAt.map { L10n.text("quota.reset_date", L10n.date($0)) } ?? L10n.text("quota.reset_unknown")
-    }
-    var detailsHelp: String {
-        var details = [L10n.text("dashboard.rings_help")]
-        if let name = quota.bucketName { details.append(name) }
-        if quota.availability == .missingPeriod {
-            details.append(L10n.text("dashboard.period_unavailable", quota.period.accessibilityLabel))
-        }
-        details.append(L10n.text("dashboard.time_remaining", percentText(quota.remainingTimePercent)))
-        details.append(resetDate)
-        if let verdict { details.append(verdict.label) }
-        details.append(quota.freshnessText)
-        return details.joined(separator: "\n")
-    }
-    var accessibilityLabel: String {
-        let provider = quota.bucketName.map { quota.provider.displayName + " " + $0 } ?? quota.provider.displayName
-        return L10n.text("dashboard.rings_accessibility", provider, quota.period.accessibilityLabel,
-            fraction == nil ? L10n.text("common.unknown") : percentText(quota.remainingQuotaPercent),
-            timeFraction == nil ? L10n.text("common.unknown") : percentText(quota.remainingTimePercent),
-            [resetDate, verdict?.label, quota.freshnessText].compactMap { $0 }.joined(separator: ". "))
-    }
-    private func normalized(_ value: Double?) -> Double? {
-        value.flatMap { $0.isFinite ? min(1, max(0, $0 / 100)) : nil }
-    }
-    private func percentText(_ value: Double?) -> String {
-        guard let fraction = normalized(value) else { return "—" }
-        return "\(Int((fraction * 100).rounded()))%"
-    }
+    var valueColor: Color { pressing ? PacerPalette.attention : PacerPalette.primary }
+    var paceText: String { reading.paceText }
+    var projection: QuotaProjection? { reading.projection }
+    var projectionWarns: Bool { reading.projectionWarns }
+    func projectionText(inline: Bool) -> String? { inline ? reading.projectionInline : reading.projectionText }
+    var resetMoment: String? { reading.resetMoment }
+    var valueText: String { reading.valueText }
+    var countdown: String { reading.countdown }
+    var resetDate: String { reading.resetDate }
+    var detailsHelp: String { reading.splitHelp }
+    var accessibilityLabel: String { reading.accessibilityLabel }
 }
 
 struct QuotaDashboardRingView: View {
@@ -454,13 +396,15 @@ struct QuotaProviderStatusView: View {
     let provider: AgentProvider
 
     var body: some View {
+        let status = QuotaConnectionPresentation(provider: provider, snapshot: model.providerQuota(provider),
+            error: model.providerQuotaError(provider), refreshing: model.providerRefreshing(provider))
         VStack(spacing: 6) {
-            if let error = model.providerQuotaError(provider) {
+            if status.state == .error, let error = status.message {
                 Text(error).font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 connectionActions
-            } else if model.providerQuota(provider)?.windows.isEmpty != false {
-                Text(model.providerRefreshing(provider) ? L10n.text("quota.loading") : L10n.text("dashboard.provider_unavailable", provider.displayName))
+            } else if status.state != .hidden {
+                Text(status.message ?? "")
                     .font(.system(size: 11)).foregroundStyle(PacerPalette.secondary).fixedSize(horizontal: false, vertical: true)
                 QuotaLinkButton(title: L10n.text("common.open_settings")) { model.openSettings(for: provider) }
             }

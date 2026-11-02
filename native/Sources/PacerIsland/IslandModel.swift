@@ -2,34 +2,14 @@ import AppKit
 import SwiftUI
 import PacerCore
 
-enum QuotaDashboardPeriod: String, CaseIterable, Identifiable, Sendable {
-    case fiveHour = "5h", weekly = "7d"
-    var id: String { rawValue }
-    var durationMinutes: Int { self == .fiveHour ? 300 : 10080 }
-    var label: String { self == .fiveHour ? L10n.text("quota.compact_hours", 5) : L10n.text("quota.compact_days", 7) }
-}
+typealias QuotaDashboardPeriod = QuotaDashboardPresentation.Period
+typealias QuotaDashboardQuota = QuotaDashboardPresentation.Reading
 
 extension QuotaWindowSelection {
     var label: String { L10n.text(self == .fiveHour ? "settings.window_five_hour" : "settings.window_weekly") }
 }
 
-enum FiveHourQuotaAlert: Equatable, Sendable {
-    case low(Double), exhausted
-}
-
-struct QuotaDashboardQuota: Equatable, Sendable {
-    enum Availability: Equatable, Sendable { case available, stale, unavailable, missingPeriod, proOnly }
-    let provider: AgentProvider
-    let period: QuotaDashboardPeriod
-    let window: QuotaWindow?
-    let availability: Availability
-    let remainingQuotaPercent: Double?
-    let remainingTimePercent: Double?
-    let capturedAt: Date?
-    let freshnessText: String
-    let sourceText: String?
-    let bucketName: String?
-}
+typealias FiveHourQuotaAlert = CompactWarningPresentation.FiveHourAlert
 
 @MainActor
 struct ClaudeQuotaReadDependencies {
@@ -51,6 +31,7 @@ final class IslandModel: ObservableObject {
             observeFirstOutputs(activities); scheduleRateExpiry()
         }
     }
+    var compactPresentationCache: (layout: CompactIslandLayout, request: CompactBarPresentation.Request, output: CompactBarPresentation.Output)?
     private var cachedTaskGroups: [ActivityTaskGroup]?
     private var cachedOverview: (at: Date, value: ActivityOverview)?
     private(set) var taskGroupingComputations = 0
@@ -59,7 +40,7 @@ final class IslandModel: ObservableObject {
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
-    var navigationErrorDuration: TimeInterval = 30
+    var navigationErrorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration
     private var navigationErrorToken = 0
     @Published private(set) var hostApplications: [AgentProvider: [String: HostApplication]] = [:]
     private let hostTracking: [AgentProvider: HostApplicationTracking] = [.codex: .init(), .claude: .init(), .deepseek: .init()]
@@ -261,24 +242,9 @@ final class IslandModel: ObservableObject {
         return elapsed < 10 ? L10n.text("quota.just_updated") : elapsed < 60 ? L10n.text("quota.seconds_ago", elapsed) : L10n.text("quota.minutes_ago", elapsed / 60)
     }
     func dashboardQuota(provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaDashboardQuota {
-        let snapshot = providerQuota(provider), bucket = providerDashboardBucket(provider)
-        let window = providerWindow(provider, period: period)
-        let stale = providerQuotaIsStale(provider, period: period) || providerQuotaError(provider) != nil
-        let availability: QuotaDashboardQuota.Availability
-        if snapshot == nil || bucket == nil { availability = .unavailable }
-        else if stale { availability = .stale }
-        else if window != nil { availability = .available }
-        else if period == .fiveHour, bucket?.id == provider.rawValue,
-                let weekly = bucket?.windows.first(where: { $0.durationMinutes == 10080 }),
-                weekly.remainingPercent != nil, weekly.resetsAt.map({ $0 > now }) == true,
-                bucket?.windows.allSatisfy({ $0.durationMinutes == 10080 }) == true {
-            // Missing model-specific or untyped windows do not establish a plan restriction.
-            availability = .proOnly
-        } else { availability = .missingPeriod }
-        return QuotaDashboardQuota(provider: provider, period: period, window: window, availability: availability,
-            remainingQuotaPercent: window?.remainingPercent, remainingTimePercent: window?.remainingTimePercent(at: now),
-            capturedAt: snapshot?.capturedAt, freshnessText: providerFreshnessText(provider, period: period),
-            sourceText: providerSourceText(provider), bucketName: bucket.flatMap { $0.id == provider.rawValue ? nil : ($0.name ?? $0.id) })
+        QuotaDashboardPresentation.Reading(provider: provider, period: period, snapshot: providerQuota(provider),
+            failed: providerQuotaError(provider) != nil, refreshing: providerRefreshing(provider),
+            sourceText: providerSourceText(provider), now: now)
     }
     func selectProvider(_ provider: AgentProvider) {
         guard enabledProviders.contains(provider), selectedProvider != provider else { return }
@@ -290,21 +256,15 @@ final class IslandModel: ObservableObject {
     /// both from the provider's own bucket. A saved 5-hour choice falls back to
     /// 7 days on an account without that window.
     func providerSelectedWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
-        guard let snapshot = providerQuota(provider) else { return nil }
-        let choice = QuotaWindowSelection(saved: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"),
-            snapshot: snapshot)
-        if choice == .fiveHour, let window = providerWindow(provider, period: .fiveHour) { return window }
-        return providerWindow(provider, period: .weekly) ?? snapshot.windows.first(where: { $0.durationMinutes == 10080 }) ??
-            snapshot.limitingWindow
+        QuotaDashboardPresentation.selectedWindow(provider: provider, snapshot: providerQuota(provider),
+            selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"))
     }
     /// The collapsed value usually shows a longer window, so the warning watches
     /// each provider's 5h window: below 20% is low and zero is exhausted. Stale,
     /// expired or failed quota never produces a live alert.
     func fiveHourAlert(_ provider: AgentProvider) -> FiveHourQuotaAlert? {
-        guard providerQuotaError(provider) == nil, let snapshot = providerQuota(provider), !snapshot.isStale(at: now),
-              let window = providerWindow(provider, period: .fiveHour), window.resetsAt.map({ $0 > now }) ?? true,
-              let remaining = window.remainingPercent, remaining.isFinite else { return nil }
-        return remaining <= 0 ? .exhausted : remaining < 20 ? .low(remaining) : nil
+        CompactWarningPresentation.fiveHourAlert(provider: provider, snapshot: providerQuota(provider),
+            failed: providerQuotaError(provider) != nil, now: now)
     }
     func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
         guard let snapshot = providerQuota(provider), !snapshot.isStale(at: now), providerQuotaError(provider) == nil else { return nil }
@@ -736,34 +696,8 @@ final class IslandModel: ObservableObject {
         return completionInbox.unreadActivities.filter { roots.contains($0.id) }
     }
     var pendingInputRequests: [PendingAttentionRequest] { attentionRequests }
-    var headerStatus: String {
-        if let first = pendingInputRequests.first {
-            return first.kind.label
-        }
-        if !pendingCompletions.isEmpty { return completionSummary }
-        if let first = waiting.first { return L10n.text(first.waitingForApproval ? "attention.approval" : "attention.input") }
-        let count = running.count + waiting.count
-        if count == 1, let task = running.first {
-            if let group = taskGroup(for: task), group.runningSubagentCount > 0 {
-                return L10n.text(group.runningSubagentCount == 1 ? "activity.subagent_running" : "activity.subagents_running", group.runningSubagentCount)
-            }
-            switch task.stage {
-            case .tool: return L10n.text("activity.tool_compact")
-            case .responding: return L10n.text("activity.responding_compact")
-            case .thinking, .starting, .working, .coordinating: return task.stage.label
-            }
-        }
-        return count == 0 ? L10n.text("activity.idle") : L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact", count > 99 ? "99+" : String(count))
-    }
-    var headerDisplayStatus: String {
-        guard running.count > 1, waiting.isEmpty, pendingInputRequests.isEmpty, pendingCompletions.isEmpty,
-              let latest = latestRunningTask else { return headerStatus }
-        switch latest.stage {
-        case .tool: return L10n.text("activity.tool_compact")
-        case .responding: return L10n.text("activity.responding_compact")
-        case .thinking, .starting, .working, .coordinating: return latest.stage.label
-        }
-    }
+    var headerStatus: String { compactContext.headerStatusText(language: L10n.language) }
+    var headerDisplayStatus: String { compactContext.statusText(language: L10n.language) }
     private var latestRunningTask: SessionActivity? {
         running.max {
             let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
@@ -808,13 +742,7 @@ final class IslandModel: ObservableObject {
     var hidesHeaderRate: Bool {
         isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
     }
-    var headerRateText: String? {
-        guard let rate else { return nil }
-        let compact = isAttached || sideDock != nil
-        if compact && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
-        if compact && rate >= 1_000 { return String(format: "%.1fk", rate / 1_000) }
-        return String(format: "%.0f", rate)
-    }
+    var headerRateText: String? { rate == nil ? nil : compactComponent(.tps).text }
     var hasSSHConnectionIssue: Bool {
         monitorsSSH && (!unavailableSSH.isEmpty || (Array(streamStatuses) + Array(claudeStreamStatuses)).contains {
             $0.key.contains("remote-ssh-discovered:") && $0.value.hasConnectionFailure
@@ -852,8 +780,9 @@ final class IslandModel: ObservableObject {
         L10n.text(defaults.string(forKey: "compactMetric") == "pace" ? "quota.pace" : "layout.quota_label")
     }
     func compactQuotaValue(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> Double? {
-        (metric ?? defaults.string(forKey: "compactMetric")) == "pace"
-            ? providerPace(provider, selection: selection) : providerSelectedWindow(provider, selection: selection)?.remainingPercent
+        CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider),
+            failed: providerQuotaError(provider) != nil, metric: metric ?? defaults.string(forKey: "compactMetric") ?? "remaining",
+            selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     /// The percentage without its sign, for the docked strip's stacked units.
     func compactQuotaNumber(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String? {
@@ -864,7 +793,8 @@ final class IslandModel: ObservableObject {
         return compactQuotaNumber(provider, metric: metric, selection: selection).map { $0 + "%" } ?? "—"
     }
     func compactTimeRemainingNumber(_ provider: AgentProvider, selection: String? = nil) -> String? {
-        providerSelectedWindow(provider, selection: selection)?.elapsedTimePercent(at: now).map { "\(Int((100 - $0).rounded()))" }
+        CompactBarPresentation.timeRemainingNumber(provider: provider, snapshot: providerQuota(provider),
+            selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     func compactTimeRemainingText(_ provider: AgentProvider, selection: String? = nil) -> String {
         compactTimeRemainingNumber(provider, selection: selection).map { $0 + "%" } ?? "—"
@@ -1543,17 +1473,7 @@ final class IslandModel: ObservableObject {
     }
     static func embeddedClaudeIDs(_ values: [SessionActivity]) -> Set<String> { embeddedActivityIDs(values) }
     static func embeddedActivityIDs(_ values: [SessionActivity]) -> Set<String> {
-        var hidden = Set(values.filter(\.launchedByEmbeddingApp).map(\.id))
-        var grew = !hidden.isEmpty
-        while grew {
-            grew = false
-            for value in values where !hidden.contains(value.id) {
-                guard let parent = value.parentThreadID,
-                      hidden.contains(value.provider.activityID(sessionID: parent, sourceHostID: value.sourceHostID)) else { continue }
-                hidden.insert(value.id); grew = true
-            }
-        }
-        return hidden
+        EmbeddedSessionVisibility.embeddedActivityIDs(values)
     }
 
     private func localSubagentStates(_ values: [SessionActivity]) -> [String: SessionActivity.SubagentEvidence] {

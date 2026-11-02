@@ -59,10 +59,9 @@ enum CompactDuration {
 /// The existing pace thresholds: below 85% spends faster than time passes,
 /// above 115% leaves spare quota for the rest of the window. Only a fast pace
 /// is colored: Claude's orange would otherwise resemble the attention amber.
-enum QuotaPaceVerdict: String {
-    case spare, steady, fast
-    init(pace: Double) { self = pace < 85 ? .fast : pace > 115 ? .spare : .steady }
-    var label: String { L10n.text("quota.verdict." + rawValue) }
+typealias QuotaPaceVerdict = QuotaDashboardPresentation.Verdict
+
+extension QuotaDashboardPresentation.Verdict {
     var tint: Color {
         switch self {
         case .spare: PacerPalette.primary

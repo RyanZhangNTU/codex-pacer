@@ -6,6 +6,7 @@
 - `AgentProvider` / `ProviderModules`: provider identity, bounded installation detection and automatic or explicit module choices. Claude and DeepSeek collection/quota adapters feed the shared activity, performance and completion model.
 - `native/Sources/CZstd`: the decompression half of the BSD-licensed Zstandard library, built without assembly, legacy formats or tracing, for DeepSeek Harness session logs.
 - `native/Sources/PacerIsland`: SwiftUI/AppKit presentation, settings, notifications and native glass.
+- `PacerCore` presentation models own compact-bar visibility, quota readings, account/history labels, DeepSeek dial and spend summaries, and wallet notice thresholds. `IslandModel+Presentation` supplies their inputs; Mac views draw the results and dispatch native actions. Typed inputs avoid converting Mac state to JSON.
 - `native/Tests/PacerCoreTests`: regression coverage for lifecycle, privacy, transport, rate calculation, account isolation, retention, geometry, singleton locking and preferences migration.
 - `native/Tests/PacerIslandTests`: presentation-model coverage for conversation opening and acknowledgment persistence, provider/quota dashboard display, compact components, rates and width measurement.
 - `scripts/native`: isolated local build/test entry points.

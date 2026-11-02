@@ -113,14 +113,14 @@ final class DeepSeekIslandTests: XCTestCase {
             DeepSeekWallet(balance: DeepSeekBalance(total: total, capturedAt: now, source: .web), connected: true,
                 ledger: DeepSeekSpendLedger(), now: now)
         }
-        var attention = DeepSeekBalanceAttention()
-        XCTAssertTrue(attention.notices(wallet(50)).isEmpty)
-        XCTAssertEqual(attention.notices(wallet(8)).map(\.id), ["deepseek:balance:low"])
-        XCTAssertTrue(attention.notices(wallet(7)).isEmpty, "Staying low does not repeat")
-        XCTAssertEqual(attention.notices(wallet(0)).map(\.id), ["deepseek:balance:exhausted"])
-        XCTAssertTrue(attention.notices(wallet(5)).isEmpty, "A small top-up after running out is not a new low warning")
-        XCTAssertTrue(attention.notices(wallet(80)).isEmpty)
-        let again = attention.notices(wallet(9))
+        var attention = DeepSeekNoticePolicy()
+        XCTAssertTrue(attention.balanceNotices(wallet(50)).isEmpty)
+        XCTAssertEqual(attention.balanceNotices(wallet(8)).map(\.id), ["deepseek:balance:low"])
+        XCTAssertTrue(attention.balanceNotices(wallet(7)).isEmpty, "Staying low does not repeat")
+        XCTAssertEqual(attention.balanceNotices(wallet(0)).map(\.id), ["deepseek:balance:exhausted"])
+        XCTAssertTrue(attention.balanceNotices(wallet(5)).isEmpty, "A small top-up after running out is not a new low warning")
+        XCTAssertTrue(attention.balanceNotices(wallet(80)).isEmpty)
+        let again = attention.balanceNotices(wallet(9))
         XCTAssertEqual(again.map(\.id), ["deepseek:balance:low"], "Crossing again after recovering warns again")
         XCTAssertEqual(again.first?.kind, .lowQuota, "Balance notices stay readable when project names are hidden")
     }
@@ -135,7 +135,7 @@ final class DeepSeekIslandTests: XCTestCase {
             return DeepSeekWallet(balance: DeepSeekBalance(total: 80, capturedAt: now, source: .web), connected: true,
                 ledger: ledger, now: now, budgets: DeepSeekBudgets(daily: 10), spikeLimit: 5)
         }
-        var attention = DeepSeekBalanceAttention()
+        var attention = DeepSeekNoticePolicy()
         func ids(_ wallet: DeepSeekWallet, snoozed: Date = .distantPast) -> [String] {
             attention.spendNotices(wallet, spike: true, budget: true, snoozedUntil: snoozed, now: now).map { $0.id.components(separatedBy: ":").prefix(2).joined(separator: ":") }
         }
@@ -189,7 +189,7 @@ final class DeepSeekIslandTests: XCTestCase {
         var delivered: [UNNotificationRequest] = []
         model.notifications = NotificationDelivery(defaults: defaults, authorizationStatus: { .authorized }, addRequest: { delivered.append($0) })
         let now = Date()
-        var ledger = DeepSeekSpendLedger(), attention = DeepSeekBalanceAttention()
+        var ledger = DeepSeekSpendLedger(), attention = DeepSeekNoticePolicy()
         func wallet() -> DeepSeekWallet {
             DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web), connected: true,
                 ledger: ledger, now: now, budgets: .init(daily: 5, weekly: 5), spikeLimit: 5)

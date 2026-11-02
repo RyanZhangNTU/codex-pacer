@@ -3,10 +3,9 @@ import PacerCore
 import SwiftUI
 
 /// Where the balance comes from. Automatic follows how Harness signs in.
-enum DeepSeekBalanceSource: String, CaseIterable, Identifiable {
-    case automatic, web, apiKey
+typealias DeepSeekBalanceSource = DeepSeekBalanceSelection
+extension DeepSeekBalanceSelection {
     static let defaultsKey = "deepseekBalanceSource"
-    var id: String { rawValue }
     static func load(from defaults: UserDefaults = .standard) -> Self {
         defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .automatic
     }
@@ -28,54 +27,7 @@ struct DeepSeekBalanceReadDependencies {
     var api: @MainActor (String) async throws -> DeepSeekBalance = { try await DeepSeekAPIBalanceClient.read(key: $0) }
 }
 
-/// Wallet notices fire once each time a line is crossed. Low and exhausted
-/// follow balance readings; spend spikes and budgets take a baseline first,
-/// so a relaunch never repeats one already shown.
-struct DeepSeekBalanceAttention {
-    static let spikeCategory = "deepseek.spike"
-    static let balanceCategory = "deepseek.balance"
-    private var notified: DeepSeekWallet.State?
-    private var spiking: Bool?
-    private var budgetLevels: [String: Int]?
-    /// An empty wallet always notifies; a low one only while that reminder is on.
-    mutating func notices(_ wallet: DeepSeekWallet, low: Bool = true) -> [IslandNotice] {
-        let state = wallet.state
-        guard [.low, .exhausted, .normal].contains(state) else { return [] }
-        defer { notified = state == .normal ? nil : state }
-        guard state != .normal, notified != state, notified != .exhausted || state == .exhausted, let balance = wallet.balance,
-              state == .exhausted || low else { return [] }
-        let detail = state == .exhausted ? L10n.text("deepseek.notice.exhausted_detail")
-            : L10n.text("deepseek.notice.low_detail", DeepSeekWallet.compactAmount(balance.total))
-        return [IslandNotice(id: "deepseek:balance:" + (state == .exhausted ? "exhausted" : "low"), kind: .lowQuota,
-            title: "DeepSeek · " + L10n.text(state == .exhausted ? "deepseek.notice.exhausted" : "deepseek.notice.low"), detail: detail,
-            category: Self.balanceCategory)]
-    }
-    mutating func spendNotices(_ wallet: DeepSeekWallet, spike: Bool, budget: Bool, snoozedUntil: Date, now: Date) -> [IslandNotice] {
-        var result: [IslandNotice] = []
-        let wasSpiking = spiking
-        spiking = wallet.spiking
-        if spike, wallet.spiking, wasSpiking == false, now >= snoozedUntil {
-            result.append(IslandNotice(id: "deepseek:spike", kind: .lowQuota, title: "DeepSeek · " + L10n.text("deepseek.notice.spike"),
-                detail: L10n.text("deepseek.notice.spike_detail", DeepSeekWallet.compactSpend(wallet.recentSpend),
-                    DeepSeekWallet.compactSpend(wallet.spikeLimit)), category: Self.spikeCategory))
-        }
-        var levels: [String: Int] = [:]
-        for period in [wallet.daily, wallet.weekly].compactMap({ $0 }) {
-            let key = period.kind.rawValue + String(Int(period.interval.start.timeIntervalSince1970))
-            let level = period.exceeded ? 2 : period.nearing ? 1 : 0
-            levels[key] = level
-            guard budget, let previous = budgetLevels, level > previous[key, default: 0] else { continue }
-            let day = period.kind == .day
-            result.append(IslandNotice(id: "deepseek:budget:" + key + ":" + String(level), kind: .lowQuota,
-                title: "DeepSeek · " + L10n.text(level == 2 ? (day ? "deepseek.notice.day_over" : "deepseek.notice.week_over")
-                    : (day ? "deepseek.notice.day_near" : "deepseek.notice.week_near")),
-                detail: L10n.text(day ? "deepseek.notice.budget_detail_day" : "deepseek.notice.budget_detail_week",
-                    DeepSeekDayDial.amount(period.spent), DeepSeekDayDial.amount(period.limit))))
-        }
-        budgetLevels = levels
-        return result
-    }
-}
+typealias DeepSeekBalanceAttention = DeepSeekNoticePolicy
 
 /// Which providers draw the collapsed rings. Unset follows the modules:
 /// Codex and Claude first, DeepSeek in a free ring once it has a budget.
@@ -200,25 +152,10 @@ extension IslandModel {
     }
     /// The providers in the collapsed rings, outer first. DeepSeek draws only with a budget.
     var compactRingProviders: [AgentProvider] {
-        let enabled = enabledProviders
-        let hasBudget = !deepseekBudgets.isEmpty
-        let drawable = { (provider: AgentProvider) in provider != .deepseek || hasBudget }
-        let outer = quotaRingChoice(.outer), inner = quotaRingChoice(.inner)
-        guard outer != nil || inner != nil else {
-            var result = Array(enabled.filter { $0 != .deepseek }.prefix(2))
-            if result.count == 1, enabled.contains(.deepseek), drawable(.deepseek) { result.append(.deepseek) }
-            return result
-        }
-        var result: [AgentProvider] = []
-        for case let provider?? in [outer, inner] where enabled.contains(provider) && drawable(provider) && !result.contains(provider) {
-            result.append(provider)
-        }
-        return result
+        compactPresentation().rings.compactMap { AgentProvider(rawValue: $0.provider) }
     }
     /// With no ring to draw for DeepSeek alone, the gauge shows the price clock.
-    var compactGaugeShowsPriceClock: Bool {
-        compactRingProviders.isEmpty && isModuleEnabled(.deepseek) && !compactLayout.components.contains(.priceClock)
-    }
+    var compactGaugeShowsPriceClock: Bool { compactPresentation().gaugeClock }
     /// DeepSeek's value follows its ring: the budget left, else the balance.
     var deepseekValueShowsBudget: Bool {
         compactLayout.components.contains(.quotaGauge) && compactRingProviders.contains(.deepseek)
@@ -356,7 +293,7 @@ extension IslandModel {
                 self.deepseekHistory.record(total: balance.total, at: balance.capturedAt, source: balance.source.rawValue)
                 self.deepseekHistory.save(to: self.defaults)
                 self.now = Date()
-                self.present(self.deepseekBalanceAttention.notices(self.deepseekWallet, low: self.compactLayout.warnings.contains(.lowBalance)))
+                self.present(self.deepseekBalanceAttention.balanceNotices(self.deepseekWallet, low: self.compactLayout.warnings.contains(.lowBalance)))
                 self.presentDeepSeekSpendNotices()
             case .failure(let error):
                 let failure = error as? DeepSeekBalanceError ?? .connectionFailed

@@ -1,0 +1,58 @@
+name: Platforms
+
+on:
+  push:
+    branches: [main, develop, 'codex/**']
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+          - arch: x86_64
+            runner: macos-26-intel
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Verify architecture and compiler
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          xcodebuild -version
+          swift --version
+      - name: Full tests
+        run: |
+          set -o pipefail
+          make test 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
+      - name: Build app
+        run: |
+          set -o pipefail
+          make build 2>&1 | tee "$RUNNER_TEMP/pacer-build.log"
+          task_app="$(sed -n 's/^App: //p' "$RUNNER_TEMP/pacer-build.log" | tail -n 1)"
+          ditto -c -k --sequesterRsrc --keepParent "$task_app" "$RUNNER_TEMP/Codex-Pacer-${{ matrix.arch }}.zip"
+      - name: Upload app and validation logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/Codex-Pacer-*.zip
+            ${{ runner.temp }}/pacer-tests.log
+            ${{ runner.temp }}/pacer-build.log
+          retention-days: 7

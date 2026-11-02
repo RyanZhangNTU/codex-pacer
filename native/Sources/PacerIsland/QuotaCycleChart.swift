@@ -8,6 +8,7 @@ struct QuotaCycleChart: View, Equatable {
     var referenceColor: Color = .white
     @State private var selectedDate: Date?
     @State private var selectedExpiryID: Date?
+    @StateObject private var presentationCache = QuotaCyclePresentationCache()
     private let expiryColor = Color(red: 0.91, green: 0.75, blue: 0.48)
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.data == rhs.data && lhs.accent == rhs.accent && lhs.referenceColor == rhs.referenceColor
@@ -18,23 +19,23 @@ struct QuotaCycleChart: View, Equatable {
               (first.timestamp...last.timestamp).contains(selectedDate) else { return nil }
         return points.min { abs($0.timestamp.timeIntervalSince(selectedDate)) < abs($1.timestamp.timeIntervalSince(selectedDate)) }
     }
-    private var expiries: [QuotaChartData.ResetExpiry] { data.expiries }
+    private var presentation: QuotaCycleChartPresentation { presentationCache.value(for: data) }
 
     var body: some View {
         VStack(spacing: 8) {
             chart.frame(height: 118)
             HStack {
-                Text(data.startedAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits).locale(L10n.locale))
+                Text(presentation.startText)
                 Spacer()
-                Text(data.resetsAt, format: .dateTime.month(.defaultDigits).day(.defaultDigits).locale(L10n.locale))
+                Text(presentation.endText)
             }
             .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             .padding(.leading, 4).padding(.trailing, 34)
-            .help(L10n.text("chart.line_help"))
+            .help(presentation.lineHelp)
             .accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(L10n.text("chart.accessibility", points.count))
+        .accessibilityLabel(presentation.accessibilityLabel)
     }
 
     private var chart: some View {
@@ -90,7 +91,7 @@ struct QuotaCycleChart: View, Equatable {
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 let plot = proxy.plotFrame.map { geometry[$0] }
-                let markers = plot.map { expiryMarkers(proxy: proxy, plot: $0) } ?? []
+                let markers = plot.map { expiryMarkers(plot: $0) } ?? []
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(.clear)
                     if let plot {
@@ -117,20 +118,21 @@ struct QuotaCycleChart: View, Equatable {
                             }
                             .buttonStyle(.plain)
                             .position(x: marker.x, y: plot.minY + 13)
-                            .accessibilityLabel(expiryDescription(marker))
+                            .accessibilityLabel(marker.reading.accessibilityLabel)
                         }
                     }
                     if let marker = markers.first(where: { $0.id == selectedExpiryID }), let plot {
                         expiryTooltip(marker)
                             .offset(x: max(plot.minX, min(plot.maxX - 196, marker.x - 98)), y: plot.minY + 30)
                             .allowsHitTesting(false)
-                    } else if let selected, let anchor = proxy.plotFrame,
+                    } else if let selected, let reading = presentation.points.first(where: { $0.timestamp == selected.timestamp.timeIntervalSince1970 }),
+                       let anchor = proxy.plotFrame,
                        let x = proxy.position(forX: selected.timestamp) {
                         let plot = geometry[anchor]
                         HStack(spacing: 10) {
-                            Text(selected.timestamp, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(L10n.locale))
+                            Text(reading.dateText)
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
-                            Text("\(Int(selected.remaining.rounded()))%")
+                            Text(reading.valueText)
                                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(accent)
                         }
                         .monospacedDigit().padding(.horizontal, 10).padding(.vertical, 7)
@@ -166,47 +168,22 @@ struct QuotaCycleChart: View, Equatable {
             ? proxy.value(atX: location.x - plot.minX) : nil
     }
 
-    private func expiryMarkers(proxy: ChartProxy, plot: CGRect) -> [ExpiryMarker] {
-        var groups: [[QuotaChartData.ResetExpiry]] = []
-        for expiry in expiries {
-            if let last = groups.last, let first = last.first,
-               let firstX = proxy.position(forX: first.date), let x = proxy.position(forX: expiry.date), x - firstX < 40 {
-                groups[groups.count - 1].append(expiry)
-            } else { groups.append([expiry]) }
-        }
-        func marker(_ group: [QuotaChartData.ResetExpiry]) -> ExpiryMarker? {
-            guard let first = group.first, let x = proxy.position(forX: first.date) else { return nil }
-            let count = group.reduce(0) { $0 + $1.count }
-            let width: CGFloat = count > 1 ? 43 : 28
-            return ExpiryMarker(expiries: group, dateX: plot.minX + x,
-                x: min(plot.maxX - width / 2, max(plot.minX + width / 2, plot.minX + x)),
-                width: width)
-        }
-        var result: [ExpiryMarker] = []
-        for group in groups {
-            guard var current = marker(group) else { continue }
-            while let last = result.last, current.x - last.x < (current.width + last.width) / 2 + 6 {
-                result.removeLast()
-                guard let combined = marker(last.expiries + current.expiries) else { break }
-                current = combined
-            }
-            result.append(current)
-        }
-        return result
+    private func expiryMarkers(plot: CGRect) -> [ExpiryMarker] {
+        presentation.markers(plotWidth: Double(plot.width)).map { ExpiryMarker(reading: $0, originX: plot.minX) }
     }
 
     private func expiryTooltip(_ marker: ExpiryMarker) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(L10n.text(data.hasPartialExpiryDetails ? "chart.known_expiring" : "chart.expiring", marker.count))
+            Text(marker.reading.title)
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(expiryColor)
-            ForEach(marker.expiries.prefix(3)) { expiry in
+            ForEach(marker.reading.details, id: \.timestamp) { expiry in
                 HStack(spacing: 10) {
-                    Text(expiry.date, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(L10n.locale))
-                    if marker.expiries.count > 1 { Text(L10n.text("chart.expiry_count", expiry.count)) }
+                    Text(expiry.dateText)
+                    if marker.reading.details.count > 1 { Text(expiry.countText) }
                 }.font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             }
-            if marker.expiries.count > 3 {
-                Text(L10n.text("chart.more_expiries", marker.expiries.count - 3))
+            if let more = marker.reading.moreText {
+                Text(more)
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
@@ -217,17 +194,25 @@ struct QuotaCycleChart: View, Equatable {
         .fixedSize()
     }
 
-    private func expiryDescription(_ marker: ExpiryMarker) -> String {
-        let details = marker.expiries.map { L10n.text("chart.expiry_item", $0.count, L10n.date($0.date)) }
-        return L10n.text("chart.expiry_summary", marker.count, details.joined(separator: L10n.text("chart.detail_separator")))
-    }
 }
 
 private struct ExpiryMarker: Identifiable {
-    let expiries: [QuotaChartData.ResetExpiry]
-    let dateX: CGFloat
-    let x: CGFloat
-    let width: CGFloat
-    var id: Date { expiries[0].date }
-    var count: Int { expiries.reduce(0) { $0 + $1.count } }
+    let reading: QuotaCycleChartPresentation.Marker
+    let originX: CGFloat
+    var dateX: CGFloat { originX + CGFloat(reading.dateX) }
+    var x: CGFloat { originX + CGFloat(reading.x) }
+    var width: CGFloat { CGFloat(reading.width) }
+    var id: Date { Date(timeIntervalSince1970: reading.id) }
+    var count: Int { reading.count }
+}
+
+/// Hover changes selection, so it can reuse the cycle's formatted readings.
+private final class QuotaCyclePresentationCache: ObservableObject {
+    private var cached: (data: QuotaChartData, language: AppLanguage, presentation: QuotaCycleChartPresentation)?
+    func value(for data: QuotaChartData) -> QuotaCycleChartPresentation {
+        if let cached, cached.data == data, cached.language == L10n.language { return cached.presentation }
+        let value = QuotaCycleChartPresentation(data: data)
+        cached = (data, L10n.language, value)
+        return value
+    }
 }
