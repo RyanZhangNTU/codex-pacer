@@ -271,14 +271,7 @@ final class ProviderDisplayTests: XCTestCase {
     }
 
     func testClaudeOpenAcknowledgesActualConversationAndKeepsTerminalOrFailureUnread() async throws {
-        for (caseIndex, outcome) in [ActivityOpenOutcome.dispatchedTerminal, .openedConversation, .failed("Synthetic open failure")].enumerated() {
-            func trace(_ phase: String) {
-                if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" {
-                    print("Quota navigation diagnostic: case \(caseIndex), \(phase)")
-                    fflush(stdout)
-                }
-            }
-            trace("begin")
+        for outcome in [ActivityOpenOutcome.dispatchedTerminal, .openedConversation, .failed("Synthetic open failure")] {
             let acknowledges: Bool
             if case .openedConversation = outcome { acknowledges = true } else { acknowledges = false }
             let domain = "com.codexpacer.provider-terminal-tests." + UUID().uuidString
@@ -301,19 +294,20 @@ final class ProviderDisplayTests: XCTestCase {
                 dispatched.fulfill()
                 return outcome
             }
-            model.onStatusChange = { processed.fulfill() }
+            // Observe the open result once. Expanding after a failed open also
+            // publishes quota progress, which is not another navigation result.
+            model.onStatusChange = { [weak model] in
+                model?.onStatusChange = nil
+                processed.fulfill()
+            }
             model.open(completed)
-            trace("waiting for dispatch")
             await fulfillment(of: [dispatched, processed], timeout: 2)
-            trace("dispatch processed")
             XCTAssertEqual(model.activities.contains { $0.id == completed.id && $0.turnID == completed.turnID }, !acknowledges)
             XCTAssertEqual(model.isUnreadCompletion(completed), !acknowledges, "Only the actual conversation-open result acknowledges the chat")
             XCTAssertEqual(model.pendingCompletions.map(\.id), acknowledges ? [] : [completed.id])
             if case .failed(let message) = outcome { XCTAssertEqual(model.navigationError, message) }
             else { XCTAssertNil(model.navigationError) }
-            trace("before shutdown")
             await model.shutdown()
-            trace("after shutdown")
         }
     }
 
