@@ -93,7 +93,7 @@ struct ActivityBadge: View {
             Image(systemName: StatusSymbols.enclosed(name)).font(.system(size: 9, weight: .bold))
                 .foregroundStyle(ink).contentTransition(.symbolEffect(.replace))
         case .count(let count):
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .bold, design: .rounded))
+            Text(HeaderActivity.countText(count)).font(.system(size: 10, weight: .bold, design: .rounded))
                 .monospacedDigit().foregroundStyle(ink).contentTransition(.numericText(value: Double(count)))
         }
     }

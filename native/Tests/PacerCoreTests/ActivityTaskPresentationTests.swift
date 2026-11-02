@@ -4,6 +4,19 @@ import XCTest
 final class ActivityTaskPresentationTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    func testShellDisplayStringsUseTheMacFormatters() throws {
+        let activities = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        let value = ActivityTaskPresentation(activities: activities, requests: [], inbox: CompletionInbox(), at: now)
+        let row = try XCTUnwrap(value.rows.first), rate = try XCTUnwrap(row.rate)
+        XCTAssertEqual(row.rateText, String(format: "%.1f", rate.value))
+        XCTAssertEqual(row.subagentText, "3")
+        XCTAssertEqual(value.taskCountText, "1")
+        for count in [0, 1, 99, 100, 1000] {
+            let header = HeaderActivity(core: .count(count), activeCount: count, orbit: [:])
+            XCTAssertEqual(header.activeCountText, count > 99 ? "99+" : String(count))
+        }
+    }
+
     func testTurnTimeUsesMacWordingAndEndedDurationStaysFixed() throws {
         var activity = DemoScenario.tasks(stage: .thinking, at: now)[0]
         let start = try XCTUnwrap(activity.turnStartedAt)

@@ -155,7 +155,7 @@ struct TaskRowView: View {
             if subagents > 0 {
                 HStack(spacing: 3) {
                     Image(systemName: "person.2").font(.system(size: 9, weight: .semibold))
-                    Text(String(subagents)).monospacedDigit()
+                    Text(presentation.subagentText).monospacedDigit()
                 }
                 .foregroundStyle(PacerPalette.secondary).fixedSize()
                 .help(subagentText)
@@ -178,7 +178,7 @@ struct TaskRowView: View {
     private var rateLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let rate {
-                Text(String(format: "%.1f", rate.value)).font(.system(size: 13, weight: .semibold))
+                Text(presentation.rateText ?? "").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(rate.isFresh && !dimmed ? PacerPalette.primary : PacerPalette.secondary)
                 Text(" t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
             } else if activity.claudeCloud == nil {

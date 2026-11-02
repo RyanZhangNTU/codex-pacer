@@ -20,7 +20,7 @@ struct TaskPagerView: View {
     }
 
     var header: some View {
-        IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: String(tasks.count)) {
+        IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: model.taskPresentation.taskCountText) {
             if pagination.isPaginated {
                 HStack(spacing: 2) {
                     pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
