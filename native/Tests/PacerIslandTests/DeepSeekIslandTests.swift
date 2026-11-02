@@ -27,7 +27,7 @@ final class DeepSeekIslandTests: XCTestCase {
 
     func testTurnCostFollowsItsSettingAndDisablingDeepSeekKeepsTheOtherModule() async throws {
         let (defaults, _) = try defaults(ProviderModules(codexMode: .enabled, claudeMode: .disabled, deepseekMode: .enabled))
-        let model = IslandModel(demo: true, defaults: defaults, installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults, installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
         model.activities = []
         let session = "019a0000-0000-7000-8000-000000000a01"
         let codex = ended(.codex, session: session, cost: 0.5), deepseek = ended(.deepseek, session: session, cost: 0.42)

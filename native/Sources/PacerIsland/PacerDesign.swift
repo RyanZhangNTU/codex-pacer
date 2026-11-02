@@ -104,14 +104,25 @@ struct IslandSectionHeader<Trailing: View>: View {
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
+        header.background {
+            header.fixedSize(horizontal: true, vertical: false)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: ExpandedContentIdealWidth.self, value: geometry.size.width)
+                })
+                .hidden().allowsHitTesting(false).accessibilityHidden(true)
+        }
+    }
+
+    private var header: some View {
         HStack(spacing: 6) {
             Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
+                .fixedSize()
             if let detail {
                 Text(detail).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor)
-                    .monospacedDigit()
+                    .monospacedDigit().fixedSize()
             }
             Spacer(minLength: 8)
-            trailing()
+            trailing().fixedSize(horizontal: true, vertical: false)
         }
         .frame(height: 24)
         .padding(.horizontal, IslandMetrics.rowInset)

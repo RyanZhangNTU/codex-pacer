@@ -32,7 +32,7 @@ final class ProviderDisplayTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(true, forKey: "monitorSSH")
         defaults.set(0, forKey: "completedRetentionMinutes")
-        let model = IslandModel(demo: true, defaults: defaults,
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true))
         model.activities = []
         model.selectProvider(.codex); model.quota = nil; model.history = QuotaCycleHistory()

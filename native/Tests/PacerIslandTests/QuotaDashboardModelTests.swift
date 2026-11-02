@@ -12,7 +12,7 @@ final class QuotaDashboardModelTests: XCTestCase {
         ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
         if let initialPeriod { defaults.set(initialPeriod, forKey: "quotaDashboardPeriod") }
         let clock = now
-        let model = IslandModel(demo: true, demoClock: { clock }, defaults: defaults,
+        let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
         for provider in AgentProvider.allCases { model.selectProvider(provider); model.quota = nil }
         model.selectProvider(.codex)

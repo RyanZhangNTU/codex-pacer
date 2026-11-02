@@ -11,7 +11,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         let file: URL
         let host: String?
         @MainActor func rebuild() -> IslandModel {
-            IslandModel(demo: true, defaults: defaults,
+            IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
                 completionDismissalStore: CompletionDismissalStore(fileURL: file))
         }
@@ -31,7 +31,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: ["codex-managed-remote-connections": [["source": "discovered", "hostId": host, "alias": "family-fixture"]],
             "remote-connection-auto-connect-by-host-id": [host: true]]).write(to: directory.appendingPathComponent(".codex-global-state.json"))
         let file = directory.appendingPathComponent("dismissals.json")
-        let model = IslandModel(demo: true, defaults: defaults,
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false), completionDismissalStore: CompletionDismissalStore(fileURL: file))
         return FamilyFixture(model: model, defaults: defaults, file: file, host: remote ? host : nil)
     }
@@ -121,7 +121,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: configuration).write(to: directory.appendingPathComponent(".codex-global-state.json"))
         XCTAssertEqual(RemoteControlActivityTarget.configured(home: directory).isEmpty, !savedRoute)
         let file = directory.appendingPathComponent("dismissals.json")
-        let model = IslandModel(demo: true, defaults: defaults,
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
             completionDismissalStore: CompletionDismissalStore(fileURL: file))
         return FamilyFixture(model: model, defaults: defaults, file: file, host: "remote-control:catalog-fixture")
@@ -220,7 +220,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     ended.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "synthetic-turn", "at": started.timeIntervalSince1970])
                     ended.applyRuntime(["method": "turn/completed", "threadId": session, "turnId": "synthetic-turn", "status": "completed", "at": started.timeIntervalSince1970 + 1])
                     func makeModel() -> IslandModel {
-                        IslandModel(demo: true, defaults: defaults,
+                        IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
                             completionDismissalStore: CompletionDismissalStore(fileURL: file))
                     }
@@ -276,7 +276,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     try configuration("/synthetic/first-home")
                     let file = directory.appendingPathComponent("dismissals.json")
                     let store = persist ? CompletionDismissalStore(fileURL: file) : nil
-                    let model = IslandModel(demo: true, defaults: defaults,
+                    let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                         installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false), completionDismissalStore: store)
                     let started = Date().addingTimeInterval(-2)
                     var ended = SessionActivity(id: AgentProvider.codex.activityID(sessionID: session, sourceHostID: host), sourceHostID: host)
@@ -309,7 +309,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     XCTAssertEqual(FileManager.default.fileExists(atPath: file.path), persist && !replaceHome && !waiting)
                     await model.shutdown()
                     if persist && replaceHome && !waiting {
-                        let rebuilt = IslandModel(demo: true, defaults: defaults,
+                        let rebuilt = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false), completionDismissalStore: store)
                         rebuilt.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [])
                         XCTAssertTrue(rebuilt.activities.contains { $0.id == ended.id })
@@ -478,7 +478,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             }
             try configuration(directory)
             let file = directory.appendingPathComponent("dismissals.json")
-            let model = IslandModel(demo: true, defaults: defaults,
+            let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
                 completionDismissalStore: CompletionDismissalStore(fileURL: file))
             XCTAssertTrue(model.monitorsRemoteControl, "The injected defaults retain the enabled-by-default setting")
@@ -533,7 +533,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             XCTAssertEqual(model.providerQuotaError(.claude), error)
             XCTAssertTrue(model.activities.contains { $0.id == claude.id }); XCTAssertTrue(model.isUnreadCompletion(claude))
             await model.shutdown()
-            let rebuilt = IslandModel(demo: true, defaults: defaults,
+            let rebuilt = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
                 completionDismissalStore: CompletionDismissalStore(fileURL: file))
             publishFamily([codex, claude], to: rebuilt)

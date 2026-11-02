@@ -4,6 +4,7 @@ import PacerCore
 
 struct TaskPagerView: View {
     @ObservedObject var model: IslandModel
+    var language: AppLanguage = L10n.language
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
     @State private var direction: CGFloat = 1
@@ -18,25 +19,28 @@ struct TaskPagerView: View {
         CGFloat(pagination.rowCapacity) * rowHeight + CGFloat(max(0, pagination.rowCapacity - 1)) * rowSpacing
     }
 
+    var header: some View {
+        IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: String(tasks.count)) {
+            if pagination.isPaginated {
+                HStack(spacing: 2) {
+                    pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
+                    Text("\(currentPage + 1) / \(pagination.pageCount)")
+                        .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
+                        .frame(minWidth: 30)
+                        .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
+                    pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
+                }
+                Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
+            }
+            IslandPanelControls(model: model, language: language)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: String(tasks.count)) {
-                if pagination.isPaginated {
-                    HStack(spacing: 2) {
-                        pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
-                        Text("\(currentPage + 1) / \(pagination.pageCount)")
-                            .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
-                            .frame(minWidth: 30)
-                            .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
-                        pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
-                    }
-                    Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
-                }
-                IslandPanelControls(model: model)
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
-
+            header
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
                     ForEach(pageTasks) { activity in
