@@ -246,6 +246,8 @@ public partial class IslandWindow : Window
         return Math.Abs(Shell.ActualWidth - width) < 0.01 && Math.Abs(Shell.ActualHeight - height) < 0.01;
     }
     internal MotionBounds LogicalTarget => destination;
+    internal bool IsExpandedForAutomation => expanded;
+    internal void CollapseForAutomation() { SetPinned(false); SetExpanded(false); }
     private void RecordInteraction(string value)
     {
         if (interactionTrace.Count == 12) interactionTrace.Dequeue();
@@ -354,7 +356,11 @@ public partial class IslandWindow : Window
         collapse.Stop();
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
-        expanded = value; SetCompactDimState(value, true); Relayout(); _ = Send("setExpanded", new { expanded = value });
+        expanded = value;
+        UIElementAutomationPeer.FromElement(this)?.RaisePropertyChangedEvent(ExpandCollapsePatternIdentifiers.ExpandCollapseStateProperty,
+            value ? ExpandCollapseState.Collapsed : ExpandCollapseState.Expanded,
+            value ? ExpandCollapseState.Expanded : ExpandCollapseState.Collapsed);
+        SetCompactDimState(value, true); Relayout(); _ = Send("setExpanded", new { expanded = value });
     }
     private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open)
     {
