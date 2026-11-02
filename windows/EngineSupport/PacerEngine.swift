@@ -1061,7 +1061,7 @@ actor EngineRuntime {
             activityState.codexReceivedRequests = desktop.attention
             activityState.codexAttentionThreadIDs = desktop.attentionThreads
             activityState.codexStreamConnected = desktop.status.connected
-            activityState.applyCodexMetadata(names: desktop.names, performance: desktop.performance)
+            activityState.applyCodexMetadata(names: desktop.names, performance: desktop.performance, at: date, visibility: activityVisibility)
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
         } else {

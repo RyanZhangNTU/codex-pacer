@@ -113,7 +113,8 @@ public struct ActivityApplicationState: Sendable {
             }).dropFirst(256) { pendingCodexEndings.removeValue(forKey: id) }
         }
     }
-    public mutating func applyCodexMetadata(names: [SessionNameUpdate], performance: [SessionPerformanceUpdate]) {
+    public mutating func applyCodexMetadata(names: [SessionNameUpdate], performance: [SessionPerformanceUpdate],
+                                           at now: Date, visibility: ActivityVisibilityOptions) {
         inbox.updateNames(names); inbox.updatePerformance(performance)
         for index in localActivities.indices {
             for name in names where name.id == localActivities[index].id { name.apply(to: &localActivities[index]) }
@@ -122,6 +123,10 @@ public struct ActivityApplicationState: Sendable {
         for index in remoteActivities.indices {
             for name in names where name.id == remoteActivities[index].id { name.apply(to: &remoteActivities[index]) }
             for sample in performance where sample.id == remoteActivities[index].id { sample.apply(to: &remoteActivities[index]) }
+        }
+        let hidden = hiddenActivityIDs(visibility)
+        for sample in performance where !hidden.contains(sample.id) {
+            rememberFirstOutput(sample.firstTokenLatency, reportedAt: sample.firstTokenReportedAt, at: now)
         }
     }
     private mutating func observeFirstOutputs(_ values: [SessionActivity], at now: Date) {

@@ -155,12 +155,31 @@ final class ActivityApplicationStateTests: XCTestCase {
                              "at": now.addingTimeInterval(1).timeIntervalSince1970])
         let name = try XCTUnwrap(SessionNameUpdate(renamed))
         state.localActivities = [original]
-        state.applyCodexMetadata(names: [name], performance: [])
+        state.applyCodexMetadata(names: [name], performance: [], at: now.addingTimeInterval(1), visibility: visible)
         state.reconcile(at: now.addingTimeInterval(1), retention: 300, visibility: visible)
         XCTAssertEqual(state.activities.first?.title, "Synthetic task label")
         XCTAssertTrue(state.remoteActivities.isEmpty, "Metadata does not fabricate runtime lifecycle evidence")
         XCTAssertEqual(state.activities.first?.turnID, original.turnID)
         XCTAssertEqual(state.activities.first?.phaseChangedAt, original.phaseChangedAt)
+    }
+
+    func testLateNumericMetadataUpdatesLatestTTFTWithoutRecreatingRemovedCard() throws {
+        var state = ActivityApplicationState()
+        let activity = task(ended: true)
+        let update = try XCTUnwrap(SessionPerformanceUpdate(id: activity.id, turnID: "first", response: nil,
+            firstTokenLatency: 1.25, firstTokenReportedAt: now.addingTimeInterval(-1)))
+        state.applyCodexMetadata(names: [], performance: [update], at: now, visibility: visible)
+        XCTAssertEqual(state.latestFirstOutput?.seconds, 1.25)
+        XCTAssertTrue(state.activities.isEmpty)
+        XCTAssertTrue(state.inbox.activities.isEmpty)
+        var embedded = task(embedded: true)
+        embedded.consumeLive(["method": "turn/started", "threadId": embedded.threadID!, "turnId": "next", "at": now.timeIntervalSince1970])
+        state.localActivities = [embedded]
+        let hidden = try XCTUnwrap(SessionPerformanceUpdate(id: embedded.id, turnID: "next", response: nil,
+            firstTokenLatency: 2, firstTokenReportedAt: now))
+        state.applyCodexMetadata(names: [], performance: [hidden], at: now,
+            visibility: .init(embeddedProviders: [.claude, .deepseek]))
+        XCTAssertEqual(state.latestFirstOutput?.seconds, 1.25, "A hidden session cannot replace the visible latest TTFT")
     }
 
     func testDisplayDeadlinePrunesRetentionWithoutChangingRequestBaseline() {
