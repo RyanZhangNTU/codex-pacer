@@ -2,9 +2,11 @@ import Foundation
 import PacerCore
 
 extension ClaudeActivityMonitor {
-    public init(sshExecutable: URL = URL(fileURLWithPath: "/usr/bin/ssh")) {
+    public init(sshExecutable: URL = URL(fileURLWithPath: "/usr/bin/ssh"),
+                clock: @escaping @Sendable () -> Date = { Date() }) {
         self.init(sshExecutable: sshExecutable, makePipeReader: { PipeChunkReader(descriptor: $0) },
-            remoteMirrorSessionIDs: { ClaudeApplicationResolver.remoteMirrorSessionIDs(claudeHome: $0) })
+            remoteMirrorSessionIDs: { ClaudeApplicationResolver.remoteMirrorSessionIDs(claudeHome: $0) },
+            files: MacFileSystem(), clock: clock)
     }
 }
 
