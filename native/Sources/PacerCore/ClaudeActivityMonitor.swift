@@ -23,6 +23,7 @@ public actor ClaudeActivityMonitor {
     private var pendingPublish: Task<Void, Never>?
     private var policy: ActivityRefreshPolicy = .collapsed
     private let sshExecutable: URL
+    private let makeSSHArguments: @Sendable (RemoteActivityTarget) -> [String]?
     private struct Connection {
         let target: RemoteActivityTarget
         let identity: UUID
@@ -41,10 +42,12 @@ public actor ClaudeActivityMonitor {
     public init(sshExecutable: URL, processes: any HelperProcessLauncher,
                 fileEvents: any ActivityFileEvents, telemetryTransport: any TelemetryTransport,
                 remoteMirrorSessionIDs: @escaping @Sendable (URL) -> Set<String>,
-                files: any PlatformFileSystem, clock: @escaping @Sendable () -> Date) {
+                files: any PlatformFileSystem, clock: @escaping @Sendable () -> Date,
+                sshArguments: @escaping @Sendable (RemoteActivityTarget) -> [String]?) {
         self.sshExecutable = sshExecutable; self.processes = processes; self.fileEvents = fileEvents
         self.telemetryTransport = telemetryTransport; self.files = files; self.clock = clock
         self.remoteMirrorSessionIDs = remoteMirrorSessionIDs
+        self.makeSSHArguments = sshArguments
         localReader = ClaudeActivityReader(files: files, clock: clock)
     }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
@@ -71,7 +74,7 @@ public actor ClaudeActivityMonitor {
     /// Reconcile discovery/settings without replacing healthy local/SSH state.
     public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget]) async {
         wanted = Dictionary(remoteTargets.prefix(8).filter { target in
-            target.sshArguments() != nil
+            makeSSHArguments(target) != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
@@ -201,7 +204,7 @@ public actor ClaudeActivityMonitor {
         let identity = UUID()
         let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
         let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(Data("~/.claude".utf8).base64EncodedString()) \(policy.interval)"
-        guard let arguments = target.sshArguments() else { return }
+        guard let arguments = makeSSHArguments(target) else { return }
         do {
             let process = try processes.launch(ChildProcessRequest(executable: sshExecutable, arguments: arguments + [command],
                 environment: ProcessInfo.processInfo.environment), output: { [weak self] bytes in

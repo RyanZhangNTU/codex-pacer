@@ -34,115 +34,15 @@
   ],
   "macosJobSHA256": "0c75a50e0aa49722731d9b9a87ec72e44c1630875596254e9ace448601aef4a9",
   "coreTransitions": {
-    "ClaudeLiveSessionRegistry.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "ClaudeRemoteAutoSetup.swift": {
-      "owner": "B4",
-      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features."
-    },
-    "ClaudeRemoteResume.swift": {
-      "owner": "B4",
-      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features."
-    },
-    "ClaudeRemoteSetup.swift": {
-      "owner": "B4",
-      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features.",
-      "systemImports": {
-        "CoreFoundation": 1,
-        "Darwin": 1
-      }
-    },
-    "ClaudeSSHRouteResolver.swift": {
-      "owner": "B4",
-      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "CodexRolloutOwners.swift": {
-      "owner": "B5c",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "DesktopEventProbe.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
-    },
-    "DesktopRouteHints.swift": {
-      "owner": "B4",
-      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
     "IslandInstanceLock.swift": {
       "owner": "B5c",
       "reason": "Move remaining collector or host operations behind the shared platform ports.",
       "systemImports": {
         "Darwin": 1
       }
-    },
-    "NativeDesktopCollector.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "ProcessOwnership.swift": {
-      "owner": "B5c",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "RealtimeActivityMonitor.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "RealtimeProbe.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
-    },
-    "RemoteControlCatalog.swift": {
-      "owner": "B4",
-      "reason": "B4b moves host IO behind ports and compiles this shared source on both platforms; P2 wires SSH/Remote features."
-    },
-    "RequestLogProbe.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
-    },
-    "RuntimeDiagnostics.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    },
-    "SessionLogProbe.swift": {
-      "owner": "B4",
-      "reason": "Move remaining collector or host operations behind the shared platform ports."
     }
   },
   "engineTransitions": [
-    {
-      "owner": "B4",
-      "files": [
-        "windows/EngineSupport/PacerEngine.swift",
-        "windows/EngineSupport/CodexDesktopMonitor.swift"
-      ],
-      "reason": "B4b replaces remaining Codex/Desktop reconcile and helper scheduling with RealtimeActivityMonitor on both hosts. B4a already shares the watcher and Claude/DeepSeek monitors."
-    },
     {
       "owner": "B5a",
       "files": [

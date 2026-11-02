@@ -75,7 +75,7 @@ final class RemoteControlTests: XCTestCase {
         let targets = RemoteControlActivityTarget.configured(home: home)
         XCTAssertEqual(Set(targets.map(\.id)), [host, "remote-control:env_project", "remote-control:env_added", "remote-control:env_pinned"])
         XCTAssertFalse(String(describing: targets).contains("PRIVATE"))
-        var routing = DesktopRouteHints()
+        var routing = DesktopRouteHints(files: TestFileSystem(), owned: { _ in true })
         XCTAssertEqual(routing.changed(home: home, hosts: [host]), [.init(host: host, thread: thread)])
     }
 

@@ -84,14 +84,18 @@ final class NativeDesktopTests: XCTestCase {
         }
     }
     func testRouteDiscoveryBoundsBootstrapWithoutLosingLaterTasks() throws {
+        #if canImport(PacerMacSupport)
         let home = URL(fileURLWithPath: "/private/tmp/pacer-route-" + UUID().uuidString)
+        #else
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-route-" + UUID().uuidString)
+        #endif
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let host = "remote-ssh-discovered:synthetic", file = home.appendingPathComponent(".codex-global-state.json")
         var routes = Dictionary(uniqueKeysWithValues: (1...100).map { (String(format: "019a0000-0000-7000-8000-%012d", $0), host) })
         func save() throws { try JSONSerialization.data(withJSONObject: ["thread-project-membership-host-ids": routes, "unrelated": "PRIVATE"]).write(to: file, options: .atomic) }
         try save()
-        var reader = DesktopRouteHints()
+        var reader = DesktopRouteHints(files: TestFileSystem(), owned: { _ in true })
         XCTAssertEqual(reader.changed(home: home, hosts: [host]).count, 8)
         XCTAssertTrue(reader.changed(home: home, hosts: [host]).isEmpty)
         routes[thread] = host

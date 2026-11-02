@@ -3,21 +3,19 @@ import Foundation
 
 /// A single authenticated connection. One blocking reader feeds the actor one
 /// projected frame at a time, so a slow consumer cannot grow an input queue.
-actor WindowsDesktopCollector: CodexDesktopConnection {
+actor WindowsDesktopCollector: DesktopActivityChannel {
     private let home: URL
     private let connect: @Sendable () throws -> WindowsDesktopTransport
     private let onFrame: @Sendable (Data) async -> Void
     private let onClosed: @Sendable () async -> Void
     private var transport: WindowsDesktopTransport?
-    private var session: NativeDesktopSession?
+    private var session: DesktopCollectionSession?
     private var gate: WindowsDesktopSourceGate?
     private var reader: Task<Void, Never>?, timer: Task<Void, Never>?
     private var timerDate: Date?
     private var threads: [String] = []
     private var interval: TimeInterval
     private var started = false, finished = false
-    private var opened = Date(), lastFlush = Date.distantPast, nextStatus = Date.distantPast
-    private var iterations = 0
 
     init(home: URL, interval: TimeInterval,
          connect: @escaping @Sendable () throws -> WindowsDesktopTransport = { try .connectCodex() },
@@ -35,8 +33,8 @@ actor WindowsDesktopCollector: CodexDesktopConnection {
             guard let peer = connection.peerIdentity else { connection.cancel(); throw WindowsDesktopTransport.Failure.identityMismatch }
             transport = connection
             let access = WindowsDesktopSourceGate(home: home, peer: peer)
-            gate = access; opened = Date()
-            var wire = try NativeDesktopSession(hosts: ["local"]) { value in
+            gate = access
+            let wire = try DesktopCollectionSession(hosts: ["local"], batchInterval: interval, localOrigin: { access.origin($0) }) { value in
                 if value["method"] as? String == "thread-stream-following-changed",
                    let params = value["params"] as? [String: Any], params["following"] as? Bool == true {
                     guard params["hostId"] as? String == "local", let thread = params["conversationId"] as? String,
@@ -44,7 +42,6 @@ actor WindowsDesktopCollector: CodexDesktopConnection {
                 }
                 try connection.send(value)
             }
-            wire.localOrigin = { access.origin($0) }
             session = wire
             try discoverNow()
             reader = Task.detached(priority: .utility) { [weak self, connection] in
@@ -67,13 +64,19 @@ actor WindowsDesktopCollector: CodexDesktopConnection {
         do { try discoverNow(); try await deliver(); schedule() }
         catch { await finish(flush: false) }
     }
-    func setInterval(_ value: TimeInterval, flushPending: Bool) async {
+    func setBatchInterval(_ value: TimeInterval, flushPending: Bool) async {
         interval = min(5, max(0.1, value))
         guard !finished, session != nil else { return }
         do {
-            if flushPending { try session?.publishEvents(); lastFlush = Date(); try await deliver() }
+            try session?.setBatchInterval(interval, flushPending: flushPending)
+            try await deliver()
             schedule()
         } catch { await finish(flush: false) }
+    }
+    func setHosts(_ hosts: Set<String>) async {
+        guard !finished else { return }
+        do { try session?.setHosts(hosts.intersection(["local"])); try await deliver(); schedule() }
+        catch { await finish(flush: false) }
     }
     func stop() async { await finish(flush: false) }
     private func observedTurns() -> Set<String>? { finished ? nil : session?.observedTurnIDs }
@@ -102,34 +105,25 @@ actor WindowsDesktopCollector: CodexDesktopConnection {
                     }
                 }
             }
-            try session?.receive(bytes, projectedItems: true)
+            try session?.receive(bytes)
             guard !gate.revoked else { throw WindowsDesktopSourceGate.Failure.revoked }
             try await deliver(); schedule()
         } catch { await finish(flush: false) }
     }
     private func service() async throws {
         guard !finished, session != nil else { return }
-        iterations += 1
         let now = Date()
         guard gate?.validate() == true else { throw WindowsDesktopSourceGate.Failure.revoked }
         if let gate {
             let ready = gate.dueRetries(at: now).filter { gate.permit($0) }.map { NativeDesktopSession.Key(host: "local", thread: $0) }
             try session?.discover(ready)
         }
-        if session?.ready != true, now.timeIntervalSince(opened) >= 5 { throw WindowsDesktopTransport.Failure.timedOut }
         try session?.service(at: now)
-        if session?.hasEvents == true, now.timeIntervalSince(lastFlush) >= interval {
-            try session?.publishEvents(); lastFlush = now
-        }
-        if now >= nextStatus { try session?.status(loopIterations: iterations); nextStatus = now.addingTimeInterval(15) }
         try await deliver(); schedule()
     }
     private func schedule() {
         guard !finished, let session else { return }
-        var next = nextStatus
-        if !session.ready { next = min(next, opened.addingTimeInterval(5)) }
-        if session.hasEvents { next = min(next, lastFlush.addingTimeInterval(interval)) }
-        if let date = session.nextServiceDate { next = min(next, date) }
+        var next = session.nextServiceDate
         if let date = gate?.nextRetryDate { next = min(next, date) }
         if let timerDate, timerDate <= next { return }
         timer?.cancel(); timerDate = next
@@ -155,12 +149,16 @@ actor WindowsDesktopCollector: CodexDesktopConnection {
     private func finish(flush: Bool) async {
         guard !finished else { return }
         finished = true; timer?.cancel(); timer = nil; reader?.cancel(); reader = nil
-        // EOF may follow a terminal event before the ordinary batch deadline.
-        // Revoked file/process proofs never flush buffered events.
-        if flush, gate?.validate() == true {
-            try? session?.publishEvents(); try? await deliver(closing: true)
+        // Release the authenticated IO before awaiting a possibly stalled consumer.
+        // The last valid batch still precedes EOF; revoked proofs never flush.
+        let access = gate
+        transport?.cancel()
+        let frames = session?.finish(flush: flush && access?.validate() == true) ?? []
+        session = nil; gate = nil; transport = nil
+        for bytes in frames {
+            guard access?.validate() == true else { break }
+            await onFrame(bytes)
         }
-        transport?.cancel(); session?.close(); session = nil; gate = nil; transport = nil
         await onClosed()
     }
 }

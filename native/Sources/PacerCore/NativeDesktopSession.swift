@@ -1,7 +1,11 @@
 import Foundation
 
-struct NativeDesktopSession {
-    struct Key: Hashable { let host: String; let thread: String }
+public struct NativeDesktopSession {
+    public struct Key: Hashable {
+        public let host: String
+        public let thread: String
+        public init(host: String, thread: String) { self.host = host; self.thread = thread }
+    }
     private(set) var ready = false
     private var client: String?
     private var followed: Set<Key> = []

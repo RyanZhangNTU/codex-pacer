@@ -1,18 +1,14 @@
 import Foundation
 import CryptoKit
-import Darwin
 
 /// Explicit local troubleshooting only. Disabled by default, bounded to 1 MiB,
 /// and excludes display text, paths, requests, token values and raw identifiers.
 public enum RuntimeDiagnostics {
-    private static let sink = Sink()
-    public static var enabled: Bool { sink.enabled }
     private static func identifier(_ value: String?) -> String? {
         value.map { SHA256.hash(data: Data($0.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined() }
     }
-    public static func record(_ stage: String, source: String, frame: [String: Any]? = nil,
-                              activities: [SessionActivity] = [], status: RuntimeStreamStatus? = nil) {
-        guard enabled else { return }
+    public static func data(_ stage: String, source: String, frame: [String: Any]? = nil,
+                              activities: [SessionActivity] = [], status: RuntimeStreamStatus? = nil) -> Data? {
         var row: [String: Any] = ["at": Date().timeIntervalSince1970, "stage": stage,
             "source": identifier(source) ?? "none"]
         if let frame {
@@ -42,25 +38,24 @@ public enum RuntimeDiagnostics {
         if let status { row["status"] = ["connected": status.connected, "attached": status.attachedThreads,
             "notifications": status.notifications, "scans": status.fallbackScans,
             "loops": status.helperLoopIterations, "cpu": status.helperCpuSeconds] as [String: Any] }
-        sink.write(row)
+        guard var bytes = try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys) else { return nil }
+        bytes.append(10); return bytes
     }
-    private final class Sink: @unchecked Sendable {
-        let enabled = UserDefaults.standard.bool(forKey: "pacerLocalRuntimeTrace")
-        private let lock = NSLock()
-        private var handle: FileHandle?
-        private var written = 0
-        init() {
-            guard enabled else { return }
-            let fd = Darwin.open("/private/tmp/pacer-runtime-trace-\(getpid()).jsonl", O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0o600)
-            if fd >= 0 { handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true) }
-        }
-        func write(_ row: [String: Any]) {
-            lock.lock(); defer { lock.unlock() }
-            guard let current = handle, var data = try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys) else { return }
-            data.append(10)
-            guard written + data.count <= 1024 * 1024 else { try? current.close(); handle = nil; return }
-            do { try current.write(contentsOf: data); written += data.count }
-            catch { try? current.close(); handle = nil }
-        }
+}
+
+public struct RuntimeDiagnosticObserver: Sendable {
+    private let isEnabled: @Sendable () -> Bool
+    public var enabled: Bool { isEnabled() }
+    private let write: @Sendable (Data) -> Void
+    public init(enabled: Bool = false, write: @escaping @Sendable (Data) -> Void = { _ in }) {
+        isEnabled = { enabled }; self.write = write
+    }
+    public init(enabled: @escaping @Sendable () -> Bool, write: @escaping @Sendable (Data) -> Void) {
+        isEnabled = enabled; self.write = write
+    }
+    public func record(_ stage: String, source: String, frame: [String: Any]? = nil,
+                       activities: [SessionActivity] = [], status: RuntimeStreamStatus? = nil) {
+        guard enabled, let bytes = RuntimeDiagnostics.data(stage, source: source, frame: frame, activities: activities, status: status) else { return }
+        write(bytes)
     }
 }

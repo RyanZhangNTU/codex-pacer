@@ -2,15 +2,8 @@
 import Foundation
 import CWindowsSupport
 
-struct WindowsProcessIdentity: Hashable, Sendable {
-    let pid: UInt32
-    let started: UInt64
-}
-struct WindowsProcessRecord: Equatable, Sendable {
-    let identity: WindowsProcessIdentity
-    let parent: UInt32
-    let executable: URL
-}
+typealias WindowsProcessIdentity = ProcessInstance
+typealias WindowsProcessRecord = ProcessInstanceRecord
 struct WindowsSourceFileIdentity: Equatable, Sendable {
     let fileVolume: UInt64, fileLow: UInt64, fileHigh: UInt64
     let rootVolume: UInt64, rootLow: UInt64, rootHigh: UInt64
@@ -39,16 +32,7 @@ enum WindowsProcessOwnership {
     /// reused parent PID cannot make an unrelated writer a child of Desktop.
     static func isDescendant(_ child: WindowsProcessIdentity, of ancestor: WindowsProcessIdentity,
                              lookup: Lookup = { inspect($0, started: $1) }) -> Bool {
-        guard child.started != 0, ancestor.started != 0 else { return false }
-        var expected = child, visited = Set<WindowsProcessIdentity>()
-        for _ in 0..<32 {
-            guard visited.insert(expected).inserted, let current = lookup(expected.pid, expected.started), current.identity == expected else { return false }
-            if expected == ancestor { return lookup(child.pid, child.started)?.identity == child && lookup(ancestor.pid, ancestor.started)?.identity == ancestor }
-            guard current.parent != 0, let parent = lookup(current.parent, 0), parent.identity.pid == current.parent,
-                  parent.identity.started != 0, parent.identity.started <= current.identity.started else { return false }
-            expected = parent.identity
-        }
-        return false
+        ProcessOwnership.isDescendant(child, of: ancestor, lookup: lookup)
     }
     /// Reads file IDs, process identities and granted handle access. Never
     /// reads file content, command lines, environment variables or memory pages.

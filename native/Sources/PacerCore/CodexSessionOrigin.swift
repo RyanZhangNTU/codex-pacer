@@ -120,13 +120,13 @@ public struct CodexRolloutMetadata: Sendable {
 }
 
 /// One lookup object per collector; no global profile or account cache.
-final class CodexOriginLookup {
+public final class CodexOriginLookup {
     private let home: URL
     private var files: [URL] = []
     private var scannedAt = Date.distantPast
     private var cache: [URL: (inode: UInt64, size: UInt64, modified: Date, value: CodexRolloutMetadata?)] = [:]
-    init(home: URL) { self.home = home }
-    func lookup(_ threadID: String) -> CodexRolloutMetadata? {
+    public init(home: URL) { self.home = home }
+    public func lookup(_ threadID: String) -> CodexRolloutMetadata? {
         lookup(threadID, visited: [])
     }
     private func lookup(_ threadID: String, visited: Set<String>) -> CodexRolloutMetadata? {

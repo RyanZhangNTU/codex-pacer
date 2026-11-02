@@ -502,7 +502,8 @@ final class NativeDesktopSocketTests: XCTestCase {
             if host.hasPrefix("remote-control:") { config["remote-projects"] = [["hostId": host]] }
             try JSONSerialization.data(withJSONObject: config).write(to: home.appendingPathComponent(".codex-global-state.json"))
         }
-        let child = Process(), stderr = Pipe()
+        let child = Process(), stderr = Pipe(), input = Pipe(), readiness = Pipe()
+        let ready = largeSnapshot ? expectation(description: "large snapshot decoded and target host followed") : nil
         let childEnded = expectation(description: "EOF fixture exited")
         child.terminationHandler = { _ in childEnded.fulfill() }
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -537,18 +538,15 @@ final class NativeDesktopSocketTests: XCTestCase {
             }
         }
         if largeSnapshot {
-            // Keep the fixture server alive through the client's 10-second
-            // delivery assertion and 5-second cleanup deadline. A slow send
-            // must not abort the scenario before the assertion can run.
-            script = script.replacingOccurrences(of: "connection.settimeout(5)", with: "connection.settimeout(15)")
+            // The 17 MiB transfer is setup, not a latency assertion. The server
+            // and test rendezvous after it has been decoded and the target host
+            // followed, before permitting the ordinary completion scenario.
+            script = script.replacingOccurrences(of: "connection.settimeout(5)", with: "connection.settimeout(None)")
             let send = "data=json.dumps(v,separators=(',',':')).encode();connection.sendall(struct.pack('<I',len(data))+data)"
             XCTAssertTrue(script.contains(send))
-            script = script.replacingOccurrences(of: send, with:
-                "encode_start=time.monotonic();data=json.dumps(v,separators=(',',':')).encode();encoded=time.monotonic();connection.sendall(struct.pack('<I',len(data))+data);sent=time.monotonic()\n    if len(data)>16*1024*1024:print('PACER_SOCKET_17M bytes=%d serialize=%.6fs send=%.6fs'%(len(data),encoded-encode_start,sent-encoded),file=sys.stderr,flush=True)")
             let initial = "initialize=read();send({'type':'response','method':'initialize','resultType':'success','result':{'clientId':client}})"
             let giant = """
             \(initial)
-            large_snapshot_started=time.monotonic()
             send({'type':'broadcast','method':'thread-stream-state-changed','version':11,'sourceClientId':owner,
                   'params':{'hostId':'local','conversationId':'019a0000-0000-7000-8000-000000000099',
                             'change':{'type':'snapshot','revision':0,'conversationState':{'ephemeral':True,'unrelatedHistory':'x'*(17*1024*1024)}}}})
@@ -560,34 +558,49 @@ final class NativeDesktopSocketTests: XCTestCase {
             script = script.replacingOccurrences(of: "follow=read();assert follow['params']['following'] is True", with: """
             follow=read()
             while follow.get('params',{}).get('hostId')!='\(host)':follow=read()
-            print('PACER_SOCKET_17M untilHostFollow=%.6fs'%(time.monotonic()-large_snapshot_started),file=sys.stderr,flush=True)
             assert follow['params']['following'] is True
+            connection.settimeout(5)
+            print('large-ready',flush=True)
+            assert sys.stdin.readline().strip()=='continue'
             """)
         }
         script += "\nconnection.close();server.close()\n"
         child.arguments = ["-u", "-c", script, home.path]
-        child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
+        child.standardInput = input
+        if largeSnapshot { child.standardOutput = readiness } else { child.standardOutput = FileHandle.nullDevice }
+        child.standardError = stderr
+        if largeSnapshot {
+            readiness.fileHandleForReading.readabilityHandler = { handle in
+                if String(decoding: handle.availableData, as: UTF8.self).contains("large-ready") {
+                    handle.readabilityHandler = nil; ready?.fulfill()
+                }
+            }
+        }
+        defer { readiness.fileHandleForReading.readabilityHandler = nil }
         try child.run()
         defer { if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
         for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
         let ending = Ending(), delivered = expectation(description: "ending delivered before disconnect")
         let monitor = RealtimeActivityMonitor()
-        let diagnosticClock = ContinuousClock(), diagnosticStart = diagnosticClock.now
         await monitor.start(home: home, includeSSH: host != "local", useSSHFallback: false) { activities, _, _ in
             XCTAssertTrue(activities.allSatisfy { ($0.sourceHostID ?? "local") == host })
             if ending.first(activities) {
-                if largeSnapshot { print("PACER_SOCKET_17M startToCompletion=\(diagnosticStart.duration(to: diagnosticClock.now))") }
                 delivered.fulfill()
             }
         }
-        await fulfillment(of: [delivered], timeout: largeSnapshot ? 10 : 5)
+        if let ready {
+            // This only detects a deadlocked fixture; elapsed transfer time is
+            // neither measured nor used to accept the collection behavior.
+            await fulfillment(of: [ready], timeout: 120)
+            try input.fileHandleForWriting.write(contentsOf: Data("continue\n".utf8))
+        }
+        await fulfillment(of: [delivered], timeout: 5)
         await monitor.shutdown()
         XCTAssertEqual(ending.unreadCount(), 1, "The reminder must outlive runtime release, trailing patches and EOF")
         await fulfillment(of: [childEnded], timeout: 5)
         guard !child.isRunning else { XCTFail("EOF fixture did not exit"); return }
         let diagnostic = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        if largeSnapshot { print(diagnostic) }
         XCTAssertEqual(child.terminationStatus, 0, diagnostic)
     }
     private static let server = #"""

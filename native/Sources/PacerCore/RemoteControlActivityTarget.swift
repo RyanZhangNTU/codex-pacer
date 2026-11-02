@@ -28,7 +28,9 @@ public struct RemoteControlActivityTarget: Equatable, Sendable {
                                              "app-server-migrated-pinned-thread-ids-by-host", "selected-remote-host-id"]) else { return [] }
         var ids: Set<String> = []
         func add(_ host: String?) {
-            guard let host, host.range(of: #"^remote-control:[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else { return }
+            let prefix = "remote-control:"
+            guard let host, host.hasPrefix(prefix),
+                  RemoteControlCatalogIdentity.validIdentifier(String(host.dropFirst(prefix.count))) else { return }
             ids.insert(host)
         }
         let selected = fields["selected-remote-host-id"]?.string()

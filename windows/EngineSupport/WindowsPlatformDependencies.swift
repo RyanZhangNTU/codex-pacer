@@ -80,18 +80,36 @@ extension ClaudeDesktopRecords {
     static func load(configFiles: [URL]) -> [Record] { load(configFiles: configFiles, files: WindowsFileSystem()) }
 }
 
-public enum ClaudeSSHRouteResolver {
-    static let maximumOutputBytes = ClaudeSSHRouteRules.maximumOutputBytes
+extension RemoteActivityTarget {
+    public func sshArguments(terminal: Bool = false) -> [String]? {
+        sshArguments(terminal: terminal, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+    public static func claudeConfigured(codexHome: URL, claudeHome: URL,
+                                        userHome: URL = FileManager.default.homeDirectoryForCurrentUser) async -> [RemoteActivityTarget] {
+        await claudeConfigured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome, discovery: ClaudeSSHDiscovery.shared)
+    }
+}
+extension ClaudeRemoteSetup {
+    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false) throws -> [String] {
+        try arguments(target: target, requireHome: requireHome, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+}
+
+extension ClaudeSSHDiscovery {
+    public static let shared = ClaudeSSHDiscovery()
+    public init(resolve: @escaping @Sendable (String, Int?) async -> ClaudeSSHRoute? = {
+        await ClaudeSSHRouteResolver.resolve(host: $0, port: $1)
+    }) {
+        self.init(resolve: resolve, validDestination: { ClaudeSSHRouteResolver.validDestination($0) })
+    }
+}
+
+extension ClaudeSSHRouteResolver {
     static func parse(_ data: Data) -> ClaudeSSHRoute? { ClaudeSSHRouteRules.parse(data, normalizeIPv6: WindowsIP.normalizedIPv6) }
     static func validDestination(_ value: String) -> Bool { ClaudeSSHRouteRules.validDestination(value, normalizeIPv6: WindowsIP.normalizedIPv6) }
     public static func resolve(host: String, port: Int? = nil, executable: URL? = nil,
                                timeout: TimeInterval = 3) async -> ClaudeSSHRoute? {
-        guard validDestination(host), port.map({ (1...65535).contains($0) }) ?? true,
-              timeout.isFinite, timeout > 0, !Task.isCancelled else { return nil }
-        var arguments = ["-G", "-o", "CanonicalizeHostname=no", "-o", "PermitLocalCommand=no",
-                         "-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
-        if let port { arguments += ["-p", String(port)] }
-        arguments += ["--", host]
+        guard let arguments = arguments(host: host, port: port, timeout: timeout, normalizeIPv6: WindowsIP.normalizedIPv6) else { return nil }
         guard let data = await WindowsSubprocess.capture(executable: executable ?? WindowsExecutables.ssh, arguments: arguments,
             timeout: min(3, timeout), limit: maximumOutputBytes) else { return nil }
         return parse(data)

@@ -21,4 +21,6 @@ try {
     $taskEntry = Join-Path $taskRoot 'windows/Tests/XCTestMain.swift'
     swift test --build-system native --enable-xctest --disable-swift-testing --experimental-test-entry-point-path $taskEntry @taskSwiftFlags --package-path $taskStage --scratch-path $taskScratchPath @taskTests
     if ($LASTEXITCODE -ne 0) { throw 'Windows engine tests failed.' }
+    python -S scripts/windows/check-shared-compilation.py --scratch-path $taskScratchPath
+    if ($LASTEXITCODE -ne 0) { throw 'Shared Core depends on host module members.' }
 } finally { $env:PACER_UI_CATALOG_REFERENCE = $taskPreviousCatalogReference; $env:PACER_TEST_PYTHON = $taskPreviousTestPython; $env:PACER_HARNESS_DESKTOP_FIXTURE = $taskPreviousHarnessFixture; $env:PACER_DESKTOP_PIPE_FIXTURE = $taskPreviousPipeFixture; Pop-Location }

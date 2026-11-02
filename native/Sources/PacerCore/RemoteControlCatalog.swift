@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import CryptoKit
 
 /// Only public client identifiers are read from the enrollment index. Key IDs,
@@ -48,7 +51,7 @@ struct RemoteControlCatalogIdentity: Sendable {
 }
 
 public actor RemoteControlCatalog {
-    private enum CatalogError: Error { case status(Int) }
+    public enum CatalogError: Error { case status(Int) }
     private struct Refresh { let targets: [RemoteControlActivityTarget]?; let preserveCache: Bool }
     private struct Cache { let key: String; let targets: [RemoteControlActivityTarget]?; let expires: Date }
     private var cache: Cache?
@@ -57,9 +60,9 @@ public actor RemoteControlCatalog {
     private let fetch: @Sendable (URLRequest) async throws -> Data
     private let makeClient: @Sendable (URL) -> CodexClient?
     private let files: any PlatformFileSystem
-    public init(fetch: (@Sendable (URLRequest) async throws -> Data)? = nil, files: any PlatformFileSystem,
+    public init(fetch: @escaping @Sendable (URLRequest) async throws -> Data, files: any PlatformFileSystem,
                 makeClient: @escaping @Sendable (URL) -> CodexClient?) {
-        self.fetch = fetch ?? { try await RemoteControlCatalog.fetch($0) }
+        self.fetch = fetch
         self.makeClient = makeClient; self.files = files
     }
 
@@ -186,25 +189,5 @@ public actor RemoteControlCatalog {
             if ($0.online == true) != ($1.online == true) { return $0.online == true }
             return $0.id < $1.id
         }
-    }
-    private final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-    }
-    static func fetch(_ request: URLRequest) async throws -> Data {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil; configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
-        let session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (stream, response) = try await session.bytes(for: request)
-        guard let response = response as? HTTPURLResponse else { throw CodexClientError.invalidResponse }
-        guard response.statusCode == 200 else { throw CatalogError.status(response.statusCode) }
-        guard response.expectedContentLength <= 512 * 1024 else { throw CodexClientError.invalidResponse }
-        var data = Data()
-        for try await byte in stream {
-            guard data.count < 512 * 1024 else { throw CodexClientError.invalidResponse }
-            data.append(byte)
-        }
-        return data
     }
 }

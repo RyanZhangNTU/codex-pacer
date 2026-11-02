@@ -2,10 +2,10 @@ import Foundation
 
 /// Decode the wire once in small chunks. Transcript strings and unrelated
 /// fields never become Swift strings or a complete in-memory wire frame.
-struct DesktopFrameDecoder {
-    struct Frame {
-        let data: Data
-        let peakBufferedBytes: Int
+public struct DesktopFrameDecoder {
+    public struct Frame {
+        public let data: Data
+        public let peakBufferedBytes: Int
     }
     private indirect enum Value {
         case object([(String, Value)]), array([Value]), string(String), rawString(Data, Bool), number(String), boolean(Bool), longString, rejected, null
@@ -42,11 +42,11 @@ struct DesktopFrameDecoder {
     private var cursor: Cursor
     private let observedTurnIDs: Set<String>
 
-    init(byteCount: Int, observedTurnIDs: Set<String> = [], read: @escaping (Int) throws -> Data) {
+    public init(byteCount: Int, observedTurnIDs: Set<String> = [], read: @escaping (Int) throws -> Data) {
         cursor = Cursor(remaining: byteCount, read: read)
         self.observedTurnIDs = observedTurnIDs
     }
-    mutating func decode() throws -> Frame {
+    public mutating func decode() throws -> Frame {
         let value = try parse(.envelope, depth: 0)
         try cursor.whitespace()
         guard try cursor.peek() == nil else { throw JSONFieldView.Failure.malformed }
