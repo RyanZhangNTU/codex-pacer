@@ -49,7 +49,8 @@ final class ClaudeInitialBacklogTests: XCTestCase {
         var totalRead: Int { reads.reduce(0) { $0 + $1.count } }
     }
     private func home() throws -> URL {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-shared-backlog-" + UUID().uuidString)
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("pacer-shared-backlog-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
         return root
