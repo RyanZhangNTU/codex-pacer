@@ -34,7 +34,7 @@ internal static class OcclusionSchedulingChecks
             Check(!window.DecorationsOccluded && quota.Scheduling.Scheduled, "The uncovered island retains its alternating labels");
             var monitor = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(window).Handle).Bounds;
             double scale = VisualTreeHelper.GetDpi(window).DpiScaleX;
-            cover = new Window { WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false,
+            cover = new Window { Owner = window, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false,
                 Topmost = true, Left = monitor.Left / scale, Top = monitor.Top / scale, Width = monitor.Width / scale, Height = monitor.Height / scale, Background = Brushes.Black };
             WindowRendering.Prepare(cover); cover.Show();
             await Until(() => window.DecorationsOccluded, "A nonactivating fullscreen cover is detected by window events");

@@ -61,6 +61,18 @@ internal static class IdleProbe
             }, IntPtr.Zero);
             return seen && valid;
         }
+        object CoverOrder()
+        {
+            var handles = ProtectedScene.Surfaces(window); int index = 0, shield = -1;
+            int[] positions = [-1, -1, -1, -1]; bool[] visible = [false, false, false, false];
+            ScreenNative.EnumWindows((hwnd, _) =>
+            {
+                if (cover != null && hwnd == new WindowInteropHelper(cover).Handle) shield = index;
+                for (int i = 0; i < handles.Length; i++) if (hwnd == handles[i]) { positions[i] = index; visible[i] = ScreenNative.IsWindowVisible(hwnd); }
+                index++; return true;
+            }, IntPtr.Zero);
+            return new { cover = shield, positions, visible, decorationsOccluded = typeof(IslandWindow).GetProperty("DecorationsOccluded", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(window) };
+        }
         try
         {
             window.ApplyPreferences(new() { IslandAppearance = "classic", DisplayMode = "notch" }); window.Show();
@@ -127,7 +139,10 @@ internal static class IdleProbe
                     {
                         var monitor = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(window).Handle).Bounds;
                         double scale = VisualTreeHelper.GetDpi(window).DpiScaleX;
-                        cover = new Window { WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false,
+                        // An independent Topmost window has the same level as
+                        // the island and is not guaranteed to remain above it.
+                        // Ownership gives the test cover a real Z-order invariant.
+                        cover = new Window { Owner = window, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false,
                             Topmost = true, Left = monitor.Left / scale, Top = monitor.Top / scale, Width = monitor.Width / scale, Height = monitor.Height / scale, Background = Brushes.Black };
                         WindowRendering.Prepare(cover); cover.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
                         if (!Covered())
@@ -169,7 +184,14 @@ internal static class IdleProbe
                     var clock = Stopwatch.StartNew(); await Task.Delay(TimeSpan.FromSeconds(seconds));
                     double wall = clock.Elapsed.TotalSeconds, cpu = Cpu(process) - before, engineCpu = Cpu(child) - engineBefore;
                     var hostAfter = Times(); double hostTime = hostAfter.Kernel - hostBefore.Kernel + hostAfter.User - hostBefore.User;
-                    ConfirmDisplay();
+                    try { ConfirmDisplay(); }
+                    catch
+                    {
+                        File.WriteAllText(Path.Combine(output, "invalid-sample.json"), JsonSerializer.Serialize(new {
+                            state, appearance, wallSeconds = wall, cpuSeconds = cpu, oneCorePercent = cpu / wall * 100,
+                            renderOperations = renders - renderBefore, displayConfirmed = false, order = CoverOrder() }));
+                        throw;
+                    }
                     var badge = (ActivityBadge)window.FindName("Badge");
                     var badgeValue = typeof(ActivityBadge).GetProperty("RotationScheduling", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(badge);
                     var badgeInfo = badgeValue is ValueTuple<bool, bool, long, IntPtr> info ? info : default;
@@ -187,6 +209,7 @@ internal static class IdleProbe
                 throw new InvalidDataException("Unknown diagnostic command.");
             }
         }
+        catch { Reply(new { type = "failed" }); throw; }
         finally { cover?.Close(); Application.Current.Dispatcher.Hooks.OperationPosted -= posted; window.AllowClose = true; window.Close(); ShellProjection.Client = null; }
     }
     private readonly record struct CpuTimes(ulong Idle, ulong Kernel, ulong User);
