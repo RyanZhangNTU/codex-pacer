@@ -21,6 +21,10 @@ internal static class SlowEngineChecks
         void Reply(object data) { lock (Console.Out) { Console.WriteLine(JsonSerializer.Serialize(data)); Console.Out.Flush(); } }
         Reply(new { protocolVersion = 1, type = "hello", engine = "PacerEngine" });
         int requests = 0, replies = 0;
+        var releaseLateReplies = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sentLateReply = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void ReplyCounts(string id) => Reply(new { protocolVersion = 1, type = "result", id, ok = true,
+            value = new { requests = Volatile.Read(ref requests), replies = Volatile.Read(ref replies) } });
         while (Console.ReadLine() is { } line)
         {
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
@@ -31,14 +35,35 @@ internal static class SlowEngineChecks
                 if (mode == "exit") return 0;
                 if (mode == "slow") _ = Task.Run(async () =>
                 {
-                    await Task.Delay(1000);
-                    try { Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { version = 1 } }); Interlocked.Increment(ref replies); }
+                    await releaseLateReplies.Task;
+                    try
+                    {
+                        Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { version = 1 } });
+                        Interlocked.Increment(ref replies); sentLateReply.TrySetResult(true);
+                    }
+                    catch (IOException) { }
+                });
+            }
+            else if (method == "releaseLateReplies")
+            {
+                releaseLateReplies.TrySetResult(true);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await sentLateReply.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                        ReplyCounts(id);
+                    }
+                    catch (TimeoutException)
+                    {
+                        Reply(new { protocolVersion = 1, type = "result", id, ok = false, error = "The synthetic delayed reply was not sent" });
+                    }
                     catch (IOException) { }
                 });
             }
             else
             {
-                Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { requests, replies = Volatile.Read(ref replies) } });
+                ReplyCounts(id);
                 if (method == "shutdown") return 0;
             }
         }
@@ -78,17 +103,16 @@ internal static class SlowEngineChecks
                     for (int repeat = 0; repeat < 100; repeat++) _ = NativeCompactBar.Shared.Read(new(), "en", []);
                     if (mode != "exit")
                     {
-                        var count = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromMilliseconds(250));
+                        var count = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromSeconds(8));
                         Check(count.GetProperty("requests").GetInt32() <= 2, "Repeated renders must coalesce requests and must not retry a failed input in a busy loop");
                     }
                     if (mode == "slow")
                     {
-                        var lateReply = Stopwatch.StartNew();
-                        while ((await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromMilliseconds(250))).GetProperty("replies").GetInt32() == 0)
-                        {
-                            if (lateReply.Elapsed > TimeSpan.FromSeconds(8)) throw new TimeoutException("The synthetic delayed engine must send its late reply");
-                            await Task.Delay(20);
-                        }
+                        // Release only after the UI has observed the timeout.
+                        // The fixture acknowledgment follows the actual late
+                        // frame on stdout, without a timed delay or polling.
+                        var lateReply = await engine.QueryAsync<JsonElement>("releaseLateReplies", timeout: TimeSpan.FromSeconds(8));
+                        Check(lateReply.GetProperty("replies").GetInt32() > 0, "The synthetic delayed engine must send its late reply");
                         await Dispatcher.Yield(DispatcherPriority.ContextIdle);
                         Check(NativeCompactBar.Shared.Read(new(), "en", []).Components.Length == 0,
                             "A reply after its deadline cannot overwrite the error placeholder");
