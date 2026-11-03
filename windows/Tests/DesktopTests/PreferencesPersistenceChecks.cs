@@ -13,6 +13,12 @@ internal static class PreferencesPersistenceChecks
         {
             await using var engine = new EngineClient();
             await engine.StartAsync(enginePath, true, "en", referenceFixture: true);
+            foreach (string method in new[] { "storageRecoveryStatus", "recoverFutureStorage" })
+            {
+                var status = await engine.QueryAsync<JsonElement>(method);
+                Check(status.TryGetProperty("futureFiles", out var files) && files.GetArrayLength() == 0 && !engine.IsConnectionClosed,
+                    "Recovery replies must pass the production protocol parser and keep demo isolated from real stores");
+            }
             var alternate = new DesktopPreferences
             {
                 Language = "zh-Hans", Position = "bottomRight", PositionChosen = true, DisplayMode = "floating", IslandAppearance = "classic",

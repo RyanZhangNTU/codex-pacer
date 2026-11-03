@@ -3,6 +3,20 @@ import XCTest
 @testable import PacerCore
 
 final class WindowsStorageRecoveryTests: XCTestCase {
+    func testRecoveryRepliesIncludeRequiredSuccessEnvelopeAndDemoHasNoProductionFiles() async throws {
+        let output = RecoveryProtocolCapture()
+        let runtime = EngineRuntime(demo: true, dismissalStore: nil, output: { output.append($0) })
+        _ = await runtime.receive(Data(#"{"protocolVersion":1,"id":"start","method":"initialize","params":{"enabledProviders":[]}}"#.utf8))
+        for method in ["storageRecoveryStatus", "recoverFutureStorage"] {
+            let command = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": "check", "method": method])
+            _ = await runtime.receive(command)
+            let reply = try XCTUnwrap(output.reply())
+            XCTAssertEqual(reply["type"] as? String, "result"); XCTAssertEqual(reply["ok"] as? Bool, true)
+            let value = try XCTUnwrap(reply["value"] as? [String: Any])
+            XCTAssertEqual(value["futureFiles"] as? [String], [])
+        }
+        await runtime.stop()
+    }
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private func directory() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-recovery-中文 space-" + UUID().uuidString)
@@ -115,4 +129,14 @@ final class WindowsStorageRecoveryTests: XCTestCase {
         for _ in 0..<5 { try Data("broken".utf8).write(to: file); _ = cache.load(home: home, accountScope: "synthetic-scope", now: now) }
         XCTAssertEqual(try Data(contentsOf: note), Data("keep".utf8)); XCTAssertEqual(try backups(file).count, 4)
     }
+}
+
+private final class RecoveryProtocolCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: [String: Any]?
+    func append(_ data: Data) {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["id"] as? String == "check" else { return }
+        lock.lock(); defer { lock.unlock() }; value = object
+    }
+    func reply() -> [String: Any]? { lock.lock(); defer { lock.unlock() }; return value }
 }

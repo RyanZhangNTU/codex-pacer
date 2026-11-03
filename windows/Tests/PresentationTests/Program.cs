@@ -46,9 +46,10 @@ internal static class Program
             {
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
-                if (group is "all" or "recovery") await StorageRecoveryChecks.Run();
+                if (group is "all" or "recovery" or "persistence") await StorageRecoveryChecks.Run();
                 TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
                 if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
+                if (group == "persistence") await PreferencesResponsivenessChecks.Run();
                 bool All(string name) => group == "all" || group == name;
                 if (All("quota"))
                 {
@@ -69,6 +70,11 @@ internal static class Program
                     }
                     foreach (bool dark in new[] { false, true })
                     {
+                        if (group == "persistence")
+                        {
+                            await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
+                            await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output);
+                        }
                         if (All("settings"))
                         {
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));

@@ -445,7 +445,7 @@ actor EngineRuntime {
                 guard recovery.recoverFutureFiles() else { failure(id: command.id, code: "storageRecoveryFailed"); return true }
             }
             let status: [String: Any] = demo ? ["futureFiles": [String]()] : recovery.status()
-            send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "value": status])
+            send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "ok": true, "value": status])
             return true
         case "activateNotification":
             guard projectionReady, let reference = command.params?.context, let kind = command.params?.notificationAction,
