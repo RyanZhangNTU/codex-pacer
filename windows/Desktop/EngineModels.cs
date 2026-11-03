@@ -12,8 +12,10 @@ internal sealed record EngineSnapshot(
     double? TotalTokensPerSecond, bool RateIsFresh, EnginePresentation? Presentation = null, EngineWallet? Wallet = null,
     IReadOnlyList<EngineModule>? Modules = null, EngineQuotaDashboard? QuotaDashboard = null, IReadOnlyList<CompactWarningItem>? CompactWarnings = null,
     JsonElement? CompactContext = null, DeepSeekConnection? DeepseekConnection = null, ClaudeConnection? ClaudeConnection = null,
-    ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null, ClaudeHookSetup? ClaudeSetup = null);
+    ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
+    EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null);
 internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
+internal sealed record EngineNavigationFailure(string Id, string Message);
 internal sealed record EngineActivityLink(string ActivityID, string Provider, string Context);
 internal sealed record EngineNavigationPlan(string Context, string Provider, string Kind, string? Url, string? WebUrl, uint? Pid, ulong? Started);
 internal sealed record ClaudeConnection(string Context, bool WebAvailable, bool Refreshing, bool Paused, bool CanChooseOrganization, string State, string? Message);

@@ -18,15 +18,21 @@ struct EngineNavigationPlan: Codable, Equatable, Sendable {
         context = demoContext; self.provider = provider.rawValue; kind = "demo"
         url = nil; webURL = nil; pid = nil; started = nil
     }
+    init(applicationContext: String, provider: AgentProvider) {
+        context = applicationContext; self.provider = provider.rawValue; kind = "application"
+        url = nil; webURL = nil; pid = nil; started = nil
+    }
 }
 
 struct ActivityNavigationServices: Sendable {
     struct Input: Sendable {
         let context: String, activity: SessionActivity, home: URL, transcript: URL?
+        var cachedHost: ActivityHostApplication? = nil
     }
     let resolve: @Sendable (Input) async throws -> EngineNavigationPlan
     static let demo = Self { .init(demoContext: $0.context, provider: $0.activity.provider) }
     static let live = Self { input in
+        if input.activity.provider == .deepseek { return .init(applicationContext: input.context, provider: .deepseek) }
         #if os(Windows)
         return try await Task.detached(priority: .userInitiated) { try WindowsActivityNavigation.resolve(input) }.value
         #else

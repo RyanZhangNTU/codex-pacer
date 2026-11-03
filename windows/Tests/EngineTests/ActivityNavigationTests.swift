@@ -127,6 +127,70 @@ final class ActivityNavigationTests: XCTestCase {
         await gate.release(); _ = await preparing.value
         XCTAssertEqual(frames.error, "staleActivityOpen"); await runtime.stop()
     }
+    func testOpeningIsSingleFlightAndFailureKeepsTheCapturedEndingUnread() async throws {
+        let frames = NavigationFrames(), clock = date
+        let runtime = EngineRuntime(demo: true, now: { clock }, navigationErrorDuration: 0.02, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"]]))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        let link = try XCTUnwrap(frames.snapshot?.activityLinks?.first { link in frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true })
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        XCTAssertTrue(frames.snapshot?.openingActivityIDs?.contains(link.activityID) == true)
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        XCTAssertEqual(frames.error, "navigationInProgress")
+        _ = await runtime.receive(try command("failActivityOpen", ["context": link.context, "navigationMessage": "Synthetic host unavailable"]))
+        XCTAssertEqual(frames.snapshot?.navigationError?.message, "Synthetic host unavailable")
+        XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        XCTAssertFalse(frames.snapshot?.openingActivityIDs?.contains(link.activityID) == true)
+        for _ in 0..<200 {
+            if frames.snapshot?.navigationError == nil { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertNil(frames.snapshot?.navigationError, "The shared error deadline publishes a display-only expiry")
+        XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        await runtime.stop()
+    }
+    func testAnotherProvidersSettingsDoNotRevokeAnOpen() async throws {
+        let frames = NavigationFrames(), clock = date
+        let runtime = EngineRuntime(demo: true, now: { clock }, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex", "claude"]]))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        let unread = Set(frames.snapshot?.tasks.filter(\.unread).map(\.id) ?? [])
+        let link = try XCTUnwrap(frames.snapshot?.activityLinks?.first { $0.provider == "codex" && unread.contains($0.activityID) })
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        _ = await runtime.receive(try command("configure", ["claudeHome": EngineCodexSourceReport.path(home.appendingPathComponent("claude-other"))]))
+        XCTAssertTrue(frames.snapshot?.openingActivityIDs?.contains(link.activityID) == true)
+        _ = await runtime.receive(try command("completeActivityOpen", ["context": link.context]))
+        XCTAssertFalse(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        await runtime.stop()
+    }
+    func testInputQueueCanSleepAndShutDownWhileAHostResolverIgnoresCancellation() async throws {
+        let frames = NavigationFrames(), gate = NavigationGate()
+        let runtime = EngineRuntime(demo: true, navigationServices: .init(resolve: { await gate.resolve($0) }), output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"]]))
+        let context = try XCTUnwrap(frames.snapshot?.activityLinks?.first?.context)
+        let accepted = await runtime.enqueue(try command("prepareActivityOpen", ["context": context]))
+        XCTAssertTrue(accepted)
+        for _ in 0..<400 { if await gate.waiting { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        let waiting = await gate.waiting; XCTAssertTrue(waiting)
+        let slept = expectation(description: "Sleep completes before the resolver is released")
+        let sleeping = Task { await runtime.prepareForSleep(); slept.fulfill() }
+        await fulfillment(of: [slept], timeout: 2)
+        _ = await sleeping.value
+        await runtime.resumeAfterSleep()
+        XCTAssertFalse(frames.snapshot?.openingActivityIDs?.contains(frames.snapshot?.activityLinks?.first?.activityID ?? "") == true)
+        let stopped = expectation(description: "Shutdown completes before the resolver is released")
+        let stopping = Task { await runtime.stop(); stopped.fulfill() }
+        await fulfillment(of: [stopped], timeout: 2)
+        _ = await stopping.value
+        await gate.release()
+        for _ in 0..<200 {
+            if frames.error == "staleActivityOpen" { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(frames.error, "staleActivityOpen")
+        _ = await runtime.receive(try command("initialize"))
+        XCTAssertEqual(frames.error, "unavailable", "A stopped runtime cannot restart collectors")
+    }
 }
 
 final class ClaudeDesktopNavigationMetadataTests: XCTestCase {

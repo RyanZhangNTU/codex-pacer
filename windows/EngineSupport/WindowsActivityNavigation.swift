@@ -2,6 +2,15 @@
 import Foundation
 
 enum WindowsActivityNavigation {
+    static func currentHost(file: URL, home: URL,
+                            writers: (URL, URL) -> [WindowsProcessIdentity]? = { WindowsProcessOwnership.writers(of: $0, within: $1) },
+                            host: (WindowsProcessIdentity) -> WindowsProcessHost? = { WindowsProcessHost.nearest(to: $0) }) throws -> WindowsProcessHost? {
+        guard let holders = writers(file, home) else { throw ActivityNavigationError.unavailable }
+        guard !holders.isEmpty else { return nil }
+        let owners = holders.compactMap(host)
+        guard owners.count == holders.count, let first = owners.first, owners.allSatisfy({ $0 == first }) else { throw ActivityNavigationError.unavailable }
+        return first
+    }
     static func isDefaultProfile(_ home: URL, provider: AgentProvider, userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
         let standard = userHome.appendingPathComponent(provider == .claude ? ".claude" : ".codex")
         return home.standardizedFileURL == standard.standardizedFileURL || WindowsClaudeAccountBinding.sameDirectory(home, standard)
@@ -25,12 +34,12 @@ enum WindowsActivityNavigation {
         }
         var currentHost: WindowsProcessHost?
         if let file = input.transcript {
-            guard let holders = writers(file, input.home) else { throw ActivityNavigationError.unavailable }
-            if !holders.isEmpty {
-                let owners = holders.compactMap(host)
-                guard owners.count == holders.count, let first = owners.first, owners.allSatisfy({ $0 == first }) else { throw ActivityNavigationError.unavailable }
-                currentHost = first
-            }
+            currentHost = try self.currentHost(file: file, home: input.home, writers: writers, host: host)
+        }
+        if currentHost == nil, let cached = input.cachedHost,
+           WindowsProcessOwnership.inspect(cached.identity.pid, started: cached.identity.started)?.identity == cached.identity,
+           WindowsHostWindow.available(pid: cached.identity.pid, started: cached.identity.started) {
+            currentHost = .init(identity: cached.identity, provider: cached.provider)
         }
         // A live editor or terminal outranks Desktop's saved mapping. Activating
         // that process never imports the session or resumes a model turn.

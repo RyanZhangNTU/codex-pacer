@@ -95,6 +95,7 @@ public actor DeepSeekBalanceCoordinator {
             guard revision == current else { return }
         }
         if let seed {
+            history = seed.history
             lastAttempt = seed.lastAttempt; failures = seed.failureCount; successes = seed.successCount
             balance = seed.balance; error = seed.error
             // A seed may contain a live balance while identity storage was

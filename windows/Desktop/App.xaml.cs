@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 
 namespace CodexPacer.Windows;
@@ -171,6 +172,7 @@ public partial class App : Application
         if (languageIndex >= 0 && languageIndex + 1 < e.Args.Length && e.Args[languageIndex + 1] is "en" or "zh-Hans") language = e.Args[languageIndex + 1];
         ui = UiText.For(language == "zh-Hans");
         engine = new EngineClient();
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         ShellProjection.Client = engine;
         webConnection = new DeepSeekConnectionCoordinator(engine, demo ? new OfflineDeepSeekWebSession() : new DeepSeekWebSession(ui),
             Dispatcher, bridgeEnabled: !demo);
@@ -354,6 +356,7 @@ public partial class App : Application
     {
         if (quitting) return;
         quitting = true;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         instanceActivation?.Dispose();
         notificationLifetime.Cancel();
         if (settingsSession != null) await settingsSession.WaitForChangesAsync();
@@ -370,5 +373,18 @@ public partial class App : Application
         if (island != null) island.AllowClose = true;
         instance?.Dispose();
         Shutdown();
+    }
+
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs change)
+    {
+        string? method = change.Mode switch { PowerModes.Suspend => "prepareForSleep", PowerModes.Resume => "resumeAfterSleep", _ => null };
+        if (method == null) return;
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
+            try { await engine.SendAsync(method); }
+            catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
+            { if (!quitting && ui != null) island?.SetStatus(ui.Text("windows.connection.refresh_failed")); }
+        }));
     }
 }
