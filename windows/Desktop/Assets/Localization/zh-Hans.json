@@ -884,7 +884,6 @@
     "whats_new.version": "版本 %@",
     "whats_new.window_title": "更新内容",
     "windows.app.open_failed": "Windows 未能打开桌面应用，请确认应用仍已安装。",
-    "windows.appearance.display_auto": "自动（主显示器）",
     "windows.appearance.display_disconnected": "已断开",
     "windows.appearance.display_fallback": "选中的显示器已断开，暂时使用主显示器；重新连接后会恢复。",
     "windows.appearance.display_pending": "Windows 预览版暂不支持选择显示器。",

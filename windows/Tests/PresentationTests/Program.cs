@@ -79,7 +79,7 @@ internal static class Program
                             await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output);
                         }
                         if (group == "deepseek") { await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output); }
-                        if (All("display")) await DisplaySettingsChecks.Run(language, dark);
+                        if (All("display") || group == "displaySettings") await DisplaySettingsChecks.Run(language, dark);
                         if (All("settings"))
                         {
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));

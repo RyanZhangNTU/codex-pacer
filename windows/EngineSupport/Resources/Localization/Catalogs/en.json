@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "0dda938660596b0f555d6556e7cc4f8a9f0fdea04a0e1f957a1af5affa8264a0"
+    "windows/EngineSupport/Resources/Localization/en.json": "663e8b5017a069142c06f8ca8d46a797661b003fd22c5c64ff93bf0a244211d4"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -888,7 +888,6 @@
     "whats_new.version": "Version %@",
     "whats_new.window_title": "What\u2019s New",
     "windows.app.open_failed": "Windows could not open the desktop app. Check that it is still installed.",
-    "windows.appearance.display_auto": "Automatic (Main Display)",
     "windows.appearance.display_disconnected": "Disconnected",
     "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
     "windows.appearance.display_pending": "Display selection is not available in the Windows preview yet.",

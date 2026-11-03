@@ -35,7 +35,6 @@
   "windows.appearance.surface_unavailable": "玻璃效果暂不可用，当前使用黑色。已保留你的选择，可先选 Classic，再选 Liquid Glass 重试。",
   "windows.appearance.quota_pending": "Windows 预览版尚未提供经典额度视图。",
   "windows.appearance.display_pending": "Windows 预览版暂不支持选择显示器。",
-  "windows.appearance.display_auto": "自动（主显示器）",
   "windows.appearance.display_disconnected": "已断开",
   "windows.appearance.display_fallback": "选中的显示器已断开，暂时使用主显示器；重新连接后会恢复。",
   "windows.appearance.display_unavailable": "Windows 无法读取显示器信息，岛暂时留在当前屏幕。",

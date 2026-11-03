@@ -12,6 +12,13 @@ internal static class Program
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
+        if (args is ["--display-preferences-read", var preferences, var expected])
+            return DisplaySelectionChecks.ReadAfterRestart(preferences, expected);
+        if (args is ["--display-only", var displayEngine])
+        {
+            await DisplaySelectionChecks.Run(Path.GetDirectoryName(Path.GetFullPath(displayEngine))!);
+            FullscreenDisplayChecks.Run(); Console.WriteLine("PASS display selection, preference restart and fullscreen policy"); return 0;
+        }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--installation-only"])

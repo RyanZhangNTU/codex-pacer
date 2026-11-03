@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "127f02cf0b506d328d704739f754a050d2cf286276fce7adb1ef4dbebb9f1471"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "ddef2050ca9ccc2eb9ab899370d7177b9862094d572b034eeb6807cffb20ddae"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -888,7 +888,6 @@
     "whats_new.version": "\u7248\u672c %@",
     "whats_new.window_title": "\u66f4\u65b0\u5185\u5bb9",
     "windows.app.open_failed": "Windows \u672a\u80fd\u6253\u5f00\u684c\u9762\u5e94\u7528\uff0c\u8bf7\u786e\u8ba4\u5e94\u7528\u4ecd\u5df2\u5b89\u88c5\u3002",
-    "windows.appearance.display_auto": "\u81ea\u52a8\uff08\u4e3b\u663e\u793a\u5668\uff09",
     "windows.appearance.display_disconnected": "\u5df2\u65ad\u5f00",
     "windows.appearance.display_fallback": "\u9009\u4e2d\u7684\u663e\u793a\u5668\u5df2\u65ad\u5f00\uff0c\u6682\u65f6\u4f7f\u7528\u4e3b\u663e\u793a\u5668\uff1b\u91cd\u65b0\u8fde\u63a5\u540e\u4f1a\u6062\u590d\u3002",
     "windows.appearance.display_pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u9009\u62e9\u663e\u793a\u5668\u3002",

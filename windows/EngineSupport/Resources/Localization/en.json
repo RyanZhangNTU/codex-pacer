@@ -35,7 +35,6 @@
   "windows.appearance.surface_unavailable": "Glass is unavailable. Using Black; your choice is saved. Choose Classic, then Liquid Glass to retry.",
   "windows.appearance.quota_pending": "The Classic quota view is not available in the Windows preview yet.",
   "windows.appearance.display_pending": "Display selection is not available in the Windows preview yet.",
-  "windows.appearance.display_auto": "Automatic (Main Display)",
   "windows.appearance.display_disconnected": "Disconnected",
   "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
   "windows.appearance.display_unavailable": "Windows could not read the displays. The island stays on the current screen.",

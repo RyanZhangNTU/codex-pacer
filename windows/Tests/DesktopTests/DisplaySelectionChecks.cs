@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using CodexPacer.Windows;
 
@@ -71,11 +73,50 @@ internal static class DisplaySelectionChecks
             Check(!loaded.Unavailable && loaded.Value.DisplayID == preference.DisplayID && loaded.Value.ShowInFullscreen && loaded.Value.SchemaVersion == 1, "Identity and fullscreen round-trip without a schema change");
             using (var json = JsonDocument.Parse(File.ReadAllText(file)))
                 Check(json.RootElement.GetProperty("displayID").GetString() == preference.DisplayID && json.RootElement.GetProperty("showInFullscreen").GetBoolean(), "Stored keys retain displayID and showInFullscreen semantics");
+            await RestartAndRead(file, preference);
+            foreach (string alias in new[] { "automatic", "primary" })
+            {
+                var legacy = preference with { DisplaySelection = alias };
+                Check(store.Save(legacy), "Either legacy Main Display alias can be saved");
+                byte[] beforeRead = File.ReadAllBytes(file);
+                await RestartAndRead(file, legacy);
+                var restarted = new PreferencesStore(file).Load();
+                Check(!restarted.Unavailable && restarted.Value.DisplaySelection == alias
+                    && DisplaySelection.Resolve(topology, restarted.Value).Display == main,
+                    "Both stored aliases resolve to Main Display and retain their original value after restart");
+                Check(File.ReadAllBytes(file).SequenceEqual(beforeRead), "Restart and read never rewrite a legacy alias or its other fields");
+            }
             File.WriteAllText(file, "{\"schemaVersion\":1}"); loaded = store.Load();
             Check(!loaded.Unavailable && loaded.Value.DisplaySelection == "automatic" && !loaded.Value.ShowInFullscreen, "Missing keys retain Main Display and fullscreen-off defaults");
             File.WriteAllText(file, "{\"schemaVersion\":1,\"displaySelection\":\"future-mode\"}");
             Check(store.Load().Value.DisplaySelection == "automatic", "Unknown modes retain the default without discarding the profile");
         }
         finally { File.Delete(file); }
+    }
+
+    internal static int ReadAfterRestart(string file, string expected)
+    {
+        var loaded = new PreferencesStore(file).Load();
+        return !loaded.Unavailable && Fingerprint(loaded.Value) == expected ? 0 : 1;
+    }
+
+    private static string Fingerprint(DesktopPreferences value) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+    {
+        value.SchemaVersion, value.DisplaySelection, value.DisplayID, value.DisplayName, value.DisplayX, value.DisplayY,
+        value.ShowInFullscreen, value.HideProjects, value.Position
+    })));
+
+    private static async Task RestartAndRead(string file, DesktopPreferences expected)
+    {
+        var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "Pacer.DesktopTests.exe"))
+        { UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add("--display-preferences-read"); start.ArgumentList.Add(file); start.ArgumentList.Add(Fingerprint(expected));
+        using var child = Process.Start(start) ?? throw new InvalidOperationException("The preference restart fixture did not start");
+        try
+        {
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            if (child.ExitCode != 0) throw new InvalidOperationException("Display identity, fallback position, fullscreen and unrelated choices must survive a fresh process");
+        }
+        finally { if (!child.HasExited) { child.Kill(); await child.WaitForExitAsync(); } }
     }
 }

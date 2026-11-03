@@ -884,7 +884,6 @@
     "whats_new.version": "Version %@",
     "whats_new.window_title": "What’s New",
     "windows.app.open_failed": "Windows could not open the desktop app. Check that it is still installed.",
-    "windows.appearance.display_auto": "Automatic (Main Display)",
     "windows.appearance.display_disconnected": "Disconnected",
     "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
     "windows.appearance.display_pending": "Display selection is not available in the Windows preview yet.",

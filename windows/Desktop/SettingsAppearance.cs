@@ -162,7 +162,6 @@ internal sealed partial class SettingsWindow
         if (!ReferenceEquals(displayItemsSource, topology))
         {
             displayChoice.Items.Clear(); displayItemsSource = topology;
-            Add(ui.Text("windows.appearance.display_auto"), new("automatic", null));
             Add(ui.Text("settings.main_display"), new("primary", null));
             foreach (var monitor in topology) Add(monitor.Name + " (" + (monitor.Bounds.Right - monitor.Bounds.Left) + " × " + (monitor.Bounds.Bottom - monitor.Bounds.Top) + ")", new("specified", monitor));
         }
@@ -175,8 +174,12 @@ internal sealed partial class SettingsWindow
             selected = Add(session.Current.DisplayName + " (" + ui.Text("windows.appearance.display_disconnected") + ")", new("missing", null));
             selected.IsEnabled = false;
         }
-        else selected = displayChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(value => value.Tag is DisplayOption option
-            && option.Mode == session.Current.DisplaySelection && (option.Mode != "specified" || option.Monitor == resolved.Display));
+        else
+        {
+            string mode = session.Current.DisplaySelection == "automatic" ? "primary" : session.Current.DisplaySelection;
+            selected = displayChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(value => value.Tag is DisplayOption option
+                && option.Mode == mode && (option.Mode != "specified" || option.Monitor == resolved.Display));
+        }
         displayChoice.SelectedItem = selected;
         if (displayStatus != null)
         {
