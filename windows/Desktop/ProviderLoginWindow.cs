@@ -11,12 +11,13 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 
 namespace CodexPacer.Windows;
 
-/// Windows browser login composition: host, page, instructions and Continue.
+/// Owned-profile login with a fingerprint baseline, bounded checks and automatic completion.
 internal class ProviderLoginWindow : Window
 {
     private readonly UiText ui;
@@ -32,7 +33,15 @@ internal class ProviderLoginWindow : Window
     private readonly TextBlock address = new() { FontSize = 12, FontWeight = FontWeights.Medium, Margin = new Thickness(18, 12, 18, 10) };
     private readonly TextBlock message = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button proceed = new() { MinWidth = 88, Margin = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-    private bool checking, closed;
+    private readonly Button refresh = new() { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+    private readonly Button later = new() { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+    private bool checking, closed, finishing, allowClose, baselineKnown, signedIn;
+    private int autoCloseRevision;
+    private string? baseline;
+    private Func<CancellationToken, Task<string?>>? readProfileFingerprint;
+    private readonly DispatcherTimer observer = new() { Interval = TimeSpan.FromSeconds(1) };
+    internal bool NewSession { get; private set; }
+    internal int SessionChecks { get; private set; }
     internal Task<bool> Completion => completion.Task;
     internal Task CheckCompletion { get; private set; } = Task.CompletedTask;
     internal Grid ClientContent { get; } = new();
@@ -52,64 +61,127 @@ internal class ProviderLoginWindow : Window
         address.Text = provider.Origin.IdnHost; message.Text = ui.Text("windows." + provider.ID + ".login.instructions"); proceed.Content = ui.Text("claude.login.continue");
         AutomationProperties.SetAutomationId(address, provider.ID + ".login.host"); AutomationProperties.SetAutomationId(message, provider.ID + ".login.instructions");
         AutomationProperties.SetAutomationId(proceed, provider.ID + ".login.continue"); AutomationProperties.SetName(proceed, (string)proceed.Content);
+        refresh.Content = ui.Text("common.refresh"); later.Content = ui.Text("login.later");
+        AutomationProperties.SetAutomationId(refresh, provider.ID + ".login.refresh"); AutomationProperties.SetAutomationId(later, provider.ID + ".login.later");
         ClientContent.RowDefinitions.Add(new() { Height = GridLength.Auto }); ClientContent.RowDefinitions.Add(new());
         ClientContent.RowDefinitions.Add(new() { Height = GridLength.Auto });
         ClientContent.Children.Add(address);
         page = new(this, provider, closeWindow: false); Grid.SetRow(page.View, 1); ClientContent.Children.Add(page.View);
         var footer = new Grid { Margin = new Thickness(18, 14, 18, 16) };
         footer.ColumnDefinitions.Add(new()); footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        footer.Children.Add(message); Grid.SetColumn(proceed, 1); footer.Children.Add(proceed); Grid.SetRow(footer, 2); ClientContent.Children.Add(footer);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal }; actions.Children.Add(refresh); actions.Children.Add(later); actions.Children.Add(proceed);
+        footer.Children.Add(message); Grid.SetColumn(actions, 1); footer.Children.Add(actions); Grid.SetRow(footer, 2); ClientContent.Children.Add(footer);
         Content = ClientContent; SetInitialContentSize(this, ClientContent, 760, 800);
         proceed.Click += async (_, _) => await (CheckCompletion = ContinueAsync());
+        refresh.Click += (_, _) => { if (page.IsUsable) page.Core.Reload(); };
+        later.Click += (_, _) => Close();
+        observer.Tick += async (_, _) => await ObserveAsync();
+        Closing += async (_, e) =>
+        {
+            if (allowClose || closed) return;
+            e.Cancel = true;
+            // Leave WPF's Closing stack before a completed probe or Abort calls Close again.
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            if (closed) return;
+            if (!baselineKnown) { Abort(); return; }
+            await (CheckCompletion = FinishAsync(requiringSession: false));
+        };
         PreviewKeyDown += async (_, e) => { if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control) { e.Handled = true; await (CheckCompletion = ContinueAsync()); } };
         Activated += (_, _) => RefreshTheme(); Deactivated += (_, _) => RefreshTheme();
         SystemEvents.UserPreferenceChanged += PreferenceChanged;
         Closed += (_, _) =>
         {
-            if (closed) return; closed = true; this.lifetime.Cancel();
+            if (closed) return; closed = true; observer.Stop(); this.lifetime.Cancel();
             foreach (var popup in popups.Keys.ToArray()) popup.Close(); popups.Clear();
             page.Dispose(); completion.TrySetResult(false); SystemEvents.UserPreferenceChanged -= PreferenceChanged; this.lifetime.Dispose();
         };
         RefreshTheme();
     }
-    internal async Task StartAsync()
+    internal async Task StartAsync(string? baseline, Func<CancellationToken, Task<string?>> readProfileFingerprint)
     {
+        this.baseline = baseline; baselineKnown = true; this.readProfileFingerprint = readProfileFingerprint;
         try
         {
             var runtime = await environment.WaitAsync(cancellation);
             await page.Initialize(runtime, cancellation); fixture?.Invoke(page.Core); Configure(page, this);
             RefreshBrowserTheme();
             await page.Navigate(new Uri(provider.Origin, provider.LoginPath), cancellation);
+            observer.Start(); await ObserveAsync();
         }
         catch (Exception error) when (Recoverable(error)) { if (!closed) message.Text = ui.Text("claude.login.load_failed"); }
     }
-    private async Task ContinueAsync()
+    internal static string? Fingerprint(JsonElement evidence)
+        => evidence.ValueKind == JsonValueKind.String && evidence.GetString() is { Length: 64 } hash && hash.All(Uri.IsHexDigit) ? hash.ToLowerInvariant() : null;
+    internal void Abort() { if (closed) return; allowClose = true; completion.TrySetResult(false); Close(); }
+    private Task ContinueAsync() => page.IsUsable ? FinishAsync(requiringSession: true) : Task.CompletedTask;
+    private async Task<string?> PageFingerprint(CancellationToken token)
     {
-        if (closed || checking || !page.IsUsable || !provider.IsOrigin(page.Core.Source)) return;
+        if (provider.ID == "claude") return (await ClaudeWebCookies.ReadAsync(page.Core, token))?.SessionHash;
+        return Fingerprint(await page.Evaluate(DeepSeekWebScripts.Shared.SignedIn, token));
+    }
+    private async Task ObserveAsync()
+    {
+        if (closed || checking || finishing || !page.IsUsable || !provider.IsOrigin(page.Core.Source)) return;
         checking = true;
+        SessionChecks++;
         try
         {
-            bool signedIn;
-            if (provider.ID == "claude") signedIn = await ClaudeWebCookies.ReadAsync(page.Core, cancellation) != null;
-            else
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation); deadline.CancelAfter(ProviderWebSession.ReadTimeout);
+            string? current = await PageFingerprint(deadline.Token);
+            if (closed || finishing) return;
+            bool changed = current != null && current != baseline;
+            if (changed && !signedIn)
             {
-                var evidence = await page.Evaluate(DeepSeekWebScripts.Shared.SignedIn, cancellation);
-                signedIn = evidence.ValueKind == JsonValueKind.String && evidence.GetString() is { Length: 64 } hash && hash.All(Uri.IsHexDigit);
+                signedIn = true; message.Text = ui.Text(provider.ID + ".login.signed_in_detail"); proceed.Content = ui.Text("login.done");
+                refresh.Visibility = later.Visibility = Visibility.Collapsed;
+                AutomationProperties.SetName(proceed, (string)proceed.Content);
+                message.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSuccess");
+                _ = AutoCloseAsync(++autoCloseRevision);
             }
-            if (!closed && signedIn) { completion.TrySetResult(true); Close(); }
-            else if (!closed) message.Text = ui.Text("windows." + provider.ID + ".login.instructions");
+            else if (!changed && signedIn)
+            {
+                signedIn = false; autoCloseRevision++; message.Text = ui.Text("windows." + provider.ID + ".login.instructions"); proceed.Content = ui.Text("claude.login.continue");
+                AutomationProperties.SetName(proceed, (string)proceed.Content); message.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                refresh.Visibility = later.Visibility = Visibility.Visible;
+            }
         }
         catch (Exception error) when (Recoverable(error)) { if (!closed) message.Text = ui.Text("claude.login.load_failed"); }
         finally { checking = false; }
     }
+    private async Task AutoCloseAsync(int revision)
+    {
+        try { await Task.Delay(TimeSpan.FromMilliseconds(1500), cancellation); if (!closed && signedIn && revision == autoCloseRevision) await (CheckCompletion = FinishAsync(requiringSession: true)); }
+        catch (OperationCanceledException) { }
+    }
+    private async Task FinishAsync(bool requiringSession)
+    {
+        if (closed || finishing || !baselineKnown || readProfileFingerprint == null) return;
+        if (!page.IsUsable) { Abort(); return; }
+        finishing = true;
+        try
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation); deadline.CancelAfter(ProviderWebSession.StartupTimeout + ProviderWebSession.ReadTimeout);
+            string? current = await readProfileFingerprint(deadline.Token);
+            if (closed || current == null && requiringSession) return;
+            NewSession = current != null && current != baseline;
+            completion.TrySetResult(current != null); allowClose = true; Close();
+        }
+        catch (Exception error) when (Recoverable(error))
+        {
+            if (!closed && !requiringSession) Abort();
+            else if (!closed) message.Text = ui.Text("claude.login.load_failed");
+        }
+        finally { finishing = false; }
+    }
     private void Configure(ProviderBrowserPage browser, Window window)
     {
         browser.Core.NavigationStarting += (_, e) => { if (!AllowedNavigation(e.Uri)) e.Cancel = true; };
-        browser.Core.SourceChanged += (_, _) => { if (ReferenceEquals(browser, page) && browser.IsUsable) address.Text = Host(browser.Core.Source); };
+        browser.Core.SourceChanged += (_, _) => { if (ReferenceEquals(browser, page) && browser.IsUsable) { address.Text = Host(browser.Core.Source); Title = ui.Text(provider.ID + ".login.title") + " · " + address.Text; } };
         browser.Core.NavigationCompleted += (_, e) =>
         {
             if (ReferenceEquals(browser, page) && !e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
                 message.Text = ui.Text("claude.login.load_failed");
+            if (e.IsSuccess && ReferenceEquals(browser, page)) _ = ObserveAsync();
         };
         browser.Core.WindowCloseRequested += (_, _) => window.Close();
         browser.Core.ProcessFailed += (_, _) => { if (!closed && ReferenceEquals(browser, page)) message.Text = ui.Text("claude.login.load_failed"); };

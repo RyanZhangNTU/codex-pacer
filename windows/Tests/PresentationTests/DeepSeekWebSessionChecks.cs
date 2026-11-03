@@ -47,11 +47,13 @@ internal static class DeepSeekWebSessionChecks
             await fixture.Main.ExecuteScriptAsync("document.getElementById('signin').click()");
             Invoke(Find<Button>(window, "deepseek.login.continue")); await Pump(); await window.CheckCompletion;
             Check(await login, "A real stored synthetic token must complete the original Continue action");
+            Check(session.SignInWasNew, "The first owned token is a new sign-in");
             var known = await session.ReadAsync(CancellationToken.None);
             Check(known is { State: "ok", AlertEnabled: true, AlertBound: "20", Estimation: "21600000" } &&
                 known.Normal!.Single() == "80" && known.Bonus!.Single() == "6.4", "The original script must reduce the actual simulated summary response");
             Check(!JsonSerializer.Serialize(known).Contains(Site.Key, StringComparison.Ordinal) &&
                 !JsonSerializer.Serialize(known).Contains("unrelated-account", StringComparison.Ordinal), "The browser result cannot contain storage credentials or account identity");
+            await Lifecycle(session, fixture);
             var previous = fixture.Main; fixture.Ready = false;
             var reopen = session.SignInAsync();
             await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any() && fixture.Ready && !ReferenceEquals(fixture.Main, previous));
@@ -96,6 +98,31 @@ internal static class DeepSeekWebSessionChecks
                 catch (UnauthorizedAccessException) { await Task.Delay(100); }
             }
         }
+    }
+    private static async Task Lifecycle(DeepSeekWebSession session, Site site)
+    {
+        site.Ready = false; var existing = session.SignInAsync();
+        await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any() && site.Ready);
+        var window = Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
+        await Task.Delay(1700);
+        Check(!existing.IsCompleted && window.IsVisible, "An unchanged session cannot be mistaken for a new sign-in or automatically dismissed");
+        window.Close(); Check(await existing && !session.SignInWasNew, "Closing a same-session challenge completes without clearing its history binding");
+        site.Ready = false; var changed = session.SignInAsync();
+        await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any() && site.Ready);
+        window = Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
+        await site.Main!.ExecuteScriptAsync("localStorage.setItem('userToken', JSON.stringify({value:'synthetic-other-account-token-000000'}))");
+        Check(await changed.WaitAsync(TimeSpan.FromSeconds(8)) && session.SignInWasNew && !window.IsVisible,
+            "A new isolated token must automatically finish the login without Continue");
+        int checks = window.SessionChecks; await Task.Delay(1100);
+        Check(window.SessionChecks == checks, "Closed login windows stop their fingerprint observer");
+        site.Hold = true; var pending = session.ReadAsync(CancellationToken.None);
+        await Until(() => site.Deferred != null);
+        site.Ready = false; var reopening = session.SignInAsync();
+        try { await pending; throw new InvalidOperationException("The old profile read survived login"); } catch (OperationCanceledException) { }
+        site.Release(); site.Hold = false;
+        await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any() && site.Ready);
+        window = Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
+        window.Close(); Check(await reopening && !session.SignInWasNew, "Login revokes in-flight reads while preserving an unchanged account");
     }
     internal sealed class Site
     {

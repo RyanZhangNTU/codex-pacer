@@ -8,6 +8,9 @@ public enum PacerEngine {
     public static func run() async {
         WindowsResources.configure()
         #if os(Windows)
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--ssh-terminal" {
+            WindowsSSHTerminal.run(CommandLine.arguments[2]); return
+        }
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--wsl-terminal" {
             WindowsWSLResume.run(CommandLine.arguments[2]); return
         }
@@ -107,6 +110,7 @@ public enum PacerEngine {
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
             wslServices: demo || readOnly ? nil : WindowsWSLServices(),
+            sshServices: demo || readOnly ? nil : WindowsSSHServices(),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices, allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
@@ -208,7 +212,6 @@ actor EngineRuntime {
     private var monitorRemoteControl = true
     private var monitorWSL = true
     private let wslServices: WindowsWSLServices?
-    private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
     private var wslNeedsReconcile = false
     private struct SourceQuotaState {
         var windows: [EngineQuota.Window]?
@@ -222,6 +225,10 @@ actor EngineRuntime {
     private var desktopBinding = UUID()
     private var desktopConfiguration: String?
     private var showClaudeCloudProjects = true
+    private var monitorSSH = true
+    private let sshServices: WindowsSSHServices?
+    private var codexRemoteTargets: [RemoteActivityTarget] = [], claudeRemoteTargets: [RemoteActivityTarget] = []
+    private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
     private var deepseekNoticePolicy = DeepSeekNoticePolicy()
@@ -251,7 +258,7 @@ actor EngineRuntime {
         var requests: [PendingAttentionRequest] = []
         var available = false
     }
-    private lazy var claudeActivityMonitor = ClaudeActivityMonitor(clock: now, wsl: wslServices)
+    private lazy var claudeActivityMonitor = ClaudeActivityMonitor(clock: now, ssh: sshServices, wsl: wslServices)
     private lazy var deepseekActivityMonitor = DeepSeekActivityMonitor(clock: now)
     private var claudeLocal = LocalActivitySnapshot(), deepseekLocal = LocalActivitySnapshot()
     private var deepseekUsage = DeepSeekLocalUsage()
@@ -284,8 +291,8 @@ actor EngineRuntime {
     private var desktopState: CodexDesktopState?
     private var pendingDesktopEndings: [String: SessionActivity] { get { activityState.pendingCodexEndings } set { activityState.pendingCodexEndings = newValue } }
     private var latestFirstOutput: (at: Date, seconds: Double)? { activityState.latestFirstOutput }
-    private lazy var desktopMonitor: RealtimeActivityMonitor? = desktopServices?.makeMonitor(wsl: wslServices, targets: { [weak self] _ in
-        self?.wslServices?.registry.targets(.codex) ?? []
+    private lazy var desktopMonitor: RealtimeActivityMonitor? = desktopServices?.makeMonitor(ssh: sshServices, wsl: wslServices, targets: { [weak self] _ in
+        await self?.monitoredRemoteTargets(.codex) ?? []
     })
     private var quota: [AgentProvider: QuotaSnapshot] = [:]
     private var codexQuota: QuotaSnapshot?
@@ -368,6 +375,7 @@ actor EngineRuntime {
          balanceServices: DeepSeekBalanceServices? = nil,
          claudeServices: ClaudeQuotaServices? = nil,
          wslServices: WindowsWSLServices? = nil,
+         sshServices: WindowsSSHServices? = nil,
          cloudServices: ClaudeCloudServices? = nil,
          navigationServices: ActivityNavigationServices? = nil,
          navigationClock: @escaping @Sendable () -> TimeInterval = { ActivityNavigationState.monotonicNow },
@@ -389,6 +397,7 @@ actor EngineRuntime {
         self.claudeServices = claudeServices; self.allowsLiveClaudeWeb = allowsLiveClaudeWeb
         self.cloudServices = cloudServices
         self.wslServices = wslServices
+        self.sshServices = sshServices
         self.navigationServices = navigationServices ?? (demo ? .demo : .live)
         self.navigationClock = navigationClock; self.navigationErrorDuration = navigationErrorDuration
         self.activityHostServices = activityHostServices
@@ -523,6 +532,7 @@ actor EngineRuntime {
             do {
                 var input = ActivityNavigationServices.Input(context: context, activity: target, home: home, transcript: transcript)
                 input.cachedHost = hostTracking.application(for: target, activities: activities, inbox: inbox)
+                input.remoteTarget = (target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).first { $0.id == target.sourceHostID }
                 input.remoteControlHosts = allowedRemoteControlHosts
                 input.wslProfile = target.sourceHostID.flatMap { wslServices?.registry.profile(id: $0, provider: target.provider) }
                 if let profile = input.wslProfile, let services = wslServices,
@@ -745,14 +755,16 @@ actor EngineRuntime {
                   await webBridge.complete(id: id, context: context, reply: reply) else {
                 failure(id: command.id, code: "staleSource"); return true
             }
-        case "deepSeekWebSessionChanged", "beginDeepSeekDisconnect", "completeDeepSeekDisconnect":
+        case "deepSeekWebSessionChanged", "beginDeepSeekWebSignIn", "beginDeepSeekDisconnect", "completeDeepSeekDisconnect":
             guard enabled.contains(.deepseek), let monitor = balanceMonitor, let context = command.params?.balanceContext else {
                 failure(id: command.id, code: "unavailable"); return true
             }
             let state = await monitor.currentState()
             guard state.token == context else { failure(id: command.id, code: "staleSource"); return true }
-            if command.method == "deepSeekWebSessionChanged" {
-                guard await monitor.webSessionChanged(token: context) else { failure(id: command.id, code: "staleSource"); return true }
+            if command.method == "beginDeepSeekWebSignIn" {
+                await webBridge.revoke(context: context)
+            } else if command.method == "deepSeekWebSessionChanged" {
+                guard await monitor.webSessionChanged(token: context, newSession: command.params?.webNewSession ?? true) else { failure(id: command.id, code: "staleSource"); return true }
             } else if command.method == "beginDeepSeekDisconnect" {
                 guard let next = await monitor.beginDisconnect(token: context) else { failure(id: command.id, code: "credentialStore"); return true }
                 send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "ok": true, "value": ["context": next]])
@@ -895,6 +907,10 @@ actor EngineRuntime {
             wslQuota = [:]
         }
         if let shown = parameters.showClaudeCloudProjects { showClaudeCloudProjects = shown }
+        if let value = parameters.monitorSSH, value != monitorSSH {
+            monitorSSH = value; ownedWork.cancel(.init(.discovery, identifier: "ssh"))
+            codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
+        }
         if var value = parameters.deepseekSettings {
             if value.balanceSource == nil { value.balanceSource = deepseekSettings.balanceSource }
             deepseekSettings = value
@@ -910,6 +926,8 @@ actor EngineRuntime {
         if changesCodex || changesClaude || changesDeepSeek { activityState.clearFirstOutput() }
         if changesCodex || changesClaude {
             ownedWork.cancel(.init(.discovery, identifier: "wsl")); wslServices?.registry.suspend()
+            ownedWork.cancel(.init(.discovery, identifier: "ssh"))
+            codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
             wslNeedsReconcile = true
         }
         bindCodexCompletionSources()
@@ -964,7 +982,7 @@ actor EngineRuntime {
             scheduleClaudeHooks()
             lastClaudeDiscovery = now()
             if enabled.contains(.claude) {
-                await claudeActivityMonitor.start(home: claudeHome, remoteTargets: monitorWSL ? wslServices?.registry.targets(.claude) ?? [] : [],
+                await claudeActivityMonitor.start(home: claudeHome, remoteTargets: monitoredRemoteTargets(.claude),
                     refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance in
                     await self?.receiveClaudeLocal(rows, statuses: statuses, attention: attention, performance: performance, context: context)
                 }
@@ -1008,8 +1026,9 @@ actor EngineRuntime {
         guard active, lifecycle.version(.claude) == context else { return }
         inbox.remove(activityIDs: exclusions)
         let status = statuses["local"]
-        claudeRemoteStatuses = statuses.filter { $0.key.hasPrefix(ConnectionSource.wslPrefix) }
-        claudeLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance), requests: attention,
+        claudeRemoteStatuses = statuses.filter { $0.key != "local" && allowsRemoteSource($0.key, provider: .claude) }
+        claudeLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance).filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
+            requests: attention.filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
             available: status?.connected == true && status?.sourceAvailable != false)
         if projectionReady, refreshTask == nil { projectLocal(.claude, snapshot: claudeLocal) }
     }
@@ -1114,9 +1133,9 @@ actor EngineRuntime {
                 case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, requested: force)
                 }
             case .codexActivity: await refresh(discover: true, refreshActivityMonitors: false)
-            case .remoteActivity: lastRemoteDiscovery = now(); scheduleWSLDiscovery(); await bindDesktopMonitor()
+            case .remoteActivity: lastRemoteDiscovery = now(); scheduleRemoteDiscovery(); scheduleWSLDiscovery(); await bindDesktopMonitor()
             case .activity(let provider): await bindActivityMonitor(provider)
-            case .claudeTargets: await bindActivityMonitor(.claude)
+            case .claudeTargets: await bindActivityMonitor(.claude); scheduleRemoteDiscovery(); scheduleWSLDiscovery()
             case .clock: if !demo { restartPresentationClock() }
             case .displayExpiry: scheduleActivityDisplay(at: now())
             case .pruneActivities: activityState.prune(at: now(), retention: retention)
@@ -1313,7 +1332,7 @@ actor EngineRuntime {
     }
     private func bindCodexCompletionSources() {
         inbox.bindSourceHomes(provider: .codex, localHome: codexHome,
-            remoteHomes: wslCompletionHomes(.codex),
+            remoteHomes: remoteCompletionHomes(.codex),
             remoteControlHostIDs: monitorRemoteControl ? remoteControlHostIDs : [], remoteControlAccountScope: remoteControlScope)
     }
     private func wslCompletionHomes(_ provider: AgentProvider) -> [String: String] {
@@ -1323,7 +1342,17 @@ actor EngineRuntime {
         }, uniquingKeysWith: { _, latest in latest })
     }
     private func bindWSLCompletionSources(_ provider: AgentProvider) {
-        inbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? codexHome : claudeHome, remoteHomes: wslCompletionHomes(provider))
+        inbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? codexHome : claudeHome, remoteHomes: remoteCompletionHomes(provider))
+    }
+    private func remoteCompletionHomes(_ provider: AgentProvider) -> [String: String] {
+        var homes = wslCompletionHomes(provider)
+        for target in monitorSSH ? (provider == .codex ? codexRemoteTargets : claudeRemoteTargets) : [] { homes[target.id] = target.home }
+        return homes
+    }
+    private func monitoredRemoteTargets(_ provider: AgentProvider) -> [RemoteActivityTarget] {
+        let ssh = monitorSSH ? (provider == .codex ? codexRemoteTargets : claudeRemoteTargets) : []
+        let wsl = monitorWSL ? wslServices?.registry.targets(provider) ?? [] : []
+        return Array(ssh.prefix(8)) + Array(wsl.prefix(8))
     }
     private func scheduleWSLDiscovery() {
         let key = ApplicationWorkRegistry.Key(.discovery, identifier: "wsl")
@@ -1385,14 +1414,14 @@ actor EngineRuntime {
             desktopConfiguration = nil
             desktopState = nil; await desktopMonitor?.shutdown(); return
         }
-        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)|\(monitorWSL)"
+        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)|\(monitorWSL)|\(monitorSSH)"
         let replace = configuration != desktopConfiguration
         guard force || replace || ownedWork.task(key) == nil else { return }
         desktopConfiguration = configuration
         desktopServices?.setExecutable(codexExecutable)
         let binding = UUID(); desktopBinding = binding
         let monitor = desktopMonitor, home = codexHome, control = monitorRemoteControl
-        let includeWSL = monitorWSL && wslServices != nil
+        let includeWSL = (monitorWSL && wslServices != nil) || (monitorSSH && sshServices != nil)
         let policy: ActivityRefreshPolicy = expanded ? .expanded : .collapsed
         let start: @Sendable () async -> Void = { [weak self] in
             if force || replace { await monitor?.invalidateRemoteControlCatalog(retryTransport: force) }
@@ -1428,14 +1457,51 @@ actor EngineRuntime {
             remoteControlHostIDs = bindings.authoritative ? bindings.hostIDs : remoteControlHostIDs.union(bindings.hostIDs)
         } else { remoteControlHostIDs = [] }
         bindCodexCompletionSources()
-        desktopState = state
+        let rows = state.activities.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }
+        desktopState = .init(context: state.context, activities: rows,
+            attention: state.attention.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }, attentionThreads: state.attentionThreads,
+            names: state.names, performance: state.performance, status: state.status,
+            statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings)
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
         else {
             // Initialization/source reads may be awaiting I/O. Keep endings
             // until the first projection; a later EOF can release the stream.
-            activityState.rememberCodexEndings(state.activities)
+            activityState.rememberCodexEndings(rows)
         }
+    }
+    private func allowsRemoteSource(_ source: String?, provider: AgentProvider) -> Bool {
+        guard let source else { return true }
+        if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL && wslServices?.registry.profile(id: source, provider: provider) != nil }
+        if source.hasPrefix(ConnectionSource.controlPrefix) { return provider == .codex && monitorRemoteControl && remoteControlHostIDs.contains(source) }
+        if source == ClaudeCloudProjectState.sourceID { return provider == .claude && showClaudeCloudProjects }
+        return monitorSSH && (provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == source }
+    }
+
+    private func scheduleRemoteDiscovery() {
+        guard !demo, monitorSSH, let services = sshServices else { return }
+        let key = ApplicationWorkRegistry.Key(.discovery, identifier: "ssh")
+        guard ownedWork.task(key) == nil else { return }
+        let owner = ownedWork.begin(key, version: generation), codex = codexHome, claude = claudeHome
+        let codexEnabled = enabled.contains(.codex), claudeEnabled = enabled.contains(.claude)
+        let task = Task { [weak self] in
+            let codexTargets = codexEnabled ? await services.codexTargets(home: codex) : []
+            let claudeTargets = claudeEnabled ? await services.claudeTargets(codexHome: codex, claudeHome: claude) : []
+            await self?.receiveRemoteTargets(codexTargets, claude: claudeTargets, owner: owner)
+        }
+        ownedWork.attach(task, to: owner)
+    }
+    private func receiveRemoteTargets(_ codex: [RemoteActivityTarget], claude: [RemoteActivityTarget], owner: ApplicationWorkRegistry.Ticket) async {
+        guard ownedWork.owns(owner) else { return }
+        let current = lifecycle.owns(owner)
+        ownedWork.finish(owner)
+        guard active, monitorSSH, current, !Task.isCancelled else { return }
+        codexRemoteTargets = codex; claudeRemoteTargets = claude
+        bindRemoteCompletionSources()
+        await bindDesktopMonitor(); await bindActivityMonitor(.claude)
+    }
+    private func bindRemoteCompletionSources() {
+        bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
     }
 
     func refresh(discover: Bool, refreshActivityMonitors: Bool = true) async {
@@ -1569,6 +1635,12 @@ actor EngineRuntime {
             current = current.filter { enabled.contains($0.provider) }
             pending = pending.filter { enabled.contains($0.provider) }
         }
+        if !demo, monitorSSH {
+            status += claudeRemoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
+                EngineSource(id: "claude:" + id, provider: "claude", available: value.connected && value.sourceAvailable != false,
+                    transport: "ssh", reason: nil)
+            }
+        }
         activityState.localActivities = current.filter { $0.provider == .codex }
         activityState.claudeActivities = current.filter { $0.provider == .claude }
         activityState.deepseekActivities = current.filter { $0.provider == .deepseek }
@@ -1583,6 +1655,11 @@ actor EngineRuntime {
             activityState.applyCodexMetadata(names: desktop.names, performance: desktop.performance, at: date, visibility: activityVisibility)
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
+            if monitorSSH {
+                status += desktop.remoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
+                    EngineSource(id: "codex:" + id, provider: "codex", available: value.connected && value.sourceAvailable != false, transport: "ssh", reason: nil)
+                }
+            }
             status += ConnectionSource.sources(statuses: [.codex: desktop.statuses], unavailableSSH: [], names: [:])
                 .filter { monitorRemoteControl && $0.key.hasPrefix(ConnectionSource.controlPrefix) }.map { source in
                     .init(id: source.id, provider: "codex", available: source.state == .connected, transport: "remote-control", reason: nil,
@@ -1723,6 +1800,7 @@ actor EngineRuntime {
                 if activity.claudeCloud != nil { return activity.threadURL != nil }
                 if let host = activity.sourceHostID {
                     if monitorWSL, wslServices?.registry.profile(id: host, provider: activity.provider) != nil { return true }
+                    if host.hasPrefix(ConnectionSource.sshPrefix) { return allowsRemoteSource(host, provider: activity.provider) && activity.threadID.flatMap(UUID.init(uuidString:)) != nil }
                     return activity.provider == .codex && allowedRemoteControlHosts.contains(host) && activity.threadURL != nil
                 }
                 #if os(Windows)
@@ -1977,6 +2055,8 @@ actor EngineRuntime {
             (entry.target.sourceHostID == nil || entry.target.claudeCloud != nil || allowedRemoteControlHosts.contains(entry.target.sourceHostID!) ||
                 (monitorWSL && wslServices?.registry.profile(id: entry.target.sourceHostID!, provider: entry.target.provider) != nil)) &&
             entry.members.allSatisfy({ inbox.isCurrentSource($0.source) }) &&
+            (entry.target.sourceHostID == nil || entry.target.claudeCloud != nil ||
+                (monitorSSH && (entry.target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == entry.target.sourceHostID })) &&
             (entry.target.claudeCloud == nil || (showClaudeCloudProjects && entry.cloudContext == cloudNavigationContext))
     }
     func failure(id: String?, code: String) {

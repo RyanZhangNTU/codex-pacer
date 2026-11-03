@@ -35,6 +35,7 @@ struct EngineCommand: Decodable {
         var monitorWSL: Bool?
         var sourceID: String?
         var showClaudeCloudProjects: Bool?
+        var monitorSSH: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
         var retentionMinutes: Int?
@@ -49,6 +50,7 @@ struct EngineCommand: Decodable {
         var webRequestID: String?
         var webReply: DeepSeekWebReply?
         var webSuccess: Bool?
+        var webNewSession: Bool?
     }
 
     static func correlationID(_ data: Data) -> String? {

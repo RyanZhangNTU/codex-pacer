@@ -38,20 +38,24 @@ struct CodexDesktopServices: Sendable {
         return nil
         #endif
     }
-    func makeMonitor(retryInterval: TimeInterval = 30, wsl: WindowsWSLServices? = nil,
+    func makeMonitor(retryInterval: TimeInterval = 30, ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil,
                      targets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil) -> RealtimeActivityMonitor {
         let catalog = catalog ?? RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse },
             files: WindowsFileSystem(), makeClient: { _ in nil })
         let authorization: (@Sendable (URL) -> RemoteControlAuthorizationSnapshot)?
         if self.catalog != nil { authorization = { catalog.authorization.snapshot(home: $0) } } else { authorization = nil }
         let arguments: (@Sendable (RemoteActivityTarget) -> [String]?)?
-        if let wsl { arguments = { wsl.registry.arguments($0) } } else { arguments = nil }
+        arguments = { target in
+            if target.id.hasPrefix(ConnectionSource.wslPrefix) { return wsl?.registry.arguments(target) }
+            return WindowsSSHServices.arguments(target)
+        }
+        let base = ssh?.processes ?? WindowsSSHProcessLauncher(ssh: WindowsExecutables.ssh)
         return RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
             desktopAvailable: { _ in true }, controlAvailable: { _ in false },
             makeDesktop: { home, hosts, local, interval, frame, closed in
                 if let routed { return routed(home, hosts, local, interval, frame, closed) }
                 return makeConnection(home, interval, frame, closed)
-            }, processes: wsl?.launcher() ?? WindowsHelperProcessLauncher(), python: WindowsExecutables.python, ssh: WindowsExecutables.ssh,
+            }, processes: wsl?.launcher(base: base) ?? base, python: WindowsExecutables.python, ssh: ssh?.ssh ?? WindowsExecutables.ssh,
             sshTargets: targets, sshArguments: arguments,
             remoteControlAuthorization: authorization),
             retryInterval: retryInterval)
@@ -72,4 +76,5 @@ struct CodexDesktopState: Sendable {
     let status: RuntimeStreamStatus
     var statuses: [String: RuntimeStreamStatus] = [:]
     var bindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
+    var remoteStatuses: [String: RuntimeStreamStatus] { statuses.filter { $0.key != "local" } }
 }

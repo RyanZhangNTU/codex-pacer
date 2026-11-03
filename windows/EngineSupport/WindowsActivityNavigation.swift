@@ -32,13 +32,18 @@ enum WindowsActivityNavigation {
                   let token = WindowsWSLResume(profile: profile, provider: provider, session: session).token else { throw ActivityNavigationError.unavailable }
             return .init(context: input.context, provider: provider, terminal: token, kind: "wslTerminal")
         }
-        if provider == .codex, let host = activity.sourceHostID {
+        if provider == .codex, let host = activity.sourceHostID, host.hasPrefix(ConnectionSource.controlPrefix) {
             guard input.remoteControlHosts.contains(host), host.hasPrefix(ConnectionSource.controlPrefix),
                   let url = activity.threadURL, let route = URLComponents(url: url, resolvingAgainstBaseURL: false),
                   route.queryItems?.filter({ $0.name == "hostId" }).map(\.value) == [host] else { throw ActivityNavigationError.unavailable }
             return .init(context: input.context, provider: provider, url: url)
         }
-        guard activity.sourceHostID == nil, let session = activity.threadID, UUID(uuidString: session) != nil else { throw ActivityNavigationError.unavailable }
+        guard let session = activity.threadID, UUID(uuidString: session) != nil else { throw ActivityNavigationError.unavailable }
+        if let source = activity.sourceHostID {
+            guard let target = input.remoteTarget, target.id == source,
+                  let token = WindowsSSHResume(provider: provider, session: session, target: target).token else { throw ActivityNavigationError.unavailable }
+            return .init(context: input.context, provider: provider, terminal: token)
+        }
         let defaultProfile = isDefaultProfile(input.home, provider: provider, userHome: userHome)
         if provider == .codex, !activity.launchedByEmbeddingApp {
             guard defaultProfile, let url = activity.threadURL else { throw ActivityNavigationError.unavailable }

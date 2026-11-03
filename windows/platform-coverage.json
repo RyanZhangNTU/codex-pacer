@@ -736,7 +736,7 @@
     {
       "id": "deepseek-budgets",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "Balance/Budget、日/周金额、最近七天均值+20% 建议、清空停用、切回保留金额",
@@ -747,7 +747,7 @@
         "native/Sources/PacerIsland/SettingsDeepSeekPane.swift"
       ],
       "evidence": [],
-      "previewNote": "预算、速度来源和单服务面板的全部选项。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）程序化实机：schema 2 的预算/余额、日周金额与清空、ring day/week、outer/inner 选择、Simple/Detailed、本机/账户速度、turn-cost、低余额/突增自动与自定义等 26 次写入、存储重读及独立引擎重启通过。中英文 × 浅深色预算与提醒页通过，含 Core 建议、切回保留金额、实际环槽位与编辑链接、失败回滚。阈值、超额与当地周期仍由共享模型及原有引擎测试验证；真实账户长时间使用与其他设备待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -801,7 +801,7 @@
     {
       "id": "ssh-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "发现 Codex/Claude 已用 hosts、端口/身份文件与路由去重、既有非交互访问/host keys",
@@ -812,8 +812,14 @@
         "docs/guide.md",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Windows OpenSSH 与真实 TTY 对应 Mac SSH 功能。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsSSHTests.swift",
+        "windows/Tests/Fixtures/SSH/Program.cs",
+        "windows/Tests/DesktopTests/SshTerminalChecks.cs",
+        "windows/Tests/PresentationTests/SettingsPresentationChecks.cs",
+        "docs/windows-ssh.md"
+      ],
+      "previewNote": "Windows synthetic SSH executable verified saved-route discovery/deduplication, bounded command transport, ordered stdin/EOF, runtime approval/reply/endings, reconnect, disable/reopen and terminal argv/fallback. Real noninteractive remote access, real TTY resume and remote sleep/reconnect await user acceptance. Claude remote hook setup is a separate PR.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -870,7 +876,7 @@
     {
       "id": "browser-session-lifecycle",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "Claude/DeepSeek 独立 Pacer WebView2 profile，登录/挑战成功后自动关闭窗口",
@@ -884,7 +890,7 @@
         "native/Sources/PacerIsland/DeepSeekWebBalance.swift"
       ],
       "evidence": [],
-      "previewNote": "跟上最新 develop 的网页登录自动完成与历史隔离行为。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）真实 WebView2、合成私有 profile 实测：Claude/DeepSeek 新指纹自动完成，同指纹关闭后保留历史/工作区，换账户清旧归属，退出/重登录、独立 profile、浏览器进程重启、迟到读取撤销、清理失败暂停均通过。关闭窗口后观察计数不再增加；所有页面请求由夹具拦截，未使用真实账户。真实站点登录/挑战、其他 Windows 设备及运行库首次安装待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []

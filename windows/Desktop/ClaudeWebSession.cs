@@ -9,6 +9,7 @@ namespace CodexPacer.Windows;
 internal interface IClaudeWebSession : IAsyncDisposable
 {
     bool Available { get; }
+    bool SignInWasNew => true;
     Task PrepareAsync(CancellationToken cancellation) => Task.CompletedTask;
     Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation);
     Task<bool> SignInAsync();
@@ -27,5 +28,7 @@ internal sealed class ClaudeWebSession : ProviderWebSession, IClaudeWebSession
         : base(ui, ProviderWebDefinition.Claude, directory, fixture, darkOverride) { }
     protected override ProviderLoginWindow CreateLogin(Task<CoreWebView2Environment> environment, CancellationToken lifetime)
         => new ClaudeLoginWindow(ui, environment, fixture, darkOverride, lifetime);
+    protected override async Task<string?> ReadFingerprintAsync(CancellationToken cancellation)
+        => (await ReadAsync(cancellation))?.SessionHash;
     public Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation) => base.ReadAsync((page, token) => ClaudeWebCookies.ReadAsync(page.Core, token), cancellation);
 }

@@ -2,8 +2,10 @@ param([string]$Filter = '')
 . (Join-Path $PSScriptRoot 'environment.ps1')
 . (Join-Path $PSScriptRoot 'harness-fixture.ps1')
 . (Join-Path $PSScriptRoot 'pipe-fixture.ps1')
+. (Join-Path $PSScriptRoot 'ssh-fixture.ps1')
 $taskPreviousHarnessFixture = $env:PACER_HARNESS_DESKTOP_FIXTURE
 $taskPreviousPipeFixture = $env:PACER_DESKTOP_PIPE_FIXTURE
+$taskPreviousSSHFixture = $env:PACER_SSH_FIXTURE
 $env:PACER_HARNESS_DESKTOP_FIXTURE = Get-HarnessMetadataFixture
 Push-Location $taskRoot
 $taskPreviousCatalogReference = $env:PACER_UI_CATALOG_REFERENCE
@@ -11,6 +13,7 @@ $taskPreviousTestPython = $env:PACER_TEST_PYTHON
 $taskPreviousClaudePython = $env:PACER_CLAUDE_PYTHON_PACKAGE
 try {
     $env:PACER_DESKTOP_PIPE_FIXTURE = Get-DesktopPipeFixture
+    $env:PACER_SSH_FIXTURE = Get-SSHFixture
     python -S scripts/windows/build-localization.py --check
     if ($LASTEXITCODE -ne 0) { throw 'The Windows UI catalogs must match their shared sources.' }
     $env:PACER_UI_CATALOG_REFERENCE = Join-Path $taskRoot 'windows/EngineSupport/Resources/Localization/Catalogs'
@@ -25,4 +28,4 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Windows engine tests failed.' }
     python -S scripts/windows/check-shared-compilation.py --scratch-path $taskScratchPath
     if ($LASTEXITCODE -ne 0) { throw 'Shared Core depends on host module members.' }
-} finally { $env:PACER_UI_CATALOG_REFERENCE = $taskPreviousCatalogReference; $env:PACER_TEST_PYTHON = $taskPreviousTestPython; $env:PACER_CLAUDE_PYTHON_PACKAGE = $taskPreviousClaudePython; $env:PACER_HARNESS_DESKTOP_FIXTURE = $taskPreviousHarnessFixture; $env:PACER_DESKTOP_PIPE_FIXTURE = $taskPreviousPipeFixture; Pop-Location }
+} finally { $env:PACER_SSH_FIXTURE = $taskPreviousSSHFixture; $env:PACER_UI_CATALOG_REFERENCE = $taskPreviousCatalogReference; $env:PACER_TEST_PYTHON = $taskPreviousTestPython; $env:PACER_CLAUDE_PYTHON_PACKAGE = $taskPreviousClaudePython; $env:PACER_HARNESS_DESKTOP_FIXTURE = $taskPreviousHarnessFixture; $env:PACER_DESKTOP_PIPE_FIXTURE = $taskPreviousPipeFixture; Pop-Location }

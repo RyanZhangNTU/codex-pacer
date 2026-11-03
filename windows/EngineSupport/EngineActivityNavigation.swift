@@ -36,6 +36,7 @@ struct ActivityNavigationServices: Sendable {
         var cachedHost: ActivityHostApplication? = nil
         var remoteControlHosts: Set<String> = []
         var wslProfile: WindowsWSLProfile? = nil
+        var remoteTarget: RemoteActivityTarget? = nil
     }
     let resolve: @Sendable (Input) async throws -> EngineNavigationPlan
     static let demo = Self { .init(demoContext: $0.context, provider: $0.activity.provider) }

@@ -57,6 +57,7 @@ internal static class Program
                     await LegacyQuotaChecks.Run(output); await QuotaConnectionChecks.Run(output); await TypographyLocaleChecks.Run(output);
                 }
                 if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
+                if (group == "deepseek") { await ClaudeConnectionChecks.Run("zh-Hans", true, output); await DeepSeekWebConnectionChecks.Run("en", false, output); }
                 if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); await BackdropPresentationChecks.Run(); }
                 if (All("idle")) { await IdleSchedulingChecks.Run(); await OcclusionSchedulingChecks.Run(); }
                 foreach (string language in new[] { "en", "zh-Hans" })
@@ -75,6 +76,7 @@ internal static class Program
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
                             await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output);
                         }
+                        if (group == "deepseek") { await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output); }
                         if (All("settings"))
                         {
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
@@ -82,6 +84,7 @@ internal static class Program
                             foreach (string provider in new[] { "claude", "deepseek" }) await ProviderHomeSettingsChecks.Run(provider, language, dark, output);
                             await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output);
                         }
+                        if (group == "ssh") await SettingsPresentationChecks.Run(language, dark, output);
                         if (All("collapsed")) foreach (bool motion in new[] { false, true }) await CollapsedLayoutChecks.Run(language, dark, motion, output);
                         if (All("quota")) { await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output); }
                         if (All("connection"))

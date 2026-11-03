@@ -30,6 +30,7 @@ internal sealed class WindowsConversationApplication
         if (!Guid.TryParse(plan.Context, out _) || plan.Provider is not ("claude" or "codex")) return false;
         try
         {
+            if (plan.Kind == "terminal") return await WindowsSshTerminal.OpenAsync(plan);
             if (plan.Kind == "wslTerminal") return await WindowsWslTerminal.OpenAsync(plan);
             if (plan.Terminal != null) return false;
             if (plan.Kind == "host") return plan.Url == null && plan.WebUrl == null && plan.Pid is > 0 && plan.Started is > 0 && host(plan.Pid.Value, plan.Started.Value);

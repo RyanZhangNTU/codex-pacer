@@ -4,6 +4,22 @@ import XCTest
 @testable import PacerCore
 
 final class DeepSeekWebBridgeTests: XCTestCase {
+    func testLoginRevokesOnlyOldContextAndRejectsItsLateReply() async throws {
+        let capture = Capture(), at = date
+        let bridge = DeepSeekWebBridge(now: { at }, output: { await capture.add($0) }); await bridge.setAvailable(true)
+        let old = Task { try await bridge.read(context: "old-synthetic") }
+        let received = await capture.request(), request = try XCTUnwrap(received)
+        await bridge.revoke(context: "old-synthetic")
+        do { _ = try await old.value; XCTFail("Login must revoke the old account read") } catch { XCTAssertTrue(error is CancellationError) }
+        let late = await bridge.complete(id: request.requestID, context: request.context, reply: .init(state: "ok", normal: ["999"]))
+        XCTAssertFalse(late)
+        let next = Task { try await bridge.read(context: "new-synthetic") }
+        let receivedNext = await capture.request(count: 2), current = try XCTUnwrap(receivedNext)
+        await bridge.revoke(context: "old-synthetic")
+        let accepted = await bridge.complete(id: current.requestID, context: current.context, reply: .init(state: "ok", normal: ["42"]))
+        let value = try await next.value; XCTAssertTrue(accepted); XCTAssertEqual(value.total, 42)
+        await bridge.setAvailable(false)
+    }
     private let date = Date(timeIntervalSince1970: 1_800_000_000)
     func testHostReadWaitsForItsMatchingPublishedSnapshotAndCancellationReleasesIt() {
         var publication = DeepSeekWebHostPublication()

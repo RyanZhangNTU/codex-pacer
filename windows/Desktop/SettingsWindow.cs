@@ -40,7 +40,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly TextBlock paneTitle;
     private readonly ScrollViewer paneScroller;
     private string activePane = "general";
-    private CheckBox? login, hideProjects, appButtons;
+    private CheckBox? login, hideProjects, appButtons, monitorSSH;
     private TextBlock? startupStatus;
     private ComboBox? language;
     private Border? restart;
@@ -255,6 +255,9 @@ internal sealed partial class SettingsWindow : Window
         ((FrameworkElement)apps.Children[0]).Margin = new Thickness(0, 11, 8, 11);
         BindToggle(appButtons, (p, value) => p with { ShowAppButtons = value }); editors.Add(appButtons);
         form.Children.Add(Card(privacy, apps));
+        var ssh = Toggle("settings.monitor_ssh", null, "settings.monitor_ssh", out var sshSwitch); monitorSSH = sshSwitch;
+        BindToggle(monitorSSH, (p, value) => p with { MonitorSSH = value }); editors.Add(monitorSSH);
+        form.Children.Add(Card(ssh));
     }
     private void BindToggle(CheckBox check, Func<DesktopPreferences, bool, DesktopPreferences> edit)
         => BindToggle(check, (value, enabled) => System.Threading.Tasks.Task.FromResult(edit(value, enabled)));
@@ -379,6 +382,7 @@ internal sealed partial class SettingsWindow : Window
             }
             if (hideProjects != null) hideProjects.IsChecked = session.Current.HideProjects;
             if (appButtons != null) appButtons.IsChecked = session.Current.ShowAppButtons;
+            if (monitorSSH != null) monitorSSH.IsChecked = session.Current.MonitorSSH;
             if (language != null) language.SelectedValue = session.Current.Language;
             string desired = session.Current.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : session.Current.Language;
             if (restart != null)
