@@ -15,7 +15,7 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private CheckBox? deepseekEnabled, deepseekTurnCost;
-    private Button? deepseekAutomatic, deepseekSignIn;
+    private Button? deepseekAutomatic, deepseekSignIn, deepseekRingLink;
     private TextBlock? deepseekDetection, deepseekBalance, deepseekRunway, deepseekDailyReference, deepseekWeeklyReference, deepseekBudgetIssue, deepseekLocalState, deepseekRingHint;
     private StackPanel? deepseekSections, deepseekBudgetRows;
     private FrameworkElement? deepseekPanelSection, deepseekBalanceHelp, deepseekRingRow;
@@ -32,7 +32,7 @@ internal sealed partial class SettingsWindow
     private void ClearDeepSeek()
     {
         ClearDeepSeekConnection();
-        deepseekEnabled = deepseekTurnCost = null; deepseekAutomatic = deepseekSignIn = null; deepseekConnection = null;
+        deepseekEnabled = deepseekTurnCost = null; deepseekAutomatic = deepseekSignIn = deepseekRingLink = null; deepseekConnection = null;
         deepseekDetection = deepseekBalance = deepseekRunway = deepseekDailyReference = deepseekWeeklyReference = deepseekBudgetIssue = deepseekLocalState = deepseekRingHint = null;
         deepseekSections = deepseekBudgetRows = null; deepseekPanelSection = deepseekBalanceHelp = deepseekRingRow = null;
         deepseekDaily = deepseekWeekly = null; deepseekBudgetSeparator = deepseekBalanceSeparator = null; deepseekClock = null; deepseekPricing = null;
@@ -68,7 +68,11 @@ internal sealed partial class SettingsWindow
                 DeepSeekDailyBudget = value == "budget" && p.DeepSeekDailyBudget == null && p.DeepSeekWeeklyBudget == null ? suggestion!.SuggestedDaily : p.DeepSeekDailyBudget,
                 DeepSeekWeeklyBudget = value == "budget" && p.DeepSeekDailyBudget == null && p.DeepSeekWeeklyBudget == null ? suggestion!.SuggestedWeekly : p.DeepSeekWeeklyBudget });
         });
-        deepseekBudgetRows = new StackPanel(); deepseekRingHint = Detail(""); deepseekRingHint.Margin = new Thickness(10, 7, 10, 4); deepseekBudgetRows.Children.Add(deepseekRingHint);
+        deepseekBudgetRows = new StackPanel(); deepseekRingHint = Detail(""); deepseekRingHint.Margin = new Thickness(10, 7, 4, 4);
+        Identify(deepseekRingHint, "settings.deepseek.ring_hint", "");
+        deepseekRingLink = new Button { Style = (Style)FindResource("SettingsLink"), FontSize = 11, Margin = new Thickness(0, 7, 10, 4) };
+        Identify(deepseekRingLink, "settings.deepseek.ring_link", ""); deepseekRingLink.Click += async (_, _) => await NavigateAsync("collapsed");
+        var ringHint = new StackPanel { Orientation = Orientation.Horizontal }; ringHint.Children.Add(deepseekRingHint); ringHint.Children.Add(deepseekRingLink); deepseekBudgetRows.Children.Add(ringHint);
         deepseekBudgetRows.Children.Add(DeepSeekBudgetField(true)); deepseekBudgetRows.Children.Add(DeepSeekBudgetField(false));
         deepseekRingRow = Row(Label(ui.Text("deepseek.budget.ring")), DeepSeekSegments("ring", new[] { ("day", "deepseek.budget.day"), ("week", "deepseek.budget.week") }, value => ChangeDeepSeek(p => p with { DeepSeekRingPeriod = value })), 36);
         deepseekBudgetRows.Children.Add(deepseekRingRow);
@@ -180,7 +184,13 @@ internal sealed partial class SettingsWindow
         deepseekBalanceHelp!.Visibility = deepseekBalanceSeparator!.Visibility = budget ? Visibility.Collapsed : Visibility.Visible;
         deepseekPanelSection!.Visibility = snapshot?.QuotaDashboard?.Providers.Count == 1 ? Visibility.Visible : Visibility.Collapsed;
         deepseekRingRow!.Visibility = settings.DeepSeekDailyBudget != null && settings.DeepSeekWeeklyBudget != null ? Visibility.Visible : Visibility.Collapsed;
-        deepseekRingHint!.Text = ui.Text(reading?.CompactBudgetKind == null ? "deepseek.ring_hint.none" : snapshot?.QuotaDashboard?.Providers.Count == 1 ? "deepseek.ring_hint.outer" : "deepseek.ring_hint.inner");
+        var compact = ReadCompact();
+        int ringSlot = compact.Components.Any(value => value.Id == "quotaGauge" && value.Shown)
+            ? Array.FindIndex(compact.Rings, value => value.Provider == "deepseek") : -1;
+        deepseekRingHint!.Text = ui.Text(ringSlot == 0 ? "deepseek.ring_hint.outer" : ringSlot == 1 ? "deepseek.ring_hint.inner" : "deepseek.ring_hint.none");
+        deepseekRingLink!.Content = ui.Text(ringSlot < 0 ? "deepseek.ring_hint.choose" : "deepseek.ring_hint.change");
+        AutomationProperties.SetName(deepseekRingLink, (string)deepseekRingLink.Content);
+        deepseekRingLink.IsEnabled = !busy && !session.RequiresRestart && connected;
         if (deepseekDailyValue != settings.DeepSeekDailyBudget) { deepseekDailyValue = settings.DeepSeekDailyBudget; deepseekDaily!.Text = DeepSeekBudgetText(deepseekDailyValue); }
         if (deepseekWeeklyValue != settings.DeepSeekWeeklyBudget) { deepseekWeeklyValue = settings.DeepSeekWeeklyBudget; deepseekWeekly!.Text = DeepSeekBudgetText(deepseekWeeklyValue); }
         deepseekDailyReference!.Text = reading?.DailyReference ?? ""; deepseekWeeklyReference!.Text = reading?.WeeklyReference ?? "";

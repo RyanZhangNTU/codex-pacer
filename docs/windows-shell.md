@@ -4,6 +4,10 @@ The per-user installer, startup state, maintenance helpers and lifecycle checks 
 
 Preference keys, edit acknowledgements, migration and protected history storage are described in [Windows preferences and quota history](windows-preferences.md).
 
+Claude and DeepSeek sign in through separate Pacer-owned WebView2 profiles. Before showing the site, the host records the existing session's one-way fingerprint. A changed fingerprint shows confirmation and closes the window after 1.5 seconds. Continue, Ctrl+Enter, Later and the close button also finish while a session is present; an unchanged session retains its history and selected workspace. Browser-process failure cannot complete sign-in. The host checks navigation and a one-second timer only while the window is open; closing stops the observer.
+
+Login revokes old quota reads before the profile can change. Claude clears the saved organization through the normal acknowledged preference transaction only for a new session. DeepSeek passes an optional `webNewSession` flag to the existing shared coordinator; omitted flags retain the older protocol behavior. Credential fingerprints still independently protect billing history. Sign-out cancels reads before clearing the owned profile; a failed clear stays paused. No external browser profile, cookie store or account is imported.
+
 The island's Classic/Liquid Glass preference uses the native Composition material described in [Windows Composition glass](windows-composition-backdrop.md), including fallback, DPI, acceptance captures and performance checks. Its C++ bridge builds with the configured Visual C++ x64 tools and Windows SDK C++/WinRT headers; the DLL is copied and published with the desktop app.
 
 The bridge uses C++20 with MSVC 19.30 or newer. VS 2019 19.29 uses C++17 because that compiler hits an internal error in the SDK's C++20 projection. Both paths keep warnings as errors; newer libraries' rejection of experimental coroutine headers is handled by the standard selection, without suppressing diagnostics.
@@ -18,6 +22,8 @@ The WPF shell renders the shared engine's presentations over protocol version 1.
 ./scripts/windows/test-presentation.ps1 -Configuration Release
 ./scripts/windows/package-preview.ps1 -SkipBuild
 ```
+
+For focused DeepSeek checks, use the `web` and `deepseek` presentation groups once each. They use intercepted pages and isolated synthetic profiles. `DeepSeekOptionPersistenceChecks` also covers 26 schema-2 option writes, fresh stores and independent engine restarts. Production accounts are not needed for these checks.
 
 The unsigned ZIP and SHA-256 file are written under `output/windows`. The `windows-app-x64-unsigned` CI artifact contains both. Packaging validates the extracted application with a restricted runtime environment, Unicode paths, demo capture, and single-instance activation. It does not create a tag or release. The shipping Mac package and release workflow are unchanged.
 

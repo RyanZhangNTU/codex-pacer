@@ -29,7 +29,7 @@ internal sealed partial class SettingsWindow
         _ = Dispatcher.InvokeAsync(() =>
         {
             if (!IsVisible) return;
-            if (activePane == "reminders") { RefreshValues(); return; }
+            if (activePane is "reminders" or "deepseek") { RefreshValues(); return; }
             if (activePane != "collapsed") return;
             if (compactEditor == null || compactRows.Count == 0) { RebuildPane("collapsed"); RefreshValues(); }
             else RefreshValues();

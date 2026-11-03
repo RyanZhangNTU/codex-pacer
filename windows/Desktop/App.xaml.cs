@@ -189,7 +189,8 @@ public partial class App : Application
         webConnection = new DeepSeekConnectionCoordinator(engine, demo ? new OfflineDeepSeekWebSession() : new DeepSeekWebSession(ui),
             Dispatcher, bridgeEnabled: !demo);
         claudeConnection = new ClaudeConnectionCoordinator(engine, demo ? new OfflineClaudeWebSession() : new ClaudeWebSession(ui),
-            Dispatcher, bridgeEnabled: !demo);
+            Dispatcher, bridgeEnabled: !demo, newSession: async () => settingsSession != null &&
+                await settingsSession.ChangeAsync(value => value with { ClaudeOrganization = "" }) == PreferencesApplyResult.Applied);
         Activated += async (_, _) =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully) return;
