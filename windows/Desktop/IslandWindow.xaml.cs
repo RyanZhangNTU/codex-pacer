@@ -63,6 +63,7 @@ public partial class IslandWindow : Window
     private bool destinationExpanded;
     private int page;
     private RevealHost? currentPage;
+    private readonly List<AnimationLease> pageClocks = [];
     private Point? pointerDown;
     private IReadOnlyList<EngineTaskRow> rows = [];
     internal bool AllowClose { get; set; }
@@ -525,6 +526,8 @@ public partial class IslandWindow : Window
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged;
         presentationStopped = true; StopRendering(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); navigationErrorDismiss.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
+        foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
         SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
     }
     private async Task Send(string method, object? parameters = null)
@@ -639,6 +642,7 @@ public partial class IslandWindow : Window
     }
     private void BuildPage(bool animate, int direction)
     {
+        foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         RevealHost? outgoing = currentPage;
         var content = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
         var incoming = new RevealHost { VerticalAlignment = VerticalAlignment.Top, RenderTransform = new TranslateTransform() };
@@ -672,12 +676,11 @@ public partial class IslandWindow : Window
         {
             TaskPages.Children.Add(outgoing);
             var fade = new DoubleAnimation(outgoing.Opacity, 0, TimeSpan.FromSeconds(0.18));
-            fade.Completed += (_, _) => TaskPages.Children.Remove(outgoing);
-            outgoing.BeginAnimation(OpacityProperty, fade);
+            pageClocks.Add(new(fade, clock => outgoing.ApplyAnimationClock(OpacityProperty, clock), () => TaskPages.Children.Remove(outgoing)));
             var transform = (TranslateTransform)outgoing.RenderTransform;
-            transform.BeginAnimation(TranslateTransform.XProperty, PageAnimation(transform.X, -direction * 18));
-            incoming.BeginAnimation(OpacityProperty, PageAnimation(0, 1));
-            ((TranslateTransform)incoming.RenderTransform).BeginAnimation(TranslateTransform.XProperty, PageAnimation(direction * 18, 0));
+            pageClocks.Add(new(PageAnimation(transform.X, -direction * 18), clock => transform.ApplyAnimationClock(TranslateTransform.XProperty, clock)));
+            pageClocks.Add(new(PageAnimation(0, 1), clock => incoming.ApplyAnimationClock(OpacityProperty, clock)));
+            pageClocks.Add(new(PageAnimation(direction * 18, 0), clock => ((TranslateTransform)incoming.RenderTransform).ApplyAnimationClock(TranslateTransform.XProperty, clock)));
         }
         TaskPages.Children.Add(incoming);
     }

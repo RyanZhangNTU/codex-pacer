@@ -25,15 +25,7 @@ internal sealed class NativeCompositionBackdrop : ICompositionBackdrop
     internal NativeCompositionBackdrop(Window content, string? path = null)
     {
         content.Dispatcher.VerifyAccess(); this.content = content;
-        string binary = Path.GetFullPath(path ?? Path.Combine(AppContext.BaseDirectory, "PacerCompositionBackdrop.dll"));
-        IntPtr library;
-        lock (Libraries)
-        {
-            if (!Libraries.TryGetValue(binary, out library))
-            {
-                library = NativeLibrary.Load(binary); Libraries.Add(binary, library);
-            }
-        }
+        IntPtr library = Library(path);
         T Export<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
         if (Export<Version>("pacer_surface_abi_version")() != 1) throw new InvalidDataException("Composition surface ABI mismatch.");
         update = Export<Update>("pacer_surface_update"); hide = Export<NativeHide>("pacer_surface_hide");
@@ -50,6 +42,19 @@ internal sealed class NativeCompositionBackdrop : ICompositionBackdrop
             source.AddHook(Message);
         }
         catch { destroy(handle); handle = IntPtr.Zero; throw; }
+    }
+    internal static IntPtr Library(string? path = null)
+    {
+        string binary = Path.GetFullPath(path ?? Path.Combine(AppContext.BaseDirectory, "PacerCompositionBackdrop.dll"));
+        IntPtr library;
+        lock (Libraries)
+        {
+            if (!Libraries.TryGetValue(binary, out library))
+            {
+                library = NativeLibrary.Load(binary); Libraries.Add(binary, library);
+            }
+        }
+        return library;
     }
     internal static BackdropFrame Frame(Window content, FrameworkElement shell, Geometry clip)
     {

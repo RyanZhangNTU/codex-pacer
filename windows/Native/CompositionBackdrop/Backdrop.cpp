@@ -22,6 +22,7 @@
 #include <cmath>
 #include <vector>
 #include <memory>
+#include <chrono>
 
 using namespace winrt;
 using namespace winrt::Windows::Foundation;
@@ -134,8 +135,10 @@ struct Surface {
     bool removalRegistered{};
     float scale{};
     bool solid{};
+    bool orbitMode{}, orbitRunning{};
+    CompositionDrawingSurface orbitTexture{nullptr};
 
-    Surface(HWND owner, UINT message) : content(owner), notification(message) {
+    Surface(HWND owner, UINT message, bool orbit = false) : content(owner), notification(message), orbitMode(orbit) {
         DWORD process{};
         if (!IsWindow(content) || GetWindowThreadProcessId(content, &process) != thread || process != GetCurrentProcessId())
             throw hresult_invalid_argument();
@@ -148,12 +151,12 @@ struct Surface {
         WNDCLASSEXW kind{}; kind.cbSize = sizeof(kind); kind.lpfnWndProc = WindowProc; kind.hInstance = module; kind.lpszClassName = WindowClass;
         if (!RegisterClassExW(&kind) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) throw_last_error();
         window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            WindowClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, module, this);
+            WindowClass, L"", WS_POPUP, 0, 0, 1, 1, orbitMode ? content : nullptr, nullptr, module, this);
         if (!window) throw_last_error();
         // The material never owns focus or input; the layered WPF window above
         // it retains the actual controls and accessibility providers.
         EnableWindow(window, FALSE);
-        BOOL allow = TRUE; check_hresult(DwmSetWindowAttribute(window, 17, &allow, sizeof(allow)));
+        if (!orbitMode) { BOOL allow = TRUE; check_hresult(DwmSetWindowAttribute(window, 17, &allow, sizeof(allow))); }
         DWORD square = 1; (void)DwmSetWindowAttribute(window, 33, &square, sizeof(square));
         compositor = Compositor();
         check_hresult(compositor.as<ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>()->CreateDesktopWindowTarget(window, TRUE,
@@ -166,9 +169,12 @@ struct Surface {
         com_ptr<ID2D1Device> drawingDevice; check_hresult(D2D1CreateDevice(device.as<IDXGIDevice>().get(), nullptr, drawingDevice.put()));
         check_hresult(compositor.as<ABI::Windows::UI::Composition::ICompositorInterop>()->CreateGraphicsDevice(drawingDevice.get(),
             reinterpret_cast<ABI::Windows::UI::Composition::ICompositionGraphicsDevice**>(put_abi(graphics))));
-        backdrop = Layer(); brightness = Layer(); tint = Layer(); noise = Layer();
-        brightness.Brush(compositor.CreateColorBrush({255, 255, 255, 255})); brightness.Opacity(.025f);
-        tint.Brush(compositor.CreateColorBrush({255, 11, 12, 14})); tint.Opacity(TintOpacity);
+        backdrop = Layer();
+        if (!orbitMode) {
+            brightness = Layer(); tint = Layer(); noise = Layer();
+            brightness.Brush(compositor.CreateColorBrush({255, 255, 255, 255})); brightness.Opacity(.025f);
+            tint.Brush(compositor.CreateColorBrush({255, 11, 12, 14})); tint.Opacity(TintOpacity);
+        }
         removalDevice = device.as<ID3D11Device4>();
         removalEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr); check_bool(removalEvent != nullptr);
         check_hresult(removalDevice->RegisterDeviceRemovedEvent(removalEvent, &removalCookie));
@@ -211,8 +217,81 @@ struct Surface {
     }
     void Solid() {
         if (!compositor || !backdrop) return;
+        if (orbitMode) { HideOrbit(); return; }
         solid = true;
         backdrop.Brush(compositor.CreateColorBrush({255, 11, 12, 14})); brightness.Opacity(0); tint.Opacity(0); noise.Opacity(0);
+    }
+    void HideOrbit() {
+        if (backdrop) backdrop.StopAnimation(L"RotationAngleInDegrees");
+        orbitRunning = false; if (window) ShowWindow(window, SW_HIDE);
+    }
+    void Texture(int width, int height, unsigned char const* pixels, int stride) {
+        if (!orbitMode || GetCurrentThreadId() != thread || width < 1 || height < 1 || width > 512 || height > 512 ||
+            !pixels || stride != width * 4) throw hresult_invalid_argument();
+        if (removed) throw hresult_error(DXGI_ERROR_DEVICE_REMOVED);
+        check_hresult(device->GetDeviceRemovedReason());
+        if (!orbitTexture || orbitTexture.Size().Width != width || orbitTexture.Size().Height != height) {
+            orbitTexture = graphics.CreateDrawingSurface({static_cast<float>(width), static_cast<float>(height)},
+                winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+            backdrop.Brush(compositor.CreateSurfaceBrush(orbitTexture));
+        }
+        auto interop = orbitTexture.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+        com_ptr<ID2D1DeviceContext> dc; POINT offset{};
+        check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext), dc.put_void(), &offset));
+        try {
+            dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
+            dc->Clear(D2D1::ColorF(0, 0));
+            com_ptr<ID2D1Bitmap> bitmap;
+            auto properties = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            check_hresult(dc->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(width), static_cast<UINT32>(height)), pixels,
+                static_cast<UINT32>(stride), properties, bitmap.put()));
+            dc->DrawBitmap(bitmap.get());
+        } catch (...) { (void)interop->EndDraw(); throw; }
+        check_hresult(interop->EndDraw());
+    }
+    void Orbit(int x, int y, int width, int height, float dpiScale, float opacity, bool ending, bool show) {
+        if (!orbitMode || GetCurrentThreadId() != thread || width < 1 || height < 1 || width > 512 || height > 512 ||
+            !std::isfinite(dpiScale) || dpiScale < .25f || dpiScale > 16 || !std::isfinite(opacity) || opacity < 0 || opacity > 1)
+            throw hresult_invalid_argument();
+        if (removed) throw hresult_error(DXGI_ERROR_DEVICE_REMOVED);
+        check_hresult(device->GetDeviceRemovedReason());
+        float w = static_cast<float>(width), h = static_cast<float>(height), inset = 1.5f * dpiScale;
+        float side = (std::ceil(std::sqrt(w * w + h * h) / dpiScale) + 2) * dpiScale;
+        root.Size({w, h}); root.Opacity(opacity);
+        backdrop.Size({side, side}); backdrop.Offset({(w - side) / 2, (h - side) / 2, 0});
+        backdrop.CenterPoint({side / 2, side / 2, 0});
+        com_ptr<ID2D1RoundedRectangleGeometry> outer, inner;
+        check_hresult(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(D2D1::RectF(0, 0, w, h), 10 * dpiScale, 10 * dpiScale), outer.put()));
+        check_hresult(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(D2D1::RectF(inset, inset, w - inset, h - inset), 8.5f * dpiScale, 8.5f * dpiScale), inner.put()));
+        com_ptr<ID2D1PathGeometry> path; check_hresult(factory->CreatePathGeometry(path.put()));
+        com_ptr<ID2D1GeometrySink> sink; check_hresult(path->Open(sink.put()));
+        check_hresult(outer->CombineWithGeometry(inner.get(), D2D1_COMBINE_MODE_EXCLUDE, nullptr, sink.get())); check_hresult(sink->Close());
+        // The WPF ending dot is drawn above the original ring. Punch out its
+        // rounded footprint so the native decoration preserves that ordering.
+        if (ending) {
+            com_ptr<ID2D1RoundedRectangleGeometry> dot;
+            check_hresult(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(
+                D2D1::RectF(w - 5 * dpiScale, -dpiScale, w + dpiScale, 5 * dpiScale), 3 * dpiScale, 3 * dpiScale), dot.put()));
+            com_ptr<ID2D1PathGeometry> cut; check_hresult(factory->CreatePathGeometry(cut.put()));
+            com_ptr<ID2D1GeometrySink> cutting; check_hresult(cut->Open(cutting.put()));
+            check_hresult(path->CombineWithGeometry(dot.get(), D2D1_COMBINE_MODE_EXCLUDE, nullptr, cutting.get())); check_hresult(cutting->Close()); path = cut;
+        }
+        root.Clip(compositor.CreateGeometricClip(compositor.CreatePathGeometry(CompositionPath(make<GeometrySource>(path)))));
+        if (show && IsWindowVisible(content)) {
+            if (!orbitRunning) {
+                auto animation = compositor.CreateScalarKeyFrameAnimation(); auto linear = compositor.CreateLinearEasingFunction();
+                animation.InsertKeyFrame(0, 0, linear); animation.InsertKeyFrame(1, 360, linear);
+                animation.Duration(std::chrono::milliseconds(1800)); animation.IterationBehavior(AnimationIterationBehavior::Forever);
+                backdrop.StartAnimation(L"RotationAngleInDegrees", animation); orbitRunning = true;
+            }
+            // Stay immediately above our owner, below any later fullscreen
+            // cover. Geometry updates must not promote this decoration.
+            HWND above = GetWindow(content, GW_HWNDPREV);
+            UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW;
+            if (above == window) flags |= SWP_NOZORDER;
+            check_bool(SetWindowPos(window, above ? above : HWND_TOP, x, y, width, height, flags));
+        } else HideOrbit();
     }
     void Update(int x, int y, int width, int height, double const* values, int count, float dpiScale, bool show) {
         if (GetCurrentThreadId() != thread || width < 1 || height < 1 || width > 16384 || height > 16384 ||
@@ -258,7 +337,7 @@ struct Surface {
         if (removalDevice && removalRegistered) { removalDevice->UnregisterDeviceRemoved(removalCookie); removalRegistered = false; }
         if (removalEvent) { CloseHandle(removalEvent); removalEvent = nullptr; }
         try { if (target) target.Root(nullptr); if (compositor) compositor.Close(); } catch (...) {}
-        if (IsWindow(content)) (void)SetWindowRgn(content, nullptr, FALSE);
+        if (!orbitMode && IsWindow(content)) (void)SetWindowRgn(content, nullptr, FALSE);
         if (window) { DestroyWindow(window); window = nullptr; }
     }
     ~Surface() { Close(); }
@@ -307,3 +386,19 @@ extern "C" __declspec(dllexport) HRESULT __cdecl pacer_surface_black(void* value
 }
 extern "C" __declspec(dllexport) void __cdecl pacer_surface_destroy(void* value) noexcept { delete static_cast<Surface*>(value); }
 extern "C" __declspec(dllexport) void __cdecl pacer_surface_test_loss(void* value) noexcept { if (value) SetEvent(static_cast<Surface*>(value)->removalEvent); }
+extern "C" __declspec(dllexport) HRESULT __cdecl pacer_orbit_create(HWND content, UINT notification, void** result) noexcept {
+    if (!result || notification < WM_APP || notification > 0xBFFF) return E_INVALIDARG;
+    *result = nullptr;
+    try { auto surface = std::make_unique<Surface>(content, notification, true); surface->Initialize(); *result = surface.release(); return S_OK; }
+    catch (...) { return to_hresult(); }
+}
+extern "C" __declspec(dllexport) HRESULT __cdecl pacer_orbit_texture(void* value, int width, int height, unsigned char const* pixels, int stride) noexcept {
+    if (!value) return E_INVALIDARG;
+    try { static_cast<Surface*>(value)->Texture(width, height, pixels, stride); return S_OK; } catch (...) { return to_hresult(); }
+}
+extern "C" __declspec(dllexport) HRESULT __cdecl pacer_orbit_update(void* value, int x, int y, int width, int height, double scale, double opacity, int ending, int show) noexcept {
+    if (!value) return E_INVALIDARG;
+    try { static_cast<Surface*>(value)->Orbit(x, y, width, height, static_cast<float>(scale), static_cast<float>(opacity), ending != 0, show != 0); return S_OK; }
+    catch (...) { return to_hresult(); }
+}
+extern "C" __declspec(dllexport) void __cdecl pacer_orbit_hide(void* value) noexcept { if (value) static_cast<Surface*>(value)->HideOrbit(); }

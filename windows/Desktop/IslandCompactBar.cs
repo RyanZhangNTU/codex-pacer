@@ -26,6 +26,7 @@ public partial class IslandWindow
     private CompactProjection? compactData;
     private double measuredStripHeight = 135;
     private bool compactDimmed;
+    private readonly Dictionary<Button, AnimationLease> dimClocks = [];
 
     private static TextBlock CompactText(double size, FontWeight weight, Brush ink)
     {
@@ -190,10 +191,10 @@ public partial class IslandWindow
             double target = value && slot.Tag is true ? compactData.ExpandedOpacity : 1;
             if (!changed && slot.HasAnimatedProperties && AnimationsEnabled) continue;
             double from = slot.Opacity;
-            slot.BeginAnimation(OpacityProperty, null); slot.Opacity = target;
+            if (dimClocks.Remove(slot, out var old)) old.Dispose(); slot.Opacity = target;
             if (animate && AnimationsEnabled && Math.Abs(from - target) > .001)
-                slot.BeginAnimation(OpacityProperty, new DoubleAnimation(from, target, TimeSpan.FromSeconds(compactData.DimDuration))
-                { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop });
+                dimClocks[slot] = new(new DoubleAnimation(from, target, TimeSpan.FromSeconds(compactData.DimDuration))
+                { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop }, clock => slot.ApplyAnimationClock(OpacityProperty, clock), () => dimClocks.Remove(slot));
         }
     }
     private bool CompactDimStateMatches()

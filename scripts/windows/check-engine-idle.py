@@ -21,7 +21,7 @@ def cpu_seconds(process):
     return sum((value.dwHighDateTime << 32) + value.dwLowDateTime for value in values[2:]) / 10_000_000
 
 
-def check(engine, seconds, output, real_data=False, quota=False):
+def check(engine, seconds, output, real_data=False, quota=False, read_only=False):
     if quota and not real_data:
         raise ValueError("Quota diagnostics require read-only real-data mode")
     if os.name != "nt" or seconds < 120:
@@ -40,13 +40,17 @@ def check(engine, seconds, output, real_data=False, quota=False):
             homes = {provider + "Home": str(Path(os.environ.get(variable) or user_home / folder))
                      for provider, variable, folder in (("codex", "CODEX_HOME", ".codex"),
                          ("claude", "CLAUDE_CONFIG_DIR", ".claude"), ("deepseek", "DSH_HOME", ".dsh"))}
-        process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data else []) + (["--quota-diagnostics"] if quota else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data or read_only else []) + (["--quota-diagnostics"] if quota else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         hello, ready = threading.Event(), threading.Event()
         counts = {"frames": 0, "stderrBytes": 0, "protocolErrors": 0, "shutdownReplies": 0}
         quota_counts = {}
+        measuring = threading.Event()
+        last_running = 0
+        sample = {"snapshots": 0, "runningMin": 0, "runningMax": 0, "streamingSnapshots": 0}
 
         def drain():
+            nonlocal last_running
             for line in process.stdout:
                 counts["frames"] += 1
                 try:
@@ -54,6 +58,15 @@ def check(engine, seconds, output, real_data=False, quota=False):
                     if message.get("type") == "hello":
                         hello.set()
                     if message.get("type") == "snapshot":
+                        running = message.get("runningCount", 0)
+                        last_running = running if type(running) is int and running >= 0 else 0
+                        if measuring.is_set():
+                            sample["snapshots"] += 1
+                            sample["runningMin"] = min(sample["runningMin"], last_running)
+                            sample["runningMax"] = max(sample["runningMax"], last_running)
+                            rate = message.get("totalTokensPerSecond")
+                            if message.get("rateIsFresh") is True and type(rate) in (int, float) and rate > 0:
+                                sample["streamingSnapshots"] += 1
                         ready.set()
                     if message.get("type") == "error":
                         counts["protocolErrors"] += 1
@@ -102,11 +115,14 @@ def check(engine, seconds, output, real_data=False, quota=False):
                 send("setClaudeWebHost", {"webAvailable": True})
             time.sleep(5)
             started, cpu_started = time.monotonic(), cpu_seconds(process)
+            sample["runningMin"] = sample["runningMax"] = last_running
+            measuring.set()
             print(f"Measuring initialized engine for {seconds} seconds; protocol bodies are discarded.", flush=True)
             until = time.monotonic() + seconds
             while time.monotonic() < until:
                 time.sleep(min(10, max(0, until - time.monotonic())))
             elapsed, cpu = time.monotonic() - started, cpu_seconds(process) - cpu_started
+            measuring.clear()
             if process.poll() is not None:
                 raise RuntimeError("Engine exited during idle measurement")
             if not real_data:
@@ -127,6 +143,8 @@ def check(engine, seconds, output, real_data=False, quota=False):
                 "logicalProcessors": os.cpu_count(), "shutdownSeconds": round(shutdown, 4),
                 "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data,
                 "sourceMutationsRequested": not real_data, **counts}
+            result["readOnlyDiagnostics"] = real_data or read_only
+            result["measured"] = dict(sample)
             if quota:
                 result["quotaReads"] = quota_counts
                 if not quota_counts:
@@ -152,5 +170,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path)
     parser.add_argument("--real-data", action="store_true", help="Read actual provider homes; disable persistence and, unless --quota is set, quota clients")
     parser.add_argument("--quota", action="store_true", help="Include read-only quota/balance clients, no history or credential writes; record numeric refresh counts")
+    parser.add_argument("--read-only", action="store_true", help="Disable persistence and quota clients for isolated source fixtures too")
     args = parser.parse_args()
-    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota)
+    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota, args.read_only)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Automation;
@@ -8,6 +9,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace CodexPacer.Windows;
 
@@ -16,18 +18,32 @@ public sealed class AlternatingQuotaText : Grid
 {
     private readonly List<TextBlock> layers = [];
     private bool animates = true;
+    private readonly DispatcherTimer wake = new(DispatcherPriority.Background);
+    private readonly List<AnimationLease> fades = [];
+    private Stopwatch? cycle;
+    private (string Provider, string Text)[] lastEntries = [];
+    private bool[] lastDimmed = [];
+    private double lastSize, lastMaximum;
+    private string? lastFamily;
+    private long wakeups;
+    internal (bool Scheduled, int Clocks, long Wakes) Scheduling => (wake.IsEnabled, fades.Count, wakeups);
     public double FontSize { get; set; } = 12;
     public FontFamily FontFamily { get; set; } = PacerFonts.Interface;
     internal double MaximumDisplayWidth { get; set; } = double.PositiveInfinity;
     public AlternatingQuotaText()
     {
         IsHitTestVisible = false;
+        wake.Tick += (_, _) => { wake.Stop(); wakeups++; Step(); };
         IsVisibleChanged += (_, _) => Refresh();
         Unloaded += (_, _) => Stop();
     }
     internal void Update(IReadOnlyList<(string Provider, string Text)> entries, bool animate, IReadOnlyList<bool>? dimmed = null)
     {
-        bool restart = layers.Count != entries.Count || animate != animates;
+        bool[] dims = entries.Select((_, index) => dimmed?.ElementAtOrDefault(index) == true).ToArray();
+        if (lastEntries.SequenceEqual(entries) && lastDimmed.SequenceEqual(dims) && animate == animates
+            && FontSize == lastSize && MaximumDisplayWidth == lastMaximum && FontFamily.Source == lastFamily) return;
+        bool restart = layers.Count != entries.Count || animate != animates
+            || !lastEntries.Select(value => value.Provider).SequenceEqual(entries.Select(value => value.Provider));
         if (restart) Stop();
         if (layers.Count != entries.Count)
         {
@@ -41,6 +57,7 @@ public sealed class AlternatingQuotaText : Grid
             }
         }
         animates = animate;
+        lastEntries = entries.ToArray(); lastDimmed = dims; lastSize = FontSize; lastMaximum = MaximumDisplayWidth; lastFamily = FontFamily.Source;
         AutomationProperties.SetName(this, string.Join(", ", entries.Select(entry => entry.Provider + " " + entry.Text)));
         UIElementAutomationPeer.FromElement(this)?.InvalidatePeer();
         double width = 0, height = 0;
@@ -60,10 +77,11 @@ public sealed class AlternatingQuotaText : Grid
             width = Math.Max(width, Math.Max(advance, probe.DesiredSize.Width)); height = Math.Max(height, probe.DesiredSize.Height);
         }
         Width = Math.Min(MaximumDisplayWidth, Math.Ceiling(width)); Height = Math.Ceiling(height);
-        if (restart || layers.All(text => !text.HasAnimatedProperties)) Refresh();
+        if (restart || cycle == null) Refresh();
     }
     internal void Stop()
     {
+        wake.Stop(); cycle = null; ClearFades();
         for (int index = 0; index < layers.Count; index++)
         {
             layers[index].BeginAnimation(OpacityProperty, null);
@@ -73,19 +91,34 @@ public sealed class AlternatingQuotaText : Grid
     private void Refresh()
     {
         if (!IsVisible || !animates || layers.Count < 2) { Stop(); return; }
-        if (layers[0].HasAnimatedProperties) return;
-        double total = layers.Count * 4.0;
+        if (cycle != null) return;
+        cycle = Stopwatch.StartNew(); Step();
+    }
+    private void ClearFades()
+    {
+        foreach (var fade in fades.ToArray()) fade.Dispose(); fades.Clear();
+    }
+    private void Step()
+    {
+        if (cycle == null || !IsVisible || !animates || layers.Count < 2) { Stop(); return; }
+        ClearFades();
+        double elapsed = cycle.Elapsed.TotalSeconds;
+        var frame = QuotaAlternationSchedule.At(elapsed, layers.Count);
+        if (frame.FadeRemaining <= 0)
+        {
+            for (int index = 0; index < layers.Count; index++) layers[index].Opacity = index == frame.Current ? 1 : 0;
+            wake.Interval = TimeSpan.FromSeconds(Math.Max(.001, frame.NextFade - elapsed)); wake.Start(); return;
+        }
         for (int index = 0; index < layers.Count; index++)
         {
-            double start = index * 4, end = start + 4;
-            double[] times, values;
-            if (index == 0) { times = [0, end - 0.35, end, total - 0.35, total]; values = [1, 1, 0, 0, 1]; }
-            else if (index == layers.Count - 1) { times = [0, start - 0.35, start, total - 0.35, total]; values = [0, 0, 1, 1, 0]; }
-            else { times = [0, start - 0.35, start, end - 0.35, end, total]; values = [0, 0, 1, 1, 0, 0]; }
-            var animation = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(total), RepeatBehavior = RepeatBehavior.Forever };
-            for (int key = 0; key < times.Length; key++) animation.KeyFrames.Add(new LinearDoubleKeyFrame(values[key], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(times[key]))));
+            var text = layers[index];
+            bool incoming = index == frame.Next, outgoing = index == frame.Current;
+            double from = incoming ? frame.NextOpacity : outgoing ? 1 - frame.NextOpacity : 0;
+            text.Opacity = incoming ? 1 : 0;
+            if (!incoming && !outgoing) continue;
+            var animation = new DoubleAnimation(from, text.Opacity, TimeSpan.FromSeconds(frame.FadeRemaining)) { FillBehavior = FillBehavior.Stop };
             Timeline.SetDesiredFrameRate(animation, 30);
-            layers[index].BeginAnimation(OpacityProperty, animation);
+            fades.Add(new(animation, clock => text.ApplyAnimationClock(OpacityProperty, clock), incoming ? Step : null));
         }
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new ValuePeer(this);
