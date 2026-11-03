@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 struct EngineWallet: Codable, Equatable {
     struct Span: Codable, Equatable { let start: Double; let end: Double }

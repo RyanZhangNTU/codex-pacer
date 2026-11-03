@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import Subprocess
 
 /// Keeps Subprocess's execution and streams inside their closure. Requests

@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 struct EngineReminderSettings: Codable, Equatable, Sendable {
     var warnings = CompactIslandLayout.Warning.allCases.map(\.rawValue)

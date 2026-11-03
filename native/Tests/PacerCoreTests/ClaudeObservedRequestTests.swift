@@ -115,10 +115,10 @@ final class ClaudeObservedRequestTests: XCTestCase {
         print(json.dumps([scope['sanitized'](json.dumps(row).encode())[0] for row in json.load(sys.stdin)]))
         """
         let process = Process(), input = Pipe(), output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.executableURL = PythonFixture.executable
         process.arguments = ["-c", program, Data(ClaudeActivityProbe.script.utf8).base64EncodedString()]
         process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
-        try process.run(); try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: rows))
+        let pythonFixture = try PythonFixture.prepare(process); defer { pythonFixture.remove() }; try process.run(); try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: rows))
         try input.fileHandleForWriting.close()
         let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0)

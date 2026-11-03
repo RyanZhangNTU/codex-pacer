@@ -1,5 +1,7 @@
 #if canImport(PacerMacSupport)
 import PacerMacSupport
+#else
+@testable import PacerEngineSupport
 #endif
 import XCTest
 @testable import PacerCore

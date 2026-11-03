@@ -9,8 +9,8 @@ python scripts/windows/build-localization.py
 python scripts/windows/build-localization.py --check
 ```
 
-生成结果在 `windows/Localization/Catalogs`，不手动编辑。脚本记录规范化换行后的来源 SHA-256，并检查两种语言的键是否一致。Windows 测试入口和 CI 会拒绝过期结果。
+生成结果在 `windows/EngineSupport/Resources/Localization/Catalogs`，不手动编辑。脚本记录规范化换行后的来源 SHA-256，并检查两种语言的键是否一致。Windows 测试入口和 CI 会拒绝过期结果。
 
-引擎通过 `WindowsResources` 向共享 `L10n` 注入 Windows 文案。共用字符串、格式占位符和业务数值格式化仍由 Core 负责；原有本地化测试同时覆盖两种语言。WPF 接线留给 C2。
+引擎从 `PacerEngineSupport` 的资源 bundle 读取目录，通过 `WindowsResources` 向共享 `L10n` 注入 Windows 文案。WPF 在构建时从同一目录生成嵌入资源。共用字符串、格式占位符和业务数值格式化仍由 Core 负责；原有本地化测试同时覆盖两种语言。
 
 共用目录中仍有面向 macOS 的原文。Windows 使用某个键前须检查其平台含义；系统设置、安装路径或启动项等文字应新增 `windows.*` 键，保留 Mac 原文。

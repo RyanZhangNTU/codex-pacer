@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// A complete, optional protocol-1 settings group. Omitting the group retains
 /// it; null daily/weekly amounts inside an update explicitly turn them off.

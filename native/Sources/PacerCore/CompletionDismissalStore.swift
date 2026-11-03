@@ -25,7 +25,7 @@ public struct CompletionDismissalStore: Sendable {
         self.fileURL = fileURL; self.files = files; self.preservesDamagedFile = preservesDamagedFile
     }
 
-    static func digest(_ fields: [String]) -> String {
+    package static func digest(_ fields: [String]) -> String {
         // Length prefixes make opaque identifiers unambiguous without storing them.
         var data = Data()
         for field in fields {

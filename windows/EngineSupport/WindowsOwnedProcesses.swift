@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 
 /// Emergency engine-exit cleanup cannot wait for a monitor or pipe consumer.
 enum WindowsOwnedProcesses {

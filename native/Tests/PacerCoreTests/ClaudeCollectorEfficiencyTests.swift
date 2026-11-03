@@ -52,10 +52,10 @@ def finish(tailer):
         let script = "__name__='fixture'\nimport base64,json,sys\nsource=base64.b64decode(sys.argv[1]).decode()\n" +
             "import ast\nast.parse(source,feature_version=(3,6))\nexec(compile(source,'claude_efficiency_fixture','exec'),globals())\n" + support + "\n" + body
         let child = Process(), stdout = Pipe(), stderr = Pipe()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.executableURL = PythonFixture.executable
         child.arguments = ["-u", "-c", script, program]
         child.standardInput = FileHandle.nullDevice; child.standardOutput = stdout; child.standardError = stderr
-        try child.run()
+        let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }; try child.run()
         let timeout = DispatchWorkItem { if child.isRunning { child.terminate() } }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10, execute: timeout)
         defer { timeout.cancel() }

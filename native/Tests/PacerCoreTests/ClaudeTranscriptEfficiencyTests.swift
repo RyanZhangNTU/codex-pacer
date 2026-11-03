@@ -78,7 +78,7 @@ final class ClaudeTranscriptEfficiencyTests: XCTestCase {
     }
 
     func testActualReaderSharesOneDocumentPerLineAndPreservesParentBindingThroughLargeAttachment() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-transcript-efficiency-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-transcript-efficiency-" + UUID().uuidString)
         let project = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }

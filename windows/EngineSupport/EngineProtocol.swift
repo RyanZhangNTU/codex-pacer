@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 enum EngineProtocol {
     static let version = 1

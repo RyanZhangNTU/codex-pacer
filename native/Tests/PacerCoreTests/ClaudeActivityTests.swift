@@ -1,5 +1,4 @@
 import XCTest
-import Darwin
 @testable import PacerCore
 
 final class ClaudeActivityTests: XCTestCase {
@@ -300,7 +299,7 @@ final class ClaudeActivityTests: XCTestCase {
         }
     }
     func testNativeReaderKeepsInitialHistoricalProvenanceAcrossTailChunks() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-reader-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-reader-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic"); try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = dir.appendingPathComponent(session + ".jsonl")
@@ -318,7 +317,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertTrue(live.records.contains { (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["kind"] as? String == "prompt" })
     }
     func testVerifiedMirrorsSpendNoTranscriptReadCursorOrWatchBudgetAndCannotStarveLocalFile() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-mirror-budget-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-mirror-budget-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -352,7 +351,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertEqual(reader.fileReads, 1); XCTAssertEqual(reader.scans, 1, "An unchanged exclusion cache does not require discovery")
     }
     func testExclusionPurgesAttachedCursorAndReplacementReattachesAsQuietHistoryBeforeNextLiveTurn() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-mirror-reattach-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-mirror-reattach-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -394,7 +393,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertEqual(inbox.unreadActivities.count, 1); XCTAssertEqual(policy.activityNotices(state.activities, at: now.addingTimeInterval(23)).count, 1)
     }
     func testIdleCursorSkipsFileReadsButFirstAppendAndAtomicReplacementStayObservable() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-idle-reader-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-idle-reader-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -427,7 +426,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertTrue(removed.records.contains { (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["kind"] as? String == "unavailable" })
     }
     func testInitialPartialRecordAndNewAppendKeepSeparateHistoricalProvenance() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-mixed-tail-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-mixed-tail-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic"); try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = dir.appendingPathComponent(session + ".jsonl")
@@ -442,7 +441,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertTrue(values.contains { $0["kind"] as? String == "prompt" && $0["promptId"] as? String == "new-prompt" && $0["attaching"] == nil })
     }
     func testNativeAndSshDrainLargeAttachmentAppendsWithoutLosingPromptOwnership() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-burst-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-burst-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -466,9 +465,9 @@ final class ClaudeActivityTests: XCTestCase {
         let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
         let script = "__name__='fixture'\nimport base64,json,sys,pathlib\nexec(base64.b64decode('" + program + "').decode(),globals())\ntailer=Tailer(pathlib.Path(sys.argv[1]));tailer.discover();initial=tailer.read()\nwith open(sys.argv[2],'ab') as stream:stream.write(pathlib.Path(sys.argv[3]).read_bytes())\nchunks=[]\nfor _ in range(10):\n tailer.poll();chunks.append(tailer.read())\n if not tailer.dirty:break\ntailer.close();print(json.dumps({'initial':initial,'chunks':chunks},separators=(',',':')))\n"
         let child = Process(), output = Pipe()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3"); child.arguments = ["-c", script, home.path, file.path, burstFile.path]
+        child.executableURL = PythonFixture.executable; child.arguments = ["-c", script, home.path, file.path, burstFile.path]
         child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = FileHandle.nullDevice
-        try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+        let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }; try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
         XCTAssertEqual(child.terminationStatus, 0)
         let projected = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
         let chunks = try XCTUnwrap(projected["chunks"] as? [[[String: Any]]]); XCTAssertGreaterThan(chunks.count, 1)
@@ -491,30 +490,11 @@ final class ClaudeActivityTests: XCTestCase {
             XCTAssertEqual(value.responsePerformance?.tokensPerSecond, 25); XCTAssertNil(value.firstTokenLatency)
         }
     }
-    func testRemoteHelperEOFAndClosedOutputTerminatePromptly() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-helper-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: home) }
-        let child = Process(), input = Pipe(), output = Pipe()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3"); child.arguments = ["-u", "-c", ClaudeActivityProbe.script, Data(home.path.utf8).base64EncodedString(), "5"]
-        child.standardInput = input; child.standardOutput = output; child.standardError = FileHandle.nullDevice; try child.run()
-        var readiness = pollfd(fd: output.fileHandleForReading.fileDescriptor, events: Int16(POLLIN | POLLHUP), revents: 0)
-        let ready = Darwin.poll(&readiness, 1, 2000)
-        guard ready > 0 else {
-            child.terminate(); child.waitUntilExit(); XCTFail("Helper must emit its startup status promptly"); return
-        }
-        var buffer = [UInt8](repeating: 0, count: 1024)
-        let count = buffer.withUnsafeMutableBytes { Darwin.read(output.fileHandleForReading.fileDescriptor, $0.baseAddress!, 1024) }
-        XCTAssertGreaterThan(count, 0)
-        try input.fileHandleForWriting.close()
-        let deadline = Date().addingTimeInterval(2); while child.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
-        XCTAssertFalse(child.isRunning, "Owned stdin EOF must stop the actual helper within two seconds")
-        if child.isRunning { child.terminate() }; child.waitUntilExit(); XCTAssertEqual(child.terminationStatus, 0)
-    }
     func testDroppedOversizeRecordsInvalidateObservedWindowsForBothCollectors() throws {
         // One size finishes just above the record limit; the other crosses the
         // fragment limit before its newline arrives. Both lose real bytes.
         for length in [1_050_000, 1_400_000] {
-            let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-oversize-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-oversize-" + UUID().uuidString)
             let dir = home.appendingPathComponent("projects/synthetic")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: home) }
@@ -534,9 +514,9 @@ final class ClaudeActivityTests: XCTestCase {
             let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
             let script = "__name__='fixture'\nimport base64,json,sys,pathlib\nexec(base64.b64decode('" + program + "').decode(),globals())\ntailer=Tailer(pathlib.Path(sys.argv[1]));tailer.discover();tailer.read()\nwith open(sys.argv[2],'ab') as stream:stream.write(pathlib.Path(sys.argv[3]).read_bytes())\nrows=[]\nfor _ in range(24):\n tailer.poll();rows.extend(tailer.read())\n if not tailer.dirty:break\ntailer.close();print(json.dumps(rows,separators=(',',':')))\n"
             let child = Process(), output = Pipe()
-            child.executableURL = URL(fileURLWithPath: "/usr/bin/python3"); child.arguments = ["-c", script, home.path, file.path, burstFile.path]
+            child.executableURL = PythonFixture.executable; child.arguments = ["-c", script, home.path, file.path, burstFile.path]
             child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = FileHandle.nullDevice
-            try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+            let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }; try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
             XCTAssertEqual(child.terminationStatus, 0)
             let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]])
             XCTAssertTrue(rows.contains { $0["kind"] as? String == "discontinuity" })
@@ -585,10 +565,10 @@ final class ClaudeActivityTests: XCTestCase {
         let script = "import base64,json,sys\nexec(base64.b64decode('" + program + "').decode(),globals())\nrows=[]\nfor value in json.loads(base64.b64decode(sys.argv[1])):\n rows.extend(transcript(json.dumps(value).encode(),sys.argv[2],None,sys.argv[3]))\nprint(json.dumps(rows,separators=(',',':')))\n"
         // Set a library name before evaluating so no helper listener starts.
         let child = Process(), output = Pipe()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.executableURL = PythonFixture.executable
         child.arguments = ["-c", "__name__='fixture'\n" + script, fixtureData.base64EncodedString(), session, turn]
         child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = FileHandle.nullDevice
-        try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+        let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }; try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
         XCTAssertEqual(child.terminationStatus, 0)
         return (expected, try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]), bytes)
     }

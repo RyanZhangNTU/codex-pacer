@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 struct ActivityHostApplication: Equatable, Sendable {
     let identity: ProcessInstance

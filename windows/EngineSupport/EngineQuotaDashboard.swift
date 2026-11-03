@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Both display styles are projected together. Choosing a style never changes
 /// the quota source, RPC scheduling, account binding or collapsed selection.

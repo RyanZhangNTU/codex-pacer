@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import CWindowsSupport
 
 /// Reads bounded account metadata only. OAuth tokens and other applications'

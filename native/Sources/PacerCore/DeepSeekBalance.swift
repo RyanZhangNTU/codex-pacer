@@ -32,7 +32,7 @@ public struct DeepSeekBalance: Equatable, Sendable {
         return value
     }
 
-    static func amount(_ value: Any?) -> Double? {
+    package static func amount(_ value: Any?) -> Double? {
         let number: Double?
         switch value {
         case let text as String: number = Double(text.trimmingCharacters(in: .whitespaces))

@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 
 enum WindowsActivityNavigation {
     static func currentHost(file: URL, home: URL,

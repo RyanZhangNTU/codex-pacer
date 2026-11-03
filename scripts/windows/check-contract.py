@@ -1,4 +1,4 @@
-"""Check the engine-stage platform boundary without freezing presentation sources."""
+"""Enforce the shared Core and host-target boundary on every platform."""
 import argparse
 from collections import Counter
 from hashlib import sha256
@@ -8,16 +8,14 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-SYSTEM_MODULES = {"AppKit", "SwiftUI", "Security", "LocalAuthentication", "CoreServices", "Darwin", "WinSDK", "CoreGraphics", "CoreFoundation", "zlib"}
+SYSTEM_MODULES = {"AppKit", "SwiftUI", "Security", "LocalAuthentication", "CoreServices", "Darwin", "WinSDK", "CoreGraphics", "CoreFoundation", "Glibc", "Musl", "ucrt", "zlib"}
 SHARED_MODULES = {"Foundation", "CryptoKit", "SQLite3", "CZstd", "CGzip"}
 AVAILABILITY_MODULES = {"FoundationNetworking", "CoreGraphics"}
-OWNERS = {"B4", "B5a", "B5b", "B5c", "C2", "F1", "P1", "P2", "P3", "P4"}
+OWNERS = {"P1", "P2", "P3", "P4"}
 IMPORT = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|typealias|let|var|func)\s+)?(\w+)", re.M)
 BRANCH = re.compile(r"^\s*#(?:if|elseif)\s+(.+)", re.M)
 GENERATED = ("ActivityNavigationTargetPortable.swift", "ClaudeCloudPortable.swift",
              "ClaudeDesktopRecordsPortable.swift", "ClaudeWebQuotaPortable.swift")
-AUTHORITATIVE = {"ClaudeQuotaClient.swift", "ClaudeWebQuotaClient.swift", "ClaudeCloudProjectMonitor.swift",
-                 "ClaudeCloudReplyStreams.swift", "ClaudeDesktopRecords.swift", "ActivityNavigationTarget.swift", "DeepSeekWebScripts.swift"}
 
 
 def content_digest(data):
@@ -69,13 +67,12 @@ def swift_code(text):
     return "".join(result)
 
 
-def source_contract(name, text, transition):
+def source_contract(name, text):
     text = swift_code(text)
     modules = Counter(IMPORT.findall(text))
     system = {module: count for module, count in modules.items() if module in SYSTEM_MODULES - AVAILABILITY_MODULES}
-    expected = transition.get("systemImports", {})
-    if system != expected:
-        raise ValueError("New or unaccounted system import in PacerCore: " + name)
+    if system:
+        raise ValueError("System import is forbidden in PacerCore: " + name + ": " + ", ".join(sorted(system)))
     unknown = set(modules) - SHARED_MODULES - SYSTEM_MODULES - AVAILABILITY_MODULES
     if unknown:
         raise ValueError("Unreviewed PacerCore module: " + name + ": " + ", ".join(sorted(unknown)))
@@ -109,12 +106,9 @@ def source_contract(name, text, transition):
                 availability += 1
             else:
                 branches.append(branch)
-    if Counter(branches) != Counter(transition.get("branches", [])):
-        raise ValueError("New or unaccounted conditional branch in PacerCore: " + name)
-    if system or branches:
-        if transition.get("owner") not in OWNERS or not transition.get("reason"):
-            raise ValueError("Core transition needs a cleanup owner: " + name)
-    return bool(system), availability, len(branches)
+    if branches:
+        raise ValueError("Platform/business conditional is forbidden in PacerCore: " + name)
+    return False, availability, 0
 
 
 def native_package_wiring(text):
@@ -133,51 +127,102 @@ def native_package_wiring(text):
     return result
 
 
-def selection_contract(selection, remaining_sources, all_sources, sources, remaining_tests, selected_tests):
-    if selection.get("owner") != "B5c" or selection.get("phase") != "end-of-C":
-        raise ValueError("Source/test selection must be removed at the end of C after B5c; P2 only wires remote features")
-    if set(remaining_sources) != all_sources - sources:
-        raise ValueError("remainingCoreSources must describe exactly the Core files not compiled on Windows")
-    if set(remaining_tests) & selected_tests:
-        raise ValueError("Compiled shared tests cannot remain in remainingCoreTests")
+def core_contract(directory):
+    sources = sorted(directory.rglob("*.swift"))
+    counts = [0, 0, 0]
+    for path in sources:
+        result = source_contract(path.relative_to(directory).as_posix(), path.read_text(encoding="utf-8"))
+        counts = [a + b for a, b in zip(counts, result)]
+    return sources, counts
+
+
+def target_fragments(text):
+    """Retain every declaration, including both platform branches of a manifest."""
+    code = swift_code(text)
+    for match in re.finditer(r'\.(target|executableTarget|testTarget)\(\s*name:\s*"([^"]+)"', text):
+        if not code[match.start():].startswith("." + match[1] + "("):
+            continue
+        start = text.index("(", match.start())
+        depth, end = 1, start + 1
+        while depth and end < len(code):
+            depth += (code[end] == "(") - (code[end] == ")")
+            end += 1
+        yield match[2], text[start + 1:end - 1]
+
+
+def target_arguments(fragment):
+    code = swift_code(fragment)
+    depth, start, parts = 0, 0, []
+    for index, character in enumerate(code):
+        if character in "([{": depth += 1
+        elif character in ")]}": depth -= 1
+        elif character == "," and depth == 0:
+            parts.append((start, index)); start = index + 1
+    parts.append((start, len(fragment)))
+    result = {}
+    for start, end in parts:
+        match = re.match(r"\s*(\w+)\s*:", code[start:end])
+        if match:
+            result[match[1]] = fragment[start + match.end():end].strip()
+    return result
+
+
+def package_boundary(text, native=False):
+    targets = list(target_fragments(text))
+    cores = [target_arguments(body) for name, body in targets if name == "PacerCore"]
+    tests = [target_arguments(body) for name, body in targets if name == "PacerCoreTests"]
+    if not cores or not tests:
+        raise ValueError("The complete PacerCore and PacerCoreTests targets are required")
+    for arguments, directory in [(item, "Sources/PacerCore") for item in cores] + [(item, "Tests/PacerCoreTests") for item in tests]:
+        expected = None if native else '"native/' + directory + '"'
+        if arguments.get("path") != expected or {"sources", "exclude"} & arguments.keys():
+            raise ValueError("Core source/test selection is forbidden; compile the complete directory")
+    for item in cores:
+        try:
+            dependencies = json.loads(re.sub(r",\s*]$", "]", item.get("dependencies", "[]")))
+        except ValueError as error:
+            raise ValueError("Core dependencies must be an explicit shared-module array") from error
+        if not isinstance(dependencies, list) or any(not isinstance(name, str) for name in dependencies) or set(dependencies) - {"CZstd", "CGzip", "SQLite3", "CryptoKit"}:
+            raise ValueError("PacerCore cannot depend on host targets")
+    if not native:
+        support = [target_arguments(body) for name, body in targets if name == "PacerEngineSupport"]
+        if len(support) != 1 or support[0].get("path") != '"windows/EngineSupport"' or '"PacerCore"' not in support[0].get("dependencies", ""):
+            raise ValueError("EngineSupport must be a separate target depending on PacerCore")
+
+
+def no_transition_inventories(contract, coverage):
+    if {"coreTransitions", "engineTransitions", "sourceSelectionRemoval", "macosJobSHA256"} & contract.keys():
+        raise ValueError("The closed C phase cannot retain source/target exception inventories")
+    if {"remainingCoreSources", "remainingCoreTests"} & coverage.keys():
+        raise ValueError("The closed C phase cannot retain Core source/test selection inventories")
+
+
+def workflow_boundary(workflow):
+    macos = workflow.split("  macos:\n", 1)[1].split("  windows:\n", 1)[0]
+    windows = workflow.split("  windows:\n", 1)[1]
+    for job in (macos, windows):
+        for script in ("scripts/windows/check-contract.py", "scripts/windows/test_contract.py"):
+            if not re.search(r"^\s+python3? " + re.escape(script) + r"\s*$", job, re.M):
+                raise ValueError("Every platform job must run the strict contract and its tests")
 
 
 def check(root=ROOT, require_parity=False):
     read = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     contract = read("windows/platform-contract.json")
-    shared = read("windows/shared-core.json")
     core = root / "native/Sources/PacerCore"
-    sources = set(shared["sources"])
-    if len(sources) != len(shared["sources"]) or not AUTHORITATIVE <= sources:
-        raise ValueError("Windows must select each authoritative shared source exactly once")
-    if any(not (core / name).is_file() for name in sources):
-        raise ValueError("Selected shared source is missing")
-    if any(not (root / "native/Tests/PacerCoreTests" / name).is_file() for name in shared["tests"]):
-        raise ValueError("Selected shared test is missing")
+    coverage = read("windows/platform-coverage.json")
+    no_transition_inventories(contract, coverage)
+    if (root / "windows/shared-core.json").exists():
+        raise ValueError("The closed C phase cannot retain shared-core.json")
+    package_boundary((root / "Package.swift").read_text(encoding="utf-8"))
+    package_boundary((root / "native/Package.swift").read_text(encoding="utf-8"), native=True)
     if (root / "scripts/windows/build-claude-core.py").exists() or any((root / "windows/EngineSupport" / name).exists() for name in GENERATED):
         raise ValueError("Generated Claude copies must be removed with their generator")
     for name in ("scripts/windows/build-engine.ps1", "scripts/windows/test-engine.ps1", "Package.swift"):
         text = (root / name).read_text(encoding="utf-8")
         if "build-claude-core" in text or any(copy in text for copy in GENERATED):
             raise ValueError("Build/test still invokes generated Claude sources: " + name)
-    counts = [0, 0, 0]
-    all_sources = {path.name for path in core.glob("*.swift")}
-    transitions = contract["coreTransitions"]
-    for name in sorted(all_sources):
-        item = transitions.get(name, {})
-        result = source_contract(name, (core / name).read_text(encoding="utf-8"), item)
-        counts = [a + b for a, b in zip(counts, result)]
-        if name not in sources and (item.get("owner") not in OWNERS or not item.get("reason")):
-            raise ValueError("Excluded Core source needs a cleanup owner: " + name)
-    if set(transitions) - all_sources:
-        raise ValueError("Remove transition entries when their source is removed")
-    for item in contract["engineTransitions"]:
-        if item["owner"] not in OWNERS or not item["reason"] or any(not (root / name).is_file() for name in item["files"]):
-            raise ValueError("Engine transition needs existing files and a cleanup owner")
-    selection = contract.get("sourceSelectionRemoval", {})
-    coverage = read("windows/platform-coverage.json")
-    selection_contract(selection, coverage["remainingCoreSources"], all_sources, sources,
-                       coverage["remainingCoreTests"], set(shared["tests"]))
+    all_sources, counts = core_contract(core)
     gzip = root / "native/Sources/CGzip"
     provenance = read("native/Sources/CGzip/provenance.json")
     for name, digest in provenance["sha256"].items():
@@ -197,9 +242,7 @@ def check(root=ROOT, require_parity=False):
     if native_package_wiring(package) != contract["nativeTargets"]:
         raise ValueError("Shipping target wiring needs explicit review in platform-contract.json")
     workflow = (root / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
-    macos = workflow.split("  macos:\n", 1)[1].split("  windows:\n", 1)[0].rstrip() + "\n"
-    if sha256(macos.encode()).hexdigest() != contract["macosJobSHA256"]:
-        raise ValueError("C1 must preserve both Mac jobs")
+    workflow_boundary(workflow)
     features = read("windows/platform-coverage.json")["features"]
     if len(features) != 47 or len({item["id"] for item in features}) != 47 or {item["id"] for item in features} != set(contract["featureIDs"]):
         raise ValueError("The 47-feature acceptance inventory must stay complete")
@@ -214,7 +257,7 @@ def check(root=ROOT, require_parity=False):
         raise ValueError("Windows acceptance remains incomplete: " + ", ".join(pending))
     stats = dict(Counter(item["status"] for item in features))
     print(f"Platform contract passed: Core system-import files={counts[0]}, canImport branches={counts[1]}, other branches={counts[2]}; "
-          f"Core sources Windows={len(sources)}, Mac={len(all_sources)}; coverage={json.dumps(stats, sort_keys=True)}")
+          f"Core sources Windows={len(all_sources)}, Mac={len(all_sources)}; coverage={json.dumps(stats, sort_keys=True)}")
 
 
 if __name__ == "__main__":

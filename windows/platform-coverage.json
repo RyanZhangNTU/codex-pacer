@@ -6,7 +6,7 @@
       "id": "shared-model",
       "status": "partial",
       "evidence": [
-        "native/Tests/PacerCoreTests/CodexConnectionFailureTests.swift",
+        "native/Tests/PacerMacSupportTests/CodexConnectionFailureTests.swift",
         "native/Tests/PacerCoreTests/CodexProcessPortTests.swift",
         "scripts/windows/test_contract.py",
         "native/Sources/PacerCore/ActivityApplicationState.swift",
@@ -31,8 +31,8 @@
         "C 最终两端编译整个 PacerCore；删除源/测试挑选清单，合同拒绝系统模块，平台实现移出核心"
       ],
       "previewNote": "One source for provider identity, lifecycle, rates, quota and cost calculations; Windows shared suites pass. A deterministic shared concurrency check covers stderr read/append ordering; the original Mac early-exit, recovery and redaction assertions remain.",
-      "note": "B5a/B5b/B5c share activity state, task and connection projections, quota/Cloud/balance coordination, captured navigation, host tracking and lifecycle. All Core files compile on both hosts. The C-stage closure after B5c removes the temporary source/test inventories; installed-host acceptance remains pending.",
-      "cleanupOwner": "B5c",
+      "note": "Both hosts compile the complete Core directory and shared test target. EngineSupport is a separate host target; source/test inventories and import exceptions are removed. Installed-host acceptance remains pending under P1.",
+      "cleanupOwner": "P1",
       "deferredEvidence": [
         "native/Tests/PacerCoreTests/ProcessErrorCollectorTests.swift"
       ]
@@ -830,7 +830,7 @@
       ],
       "sourceRefs": [
         "native/Sources/PacerCore/ClaudeApplicationResolver.swift",
-        "docs/windows-shared-core-plan.md"
+        "docs/windows-port.md"
       ],
       "evidence": [],
       "previewNote": "WSL 作为 Windows 来源适配，与同服务其他来源保持相同任务语义。",
@@ -1076,7 +1076,7 @@
       ],
       "sourceRefs": [
         "README.md",
-        "docs/windows-shared-core-plan.md"
+        "docs/windows-port.md"
       ],
       "evidence": [],
       "previewNote": "Windows 正式发行以 Authenticode 对应 Developer ID 和公证。",
@@ -1188,47 +1188,6 @@
       "deferredEvidence": []
     }
   ],
-  "remainingCoreSources": {},
-  "remainingCoreTests": {
-    "ClaudeActivityMonitorTests.swift": "claude-local",
-    "ClaudeActivityTelemetryTests.swift": "claude-local",
-    "ClaudeActivityTests.swift": "claude-local",
-    "ClaudeApplicationResolverTests.swift": "navigation",
-    "ClaudeCollectorEfficiencyTests.swift": "claude-local",
-    "ClaudeDesktopCredentialTests.swift": "claude-web",
-    "ClaudeHookInstallerTests.swift": "claude-local",
-    "ClaudeLiveSessionRegistryTests.swift": "claude-local",
-    "ClaudeObservedRequestTests.swift": "claude-local",
-    "ClaudeQuotaCredentialCacheTests.swift": "claude-web",
-    "ClaudeQuotaTests.swift": "claude-web",
-    "ClaudeRemoteResumeTests.swift": "claude-remote",
-    "ClaudeRemoteSetupTests.swift": "claude-remote",
-    "ClaudeSSHDiscoveryTests.swift": "claude-remote",
-    "ClaudeSSHRouteResolverTests.swift": "claude-remote",
-    "ClaudeSubagentLifecycleTests.swift": "claude-local",
-    "ClaudeTranscriptEfficiencyTests.swift": "claude-local",
-    "ClaudeTranscriptOrderingTests.swift": "claude-local",
-    "CodexConnectionFailureTests.swift": "shared-model",
-    "CodexDiagnosticTests.swift": "codex-quota",
-    "CodexExecutableResolverTests.swift": "codex-quota",
-    "CodexSessionOriginTests.swift": "shared-model",
-    "CompletionDismissalStoreTests.swift": "completion",
-    "DesktopEventTests.swift": "codex-runtime",
-    "HelperLifecycleTests.swift": "shared-model",
-    "IslandInstanceLockTests.swift": "lifecycle",
-    "MetricPresentationTests.swift": "shared-model",
-    "ModelDisplayTests.swift": "shared-model",
-    "NativeDesktopSocketTests.swift": "codex-runtime",
-    "ProjectSupportTests.swift": "shared-model",
-    "RealtimeTests.swift": "codex-runtime",
-    "RealtimeTransportTests.swift": "codex-runtime",
-    "RemoteControlCatalogTests.swift": "codex-runtime",
-    "RequestLogProbeTests.swift": "codex-runtime",
-    "RuntimeLifecycleTests.swift": "shared-model",
-    "SelectionAndApplicationTests.swift": "shared-model",
-    "SourceDiscoveryTests.swift": "shared-model",
-    "SubagentMetricsTests.swift": "shared-model"
-  },
   "acceptancePolicy": {
     "preview": "功能语义与 Mac 一致；每个功能一次实机检查，日用无明显问题。仅文案或主题修改运行中英 x 浅深色 x 动画开关全矩阵。",
     "formal": "status 只有在该 feature 的全部 requirements 和正式验收完成后才可为 verified；check-contract.py --require-parity 另加像素、字形、动画对照。",

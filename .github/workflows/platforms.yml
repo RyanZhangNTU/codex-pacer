@@ -36,6 +36,10 @@ jobs:
           test "$(uname -m)" = "$EXPECTED_ARCH"
           xcodebuild -version
           swift --version
+      - name: Platform contract
+        run: |
+          python3 scripts/windows/test_contract.py
+          python3 scripts/windows/check-contract.py
       - name: Full tests
         run: |
           set -o pipefail

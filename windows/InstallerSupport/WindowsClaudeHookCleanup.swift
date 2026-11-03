@@ -1,3 +1,4 @@
+import PacerEngineSupport
 import Foundation
 import PacerCore
 import WinSDK

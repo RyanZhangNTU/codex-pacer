@@ -32,20 +32,6 @@
     ".executable(name: \"PacerRelaunch\", targets: [\"PacerRelaunch\"])",
     "\"-Xlinker\", \"-rpath\", \"-Xlinker\", \"@executable_path/../Frameworks\""
   ],
-  "macosJobSHA256": "0c75a50e0aa49722731d9b9a87ec72e44c1630875596254e9ace448601aef4a9",
-  "coreTransitions": {},
-  "engineTransitions": [
-    {
-      "owner": "B5c",
-      "phase": "end-of-C",
-      "files": [
-        "Package.swift",
-        "windows/shared-core.json",
-        "windows/platform-coverage.json"
-      ],
-      "reason": "C-stage closure after B5c: both hosts now compile the whole Core. Remove the temporary root Package source/test selection, shared-core.json and coverage remainingCoreSources/remainingCoreTests as the C-stage closure. P2 only wires remote features."
-    }
-  ],
   "nativeTargets": {
     "CZstd": {
       "kind": "target",
@@ -94,6 +80,13 @@
     "CGzip": {
       "kind": "target",
       "dependencies": []
+    },
+    "PacerMacSupportTests": {
+      "kind": "testTarget",
+      "dependencies": [
+        "PacerCore",
+        "PacerMacSupport"
+      ]
     }
   },
   "featureIDs": [
@@ -144,10 +137,5 @@
     "accessibility",
     "platform-matrix",
     "cross-platform-delivery"
-  ],
-  "sourceSelectionRemoval": {
-    "owner": "B5c",
-    "phase": "end-of-C",
-    "reason": "Remove the root Package Core selection, shared-core.json and both coverage remaining inventories after B5c, as the C-stage closure."
-  }
+  ]
 }

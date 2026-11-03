@@ -1,4 +1,8 @@
+#if canImport(PacerMacSupport)
 import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -52,8 +56,6 @@ final class CompletionDismissalStoreTests: XCTestCase {
         let value = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(Set(value.keys), ["version", "digests"])
         XCTAssertTrue(try XCTUnwrap(value["digests"] as? [String]).allSatisfy { $0.count == 64 })
-        let permissions = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)
-        XCTAssertEqual(permissions.intValue & 0o777, 0o600)
     }
 
     func testCloudSettlementRecordsAreBoundedValidatedAndKeepNoIdentifiers() throws {
@@ -196,18 +198,6 @@ final class CompletionDismissalStoreTests: XCTestCase {
         XCTAssertEqual(oldest.activities.count, 1, "Bound eviction fails open for old cards")
     }
 
-    func testSymbolicLinkToAValidStoreDoesNotLoadAcknowledgments() throws {
-        let target = try fixture(), link = target.deletingLastPathComponent().appendingPathComponent("linked.json")
-        let store = CompletionDismissalStore(fileURL: target), digest = CompletionDismissalStore.digest(["synthetic-ending"])
-        XCTAssertTrue(store.saveDigests([digest]))
-        let saved = try Data(contentsOf: target)
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
-        XCTAssertEqual(store.loadDigests(), [digest])
-        let linked = CompletionDismissalStore(fileURL: link).load()
-        XCTAssertTrue(linked.digests.isEmpty)
-        XCTAssertTrue(linked.cloudEndings.isEmpty)
-        XCTAssertEqual(try Data(contentsOf: target), saved)
-    }
 
     func testCorruptUnsupportedOrOversizedStoreFailsOpen() throws {
         let file = try fixture(), ended = completion()

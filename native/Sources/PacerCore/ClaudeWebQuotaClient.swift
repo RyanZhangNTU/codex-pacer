@@ -32,7 +32,7 @@ public struct ClaudeWebAccountBinding: Equatable, Sendable {
 }
 
 public enum ClaudeWebQuotaDecoder {
-    static func uuid(_ text: String?) -> String? {
+    package static func uuid(_ text: String?) -> String? {
         guard let text, text.count == 36 else { return nil }
         return UUID(uuidString: text)?.uuidString.lowercased()
     }
@@ -59,7 +59,7 @@ public enum ClaudeWebQuotaDecoder {
         return result
     }
 
-    static func sessionKey(_ value: ClaudeWebSession) -> String? {
+    package static func sessionKey(_ value: ClaudeWebSession) -> String? {
         guard !value.cookieHeader.isEmpty, value.cookieHeader.utf8.count <= 65_536,
               !value.cookieHeader.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               value.sessionHash.count == 64, value.sessionHash.allSatisfy(\.isHexDigit) else { return nil }

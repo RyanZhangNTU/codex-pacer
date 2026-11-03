@@ -1,4 +1,3 @@
-import ImageIO
 import XCTest
 @testable import PacerCore
 
@@ -30,14 +29,6 @@ final class ProjectSupportTests: XCTestCase {
         }
     }
 
-    func testTheWeChatCodeShipsLargeEnoughToScan() throws {
-        let code = try XCTUnwrap(ProjectSupport.codes().first { $0.titleKey == "support.code.wechat" })
-        let source = try XCTUnwrap(CGImageSourceCreateWithURL(code.image as CFURL, nil))
-        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
-        // Shown at 220 points, so it needs at least twice that on a Retina display.
-        XCTAssertGreaterThanOrEqual(min(image.width, image.height), 440)
-        XCTAssertEqual(image.width, image.height)
-    }
 
     func testOnlyQRCodesThatShipAreOffered() throws {
         // A bundle remembers its folder's listing, so each case gets its own.

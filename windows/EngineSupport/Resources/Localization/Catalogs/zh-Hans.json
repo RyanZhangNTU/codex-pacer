@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/Localization/zh-Hans.json": "33cc7d396af5c9532cf47367459be5a6efd08d48a13621e5a7398a1b7c0d0b07"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "33cc7d396af5c9532cf47367459be5a6efd08d48a13621e5a7398a1b7c0d0b07"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",

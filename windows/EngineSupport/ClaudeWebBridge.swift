@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// These values exist only while answering an owned cookie request. They never
 /// enter activity snapshots, preferences, quota history or diagnostics.

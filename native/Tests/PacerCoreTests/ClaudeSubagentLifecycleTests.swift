@@ -170,10 +170,10 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
     private func pythonRows(_ fixtures: [[String: Any]], owner: String, parentID: String?) throws -> [[String: Any]] {
         let script = "__name__='fixture'\nimport base64,json,sys\nexec(base64.b64decode(sys.argv[1]).decode(),globals())\nrows=[]\nfor value in json.loads(base64.b64decode(sys.argv[2])):\n rows.extend(transcript(json.dumps(value).encode(),sys.argv[3],sys.argv[4] or None,sys.argv[5]))\nprint(json.dumps(rows,separators=(',',':')))\n"
         let process = Process(), output = Pipe(), errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.executableURL = PythonFixture.executable
         process.arguments = ["-c", script, Data(ClaudeActivityProbe.script.utf8).base64EncodedString(), try JSONSerialization.data(withJSONObject: fixtures).base64EncodedString(), owner, parentID ?? "", turn]
         process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = errors
-        try process.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        let pythonFixture = try PythonFixture.prepare(process); defer { pythonFixture.remove() }; try process.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0); XCTAssertTrue(errors.fileHandleForReading.readDataToEndOfFile().isEmpty)
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
         return try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]])
@@ -233,7 +233,7 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
         }
     }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-child-cold-replay-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let root = home.appendingPathComponent("root.jsonl"), spool = home.appendingPathComponent("hooks.jsonl")
@@ -302,12 +302,12 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             let coldHooks = Array(hooks.prefix(5)) + filler + Array(hooks.suffix(2))
             try lines(transcript).write(to: root); try lines(coldHooks).write(to: spool)
             let process = Process(), output = Pipe(), errors = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            process.executableURL = PythonFixture.executable
             process.arguments = ["-c", program, Data(ClaudeActivityProbe.script.utf8).base64EncodedString(), root.path, spool.path, parent, order,
                 try lines([nextRaw]).base64EncodedString(), try lines(filler + [hook("prompt", second: 20.04, prompt: "next-human-turn")]).base64EncodedString(),
                 try lines([raw("assistant", id: "metadata-1", second: 21, extra: ["message": ["model": "fixture-model", "content": [Any]()]])]).base64EncodedString()]
             process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = errors
-            try process.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            let pythonFixture = try PythonFixture.prepare(process); defer { pythonFixture.remove() }; try process.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             XCTAssertEqual(process.terminationStatus, 0); XCTAssertTrue(errors.fileHandleForReading.readDataToEndOfFile().isEmpty)
             XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
             let result = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])

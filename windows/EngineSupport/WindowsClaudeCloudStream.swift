@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import FoundationNetworking
 
 /// FoundationNetworking has no URLSession.AsyncBytes on Windows. This adapter

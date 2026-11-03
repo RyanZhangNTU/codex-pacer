@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 
 /// A single authenticated connection. One blocking reader feeds the actor one
 /// projected frame at a time, so a slow consumer cannot grow an input queue.

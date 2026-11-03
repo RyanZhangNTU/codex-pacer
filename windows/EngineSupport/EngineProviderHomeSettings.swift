@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// An explicit source-editor query. Paths never enter routine snapshots.
 struct EngineProviderHomeReport: Codable, Equatable, Sendable {

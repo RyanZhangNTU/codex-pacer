@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Windows-only recovery for Pacer-owned numeric stores. No file bytes enter diagnostics.
 final class WindowsStorageRecovery: @unchecked Sendable {

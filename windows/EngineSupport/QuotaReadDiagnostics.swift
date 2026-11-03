@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Opt-in diagnostic counters contain numbers only. Protocol bodies, account
 /// scopes, paths, credentials and localized server errors are never recorded.

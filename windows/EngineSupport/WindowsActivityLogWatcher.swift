@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 import CWindowsSupport
 
 /// ReadDirectoryChangesW facts only. Core owns limits, debounce and lifecycle.
