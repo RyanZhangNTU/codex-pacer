@@ -104,14 +104,15 @@ public enum PacerEngine {
             }
         }
         let ssh: WindowsSSHServices? = demo || readOnly ? nil : WindowsSSHServices()
+        let wsl: WindowsWSLServices? = demo || readOnly ? nil : WindowsWSLServices()
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
             notificationStore: notificationStore,
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
-            wslServices: demo || readOnly ? nil : WindowsWSLServices(),
-            sshServices: ssh, claudeRemoteServices: ssh.flatMap { .live(ssh: $0) },
+            wslServices: wsl,
+            sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices, allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
@@ -229,7 +230,7 @@ actor EngineRuntime {
     private var monitorSSH = true
     private let sshServices: WindowsSSHServices?
     private let claudeRemoteServices: EngineClaudeRemoteServices?
-    private lazy var claudeRemoteSetup = claudeRemoteServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now) }
+    private lazy var claudeRemoteSetup = claudeRemoteServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now, maximumTargets: 16) }
     private var claudeRemoteSetups: [EngineClaudeRemoteSetup] = []
     private var codexRemoteTargets: [RemoteActivityTarget] = [], claudeRemoteTargets: [RemoteActivityTarget] = []
     private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
@@ -1524,8 +1525,8 @@ actor EngineRuntime {
 
     private func bindClaudeRemoteSetup() async {
         guard let setup = claudeRemoteSetup else { return }
-        await setup.configure(targets: claudeRemoteTargets, statuses: claudeRemoteStatuses,
-            enabled: active && monitorSSH && enabled.contains(.claude), version: lifecycle.version(.claude),
+        await setup.configure(targets: monitoredRemoteTargets(.claude), statuses: claudeRemoteStatuses,
+            enabled: active && (monitorSSH || monitorWSL) && enabled.contains(.claude), version: lifecycle.version(.claude),
             update: { [weak self] rows, version in await self?.receiveClaudeRemoteSetups(rows, version: version) },
             didConfigure: { [weak self] source, version in await self?.refreshConfiguredClaudeRemote(source, version: version) })
     }
@@ -1535,8 +1536,8 @@ actor EngineRuntime {
         if projectionReady { publish(notices: []) }
     }
     private func refreshConfiguredClaudeRemote(_ source: String, version: UInt64) async {
-        guard active, lifecycle.version(.claude) == version, monitorSSH,
-              claudeRemoteTargets.contains(where: { $0.id == source }) else { return }
+        guard active, lifecycle.version(.claude) == version,
+              monitoredRemoteTargets(.claude).contains(where: { $0.id == source }) else { return }
         await claudeActivityMonitor.refresh(remoteTargetID: source)
     }
 
@@ -2089,12 +2090,17 @@ actor EngineRuntime {
         navigation.entry(context: context) ?? notificationNavigation.entry(context: context)
     }
     private func navigationIsCurrent(_ entry: ActivityNavigationRegistry.Entry) -> Bool {
-        active && projectionReady && navigationEntry(context: entry.link.context)?.link == entry.link && enabled.contains(entry.target.provider) &&
-            (entry.target.sourceHostID == nil || entry.target.claudeCloud != nil || allowedRemoteControlHosts.contains(entry.target.sourceHostID!) ||
-                (monitorWSL && wslServices?.registry.profile(id: entry.target.sourceHostID!, provider: entry.target.provider) != nil)) &&
+        let sourceIsCurrent: Bool
+        if entry.target.claudeCloud != nil || entry.target.sourceHostID == nil { sourceIsCurrent = true }
+        else if let source = entry.target.sourceHostID, source.hasPrefix(ConnectionSource.controlPrefix) {
+            sourceIsCurrent = entry.target.provider == .codex && allowedRemoteControlHosts.contains(source)
+        } else if let source = entry.target.sourceHostID, source.hasPrefix(ConnectionSource.wslPrefix) {
+            sourceIsCurrent = monitorWSL && wslServices?.registry.profile(id: source, provider: entry.target.provider) != nil
+        } else {
+            sourceIsCurrent = monitorSSH && (entry.target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == entry.target.sourceHostID }
+        }
+        return active && projectionReady && navigationEntry(context: entry.link.context)?.link == entry.link && enabled.contains(entry.target.provider) && sourceIsCurrent &&
             entry.members.allSatisfy({ inbox.isCurrentSource($0.source) }) &&
-            (entry.target.sourceHostID == nil || entry.target.claudeCloud != nil ||
-                (monitorSSH && (entry.target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == entry.target.sourceHostID })) &&
             (entry.target.claudeCloud == nil || (showClaudeCloudProjects && entry.cloudContext == cloudNavigationContext))
     }
     func failure(id: String?, code: String) {

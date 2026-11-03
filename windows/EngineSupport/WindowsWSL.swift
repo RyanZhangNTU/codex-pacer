@@ -106,7 +106,7 @@ struct WindowsWSLServices: Sendable {
     static func script(_ name: String) -> String? {
         guard let url = Bundle.module.resourceURL?.appendingPathComponent("WSL/" + name + ".py"),
               let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else { return nil }
-        if ["bootstrap", "console", "read-quota-files"].contains(name), let identity = script("identity") {
+        if ["bootstrap", "setup", "console", "read-quota-files"].contains(name), let identity = script("identity") {
             return identity + "\n" + text
         }
         return text
@@ -168,8 +168,8 @@ private struct WindowsWSLHelperLauncher: HelperProcessLauncher {
 
 struct WindowsWSLInvocation {
     let arguments: [String], input: Data
-    init?(profile: WindowsWSLProfile, provider: AgentProvider, command: String) {
-        guard let route = profile.route(provider), let bootstrap = WindowsWSLServices.script("bootstrap"),
+    init?(profile: WindowsWSLProfile, provider: AgentProvider, command: String, setup: Bool = false) {
+        guard let route = profile.route(provider), let bootstrap = WindowsWSLServices.script(setup ? "setup" : "bootstrap"),
               !command.isEmpty, !command.contains("\0"), command.utf8.count <= 1024 * 1024 else { return nil }
         arguments = ["--distribution", profile.distro, "--user", profile.user, "--exec", "/usr/bin/python3", "-I", "-u", "-c", bootstrap, route.base64EncodedString()]
         input = Data((String(command.utf8.count) + "\n" + command).utf8)

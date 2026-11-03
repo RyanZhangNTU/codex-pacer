@@ -31,23 +31,28 @@ public actor ClaudeRemoteSetup {
     private let timeout: TimeInterval
     private let validDestination: @Sendable (String) -> Bool
     private let validIdentityFile: (@Sendable (String) -> Bool)?
+    private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool) throws -> [String])?
     private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
     private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
     public init(executable: URL, timeout: TimeInterval = 15,
                 makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation,
                 validDestination: @escaping @Sendable (String) -> Bool,
-                validIdentityFile: (@Sendable (String) -> Bool)? = nil) {
+                validIdentityFile: (@Sendable (String) -> Bool)? = nil,
+                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool) throws -> [String])? = nil) {
         self.executable = executable
         self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
         self.makeOperation = makeOperation
         self.validDestination = validDestination
         self.validIdentityFile = validIdentityFile
+        self.argumentBuilder = argumentBuilder
     }
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false) async throws -> ClaudeHookInstaller.Status {
-        let arguments = try Self.arguments(target: target, requireHome: requireHome, validDestination: validDestination, validIdentityFile: validIdentityFile)
+        let arguments: [String]
+        if let argumentBuilder { arguments = try argumentBuilder(target, requireHome) }
+        else { arguments = try Self.arguments(target: target, requireHome: requireHome, validDestination: validDestination, validIdentityFile: validIdentityFile) }
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
