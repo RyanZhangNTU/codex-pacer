@@ -123,7 +123,10 @@ try:
     checks.append('two Claude homes share one owned LocalAppData runtime; no runtime copied into a Claude home')
     probe = json.loads(failure_probe(homes[0], versions[0]/'python.exe'))
     assert probe.get('stage')=='probe-complete' and probe.get('rendererMatches'), json.dumps(probe,sort_keys=True)
-    long_home = fixture.joinpath(*(['长路径 空格 segment']*12), 'Claude home')
+    long_home = fixture/'Claude home'
+    # Hosted CI can have a much shorter checkout root than a local worktree.
+    while len(str(long_home))<=300:
+        long_home = long_home.parent/'长路径 空格 segment'/'Claude home'
     assert len(str(long_home))>260
     long_home.mkdir(parents=True)
     (long_home/'settings.json').write_text(json.dumps(original),encoding='utf-8')
