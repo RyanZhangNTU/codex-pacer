@@ -33,15 +33,7 @@
     "\"-Xlinker\", \"-rpath\", \"-Xlinker\", \"@executable_path/../Frameworks\""
   ],
   "macosJobSHA256": "0c75a50e0aa49722731d9b9a87ec72e44c1630875596254e9ace448601aef4a9",
-  "coreTransitions": {
-    "IslandInstanceLock.swift": {
-      "owner": "B5c",
-      "reason": "Move remaining collector or host operations behind the shared platform ports.",
-      "systemImports": {
-        "Darwin": 1
-      }
-    }
-  },
+  "coreTransitions": {},
   "engineTransitions": [
     {
       "owner": "B5c",

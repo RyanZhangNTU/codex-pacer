@@ -43,7 +43,10 @@ final class IslandModel: ObservableObject {
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
     var navigationErrorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration
-    private var navigationErrorToken = 0
+    private var navigation = ActivityNavigationState()
+    private var navigationErrorExpiry: Task<Void, Never>?
+    var navigationClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private var claudeCloudNavigationScope: String?
     @Published private(set) var hostApplications: [AgentProvider: [String: HostApplication]] = [:]
     private let hostTracking: [AgentProvider: HostApplicationTracking] = [.codex: .init(), .claude: .init(), .deepseek: .init()]
     var hostApplicationResolver: @Sendable (AgentProvider, Set<String>, URL) async -> [String: HostApplication] = { provider, sessions, home in
@@ -336,7 +339,6 @@ final class IslandModel: ObservableObject {
     var onQuit: (() -> Void)?
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?
-    private var openingActivities: Set<String> = []
     /// The expanded task header offers each enabled module's desktop app,
     /// whether or not it has a task. A module without one shows no button.
     static let showsAppButtonsKey = "showAppButtons"
@@ -381,7 +383,7 @@ final class IslandModel: ObservableObject {
     func openDesktopApplication(_ provider: AgentProvider) {
         guard appButtonProviders.contains(provider), let application = desktopApplications[provider],
               let open = onOpenDesktopApplication else { return }
-        navigationError = nil
+        clearNavigationError()
         Task { [weak self] in
             let outcome = await open(provider, application)
             guard let self, case .failed(let failure) = outcome else { return }
@@ -932,95 +934,50 @@ final class IslandModel: ObservableObject {
         if suspended { close() }
     }
     func close() { pinned = false; setExpanded(false) }
-    private struct DescendantAcknowledgment {
-        let activity: SessionActivity
-        let token: CompletionInbox.AcknowledgmentToken
-        let source: CompletionInbox.SourceToken
-        let ancestors: [SessionActivity]
+    private func navigationScope(for activity: SessionActivity) -> String? {
+        activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
     }
-    private func sameLifecycle(_ left: SessionActivity, _ right: SessionActivity) -> Bool {
-        left.canonicalized().id == right.canonicalized().id && left.provider == right.provider && left.sourceHostID == right.sourceHostID &&
-            left.parentThreadID == right.parentThreadID && left.turnID == right.turnID && left.turnStartedAt == right.turnStartedAt &&
-            left.phase == right.phase && left.phaseChangedAt == right.phaseChangedAt && left.turnFailed == right.turnFailed
-    }
-    private func descendantAcknowledgments(for parent: SessionActivity, source: CompletionInbox.SourceToken) -> [DescendantAcknowledgment] {
-        guard parent.parentThreadID == nil, let group = taskGroup(for: parent), sameLifecycle(group.primary, parent) else { return [] }
-        let members = Dictionary(group.members.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
-        return group.members.compactMap { child in
-            guard child.id != parent.id, !child.isInternalReview, child.provider == parent.provider, child.sourceHostID == parent.sourceHostID,
-                  child.turnID != nil, child.turnStartedAt != nil, [.completed, .interrupted].contains(child.phase),
-                  let token = completionInbox.acknowledgment(for: child), completionInbox.sourceToken(for: child) == source else { return nil }
-            var current = child, ancestors: [SessionActivity] = [], seen = Set<String>()
-            for _ in 0..<64 {
-                guard seen.insert(current.id).inserted, let parentSession = current.parentThreadID,
-                      let ancestor = members[current.provider.activityID(sessionID: parentSession, sourceHostID: current.sourceHostID)],
-                      ancestor.provider == parent.provider, ancestor.sourceHostID == parent.sourceHostID,
-                      [.completed, .interrupted].contains(ancestor.phase) else { return nil }
-                ancestors.append(ancestor)
-                if ancestor.id == parent.id { return DescendantAcknowledgment(activity: child, token: token, source: source, ancestors: ancestors) }
-                current = ancestor
-            }
-            return nil
-        }
+    private func acceptsNavigation(_ activity: SessionActivity) -> Bool {
+        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo)
     }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
-              openingActivities.insert(activity.id).inserted else { return }
-        navigationError = nil
-        let generation = sourceGeneration(for: activity.provider)
-        let acknowledgment = completionInbox.acknowledgment(for: activity)
-        let source = completionInbox.sourceToken(for: activity)
-        let descendants = acknowledgment == nil ? [] : descendantAcknowledgments(for: activity, source: source)
+              let operation = navigation.begin(activity: activity, target: target, version: UInt64(sourceGeneration(for: activity.provider)),
+                activities: activities, inbox: completionInbox, active: acceptsNavigation(activity), scope: navigationScope(for: activity)) else { return }
+        clearNavigationError()
         Task { [weak self] in
             guard let self else { return }
-            defer { self.openingActivities.remove(activity.id) }
-            guard !self.stopped, generation == self.sourceGeneration(for: activity.provider),
-                  self.completionInbox.isCurrentSource(source),
-                  self.isModuleEnabled(activity.provider) || self.demo else { return }
-            let outcome = await open(target)
-            guard !self.stopped, generation == self.sourceGeneration(for: activity.provider),
-                  self.completionInbox.isCurrentSource(source),
-                  self.isModuleEnabled(activity.provider) || self.demo else { return }
-            if case .failed(let failure) = outcome {
-                self.showNavigationError(failure)
-            } else if outcome == .openedConversation {
-                if activity.parentThreadID != nil, activity.provider == .claude || activity.launchedByEmbeddingApp {
-                    guard let current = self.activities.first(where: { $0.canonicalized().id == activity.canonicalized().id }),
-                          self.sameLifecycle(current, activity),
-                          let currentTarget = self.conversationTarget(for: current),
-                          currentTarget.canonicalized().id == target.canonicalized().id else { return }
-                }
-                let acknowledged = acknowledgment.map { self.completionInbox.dismiss(activity, acknowledging: $0) } ?? false
-                if acknowledged {
-                    let current = Dictionary(self.activities.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
-                    var removed = [activity]
-                    for descendant in descendants {
-                        guard self.completionInbox.isCurrentSource(descendant.source),
-                              let child = current[descendant.activity.canonicalized().id], self.sameLifecycle(child, descendant.activity),
-                              descendant.ancestors.allSatisfy({ ancestor in current[ancestor.canonicalized().id].map { self.sameLifecycle($0, ancestor) } ?? false }),
-                              self.completionInbox.dismiss(descendant.activity, acknowledging: descendant.token) else { continue }
-                        removed.append(descendant.activity)
-                    }
-                    self.activities.removeAll {
-                        value in removed.contains { self.sameLifecycle(value, $0) }
-                    }
-                }
-            }
+            defer { self.navigation.abandon(operation) }
+            guard self.navigation.owns(operation), operation.isCurrent(version: UInt64(self.sourceGeneration(for: activity.provider)),
+                active: self.acceptsNavigation(activity), inbox: self.completionInbox, scope: self.navigationScope(for: activity)) else { return }
+            let outcome = await open(operation.target)
+            var values = self.activities, inbox = self.completionInbox
+            guard let result = self.navigation.complete(operation, outcome: outcome, version: UInt64(self.sourceGeneration(for: activity.provider)),
+                active: self.acceptsNavigation(activity), activities: &values, inbox: &inbox, remoteSourceIDs: Set(self.claudeRemoteTargets.map(\.id)),
+                scope: self.navigationScope(for: activity), now: self.navigationClock(), errorDuration: self.navigationErrorDuration), result.accepted else { return }
+            self.completionInbox = inbox
+            if !result.removed.isEmpty { self.activities = values }
+            if result.failure != nil { self.publishNavigationFailure() }
             self.onLayoutChange?(); self.onStatusChange?()
         }
     }
-    /// An open failure expands the island and clears itself after
-    /// `navigationErrorDuration` unless a newer failure replaced it.
+    private func clearNavigationError() {
+        navigation.clearFailure(); navigationErrorExpiry?.cancel(); navigationErrorExpiry = nil
+        navigationError = nil
+    }
     func showNavigationError(_ message: String) {
-        navigationErrorToken += 1
-        let token = navigationErrorToken, duration = navigationErrorDuration
-        navigationError = message
-        setExpanded(true)
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(0, duration) * 1_000_000_000))
-            guard let self, self.navigationErrorToken == token, self.navigationError != nil else { return }
-            self.navigationError = nil
-            self.onLayoutChange?()
+        guard !stopped else { return }
+        navigation.showFailure(message, now: navigationClock(), duration: navigationErrorDuration)
+        publishNavigationFailure()
+    }
+    private func publishNavigationFailure() {
+        guard let failure = navigation.failure else { return }
+        navigationErrorExpiry?.cancel(); navigationError = failure.message; setExpanded(true)
+        let delay = max(0, failure.deadline - navigationClock())
+        navigationErrorExpiry = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            guard let self, self.navigation.expireFailure(failure.id, now: self.navigationClock()) else { return }
+            self.navigationError = nil; self.navigationErrorExpiry = nil; self.onLayoutChange?()
         }
     }
 
@@ -1326,6 +1283,7 @@ final class IslandModel: ObservableObject {
     }
     private func acceptsClaudeCloud(_ state: ClaudeCloudState, generation: Int) -> Bool {
         guard generation == claudeCloudGeneration, state.context == UInt64(claudeGeneration), !sleeping, !stopped, isModuleEnabled(.claude) else { return false }
+        claudeCloudNavigationScope = state.connectionContext + "|" + (defaults.string(forKey: "claudeWebOrganizationID") ?? "")
         if claudeCloudHistoryBinding.observe(state) {
             let ids = Set((activities + completionInbox.activities).filter { $0.claudeCloud != nil }.map(\.id))
             completionInbox.remove(activityIDs: ids)
@@ -1335,6 +1293,7 @@ final class IslandModel: ObservableObject {
         return true
     }
     private func stopClaudeCloudMonitor() {
+        claudeCloudNavigationScope = nil
         guard let coordinator = claudeCloudCoordinator else { return }
         coordinator.invalidateSource(); claudeCloudCoordinator = nil; claudeCloudGeneration += 1
         let target = claudeMonitor, cloudGeneration = claudeCloudGeneration
@@ -1626,7 +1585,7 @@ final class IslandModel: ObservableObject {
         }
     }
     func clearSourceState() {
-        navigationError = nil
+        clearNavigationError()
         activityState.clearFirstOutput(); latestFirstOutputLatency = nil
         activityState.replaceActivities(activities, at: now)
         latestFirstOutputLatency = activityState.latestFirstOutput?.seconds

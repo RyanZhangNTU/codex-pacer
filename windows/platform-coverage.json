@@ -1181,9 +1181,7 @@
       "deferredEvidence": []
     }
   ],
-  "remainingCoreSources": {
-    "IslandInstanceLock.swift": "lifecycle"
-  },
+  "remainingCoreSources": {},
   "remainingCoreTests": {
     "ClaudeActivityMonitorTests.swift": "claude-local",
     "ClaudeActivityTelemetryTests.swift": "claude-local",
