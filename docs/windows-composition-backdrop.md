@@ -44,11 +44,15 @@ WPF 保留默认硬件路径；透明内容底使用 1/255 alpha，避免空白�
 
 后续原生输入组也验证了设备事件：空闲时注入设备丢失即回退 Black，再向正式内容 HWND 发送显示变化消息，玻璃恢复且偏好仍为 `liquidGlass`。这覆盖生产消息接线，仍不等同于真实重置显卡。
 
-![浅色合成背景上的玻璃展开态](images/windows-composition/glass-light-expanded.png)
+![浅色合成背景上的玻璃收起态](images/windows-composition/glass-light-collapsed.png)
 
 ![深色合成背景上的玻璃展开态](images/windows-composition/glass-dark-expanded.png)
 
-截图及原始数字证据保存在 [windows-composition](images/windows-composition/)：`glass-{light,dark}-{expanded,collapsed,capsule}.png`、`classic-{light,dark}-{expanded,collapsed}.png`、`fallback-{transparency-off,high-contrast,old-system,api-failure,device-loss}.png`、`motion-collapse.png`、`motion-reversal.png`、`dpi-150-simulated.png` 和两张 `reference-*.png`。`acceptance.json` 记录逐图轮廓、DPI、状态和检查结果，`outside-pixels.json` 记录像素比较，`input.json` 和 `recovery.json` 记录原生输入与设备恢复结果。
+![高对比度回退 Black](images/windows-composition/fallback-high-contrast.png)
+
+![反向动画中的玻璃轮廓](images/windows-composition/motion-reversal.png)
+
+仓库只保留上述 4 张代表图，以及 [windows-composition](images/windows-composition/) 中的 `cpu.json`、`motion.json`、`outside-pixels.json`、`input.json` 和 `recovery.json`。完整截图、背景参考和逐图轮廓文件 `acceptance.json` 留在本地忽略目录，不作为仓库参考产物提交。
 
 重跑前先协调其他会话的屏幕使用，构建 desktop，然后运行以下命令。像素检查需要 Python 的 Pillow 和 NumPy。每次使用新的输出目录；原生背景不可用会报告失败，不会把 Black 当作玻璃通过。
 
@@ -57,6 +61,8 @@ WPF 保留默认硬件路径；透明内容底使用 1/255 alpha，避免空白�
 ./scripts/windows/test-backdrop.ps1 -Mode input
 ./scripts/windows/test-backdrop.ps1 -Mode cpu
 ```
+
+`overlay` 模式会在 `output/windows/backdrop/<本次标识>/` 下重新生成完整截图、两张背景参考、`acceptance.json` 和像素检查结果；也可用 `-Output` 指定一个新的本地输出目录。无需从仓库保存的代表图还原完整证据。
 
 `interactive` 模式最多保留合成窗口 180 秒，便于工具或用户点击；在该次输出目录创建 `finish` 文件可提前结束。背景和引擎子进程均受当前测试的 Job 管理，测试退出时一并关闭。
 
