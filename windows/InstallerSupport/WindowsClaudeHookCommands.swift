@@ -30,6 +30,17 @@ enum WindowsClaudeHookCommands {
         path = path.replacingOccurrences(of: "\\", with: "/")
         return directSafe(path) ? path : nil
     }
+    private static func longPath(_ url: URL) -> String? {
+        let input = WindowsClaudeHookStorage.wide(url)
+        let count = GetLongPathNameW(input, nil, 0)
+        guard count > 0, count < 32768 else { return nil }
+        var buffer = [UInt16](repeating: 0, count: Int(count))
+        let written = GetLongPathNameW(input, &buffer, count)
+        guard written > 0, written < count else { return nil }
+        var path = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
+        if path.hasPrefix("\\\\?\\") { path.removeFirst(4) }
+        return path.replacingOccurrences(of: "\\", with: "/")
+    }
     private static func normalized(_ arguments: [String]) -> [String] {
         arguments.map { $0.replacingOccurrences(of: "\\", with: "/") }
     }
@@ -86,22 +97,13 @@ enum WindowsClaudeHookCommands {
         for prefix in ["cmd.exe /D/C call \"" + root.path + "/", powershellPrefix + "\"" + root.path + "/", root.path + "/"] where command.hasPrefix(prefix) {
             candidates.append(String(command.dropFirst(prefix.count).prefix { $0 != "/" }))
         }
-        // A short command does not contain the long version identifier. Expand
-        // the executable through Win32 before matching the exact owned form.
-        if let first = command.split(separator: " ").first, directSafe(String(first)) {
-            let input = WindowsClaudeHookStorage.wide(URL(fileURLWithPath: String(first)))
-            let count = GetLongPathNameW(input, nil, 0)
-            if count > 0, count < 32768 {
-                var buffer = [UInt16](repeating: 0, count: Int(count))
-                let written = GetLongPathNameW(input, &buffer, count)
-                if written > 0, written < count {
-                    var path = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
-                    if path.hasPrefix("\\\\?\\") { path.removeFirst(4) }
-                    path = path.replacingOccurrences(of: "\\", with: "/")
-                    let prefix = root.path + "/"
-                    if path.hasPrefix(prefix) { candidates.append(String(path.dropFirst(prefix.count).prefix { $0 != "/" })) }
-                }
-            }
+        // Either path can already contain an 8.3 ancestor (for example TEMP).
+        // Expand both before locating the version, then require an exact match
+        // against a command generated for this root, home and operation.
+        if let first = command.split(separator: " ").first, directSafe(String(first)),
+           let path = longPath(URL(fileURLWithPath: String(first))), let rootPath = longPath(root),
+           let prefix = path.range(of: rootPath + "/", options: [.anchored, .caseInsensitive]) {
+            candidates.append(String(path[prefix.upperBound...].prefix { $0 != "/" }))
         }
         for identifier in candidates where WindowsClaudeRuntimeStore.validIdentifier(identifier) {
             let python = root.appendingPathComponent(identifier + "/python.exe")

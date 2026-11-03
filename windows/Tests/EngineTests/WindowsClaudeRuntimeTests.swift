@@ -4,8 +4,9 @@ import PacerCore
 @testable import WindowsInstallerSupport
 
 final class WindowsClaudeRuntimeTests: XCTestCase {
-    private func fixture() throws -> (base: URL, root: URL, homes: [URL]) {
-        let temporary = FileManager.default.temporaryDirectory.standardizedFileURL
+    private func fixture(aliasAncestors: Bool = false) throws -> (base: URL, root: URL, homes: [URL]) {
+        let originalTemporary = FileManager.default.temporaryDirectory.standardizedFileURL
+        let temporary = aliasAncestors ? WindowsClaudeHookCommands.shortPath(originalTemporary).map { URL(fileURLWithPath: $0, isDirectory: true) } ?? originalTemporary : originalTemporary
         let base = temporary.appendingPathComponent("pacer-runtime-中文-" + UUID().uuidString, isDirectory: true)
         let homes = [base.appendingPathComponent("Claude 一号"), base.appendingPathComponent("Claude 二号")]
         for home in homes { try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
@@ -226,15 +227,15 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         }
     }
     func testEveryOwnedWindowsFormMigratesAndUninstallsExactly() throws {
-        let fixture = try fixture(), home = fixture.homes[0], runtime = WindowsClaudeHookRuntime(root: fixture.root)
+        let fixture = try fixture(aliasAncestors: true), home = fixture.homes[0], runtime = WindowsClaudeHookRuntime(root: fixture.root)
         try write(original, home.appendingPathComponent("settings.json"))
         XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
         let python = fixture.root.appendingPathComponent(try WindowsPythonPin.load().identifier + "/python.exe")
         for site in [false, true] {
             for kind in [ClaudeHookInstaller.CommandKind.hook, .statusLine] {
                 let values = WindowsClaudeHookCommands.arguments(python: python, home: home, kind: kind, site: site)
-                for command in [WindowsClaudeHookCommands.serialize(values), WindowsClaudeHookCommands.legacySerialize(values), WindowsClaudeHookCommands.fallback(values)] {
-                    XCTAssertTrue(WindowsClaudeHookCommands.owned(command, home: home, root: fixture.root, kind: kind))
+                for (index, command) in [WindowsClaudeHookCommands.serialize(values), WindowsClaudeHookCommands.legacySerialize(values), WindowsClaudeHookCommands.fallback(values)].enumerated() {
+                    XCTAssertTrue(WindowsClaudeHookCommands.owned(command, home: home, root: fixture.root, kind: kind), "Owned form \(index), kind \(kind), site \(site), including a short ancestor")
                     XCTAssertFalse(WindowsClaudeHookCommands.owned(command + " extra", home: home, root: fixture.root, kind: kind))
                     XCTAssertFalse(WindowsClaudeHookCommands.owned(command, home: fixture.homes[1], root: fixture.root, kind: kind))
                 }
