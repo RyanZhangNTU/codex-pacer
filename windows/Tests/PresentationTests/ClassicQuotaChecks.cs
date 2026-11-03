@@ -15,9 +15,12 @@ internal static class ClassicQuotaChecks
 {
     internal static async Task Run(string output)
     {
-        await using var engine = new EngineClient(); EngineSnapshot? snapshot = null;
-        engine.Snapshot += value => snapshot = value;
+        await using var engine = new EngineClient(); EngineSnapshot? snapshot = null; EngineWallet? connectingWallet = null;
+        engine.Snapshot += value => { snapshot = value; if (value.Wallet is { Balance: null } wallet) connectingWallet ??= wallet; };
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
+        await PresentationWait.UntilAsync(() => snapshot?.Wallet is { Balance: not null, Dial: not null }
+            && snapshot.DeepseekConnection is { Refreshing: false, Reading.Connected: true },
+            "The balance drawing fixture must receive the completed demo wallet, after the initial connecting snapshot");
         var dashboard = snapshot!.QuotaDashboard!;
         var codex = dashboard.Providers.Single(value => value.Provider == "codex");
         var claude = dashboard.Providers.Single(value => value.Provider == "claude");
@@ -39,11 +42,17 @@ internal static class ClassicQuotaChecks
         var proPixels = RenderDial(pro);
         Check(!proPixels.Any(value => value.Arc) && freshPixels.Any(value => value.Arc) && proPixels.Any(value => value.Drawing is GlyphRunDrawing), "The subscription mark must differ from an empty or measured gauge");
         var wallet = snapshot.Wallet!;
+        if (connectingWallet != null)
+        {
+            var connectingPixels = RenderDial(new QuotaDial("deepseek", null, connectingWallet, classic: true));
+            Console.WriteLine($"DeepSeek connecting wallet: balanceGlyphs={connectingPixels.Count(value => value.Drawing is GlyphRunDrawing && value.Color == ((SolidColorBrush)PacerPalette.Secondary).Color)}");
+        }
         var staleWallet = wallet with { State = "stale", Dial = wallet.Dial! with { DimmedFace = true, BalanceTone = "secondary", SegmentTone = "staleSegment", SubtitleTone = "tertiary", StaleCaption = true } };
         var staleWalletPixels = RenderDial(new QuotaDial("deepseek", null, staleWallet, classic: true));
         var balanceInk = staleWalletPixels.Where(value => value.Drawing is GlyphRunDrawing
             && value.Color == ((SolidColorBrush)PacerPalette.Secondary).Color).ToArray();
         double centreInk = balanceInk.Length > 0 ? balanceInk.Max(value => value.Intensity) : 0;
+        Console.WriteLine($"DeepSeek stale balance drawing: intensity={centreInk}, glyphs={balanceInk.Length}, hasBalance={wallet.Balance != null}");
         Check(centreInk is >= 145 and <= 165, "A stale DeepSeek face cannot dim the independently styled balance a second time");
         Check(UIElementAutomationPeer.CreatePeerForElement(new QuotaDial("deepseek", null, wallet, classic: true)).GetName() == wallet.Dial!.AccessibilityLabel,
             "The time dial must use the shared localized account-independent accessibility reading");

@@ -24,6 +24,7 @@ struct EngineQuotaHistory {
         if scope != snapshot?.accountScope { scope = snapshot?.accountScope; accountContext = UUID().uuidString }
         self.history = history; self.warning = warning
     }
+    mutating func prune(at date: Date) { history.prune(at: date) }
     mutating func presentation(provider: AgentProvider, snapshot: QuotaSnapshot?, weekly: QuotaDashboardPresentation.Reading,
                                error: String?, refreshing: Bool, now: Date) -> QuotaHistoryPresentation {
         let window = snapshot?.windows.first { $0.id == weekly.windowID }

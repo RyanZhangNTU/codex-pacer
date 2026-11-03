@@ -4,6 +4,40 @@ import XCTest
 
 final class DeepSeekWebBridgeTests: XCTestCase {
     private let date = Date(timeIntervalSince1970: 1_800_000_000)
+    func testHostReadWaitsForItsMatchingPublishedSnapshotAndCancellationReleasesIt() {
+        var publication = DeepSeekWebHostPublication()
+        let request = DeepSeekWebHostMessage(type: "hostRequest", requestID: "next", context: "new-web-source")
+        XCTAssertTrue(publication.receive(request, publishedContext: "old-api-source", ready: false).isEmpty)
+        XCTAssertEqual(publication.count, 1)
+        let ready = publication.published(context: "new-web-source")
+        XCTAssertEqual(ready.map(\.requestID), ["next"])
+        XCTAssertEqual(publication.count, 0)
+        XCTAssertEqual(publication.receive(request, publishedContext: "new-web-source", ready: true).map(\.requestID), ["next"])
+        XCTAssertTrue(publication.receive(request, publishedContext: "old-api-source", ready: true).isEmpty,
+            "A ready activity projection may still precede a new balance binding")
+        XCTAssertTrue(publication.published(context: "old-api-source").isEmpty)
+        XCTAssertEqual(publication.count, 1, "An unrelated earlier snapshot cannot discard the future binding's read")
+        let cancel = DeepSeekWebHostMessage(type: "hostCancel", requestID: "next", context: "new-web-source")
+        XCTAssertEqual(publication.receive(cancel, publishedContext: "old-api-source", ready: false).map(\.type), ["hostCancel"])
+        XCTAssertEqual(publication.count, 0)
+        XCTAssertTrue(publication.published(context: "new-web-source").isEmpty)
+    }
+    func testHostPublicationDropsSupersededSourcesAndBoundsPendingReadsAcrossSleepOrStop() {
+        var publication = DeepSeekWebHostPublication()
+        for index in 0..<12 {
+            let request = DeepSeekWebHostMessage(type: "hostRequest", requestID: String(index), context: "old-source")
+            XCTAssertTrue(publication.receive(request, publishedContext: nil, ready: false).isEmpty)
+            XCTAssertLessThanOrEqual(publication.count, DeepSeekWebBridge.maximumPendingRequests)
+        }
+        publication.rebind(context: "replacement-source")
+        XCTAssertTrue(publication.published(context: "replacement-source").isEmpty)
+        XCTAssertEqual(publication.count, 0)
+        let current = DeepSeekWebHostMessage(type: "hostRequest", requestID: "current", context: "replacement-source")
+        _ = publication.receive(current, publishedContext: nil, ready: false)
+        publication.reset()
+        XCTAssertEqual(publication.count, 0)
+        XCTAssertTrue(publication.published(context: "replacement-source").isEmpty)
+    }
     func testOnlyAnOptedInHostCanCompleteTheMatchingNumericRequest() async throws {
         let capture = Capture(), at = date, context = UUID().uuidString
         let bridge = DeepSeekWebBridge(now: { at }, output: { await capture.add($0) })

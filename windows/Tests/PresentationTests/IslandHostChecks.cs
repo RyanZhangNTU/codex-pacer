@@ -29,13 +29,14 @@ internal static class IslandHostChecks
             Check(buttons.Visibility == Visibility.Visible && buttons.Children.Count == 2, "Registered Codex and Claude apps must appear when their modules are enabled");
             var codex = buttons.Children.OfType<Button>().Single(button => AutomationProperties.GetAutomationId(button) == "island.open.codex");
             Invoke(codex); await Until(() => opened.Count == 1, "The app action must reach the injected Windows activation service");
+            await window.WaitForPresentationAsync();
             Check(opened.Single() == "OpenAI.Codex_2p2nqsd0c76g0!App", "The app action must activate the allowlisted application identity");
             Check(window.LogicalTarget.Height == 38, "Opening a desktop app must release the expanded island");
             window.Reveal(); await window.SynchronizeExpansionAsync(); await window.WaitForPresentationAsync();
             window.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             Check(buttons.Children.Count == 0 && buttons.Visibility == Visibility.Collapsed, "The settings choice must immediately remove desktop app actions");
-            await engine.SendAsync("configure", new { providerModes = new { codex = "disabled", claude = "enabled", deepseek = "disabled" } });
-            window.ApplyPreferences(new() { IslandAppearance = "classic" }); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = "disabled", claude = "enabled", deepseek = "disabled" } });
+            window.ApplyPreferences(new() { IslandAppearance = "classic" }); await window.WaitForPresentationAsync();
             Check(buttons.Children.Count == 1 && AutomationProperties.GetAutomationId(buttons.Children[0]) == "island.open.claude", "A disabled module cannot retain a desktop app action");
             Invoke((Button)window.FindName("SettingsButton"));
             await Until(() => settings == 1, "The native-size gear action must reach the settings owner");

@@ -40,6 +40,21 @@ private actor CoordinationGate<Value: Sendable> {
     func release(_ value: Value) { let old = pending; pending = nil; old?.resume(returning: value) }
 }
 
+private actor BalancePublicationRecorder {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var waiting = false
+    private(set) var values: [DeepSeekBalanceState] = []
+    func publish(_ state: DeepSeekBalanceState) async {
+        if state.refreshing && !released {
+            waiting = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+        values.append(state)
+    }
+    func release() { released = true; continuation?.resume(); continuation = nil }
+}
+
 final class SharedQuotaCoordinationTests: XCTestCase {
     private let home = URL(fileURLWithPath: "/synthetic/shared-quota")
     private func snapshot() throws -> QuotaSnapshot {
@@ -55,6 +70,63 @@ final class SharedQuotaCoordinationTests: XCTestCase {
         }
         XCTFail("The controlled shared operation did not reach its boundary")
         throw CancellationError()
+    }
+
+    func testBalanceReadCannotOvertakeItsPendingPublication() async throws {
+        let recorder = BalancePublicationRecorder(), reads = CoordinationCounts(), date = Date(timeIntervalSince1970: 1_800_000_000)
+        let coordinator = DeepSeekBalanceCoordinator(services: .init(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil },
+            readWeb: { _ in await reads.add("read"); return .init(total: 42, capturedAt: date, source: .web, sessionFingerprint: String(repeating: "7", count: 64)) }, detect: { _, _ in .account }),
+            now: { date }, output: { await recorder.publish($0) })
+        await coordinator.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
+        let starting = Task { await coordinator.refreshIfDue(active: true) }
+        do { try await until { await recorder.waiting } }
+        catch { await recorder.release(); _ = await starting.value; await coordinator.stop(); throw error }
+        let earlyRead = await coordinator.refreshCompletion
+        XCTAssertNil(earlyRead, "No reader can run while its pending state is still held at the host boundary")
+        let earlyCount = await reads.count("read")
+        XCTAssertEqual(earlyCount, 0)
+        // On the previous implementation this completes the immediate reader
+        // before releasing pending, reproducing the stale last publication.
+        await earlyRead?.value
+        await recorder.release()
+        let accepted = await starting.value
+        await coordinator.refreshCompletion?.value
+        let observed = await recorder.values, current = await coordinator.currentState()
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(observed.last?.balance?.total, 42)
+        XCTAssertEqual(observed.last?.refreshing, false)
+        XCTAssertEqual(observed.last, current)
+        XCTAssertEqual(observed.filter(\.refreshing).count, 1)
+        await coordinator.stop()
+    }
+
+    func testBalancePendingPublicationKeepsSingleFlightAndCanBeRevokedBeforeIO() async throws {
+        for stop in [false, true] {
+            let recorder = BalancePublicationRecorder(), reads = CoordinationCounts(), date = Date(timeIntervalSince1970: 1_800_000_000)
+            let coordinator = DeepSeekBalanceCoordinator(services: .init(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+                readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil },
+                readWeb: { _ in await reads.add("read"); return .init(total: 42, capturedAt: date, source: .web, sessionFingerprint: String(repeating: "7", count: 64)) }, detect: { _, _ in .account }),
+                now: { date }, output: { await recorder.publish($0) })
+            await coordinator.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
+            let starting = Task { await coordinator.refreshIfDue(active: true) }
+            do { try await until { await recorder.waiting } }
+            catch { await recorder.release(); _ = await starting.value; await coordinator.stop(); throw error }
+            let pending = await coordinator.currentState()
+            XCTAssertTrue(pending.refreshing)
+            let duplicate = await coordinator.refreshIfDue(active: true, force: true)
+            XCTAssertFalse(duplicate, "A pending publication still reserves the single flight")
+            if stop { await coordinator.stop() }
+            else { await coordinator.configure(home: home, source: .apiKey, enabled: true, recentProvider: nil, context: 2) }
+            await recorder.release()
+            let accepted = await starting.value, count = await reads.count("read"), final = await coordinator.currentState()
+            XCTAssertTrue(accepted)
+            XCTAssertEqual(count, 0, "Revocation during publication cannot start the old reader")
+            XCTAssertFalse(final.refreshing)
+            XCTAssertNil(final.balance)
+            if !stop { XCTAssertEqual(final.source, .apiKey); XCTAssertEqual(final.error, .missingKey) }
+            await coordinator.stop()
+        }
     }
 
     func testEveryFailureRetainsMacCadenceThroughTheCapAndRecoveryForBothQuotaProviders() async throws {
@@ -193,5 +265,35 @@ final class SharedQuotaCoordinationTests: XCTestCase {
             XCTAssertEqual(after.error, .challenge)
             await coordinator.stop()
         }
+    }
+    func testBalanceReplacementRetainsTheSeededNumericHistoryAcrossSleep() async {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
+        let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.connectionFailed },
+            fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) },
+            readWeb: { _ in .init(total: 42, capturedAt: date, source: .web, sessionFingerprint: String(repeating: "7", count: 64)) }, detect: { _, _ in .account })
+        let first = DeepSeekBalanceCoordinator(services: services, now: { date }, output: { _ in })
+        await first.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
+        _ = await first.refreshIfDue(active: true, force: true)
+        await first.refreshCompletion?.value
+        let seed = await first.currentState()
+        XCTAssertFalse(seed.history.samples.isEmpty)
+        await first.stop()
+        let replacement = DeepSeekBalanceCoordinator(services: services, seed: seed, now: { date }, output: { _ in })
+        await replacement.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 2)
+        let resumed = await replacement.currentState()
+        XCTAssertEqual(resumed.history, seed.history)
+        XCTAssertEqual(resumed.balance, seed.balance)
+        XCTAssertEqual(resumed.lastAttempt, seed.lastAttempt)
+        XCTAssertEqual(resumed.successCount, seed.successCount)
+        XCTAssertNotEqual(resumed.token, seed.token)
+        await replacement.stop()
+        let changedBilling = DeepSeekBalanceCoordinator(services: services, seed: seed, now: { date }, output: { _ in })
+        await changedBilling.configure(home: home, source: .apiKey, enabled: true, recentProvider: nil, context: 3)
+        let changed = await changedBilling.currentState()
+        XCTAssertTrue(changed.history.samples.isEmpty)
+        XCTAssertNil(changed.balance, "A previous web reading cannot seed a different billing source")
+        await changedBilling.stop()
     }
 }

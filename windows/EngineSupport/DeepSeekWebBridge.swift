@@ -27,9 +27,32 @@ struct DeepSeekWebHostMessage: Encodable, Sendable {
     let requestID: String, context: String
 }
 
+/// The host checks a read against its latest snapshot. Configuration may
+/// suspend that projection while the balance coordinator starts its work.
+struct DeepSeekWebHostPublication {
+    private var pending: [DeepSeekWebHostMessage] = []
+    var count: Int { pending.count }
+    mutating func receive(_ message: DeepSeekWebHostMessage, publishedContext: String?, ready: Bool) -> [DeepSeekWebHostMessage] {
+        pending.removeAll { $0.requestID == message.requestID }
+        if message.type == "hostCancel" { return [message] }
+        if ready && publishedContext == message.context { return [message] }
+        if pending.count == DeepSeekWebBridge.maximumPendingRequests { pending.removeFirst() }
+        pending.append(message)
+        return []
+    }
+    mutating func published(context: String?) -> [DeepSeekWebHostMessage] {
+        let current = pending.filter { $0.context == context }
+        pending.removeAll { $0.context == context }
+        return current
+    }
+    mutating func rebind(context: String) { pending.removeAll { $0.context != context } }
+    mutating func reset() { pending.removeAll(keepingCapacity: true) }
+}
+
 /// The browser owns tokens. The engine requests a bounded numeric result and
 /// cancels it explicitly when its binding, host or deadline changes.
 actor DeepSeekWebBridge {
+    static let maximumPendingRequests = 4
     private struct Pending {
         let context: String, at: Date
         let continuation: CheckedContinuation<DeepSeekBalance, Error>
@@ -49,7 +72,7 @@ actor DeepSeekWebBridge {
         if !value { for id in Array(pending.keys) { await cancel(id, failure: DeepSeekBalanceError.connectionFailed) } }
     }
     func read(context: String) async throws -> DeepSeekBalance {
-        guard available, pending.count < 4 else { throw DeepSeekBalanceError.connectionFailed }
+        guard available, pending.count < Self.maximumPendingRequests else { throw DeepSeekBalanceError.connectionFailed }
         try Task.checkCancellation()
         let id = UUID().uuidString
         return try await withTaskCancellationHandler {

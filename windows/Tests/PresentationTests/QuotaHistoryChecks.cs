@@ -21,6 +21,9 @@ internal static class QuotaHistoryChecks
     {
         await using var engine = new EngineClient();
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
+        await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.QuotaDashboard?.Providers
+            .Any(value => value.Provider == "codex" && value.History?.Chart != null) == true,
+            "The history fixture must receive the projected quota samples");
         var data = engine.LatestSnapshot!.QuotaDashboard!.Providers.Single(value => value.Provider == "codex").History!;
         Check(data.Chart?.Points.Count > 20 && data.Account?.Expiries.Count == 2, "The actual engine must publish original synthetic samples and reset details");
         UiText ui = UiText.For(language == "zh-Hans"); int retries = 0;
@@ -36,6 +39,7 @@ internal static class QuotaHistoryChecks
         try
         {
             window.Show(); await Pump();
+            await ShellProjection.WhenIdleAsync(); await Pump();
             string name = language + (dark ? "-dark" : "-light");
             var chart = history.Chart!;
             Check(chart.ActualWidth == 509 && chart.InputSurface.ActualHeight == 118 && chart.ActualHeight > 138 && chart.ActualHeight < 145,

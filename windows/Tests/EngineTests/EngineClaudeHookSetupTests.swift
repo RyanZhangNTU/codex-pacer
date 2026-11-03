@@ -69,4 +69,28 @@ final class EngineClaudeHookSetupTests: XCTestCase {
         XCTAssertNil(result)
         XCTAssertLessThan(Date().timeIntervalSince(start), 2, "A missing helper reply cannot block the engine command loop")
     }
+    func testSleepRevokesPendingSetupAndWakeStartsANewOwnedAttempt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-wake-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = Gate(), frames = Frames()
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil,
+            claudeHookServices: .init { action, home in await gate.run(action, home) },
+            installationDetection: { .init(codexInstalled: false, claudeInstalled: false, deepseekInstalled: false) }, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["claude"],
+            "claudeHome": EngineCodexSourceReport.path(root), "codexHome": EngineCodexSourceReport.path(root),
+            "deepseekHome": EngineCodexSourceReport.path(root)]))
+        let first = await wait { await gate.calls == 1 }
+        XCTAssertTrue(first)
+        await runtime.prepareForSleep()
+        await runtime.resumeAfterSleep()
+        let second = await wait { await gate.calls == 2 }
+        XCTAssertTrue(second)
+        XCTAssertEqual(frames.state, .settingUp)
+        await gate.complete(0, .failed)
+        await gate.complete(1, .ready)
+        let ready = await wait { frames.state == .ready }
+        XCTAssertTrue(ready, "A cancelled pre-sleep helper cannot replace the wake attempt")
+        await runtime.stop()
+    }
 }

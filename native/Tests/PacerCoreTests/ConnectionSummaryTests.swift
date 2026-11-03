@@ -1,6 +1,5 @@
 import XCTest
 @testable import PacerCore
-@testable import PacerIsland
 
 final class ConnectionSummaryTests: XCTestCase {
     private let prefix = ConnectionSource.sshPrefix

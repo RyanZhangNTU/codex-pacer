@@ -25,6 +25,7 @@ struct EngineCommand: Decodable {
         var requestID: String?
         var context: String?
         var notificationAction: String?
+        var navigationMessage: String?
         var deepseekHome: String?
         var sourceHome: String?
         var hideProjects: Bool?
@@ -230,6 +231,12 @@ struct EngineNotice: Codable, Equatable {
     }
 }
 
+struct EngineNavigationFailure: Codable, Equatable {
+    let id: String
+    let message: String
+    init(_ failure: ActivityNavigationState.Failure) { id = failure.id.uuidString; message = failure.message }
+}
+
 struct EngineSnapshot: Codable, Equatable {
     let protocolVersion: Int
     let type: String
@@ -256,6 +263,8 @@ struct EngineSnapshot: Codable, Equatable {
     let claudeCloudConnection: EngineClaudeCloudConnection?
     let activityLinks: [EngineActivityLink]?
     let claudeSetup: EngineClaudeHookSetup?
+    let navigationError: EngineNavigationFailure?
+    let openingActivityIDs: [String]?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
@@ -264,7 +273,8 @@ struct EngineSnapshot: Codable, Equatable {
          taskPresentation: ActivityTaskPresentation? = nil,
          deepseekConnection: EngineDeepSeekConnection? = nil, claudeConnection: EngineClaudeConnection? = nil,
          claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil,
-         notificationProjections: [EngineNotice]? = nil, claudeSetup: EngineClaudeHookSetup? = nil) {
+         notificationProjections: [EngineNotice]? = nil,
+         navigationError: EngineNavigationFailure? = nil, openingActivityIDs: [String]? = nil, claudeSetup: EngineClaudeHookSetup? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
         self.demo = demo; capturedAt = now.timeIntervalSince1970
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
@@ -284,5 +294,6 @@ struct EngineSnapshot: Codable, Equatable {
         self.claudeCloudConnection = claudeCloudConnection
         self.activityLinks = activityLinks
         self.claudeSetup = claudeSetup
+        self.navigationError = navigationError; self.openingActivityIDs = openingActivityIDs
     }
 }

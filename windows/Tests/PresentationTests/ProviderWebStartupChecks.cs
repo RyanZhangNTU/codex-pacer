@@ -26,6 +26,8 @@ internal static class ProviderWebStartupChecks
             "Failed startup must leave the bridge unavailable without reading cookies");
         session.FailStartup = false; session.Ready.TrySetResult();
         await coordinator.StartAsync();
+        await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.ClaudeConnection?.WebAvailable == true,
+            "The prepared browser must publish its availability");
         Check(session.Starts == 2 && coordinator.Available && engine.LatestSnapshot?.ClaudeConnection?.WebAvailable == true,
             "A later start must retry preparation and enable only the prepared browser");
     }
@@ -37,12 +39,14 @@ internal static class ProviderWebStartupChecks
         await Start(engine);
         var first = coordinator.StartAsync();
         var second = coordinator.StartAsync();
-        await session.Entered.Task;
+        await session.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Check(session.Starts == 1 && session.Reads == 0, "Concurrent starts must share one prewarm without reading a not-ready browser");
         Check(!coordinator.Available && engine.LatestSnapshot?.ClaudeConnection?.WebAvailable != true,
             "The engine cannot request cookies before private-profile startup completes");
         session.Ready.TrySetResult();
         await Task.WhenAll(first, second);
+        await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.ClaudeConnection?.WebAvailable == true,
+            "The coalesced startup must publish the prepared browser");
         Check(coordinator.Available && engine.LatestSnapshot?.ClaudeConnection?.WebAvailable == true,
             "A prepared browser must enable the original bridge");
     }
@@ -53,7 +57,7 @@ internal static class ProviderWebStartupChecks
         var coordinator = new ClaudeConnectionCoordinator(engine, session, Application.Current.Dispatcher);
         await Start(engine);
         var starting = coordinator.StartAsync();
-        await session.Entered.Task;
+        await session.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
         await coordinator.DisposeAsync();
         await starting;
         Check(session.Cancelled && session.Disposed && session.Reads == 0 && !coordinator.Available,

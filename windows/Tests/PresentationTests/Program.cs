@@ -114,6 +114,7 @@ internal static class Program
             window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
             await window.WaitForPresentationAsync();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
+            await Until(() => latest?.Wallet?.Balance != null, "The reference window must receive its completed demo wallet");
             var withQuota = await NativeCompactBar.Shared.EditAsync(new DesktopPreferences { IslandAppearance = "classic" }, language,
                 NativeCompactBar.Providers(new DesktopPreferences { IslandAppearance = "classic" }, engine.LatestSnapshot), new("show", "quota"));
             window.ApplyPreferences(withQuota);
@@ -146,15 +147,17 @@ internal static class Program
             var peer = UIElementAutomationPeer.CreatePeerForElement(host);
             Check(peer.GetChildren()?.Count is null or 0, "Collapsed content must be absent from the accessibility tree");
             window.Reveal();
-            await Task.Delay(1400); await Pump();
+            await window.WaitForPresentationAsync(); await Pump();
             Check(peer.GetChildren()?.Count > 0, $"Revealed content must be accessible (height={window.VisibleHeight}, opacity={host.Opacity}, control={peer.IsControlElement()}, {window.PresentationDiagnostics})");
             string[] dialNames = Descendants<QuotaDial>(window).Select(dial => UIElementAutomationPeer.CreatePeerForElement(dial).GetName()).ToArray();
             Check(dialNames.Any(name => name.Contains("43%")) && dialNames.Any(name => name.Contains("81%") && name.Contains("64%")) && dialNames.Any(name => name.Contains("¥86")),
                 "Vector dials must expose their actual quota and wallet values to accessibility clients");
             for (int stage = 0; stage <= 3; stage++)
             {
-                await engine.SendAsync("demoStage", new { demoStage = stage }); await Pump();
-                await Task.Delay(100);
+                await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = stage }, waitForSnapshot: stage != 0);
+                await window.WaitForPresentationAsync();
+                await Until(() => ((Grid)window.FindName("TaskPages")).Children.Count == 1,
+                    "The stage change must retire its outgoing task page");
                 string[] expected = latest!.Presentation!.Rows.Take(latest.Presentation.PageSize).Select(row => row.Id).ToArray();
                 string[] actual = Descendants<TaskRow>(window).Select(row => ((TaskRowState)row.DataContext).Value.Id).ToArray();
                 Check(actual.SequenceEqual(expected), $"Stage {stage} rows must match the shared engine projection: {string.Join(",", actual)}");
@@ -212,7 +215,8 @@ internal static class Program
             badge.Update(latest!.Presentation!.Header, motion);
             Console.WriteLine("PASS " + scenario + ": finite badge motion, completion, snapshot stability and motion policy");
 
-            await engine.SendAsync("demoStage", new { demoStage = 0 }); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 0 });
+            await window.WaitForPresentationAsync();
             var slots = (Grid)window.FindName("QuotaSlots");
             double originalTop = slots.TranslatePoint(new Point(), window).Y;
             Invoke((Button)window.FindName("NextPage"));
@@ -234,15 +238,18 @@ internal static class Program
             Check(!((Button)window.FindName("NextPage")).IsEnabled, "Next is disabled at the last page");
             Console.WriteLine("PASS " + scenario + ": accessible pagination, fixed row capacity and last-page bounds");
 
-            await engine.SendAsync("demoStage", new { demoStage = 3 }); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 });
+            await window.WaitForPresentationAsync();
             var markRead = (Button)window.FindName("MarkReadButton");
             Check(markRead.IsEnabled, "Unread endings must enable the read action");
             ulong before = latest!.Sequence;
             Invoke(markRead);
             await Until(() => latest!.Sequence > before, "The read action must reach the engine"); await Pump();
+            await Until(() => !latest!.Presentation!.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted"),
+                "The mark-read snapshot must finish before checking the model");
             Check(!latest!.Presentation!.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted"), "Read actions must update the visible model");
             window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
-            await Task.Delay(1400); await Pump();
+            await window.WaitForPresentationAsync(); await Pump();
             Check(window.LogicalTarget.Height == 38 && window.VisibleSizeMatches(window.LogicalTarget.Width, 38) && peer.GetChildren()?.Count is null or 0, "Escape must close the panel and hide its accessibility descendants");
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed, "Escape must publish the collapsed UIA state");
             window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
@@ -261,12 +268,23 @@ internal static class Program
             expansion.Collapse(); await window.WaitForPresentationAsync();
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed && window.LogicalTarget.Height == 38, "The UIA Collapse action must clear the pin and close the panel");
             Console.WriteLine("PASS " + scenario + ": read action, Escape, hover reopening/exit and accessibility cleanup");
-            window.Reveal(); await Task.Delay(1400); await Pump();
+            window.Reveal(); await window.WaitForPresentationAsync(); await Pump();
             window.CapturePreview(Path.Combine(output, "presentation-" + scenario + ".png"));
             Console.WriteLine("Window timing " + scenario + ": " + window.PresentationDiagnostics);
         }
         catch
         {
+            Console.WriteLine("Window fixture startup state: " + JsonSerializer.Serialize(new
+            {
+                callbackSequence = latest?.Sequence, engineSequence = engine.LatestSnapshot?.Sequence,
+                callbackHasBalance = latest?.Wallet?.Balance != null, engineHasBalance = engine.LatestSnapshot?.Wallet?.Balance != null,
+                walletState = engine.LatestSnapshot?.Wallet?.State,
+                source = engine.LatestSnapshot?.DeepseekConnection?.Source, mode = engine.LatestSnapshot?.DeepseekConnection?.Mode,
+                refreshing = engine.LatestSnapshot?.DeepseekConnection?.Refreshing,
+                connected = engine.LatestSnapshot?.DeepseekConnection?.Reading.Connected,
+                action = engine.LatestSnapshot?.DeepseekConnection?.Reading.Action,
+                initialized = engine.IsInitialized, closed = engine.IsConnectionClosed
+            }));
             Console.WriteLine(window.PresentationDiagnostics);
             try { window.CapturePreview(Path.Combine(output, "failed-" + scenario + ".png")); }
             catch (Exception captureError) { Console.WriteLine("Diagnostic capture unavailable: " + captureError.Message); }

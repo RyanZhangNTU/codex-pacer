@@ -57,12 +57,17 @@ extension IslandModel {
         DeepSeekBalanceBinding(source: .load(from: defaults), mode: deepseekBalanceMode)
     }
     /// Cancellation alone cannot stop a WebKit read from returning late.
-    func cancelDeepSeekBalanceRead() {
+    @discardableResult func cancelDeepSeekBalanceRead(stop: Bool = true) -> DeepSeekBalanceCoordinator? {
         let previous = deepseekBalanceCoordinator; previous?.invalidateSource()
         deepseekBalanceCoordinator = nil; deepseekBalanceCoordinatorID = UUID(); deepseekCredentialInput = nil
         deepseekBalanceRequestID = nil
-        deepseekBalanceTask?.cancel(); deepseekBalanceTask = nil; deepseekRefreshing = false; deepseekBalanceStarting = false
-        Task { await previous?.stop() }
+        deepseekBalanceTask?.cancel(); cancelOwnedWork(.init(.quota, provider: .deepseek)); deepseekRefreshing = false; deepseekBalanceStarting = false
+        if stop, let previous {
+            launchOwnedWork(.init(.reset, provider: .deepseek, identifier: "balance")) { _ in
+                await ApplicationLifecycleCoordinator.cleanup([.balance: { await previous.stop() }])
+            }
+        }
+        return previous
     }
     private func clearDeepSeekBalance() {
         cancelDeepSeekBalanceRead()
@@ -228,9 +233,9 @@ extension IslandModel {
     func startDeepSeekActivity() {
         guard isModuleEnabled(.deepseek), deepseekActivityTask == nil, !sleeping, !stopped, !demo else { return }
         let generation = deepseekGeneration, home = deepseekHome
-        deepseekActivityTask = Task { [weak self] in
+        launchOwnedWork(.init(.activity, provider: .deepseek)) { [weak self] workTicket in
             guard let self else { return }
-            defer { if generation == self.deepseekGeneration { self.deepseekActivityTask = nil } }
+            defer { if generation == self.deepseekGeneration { self.ownedWork.finish(workTicket) } }
             await self.deepseekMonitor.start(home: home, refreshPolicy: self.activityRefreshPolicy) { [weak self] values, statuses, requests, performance, usage in
                 guard let model = self else { return }
                 await MainActor.run {
@@ -275,11 +280,11 @@ extension IslandModel {
         let coordinator = ensureDeepSeekBalanceCoordinator(key: key)
         deepseekRefreshing = true; deepseekBalanceStarting = true
         let request = UUID(); deepseekBalanceRequestID = request
-        deepseekBalanceTask = Task { [weak self] in
+        launchOwnedWork(.init(.quota, provider: .deepseek)) { [weak self] workTicket in
             guard let self else { return }
             defer {
                 if self.deepseekBalanceRequestID == request {
-                    self.deepseekBalanceTask = nil; self.deepseekBalanceRequestID = nil; self.deepseekBalanceStarting = false
+                    self.ownedWork.finish(workTicket); self.deepseekBalanceRequestID = nil; self.deepseekBalanceStarting = false
                 }
             }
             guard !Task.isCancelled, generation == self.deepseekGeneration else { return }
@@ -362,19 +367,19 @@ extension IslandModel {
         return true
     }
     func removeDeepSeekConnection() {
-        cancelDeepSeekBalanceRead(); deepseekGeneration += 1
-        deepseekActivityTask?.cancel(); deepseekActivityTask = nil
+        cancelDeepSeekBalanceRead(); lifecycle.invalidateSources([.deepseek])
+        deepseekActivityTask?.cancel(); cancelOwnedWork(.init(.activity, provider: .deepseek))
         startDeepSeekActivity()
         let owner = deepseekBalanceCoordinatorID, generation = deepseekGeneration
         let coordinator = ensureDeepSeekBalanceCoordinator(key: deepseekBalanceMode == .apiKey ? deepseekBalanceReads.apiKey() : nil)
         let sourceHome = deepseekHome, source = DeepSeekBalanceSource.load(from: defaults), recent = deepseekUsage.provider
         deepseekRefreshing = true; deepseekBalanceStarting = true
         let request = UUID(); deepseekBalanceRequestID = request
-        deepseekBalanceTask = Task { [weak self] in
+        launchOwnedWork(.init(.quota, provider: .deepseek)) { [weak self] workTicket in
             guard let self else { return }
             defer {
                 if self.deepseekBalanceRequestID == request {
-                    self.deepseekBalanceTask = nil; self.deepseekBalanceRequestID = nil; self.deepseekBalanceStarting = false
+                    self.ownedWork.finish(workTicket); self.deepseekBalanceRequestID = nil; self.deepseekBalanceStarting = false
                 }
             }
             await coordinator.configure(home: sourceHome, source: source, enabled: true, recentProvider: recent, context: UInt64(generation))
@@ -400,9 +405,9 @@ extension IslandModel {
         defaults.removeObject(forKey: DeepSeekBalanceHistory.defaultsKey)
     }
 
-    func resetDeepSeekSource() {
-        deepseekGeneration += 1
-        deepseekActivityTask?.cancel(); deepseekActivityTask = nil
+    func resetDeepSeekSource(versionInvalidated: Bool = false) {
+        if !versionInvalidated { lifecycle.invalidateSources([.deepseek]) }
+        deepseekActivityTask?.cancel(); cancelOwnedWork(.init(.activity, provider: .deepseek))
         clearDeepSeekBalance(); deepseekBalanceBinding = nil
         deepseekActivityAttention = AttentionPolicy(); deepseekBalanceAttention = DeepSeekBalanceAttention()
         completionInbox.remove(provider: .deepseek)
@@ -412,11 +417,11 @@ extension IslandModel {
         activities.removeAll { $0.provider == .deepseek }
         clearSourceState()
         let generation = deepseekGeneration
-        Task { [weak self] in
-            guard let self else { return }
+        launchOwnedWork(.init(.reset, provider: .deepseek)) { [weak self] _ in
+            guard let self, generation == self.deepseekGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             let monitor = self.deepseekMonitor
-            await ShutdownDeadline().perform([{ await monitor.shutdown() }])
-            guard generation == self.deepseekGeneration else { return }
+            await ApplicationLifecycleCoordinator.cleanup([.deepseekActivity: { await monitor.shutdown() }])
+            guard generation == self.deepseekGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             self.startDeepSeekActivity(); self.refreshDeepSeekBalance()
         }
     }

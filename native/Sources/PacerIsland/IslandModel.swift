@@ -43,9 +43,23 @@ final class IslandModel: ObservableObject {
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
     var navigationErrorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration
-    private var navigationErrorToken = 0
+    private var navigation = ActivityNavigationState()
+    var navigationClock: () -> TimeInterval = { ActivityNavigationState.monotonicNow }
+    private var claudeCloudNavigationScope: String?
     @Published private(set) var hostApplications: [AgentProvider: [String: HostApplication]] = [:]
-    private let hostTracking: [AgentProvider: HostApplicationTracking] = [.codex: .init(), .claude: .init(), .deepseek: .init()]
+    private var hostTracking = HostApplicationTrackingState<HostApplication>()
+    var lifecycle = ApplicationLifecycleCoordinator()
+    var ownedWork: ApplicationWorkRegistry { get { lifecycle.work } set { lifecycle.work = newValue } }
+    func launchOwnedWork(_ key: ApplicationWorkRegistry.Key, operation: @escaping @MainActor (ApplicationWorkRegistry.Ticket) async -> Void) {
+        let version = key.provider.map { UInt64(sourceGeneration(for: $0)) } ?? lifecycle.revision
+        let ticket = ownedWork.begin(key, version: version)
+        let task = Task { @MainActor [weak self] in
+            defer { self?.ownedWork.finish(ticket) }
+            await operation(ticket)
+        }
+        ownedWork.attach(task, to: ticket)
+    }
+    func cancelOwnedWork(_ key: ApplicationWorkRegistry.Key) { ownedWork.cancel(key) }
     var hostApplicationResolver: @Sendable (AgentProvider, Set<String>, URL) async -> [String: HostApplication] = { provider, sessions, home in
         await Task.detached(priority: .utility) { HostApplication.resolve(sessions: sessions, provider: provider, home: home) }.value
     }
@@ -83,9 +97,9 @@ final class IslandModel: ObservableObject {
     @Published private(set) var claudeQuotaSource: ClaudeQuotaSource?
     // DeepSeek has a wallet instead of quota windows; see IslandModel+DeepSeek.
     let deepseekMonitor: DeepSeekActivityMonitor
-    var deepseekGeneration = 0
-    var deepseekActivityTask: Task<Void, Never>?
-    var deepseekBalanceTask: Task<Void, Never>?
+    var deepseekGeneration: Int { Int(lifecycle.version(.deepseek)) }
+    var deepseekActivityTask: Task<Void, Never>? { ownedWork.task(.init(.activity, provider: .deepseek)) }
+    var deepseekBalanceTask: Task<Void, Never>? { ownedWork.task(.init(.quota, provider: .deepseek)) }
     var deepseekBalanceRequestID: UUID?
     var deepseekReceivedActivities: [SessionActivity] {
         get { activityState.deepseekActivities }
@@ -110,7 +124,6 @@ final class IslandModel: ObservableObject {
     var deepseekSpikeSnoozedUntil = Date.distantPast
     var deepseekFailureCount = 0
     var lastDeepSeekBalanceAttempt = Date.distantPast
-    var deepseekSourceSignature = ""
     var deepseekBalanceBinding: DeepSeekBalanceBinding?
     var deepseekBalanceReads = DeepSeekBalanceReadDependencies()
     var deepseekBalanceCoordinator: DeepSeekBalanceCoordinator?
@@ -129,8 +142,6 @@ final class IslandModel: ObservableObject {
     private let installationOverride: ProviderInstallationDetection?
     let defaults: UserDefaults
     private var modules = ProviderModules()
-    private var codexSourceSignature = ""
-    private var claudeSourceSignature = ""
     /// Quota windows exist for Codex and Claude only; DeepSeek reports nil.
     var quota: QuotaSnapshot? {
         get { providerQuota(selectedProvider) }
@@ -191,14 +202,8 @@ final class IslandModel: ObservableObject {
         }
     }
     func taskPresentationOptions(for values: [SessionActivity]) -> TaskPresentationOptions {
-        var hosts: [String: TaskHostLabel] = [:]
-        for value in values where value.sourceHostID == nil && (value.provider == .claude || value.launchedByEmbeddingApp) {
-            if let host = hostApplication(for: value) {
-                let label = TaskHostLabel(name: host.name, isClaudeDesktop: host.isClaudeDesktop)
-                hosts[value.id] = label
-                hosts[value.canonicalized().id] = label
-            }
-        }
+        let hosts = hostTracking.labels(for: values, activities: activities, inbox: completionInbox,
+            remoteSourceIDs: Set(claudeRemoteTargets.map(\.id))) { .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop) }
         return .init(hideProjects: hideProjects, hostApplications: hosts,
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost)
     }
@@ -310,7 +315,9 @@ final class IslandModel: ObservableObject {
     func retryClaudeLocalSetup() {
         guard isModuleEnabled(.claude), !demo, !stopped else { return }
         let home = claudeHome, generation = claudeGeneration
-        Task { [weak self] in await self?.ensureClaudeHooks(home: home, generation: generation) }
+        launchOwnedWork(.init(.setup, provider: .claude, identifier: "local")) { [weak self] _ in
+            await self?.ensureClaudeHooks(home: home, generation: generation)
+        }
     }
     @Published var expanded = false
     @Published var pinned = false
@@ -336,7 +343,6 @@ final class IslandModel: ObservableObject {
     var onQuit: (() -> Void)?
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?
-    private var openingActivities: Set<String> = []
     /// The expanded task header offers each enabled module's desktop app,
     /// whether or not it has a task. A module without one shows no button.
     static let showsAppButtonsKey = "showAppButtons"
@@ -355,7 +361,7 @@ final class IslandModel: ObservableObject {
         }.value
     }
     var onOpenDesktopApplication: ((AgentProvider, URL) async -> ActivityOpenOutcome)?
-    private var desktopApplicationScan: Task<Void, Never>?
+    private var desktopApplicationScan: Task<Void, Never>? { ownedWork.task(.init(.applications)) }
     private var desktopApplicationsScannedAt = Date.distantPast
     /// Installations change rarely, so opening the panel looks again at most
     /// once a minute; settings changes and a failed open look at once. Demo
@@ -369,11 +375,10 @@ final class IslandModel: ObservableObject {
         }
         desktopApplicationScan?.cancel()
         let resolve = desktopApplicationResolver
-        desktopApplicationScan = Task { [weak self] in
+        launchOwnedWork(.init(.applications)) { [weak self] workTicket in
             var found: [AgentProvider: URL] = [:]
             for provider in providers { found[provider] = await resolve(provider) }
-            guard let self, !Task.isCancelled else { return }
-            self.desktopApplicationScan = nil
+            guard let self, !Task.isCancelled, self.ownedWork.owns(workTicket) else { return }
             guard found != self.desktopApplications else { return }
             self.desktopApplications = found; self.onLayoutChange?()
         }
@@ -381,10 +386,12 @@ final class IslandModel: ObservableObject {
     func openDesktopApplication(_ provider: AgentProvider) {
         guard appButtonProviders.contains(provider), let application = desktopApplications[provider],
               let open = onOpenDesktopApplication else { return }
-        navigationError = nil
-        Task { [weak self] in
+        clearNavigationError()
+        let generation = sourceGeneration(for: provider)
+        launchOwnedWork(.init(.navigation, provider: provider, identifier: "desktop")) { [weak self] _ in
             let outcome = await open(provider, application)
-            guard let self, case .failed(let failure) = outcome else { return }
+            guard let self, generation == self.sourceGeneration(for: provider), !self.sleeping, !self.stopped,
+                  !Task.isCancelled, case .failed(let failure) = outcome else { return }
             self.showNavigationError(failure)
             self.refreshDesktopApplications()
         }
@@ -471,7 +478,7 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaStarting = false
     private let reader = LocalActivityReader()
     private let realtimeMonitor = RealtimeActivityMonitor()
-    private var remoteTask: Task<Void, Never>?
+    private var remoteTask: Task<Void, Never>? { ownedWork.task(.init(.remote, provider: .codex)) }
     private var remoteControlHostIDs: Set<String>?
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
@@ -483,7 +490,7 @@ final class IslandModel: ObservableObject {
     private var claudeCloudHistoryBinding = ClaudeCloudHistoryBinding()
     private var claudeCloudGeneration = 0
     private let claudeRemoteSetup: ClaudeRemoteSetup
-    private var claudeDiscoveryTask: Task<Void, Never>?
+    private var claudeDiscoveryTask: Task<Void, Never>? { ownedWork.task(.init(.discovery, provider: .claude)) }
     private var claudeDiscoveryRevision = 0
     private var claudeRemoteSetupTasks: [String: Task<ClaudeHookInstaller.Status, Error>] = [:]
     private var claudeRemoteSetupIDs: [String: UUID] = [:]
@@ -506,6 +513,11 @@ final class IslandModel: ObservableObject {
         let generation = claudeGeneration, requestID = UUID()
         let setup = claudeRemoteSetup
         let task = Task { try await setup.install(target: target, requireHome: true) }
+        launchOwnedWork(.init(.setup, provider: .claude, identifier: targetID)) { _ in
+            await withTaskCancellationHandler {
+                _ = try? await task.value
+            } onCancel: { task.cancel() }
+        }
         claudeRemoteSetupTasks[targetID] = task
         claudeRemoteSetupIDs[targetID] = requestID
         configuringClaudeHosts.insert(targetID)
@@ -538,8 +550,12 @@ final class IslandModel: ObservableObject {
         }
     }
     private func cancelClaudeRemoteSetup() {
-        claudeDiscoveryTask?.cancel(); claudeDiscoveryTask = nil
+        claudeDiscoveryTask?.cancel(); cancelOwnedWork(.init(.discovery, provider: .claude))
         claudeRemoteSetupTasks.values.forEach { $0.cancel() }
+        for targetID in claudeRemoteSetupTasks.keys {
+            cancelOwnedWork(.init(.setup, provider: .claude, identifier: targetID))
+            cancelOwnedWork(.init(.setup, provider: .claude, identifier: "auto:" + targetID))
+        }
         claudeRemoteSetupTasks.removeAll()
         claudeRemoteSetupIDs.removeAll()
         configuringClaudeHosts.removeAll()
@@ -548,6 +564,7 @@ final class IslandModel: ObservableObject {
     func reconcileClaudeRemoteTargets(_ targets: [RemoteActivityTarget]) {
         for previous in claudeRemoteTargets where !targets.contains(previous) {
             claudeRemoteSetupTasks.removeValue(forKey: previous.id)?.cancel()
+            cancelOwnedWork(.init(.setup, provider: .claude, identifier: previous.id))
             claudeRemoteSetupIDs.removeValue(forKey: previous.id)
             configuringClaudeHosts.remove(previous.id)
             claudeRemoteSetupStatus.removeValue(forKey: previous.id)
@@ -560,14 +577,14 @@ final class IslandModel: ObservableObject {
     }
     private func discoverClaudeRemoteTargets(refresh: Bool = false) {
         guard isModuleEnabled(.claude), !sleeping, !stopped, !demo else { return }
-        if refresh { claudeDiscoveryTask?.cancel(); claudeDiscoveryTask = nil }
+        if refresh { claudeDiscoveryTask?.cancel(); cancelOwnedWork(.init(.discovery, provider: .claude)) }
         guard claudeDiscoveryTask == nil else { return }
         lastClaudeDiscovery = Date(); claudeDiscoveryRevision += 1
         let revision = claudeDiscoveryRevision, generation = claudeGeneration
         let codexHome = home, sourceHome = claudeHome, includeSSH = monitorsSSH
-        claudeDiscoveryTask = Task { [weak self] in
+        launchOwnedWork(.init(.discovery, provider: .claude)) { [weak self] workTicket in
             guard let self else { return }
-            defer { if revision == self.claudeDiscoveryRevision { self.claudeDiscoveryTask = nil } }
+            defer { if revision == self.claudeDiscoveryRevision { self.ownedWork.finish(workTicket) } }
             let targets = includeSSH ? await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: sourceHome) : []
             guard !Task.isCancelled, generation == self.claudeGeneration, !self.stopped, !self.sleeping else { return }
             self.reconcileClaudeRemoteTargets(targets)
@@ -583,7 +600,7 @@ final class IslandModel: ObservableObject {
             failures: claudeRemoteSetupFailedAt, inFlight: configuringClaudeHosts, now: Date())
         let generation = claudeGeneration
         for target in pending {
-            Task { [weak self] in
+            launchOwnedWork(.init(.setup, provider: .claude, identifier: "auto:" + target.id)) { [weak self] _ in
                 guard let self, generation == self.claudeGeneration else { return }
                 _ = await self.configureClaudeRemote(targetID: target.id)
             }
@@ -593,10 +610,10 @@ final class IslandModel: ObservableObject {
     var onClaudeLogin: (() -> Void)?
     var onClaudeOrganizationSelection: (([ClaudeWebOrganization]) -> Void)?
     private var claudeOrganizationChoices: [ClaudeWebOrganization] = []
-    private var claudeQuotaRestartTask: Task<Void, Never>?
-    private var claudeQuotaTask: Task<Void, Never>?
-    private var claudeActivityTask: Task<Void, Never>?
-    private var claudeGeneration = 0
+    private var claudeQuotaRestartTask: Task<Void, Never>? { ownedWork.task(.init(.quotaRestart, provider: .claude)) }
+    private var claudeQuotaTask: Task<Void, Never>? { ownedWork.task(.init(.quota, provider: .claude)) }
+    private var claudeActivityTask: Task<Void, Never>? { ownedWork.task(.init(.activity, provider: .claude)) }
+    private var claudeGeneration: Int { Int(lifecycle.version(.claude)) }
     /// Unfiltered reader state also feeds completion retention while embedded
     /// sessions are hidden. Only presentation and attention are filtered.
     private var claudeReceivedActivities: [SessionActivity] {
@@ -644,8 +661,8 @@ final class IslandModel: ObservableObject {
         set { activityState.inbox = newValue }
     }
     private var clock: Timer?
-    private var refreshTask: Task<Void, Never>?
-    private var localTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>? { ownedWork.task(.init(.quota, provider: .codex)) }
+    private var localTask: Task<Void, Never>? { ownedWork.task(.init(.activity, provider: .codex)) }
     private var closeWork: DispatchWorkItem?
     private var rateExpiryWork: DispatchWorkItem?
     private var rateExpiryAt: Date?
@@ -655,11 +672,11 @@ final class IslandModel: ObservableObject {
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
         Task { @MainActor in self?.refreshActivity(metricsOnly: !discover) }
     }
-    private(set) var sleeping = false
-    private(set) var stopped = false
+    var sleeping: Bool { lifecycle.isSleeping }
+    var stopped: Bool { lifecycle.isStopped }
     private(set) var interactionSuspended = false
     private var lastDiscovery = Date.distantPast
-    private var sourceGeneration = 0
+    private var sourceGeneration: Int { Int(lifecycle.version(.codex)) }
     private var observations: [NSObjectProtocol] = []
     let demo: Bool
     private let demoClock: () -> Date
@@ -828,9 +845,9 @@ final class IslandModel: ObservableObject {
         if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), enabledProviders.contains(saved) {
             selectedProvider = saved
         } else { selectedProvider = enabledProviders.first ?? .codex }
-        codexSourceSignature = currentCodexSourceSignature
-        claudeSourceSignature = currentClaudeSourceSignature
-        deepseekSourceSignature = currentDeepSeekSourceSignature
+        lifecycle = ApplicationLifecycleCoordinator(demo: demo, configuration: .init(enabled: Set(enabledProviders),
+            sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],
+            hasDemoSnapshot: demo && demoArguments != nil))
         deepseekBalanceBinding = currentDeepSeekBalanceBinding
         if !demo { restoreDeepSeekHistory() }
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
@@ -846,10 +863,9 @@ final class IslandModel: ObservableObject {
     }
 
     func start() {
-        if !demo { refreshQuota(); refreshActivity(); refreshRemote(); startClaudeActivity(); startDeepSeekActivity() }
-        refreshDesktopApplications()
-        scheduleClock()
-        scheduleRateExpiry()
+        let plan = lifecycle.start()
+        guard !plan.actions.isEmpty else { return }
+        performLifecycle(plan)
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
@@ -863,33 +879,27 @@ final class IslandModel: ObservableObject {
         })
     }
     func prepareForSleep() async {
-        sleeping = true
-        logWatcher.stop()
-        invalidateWork()
-        claudeGeneration += 1
-        cancelHostTracking()
-        cancelClaudeRemoteSetup()
-        claudeQuotaRestartTask?.cancel(); claudeQuotaRestartTask = nil
-        claudeQuotaTask?.cancel(); claudeActivityTask?.cancel(); claudeActivityTask = nil
+        let plan = lifecycle.prepareForSleep()
+        guard plan.actions.contains(.suspendSources) else { return }
+        performLifecycle(plan)
+        navigation.cancel(); clearNavigationError()
+        invalidateWork(invalidateSource: false)
         claudeRefreshing = false
-        deepseekGeneration += 1; deepseekActivityTask?.cancel(); deepseekActivityTask = nil
-        cancelDeepSeekBalanceRead()
+        let balance = cancelDeepSeekBalanceRead(stop: false)
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
         let claude = claudeMonitor, deepseek = deepseekMonitor, realtime = realtimeMonitor
-        await deadline.perform([
-            { await quota?.stop() }, { await claudeQuota?.stop() },
-            { await cloud?.suspend() }, { await claude.shutdown(deadline: deadline) },
-            { await deepseek.shutdown() }, { await realtime.shutdown(deadline: deadline) }
-        ])
+        await ApplicationLifecycleCoordinator.cleanup([
+            .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
+            .cloud: { await cloud?.suspend() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
+            .deepseekActivity: { await deepseek.shutdown() }, .realtime: { await realtime.shutdown(deadline: deadline) },
+            .balance: { await balance?.stop() }
+        ], deadline: deadline)
     }
     func resumeAfterSleep() {
-        guard !stopped else { return }
-        sleeping = false
-        now = Date()
-        scheduleRateExpiry()
-        for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
-        refreshQuota(); refreshActivity(); refreshRemote(); startClaudeActivity(); startDeepSeekActivity()
+        let plan = lifecycle.resume()
+        guard !plan.actions.isEmpty else { return }
+        now = Date(); performLifecycle(plan)
     }
     func setExpanded(_ value: Bool) {
         guard !value || !interactionSuspended else { return }
@@ -899,11 +909,14 @@ final class IslandModel: ObservableObject {
         if !demo, !sleeping, !stopped {
             logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: value)
             let generation = sourceGeneration
-            Task { [weak self] in
-                guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped else { return }
+            launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
+                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
                 await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+                guard self.lifecycle.owns(ticket) else { return }
                 await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+                guard self.lifecycle.owns(ticket) else { return }
                 await self.claudeCloudCoordinator?.setExpanded(self.expanded)
+                guard self.lifecycle.owns(ticket) else { return }
                 await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
             }
             if value { refreshActivity(metricsOnly: true) }
@@ -932,150 +945,98 @@ final class IslandModel: ObservableObject {
         if suspended { close() }
     }
     func close() { pinned = false; setExpanded(false) }
-    private struct DescendantAcknowledgment {
-        let activity: SessionActivity
-        let token: CompletionInbox.AcknowledgmentToken
-        let source: CompletionInbox.SourceToken
-        let ancestors: [SessionActivity]
+    private func navigationScope(for activity: SessionActivity) -> String? {
+        activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
     }
-    private func sameLifecycle(_ left: SessionActivity, _ right: SessionActivity) -> Bool {
-        left.canonicalized().id == right.canonicalized().id && left.provider == right.provider && left.sourceHostID == right.sourceHostID &&
-            left.parentThreadID == right.parentThreadID && left.turnID == right.turnID && left.turnStartedAt == right.turnStartedAt &&
-            left.phase == right.phase && left.phaseChangedAt == right.phaseChangedAt && left.turnFailed == right.turnFailed
-    }
-    private func descendantAcknowledgments(for parent: SessionActivity, source: CompletionInbox.SourceToken) -> [DescendantAcknowledgment] {
-        guard parent.parentThreadID == nil, let group = taskGroup(for: parent), sameLifecycle(group.primary, parent) else { return [] }
-        let members = Dictionary(group.members.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
-        return group.members.compactMap { child in
-            guard child.id != parent.id, !child.isInternalReview, child.provider == parent.provider, child.sourceHostID == parent.sourceHostID,
-                  child.turnID != nil, child.turnStartedAt != nil, [.completed, .interrupted].contains(child.phase),
-                  let token = completionInbox.acknowledgment(for: child), completionInbox.sourceToken(for: child) == source else { return nil }
-            var current = child, ancestors: [SessionActivity] = [], seen = Set<String>()
-            for _ in 0..<64 {
-                guard seen.insert(current.id).inserted, let parentSession = current.parentThreadID,
-                      let ancestor = members[current.provider.activityID(sessionID: parentSession, sourceHostID: current.sourceHostID)],
-                      ancestor.provider == parent.provider, ancestor.sourceHostID == parent.sourceHostID,
-                      [.completed, .interrupted].contains(ancestor.phase) else { return nil }
-                ancestors.append(ancestor)
-                if ancestor.id == parent.id { return DescendantAcknowledgment(activity: child, token: token, source: source, ancestors: ancestors) }
-                current = ancestor
-            }
-            return nil
-        }
+    private func acceptsNavigation(_ activity: SessionActivity) -> Bool {
+        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo)
     }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
-              openingActivities.insert(activity.id).inserted else { return }
-        navigationError = nil
-        let generation = sourceGeneration(for: activity.provider)
-        let acknowledgment = completionInbox.acknowledgment(for: activity)
-        let source = completionInbox.sourceToken(for: activity)
-        let descendants = acknowledgment == nil ? [] : descendantAcknowledgments(for: activity, source: source)
-        Task { [weak self] in
+              let operation = navigation.begin(activity: activity, target: target, version: UInt64(sourceGeneration(for: activity.provider)),
+                activities: activities, inbox: completionInbox, active: acceptsNavigation(activity), scope: navigationScope(for: activity)) else { return }
+        clearNavigationError()
+        launchOwnedWork(.init(.navigation, provider: activity.provider, identifier: operation.id.uuidString)) { [weak self] _ in
             guard let self else { return }
-            defer { self.openingActivities.remove(activity.id) }
-            guard !self.stopped, generation == self.sourceGeneration(for: activity.provider),
-                  self.completionInbox.isCurrentSource(source),
-                  self.isModuleEnabled(activity.provider) || self.demo else { return }
-            let outcome = await open(target)
-            guard !self.stopped, generation == self.sourceGeneration(for: activity.provider),
-                  self.completionInbox.isCurrentSource(source),
-                  self.isModuleEnabled(activity.provider) || self.demo else { return }
-            if case .failed(let failure) = outcome {
-                self.showNavigationError(failure)
-            } else if outcome == .openedConversation {
-                if activity.parentThreadID != nil, activity.provider == .claude || activity.launchedByEmbeddingApp {
-                    guard let current = self.activities.first(where: { $0.canonicalized().id == activity.canonicalized().id }),
-                          self.sameLifecycle(current, activity),
-                          let currentTarget = self.conversationTarget(for: current),
-                          currentTarget.canonicalized().id == target.canonicalized().id else { return }
-                }
-                let acknowledged = acknowledgment.map { self.completionInbox.dismiss(activity, acknowledging: $0) } ?? false
-                if acknowledged {
-                    let current = Dictionary(self.activities.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
-                    var removed = [activity]
-                    for descendant in descendants {
-                        guard self.completionInbox.isCurrentSource(descendant.source),
-                              let child = current[descendant.activity.canonicalized().id], self.sameLifecycle(child, descendant.activity),
-                              descendant.ancestors.allSatisfy({ ancestor in current[ancestor.canonicalized().id].map { self.sameLifecycle($0, ancestor) } ?? false }),
-                              self.completionInbox.dismiss(descendant.activity, acknowledging: descendant.token) else { continue }
-                        removed.append(descendant.activity)
-                    }
-                    self.activities.removeAll {
-                        value in removed.contains { self.sameLifecycle(value, $0) }
-                    }
-                }
-            }
+            defer { self.navigation.abandon(operation) }
+            guard self.navigation.owns(operation), operation.isCurrent(version: UInt64(self.sourceGeneration(for: activity.provider)),
+                active: self.acceptsNavigation(activity), inbox: self.completionInbox, scope: self.navigationScope(for: activity)) else { return }
+            let outcome = await open(operation.target)
+            var values = self.activities, inbox = self.completionInbox
+            guard let result = self.navigation.complete(operation, outcome: outcome, version: UInt64(self.sourceGeneration(for: activity.provider)),
+                active: self.acceptsNavigation(activity), activities: &values, inbox: &inbox, remoteSourceIDs: Set(self.claudeRemoteTargets.map(\.id)),
+                scope: self.navigationScope(for: activity), now: self.navigationClock(), errorDuration: self.navigationErrorDuration), result.accepted else { return }
+            self.completionInbox = inbox
+            if !result.removed.isEmpty { self.activities = values }
+            if result.failure != nil { self.publishNavigationFailure() }
             self.onLayoutChange?(); self.onStatusChange?()
         }
     }
-    /// An open failure expands the island and clears itself after
-    /// `navigationErrorDuration` unless a newer failure replaced it.
+    private func clearNavigationError() {
+        navigation.clearFailure(); cancelOwnedWork(.init(.navigationError))
+        navigationError = nil
+    }
     func showNavigationError(_ message: String) {
-        navigationErrorToken += 1
-        let token = navigationErrorToken, duration = navigationErrorDuration
-        navigationError = message
-        setExpanded(true)
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(0, duration) * 1_000_000_000))
-            guard let self, self.navigationErrorToken == token, self.navigationError != nil else { return }
-            self.navigationError = nil
-            self.onLayoutChange?()
+        guard !stopped else { return }
+        navigation.showFailure(message, now: navigationClock(), duration: navigationErrorDuration)
+        publishNavigationFailure()
+    }
+    private func publishNavigationFailure() {
+        guard let failure = navigation.failure else { return }
+        navigationError = failure.message; setExpanded(true)
+        let delay = max(0.001, failure.deadline - navigationClock() + 0.001)
+        launchOwnedWork(.init(.navigationError)) { [weak self] _ in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            guard let self, self.navigation.expireFailure(failure.id, now: self.navigationClock()) else { return }
+            self.navigationError = nil; self.onLayoutChange?()
         }
     }
 
     func hostApplication(for activity: SessionActivity) -> HostApplication? {
-        guard activity.sourceHostID == nil, activity.provider == .claude || activity.launchedByEmbeddingApp,
-              let session = conversationTarget(for: activity)?.threadID?.lowercased() else { return nil }
-        return hostApplications[activity.provider]?[session]
+        hostTracking.application(for: activity, activities: activities, inbox: completionInbox, remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)))
     }
     func claudeHost(for activity: SessionActivity) -> HostApplication? { hostApplication(for: activity) }
+    private func publishHostApplications(layout: Bool = true) {
+        guard hostApplications != hostTracking.applications else { return }
+        hostApplications = hostTracking.applications
+        if layout { onLayoutChange?() }
+    }
     func recordHostApplications(_ found: [String: HostApplication], provider: AgentProvider) {
-        var next = hostApplications[provider] ?? [:]
-        for (session, host) in found { next[session.lowercased()] = host }
-        guard next != hostApplications[provider] else { return }
-        hostApplications[provider] = next; onLayoutChange?()
+        if hostTracking.record(found, provider: provider) { publishHostApplications() }
     }
     func recordClaudeHosts(_ found: [String: HostApplication]) { recordHostApplications(found, provider: .claude) }
     func trackClaudeHosts(now: Date = Date()) { trackHostApplications(for: .claude, now: now) }
-    /// Shared scan lifecycle. Hidden cards retain their known app until the
-    /// reader and completion inbox both release that session.
-    func trackHostApplications(for provider: AgentProvider, now: Date = Date()) {
-        let work = hostTracking[provider]!
-        var referenced = Set<String>(), wanted = Set<String>()
-        for activity in knownActivities(for: provider) where activity.sourceHostID == nil && !activity.isIgnoredCodexSession {
-            guard provider == .claude || activity.launchedByEmbeddingApp,
-                  let session = conversationTarget(for: activity)?.threadID?.lowercased() else { continue }
-            referenced.insert(session)
-            if !work.attempts.contains(session) || ![.completed, .interrupted].contains(activity.phase) { wanted.insert(session) }
-        }
-        work.attempts.formIntersection(referenced)
-        if hostApplications[provider]?.keys.contains(where: { !referenced.contains($0) }) == true {
-            hostApplications[provider] = hostApplications[provider]?.filter { referenced.contains($0.key) }
-        }
-        guard !demo, !stopped, !sleeping, !wanted.isEmpty, work.scan == nil else { return }
-        let wait = 2 - now.timeIntervalSince(work.scannedAt)
-        guard wait <= 0 else {
-            guard work.retry == nil, !wanted.isSubset(of: work.attempts) else { return }
-            work.retry = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                guard let self, !Task.isCancelled else { return }
-                work.retry = nil; self.trackHostApplications(for: provider)
+    func trackHostApplications(for provider: AgentProvider, now: Date = Date(), refreshRunning: Bool = true) {
+        let decision = hostTracking.prepare(provider: provider, references: knownActivities(for: provider), activities: activities, inbox: completionInbox,
+            remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)), version: UInt64(sourceGeneration(for: provider)), now: now,
+            active: !stopped && !sleeping, demo: demo, refreshRunning: refreshRunning)
+        publishHostApplications(layout: false)
+        switch decision {
+        case .idle: break
+        case .retry(let retry):
+            let owner = ownedWork.begin(.init(.hostRetry, provider: provider), version: retry.version)
+            let task = Task { [weak self] in
+                defer { if let self { self.ownedWork.finish(owner) } }
+                do { try await Task.sleep(nanoseconds: UInt64(max(0, retry.delay) * 1_000_000_000)) } catch { return }
+                guard let self, self.hostTracking.finishRetry(retry, version: UInt64(self.sourceGeneration(for: provider)),
+                    active: !self.stopped && !self.sleeping, cancelled: Task.isCancelled) else { return }
+                self.ownedWork.finish(owner); self.trackHostApplications(for: provider)
             }
-            return
-        }
-        work.scannedAt = now; work.attempts.formUnion(wanted)
-        let generation = sourceGeneration(for: provider)
-        let sourceHome = provider == .codex ? home : claudeHome, resolve = hostApplicationResolver, scanID = UUID()
-        work.scanID = scanID
-        work.scan = Task { [weak self] in
-            let found = await resolve(provider, wanted, sourceHome)
-            guard let self, work.scanID == scanID else { return }
-            work.scan = nil; work.scanID = nil
-            guard !Task.isCancelled, generation == self.sourceGeneration(for: provider),
-                  !self.stopped, !self.sleeping else { return }
-            self.recordHostApplications(found, provider: provider)
-            self.trackHostApplications(for: provider)
+            ownedWork.attach(task, to: owner)
+        case .scan(let scan):
+            let sourceHome = provider == .codex ? home : claudeHome, resolve = hostApplicationResolver
+            let owner = ownedWork.begin(.init(.hostScan, provider: provider), version: scan.version)
+            let task = Task { [weak self] in
+                let found = await resolve(provider, scan.sessions, sourceHome)
+                guard let self else { return }
+                defer { self.ownedWork.finish(owner) }
+                let result = self.hostTracking.complete(scan, found: found, version: UInt64(self.sourceGeneration(for: provider)),
+                    active: !self.stopped && !self.sleeping, cancelled: Task.isCancelled)
+                if result.owned { self.ownedWork.finish(owner) }
+                guard result.accepted else { return }
+                self.publishHostApplications(); self.trackHostApplications(for: provider, refreshRunning: false)
+            }
+            ownedWork.attach(task, to: owner)
         }
     }
     func sourceGeneration(for provider: AgentProvider) -> Int {
@@ -1085,8 +1046,10 @@ final class IslandModel: ObservableObject {
         case .deepseek: deepseekGeneration
         }
     }
-    private func cancelHostTracking(for provider: AgentProvider? = nil) {
-        for (key, work) in hostTracking where provider == nil || key == provider { work.cancel() }
+    private func cancelHostTracking(for provider: AgentProvider? = nil, clearApplications: Bool = false) {
+        hostTracking.cancel(provider: provider, clearApplications: clearApplications)
+        ownedWork.cancel(provider: provider, kinds: [.hostScan, .hostRetry])
+        publishHostApplications(layout: false)
     }
 
     func refreshQuota() {
@@ -1116,9 +1079,9 @@ final class IslandModel: ObservableObject {
         guard let coordinator = codexQuotaCoordinator else { return }
         codexQuotaReceiptID = receipt
         codexQuotaStarting = true; codexRefreshing = true
-        refreshTask = Task { [weak self] in
+        launchOwnedWork(.init(.quota, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
-            defer { if self.codexQuotaReceiptID == receipt { self.refreshTask = nil; self.codexQuotaReceiptID = nil } }
+            defer { if self.codexQuotaReceiptID == receipt { self.ownedWork.finish(workTicket); self.codexQuotaReceiptID = nil } }
             guard generation == self.sourceGeneration, !Task.isCancelled else { return }
             await coordinator.configure(home: sourceHome, customPath: custom, enabled: true, context: UInt64(generation))
             guard generation == self.sourceGeneration, !Task.isCancelled else { return }
@@ -1141,7 +1104,7 @@ final class IslandModel: ObservableObject {
     @discardableResult private func detachCodexQuota(preservingCadence: Bool = true) -> CodexQuotaCoordinator? {
         let previous = codexQuotaCoordinator; previous?.invalidateSource()
         codexQuotaCoordinator = nil; codexQuotaOwnerID = UUID(); codexQuotaReceiptID = nil
-        refreshTask?.cancel(); refreshTask = nil; codexRefreshing = false; codexQuotaStarting = false
+        refreshTask?.cancel(); cancelOwnedWork(.init(.quota, provider: .codex)); codexRefreshing = false; codexQuotaStarting = false
         if !preservingCadence { codexQuotaState = nil }
         return previous
     }
@@ -1153,9 +1116,9 @@ final class IslandModel: ObservableObject {
         if provider == .claude { retryClaudeWebConnection(); return }
         guard !codexRefreshing else { return }
         let previous = detachCodexQuota(), generation = sourceGeneration
-        Task { [weak self] in
-            await previous?.stop()
-            guard let self, generation == self.sourceGeneration else { return }
+        launchOwnedWork(.init(.quotaRestart, provider: .codex)) { [weak self] _ in
+            await ApplicationLifecycleCoordinator.cleanup([.codexQuota: { await previous?.stop() }])
+            guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             self.refreshCodexQuota()
         }
     }
@@ -1184,13 +1147,15 @@ final class IslandModel: ObservableObject {
             // Revoke Cloud callbacks now, before either owner awaits browser or
             // client cleanup. Its history binding still retains the same scope.
             stopClaudeCloudMonitor(); syncClaudeCloudMonitor()
-        } else if let cloud = claudeCloudCoordinator { Task { await cloud.refresh() } }
+        } else if let cloud = claudeCloudCoordinator {
+            launchOwnedWork(.init(.activity, provider: .claude, identifier: "cloud-refresh")) { _ in await cloud.refresh() }
+        }
         guard claudeQuotaRestartTask == nil, isModuleEnabled(.claude), !sleeping, !stopped else { return }
         let generation = claudeGeneration, previous = detachClaudeQuota()
-        claudeQuotaRestartTask = Task { [weak self] in
+        launchOwnedWork(.init(.quotaRestart, provider: .claude)) { [weak self] workTicket in
             await previous?.stop()
             guard let self, self.isCurrentClaudeQuotaRead(generation) else { return }
-            self.claudeQuotaRestartTask = nil; self.refreshClaudeQuota()
+            self.ownedWork.finish(workTicket); self.refreshClaudeQuota()
         }
     }
     private func isCurrentClaudeQuotaRead(_ generation: Int) -> Bool {
@@ -1233,9 +1198,9 @@ final class IslandModel: ObservableObject {
         guard let coordinator = claudeQuotaCoordinator else { return }
         claudeQuotaReceiptID = receipt
         claudeQuotaStarting = true; claudeRefreshing = true
-        claudeQuotaTask = Task { [weak self] in
+        launchOwnedWork(.init(.quota, provider: .claude)) { [weak self] workTicket in
             guard let self else { return }
-            defer { if self.claudeQuotaReceiptID == receipt { self.claudeQuotaTask = nil; self.claudeQuotaReceiptID = nil } }
+            defer { if self.claudeQuotaReceiptID == receipt { self.ownedWork.finish(workTicket); self.claudeQuotaReceiptID = nil } }
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
             await coordinator.configure(home: sourceHome, organization: organization, enabled: true, context: UInt64(generation))
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
@@ -1264,7 +1229,7 @@ final class IslandModel: ObservableObject {
     @discardableResult private func detachClaudeQuota(preservingCadence: Bool = true) -> ClaudeQuotaCoordinator? {
         let previous = claudeQuotaCoordinator; previous?.invalidateSource()
         claudeQuotaCoordinator = nil; claudeQuotaOwnerID = UUID(); claudeQuotaReceiptID = nil
-        claudeQuotaTask?.cancel(); claudeQuotaTask = nil; claudeRefreshing = false; claudeQuotaStarting = false
+        claudeQuotaTask?.cancel(); cancelOwnedWork(.init(.quota, provider: .claude)); claudeRefreshing = false; claudeQuotaStarting = false
         if !preservingCadence { claudeQuotaState = nil }
         return previous
     }
@@ -1272,9 +1237,9 @@ final class IslandModel: ObservableObject {
         guard isModuleEnabled(.claude), claudeActivityTask == nil, !sleeping, !stopped, !demo else { return }
         lastClaudeDiscovery = Date()
         let generation = claudeGeneration, sourceHome = claudeHome, codexHome = home
-        claudeActivityTask = Task { [weak self] in
+        launchOwnedWork(.init(.activity, provider: .claude)) { [weak self] workTicket in
             guard let self else { return }
-            defer { if generation == self.claudeGeneration { self.claudeActivityTask = nil } }
+            defer { if generation == self.claudeGeneration { self.ownedWork.finish(workTicket) } }
             // Install or bring Pacer's hooks current before reading the spool.
             await self.ensureClaudeHooks(home: sourceHome, generation: generation)
             guard generation == self.claudeGeneration, !self.stopped else { return }
@@ -1313,7 +1278,7 @@ final class IslandModel: ObservableObject {
         guard let coordinator = claudeCloudCoordinator else { return }
         let cloudGeneration = claudeCloudGeneration
         let sourceHome = claudeHome, organization = defaults.string(forKey: "claudeWebOrganizationID") ?? ""
-        Task { [weak self] in
+        launchOwnedWork(.init(.activity, provider: .claude, identifier: "cloud-binding")) { [weak self] _ in
             guard let self, self.isCurrentClaudeQuotaRead(generation), self.claudeCloudGeneration == cloudGeneration else { return }
             await coordinator.resume(context: UInt64(generation))
             guard self.isCurrentClaudeQuotaRead(generation), self.claudeCloudGeneration == cloudGeneration else { return }
@@ -1326,6 +1291,7 @@ final class IslandModel: ObservableObject {
     }
     private func acceptsClaudeCloud(_ state: ClaudeCloudState, generation: Int) -> Bool {
         guard generation == claudeCloudGeneration, state.context == UInt64(claudeGeneration), !sleeping, !stopped, isModuleEnabled(.claude) else { return false }
+        claudeCloudNavigationScope = state.connectionContext + "|" + (defaults.string(forKey: "claudeWebOrganizationID") ?? "")
         if claudeCloudHistoryBinding.observe(state) {
             let ids = Set((activities + completionInbox.activities).filter { $0.claudeCloud != nil }.map(\.id))
             completionInbox.remove(activityIDs: ids)
@@ -1335,10 +1301,11 @@ final class IslandModel: ObservableObject {
         return true
     }
     private func stopClaudeCloudMonitor() {
+        claudeCloudNavigationScope = nil
         guard let coordinator = claudeCloudCoordinator else { return }
         coordinator.invalidateSource(); claudeCloudCoordinator = nil; claudeCloudGeneration += 1
         let target = claudeMonitor, cloudGeneration = claudeCloudGeneration
-        Task { [weak self] in
+        launchOwnedWork(.init(.reset, provider: .claude, identifier: "cloud")) { [weak self] _ in
             let deadline = ShutdownDeadline()
             await deadline.perform([{ await coordinator.stop() }])
             guard self?.claudeCloudGeneration == cloudGeneration else { return }
@@ -1393,9 +1360,10 @@ final class IslandModel: ObservableObject {
     }
     func refreshTaskSources() {
         refreshActivity()
-        Task { [weak self] in
-            guard let self else { return }
+        launchOwnedWork(.init(.discovery, identifier: "manual")) { [weak self] ticket in
+            guard let self, self.lifecycle.owns(ticket) else { return }
             await self.realtimeMonitor.invalidateRemoteControlCatalog()
+            guard self.lifecycle.owns(ticket) else { return }
             self.refreshRemote()
             await self.claudeCloudCoordinator?.refresh()
         }
@@ -1415,12 +1383,12 @@ final class IslandModel: ObservableObject {
             $0.sourceHostID == nil && $0.hasLiveEvidence && [.running, .waitingForInput].contains($0.phase)
         }.compactMap(\.threadID)) : []
         let agentStates = localSubagentStates(remoteActivities)
-        localTask = Task { [weak self, reader] in
+        launchOwnedWork(.init(.activity, provider: .codex)) { [weak self, reader] workTicket in
             let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true, metricsOnly: onlyMetrics, subagentStates: agentStates)
             guard let self else { return }
             defer {
                 if generation == self.sourceGeneration {
-                    self.localTask = nil
+                    self.ownedWork.finish(workTicket)
                     if self.localActivityDirty { self.refreshActivity(metricsOnly: !self.localActivityNeedsDiscovery) }
                 }
             }
@@ -1446,9 +1414,9 @@ final class IslandModel: ObservableObject {
         lastRemoteDiscovery = Date()
         let generation = sourceGeneration
         let sourceHome = home
-        remoteTask = Task { [weak self] in
+        launchOwnedWork(.init(.remote, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
-            defer { if generation == self.sourceGeneration { self.remoteTask = nil } }
+            defer { if generation == self.sourceGeneration { self.ownedWork.finish(workTicket) } }
             await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] activities, statuses, unavailable, requests, names, performance, controls in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
@@ -1523,7 +1491,6 @@ final class IslandModel: ObservableObject {
             ? "|" + home.path : "")
     }
     func applySettings(sourceChanged: Bool) {
-        let oldEnabled = Set(enabledProviders)
         installation = installationOverride ?? (demo && demoArguments != nil
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
@@ -1533,41 +1500,17 @@ final class IslandModel: ObservableObject {
         // stays: clearing it would leave the bar at the wider estimate after any setting.
         compactLayout = .load(from: defaults); settingsRevision += 1
         if clock != nil { scheduleClock() }
-        pruneCompletions()
-        if demo, demoArguments != nil {
-            applyDemoSnapshot()
-            refreshDesktopApplications()
-            onLayoutChange?(); onStatusChange?()
-            return
-        }
-        let newCodex = currentCodexSourceSignature, newClaude = currentClaudeSourceSignature, newDeepSeek = currentDeepSeekSourceSignature
-        let codexChanged = oldEnabled.contains(.codex) != isModuleEnabled(.codex) || newCodex != codexSourceSignature
-        let claudeChanged = oldEnabled.contains(.claude) != isModuleEnabled(.claude) || newClaude != claudeSourceSignature
-        let deepseekChanged = oldEnabled.contains(.deepseek) != isModuleEnabled(.deepseek) || newDeepSeek != deepseekSourceSignature
-        // Turning Claude off by hand also takes Pacer's local hooks out again.
-        if oldEnabled.contains(.claude), !isModuleEnabled(.claude), modules.claudeMode == .disabled, !demo {
-            let home = claudeHome
-            Task.detached(priority: .utility) { try? ClaudeHookInstaller.uninstall(home: home) }
-            claudeLocalSetup = .checking
-        }
-        codexSourceSignature = newCodex; claudeSourceSignature = newClaude
-        if codexChanged { resetCodexSource() }
-        else { logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval); refreshRemote() }
-        if claudeChanged { resetClaudeSource() }
-        else { startClaudeActivity() }
-        syncClaudeCloudMonitor()
-        deepseekSourceSignature = newDeepSeek
-        if deepseekChanged { resetDeepSeekSource() }
-        else { startDeepSeekActivity() }
-        applyDeepSeekBalanceSource()
-        refilterEmbeddedSessions()
-        refreshDesktopApplications()
+        let plan = lifecycle.settings(.init(enabled: Set(enabledProviders),
+            sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],
+            hasDemoSnapshot: demo && demoArguments != nil), explicitlyDisablesClaude: modules.claudeMode == .disabled)
+        for provider in plan.changedProviders { navigation.cancel(provider: provider) }
+        performLifecycle(plan)
         onLayoutChange?(); onStatusChange?()
     }
-    private func resetCodexSource() {
-        cancelHostTracking(for: .codex); hostApplications[.codex] = [:]
+    private func resetCodexSource(versionInvalidated: Bool = false) {
+        cancelHostTracking(for: .codex, clearApplications: true)
         excludedCodexActivityIDs = []; codexReceivedRequests = []; codexLogRequests = []
-        logWatcher.stop(); invalidateWork()
+        logWatcher.stop(); invalidateWork(invalidateSource: !versionInvalidated)
         let previous = detachCodexQuota(preservingCadence: false)
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
         quotaCLI = nil; attention = AttentionPolicy()
@@ -1579,26 +1522,29 @@ final class IslandModel: ObservableObject {
         observeAttentionRequests(claudeAttentionRequests + deepseekAttentionRequests)
         clearSourceState()
         let generation = sourceGeneration
-        Task { [weak self, reader] in
-            guard let self, generation == self.sourceGeneration else { return }
+        launchOwnedWork(.init(.reset, provider: .codex)) { [weak self, reader] _ in
+            guard let self else {
+                await ApplicationLifecycleCoordinator.cleanup([.codexQuota: { await previous?.stop() }]); return
+            }
+            let current = generation == self.sourceGeneration && !self.sleeping && !self.stopped && !Task.isCancelled
             let deadline = ShutdownDeadline()
             let realtime = self.realtimeMonitor
-            await deadline.perform([
-                { await previous?.stop() },
-                { await realtime.shutdown(deadline: deadline) },
-                { await reader.reset() }
-            ])
-            guard generation == self.sourceGeneration else { return }
+            await ApplicationLifecycleCoordinator.cleanup([
+                .codexQuota: { await previous?.stop() },
+                .realtime: { if current { await realtime.shutdown(deadline: deadline) } },
+                .reader: { if current { await reader.reset() } }
+            ], deadline: deadline)
+            guard generation == self.sourceGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             self.refreshCodexQuota(); self.refreshActivity(); self.refreshRemote()
         }
     }
-    private func resetClaudeSource() {
-        claudeGeneration += 1
+    private func resetClaudeSource(versionInvalidated: Bool = false) {
+        if !versionInvalidated { lifecycle.invalidateSources([.claude]) }
         stopClaudeCloudMonitor()
         cancelClaudeRemoteSetup()
         claudeRemoteSetupStatus.removeAll(); claudeRemoteSetupFailures.removeAll(); claudeRemoteSetupFailedAt.removeAll()
-        claudeQuotaRestartTask?.cancel(); claudeQuotaRestartTask = nil
-        claudeQuotaTask?.cancel(); claudeActivityTask?.cancel(); claudeActivityTask = nil
+        claudeQuotaRestartTask?.cancel(); cancelOwnedWork(.init(.quotaRestart, provider: .claude))
+        claudeQuotaTask?.cancel(); claudeActivityTask?.cancel(); cancelOwnedWork(.init(.activity, provider: .claude))
         let previous = detachClaudeQuota(preservingCadence: false)
         claudeOrganizationChoices = []
         claudeQuota = nil; claudeHistory = QuotaCycleHistory(); claudeHistoryWarning = nil; claudeErrorMessage = nil
@@ -1608,25 +1554,27 @@ final class IslandModel: ObservableObject {
         bindCompletionSources(.claude)
         claudeReceivedActivities = []; claudeReceivedRequests = []
         claudeAttentionRequests = []; claudeStreamStatuses = [:]
-        cancelHostTracking(for: .claude)
-        hostApplications[.claude] = [:]
+        cancelHostTracking(for: .claude, clearApplications: true)
         activities.removeAll { $0.provider == .claude }
         observeAttentionRequests(codexAttentionRequests + deepseekAttentionRequests)
         clearSourceState()
         let generation = claudeGeneration
-        Task { [weak self] in
-            guard let self, generation == self.claudeGeneration else { return }
+        launchOwnedWork(.init(.reset, provider: .claude)) { [weak self] _ in
+            guard let self else {
+                await ApplicationLifecycleCoordinator.cleanup([.claudeQuota: { await previous?.stop() }]); return
+            }
+            let current = generation == self.claudeGeneration && !self.sleeping && !self.stopped && !Task.isCancelled
             let deadline = ShutdownDeadline()
             let monitor = self.claudeMonitor
-            await deadline.perform([
-                { await previous?.stop() }, { await monitor.shutdown(deadline: deadline) }
-            ])
-            guard generation == self.claudeGeneration else { return }
+            await ApplicationLifecycleCoordinator.cleanup([
+                .claudeQuota: { await previous?.stop() }, .claudeActivity: { if current { await monitor.shutdown(deadline: deadline) } }
+            ], deadline: deadline)
+            guard generation == self.claudeGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             self.refreshClaudeQuota(); self.startClaudeActivity()
         }
     }
     func clearSourceState() {
-        navigationError = nil
+        clearNavigationError()
         activityState.clearFirstOutput(); latestFirstOutputLatency = nil
         activityState.replaceActivities(activities, at: now)
         latestFirstOutputLatency = activityState.latestFirstOutput?.seconds
@@ -1644,37 +1592,34 @@ final class IslandModel: ObservableObject {
     }
 
     func shutdown() async {
-        stopped = true
+        let plan = lifecycle.shutdown()
+        guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()
-        logWatcher.stop()
-        clock?.invalidate()
-        closeWork?.cancel()
-        invalidateWork()
+        clock?.invalidate(); closeWork?.cancel()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
-        claudeGeneration += 1; claudeQuotaRestartTask?.cancel(); claudeQuotaTask?.cancel(); claudeActivityTask?.cancel()
-        deepseekGeneration += 1; deepseekActivityTask?.cancel(); cancelDeepSeekBalanceRead()
-        cancelHostTracking()
-        cancelClaudeRemoteSetup()
+        performLifecycle(plan)
+        navigation.cancel(); clearNavigationError()
+        invalidateWork(invalidateSource: false)
+        let balance = cancelDeepSeekBalanceRead(stop: false)
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
-        let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup
-        let realtime = realtimeMonitor
-        let completed = await deadline.perform([
-            { await quota?.stop() }, { await claudeQuota?.stop() },
-            { await cloud?.stop() }, { await claude.shutdown(deadline: deadline) },
-            { await deepseek.shutdown() }, { await setup.shutdown() },
-            { await realtime.shutdown(deadline: deadline) }
-        ])
+        let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup, realtime = realtimeMonitor
+        let completed = await ApplicationLifecycleCoordinator.cleanup([
+            .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
+            .cloud: { await cloud?.stop() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
+            .deepseekActivity: { await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },
+            .realtime: { await realtime.shutdown(deadline: deadline) }, .balance: { await balance?.stop() }
+        ], deadline: deadline)
         if !completed { OwnedProcessTermination.terminateAll() }
     }
 
-    private func invalidateWork() {
+    private func invalidateWork(invalidateSource: Bool = true) {
         rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
-        sourceGeneration += 1
+        if invalidateSource { lifecycle.invalidateSources([.codex]) }
         codexQuotaCoordinator?.invalidateSource(); refreshTask?.cancel()
         localTask?.cancel()
-        remoteTask?.cancel(); remoteTask = nil
-        localTask = nil
+        remoteTask?.cancel(); cancelOwnedWork(.init(.remote, provider: .codex))
+        cancelOwnedWork(.init(.activity, provider: .codex))
         codexRefreshing = false
     }
     private func pruneCompletions() {
@@ -1712,17 +1657,55 @@ final class IslandModel: ObservableObject {
     }
     private func tick() {
         now = Date()
-        pruneCompletions()
-        codexHistory.prune(at: now); claudeHistory.prune(at: now)
-        guard !sleeping, !stopped, !demo else { return }
-        refreshCodexQuota(force: false); refreshClaudeQuota(force: false)
-        if now.timeIntervalSince(lastDiscovery) >= (streamStatuses["local"]?.connected == true ? 120 : 60) { refreshActivity() }
-        if now.timeIntervalSince(lastRemoteDiscovery) >= 30 { refreshRemote() }
-        if isModuleEnabled(.claude), now.timeIntervalSince(lastClaudeDiscovery) >= 30 { discoverClaudeRemoteTargets() }
-        // A running task reads every minute too, so a spend spike shows within minutes.
-        let deepseekActive = expanded || running.contains { $0.provider == .deepseek }
-        refreshDeepSeekBalance(scheduled: true, active: deepseekActive)
-        onStatusChange?()
+        performLifecycle(lifecycle.tick(.init(now: now, expanded: expanded, codexConnected: streamStatuses["local"]?.connected == true,
+            lastCodexDiscovery: lastDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
+            deepseekRunning: running.contains { $0.provider == .deepseek })))
+        if !sleeping, !stopped, !demo { onStatusChange?() }
+    }
+    private func performLifecycle(_ plan: ApplicationLifecycleCoordinator.Plan) {
+        for action in plan.actions {
+            switch action {
+            case .quota(let provider, let force, let active):
+                switch provider {
+                case .codex: refreshCodexQuota(force: force)
+                case .claude: refreshClaudeQuota(force: force)
+                case .deepseek: refreshDeepSeekBalance(scheduled: !force, active: active)
+                }
+            case .codexActivity: refreshActivity()
+            case .remoteActivity: refreshRemote()
+            case .activity(let provider):
+                if provider == .claude { startClaudeActivity() }
+                else if provider == .deepseek { startDeepSeekActivity() }
+            case .claudeTargets: discoverClaudeRemoteTargets()
+            case .applications: refreshDesktopApplications()
+            case .clock: scheduleClock()
+            case .displayExpiry: scheduleRateExpiry()
+            case .pruneActivities: pruneCompletions()
+            case .pruneHistory: codexHistory.prune(at: now); claudeHistory.prune(at: now)
+            case .resetSource(let provider):
+                switch provider {
+                case .codex: resetCodexSource(versionInvalidated: true)
+                case .claude: resetClaudeSource(versionInvalidated: true)
+                case .deepseek: resetDeepSeekSource(versionInvalidated: true)
+                }
+            case .updateActivityPolicy: logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval)
+            case .cloud: syncClaudeCloudMonitor()
+            case .balanceBinding: applyDeepSeekBalanceSource()
+            case .refilter: refilterEmbeddedSessions()
+            case .removeClaudeHooks:
+                let home = claudeHome
+                launchOwnedWork(.init(.setup, provider: .claude, identifier: "uninstall")) { _ in
+                    await Task.detached(priority: .utility) { _ = try? ClaudeHookInstaller.uninstall(home: home) }.value
+                }
+                claudeLocalSetup = .checking
+            case .retryHostTracking: for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
+            case .stopWatches: logWatcher.stop()
+            case .cancelHostTracking: cancelHostTracking()
+            case .cancelRemoteSetup: cancelClaudeRemoteSetup()
+            case .demoSnapshot: applyDemoSnapshot()
+            case .suspendSources, .stopSources: break
+            }
+        }
     }
     /// The collapsed bar already shows each of these states while it lasts, so
     /// a moment only leaves the island as a system notification, when chosen.

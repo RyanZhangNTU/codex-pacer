@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,7 +20,11 @@ internal static class SlowEngineChecks
         Console.InputEncoding = new UTF8Encoding(false); Console.OutputEncoding = new UTF8Encoding(false);
         void Reply(object data) { lock (Console.Out) { Console.WriteLine(JsonSerializer.Serialize(data)); Console.Out.Flush(); } }
         Reply(new { protocolVersion = 1, type = "hello", engine = "PacerEngine" });
-        int requests = 0;
+        int requests = 0, replies = 0;
+        var releaseLateReplies = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sentLateReply = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void ReplyCounts(string id) => Reply(new { protocolVersion = 1, type = "result", id, ok = true,
+            value = new { requests = Volatile.Read(ref requests), replies = Volatile.Read(ref replies) } });
         while (Console.ReadLine() is { } line)
         {
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
@@ -30,14 +35,35 @@ internal static class SlowEngineChecks
                 if (mode == "exit") return 0;
                 if (mode == "slow") _ = Task.Run(async () =>
                 {
-                    await Task.Delay(1000);
-                    try { Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { version = 1 } }); }
+                    await releaseLateReplies.Task;
+                    try
+                    {
+                        Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { version = 1 } });
+                        Interlocked.Increment(ref replies); sentLateReply.TrySetResult(true);
+                    }
+                    catch (IOException) { }
+                });
+            }
+            else if (method == "releaseLateReplies")
+            {
+                releaseLateReplies.TrySetResult(true);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await sentLateReply.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                        ReplyCounts(id);
+                    }
+                    catch (TimeoutException)
+                    {
+                        Reply(new { protocolVersion = 1, type = "result", id, ok = false, error = "The synthetic delayed reply was not sent" });
+                    }
                     catch (IOException) { }
                 });
             }
             else
             {
-                Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { requests } });
+                ReplyCounts(id);
                 if (method == "shutdown") return 0;
             }
         }
@@ -51,7 +77,9 @@ internal static class SlowEngineChecks
             ShellProjection.RequestTimeout = TimeSpan.FromMilliseconds(250);
             foreach (string mode in new[] { "silent", "slow", "exit" })
             {
-                await using var engine = new EngineClient(TimeSpan.FromMilliseconds(500));
+                // Initialization uses the normal engine budget. Presentation
+                // queries still use the artificial 250 ms deadline above.
+                await using var engine = new EngineClient();
                 await engine.StartAsync(Environment.ProcessPath!, true, mode);
                 ShellProjection.Client = engine;
                 var window = new IslandWindow(engine, true, false, animationOverride: false) { ShowActivated = false, IsHitTestVisible = false };
@@ -64,6 +92,9 @@ internal static class SlowEngineChecks
                     _ = NativeCompactBar.Shared.Read(new(), "en", []);
                     Check(watch.Elapsed < TimeSpan.FromMilliseconds(125), "A cache read must return before the request deadline, without waiting on the UI thread");
                     await Task.Delay(450); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+                    await PresentationWait.UntilAsync(() => ShellProjection.LastFailure != null && beats >= 5,
+                        "The timed-out projection must publish its failure while the dispatcher continues its heartbeat");
+                    await window.WaitForPresentationAsync();
                     Check(beats >= 5, "The UI dispatcher must keep processing input/heartbeat callbacks while the engine does not answer");
                     Check(ShellProjection.LastFailure != null && NativeCompactBar.Shared.Read(new(), "en", []).Components.Length == 0,
                         "A timeout or engine exit must show an unavailable presentation, rather than retain a pending wait");
@@ -72,12 +103,17 @@ internal static class SlowEngineChecks
                     for (int repeat = 0; repeat < 100; repeat++) _ = NativeCompactBar.Shared.Read(new(), "en", []);
                     if (mode != "exit")
                     {
-                        var count = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromMilliseconds(250));
+                        var count = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromSeconds(8));
                         Check(count.GetProperty("requests").GetInt32() <= 2, "Repeated renders must coalesce requests and must not retry a failed input in a busy loop");
                     }
                     if (mode == "slow")
                     {
-                        await Task.Delay(1000);
+                        // Release only after the UI has observed the timeout.
+                        // The fixture acknowledgment follows the actual late
+                        // frame on stdout, without a timed delay or polling.
+                        var lateReply = await engine.QueryAsync<JsonElement>("releaseLateReplies", timeout: TimeSpan.FromSeconds(8));
+                        Check(lateReply.GetProperty("replies").GetInt32() > 0, "The synthetic delayed engine must send its late reply");
+                        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
                         Check(NativeCompactBar.Shared.Read(new(), "en", []).Components.Length == 0,
                             "A reply after its deadline cannot overwrite the error placeholder");
                     }

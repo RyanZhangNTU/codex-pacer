@@ -41,8 +41,8 @@ internal static class HarnessNavigationChecks
             Check(Descendants(island).OfType<TaskRow>().Where(row => State(row).Provider != "deepseek").All(row =>
                 row.IsEnabled == (engine.LatestSnapshot!.ActivityLinks?.Any(link => link.ActivityID == State(row).Id && link.Provider == State(row).Provider) == true)),
                 "Conversation actions must be backed by the engine's current source-scoped links");
-            await engine.SendAsync("configure", new { enabledProviders = new[] { "deepseek" } });
-            await engine.SendAsync("demoStage", new { demoStage = 3 }); await Pump(); await island.WaitForPresentationAsync();
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = new[] { "deepseek" } });
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 }); await island.WaitForPresentationAsync();
             await Until(() => ((Grid)island.FindName("TaskPages")).Children.Count == 1, "A replaced page must release its outgoing visual");
             var row = Descendants(island).OfType<TaskRow>().Single(); var value = State(row);
             Check(value.Unread && value.Phase == "completed" && row.IsEnabled && row.Focusable && row.ActualHeight == 54,
@@ -72,6 +72,8 @@ internal static class HarnessNavigationChecks
             Check(opened.Single() == fixture && island.LogicalTarget.Height > 38
                 && engine.LatestSnapshot!.Presentation!.Rows.Single().Unread, "Failed opens must leave the panel and unread completion intact");
             var status = (TextBlock)island.FindName("StatusLabel");
+            await Until(() => engine.LatestSnapshot?.NavigationError != null && status.Visibility == Visibility.Visible && row.IsEnabled,
+                "A failed launch must publish its shared error and release the single flight before checking the message");
             Check(status.Text == ui.Text("windows.app.open_failed"), "A launch failure cannot be mislabeled as a missing installation");
             if (language == "en" && !motion)
             {
@@ -82,6 +84,7 @@ internal static class HarnessNavigationChecks
                     $"Error expiry must retain the unread completion: elapsed={errorClock.Elapsed.TotalSeconds:0.00}, required={NativeTaskRowTiming.Shared.NavigationErrorDuration - 1}, unread={engine.LatestSnapshot!.Presentation!.Rows.Single().Unread}");
             }
             launchSucceeds = true;
+            await Until(() => row.IsEnabled, "A failed open must release its shared single flight before another explicit click");
             Invoke(row);
             await Until(() => !engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
                 "A successful open must acknowledge only that completion before collapsing");
@@ -94,11 +97,12 @@ internal static class HarnessNavigationChecks
             launchSucceeds = true; island.ApplyPreferences(new() { IslandAppearance = "classic" });
             var currentHarness = buttons.Children.OfType<Button>().Single();
             Invoke(currentHarness); await Until(() => opened.Count == 3, "The toolbar must use the same launcher");
+            await island.WaitForPresentationAsync();
             Check(!engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
                 "Opening the desktop alone must collapse the panel without manufacturing an unread event");
             Invoke(currentHarness); await Pump(); Check(opened.Count == 3, "A cached toolbar button cannot launch while its panel is collapsed");
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
-            await engine.SendAsync("demoStage", new { demoStage = 0 }); await Pump(); await island.WaitForPresentationAsync();
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 0 }); await island.WaitForPresentationAsync();
             await Until(() => ((Grid)island.FindName("TaskPages")).Children.Count == 1, "The new running page must finish replacing the completion page");
             Invoke(row); await Pump();
             Check(opened.Count == 3, "A cached row from a replaced page cannot act on the new task while the panel is open");
@@ -118,7 +122,14 @@ internal static class HarnessNavigationChecks
     private static EngineTaskRow State(TaskRow row) => ((TaskRowState)row.DataContext).Value;
     private static void Hover(TaskRow row, bool inside) => row.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
         { RoutedEvent = inside ? Mouse.MouseEnterEvent : Mouse.MouseLeaveEvent });
-    private static void Invoke(Button button) => ((IInvokeProvider)UIElementAutomationPeer.CreatePeerForElement(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static void Invoke(Button button)
+    {
+        try { ((IInvokeProvider)UIElementAutomationPeer.CreatePeerForElement(button).GetPattern(PatternInterface.Invoke)).Invoke(); }
+        catch (ElementNotEnabledException)
+        {
+            Check(!button.IsEnabled, "UI Automation may reject a retired disabled row without dispatching its old action");
+        }
+    }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     { for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) { var child = VisualTreeHelper.GetChild(root, index); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Until(Func<bool> condition, string message, TimeSpan? timeout = null)

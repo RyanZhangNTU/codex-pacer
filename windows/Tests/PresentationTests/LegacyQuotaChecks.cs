@@ -18,6 +18,8 @@ internal static class LegacyQuotaChecks
         engine.Snapshot += value => latest = value;
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en",
             new { providerModes = new { codex = "enabled", claude = "disabled", deepseek = "disabled" } }, referenceFixture: true);
+        await PresentationWait.UntilAsync(() => latest?.QuotaDashboard?.LegacyCodex != null,
+            "The legacy drawing fixture must receive the Codex-only snapshot");
         var data = latest!.QuotaDashboard?.LegacyCodex ?? throw new InvalidOperationException("The real Codex-only engine fixture must project original Classic bars.");
         var reading = data.Buckets.First().Windows.First();
         Check(reading.RemainingPercent == 43 && reading.ValueText == "43" && reading.PaceText.Contains('%'),

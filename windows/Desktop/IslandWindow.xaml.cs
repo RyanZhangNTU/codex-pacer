@@ -30,7 +30,7 @@ public partial class IslandWindow : Window
     private string deepseekPanelStyle = "detailed";
     private readonly WindowsDesktopApplications? desktopApplications;
     private readonly Func<EngineNavigationPlan, EngineTaskRow, Task<bool>> openConversation;
-    private string? openingActivityContext;
+    private readonly HashSet<string> openingActivityContexts = [];
     private readonly Func<bool>? canConnectDeepSeekWeb;
     private bool showAppButtons = true;
     private bool harnessAvailable;
@@ -40,8 +40,8 @@ public partial class IslandWindow : Window
     private readonly bool? animationOverride;
     private bool AnimationsEnabled => animationOverride ?? SystemParameters.ClientAreaAnimation;
     private readonly DispatcherTimer collapse = new() { Interval = TimeSpan.FromMilliseconds(400) };
-    private readonly DispatcherTimer navigationErrorDismiss = new();
     private bool navigationErrorShown;
+    private string? navigationFailureID;
     private readonly Queue<string> interactionTrace = new();
     private NativeMotion motion;
     private readonly NativeLayout geometry;
@@ -55,7 +55,7 @@ public partial class IslandWindow : Window
     private double worstRenderMilliseconds, totalRenderMilliseconds, worstFrameIntervalMilliseconds;
     private double boundsMilliseconds, visualsMilliseconds, layoutMilliseconds;
     private MotionFrame lastFrame;
-    internal string PresentationDiagnostics => $"rendering={rendering}, frames={renderedFrames}, sinceLast={Clock() - lastRenderedAt:0.000}, sinceStart={Clock() - transitionStarted:0.000}, renderMeanMs={totalRenderMilliseconds / Math.Max(1, renderedFrames):0.00}, renderWorstMs={worstRenderMilliseconds:0.00}, frameWorstIntervalMs={worstFrameIntervalMilliseconds:0.00}, boundsTotalMs={boundsMilliseconds:0.00}, visualsTotalMs={visualsMilliseconds:0.00}, layoutTotalMs={layoutMilliseconds:0.00}, renderTier={RenderCapability.Tier >> 16}, target={destination}, expanded={expanded}, requested={Width}x{Height}, actual={ActualWidth}x{ActualHeight}, last={lastFrame}, interactions=[{string.Join("; ", interactionTrace)}]";
+    internal string PresentationDiagnostics => $"rendering={rendering}, frames={renderedFrames}, sinceLast={Clock() - lastRenderedAt:0.000}, sinceStart={Clock() - transitionStarted:0.000}, renderMeanMs={totalRenderMilliseconds / Math.Max(1, renderedFrames):0.00}, renderWorstMs={worstRenderMilliseconds:0.00}, frameWorstIntervalMs={worstFrameIntervalMilliseconds:0.00}, boundsTotalMs={boundsMilliseconds:0.00}, visualsTotalMs={visualsMilliseconds:0.00}, layoutTotalMs={layoutMilliseconds:0.00}, renderTier={RenderCapability.Tier >> 16}, target={destination}, expanded={expanded}, requested={Width}x{Height}, actual={ActualWidth}x{ActualHeight}, shell={Shell.ActualWidth}x{Shell.ActualHeight}, callback={renderCallback}, dim=[{CompactDimDiagnostics}], last={lastFrame}, interactions=[{string.Join("; ", interactionTrace)}]";
     private EngineSnapshot? latest;
     private IslandLayout layout;
     private MotionBounds destination;
@@ -112,7 +112,6 @@ public partial class IslandWindow : Window
         InitializeCompactBar();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         collapse.Tick += (_, _) => { collapse.Stop(); if (!pinned) SetExpanded(false); };
-        navigationErrorDismiss.Tick += (_, _) => ClearNavigationError();
         engine.Snapshot += value => Dispatcher.InvokeAsync(() => Render(value));
         engine.Status += value => Dispatcher.InvokeAsync(() => SetStatus(ui.Text(value == "engineStopped" ? "windows.connection.closed" : "windows.connection.refresh_failed")));
         ShellProjection.Changed += OnShellProjectionChanged;
@@ -167,22 +166,31 @@ public partial class IslandWindow : Window
     internal void SetStatus(string value)
     {
         if (presentationStopped) return;
-        navigationErrorDismiss.Stop(); navigationErrorShown = false;
+        navigationErrorShown = false;
         StatusLabel.Text = value; StatusLabel.Visibility = string.IsNullOrEmpty(value) ? Visibility.Collapsed : Visibility.Visible;
         Reveal(); Relayout();
     }
     private void ShowNavigationError(string value)
     {
         if (presentationStopped) return;
-        navigationErrorDismiss.Stop(); navigationErrorShown = true;
-        StatusLabel.Text = value; StatusLabel.Visibility = Visibility.Visible;
-        SetExpanded(true); Relayout();
-        navigationErrorDismiss.Interval = TimeSpan.FromSeconds(NativeTaskRowTiming.Shared.NavigationErrorDuration);
-        navigationErrorDismiss.Start();
+        _ = ReportNavigationFailureAsync(value);
+    }
+    private async Task ReportNavigationFailureAsync(string value, string? context = null)
+    {
+        try { await engine.SendAsync(context == null ? "showNavigationError" : "failActivityOpen", new { context, navigationMessage = value }); }
+        catch (Exception error) when (error is IOException or OperationCanceledException or InvalidOperationException)
+        { if (!presentationStopped && (context == null || latest?.ActivityLinks?.Any(link => link.Context == context) == true)) SetStatus(value); }
+    }
+    private void ApplyNavigationFailure(EngineNavigationFailure? failure)
+    {
+        if (failure == null) { navigationFailureID = null; ClearNavigationError(); return; }
+        if (navigationFailureID == failure.Id) return;
+        navigationFailureID = failure.Id; navigationErrorShown = true;
+        StatusLabel.Text = failure.Message; StatusLabel.Visibility = Visibility.Visible;
+        SetExpanded(true);
     }
     private void ClearNavigationError()
     {
-        navigationErrorDismiss.Stop();
         if (!navigationErrorShown || presentationStopped) return;
         navigationErrorShown = false; StatusLabel.Text = ""; StatusLabel.Visibility = Visibility.Collapsed; Relayout();
     }
@@ -526,7 +534,7 @@ public partial class IslandWindow : Window
     {
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged;
-        presentationStopped = true; StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); navigationErrorDismiss.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        presentationStopped = true; StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
         SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
@@ -542,8 +550,10 @@ public partial class IslandWindow : Window
     {
         if (presentationStopped) return;
         bool linksChanged = !(latest?.ActivityLinks ?? []).SequenceEqual(snapshot.ActivityLinks ?? []);
+        bool openingChanged = !(latest?.OpeningActivityIDs ?? []).SequenceEqual(snapshot.OpeningActivityIDs ?? []);
         latest = snapshot;
-        if (openingActivityContext != null && snapshot.ActivityLinks?.Any(link => link.Context == openingActivityContext) != true) openingActivityContext = null;
+        openingActivityContexts.IntersectWith((snapshot.ActivityLinks ?? []).Select(link => link.Context));
+        ApplyNavigationFailure(snapshot.NavigationError);
         UpdateAppButtons();
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
         MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
@@ -552,7 +562,7 @@ public partial class IslandWindow : Window
         {
             rows = presentation.Rows; page = Math.Clamp(page, 0, presentation.PageCount - 1); BuildPage(false, 0);
         }
-        else if (linksChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
+        else if (linksChanged || openingChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
         TasksCount.Text = presentation.TaskCountText ?? "—";
         UpdatePager();
         RenderQuota(snapshot);
@@ -699,8 +709,9 @@ public partial class IslandWindow : Window
         var state = (TaskRowState)row.DataContext;
         var link = latest?.ActivityLinks?.FirstOrDefault(value => value.ActivityID == state.Value.Id && value.Provider == state.Value.Provider);
         bool harness = state.Value.Provider == "deepseek" && harnessAvailable;
-        bool available = harness || (link != null && openingActivityContext == null);
-        row.SetOpenAction(available ? harness ? () => _ = OpenHarnessTaskAsync(row) : () => _ = OpenConversationTaskAsync(row, link!) : null,
+        bool available = link != null && (state.Value.Provider != "deepseek" || harness) &&
+            !openingActivityContexts.Contains(link.Context) && latest?.OpeningActivityIDs?.Contains(state.Value.Id) != true;
+        row.SetOpenAction(available ? () => _ = OpenConversationTaskAsync(row, link!) : null,
             available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), AnimationsEnabled);
     }
     private bool CurrentConversationAction(TaskRow control, EngineActivityLink link) => !presentationStopped && expanded && Expanded.IsAccessible &&
@@ -710,8 +721,8 @@ public partial class IslandWindow : Window
         currentPage?.IsAccessible == true && rows.Skip(page * 3).Take(3).Any(row => row.Id == link.ActivityID);
     private async Task OpenConversationTaskAsync(TaskRow control, EngineActivityLink link)
     {
-        if (openingActivityContext != null || !CurrentConversationAction(control, link)) return;
-        openingActivityContext = link.Context; ClearNavigationError();
+        if (!CurrentConversationAction(control, link) || !openingActivityContexts.Add(link.Context)) return;
+        ClearNavigationError();
         foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
         try
         {
@@ -719,7 +730,12 @@ public partial class IslandWindow : Window
             if (!CurrentConversationPanel(link) || plan.Context != link.Context || plan.Provider != link.Provider) return;
             bool opened = await openConversation(plan, rows.First(row => row.Id == link.ActivityID));
             if (!CurrentConversationLink(link)) return;
-            if (!opened) { ShowNavigationError(ui.Text("activity.open_failed")); return; }
+            if (!opened) {
+                await ReportNavigationFailureAsync(ui.Text(link.Provider == "deepseek"
+                    ? desktopApplications?.CanOpenHarness == true ? "windows.app.open_failed" : "deepseek.app_missing"
+                    : "activity.open_failed"), link.Context);
+                return;
+            }
             if (CurrentConversationPanel(link)) DismissForSettings();
             // A source/ending token survives unrelated rate ticks. The engine
             // rejects a newer turn or changed source rather than clearing it.
@@ -728,18 +744,21 @@ public partial class IslandWindow : Window
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or InvalidOperationException)
         {
-            if (CurrentConversationLink(link)) ShowNavigationError(ui.Text(error is EngineCommandException command ? command.Code switch {
+            if (CurrentConversationLink(link)) await ReportNavigationFailureAsync(ui.Text(error is EngineCommandException command ? command.Code switch {
                 "missingClaudeHost" => "activity.claude_host_missing", "missingCodexHost" => "activity.codex_host_missing", _ => "activity.open_failed"
-            } : "activity.open_failed"));
+            } : "activity.open_failed"), link.Context);
         }
         finally
         {
-            if (openingActivityContext == link.Context) openingActivityContext = null;
+            await Send("cancelActivityOpen", new { context = link.Context });
+            openingActivityContexts.Remove(link.Context);
             if (!presentationStopped) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
         }
     }
     private Task<bool> OpenConversationAsync(EngineNavigationPlan plan, EngineTaskRow row)
     {
+        if (row.Provider == "deepseek") return Task.FromResult(plan.Kind is "application" or "demo" &&
+            plan.Url == null && plan.WebUrl == null && plan.Pid == null && plan.Started == null && desktopApplications?.Open("deepseek") == true);
         if (plan.Kind != "demo") return desktopApplications?.OpenConversationAsync(plan) ?? Task.FromResult(false);
         if (!demo) return Task.FromResult(false);
         var content = new StackPanel { Margin = new Thickness(32) };
@@ -752,21 +771,6 @@ public partial class IslandWindow : Window
         var back = new Button { Content = ui.Text("demo.return"), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 22, 0, 0), Padding = new Thickness(14, 6, 14, 6) };
         back.Click += (_, _) => { dialog.Close(); Reveal(); }; content.Children.Add(back); WindowRendering.Prepare(dialog); dialog.Show();
         return Task.FromResult(true);
-    }
-    private async Task OpenHarnessTaskAsync(TaskRow control)
-    {
-        if (presentationStopped || !expanded || !Expanded.IsAccessible || currentPage?.IsAccessible != true || !currentPage.IsAncestorOf(control)) return;
-        var row = ((TaskRowState)control.DataContext).Value;
-        ClearNavigationError();
-        ulong? sequence = latest?.Sequence;
-        if (desktopApplications?.Open("deepseek") != true)
-        { ShowNavigationError(ui.Text(desktopApplications?.CanOpenHarness == true ? "windows.app.open_failed" : "deepseek.app_missing")); return; }
-        if (row.Unread && row.Phase is "completed" or "interrupted" && sequence != null)
-        {
-            try { await engine.SendAsync("markRead", new { activityID = row.Id, snapshotSequence = sequence.Value }); }
-            catch (Exception error) when (error is IOException or OperationCanceledException or EngineCommandException) { }
-        }
-        if (!presentationStopped) DismissForSettings();
     }
     private static DoubleAnimationUsingKeyFrames PageAnimation(double from, double to)
     {

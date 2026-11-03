@@ -60,6 +60,9 @@ final class RealtimeTransportTests: XCTestCase {
                 while let end = buffer.firstIndex(of: 10) {
                     let line = buffer[..<end]; buffer.removeSubrange(...end)
                     let value = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] ?? [:]
+                    if let kind = value["kind"] as? String, ["testCadenceQueued", "testCadenceChecked"].contains(kind) {
+                        added.insert(kind)
+                    }
                     for event in value["events"] as? [[String: Any]] ?? [] {
                         if let name = event["name"] as? String, names.insert(name).inserted { added.insert(name) }
                     }
@@ -80,33 +83,75 @@ final class RealtimeTransportTests: XCTestCase {
         let replacement = """
         send({'method':'item/agentMessage/delta','params':dict(common,itemId='reply',delta='PRIVATE reply')})
         send({'method':'thread/name/updated','params':{'threadId':fixture_active,'threadName':'cadence-initial'}})
-        time.sleep(2)
+        fixture_pending_gate.wait()
         send({'method':'thread/name/updated','params':{'threadId':fixture_active,'threadName':'cadence-pending'}})
-        time.sleep(8)
+        threading.Event().wait(30)
         """
         prefix.replaceSubrange(first.lowerBound..<end.lowerBound, with: replacement.replacingOccurrences(of: "\n", with: "\n" + indent) + "\n" + indent)
+        // Start-up is independent of the cadence under test. Release the
+        // pending event only after the helper has applied collapsed settings.
+        prefix = "import threading\nfixture_pending_gate=threading.Event()\n" + prefix
+        let clock = """
+        fixture_clock=None
+        fixture_base=None
+        fixture_check_after_loop=False
+        fixture_real_monotonic=time.monotonic
+        time.monotonic=lambda:fixture_real_monotonic() if fixture_clock is None else fixture_clock
+        fixture_receive=Session.receive
+        def fixture_received(self,value):
+            result=fixture_receive(self,value)
+            if isinstance(value,dict) and value.get('method')=='thread/name/updated' and value.get('params',{}).get('threadName')=='cadence-pending':
+                emit({'kind':'testCadenceQueued'})
+            return result
+        Session.receive=fixture_received
+        """
+        var main = String(RealtimeProbe.script.dropFirst(RealtimeProbe.library.count))
+        let globals = "global hint_buffer,batch_interval,flush_at"
+        let interval = "batch_interval=interval;now=time.monotonic()"
+        let settings = "if isinstance(value,dict) and value.get('kind')=='settings':"
+        let reschedule = "if request_logs:request_logs.reschedule(now,interval,flush)"
+        let stamp = "stamp=(bool(session and session.ready),len(session.attached) if session else 0)"
+        for marker in [globals, interval, settings, reschedule, stamp] { XCTAssertTrue(main.contains(marker)) }
+        main = main.replacingOccurrences(of: globals, with: globals + ",fixture_clock,fixture_base,fixture_check_after_loop,now")
+        main = main.replacingOccurrences(of: interval, with:
+            "if interval==5 and fixture_clock is None:fixture_clock=fixture_base=last_flush\n                " + interval)
+        main = main.replacingOccurrences(of: settings, with:
+            "if isinstance(value,dict) and value.get('kind')=='testClock':\n" +
+            "            fixture_clock=fixture_base+value['at'];now=fixture_clock;fixture_check_after_loop=True;continue\n        " + settings)
+        main = main.replacingOccurrences(of: reschedule, with: reschedule +
+            "\n                if interval==5:fixture_pending_gate.set()")
+        main = main.replacingOccurrences(of: stamp, with:
+            "if fixture_check_after_loop:emit({'kind':'testCadenceChecked'});fixture_check_after_loop=False\n        " + stamp)
         let child = Process(), stdout = Pipe(), stdin = Pipe(), stderr = Pipe()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), "ssh-lifetime", "5"]
+        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.library + "\n" + clock + "\n" + main,
+                           Data(home.path.utf8).base64EncodedString(), "ssh-lifetime", "5"]
         child.standardOutput = stdout; child.standardInput = stdin; child.standardError = stderr
         let capture = Capture(), initial = expectation(description: "initial ordinary batch"), expanded = expectation(description: "pending batch on expansion")
+        let queued = expectation(description: "pending event received after collapsed settings"), checked = expectation(description: "logical cadence evaluated")
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let names = capture.append(handle.availableData)
             if names.contains("cadence-initial") { initial.fulfill() }
             if names.contains("cadence-pending") { expanded.fulfill() }
+            if names.contains("testCadenceQueued") { queued.fulfill() }
+            if names.contains("testCadenceChecked") { checked.fulfill() }
         }
         defer { stdout.fileHandleForReading.readabilityHandler = nil; if child.isRunning { child.terminate() } }
         try child.run()
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
-        await fulfillment(of: [initial], timeout: 2)
+        await fulfillment(of: [initial], timeout: 10)
         guard child.isRunning else {
             XCTFail(String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)); return
         }
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":5,\"flushPending\":false}\n".utf8))
-        try await Task.sleep(nanoseconds: 2_300_000_000)
+        await fulfillment(of: [queued], timeout: 10)
+        // Advance the helper's monotonic clock after the event is queued.
+        // A one-second clamp would flush it; the required five seconds do not.
+        try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"testClock\",\"at\":2.3}\n".utf8))
+        await fulfillment(of: [checked], timeout: 10)
         XCTAssertFalse(capture.has("cadence-pending"), "Collapsed batches must not be clamped to the old one-second limit")
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
-        await fulfillment(of: [expanded], timeout: 1)
+        await fulfillment(of: [expanded], timeout: 10)
         try stdin.fileHandleForWriting.close(); child.waitUntilExit()
         stdout.fileHandleForReading.readabilityHandler = nil
         _ = capture.append(stdout.fileHandleForReading.readDataToEndOfFile())
