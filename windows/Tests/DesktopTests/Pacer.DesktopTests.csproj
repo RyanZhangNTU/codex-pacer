@@ -29,5 +29,6 @@
     <Compile Include="../../Desktop/BackdropPolicy.cs" Link="BackdropPolicy.cs"/>
     <Compile Include="../../Desktop/BackdropController.cs" Link="BackdropController.cs"/>
     <Compile Include="../../Desktop/QuotaAlternationSchedule.cs" Link="QuotaAlternationSchedule.cs"/>
+    <Compile Include="../../Desktop/FullscreenOcclusionPolicy.cs" Link="FullscreenOcclusionPolicy.cs"/>
   </ItemGroup>
 </Project>

@@ -129,6 +129,7 @@ public partial class IslandWindow : Window
         };
         ApplyPresentationLayout();
         InitializeBackdrop();
+        InitializeOcclusion();
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new IslandWindowAutomationPeer(this);
     internal Rect VisibleScreenBounds
@@ -525,7 +526,7 @@ public partial class IslandWindow : Window
     {
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged;
-        presentationStopped = true; StopRendering(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); navigationErrorDismiss.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        presentationStopped = true; StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); navigationErrorDismiss.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
         SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;

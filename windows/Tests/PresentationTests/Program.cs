@@ -55,7 +55,7 @@ internal static class Program
                 }
                 if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
                 if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); await BackdropPresentationChecks.Run(); }
-                if (All("idle")) await IdleSchedulingChecks.Run();
+                if (All("idle")) { await IdleSchedulingChecks.Run(); await OcclusionSchedulingChecks.Run(); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
                     foreach (bool motion in new[] { false, true })
