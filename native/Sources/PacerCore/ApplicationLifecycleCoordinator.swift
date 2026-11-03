@@ -66,6 +66,9 @@ public struct ApplicationLifecycleCoordinator: Sendable {
     public mutating func invalidateSources(_ providers: Set<AgentProvider>) {
         guard !providers.isEmpty else { return }
         revision &+= 1
+        // A batch read spans providers; it cannot retain its coalescing slot
+        // after any constituent source changes.
+        work.cancel(.init(.activity))
         for provider in providers {
             versions[provider, default: 0] &+= 1
             work.cancel(provider: provider)

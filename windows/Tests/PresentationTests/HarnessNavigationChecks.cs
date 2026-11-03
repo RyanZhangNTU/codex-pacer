@@ -118,7 +118,14 @@ internal static class HarnessNavigationChecks
     private static EngineTaskRow State(TaskRow row) => ((TaskRowState)row.DataContext).Value;
     private static void Hover(TaskRow row, bool inside) => row.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
         { RoutedEvent = inside ? Mouse.MouseEnterEvent : Mouse.MouseLeaveEvent });
-    private static void Invoke(Button button) => ((IInvokeProvider)UIElementAutomationPeer.CreatePeerForElement(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static void Invoke(Button button)
+    {
+        try { ((IInvokeProvider)UIElementAutomationPeer.CreatePeerForElement(button).GetPattern(PatternInterface.Invoke)).Invoke(); }
+        catch (ElementNotEnabledException)
+        {
+            Check(!button.IsEnabled, "UI Automation may reject a retired disabled row without dispatching its old action");
+        }
+    }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     { for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) { var child = VisualTreeHelper.GetChild(root, index); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Until(Func<bool> condition, string message, TimeSpan? timeout = null)

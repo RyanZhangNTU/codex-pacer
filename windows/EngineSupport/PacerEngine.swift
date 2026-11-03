@@ -1242,11 +1242,14 @@ actor EngineRuntime {
         guard active else { return }
         refreshRequested = true; discoveryRequested = discoveryRequested || discover
         refreshActivityMonitorsRequested = refreshActivityMonitorsRequested || refreshActivityMonitors
-        if let refreshTask { await refreshTask.value; return }
+        if let refreshTask {
+            await ApplicationLifecycleCoordinator.cleanup([.reader: { await refreshTask.value }])
+            return
+        }
         let owner = ownedWork.begin(.init(.activity), version: generation)
         let task = Task { await self.drainRefreshes(owner: owner) }
         ownedWork.attach(task, to: owner)
-        await task.value
+        await ApplicationLifecycleCoordinator.cleanup([.reader: { await task.value }])
     }
     private func drainRefreshes(owner: ApplicationWorkRegistry.Ticket) async {
         while active, ownedWork.owns(owner), refreshRequested, !Task.isCancelled {
