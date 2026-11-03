@@ -142,6 +142,7 @@ internal static class ClaudeConnectionChecks
         internal bool FailClear, RuntimeAvailable = true;
         internal string LastReadState = "none";
         public bool Available => RuntimeAvailable && inner.Available;
+        public Task PrepareAsync(CancellationToken cancellation) => inner.PrepareAsync(cancellation);
         public async Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation)
         { var value = await inner.ReadAsync(cancellation); LastReadState = value == null ? "absent" : "present"; return value; }
         public Task<bool> SignInAsync() => inner.SignInAsync();

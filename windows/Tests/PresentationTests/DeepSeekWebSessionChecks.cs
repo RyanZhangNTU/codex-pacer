@@ -26,6 +26,7 @@ internal static class DeepSeekWebSessionChecks
         Directory.CreateDirectory(root);
         var fixture = new Site();
         var session = new DeepSeekWebSession(UiText.For(false), Path.Combine(root, "first"), fixture.Install, false);
+        session.StartupMeasured = (stage, elapsed) => Console.WriteLine("WebView2 startup deepseek: " + stage + " ms=" + elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
         try
         {
             Check(session.Available, "The real WebView2 runtime is required for the browser integration checks");

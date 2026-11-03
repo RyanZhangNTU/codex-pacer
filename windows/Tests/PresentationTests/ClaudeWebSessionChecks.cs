@@ -25,9 +25,12 @@ internal static class ClaudeWebSessionChecks
         string root = Path.Combine(Path.GetTempPath(), "pacer-claude-web-fixture-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root); var site = new Site();
         var session = new ClaudeWebSession(UiText.For(false), Path.Combine(root, "Claude"), site.Bind, false);
+        session.StartupMeasured = (stage, elapsed) => Console.WriteLine("WebView2 startup claude: " + stage + " ms=" + elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
         try
         {
             Check(session.Available, "Claude needs the pinned stable WebView2 runtime for its isolated fixture");
+            await session.PrepareAsync(CancellationToken.None);
+            Check(site.Core == null && site.Requests.Count == 0, "Prewarming the private blank controller cannot inspect cookies or navigate to the service");
             Check(await session.ReadAsync(CancellationToken.None) == null, "An empty private profile cannot appear signed in");
             var signingIn = session.SignInAsync(); await Until(() => { if (signingIn.IsFaulted) signingIn.GetAwaiter().GetResult(); return Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.Ready; });
             var window = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); window.IsHitTestVisible = false;
