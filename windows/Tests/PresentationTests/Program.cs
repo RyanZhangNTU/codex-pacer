@@ -85,7 +85,8 @@ internal static class Program
                 if (All("web")) { await Attempt(nameof(ProviderWebStartupChecks), () => ProviderWebStartupChecks.Run()); await Attempt(nameof(ClaudeWebSessionChecks), () => ClaudeWebSessionChecks.Run()); await Attempt(nameof(DeepSeekWebSessionChecks), () => DeepSeekWebSessionChecks.Run()); }
                 if (group == "deepseek") { await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run("zh-Hans", true, output)); await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run("en", false, output)); }
                 if (All("host")) { await Attempt(nameof(NotificationActivationWindowChecks), () => NotificationActivationWindowChecks.Run()); await Attempt(nameof(IslandHostChecks), () => IslandHostChecks.Run()); await Attempt(nameof(BackdropPresentationChecks), () => BackdropPresentationChecks.Run()); }
-                if (All("idle")) { await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run()); await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
+                if (All("idle") || group == "quotaIdle") await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
+                if (All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run());
                 if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (group != "all") await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
