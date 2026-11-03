@@ -841,7 +841,7 @@
     {
       "id": "remote-control",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "同一 catalog/account 授权、Desktop 在线/离线/待加载会话与 source name",
@@ -852,8 +852,14 @@
         "native/Sources/PacerCore/RemoteControlCatalog.swift",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Codex Remote Control 不能长期停在编译排除状态。",
+      "evidence": [
+        "native/Tests/PacerCoreTests/RemoteControlAuthorizationTests.swift",
+        "native/Tests/PacerCoreTests/RemoteControlTests.swift",
+        "windows/Tests/EngineTests/RemoteControlEngineTests.swift",
+        "windows/Tests/EngineTests/WindowsRemoteControlHTTPTests.swift",
+        "windows/Tests/EngineTests/WindowsDesktopCollectorTests.swift"
+      ],
+      "previewNote": "Synthetic catalog/account, bounded HTTP, authenticated private-pipe runtime, exact-host navigation, offline/waiting states, retry, EOF/unread, failed/successful opens, toggles and account replacement pass. Engine/desktop Debug compilation is clean. No real Remote Control account was contacted or changed; UI preview and installed-host acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []

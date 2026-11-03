@@ -201,6 +201,11 @@ actor EngineRuntime {
     private var snapshotEmission = EngineSnapshotEmission()
     private var hideProjects = false
     private var showEmbeddedCodexSessions = true
+    private var monitorRemoteControl = true
+    private var remoteControlHostIDs: Set<String> = []
+    private var remoteControlScope: String?
+    private var desktopBinding = UUID()
+    private var desktopConfiguration: String?
     private var showClaudeCloudProjects = true
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
@@ -499,6 +504,7 @@ actor EngineRuntime {
             do {
                 var input = ActivityNavigationServices.Input(context: context, activity: target, home: home, transcript: transcript)
                 input.cachedHost = hostTracking.application(for: target, activities: activities, inbox: inbox)
+                input.remoteControlHosts = allowedRemoteControlHosts
                 let plan = try await navigationServices.resolve(input)
                 guard navigationIsCurrent(entry), navigationState.owns(operation), operation.isCurrent(version: lifecycle.version(target.provider), active: active, inbox: inbox, scope: entry.cloudContext),
                       home == navigationHome(for: target.provider),
@@ -676,6 +682,11 @@ actor EngineRuntime {
             await claudeCloudMonitor?.refresh()
             forceBalanceRequested = true
             await refresh(discover: command.params?.discover ?? false)
+        case "refreshRemoteControl":
+            guard initialized, enabled.contains(.codex), monitorRemoteControl else {
+                failure(id: command.id, code: "unavailable"); return true
+            }
+            await bindDesktopMonitor(force: true)
         case "retryQuota":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name), provider != .deepseek, enabled.contains(provider) else {
                 failure(id: command.id, code: "invalidCommand"); return true
@@ -848,6 +859,7 @@ actor EngineRuntime {
         }
         if let hidden = parameters.hideProjects { hideProjects = hidden }
         if let shown = parameters.showEmbeddedCodexSessions { showEmbeddedCodexSessions = shown }
+        if let value = parameters.monitorRemoteControl { monitorRemoteControl = value }
         if let shown = parameters.showClaudeCloudProjects { showClaudeCloudProjects = shown }
         if var value = parameters.deepseekSettings {
             if value.balanceSource == nil { value.balanceSource = deepseekSettings.balanceSource }
@@ -862,7 +874,7 @@ actor EngineRuntime {
             deepseekNoticePolicy = .init()
         }
         if changesCodex || changesClaude || changesDeepSeek { activityState.clearFirstOutput() }
-        inbox.bindSourceHomes(provider: .codex, localHome: codexHome)
+        bindCodexCompletionSources()
         inbox.bindSourceHomes(provider: .claude, localHome: claudeHome)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
         let plan = lifecycle.settings(lifecycleConfiguration)
@@ -1057,7 +1069,7 @@ actor EngineRuntime {
                 case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, requested: force)
                 }
             case .codexActivity: await refresh(discover: true, refreshActivityMonitors: false)
-            case .remoteActivity: lastRemoteDiscovery = now() // Transport activation remains P2.
+            case .remoteActivity: lastRemoteDiscovery = now(); await bindDesktopMonitor()
             case .activity(let provider): await bindActivityMonitor(provider)
             case .claudeTargets: await bindActivityMonitor(.claude)
             case .clock: if !demo { restartPresentationClock() }
@@ -1101,6 +1113,8 @@ actor EngineRuntime {
         loggedSources.removeAll { $0.provider == provider.rawValue }
         switch provider {
         case .codex:
+            desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil
+            bindCodexCompletionSources()
             desktopState = nil; pendingDesktopEndings = [:]
             codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
             codexQuotaState = nil; codexQuota = nil; codexQuotaFailed = false; codexQuotaRefreshing = false
@@ -1247,21 +1261,65 @@ actor EngineRuntime {
         output(bytes + Data([10]))
     }
 
-    private func bindDesktopMonitor() async {
+    private var allowedRemoteControlHosts: Set<String> {
+        guard monitorRemoteControl, enabled.contains(.codex), let grant = desktopServices?.authorization(home: codexHome),
+              grant.verified, !grant.revoked, grant.scope != nil, grant.scope == remoteControlScope else { return [] }
+        return grant.hostIDs.intersection(remoteControlHostIDs)
+    }
+    private func bindCodexCompletionSources() {
+        inbox.bindSourceHomes(provider: .codex, localHome: codexHome,
+            remoteControlHostIDs: monitorRemoteControl ? remoteControlHostIDs : [], remoteControlAccountScope: remoteControlScope)
+    }
+    private func bindDesktopMonitor(force: Bool = false) async {
         let context = lifecycle.version(.codex)
+        let key = ApplicationWorkRegistry.Key(.remote, provider: .codex, identifier: "desktop-start")
         guard !demo, enabled.contains(.codex) else {
+            ownedWork.cancel(key); desktopBinding = UUID()
+            desktopConfiguration = nil
             desktopState = nil; await desktopMonitor?.shutdown(); return
         }
-        await desktopMonitor?.startAsync(home: codexHome, includeSSH: false, includeRemoteControl: false,
-            useSSHFallback: false, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] value in
-                await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
-                    attention: value.localDesktopAttention, attentionThreads: value.attentionThreads, names: value.names,
-                    performance: value.performance, status: value.localDesktopStatus))
-            }
+        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)"
+        let replace = configuration != desktopConfiguration
+        guard force || replace || ownedWork.task(key) == nil else { return }
+        desktopConfiguration = configuration
+        desktopServices?.setExecutable(codexExecutable)
+        let binding = UUID(); desktopBinding = binding
+        let monitor = desktopMonitor, home = codexHome, control = monitorRemoteControl
+        let policy: ActivityRefreshPolicy = expanded ? .expanded : .collapsed
+        let start: @Sendable () async -> Void = { [weak self] in
+            if force || replace { await monitor?.invalidateRemoteControlCatalog(retryTransport: force) }
+            await monitor?.startAsync(home: home, includeSSH: false, includeRemoteControl: control,
+                useSSHFallback: false, refreshPolicy: policy) { [weak self] value in
+                    await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
+                        attention: value.attention, attentionThreads: value.attentionThreads, names: value.names,
+                        performance: value.performance, status: value.localDesktopStatus, statuses: value.statuses,
+                        bindings: value.bindings), binding: binding)
+                }
+        }
+        // Local transport fixtures need no directory request. Production owns
+        // the bounded catalog request separately from initialize/quota work.
+        if desktopServices?.catalog == nil { await start(); return }
+        let owner = ownedWork.begin(key, version: context)
+        let task = Task { [weak self] in
+            await start()
+            await self?.finishDesktopStart(owner)
+        }
+        ownedWork.attach(task, to: owner)
     }
+    private func finishDesktopStart(_ owner: ApplicationWorkRegistry.Ticket) { ownedWork.finish(owner) }
 
-    private func receiveDesktop(_ state: CodexDesktopState) {
-        guard active, state.context == lifecycle.version(.codex), enabled.contains(.codex), !demo else { return }
+    private func receiveDesktop(_ state: CodexDesktopState, binding: UUID) {
+        guard active, desktopBinding == binding, state.context == lifecycle.version(.codex), enabled.contains(.codex), !demo else { return }
+        if monitorRemoteControl {
+            let bindings = state.bindings
+            if remoteControlScope != bindings.accountScope {
+                pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) != true }
+                activityState.clearFirstOutput()
+            }
+            remoteControlScope = bindings.accountScope
+            remoteControlHostIDs = bindings.authoritative ? bindings.hostIDs : remoteControlHostIDs.union(bindings.hostIDs)
+        } else { remoteControlHostIDs = [] }
+        bindCodexCompletionSources()
         desktopState = state
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
@@ -1396,6 +1454,13 @@ actor EngineRuntime {
             activityState.applyCodexMetadata(names: desktop.names, performance: desktop.performance, at: date, visibility: activityVisibility)
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
+            status += ConnectionSource.sources(statuses: [.codex: desktop.statuses], unavailableSSH: [], names: [:])
+                .filter { monitorRemoteControl && $0.key.hasPrefix(ConnectionSource.controlPrefix) }.map { source in
+                    .init(id: source.id, provider: "codex", available: source.state == .connected, transport: "remote-control", reason: nil,
+                        sourceName: source.name, state: String(describing: source.state),
+                        stateLabel: source.state == .paused ? L10n.text("connections.state.paused", source.provider.displayName) :
+                            L10n.text("connections.state." + String(describing: source.state)), sessions: source.sessions)
+                }
         } else {
             activityState.remoteActivities = []; activityState.codexReceivedRequests = []
             activityState.codexAttentionThreadIDs = []; activityState.codexStreamConnected = false
@@ -1527,6 +1592,9 @@ actor EngineRuntime {
                 if activity.provider == .deepseek { return true }
                 if demo { return true }
                 if activity.claudeCloud != nil { return activity.threadURL != nil }
+                if let host = activity.sourceHostID {
+                    return activity.provider == .codex && allowedRemoteControlHosts.contains(host) && activity.threadURL != nil
+                }
                 #if os(Windows)
                 if activity.provider == .codex, !activity.launchedByEmbeddingApp,
                    !codexDefaultProfile { return false }
@@ -1774,6 +1842,7 @@ actor EngineRuntime {
     }
     private func navigationIsCurrent(_ entry: ActivityNavigationRegistry.Entry) -> Bool {
         active && projectionReady && navigationEntry(context: entry.link.context)?.link == entry.link && enabled.contains(entry.target.provider) &&
+            (entry.target.sourceHostID == nil || entry.target.claudeCloud != nil || allowedRemoteControlHosts.contains(entry.target.sourceHostID!)) &&
             entry.members.allSatisfy({ inbox.isCurrentSource($0.source) }) &&
             (entry.target.claudeCloud == nil || (showClaudeCloudProjects && entry.cloudContext == cloudNavigationContext))
     }

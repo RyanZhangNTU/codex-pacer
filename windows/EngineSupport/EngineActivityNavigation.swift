@@ -29,6 +29,7 @@ struct ActivityNavigationServices: Sendable {
     struct Input: Sendable {
         let context: String, activity: SessionActivity, home: URL, transcript: URL?
         var cachedHost: ActivityHostApplication? = nil
+        var remoteControlHosts: Set<String> = []
     }
     let resolve: @Sendable (Input) async throws -> EngineNavigationPlan
     static let demo = Self { .init(demoContext: $0.context, provider: $0.activity.provider) }

@@ -179,5 +179,43 @@ final class WindowsDesktopCollectorTests: XCTestCase {
         try await until("A newly valid selected rollout must not require another hint or log notification", timeout: 4) { await capture.has("turn/attached") }
         XCTAssertFalse(fixture.exists(".foreign-follow")); await collector.stop()
     }
+    func testAuthorizedRemotePipeUsesCatalogHostWithoutBorrowingLocalRolloutOwnership() async throws {
+        let fixture = try Fixture(mode: "runtime-remote", ignored: true); defer { fixture.stop() }
+        let view = RemoteControlAuthorizationView(), capture = CollectorFrames(), host = "remote-control:work"
+        view.publish(home: fixture.home, scope: "account", hosts: [host], verified: true, validate: { true })
+        let endpoint = fixture.endpoint, peerRoot = fixture.executable.deletingLastPathComponent(), home = fixture.home
+        let collector = WindowsDesktopCollector(home: home, interval: 5,
+            connect: { try .init(endpoint: endpoint, peerRoot: peerRoot) }, hosts: ["local", host, "remote-control:foreign"],
+            authorization: { view.snapshot(home: home) }, onFrame: { await capture.append($0) }, onClosed: { await capture.close() })
+        let original = try Data(contentsOf: fixture.file)
+        await collector.start()
+        try await until("Authorized Remote Control must use the shared parser even when the local UUID is excluded") { await capture.has("turn/attached") }
+        XCTAssertFalse(fixture.exists(".foreign-host-follow"), "An authenticated pipe alone cannot authorize another device")
+        try fixture.signal(".approval")
+        try await until("Remote approvals bypass the collapsed batch") { await capture.approval() }
+        try fixture.signal(".complete")
+        try await until("Remote completion reaches the shared projection") { await capture.has("turn/completed") }
+        try fixture.signal(".close")
+        try await until("EOF releases the owned remote pipe") { await capture.closed == 1 }
+        XCTAssertEqual(try Data(contentsOf: fixture.file), original)
+        let privateText = await capture.containsPrivateText(); XCTAssertFalse(privateText)
+        await collector.stop()
+    }
+    func testAccountRevocationDropsLateRemoteCompletionBeforeItEntersCore() async throws {
+        let fixture = try Fixture(mode: "runtime-remote"); defer { fixture.stop() }
+        let view = RemoteControlAuthorizationView(), capture = CollectorFrames(), host = "remote-control:work", home = fixture.home
+        view.publish(home: home, scope: "old", hosts: [host], verified: true, validate: { true })
+        let endpoint = fixture.endpoint, peerRoot = fixture.executable.deletingLastPathComponent()
+        let collector = WindowsDesktopCollector(home: home, interval: 5,
+            connect: { try .init(endpoint: endpoint, peerRoot: peerRoot) }, hosts: [host],
+            authorization: { view.snapshot(home: home) }, onFrame: { await capture.append($0) }, onClosed: { await capture.close() })
+        await collector.start()
+        try await until("The old account first establishes its own runtime") { await capture.has("turn/attached") }
+        view.publish(home: home, scope: "new", hosts: [host], verified: true, validate: { true })
+        try fixture.signal(".complete")
+        try await until("The account change revokes the pipe") { await capture.closed == 1 }
+        let completed = await capture.has("turn/completed"); XCTAssertFalse(completed)
+        await collector.stop()
+    }
 }
 #endif

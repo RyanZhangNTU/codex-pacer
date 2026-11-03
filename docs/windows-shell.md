@@ -64,3 +64,13 @@ python scripts/windows/check-engine-idle.py --engine <engine-path> --seconds 300
 ```
 
 This option reads real sources for at least five minutes, does not change source configuration or record protocol bodies, and reports engine CPU and shutdown time. The default mode uses empty provider homes. CPU results cover the engine process; they do not establish complete feature acceptance. Record manual evidence in `windows/platform-coverage.json` without promoting features whose remaining requirements are untested.
+
+## Codex Remote Control
+
+`monitorRemoteControl` defaults to true, matching the Mac preference. Windows reads the paired-device directory through the shared catalog and projects its names, online state and runtime with the shared Realtime monitor. The authenticated Desktop pipe carries the stream. A saved routing hint alone grants no subscription or navigation.
+
+The catalog keeps bearer credentials inside the read-only RPC/HTTP operation. Its Windows HTTP session has no cookie, credential or response cache, refuses redirects, caps the response at 512 KiB, and limits requests/resources to 8/10 seconds. Initialization owns catalog work separately so a slow directory cannot block the local task source or the 650 ms cleanup budget.
+
+Only a currently verified account and exact device ID can open a Remote Control thread. Account and enrollment changes revoke old pipe proofs and navigation. A hashed account scope separates completion acknowledgments even when two accounts use the same device/thread/turn IDs. A token refresh for the same verified account retains its scope. EOF retains unread endings; failed opens retain unread state and report an error. Retry bypasses transport backoff without replacing a healthy channel.
+
+Development checks use synthetic catalogs, RPC replies and a private named-pipe fixture. They do not send prompts, activate a real provider, or modify real accounts. The Remote Control switch and source rows still need the integration presentation pass and installed-host acceptance.

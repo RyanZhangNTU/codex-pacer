@@ -31,6 +31,7 @@ struct EngineCommand: Decodable {
         var sourceHome: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
+        var monitorRemoteControl: Bool?
         var showClaudeCloudProjects: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
@@ -159,6 +160,10 @@ struct EngineSource: Codable, Equatable {
     let transport: String
     let reason: String?
     var failure: CodexQuotaFailure? = nil
+    var sourceName: String? = nil
+    var state: String? = nil
+    var stateLabel: String? = nil
+    var sessions: Int? = nil
 }
 
 struct EngineModule: Codable, Equatable {

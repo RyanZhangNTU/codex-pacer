@@ -37,7 +37,8 @@ internal sealed record EngineTask(
     double? StartedAt, bool Unread, bool Failed, double? TurnCost, double? TurnPeakCost);
 
 internal sealed record EngineRequest(string Id, string Provider, string ActivityId, string Kind, string Label, double DetectedAt);
-internal sealed record EngineSource(string Id, string Provider, bool Available, string Transport, string? Reason, ConnectionFailure? Failure = null);
+internal sealed record EngineSource(string Id, string Provider, bool Available, string Transport, string? Reason, ConnectionFailure? Failure = null,
+    string? SourceName = null, string? State = null, string? StateLabel = null, int? Sessions = null);
 internal sealed record ConnectionFailure(string Kind, string? Method, int? Code);
 internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled);
 internal sealed record CodexSourceCandidate(string Path, string Source, string Label);

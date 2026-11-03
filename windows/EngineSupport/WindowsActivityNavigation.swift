@@ -27,6 +27,12 @@ enum WindowsActivityNavigation {
         if activity.claudeCloud != nil, let url = activity.threadURL, let web = activity.claudeCloudWebURL {
             return .init(context: input.context, provider: provider, url: url, webURL: web)
         }
+        if provider == .codex, let host = activity.sourceHostID {
+            guard input.remoteControlHosts.contains(host), host.hasPrefix(ConnectionSource.controlPrefix),
+                  let url = activity.threadURL, let route = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  route.queryItems?.filter({ $0.name == "hostId" }).map(\.value) == [host] else { throw ActivityNavigationError.unavailable }
+            return .init(context: input.context, provider: provider, url: url)
+        }
         guard activity.sourceHostID == nil, let session = activity.threadID, UUID(uuidString: session) != nil else { throw ActivityNavigationError.unavailable }
         let defaultProfile = isDefaultProfile(input.home, provider: provider, userHome: userHome)
         if provider == .codex, !activity.launchedByEmbeddingApp {

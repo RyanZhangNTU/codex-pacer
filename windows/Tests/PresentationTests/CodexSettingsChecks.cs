@@ -49,6 +49,14 @@ internal static class CodexSettingsChecks
             await Until(() => !session.Current.ShowEmbeddedCodexSessions && embedded.IsEnabled, "Hiding embedded sessions must await the real engine configuration");
             Toggle(embedded);
             await Until(() => session.Current.ShowEmbeddedCodexSessions && embedded.IsEnabled, "The embedded-session choice must restore immediately");
+            var remote = Find<CheckBox>(window, "settings.codex.remote_control");
+            Check(remote.IsEnabled && remote.IsChecked == true, "Remote Control defaults to the Mac preference's enabled state");
+            Toggle(remote);
+            await Until(() => !session.Current.MonitorRemoteControl && remote.IsEnabled, "Remote Control changes must await engine acknowledgement");
+            Check(!Find<Button>(window, "settings.codex.remote_retry").IsEnabled, "A disabled Remote Control connection cannot be retried");
+            Toggle(remote);
+            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled && Find<Button>(window, "settings.codex.remote_retry").IsEnabled,
+                "Re-enabling restores the independently retryable connection");
             int sourceConfigurations = configurations;
             Check(Find<RadioButton>(window, "settings.pane.codex").IsChecked == true
                 && Find<RadioButton>(window, "settings.pane.claude").IsEnabled
