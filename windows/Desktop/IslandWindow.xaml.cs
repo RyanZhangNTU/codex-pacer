@@ -45,6 +45,7 @@ public partial class IslandWindow : Window
     private readonly Queue<string> interactionTrace = new();
     private readonly NativeMotion motion;
     private readonly NativeLayout geometry;
+    private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
     private bool renderCallback;
     private int motionRevision;
@@ -72,7 +73,8 @@ public partial class IslandWindow : Window
     internal event Action<MotionFrame>? FrameApplied;
 
     internal IslandWindow(EngineClient engine, bool demo, bool chinese, int position = 0, bool? animationOverride = null, WindowsDesktopApplications? desktopApplications = null, int displayMode = 0, Func<bool>? canConnectDeepSeekWeb = null,
-        Func<EngineNavigationPlan, EngineTaskRow, Task<bool>>? openConversation = null)
+        Func<EngineNavigationPlan, EngineTaskRow, Task<bool>>? openConversation = null,
+        Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -82,6 +84,7 @@ public partial class IslandWindow : Window
         this.desktopApplications = desktopApplications;
         this.canConnectDeepSeekWeb = canConnectDeepSeekWeb;
         this.openConversation = openConversation ?? OpenConversationAsync;
+        this.screenGeometry = screenGeometry;
         ui = UiText.For(chinese);
         Language = PacerFonts.RenderingLanguage(ui);
         if (animationOverride != null && !demo) throw new ArgumentException("Synthetic motion overrides require demo mode.");
@@ -365,8 +368,9 @@ public partial class IslandWindow : Window
     private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open)
     {
         Rect work = SystemParameters.WorkArea;
-        return geometry.Measure(new(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight),
-            new(work.X, work.Y, work.Width, work.Height), displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
+        var bounds = screenGeometry?.Invoke() ?? (new MotionBounds(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight),
+            new MotionBounds(work.X, work.Y, work.Width, work.Height));
+        return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
     }
     private void Relayout()
     {

@@ -92,7 +92,10 @@ internal static class Program
     private static async Task Run(string language, bool motion, string output)
     {
         await using var engine = new EngineClient();
-        var window = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: motion);
+        // Absolute reference geometry uses one logical viewport. The HWND
+        // still renders at the actual monitor DPI.
+        var window = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: motion,
+            screenGeometry: () => (new(0, 0, 2560, 1440), new(0, 0, 2560, 1400)));
         // Keep the real desktop pointer from steering UI Automation scenarios.
         // Explicit routed hover/key events below still use the window handlers.
         window.IsHitTestVisible = false;
