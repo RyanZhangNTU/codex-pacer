@@ -1,35 +1,117 @@
 import Foundation
 import PacerCore
+import WinSDK
 
 enum WindowsClaudeHookCommands {
+    struct Selection { let command: String; let mode: String }
+    private static var powershellExecutable: String? {
+        var buffer = [UInt16](repeating: 0, count: 32768)
+        let count = GetSystemDirectoryW(&buffer, UInt32(buffer.count))
+        guard count > 0, Int(count) < buffer.count else { return nil }
+        let directory = String(decoding: buffer.prefix(Int(count)), as: UTF16.self).replacingOccurrences(of: "\\", with: "/")
+        let path = directory + "/WindowsPowerShell/v1.0/powershell.exe"
+        return directSafe(path) ? path : nil
+    }
+    static var powershellPrefix: String {
+        (powershellExecutable ?? "pacer-unavailable-powershell.exe") + " -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "
+    }
+    static func directSafe(_ value: String) -> Bool {
+        value.range(of: #"^[A-Za-z]:/[\p{L}\p{M}\p{N}_./~-]+\z"#, options: .regularExpression) != nil
+    }
+    static func shortPath(_ url: URL) -> String? {
+        let input = WindowsClaudeHookStorage.wide(url)
+        let count = GetShortPathNameW(input, nil, 0)
+        guard count > 0, count < 32768 else { return nil }
+        var buffer = [UInt16](repeating: 0, count: Int(count))
+        let written = GetShortPathNameW(input, &buffer, count)
+        guard written > 0, written < count else { return nil }
+        var path = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
+        if path.hasPrefix("\\\\?\\") { path.removeFirst(4) }
+        path = path.replacingOccurrences(of: "\\", with: "/")
+        return directSafe(path) ? path : nil
+    }
+    private static func normalized(_ arguments: [String]) -> [String] {
+        arguments.map { $0.replacingOccurrences(of: "\\", with: "/") }
+    }
+    private static func directArguments(_ values: [String]) -> Bool {
+        let scriptIndex = values.count == 5 ? 2 : 1
+        return [0, scriptIndex, values.count - 1].allSatisfy { directSafe(values[$0]) }
+    }
+    static func fallback(_ arguments: [String]) -> String {
+        let values = normalized(arguments), noSite = values.count == 5
+        let python = URL(fileURLWithPath: values[0])
+        let launcher = python.deletingLastPathComponent().appendingPathComponent("pacer-launch.ps1").path
+        let valuesToQuote = [launcher, values[0], noSite ? "no-site" : "site"] + Array(values.dropFirst(noSite ? 2 : 1))
+        return powershellPrefix + valuesToQuote.map { "\"" + $0 + "\"" }.joined(separator: " ")
+    }
+    static func selection(_ arguments: [String], shorten: (URL) -> String? = shortPath) -> Selection {
+        let values = normalized(arguments), noSite = values.count == 5
+        let home = values[values.count - 1]
+        if directArguments(values) {
+            return Selection(command: values.joined(separator: " "), mode: "direct")
+        }
+        if let python = shorten(URL(fileURLWithPath: values[0])), let home = shorten(URL(fileURLWithPath: home)),
+           directSafe(python), directSafe(home) {
+            let short = [python] + (noSite ? ["-S"] : []) + [home + "/pacer/hook.py", values[values.count - 2], home]
+            return Selection(command: short.joined(separator: " "), mode: "shortPath")
+        }
+        return Selection(command: fallback(values), mode: "powershell")
+    }
     static func serialize(_ arguments: [String]) -> String {
-        // Combined /D/C is passed intact through Git Bash, cmd and PowerShell.
-        // Python is always absolute; cmd.exe is the standard Windows launcher.
-        "cmd.exe /D/C call " + arguments.map { "\"" + $0.replacingOccurrences(of: "\\", with: "/") + "\"" }.joined(separator: " ")
+        selection(arguments).command
+    }
+    static func legacySerialize(_ arguments: [String]) -> String {
+        "cmd.exe /D/C call " + normalized(arguments).map { "\"" + $0 + "\"" }.joined(separator: " ")
     }
     static func validate(python: URL, home: URL) throws {
+        guard powershellExecutable != nil else { throw ClaudeHookInstaller.Failure.unsafePath }
         for path in [python.path, home.path] {
             guard !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
                   path.rangeOfCharacter(from: CharacterSet(charactersIn: "\"$`%!^&|<>")) == nil else { throw ClaudeHookInstaller.Failure.unsafePath }
         }
-        guard command(python: python, home: home, kind: .statusLine).utf16.count < 7000 else { throw ClaudeHookInstaller.Failure.unsafePath }
+        guard fallback(arguments(python: python, home: home, kind: .statusLine)).utf16.count < 7000 else { throw ClaudeHookInstaller.Failure.unsafePath }
     }
     private static func mode(_ kind: ClaudeHookInstaller.CommandKind) -> String { kind == .hook ? "hook" : "statusline" }
+    static func arguments(python: URL, home: URL, kind: ClaudeHookInstaller.CommandKind, site: Bool = false) -> [String] {
+        [python.path] + (site ? [] : ["-S"]) + [home.appendingPathComponent("pacer/hook.py").path, mode(kind), home.path]
+    }
     static func command(python: URL, home: URL, kind: ClaudeHookInstaller.CommandKind, site: Bool = false) -> String {
-        serialize([python.path] + (site ? [] : ["-S"]) + [home.appendingPathComponent("pacer/hook.py").path, mode(kind), home.path])
+        serialize(arguments(python: python, home: home, kind: kind, site: site))
     }
     static func owned(_ command: String, home: URL, root: URL, kind: ClaudeHookInstaller.CommandKind) -> Bool {
         func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let suffix = quote(home.appendingPathComponent("pacer/hook.py").path) + " " + mode(kind) + " " + quote(home.path)
         if command == "python3 -S " + suffix || command == "python3 " + suffix { return true }
-        let prefix = "cmd.exe /D/C call \"" + root.path + "/"
-        guard command.hasPrefix(prefix) else { return false }
-        let remainder = command.dropFirst(prefix.count)
-        guard let slash = remainder.firstIndex(of: "/") else { return false }
-        let identifier = String(remainder[..<slash])
-        guard WindowsClaudeRuntimeStore.validIdentifier(identifier) else { return false }
-        let python = root.appendingPathComponent(identifier + "/python.exe")
-        return command == self.command(python: python, home: home, kind: kind) || command == self.command(python: python, home: home, kind: kind, site: true)
+        var candidates: [String] = []
+        for prefix in ["cmd.exe /D/C call \"" + root.path + "/", powershellPrefix + "\"" + root.path + "/", root.path + "/"] where command.hasPrefix(prefix) {
+            candidates.append(String(command.dropFirst(prefix.count).prefix { $0 != "/" }))
+        }
+        // A short command does not contain the long version identifier. Expand
+        // the executable through Win32 before matching the exact owned form.
+        if let first = command.split(separator: " ").first, directSafe(String(first)) {
+            let input = WindowsClaudeHookStorage.wide(URL(fileURLWithPath: String(first)))
+            let count = GetLongPathNameW(input, nil, 0)
+            if count > 0, count < 32768 {
+                var buffer = [UInt16](repeating: 0, count: Int(count))
+                let written = GetLongPathNameW(input, &buffer, count)
+                if written > 0, written < count {
+                    var path = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
+                    if path.hasPrefix("\\\\?\\") { path.removeFirst(4) }
+                    path = path.replacingOccurrences(of: "\\", with: "/")
+                    let prefix = root.path + "/"
+                    if path.hasPrefix(prefix) { candidates.append(String(path.dropFirst(prefix.count).prefix { $0 != "/" })) }
+                }
+            }
+        }
+        for identifier in candidates where WindowsClaudeRuntimeStore.validIdentifier(identifier) {
+            let python = root.appendingPathComponent(identifier + "/python.exe")
+            for site in [false, true] {
+                let values = arguments(python: python, home: home, kind: kind, site: site)
+                if command == serialize(values) || command == legacySerialize(values) || command == fallback(values) { return true }
+                if directArguments(normalized(values)), command == normalized(values).joined(separator: " ") { return true }
+            }
+        }
+        return false
     }
     static func installer(home: URL, root: URL, storage: any ClaudeHookStorage, script: Data? = nil) throws -> ClaudeHookInstaller {
         let pin = try WindowsPythonPin.load(), root = root.standardizedFileURL

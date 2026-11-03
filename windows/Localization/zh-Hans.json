@@ -66,6 +66,7 @@
   "windows.claude.local_help": "读取 Claude 本机活动、工具事件和待回复请求。",
   "windows.claude.retry_setup": "重试设置",
   "windows.claude.setup_ready": "Claude 活动记录已就绪。",
+  "windows.claude.setup_slow": "当前路径需要通过 PowerShell 启动，每次工具事件可能多花 150 至 400 毫秒。",
   "windows.claude.setup_working": "正在设置 Claude 活动记录…",
   "windows.claude.setup_missing": "请选择已有的 Claude 文件夹以启用活动记录。",
   "windows.claude.setup_disabled": "Claude 活动记录已关闭。",

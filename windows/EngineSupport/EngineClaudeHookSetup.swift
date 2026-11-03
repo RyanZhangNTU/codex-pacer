@@ -5,6 +5,7 @@ struct EngineClaudeHookSetup: Codable, Equatable, Sendable {
     let state: State
     var hooksConfigured = false, telemetryConfigured = false, statusLineConfigured = false
     var telemetryConflict = false, updateAvailable = false
+    var launchMode: String?
     init(_ state: State) { self.state = state }
 }
 

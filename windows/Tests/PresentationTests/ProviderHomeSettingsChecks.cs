@@ -43,6 +43,13 @@ internal static class ProviderHomeSettingsChecks
                 "The provider page must retain native canvas geometry and acknowledged module state");
             if (provider == "claude")
             {
+                var ui = UiText.For(language == "zh-Hans");
+                var setup = new ClaudeHookSetup("ready", true, true, true, false, false, "powershell");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup) == ui.Text("windows.claude.setup_ready") + " " + ui.Text("windows.claude.setup_slow"), "A slow launcher must explain its per-event startup cost");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { LaunchMode = "direct" }) == ui.Text("windows.claude.setup_ready"), "The direct route must retain its ready message");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { LaunchMode = "shortPath" }) == ui.Text("windows.claude.setup_ready"), "The 8.3 route must retain its ready message");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { TelemetryConflict = true }).Contains(ui.Text("windows.claude.setup_conflict")), "The cost notice must retain the existing telemetry conflict");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "failed", setup) == ui.Text("windows.claude.setup_failed"), "A failed setup must retain its actionable error");
                 Check(Find<TextBlock>(window, "settings.claude.setup").Text == UiText.For(language == "zh-Hans").Text("windows.claude.setup_ready"),
                     "The demo must show the localized Claude setup state");
                 Check(!Find<Button>(window, "settings.claude.retry_setup").IsEnabled,

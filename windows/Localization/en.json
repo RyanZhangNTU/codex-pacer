@@ -66,6 +66,7 @@
   "windows.claude.local_help": "Tracks local Claude activity, tool events and requests for input.",
   "windows.claude.retry_setup": "Retry setup",
   "windows.claude.setup_ready": "Claude activity is ready.",
+  "windows.claude.setup_slow": "These paths require PowerShell. Each tool event may take an extra 150 to 400 ms to start.",
   "windows.claude.setup_working": "Setting up Claude activity…",
   "windows.claude.setup_missing": "Choose an existing Claude folder to enable activity tracking.",
   "windows.claude.setup_disabled": "Claude activity is off.",

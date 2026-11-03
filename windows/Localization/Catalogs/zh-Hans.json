@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/Localization/zh-Hans.json": "672571e8a586b46b4cdda984cc7f57683f8d9b5d562779052ac37b466eab11ab"
+    "windows/Localization/zh-Hans.json": "6af0d100cf6f2ac33c20db8862dda989271f123df968591a45cbf474452041b7"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -916,6 +916,7 @@
     "windows.claude.setup_failed": "Claude \u6d3b\u52a8\u8bb0\u5f55\u8bbe\u7f6e\u5931\u8d25\u3002\u8bf7\u91cd\u8bd5\u8bbe\u7f6e\u6216\u4fee\u590d\u5e94\u7528\u3002",
     "windows.claude.setup_missing": "\u8bf7\u9009\u62e9\u5df2\u6709\u7684 Claude \u6587\u4ef6\u5939\u4ee5\u542f\u7528\u6d3b\u52a8\u8bb0\u5f55\u3002",
     "windows.claude.setup_ready": "Claude \u6d3b\u52a8\u8bb0\u5f55\u5df2\u5c31\u7eea\u3002",
+    "windows.claude.setup_slow": "\u5f53\u524d\u8def\u5f84\u9700\u8981\u901a\u8fc7 PowerShell \u542f\u52a8\uff0c\u6bcf\u6b21\u5de5\u5177\u4e8b\u4ef6\u53ef\u80fd\u591a\u82b1 150 \u81f3 400 \u6beb\u79d2\u3002",
     "windows.claude.setup_working": "\u6b63\u5728\u8bbe\u7f6e Claude \u6d3b\u52a8\u8bb0\u5f55\u2026",
     "windows.claude.sign_out": "\u9000\u51fa\u767b\u5f55",
     "windows.cli.not_found": "\u672a\u627e\u5230\u53ef\u8fd0\u884c\u7684 Codex CLI\uff0c\u8bf7\u5728\u8bbe\u7f6e\u4e2d\u9009\u62e9 codex.exe \u6216\u5176\u5b89\u88c5\u6587\u4ef6\u5939\u3002",

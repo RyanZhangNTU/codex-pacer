@@ -912,6 +912,7 @@
     "windows.claude.setup_failed": "Claude activity setup failed. Retry setup or repair the app.",
     "windows.claude.setup_missing": "Choose an existing Claude folder to enable activity tracking.",
     "windows.claude.setup_ready": "Claude activity is ready.",
+    "windows.claude.setup_slow": "These paths require PowerShell. Each tool event may take an extra 150 to 400 ms to start.",
     "windows.claude.setup_working": "Setting up Claude activity…",
     "windows.claude.sign_out": "Sign Out",
     "windows.cli.not_found": "No runnable Codex CLI was found. Choose codex.exe or its installation folder in Settings.",

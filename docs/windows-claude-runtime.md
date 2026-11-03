@@ -10,11 +10,19 @@ Windows 包附带官方 CPython 3.14.10 x64 embeddable runtime。Claude hook 和
 
     %LOCALAPPDATA%\CodexPacer\ClaudeRuntime\3.14.10-90905e64a840\
 
-所有 Claude home 共用这个用户级目录。每个 home 仍只保留与 Mac 对等的 hook 脚本和记账文件。命令包含带完整双引号的 python.exe、脚本及 home 的绝对路径，并通过 Windows cmd 启动；实际测试覆盖 cmd、Git Bash、PowerShell、中文路径、空格路径和 UTF-8 stdin。移动应用、切换安装目录或使用便携包不会改变已写入的运行时路径。
+所有 Claude home 共用这个用户级目录。每个 home 仍只保留与 Mac 对等的 hook 脚本和记账文件。移动应用、切换安装目录或使用便携包不会改变已写入的运行时路径。
+
+Windows 上，Claude Code 的 hook 和 statusLine 默认经 Git Bash 执行；未安装 Git Bash 时改用 PowerShell。[hook 文档](https://code.claude.com/docs/en/hooks#command-hook-fields)、[statusLine 文档](https://code.claude.com/docs/en/statusline#windows-configuration) 因此启动命令按以下顺序选择：
+
+1. Python、脚本和 home 的绝对路径只含可直接传递的字符时，写入不带引号的 `C:/.../python.exe -S C:/.../pacer/hook.py hook C:/...`。这些参数没有空格或 shell 特殊字符，也不以 POSIX 的斜杠开头。
+2. 否则调用 `GetShortPathNameW`，仅在 Python 和 home 都能取得安全的 8.3 路径时直接启动。卷禁用 8.3、短名称不存在或返回值仍含特殊字符时，不使用这一档；不修改卷设置。
+3. 最后才使用 Windows 自带 PowerShell 的 `-File` 入口。PowerShell 通过 Win32 系统目录定位，不从 PATH 查找。Python、脚本和 home 全部加双引号；薄脚本随自有运行时存放，按字节转发 stdin/stdout/stderr，不解析事件或计算额度。这个子进程使用 `RemoteSigned`，不更改全局执行策略；企业组策略仍可能阻止执行。
+
+第三档每次工具事件都会多启动一个 PowerShell，通常额外需要 150 至 400 毫秒。设置页会提示这一开销，普通路径和可用的短路径不经过 PowerShell。`test-claude-runtime.ps1` 输出每档、每种执行器下五次实际 hook 调用的耗时。本机与 CI 同时验证 hook、statusLine 和本机 HTTP telemetry；测试会清除 MSYS 参数转换的豁免变量。旧 `cmd.exe /D/C` 包装会被迁移，因为 Git Bash 可把这个开关改成 `D:/C`。[MSYS2 参数转换说明](https://www.msys2.org/docs/filesystem-paths/#process-arguments)
 
 根目录和每个版本目录都有 .pacer-owned.json 所有权标记。写入、修复和删除前检查文件所有者与路径上的重解析点；非空但无标记的目录不会被接管。修复只替换标记内的文件，额外文件会阻止操作。
 
-根标记记录 Pacer 曾连接的 Claude home，最多 128 个。升级后先扫描这些 home 的 settings.json 和安装记录中的原 status-line；任何字符串仍引用旧版本时，都保留该版本，包括用户 hook 和被包装的用户 renderer。配置无效、过大、不可读或目录含未知文件时保留运行时。只按文件清单删除已确认归属、内容未变且未被引用的旧版本，不递归删除目录。
+根标记记录 Pacer 曾连接的 Claude home，最多 128 个。升级后先扫描这些 home 的 settings.json 和安装记录中的原 status-line；长路径或 8.3 路径仍引用旧版本时，都保留该版本，包括用户 hook 和被包装的用户 renderer。配置无效、过大、不可读或目录含未知文件时保留运行时。新旧 Windows 命令按完整参数匹配归属，包括旧 `python3`、旧 cmd 包装、直接调用、短路径和 PowerShell 回退。只按文件清单删除已确认归属、内容未变且未被引用的旧版本，不递归删除目录。
 
 应用启动、模块开关和 home 变更触发一次异步安装或移除。helper 请求有 5 秒超时，失败可在 Claude 设置页重试；无空闲轮询。Demo 和只读引擎不会安装 hook。停用模块移除当前 home 的 Pacer 条目；退出应用保留 hook。
 
@@ -22,7 +30,7 @@ Windows 包附带官方 CPython 3.14.10 x64 embeddable runtime。Claude hook 和
 
 ## 固定依赖与安全更新
 
-固定信息在 windows/InstallerSupport/Resources/python-runtime-lock.json：版本、官方 ZIP 地址、SHA-256、发布者和需检查签名的文件。构建脚本校验 ZIP 哈希、四个可执行文件/库的 Python Software Foundation Authenticode 签名，并逐文件生成部署清单。包内保留官方 LICENSE.txt；当前运行时 37 个文件，共 24,450,611 字节，约 23.3 MiB，压缩包约 12 MB。[Python 发行说明](https://www.python.org/downloads/release/python-31410/)、[嵌入式发行包说明](https://docs.python.org/3/using/windows.html#the-embeddable-package)
+固定信息在 windows/InstallerSupport/Resources/python-runtime-lock.json：版本、官方 ZIP 地址、SHA-256、发布者和需检查签名的文件。构建脚本校验 ZIP 哈希、四个可执行文件/库的 Python Software Foundation Authenticode 签名，并逐文件生成部署清单。包内保留官方 LICENSE.txt；官方 Python 部分为 37 个文件，共 24,450,611 字节，约 23.3 MiB，压缩包约 12 MB；另附 Pacer 自有的 `pacer-launch.ps1`，同样受文件哈希清单、修复和卸载检查保护。[Python 发行说明](https://www.python.org/downloads/release/python-31410/)、[嵌入式发行包说明](https://docs.python.org/3/using/windows.html#the-embeddable-package)
 
 安全更新时，从 Python 官方取得修复版本，核对官方来源及签名，再更新锁文件中的版本、URL、哈希和签名文件名。使用干净构建生成新包，运行共享测试、无用户 Python 的三种 shell 测试和安装生命周期测试。新版本部署到新的哈希目录，共享安装器迁移自有命令；旧版本仅在全部已记录 home 不再引用时回收。不覆盖正在使用的解释器，也不自动下载运行时。
 

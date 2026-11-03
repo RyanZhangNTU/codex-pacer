@@ -37,6 +37,10 @@ foreach ($taskName in $taskPin.signedFiles) {
     }
 }
 if (!(Test-Path -LiteralPath (Join-Path $taskRuntime 'LICENSE.txt'))) { throw 'The embedded Python license is missing.' }
+$taskLauncher = Join-Path $taskRoot 'windows/InstallerSupport/Resources/pacer-launch.ps1'
+$taskLauncherBytes = [IO.File]::ReadAllBytes($taskLauncher)
+[IO.File]::WriteAllBytes((Join-Path $taskRuntime 'pacer-launch.ps1'),$taskLauncherBytes)
+$taskFiles.Add(@{name='pacer-launch.ps1';sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($taskLauncherBytes)).ToLowerInvariant();bytes=$taskLauncherBytes.Length})
 $taskManifest = @{schemaVersion=1;version=$taskPin.version;architecture=$taskPin.architecture;archiveSHA256=$taskPin.sha256;files=@($taskFiles)}
 [IO.File]::WriteAllText((Join-Path $taskRuntime 'pacer-runtime.json'),($taskManifest|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 Write-Output $taskRuntime

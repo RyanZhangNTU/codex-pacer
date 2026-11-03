@@ -171,7 +171,7 @@ public struct WindowsClaudeRuntimeStore {
                       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure.referenced }
                 var pending: [Any] = [object]
                 while let value = pending.popLast() {
-                    if let text = value as? String { strings.append(text.lowercased()) }
+                    if let text = value as? String { strings.append(text.lowercased().replacingOccurrences(of: "\\", with: "/")) }
                     else if let dictionary = value as? [String: Any] { pending += Array(dictionary.values) }
                     else if let array = value as? [Any] { pending += array }
                 }
@@ -191,7 +191,8 @@ public struct WindowsClaudeRuntimeStore {
         for directory in try entries(root) where directory.lastPathComponent != Self.marker {
             let identifier = directory.lastPathComponent
             guard Self.validIdentifier(identifier) else { throw Failure.unsafeRuntime }
-            if identifier == current || uses.contains(where: { $0.contains(identifier) }) { retained = true; continue }
+            let short = WindowsClaudeHookCommands.shortPath(directory)?.lowercased()
+            if identifier == current || uses.contains(where: { text in text.contains(identifier) || (short.map { text.contains($0) } ?? false) }) { retained = true; continue }
             let version = try versionClaim(directory)
             let expected = Set(version.files.map(\.name) + [Self.marker])
             guard try entries(directory).allSatisfy({ expected.contains($0.lastPathComponent) }) else { throw Failure.unsafeRuntime }

@@ -40,7 +40,10 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let versions = try FileManager.default.contentsOfDirectory(at: fixture.root, includingPropertiesForKeys: nil).filter { $0.lastPathComponent != ".pacer-owned.json" }
         XCTAssertEqual(versions.count, 1)
         for home in fixture.homes {
-            XCTAssertTrue(try command(home).contains(fixture.root.path + "/" + pin.identifier + "/python.exe"))
+            if let short = WindowsClaudeHookCommands.shortPath(directory.appendingPathComponent("python.exe")),
+               WindowsClaudeHookCommands.selection(WindowsClaudeHookCommands.arguments(python: directory.appendingPathComponent("python.exe"), home: home, kind: .hook)).mode == "shortPath" {
+                XCTAssertTrue(try command(home).hasPrefix(short + " -S "))
+            } else { XCTAssertTrue(try command(home).contains(fixture.root.path + "/" + pin.identifier + "/python.exe")) }
             let before = try Data(contentsOf: home.appendingPathComponent("settings.json"))
             XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
             XCTAssertEqual(try Data(contentsOf: home.appendingPathComponent("settings.json")), before, "An already-current configuration is not rewritten")
@@ -73,12 +76,12 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let manifest = try read(home.appendingPathComponent("pacer/installation.json"))
         XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(manifest["previousStatusLine"]), options: [.sortedKeys]),
             try JSONSerialization.data(withJSONObject: XCTUnwrap(original["statusLine"]), options: [.sortedKeys]))
-        XCTAssertTrue(try command(home).hasPrefix("cmd.exe /D/C call \""))
+        XCTAssertEqual(try command(home), WindowsClaudeHookCommands.command(python: fixture.root.appendingPathComponent(try WindowsPythonPin.load().identifier + "/python.exe"), home: home, kind: .hook))
         XCTAssertFalse(try command(home).hasPrefix("python3"))
         let pin = try WindowsPythonPin.load()
         let old = fixture.root.appendingPathComponent("0.0.1-111111111111/python.exe")
         var value = try read(home.appendingPathComponent("settings.json"))
-        let current = try command(home), prior = WindowsClaudeHookCommands.command(python: old, home: home, kind: .hook)
+        let current = try command(home), prior = WindowsClaudeHookCommands.legacySerialize(WindowsClaudeHookCommands.arguments(python: old, home: home, kind: .hook))
         var hooks = try XCTUnwrap(value["hooks"] as? [String: [[String: Any]]])
         for event in hooks.keys {
             hooks[event] = hooks[event]?.map { group in
@@ -89,10 +92,12 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
             }
         }
         value["hooks"] = hooks
-        var line = try XCTUnwrap(value["statusLine"] as? [String: Any]); line["command"] = WindowsClaudeHookCommands.command(python: old, home: home, kind: .statusLine); value["statusLine"] = line
+        var line = try XCTUnwrap(value["statusLine"] as? [String: Any]); line["command"] = WindowsClaudeHookCommands.legacySerialize(WindowsClaudeHookCommands.arguments(python: old, home: home, kind: .statusLine)); value["statusLine"] = line
         try write(value, home.appendingPathComponent("settings.json"))
         XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
-        XCTAssertTrue(try command(home).contains(pin.identifier))
+        if runtime.inspect(home: home).launchMode == "shortPath" {
+            XCTAssertEqual(try command(home), WindowsClaudeHookCommands.command(python: fixture.root.appendingPathComponent(pin.identifier + "/python.exe"), home: home, kind: .hook))
+        } else { XCTAssertTrue(try command(home).contains(pin.identifier)) }
         try runtime.uninstall(homes: [home])
         XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: try read(home.appendingPathComponent("settings.json"))))
     }
@@ -114,6 +119,14 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         try write(value, other.appendingPathComponent("settings.json"))
         try store.collect(keeping: pin.identifier)
         XCTAssertTrue(FileManager.default.fileExists(atPath: old.path), "A foreign hook in another home protects its dependency")
+        if let short = WindowsClaudeHookCommands.shortPath(old.appendingPathComponent("python.exe")) {
+            value["foreignHook"] = ["command": short + " user-script.py"]
+            try write(value, other.appendingPathComponent("settings.json")); try store.collect(keeping: pin.identifier)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: old.path), "An 8.3 reference in another home protects the same runtime")
+            value["foreignHook"] = ["command": short.replacingOccurrences(of: "/", with: "\\") + " user-script.py"]
+            try write(value, other.appendingPathComponent("settings.json")); try store.collect(keeping: pin.identifier)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: old.path), "A backslash 8.3 reference must also retain its runtime")
+        }
         value.removeValue(forKey: "foreignHook"); try write(value, other.appendingPathComponent("settings.json"))
         let manifestURL = other.appendingPathComponent("pacer/installation.json")
         var manifest = try read(manifestURL)
@@ -121,6 +134,11 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         manifest["previousStatusLine"] = ["type": "command", "command": old.appendingPathComponent("python.exe").path + " user-renderer.py"]
         try write(manifest, manifestURL); try store.collect(keeping: pin.identifier)
         XCTAssertTrue(FileManager.default.fileExists(atPath: old.path), "A saved renderer remains an active dependency of the wrapper")
+        if let short = WindowsClaudeHookCommands.shortPath(old.appendingPathComponent("python.exe")) {
+            manifest["previousStatusLine"] = ["type": "command", "command": short + " user-renderer.py"]
+            try write(manifest, manifestURL); try store.collect(keeping: pin.identifier)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: old.path), "A saved renderer's 8.3 dependency cannot be collected")
+        }
         try write(before, manifestURL); try store.collect(keeping: pin.identifier)
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent(pin.identifier).path))
@@ -179,10 +197,68 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         try write(original, home.appendingPathComponent("settings.json"))
         let runtime = WindowsClaudeHookRuntime(root: root)
         XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
-        XCTAssertTrue(try command(home).contains(root.path))
+        if runtime.inspect(home: home).launchMode == "shortPath" {
+            XCTAssertTrue(try command(home).hasPrefix(try XCTUnwrap(WindowsClaudeHookCommands.shortPath(root)) + "/"))
+        } else { XCTAssertTrue(try command(home).contains(root.path)) }
         try runtime.uninstall(homes: [home], checkOnly: true)
         try runtime.uninstall(homes: [home])
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: try read(home.appendingPathComponent("settings.json"))))
+    }
+    func testLaunchSelectionPrefersDirectThenShortPathsThenPowerShell() throws {
+        let python = URL(fileURLWithPath: "C:/Pacer/3.14.10-90905e64a840/python.exe"), home = URL(fileURLWithPath: "C:/Claude/中文")
+        let values = WindowsClaudeHookCommands.arguments(python: python, home: home, kind: .hook)
+        let direct = WindowsClaudeHookCommands.selection(values, shorten: { _ in XCTFail("Safe paths need no filesystem lookup"); return nil })
+        XCTAssertEqual(direct.mode, "direct"); XCTAssertEqual(direct.command, values.joined(separator: " "))
+        let spaced = URL(fileURLWithPath: "C:/Claude Home/用户")
+        let arguments = WindowsClaudeHookCommands.arguments(python: python, home: spaced, kind: .hook)
+        let short = WindowsClaudeHookCommands.selection(arguments, shorten: { $0 == python ? "C:/PACER/31410~1/python.exe" : "C:/CLAUDE~1/用户" })
+        XCTAssertEqual(short.mode, "shortPath")
+        XCTAssertEqual(short.command, "C:/PACER/31410~1/python.exe -S C:/CLAUDE~1/用户/pacer/hook.py hook C:/CLAUDE~1/用户")
+        let fallback = WindowsClaudeHookCommands.selection(arguments, shorten: { _ in nil })
+        XCTAssertEqual(fallback.mode, "powershell")
+        XCTAssertTrue(fallback.command.hasPrefix(WindowsClaudeHookCommands.powershellPrefix))
+        XCTAssertTrue(fallback.command.contains("\"" + python.path + "\"")); XCTAssertTrue(fallback.command.hasSuffix("\"" + spaced.path + "\""))
+        XCTAssertFalse(fallback.command.contains("/D/C"))
+        XCTAssertEqual(WindowsClaudeHookCommands.selection(arguments, shorten: { $0.path }).mode, "powershell", "A volume returning its unchanged long name has no usable short path")
+        for unsafe in ["C:/Claude space", "C:/Claude&other", "C:/Claude(test)", "C:/Claude'quote", "C:/Claude;other", "C:/Claude[other]"] {
+            XCTAssertFalse(WindowsClaudeHookCommands.directSafe(unsafe))
+        }
+    }
+    func testEveryOwnedWindowsFormMigratesAndUninstallsExactly() throws {
+        let fixture = try fixture(), home = fixture.homes[0], runtime = WindowsClaudeHookRuntime(root: fixture.root)
+        try write(original, home.appendingPathComponent("settings.json"))
+        XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
+        let python = fixture.root.appendingPathComponent(try WindowsPythonPin.load().identifier + "/python.exe")
+        for site in [false, true] {
+            for kind in [ClaudeHookInstaller.CommandKind.hook, .statusLine] {
+                let values = WindowsClaudeHookCommands.arguments(python: python, home: home, kind: kind, site: site)
+                for command in [WindowsClaudeHookCommands.serialize(values), WindowsClaudeHookCommands.legacySerialize(values), WindowsClaudeHookCommands.fallback(values)] {
+                    XCTAssertTrue(WindowsClaudeHookCommands.owned(command, home: home, root: fixture.root, kind: kind))
+                    XCTAssertFalse(WindowsClaudeHookCommands.owned(command + " extra", home: home, root: fixture.root, kind: kind))
+                    XCTAssertFalse(WindowsClaudeHookCommands.owned(command, home: fixture.homes[1], root: fixture.root, kind: kind))
+                }
+            }
+        }
+        // The slow form can become stale when a usable short name appears.
+        var value = try read(home.appendingPathComponent("settings.json"))
+        let current = try command(home)
+        var hooks = try XCTUnwrap(value["hooks"] as? [String: [[String: Any]]])
+        for event in hooks.keys { hooks[event] = hooks[event]?.map { group in
+            var group = group
+            group["hooks"] = (group["hooks"] as? [[String: Any]])?.map { entry in
+                var entry = entry
+                if entry["command"] as? String == current { entry["command"] = WindowsClaudeHookCommands.fallback(WindowsClaudeHookCommands.arguments(python: python, home: home, kind: .hook)) }
+                return entry
+            }; return group
+        } }
+        value["hooks"] = hooks
+        var line = try XCTUnwrap(value["statusLine"] as? [String: Any])
+        line["command"] = WindowsClaudeHookCommands.fallback(WindowsClaudeHookCommands.arguments(python: python, home: home, kind: .statusLine)); value["statusLine"] = line
+        try write(value, home.appendingPathComponent("settings.json"))
+        XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
+        XCTAssertEqual(try command(home), current)
+        try runtime.uninstall(homes: [home])
         XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: try read(home.appendingPathComponent("settings.json"))))
     }
 }

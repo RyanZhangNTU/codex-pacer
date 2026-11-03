@@ -53,12 +53,22 @@ final class ClaudeHookInstallerTests: XCTestCase {
         let packaged = try XCTUnwrap(L10n.sharedResourceBundle.url(forResource: "claude_hook", withExtension: "py"))
         XCTAssertEqual(try Data(contentsOf: home.appendingPathComponent("pacer/hook.py")), try Data(contentsOf: packaged))
         let windows = "cmd.exe /D/C call \"C:/synthetic/ClaudeRuntime/3.14.10-90905e64a840/python.exe\" \"-S\" \"" + home.appendingPathComponent("pacer/hook.py").path + "\" \"hook\" \"" + home.path + "\""
+        let otherWindowsForms = [
+            "C:/synthetic/ClaudeRuntime/3.14.10-90905e64a840/python.exe -S C:/synthetic/Claude/pacer/hook.py hook C:/synthetic/Claude",
+            "C:/SYNTHE~1/CLAUDE~1/31410~1/python.exe -S C:/SYNTHE~1/CLAUDE/pacer/hook.py hook C:/SYNTHE~1/CLAUDE",
+            "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File \"C:/synthetic/ClaudeRuntime/3.14.10-90905e64a840/pacer-launch.ps1\" \"C:/synthetic/ClaudeRuntime/3.14.10-90905e64a840/python.exe\" \"no-site\" \"C:/synthetic/Claude/pacer/hook.py\" \"hook\" \"C:/synthetic/Claude\""
+        ]
         var hooks = try XCTUnwrap(settings["hooks"] as? [String: [[String: Any]]])
         hooks["Stop", default: []].append(["hooks": [["type": "command", "command": windows]]])
+        for command in otherWindowsForms { hooks["Stop", default: []].append(["hooks": [["type": "command", "command": command]]]) }
         settings["hooks"] = hooks; try write(settings, to: home.appendingPathComponent("settings.json"))
         try ClaudeHookInstaller.uninstall(home: home)
         XCTAssertEqual(commandEntries(try read(home.appendingPathComponent("settings.json")), event: "Stop", command: windows).count, 1,
             "Windows ownership is opt-in; the unchanged Mac policy preserves this foreign command")
+        for command in otherWindowsForms {
+            XCTAssertEqual(commandEntries(try read(home.appendingPathComponent("settings.json")), event: "Stop", command: command).count, 1,
+                "The default Mac policy also preserves direct, short-path and PowerShell Windows commands")
+        }
     }
     func testInstallUninstallPreservesUnrelatedHooksEnvironmentAndStatusLineOptions() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }

@@ -86,9 +86,14 @@ internal sealed partial class SettingsWindow
         claudeLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>
             (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true ? "provider.state.found" : "provider.state.no_home");
         string setup = !connected ? "failed" : snapshot?.ClaudeSetup?.State ?? (snapshot?.Demo == true ? "ready" : "failed");
-        claudeSetupState!.Text = ui.Text("windows.claude.setup_" + (setup switch
-        { "ready" when snapshot?.ClaudeSetup?.TelemetryConflict == true => "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
+        claudeSetupState!.Text = ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup);
         claudeSetupRetry!.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
         RefreshClaudeConnection(connected && enabled);
+    }
+    internal static string ClaudeSetupDescription(UiText ui, string state, ClaudeHookSetup? setup)
+    {
+        string message = ui.Text("windows.claude.setup_" + (state switch
+        { "ready" when setup?.TelemetryConflict == true => "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
+        return state == "ready" && setup?.LaunchMode == "powershell" ? message + " " + ui.Text("windows.claude.setup_slow") : message;
     }
 }

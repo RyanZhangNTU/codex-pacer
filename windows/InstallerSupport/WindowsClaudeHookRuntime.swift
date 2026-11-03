@@ -5,10 +5,12 @@ public struct WindowsClaudeHookRuntime {
     public struct Report: Codable, Sendable {
         public let state: String
         public let hooksConfigured, telemetryConfigured, statusLineConfigured, telemetryConflict, updateAvailable: Bool
-        init(_ state: String, _ status: ClaudeHookInstaller.Status? = nil) {
+        public let launchMode: String?
+        init(_ state: String, _ status: ClaudeHookInstaller.Status? = nil, launchMode: String? = nil) {
             self.state = state; hooksConfigured = status?.hooksConfigured ?? false
             telemetryConfigured = status?.telemetryConfigured ?? false; statusLineConfigured = status?.statusLineConfigured ?? false
             telemetryConflict = status?.telemetryConflict ?? false; updateAvailable = status?.updateAvailable ?? false
+            self.launchMode = launchMode
         }
     }
     let runtime: WindowsClaudeRuntimeStore
@@ -28,7 +30,8 @@ public struct WindowsClaudeHookRuntime {
             let status = installer.details(home: home)
             let python = runtime.python(identifier: try WindowsPythonPin.load().identifier)
             try storage.validate(python)
-            return Report(status.hooksConfigured && !status.updateAvailable && storage.isReadable(python) ? "ready" : "needsSetup", status)
+            return Report(status.hooksConfigured && !status.updateAvailable && storage.isReadable(python) ? "ready" : "needsSetup", status,
+                launchMode: WindowsClaudeHookCommands.selection(WindowsClaudeHookCommands.arguments(python: python, home: home, kind: .hook)).mode)
         } catch { return Report("failed") }
     }
     public func ensure(home: URL, package: URL) -> Report {
@@ -51,7 +54,8 @@ public struct WindowsClaudeHookRuntime {
                 // GC failure does not undo a working new adapter. Unknown or
                 // referenced data is retained for a later explicit retry.
                 try? runtime.collect(keeping: try WindowsPythonPin.load().identifier)
-                return Report("ready", installer.details(home: home))
+                return Report("ready", installer.details(home: home),
+                    launchMode: WindowsClaudeHookCommands.selection(WindowsClaudeHookCommands.arguments(python: python, home: home, kind: .hook)).mode)
             }
         } catch { return Report("failed") }
     }

@@ -1,12 +1,15 @@
 """Exercise packaged Claude commands without user Python or real provider data."""
 import argparse
+import base64
 import concurrent.futures
+import ctypes
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import statistics
 import subprocess
 import tempfile
 import time
@@ -23,13 +26,49 @@ homes = [fixture / 'Claude 一号', fixture / 'Claude 二号']
 local = fixture / '本地 数据'
 runtime = local / 'CodexPacer' / 'ClaudeRuntime'
 checks = []
+timings = []
 original = {'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': 'echo synthetic-user'}]}]},
             'statusLine': {'type': 'command', 'command': 'echo SYNTHETIC_RENDERER', 'padding': 2},
             'env': {'USER_SETTING': 'keep'}, 'userOption': {'preserve': True}}
 environment = dict(os.environ)
-environment.update(PATH=os.path.join(os.environ['SystemRoot'], 'System32'), HOME=str(fixture), USERPROFILE=str(fixture),
+system = Path(os.environ['SystemRoot'])/'System32'
+environment.update(PATH=str(system)+os.pathsep+str(system/'WindowsPowerShell/v1.0'), HOME=str(fixture), USERPROFILE=str(fixture),
                    CLAUDE_CONFIG_DIR=str(homes[0]), LOCALAPPDATA=str(local), BASH_ENV='', ENV='',
                    PYTHONHOME=str(fixture/'untrusted-python'), PYTHONPATH=str(fixture/'untrusted-modules'))
+for key in ('MSYS_NO_PATHCONV','MSYS2_ARG_CONV_EXCL','MSYS2_ENV_CONV_EXCL'):
+    environment.pop(key,None)
+assert all(shutil.which(name,path=environment['PATH']) is None for name in ('python','python3','py'))
+
+def short_path(path):
+    function=ctypes.WinDLL('kernel32',use_last_error=True).GetShortPathNameW
+    function.argtypes=[ctypes.c_wchar_p,ctypes.c_wchar_p,ctypes.c_uint32]
+    function.restype=ctypes.c_uint32
+    buffer=ctypes.create_unicode_buffer(32768)
+    count=function('\\\\?\\'+str(path),buffer,len(buffer))
+    if not 0<count<len(buffer): return None
+    return Path(buffer.value.removeprefix('\\\\?\\'))
+
+def direct_safe(path):
+    value=str(path).replace('\\','/')
+    return len(value)>3 and value[1:3]==':/' and all(c.isalnum() or c in '/._~-:' for c in value)
+
+def fallback_command(python,home,mode):
+    values=[python.parent/'pacer-launch.ps1',python,'no-site',home/'pacer/hook.py',mode,home]
+    buffer=ctypes.create_unicode_buffer(32768)
+    count=ctypes.WinDLL('kernel32',use_last_error=True).GetSystemDirectoryW(buffer,len(buffer))
+    assert 0<count<len(buffer)
+    shell=str(Path(buffer.value)/'WindowsPowerShell/v1.0/powershell.exe').replace('\\','/')
+    return shell+' -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File '+ ' '.join('"'+str(value).replace('\\','/')+'"' for value in values)
+
+def select_slow_form(home,python):
+    value=settings(home)
+    old=hook_command(home)
+    for groups in value['hooks'].values():
+        for group in groups:
+            for entry in group.get('hooks',[]):
+                if entry.get('command')==old:entry['command']=fallback_command(python,home,'hook')
+    value['statusLine']['command']=fallback_command(python,home,'statusline')
+    (home/'settings.json').write_text(json.dumps(value),encoding='utf-8')
 
 def run(arguments, raw=None, shell=None, expected=0):
     result = subprocess.run(arguments, executable=shell, input=raw, env=environment,
@@ -111,15 +150,21 @@ try:
     fixture.mkdir(parents=True)
     assert fixture.resolve().is_relative_to((workspace/'out').resolve())
     shutil.copytree(args.bundle, app)
+    modes={}
     for home in homes:
         home.mkdir()
         (home/'settings.json').write_text(json.dumps(original), encoding='utf-8')
         report = json.loads(helper('--ensure', home, runtime))
         assert report['state']=='ready' and report['hooksConfigured']
+        modes[str(home)]=report['launchMode']
         assert not (home/'pacer/runtime').exists()
     versions = [path for path in runtime.iterdir() if path.is_dir()]
     assert len(versions)==1 and (versions[0]/'python.exe').is_file()
-    assert all(str(versions[0]/'python.exe').replace('\\','/') in hook_command(home) for home in homes)
+    for home in homes:
+        python=versions[0]/'python.exe'
+        if modes[str(home)]=='shortPath':
+            assert hook_command(home).startswith(str(short_path(python)).replace('\\','/')+' -S ')
+        else:assert str(python).replace('\\','/') in hook_command(home)
     checks.append('two Claude homes share one owned LocalAppData runtime; no runtime copied into a Claude home')
     probe = json.loads(failure_probe(homes[0], versions[0]/'python.exe'))
     assert probe.get('stage')=='probe-complete' and probe.get('rendererMatches'), json.dumps(probe,sort_keys=True)
@@ -169,6 +214,70 @@ try:
             assert b'SYNTHETIC_PRIVATE_BODY' not in path.read_bytes() and b'SYNTHETIC_PRIVATE_TOKEN' not in path.read_bytes()
     checks.append('identical configured commands work in cmd, Git Bash and PowerShell; UTF-8 input, Chinese/space paths, tool/approval ownership and previous renderer preserved')
     checks.append('isolated PATH has no python/python3/py; prompt bodies, tool input and tokens absent from spool and quota cache')
+
+    # The native argv probe reports only fixed booleans. No command line or
+    # provider path leaves the synthetic fixture. Old /D/C becomes D:/C even
+    # on machines where cmd happens to interpret the converted text usefully.
+    native=versions[0]/'python.exe'
+    program='import base64,json,sys;print(json.dumps({"convertedD":sys.argv[1].lower()=="d:/c","unchanged":sys.argv[1]=="/D/C","absolutePathPreserved":sys.argv[2]==base64.b64decode(sys.argv[3]).decode("utf-8")}))'
+    absolute=str(native).replace('\\','/')
+    probe='"'+absolute+'" -S -c \''+program+'\' /D/C "'+absolute+'" '+base64.b64encode(absolute.encode('utf-8')).decode('ascii')
+    facts=json.loads(execute(probe,{},'bash'))
+    assert facts['absolutePathPreserved'] and facts['convertedD']!=facts['unchanged'], facts
+    print('Native argv probe '+json.dumps(facts,sort_keys=True))
+
+    routes=[]
+    if modes[str(homes[0])]=='shortPath':routes.append(('shortPath',homes[0],runtime))
+    safe=fixture if direct_safe(fixture) else short_path(fixture)
+    direct_runtime=None
+    if safe is not None and direct_safe(safe):
+        direct_home=safe/'ClaudeDirect';direct_home.mkdir()
+        (direct_home/'settings.json').write_text(json.dumps(original),encoding='utf-8')
+        direct_runtime=safe/'Direct/CodexPacer/ClaudeRuntime'
+        direct_report=json.loads(helper('--ensure',direct_home,direct_runtime))
+        assert direct_report['state']=='ready' and direct_report['launchMode']=='direct'
+        routes.append(('direct',direct_home,direct_runtime))
+    slow_home=long_home.parent/"PowerShell O'Neil (fallback) 用户";slow_home.mkdir()
+    (slow_home/'settings.json').write_text(json.dumps(original),encoding='utf-8')
+    assert json.loads(helper('--ensure',slow_home,runtime))['state']=='ready'
+    select_slow_form(slow_home,native)
+    slow_status=json.loads(helper('--inspect',slow_home,runtime))
+    assert slow_status['hooksConfigured'] and slow_status['statusLineConfigured']
+    routes.append(('powershell',slow_home,runtime))
+    for mode,home,_ in routes:
+        for shell in ('cmd','bash','powershell'):
+            elapsed=[]
+            for index in range(5):
+                started=time.perf_counter()
+                assert execute(hook_command(home),{'session_id':'fixture-'+mode+'-'+shell,
+                    'hook_event_name':'UserPromptSubmit','prompt_id':'timing-'+str(index),
+                    'cwd':str(fixture/'synthetic-中文')},shell)==b''
+                elapsed.append((time.perf_counter()-started)*1000)
+            assert execute(settings(home)['statusLine']['command'],{},shell).strip()==b'SYNTHETIC_RENDERER'
+            result={'mode':mode,'executor':shell,'samples':len(elapsed),'hookMedianMs':round(statistics.median(elapsed),1),
+                    'hookMinimumMs':round(min(elapsed),1),'hookMaximumMs':round(max(elapsed),1)}
+            timings.append(result)
+            print('Launch timing '+json.dumps(result,sort_keys=True))
+        observed=[json.loads(line) for line in (home/'pacer/events.jsonl').read_bytes().splitlines()]
+        assert any(row.get('promptId')=='timing-4' and row.get('project')=='synthetic-中文' for row in observed)
+        spool=(home/'pacer/events.jsonl').read_bytes()
+        for shell in ('cmd','bash','powershell'):
+            assert execute(hook_command(home),{'synthetic_oversize':'x'*(2*1024*1024)},shell)==b''
+        assert (home/'pacer/events.jsonl').read_bytes()==spool
+    manifest_path=slow_home/'pacer/installation.json'
+    before_manifest=manifest_path.read_bytes()
+    renderer=fixture/'synthetic-renderer.py'
+    rendered='SYNTHETIC_RENDERER 中文'.encode('utf-8')
+    renderer.write_text('import json,sys\nassert json.load(sys.stdin.buffer)["synthetic_utf8"]=="\\u4e2d\\u6587"\nsys.stdout.buffer.write(bytes.fromhex('+repr(rendered.hex())+'))\n',encoding='utf-8')
+    try:
+        manifest=json.loads(before_manifest)
+        manifest['previousStatusLine']={'type':'command','command':'"'+str(native)+'" -S "'+str(renderer)+'"'}
+        manifest_path.write_text(json.dumps(manifest),encoding='utf-8')
+        for shell in ('bash','powershell'):
+            assert execute(settings(slow_home)['statusLine']['command'],{'synthetic_utf8':'中文'},shell)==rendered
+    finally:manifest_path.write_bytes(before_manifest)
+    checks.append('PowerShell fallback forwards UTF-8 input and previous status-line output as unchanged bytes; oversized input retains the shared silent rejection and writes no records')
+    checks.append('direct, available 8.3 and forced no-8.3 PowerShell commands exercise hook/statusLine under every executor; per-call latency recorded')
 
     home = homes[0]
     python = versions[0]/'python.exe'
@@ -252,11 +361,15 @@ try:
     assert not runtime.exists()
     assert all(settings(home)==original for home in homes)
     assert settings(long_home)==original and not (long_home/'pacer/installation.json').exists()
+    assert settings(slow_home)==original and not (slow_home/'pacer/installation.json').exists()
+    if direct_runtime is not None:
+        helper('--uninstall-all',direct_runtime,direct_home)
+        assert not direct_runtime.exists() and settings(direct_home)==original
     assert all(not (home/'pacer/installation.json').exists() for home in homes)
     checks.append('shared uninstall discovers the second home, leaves exactly user settings, and deletes the owned runtime root')
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({'schemaVersion':1,'syntheticOnly':True,'noUserPython':True,'checks':checks}, indent=2), encoding='utf-8')
+    args.output.write_text(json.dumps({'schemaVersion':1,'syntheticOnly':True,'noUserPython':True,'checks':checks,'launchTimings':timings}, indent=2), encoding='utf-8')
     for check in checks:
         print('PASS '+check)
 finally:
