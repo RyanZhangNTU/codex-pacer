@@ -44,7 +44,7 @@ internal static class ClassicLayoutChecks
             var combinations = new[] { new[] { "codex" }, new[] { "claude" }, new[] { "codex", "claude" }, new[] { "codex", "deepseek" }, new[] { "claude", "deepseek" }, Array.Empty<string>(), new[] { "codex", "claude", "deepseek" } };
             foreach (var providers in combinations)
             {
-                await engine.SendAsync("configure", new { enabledProviders = providers }); await Pump(); await island.WaitForPresentationAsync();
+                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = providers }); await island.WaitForPresentationAsync();
                 var data = engine.LatestSnapshot!.QuotaDashboard!;
                 if (data.Classic.Kind == "legacyCodex")
                     Check(Descendants(island).OfType<LegacyQuotaView>().Any() && !Descendants(island).OfType<ClassicQuotaView>().Any(),

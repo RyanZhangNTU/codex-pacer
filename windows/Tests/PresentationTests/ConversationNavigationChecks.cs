@@ -28,19 +28,21 @@ internal static class ConversationNavigationChecks
             island.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine", "PacerEngine.exe"), true, language,
                 configuration: new { enabledProviders = new[] { provider } }, referenceFixture: true);
-            await engine.SendAsync("demoStage", new { demoStage = 3 });
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 });
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             var completed = Descendants(island).OfType<TaskRow>().First(row => State(row).Unread);
             string id = State(completed).Id;
             Check(completed.IsEnabled && completed.Focusable && ((string)completed.ToolTip).Contains(ui.Text("common.open_chat"), StringComparison.Ordinal), "A provider row must expose its conversation action without changing geometry");
             Check(Math.Abs(completed.ActualHeight - 54) < 0.01, "Conversation actions must preserve the native task row height");
             Invoke(completed); await Until(() => opened.Count == 1 && completed.IsEnabled, "A failed open must finish its single flight");
+            await Until(() => engine.LatestSnapshot?.NavigationError != null, "The failed open must publish its shared error");
             Check(Unread(engine, id) && island.LogicalTarget.Height > 38 && ((TextBlock)island.FindName("StatusLabel")).Text == ui.Text("activity.open_failed"), "Failed navigation must preserve the unread task and show its localized error");
 
             dispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Invoke(completed); await Until(() => opened.Count == 2, "The next explicit click must prepare another scoped open");
             Check(opened[^1].Provider == provider && opened[^1].Kind == "demo", "An offline engine may only return a labeled demo destination");
-            await engine.SendAsync("refresh"); await engine.SendAsync("refresh");
+            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
+            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
             Check(Unread(engine, id), "Unrelated snapshots cannot acknowledge a pending launch");
             dispatch.SetResult(true);
             await Until(() => !Unread(engine, id) && island.LogicalTarget.Height == 38, "A successful open must acknowledge despite unrelated snapshot sequences");
@@ -48,7 +50,7 @@ internal static class ConversationNavigationChecks
             Check(opened.Count == 2, "A cached control cannot launch while its panel is collapsed");
 
             dispatch = null; succeed = true;
-            await engine.SendAsync("demoStage", new { demoStage = 0 });
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 0 });
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             Invoke(completed); await Pump();
             Check(opened.Count == 2, "A control from the old ending page cannot act on a replacement turn");
@@ -76,15 +78,22 @@ internal static class ConversationNavigationChecks
             var running = Descendants(island).OfType<TaskRow>().First(row => State(row).Phase == "running" && localIDs.Contains(State(row).Id));
             string id = State(running).Id;
             Invoke(running); await Until(() => opened == 1, "A current running conversation must be navigable");
-            await engine.SendAsync("demoStage", new { demoStage = 3 }); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 });
+            await island.WaitForPresentationAsync();
             Check(Unread(engine, id), "The new ending must be unread before the old launch returns");
-            dispatch.SetResult(true); await Task.Delay(100); await Pump();
+            dispatch.SetResult(true); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
+            await Until(() => engine.LatestSnapshot?.OpeningActivityIDs?.Contains(id) != true,
+                "The superseded running-task open must release its captured navigation operation");
+            await island.WaitForPresentationAsync();
             Check(Unread(engine, id) && island.LogicalTarget.Height > 38, "An older running-task launch cannot clear a new ending or close its replacement page");
             dispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var current = Descendants(island).OfType<TaskRow>().First(row => State(row).Id == id);
             Invoke(current); await Until(() => opened == 2, "A fresh ending must expose its new navigation token");
-            await engine.SendAsync("configure", new { enabledProviders = Array.Empty<string>() }); await Pump();
-            dispatch.SetResult(true); await Task.Delay(100); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = Array.Empty<string>() });
+            dispatch.SetResult(true); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
+            await island.WaitForPresentationAsync();
             Check(engine.LatestSnapshot!.Tasks.Count == 0 && island.LogicalTarget.Height > 38, "A disabled source must revoke old launch callbacks");
         }
         finally { dispatch.TrySetResult(false); island.StopPresentation(); island.AllowClose = true; island.Close(); }

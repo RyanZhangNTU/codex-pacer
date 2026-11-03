@@ -275,6 +275,8 @@ actor EngineRuntime {
     private var walletSource: EngineWalletSource?
     private let balanceServices: DeepSeekBalanceServices?
     private var balanceState: DeepSeekBalanceState?
+    private var webHostPublication = DeepSeekWebHostPublication()
+    private var publishedBalanceContext: String?
     private lazy var balanceMonitor: DeepSeekBalanceMonitor? = balanceServices.map { services in
         DeepSeekBalanceMonitor(services: services, now: now) { [weak self] state in await self?.receiveBalance(state) }
     }
@@ -1157,7 +1159,9 @@ actor EngineRuntime {
     private func receiveBalance(_ state: DeepSeekBalanceState) {
         guard lifecycle.acceptsObservedWork, state.context == lifecycle.version(.deepseek) else { return }
         let changed = balanceState != state
-        if balanceState?.token != state.token { deepseekNoticePolicy = .init() }
+        if balanceState?.token != state.token {
+            deepseekNoticePolicy = .init(); webHostPublication.rebind(context: state.token)
+        }
         balanceState = state
         if var source = walletSource {
             source.balance = state.balance; source.connected = state.error == nil || state.balance != nil
@@ -1166,7 +1170,14 @@ actor EngineRuntime {
         if changed && initialized && projectionReady { publish(notices: []) }
     }
     private func sendWebHostMessage(_ message: DeepSeekWebHostMessage) {
-        guard initialized, let bytes = try? JSONEncoder().encode(message), bytes.count <= EngineProtocol.maximumCommandBytes else { return }
+        guard initialized else { return }
+        for ready in webHostPublication.receive(message, publishedContext: publishedBalanceContext,
+            ready: projectionReady && lifecycle.acceptsObservedWork) {
+            outputWebHostMessage(ready)
+        }
+    }
+    private func outputWebHostMessage(_ message: DeepSeekWebHostMessage) {
+        guard let bytes = try? JSONEncoder().encode(message), bytes.count <= EngineProtocol.maximumCommandBytes else { return }
         output(bytes + Data([10]))
     }
 
@@ -1532,6 +1543,10 @@ actor EngineRuntime {
         guard (try? snapshotEmission.accepts(bytes, force: force)) != false else { return }
         sequence += 1
         output(bytes + Data([10]))
+        publishedBalanceContext = snapshot.deepseekConnection?.context
+        if projectionReady && lifecycle.acceptsObservedWork {
+            for message in webHostPublication.published(context: publishedBalanceContext) { outputWebHostMessage(message) }
+        }
     }
 
     func prepareForSleep() async {
@@ -1580,6 +1595,7 @@ actor EngineRuntime {
     }
     private func releaseHostWork() {
         claudeHookTask?.cancel(); claudeHookTask = nil; claudeHookRequest = nil; claudeHookHome = nil
+        webHostPublication.reset(); publishedBalanceContext = nil
         cancelHostTracking(); invalidateNavigation()
         activityDisplayDeadline = nil
         refreshRequested = false; discoveryRequested = false; refreshActivityMonitorsRequested = false

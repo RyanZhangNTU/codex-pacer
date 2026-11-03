@@ -34,6 +34,8 @@ internal static class ReminderSettingsChecks
         {
             window.Show(); island.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, preferences.EngineConfiguration(), referenceFixture: true);
+            await Until(() => engine.LatestSnapshot?.Wallet?.Balance != null
+                && engine.LatestSnapshot.DeepseekConnection?.Refreshing == false);
             island.Reveal(); await island.WaitForPresentationAsync(); await Pump();
             var low = Find<TextBox>(window, "settings.reminders.lowLine"); var spike = Find<TextBox>(window, "settings.reminders.spikeLine");
             var lowSwitch = Find<CheckBox>(window, "settings.reminders.lowBalance"); var budget = Find<CheckBox>(window, "settings.reminders.budget");
@@ -73,6 +75,7 @@ internal static class ReminderSettingsChecks
             Check(systemSettings.Focusable && settingsPeer.GetName().Contains(UiText.For(language == "zh-Hans").Text("settings.system_notifications")),
                 "The system settings link remains keyboard accessible and names the notification setting");
             ((IInvokeProvider)settingsPeer.GetPattern(PatternInterface.Invoke)).Invoke(); await Pump();
+            await Until(() => systemSettingsOpened == 1);
             Check(systemSettingsOpened == 1 && configurations == before, "The native settings entry opens once without changing collectors");
             system.Result = NotificationAvailability.Available; Toggle(systemSwitch); await Until(() => session.Current.SystemNotifications && !notifications.IsChanging);
             Check(configurations == before, "System notification choices do not reconfigure collectors");

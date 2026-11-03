@@ -21,6 +21,7 @@ internal static class QuotaConnectionChecks
         await using var engine = new EngineClient(); EngineSnapshot? latest = null;
         engine.Snapshot += value => latest = value;
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
+        await PresentationWait.UntilAsync(() => latest != null, "The recovery fixture must receive its initial snapshot");
         foreach (bool chinese in new[] { false, true })
         {
             var ui = UiText.For(chinese); string language = chinese ? "zh-Hans" : "en";

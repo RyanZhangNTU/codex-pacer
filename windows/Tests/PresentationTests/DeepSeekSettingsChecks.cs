@@ -31,6 +31,9 @@ internal static class DeepSeekSettingsChecks
         {
             window.Show(); island.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, configuration: preferences.EngineConfiguration(), referenceFixture: true);
+            await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.Wallet?.Balance != null
+                && engine.LatestSnapshot.DeepseekConnection?.Refreshing == false,
+                "The settings fixture must receive the completed demo wallet before using its budget suggestions");
             island.Reveal(); await island.WaitForPresentationAsync(); await Pump();
             var module = Find<CheckBox>(window, "settings.deepseek.enabled"); var daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); var weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
             var budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); var balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
@@ -42,6 +45,7 @@ internal static class DeepSeekSettingsChecks
             window.CapturePreview(Path.Combine(output, "settings-" + scenario + "-deepseek.png"));
             var suggestion = engine.LatestSnapshot!.Wallet!.Settings!;
             Select(budget); await Until(() => session.Current.DeepSeekMode == "budget" && budget.IsEnabled);
+            await island.WaitForPresentationAsync();
             Check(session.Current.DeepSeekDailyBudget == suggestion.SuggestedDaily && session.Current.DeepSeekWeeklyBudget == suggestion.SuggestedWeekly,
                 "First switching to budgets must use the shared Core suggestion");
             Check(engine.LatestSnapshot!.Wallet!.Solo!.Budgets.Count == 2 && Descendants(island).OfType<DeepSeekBudgetDial>().Any(), "Saved amounts must drive the actual solo budget face");
@@ -76,6 +80,7 @@ internal static class DeepSeekSettingsChecks
             daily.Text = "0"; Enter(window, daily); await Until(() => session.Current.DeepSeekDailyBudget == null && daily.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet!.Solo!.Budgets.Select(value => value.Kind).SequenceEqual(new[] { "week" }), "Zero must turn off only the daily budget");
             weekly.Text = ""; Enter(window, weekly); await Until(() => session.Current.DeepSeekWeeklyBudget == null && weekly.IsEnabled);
+            await island.WaitForPresentationAsync();
             Check(engine.LatestSnapshot!.Wallet!.Solo!.Budgets.Count == 0 && Descendants(island).OfType<CompactQuotaGlyph>().All(value => value.ShowsPriceClock), "Blank must turn off the last budget and restore the price clock");
             var cost = Find<CheckBox>(window, "settings.deepseek.turn_cost"); Toggle(cost); await Until(() => !session.Current.DeepSeekShowsTurnCost && cost.IsEnabled);
             Check(engine.LatestSnapshot!.Presentation!.Rows.Where(value => value.Provider == "deepseek").All(value => value.Cost == null), "The per-turn display choice must change shared row metadata");

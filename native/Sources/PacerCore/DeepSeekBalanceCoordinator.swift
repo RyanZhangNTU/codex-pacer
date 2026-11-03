@@ -120,7 +120,7 @@ public actor DeepSeekBalanceCoordinator {
         return nil
     }
     @discardableResult public func refreshIfDue(active: Bool, force: Bool = false, requested: Bool = false, turnEnded: Bool = false) async -> Bool {
-        guard enabled, !paused, generation.contains(epoch), let home, let mode = source.mode(detected: detected), work == nil else { return false }
+        guard enabled, !paused, generation.contains(epoch), let home, let mode = source.mode(detected: detected), work == nil, attempt == nil else { return false }
         guard force || !disconnectFailed else { return false }
         guard force || error?.needsConnection != true else { return false }
         guard Self.isDue(lastAttempt: lastAttempt, failures: failures, active: active, force: force, requested: requested, turnEnded: turnEnded, now: now()) else { return false }
@@ -130,13 +130,20 @@ public actor DeepSeekBalanceCoordinator {
         if mode == .account && services.readWeb == nil { error = .signedOut; await emit(); return false }
         lastAttempt = now(); let identifier = UUID(), current = revision
         attempt = identifier; let webContext = token
+        // Reserve the single flight while the host applies pending. A fast
+        // reader must not publish completion before that earlier state lands.
+        await emit()
+        guard enabled, !paused, revision == current, attempt == identifier, generation.contains(epoch) else {
+            if attempt == identifier { attempt = nil }
+            return true
+        }
         work = Task { [weak self, services] in
             let result: Result<DeepSeekBalance, Error>
             do { result = .success(mode == .apiKey ? try await services.readAPI(key!) : try await services.readWeb!(webContext)) }
             catch { result = .failure(error) }
             await self?.finish(result, key: key, home: home, revision: current, attempt: identifier)
         }
-        await emit(); return true
+        return true
     }
     public func saveKey(_ raw: String, token: String) async -> Bool {
         guard enabled, !paused, token == self.token, source.mode(detected: detected) == .apiKey,
@@ -196,7 +203,7 @@ public actor DeepSeekBalanceCoordinator {
     }
     public func currentState() -> DeepSeekBalanceState {
         .init(context: context, token: token, source: source, detected: detected, balance: balance,
-            history: historyAvailable ? history : .init(), error: error, refreshing: work != nil || paused, hasKey: hasKey, webAvailable: services.readWeb != nil,
+            history: historyAvailable ? history : .init(), error: error, refreshing: attempt != nil || paused, hasKey: hasKey, webAvailable: services.readWeb != nil,
             failureCount: failures, lastAttempt: lastAttempt, successCount: successes)
     }
     public var refreshCompletion: Task<Void, Never>? { work }

@@ -16,6 +16,9 @@ internal static class QuotaProjectionChecks
         await using var engine = new EngineClient(); EngineSnapshot? latest = null;
         engine.Snapshot += value => latest = value;
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
+        await PresentationWait.UntilAsync(() => latest?.QuotaDashboard?.Providers.Any(value => value.Provider == "codex") == true
+            && latest.QuotaDashboard.Providers.Any(value => value.Provider == "claude"),
+            "The quota drawing fixture must receive all reference providers");
         var dashboard = latest!.QuotaDashboard ?? throw new InvalidOperationException("The real engine must project dashboard readings.");
         var codex = dashboard.Providers.Single(value => value.Provider == "codex");
         var foreign = new EngineQuota("codex", latest.CapturedAt, false,

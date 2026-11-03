@@ -41,8 +41,8 @@ internal static class HarnessNavigationChecks
             Check(Descendants(island).OfType<TaskRow>().Where(row => State(row).Provider != "deepseek").All(row =>
                 row.IsEnabled == (engine.LatestSnapshot!.ActivityLinks?.Any(link => link.ActivityID == State(row).Id && link.Provider == State(row).Provider) == true)),
                 "Conversation actions must be backed by the engine's current source-scoped links");
-            await engine.SendAsync("configure", new { enabledProviders = new[] { "deepseek" } });
-            await engine.SendAsync("demoStage", new { demoStage = 3 }); await Pump(); await island.WaitForPresentationAsync();
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = new[] { "deepseek" } });
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 }); await island.WaitForPresentationAsync();
             await Until(() => ((Grid)island.FindName("TaskPages")).Children.Count == 1, "A replaced page must release its outgoing visual");
             var row = Descendants(island).OfType<TaskRow>().Single(); var value = State(row);
             Check(value.Unread && value.Phase == "completed" && row.IsEnabled && row.Focusable && row.ActualHeight == 54,
@@ -97,11 +97,12 @@ internal static class HarnessNavigationChecks
             launchSucceeds = true; island.ApplyPreferences(new() { IslandAppearance = "classic" });
             var currentHarness = buttons.Children.OfType<Button>().Single();
             Invoke(currentHarness); await Until(() => opened.Count == 3, "The toolbar must use the same launcher");
+            await island.WaitForPresentationAsync();
             Check(!engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
                 "Opening the desktop alone must collapse the panel without manufacturing an unread event");
             Invoke(currentHarness); await Pump(); Check(opened.Count == 3, "A cached toolbar button cannot launch while its panel is collapsed");
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
-            await engine.SendAsync("demoStage", new { demoStage = 0 }); await Pump(); await island.WaitForPresentationAsync();
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 0 }); await island.WaitForPresentationAsync();
             await Until(() => ((Grid)island.FindName("TaskPages")).Children.Count == 1, "The new running page must finish replacing the completion page");
             Invoke(row); await Pump();
             Check(opened.Count == 3, "A cached row from a replaced page cannot act on the new task while the panel is open");

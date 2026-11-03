@@ -18,6 +18,8 @@ Parallel worktrees can set `PACER_WINDOWS_SCRATCH_PATH` to separate temporary ca
 
 The engine speaks bounded newline-delimited JSON on stdin/stdout. Requests carry `protocolVersion: 1`, an `id` and a `method`. An `initialize` request supplies enabled providers and source roots; `shutdown` closes owned work. Do not save live protocol bodies: they can contain task display metadata. Diagnostics and acceptance records must exclude credentials, account identity and private task content.
 
+DeepSeek browser requests follow the snapshot that publishes their connection context. While configuration suspends task projection, the engine holds at most four requests. Cancellation and a replacement binding remove old requests; sleep and shutdown clear the queue. The browser host still validates every source context, and the existing read and cleanup deadlines remain in force.
+
 For an idle check with empty provider homes, run:
 
 ```powershell

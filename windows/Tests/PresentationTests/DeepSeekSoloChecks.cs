@@ -29,7 +29,10 @@ internal static class DeepSeekSoloChecks
         {
             island.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
-            await engine.SendAsync("configure", new { enabledProviders = new[] { "deepseek" } });
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = new[] { "deepseek" } });
+            await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.Wallet?.Balance != null
+                && engine.LatestSnapshot.DeepseekConnection?.Refreshing == false,
+                "The solo fixture must receive its completed demo wallet");
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             var view = Descendants(island).OfType<DeepSeekSoloView>().Single();
             var wallet = engine.LatestSnapshot!.Wallet!;
@@ -46,7 +49,7 @@ internal static class DeepSeekSoloChecks
                 "A naturally fitted solo panel must not introduce a scrollbar for a fractional text line");
             island.CapturePreview(Path.Combine(output, "deepseek-solo-" + language + (motion ? "-motion" : "-reduced") + ".png"));
             string[] titles = wallet.Solo!.Distribution!.Parts.Where(part => !part.Elsewhere && part.Opacity >= .6).Select(part => part.Title).ToArray();
-            await engine.SendAsync("configure", new { hideProjects = true }); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { hideProjects = true });
             await island.WaitForPresentationAsync();
             Check(!Descendants(island).OfType<TextBlock>().Any(text => titles.Contains(text.Text))
                 && titles.All(title => !JsonSerializer.Serialize(engine.LatestSnapshot).Contains(title, StringComparison.Ordinal)),
@@ -55,7 +58,7 @@ internal static class DeepSeekSoloChecks
             Check(Descendants(island).OfType<DeepSeekSoloView>().Count() == 1 && Descendants(island).OfType<QuotaDial>().Single().ActualWidth == 132,
                 "The original DeepSeek solo exception applies in both dashboard styles");
             if (!motion) await States(wallet, ui, language, output);
-            await engine.SendAsync("configure", new { enabledProviders = new[] { "codex", "claude", "deepseek" }, hideProjects = false });
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = new[] { "codex", "claude", "deepseek" }, hideProjects = false });
             island.ApplyPreferences(new DesktopPreferences { IslandAppearance = "classic" }); await island.WaitForPresentationAsync();
             Check(!Descendants(island).OfType<DeepSeekSoloView>().Any() && Descendants(island).OfType<QuotaDial>().Count() == 3
                 && island.LogicalTarget.Height == 440, "Returning to all providers must restore the original compact quota row without stale solo height");

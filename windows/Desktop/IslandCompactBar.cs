@@ -189,21 +189,41 @@ public partial class IslandWindow
         foreach (var slot in compactRow.Values.Concat(compactColumn.Values))
         {
             double target = value && slot.Tag is true ? compactData.ExpandedOpacity : 1;
-            if (!changed && slot.HasAnimatedProperties && AnimationsEnabled) continue;
-            double from = slot.Opacity;
-            if (dimClocks.Remove(slot, out var old)) old.Dispose(); slot.Opacity = target;
-            if (animate && AnimationsEnabled && Math.Abs(from - target) > .001)
-                dimClocks[slot] = new(new DoubleAnimation(from, target, TimeSpan.FromSeconds(compactData.DimDuration))
-                { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop }, clock => slot.ApplyAnimationClock(OpacityProperty, clock), () => dimClocks.Remove(slot));
+            dimClocks.TryGetValue(slot, out var old);
+            var next = CompactComponentOpacity.Apply(slot, target, !changed && AnimationsEnabled,
+                animate && AnimationsEnabled, compactData.DimDuration, old, () => dimClocks.Remove(slot));
+            if (next == null) dimClocks.Remove(slot); else dimClocks[slot] = next;
         }
     }
     private bool CompactDimStateMatches()
         => compactData == null || compactRow.Values.Concat(compactColumn.Values).All(slot =>
             Math.Abs(slot.Opacity - (expanded && slot.Tag is true ? compactData.ExpandedOpacity : 1)) < .001);
+    private string CompactDimDiagnostics => string.Join(";", compactRow.Values.Concat(compactColumn.Values)
+        .Where(slot => compactData != null && Math.Abs(slot.Opacity - (expanded && slot.Tag is true ? compactData.ExpandedOpacity : 1)) >= .001).Select(slot =>
+        $"{AutomationProperties.GetAutomationId(slot)}:{slot.Opacity:0.000}/{slot.GetAnimationBaseValue(OpacityProperty)},dim={slot.Tag},animated={slot.HasAnimatedProperties}"));
     private sealed class CompactComponentButton : Button
     {
         protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
         private sealed class Peer(CompactComponentButton owner) : ButtonAutomationPeer(owner)
         { protected override List<AutomationPeer>? GetChildrenCore() => null; }
+    }
+}
+
+internal static class CompactComponentOpacity
+{
+    internal static AnimationLease? Apply(Button slot, double target, bool preserveAnimation, bool animate, double duration,
+        AnimationLease? ownedClock = null, Action? completed = null)
+    {
+        // A completed WPF clock still sets HasAnimatedProperties. Keep it
+        // only while its base target also matches the current projection.
+        if (preserveAnimation && slot.HasAnimatedProperties
+            && Math.Abs((double)slot.GetAnimationBaseValue(UIElement.OpacityProperty) - target) < .001) return ownedClock;
+        double from = slot.Opacity;
+        ownedClock?.Dispose(); slot.ApplyAnimationClock(UIElement.OpacityProperty, null); slot.Opacity = target;
+        if (animate && Math.Abs(from - target) > .001)
+            return new(new DoubleAnimation(from, target, TimeSpan.FromSeconds(duration))
+            { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop },
+                clock => slot.ApplyAnimationClock(UIElement.OpacityProperty, clock), completed);
+        return null;
     }
 }

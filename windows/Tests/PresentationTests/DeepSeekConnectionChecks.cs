@@ -48,14 +48,14 @@ internal static class DeepSeekConnectionChecks
             foreach (string layout in new[] { "solo", "classic", "split" })
             {
                 island.ApplyPreferences(session.Current with { ExpandedQuotaStyle = layout == "classic" ? "classic" : "split" });
-                await engine.SendAsync("configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = "disabled", deepseek = "enabled" } });
+                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = "disabled", deepseek = "enabled" } });
                 island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
                 var connect = Find<Button>(island, "deepseek.balance.connect");
                 Check(connect.IsEnabled && (string)connect.Content == ui.Text("deepseek.paste_key_short"),
                     "The actual " + layout + " dial must offer the original API key action");
                 requestedPane = null; Invoke(connect); await Until(() => requestedPane == "deepseek"); oldConnect = connect;
             }
-            await engine.SendAsync("configure", session.Current.EngineConfiguration()); island.ApplyPreferences(session.Current); await Pump();
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", session.Current.EngineConfiguration()); island.ApplyPreferences(session.Current); await island.WaitForPresentationAsync();
             window.CapturePreview(Path.Combine(output, "settings-deepseek-api-" + name + "-missing.png"));
             field.Password = "short"; Invoke(save); await Until(() => save.IsEnabled == false && field.IsEnabled && field.SecurePassword.Length == 0);
             Check(Find<TextBlock>(window, "settings.deepseek.key.issue").Text == ui.Text("deepseek.key_invalid"), "A rejected key must clear its field and show the original input issue");
@@ -90,6 +90,7 @@ internal static class DeepSeekConnectionChecks
             Check(engine.LatestSnapshot.Wallet!.Balance == null && session.Current.DeepSeekBalanceSource == "apiKey", "Removal must clear the balance while retaining the chosen source");
             field = Find<PasswordBox>(window, "settings.deepseek.key.input"); field.Password = key;
             Toggle(Find<CheckBox>(window, "settings.deepseek.enabled")); await Until(() => engine.LatestSnapshot.Modules!.Single(value => value.Provider == "deepseek").Enabled == false);
+            await Until(() => !field.IsVisible && field.SecurePassword.Length == 0);
             Check(field.SecurePassword.Length == 0 && !field.IsVisible, "Disabling the module must clear an unfinished key");
             Console.WriteLine("PASS DeepSeek connection " + name + ": secure input, source menu, three dial routes, isolated demo credentials, refresh/removal, rollback and stale-control rejection");
         }

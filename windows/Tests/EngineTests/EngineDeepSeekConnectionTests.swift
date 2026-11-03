@@ -3,6 +3,37 @@ import XCTest
 @testable import PacerCore
 
 final class EngineDeepSeekConnectionTests: XCTestCase {
+    func testEveryWebRequestFollowsTheMatchingSourceSnapshotAcrossRepeatedSwitches() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000), capture = Capture()
+        let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, detect: { _, _ in .account })
+        let runtime = EngineRuntime(demo: true, now: { now }, balanceServices: services, output: { capture.append($0) })
+        func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        func settings(_ source: String) -> [String: Any] {
+            ["mode": "balance", "daily": NSNull(), "weekly": NSNull(), "ringPeriod": "day", "speedSource": "local",
+             "showsTurnCost": true, "balanceSource": source]
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["deepseek"], "deepseekSettings": settings("apiKey")]))
+        _ = await runtime.receive(try command("setDeepSeekWebHost", ["webAvailable": true]))
+        for index in 0..<8 {
+            _ = await runtime.receive(try command("configure", ["deepseekSettings": settings("web")]))
+            try await wait { capture.webRequests().count == index + 1 }
+            let request = try XCTUnwrap(capture.webRequests().last)
+            XCTAssertEqual(capture.last()?.deepseekConnection?.context, request.context)
+            XCTAssertEqual(capture.last()?.deepseekConnection?.mode, "account")
+            XCTAssertEqual(capture.uncorrelatedWebRequests(), 0,
+                "The host must see the current source before any browser work is requested")
+            _ = await runtime.receive(try command("completeDeepSeekWebRead", ["webRequestID": request.id,
+                "balanceContext": request.context, "webReply": ["state": "ok", "normal": ["35.60"], "bonus": ["6.40"]]]))
+            try await wait { capture.last()?.wallet?.balance == 42 }
+            _ = await runtime.receive(try command("configure", ["deepseekSettings": settings("apiKey")]))
+            XCTAssertNil(capture.last()?.wallet?.balance)
+        }
+        XCTAssertEqual(capture.webRequests().count, 8)
+        await runtime.stop()
+    }
     func testRealProtocolKeyEditsKeepSecretsOutOfSnapshotsAndLegacySettingsRetainTheSource() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000), memory = KeyMemory(), capture = Capture()
         let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
@@ -156,5 +187,23 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
                 .last { $0["type"] as? String == "error" }?["code"] as? String
         }
         func text() -> String { values().map { String(decoding: $0, as: UTF8.self) }.joined() }
+        func webRequests() -> [(id: String, context: String)] {
+            values().compactMap { data in
+                guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      value["type"] as? String == "hostRequest", value["operation"] as? String == "deepseek.balance",
+                      let id = value["requestID"] as? String, let context = value["context"] as? String else { return nil }
+                return (id, context)
+            }
+        }
+        func uncorrelatedWebRequests() -> Int {
+            var latest: EngineSnapshot?, mismatches = 0
+            for data in values() {
+                if let snapshot = try? JSONDecoder().decode(EngineSnapshot.self, from: data) { latest = snapshot; continue }
+                guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      value["type"] as? String == "hostRequest", value["operation"] as? String == "deepseek.balance" else { continue }
+                if latest?.deepseekConnection?.context != value["context"] as? String || latest?.deepseekConnection?.mode != "account" { mismatches += 1 }
+            }
+            return mismatches
+        }
     }
 }

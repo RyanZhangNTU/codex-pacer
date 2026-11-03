@@ -50,6 +50,7 @@ internal static class CollapsedLayoutChecks
             Check(state.EditorTrailing.Last() == "tps" && !state.EditorLeading.Contains("tps"), "Dropping at the lane end must move the actual shared component");
             Check(configurations == 0 && engine.LatestSnapshot.Sequence == before, "Layout edits cannot configure the engine or request another snapshot");
             await Until(() => ((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"));
+            await island.WaitForPresentationAsync();
             Check(((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"),
                 "The real header must reflect the changed lane");
             await Until(() => editor.IsEnabled);
@@ -99,6 +100,7 @@ internal static class CollapsedLayoutChecks
             else Check(header.All(value => Math.Abs(value.Opacity - 1) < .001), "Reduced motion must restore full strength immediately");
             var status = Find<CheckBox>(window, "compact.component.status"); bool original = status.IsChecked == true;
             reject = true; Toggle(status); await Until(() => !reject && status.IsEnabled);
+            await island.WaitForPresentationAsync();
             Check((status.IsChecked == true) == original && Descendants(island).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.status") == original,
                 "A failed write must restore the editor's acknowledged state");
             Check(configurations == 0, "A failed presentation write cannot reconfigure a source");

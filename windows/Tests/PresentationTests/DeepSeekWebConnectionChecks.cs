@@ -44,6 +44,7 @@ internal static class DeepSeekWebConnectionChecks
                 Find<Button>(window, "settings.deepseek.sign_in").IsEnabled);
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             browserActions = false; island.ApplyPreferences(preferences with { DeepSeekPanelStyle = "simple" });
+            await island.WaitForPresentationAsync();
             var offlineConnect = Find<Button>(island, "deepseek.balance.connect");
             Check(!offlineConnect.IsEnabled && (string?)offlineConnect.ToolTip == ui.Text("windows.deepseek.demo_web_help"),
                 "A synthetic web reader cannot advertise a real login action in the offline demo");
@@ -92,6 +93,7 @@ internal static class DeepSeekWebConnectionChecks
             Check(site.Reads == reads && engine.LatestSnapshot?.Wallet?.Balance == null, "A failed profile clear cannot silently reconnect the old account");
             session.Unavailable = true; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection?.WebAvailable == false);
+            await island.WaitForPresentationAsync();
             session.Unavailable = false; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { WebAvailable: true, Refreshing: false });
             Check(site.Reads == reads && engine.LatestSnapshot?.Wallet?.Balance == null,
@@ -103,6 +105,7 @@ internal static class DeepSeekWebConnectionChecks
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Connected: false });
             session.Unavailable = true; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection?.WebAvailable == false);
+            await island.WaitForPresentationAsync();
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "A missing runtime cannot advertise a working sign-in");
             Check(!Find<Button>(island, "deepseek.balance.connect").IsEnabled, "The island must also disable web sign-in without a runtime");
             session.Unavailable = false; await connection.StartAsync();
@@ -143,7 +146,7 @@ internal static class DeepSeekWebConnectionChecks
         {
             foreach (string layout in new[] { "solo", "split", "classic", "three", "classic-three" })
             {
-                await engine.SendAsync("configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = layout.Contains("three", StringComparison.Ordinal) ? "enabled" : "disabled", deepseek = "enabled" } });
+                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = layout.Contains("three", StringComparison.Ordinal) ? "enabled" : "disabled", deepseek = "enabled" } });
                 island.ApplyPreferences(preferences with { ExpandedQuotaStyle = layout.StartsWith("classic", StringComparison.Ordinal) ? "classic" : "split" });
                 site.Status = 503;
                 await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot!.DeepseekConnection!.Context });
@@ -177,7 +180,8 @@ internal static class DeepSeekWebConnectionChecks
         finally
         {
             island.ProviderSettingsRequested -= OpenSettings; site.Hold = false; site.Release(); site.Status = 200;
-            await engine.SendAsync("configure", preferences.EngineConfiguration()); island.ApplyPreferences(preferences);
+            await PresentationWait.CommandSnapshotAsync(engine, "configure", preferences.EngineConfiguration()); island.ApplyPreferences(preferences);
+            await island.WaitForPresentationAsync();
         }
     }
     private static async Task<DeepSeekLoginWindow> Login(DeepSeekWebSessionChecks.Site site)
