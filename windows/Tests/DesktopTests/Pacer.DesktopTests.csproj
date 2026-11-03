@@ -30,5 +30,6 @@
     <Compile Include="../../Desktop/BackdropController.cs" Link="BackdropController.cs"/>
     <Compile Include="../../Desktop/QuotaAlternationSchedule.cs" Link="QuotaAlternationSchedule.cs"/>
     <Compile Include="../../Desktop/FullscreenOcclusionPolicy.cs" Link="FullscreenOcclusionPolicy.cs"/>
+    <Compile Include="../../Desktop/TrailingRefreshThrottle.cs" Link="TrailingRefreshThrottle.cs"/>
   </ItemGroup>
 </Project>

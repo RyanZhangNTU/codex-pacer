@@ -1,6 +1,5 @@
 using System;
 using System.Windows.Interop;
-using System.Windows.Threading;
 
 namespace CodexPacer.Windows;
 
@@ -22,8 +21,7 @@ public partial class IslandWindow
                 var bounds = VisibleScreenBounds;
                 return bounds.IsEmpty ? default : new((int)Math.Floor(bounds.Left), (int)Math.Floor(bounds.Top),
                     (int)Math.Ceiling(bounds.Right), (int)Math.Ceiling(bounds.Bottom));
-            }, value => { decorationsOccluded = value; UpdateCompactBar(); },
-                action => Dispatcher.BeginInvoke(action, DispatcherPriority.ContextIdle));
+            }, value => { decorationsOccluded = value; UpdateCompactBar(); }, Dispatcher);
             occlusionSource = HwndSource.FromHwnd(hwnd); occlusionSource?.AddHook(OcclusionMessage);
         };
         Loaded += (_, _) => occlusion?.Request();

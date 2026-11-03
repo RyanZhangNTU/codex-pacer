@@ -1,5 +1,7 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Windows.Threading;
 
 namespace CodexPacer.Windows;
 
@@ -10,15 +12,20 @@ internal sealed class FullscreenOcclusionObserver : IDisposable
     private readonly IntPtr content;
     private readonly Func<ScreenRectangle> islandBounds;
     private readonly Action<bool> changed;
-    private readonly Action<Action> post;
+    private readonly DispatcherTimer wake;
+    private readonly TrailingRefreshThrottle throttle;
     private readonly WinEvent callback;
     private readonly GCHandle callbackRoot;
     private readonly IntPtr[] hooks = new IntPtr[4];
-    private bool queued, disposed;
+    private bool disposed;
     private bool? previous;
-    internal FullscreenOcclusionObserver(IntPtr content, Func<ScreenRectangle> islandBounds, Action<bool> changed, Action<Action> post)
+    internal FullscreenOcclusionObserver(IntPtr content, Func<ScreenRectangle> islandBounds, Action<bool> changed, Dispatcher dispatcher)
     {
-        this.content = content; this.islandBounds = islandBounds; this.changed = changed; this.post = post;
+        this.content = content; this.islandBounds = islandBounds; this.changed = changed;
+        long epoch = Stopwatch.GetTimestamp();
+        wake = new(DispatcherPriority.ContextIdle, dispatcher);
+        throttle = new(() => Stopwatch.GetElapsedTime(epoch), delay => { wake.Interval = delay; wake.Start(); }, () => wake.Stop(), Refresh);
+        wake.Tick += Wake;
         callback = Event;
         callbackRoot = GCHandle.Alloc(callback);
         hooks[0] = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0); // foreground
@@ -32,12 +39,8 @@ internal sealed class FullscreenOcclusionObserver : IDisposable
         if (hwnd == IntPtr.Zero || objectId != 0 || child != 0) return;
         Request();
     }
-    internal void Request()
-    {
-        if (disposed || queued) return;
-        queued = true;
-        post(() => { queued = false; if (!disposed) Refresh(); });
-    }
+    internal void Request() => throttle.Request();
+    private void Wake(object? sender, EventArgs args) { wake.Stop(); throttle.Fire(); }
     private void Refresh()
     {
         bool covered = false;
@@ -81,6 +84,7 @@ internal sealed class FullscreenOcclusionObserver : IDisposable
     {
         if (disposed) return;
         disposed = true;
+        throttle.Dispose(); wake.Tick -= Wake;
         foreach (var hook in hooks) if (hook != IntPtr.Zero) UnhookWinEvent(hook);
         if (callbackRoot.IsAllocated) callbackRoot.Free();
     }
