@@ -56,12 +56,17 @@ private actor WSLNoDesktop: DesktopActivityChannel {
 private final class WSLFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var frames: [EngineSnapshot] = []
+    private var results: [[String: Any]] = []
     func append(_ data: Data) {
-        guard let value = try? JSONDecoder().decode(EngineSnapshot.self, from: data) else { return }
-        lock.lock(); frames.append(value); lock.unlock()
+        if let value = try? JSONDecoder().decode(EngineSnapshot.self, from: data) {
+            lock.lock(); frames.append(value); lock.unlock()
+        } else if let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            lock.lock(); results.append(value); lock.unlock()
+        }
     }
     func latest() -> EngineSnapshot? { lock.lock(); defer { lock.unlock() }; return frames.last }
     func count() -> Int { lock.lock(); defer { lock.unlock() }; return frames.count }
+    func result(_ id: String) -> [String: Any]? { lock.lock(); defer { lock.unlock() }; return results.last { $0["id"] as? String == id } }
 }
 final class WindowsWSLTests: XCTestCase {
     private func profile(distro: String = "Fixture Linux", user: String = "synthetic", uid: UInt32 = 1000,
@@ -263,8 +268,8 @@ final class WindowsWSLTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-engine-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
-            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        func command(_ method: String, _ params: [String: Any] = [:], id: String = UUID().uuidString) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": id, "method": method, "params": params])
         }
         func until(_ condition: () -> Bool) async throws {
             let end = Date().addingTimeInterval(3)
@@ -283,6 +288,15 @@ final class WindowsWSLTests: XCTestCase {
         try await child.send(["kind": "runtimeBatch", "events": [["method": "turn/completed", "threadId": thread, "turnId": "one", "status": "completed", "at": Date().timeIntervalSince1970]]])
         XCTAssertTrue(frames.latest()?.tasks.first?.unread == true)
         XCTAssertNotNil(frames.latest()?.activityLinks?.first)
+        let link = try XCTUnwrap(frames.latest()?.activityLinks?.first)
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context], id: "wsl-open"))
+        let opened = try XCTUnwrap(frames.result("wsl-open")?["value"] as? [String: Any])
+        XCTAssertEqual(opened["kind"] as? String, "wslTerminal", "A WSL source does not need an SSH target to navigate")
+        let token = try XCTUnwrap(opened["terminal"] as? String), resume = try XCTUnwrap(WindowsWSLResume.decode(token))
+        XCTAssertEqual(resume.profile, profile); XCTAssertEqual(resume.provider, .codex); XCTAssertEqual(resume.session, thread)
+        XCTAssertNil(opened["hostApplication"])
+        _ = await runtime.receive(try command("cancelActivityOpen", ["context": link.context]))
+        XCTAssertTrue(frames.latest()?.tasks.first?.unread == true, "Preparing or cancelling a terminal cannot acknowledge the ending")
         _ = await runtime.receive(try command("configure", ["monitorWSL": false]))
         XCTAssertTrue(frames.latest()?.tasks.allSatisfy { $0.sourceID != profile.id } == true)
         XCTAssertFalse(child.isRunning)
