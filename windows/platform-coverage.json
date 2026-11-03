@@ -671,7 +671,7 @@
         "反向/重复输入/焦点/可访问树、遮挡和实际播放；正式版再做动画对照",
         "A/B/C 不新增参考截图、来源证明 JSON 或像素/动画检查；已有断言迁移保留"
       ],
-      "previewNote": "Original Swift geometry and curves drive a fixed WPF surface. Read-only allocation bounds cover 1 ms trajectory samples and preserve displayed state and velocity; badge clocks retain 864 checked samples. Harness rows use a shared finite 120 ms ease-out clock with Mac UnitCurve compatibility coverage and normal/reduced-motion WPF checks. Window scenarios cover reversals, native transparent hit testing and visible accessibility bounds. Frame-time diagnostics still show environment stalls; occlusion, paired actual playback and switch-motion acceptance remain. Compact quota components independently ease to the original 0.3 opacity over 200 ms, reverse from displayed opacity and update immediately with reduced motion; paired animation acceptance remains.",
+      "previewNote": "Original Swift geometry and curves drive a fixed WPF surface. Read-only allocation bounds cover 1 ms trajectory samples and preserve displayed state and velocity; badge clocks retain 864 checked samples. Harness rows use a shared finite 120 ms ease-out clock with Mac UnitCurve compatibility coverage and normal/reduced-motion WPF checks. Window scenarios cover reversals, native transparent hit testing and visible accessibility bounds. Frame-time diagnostics still show environment stalls; occlusion, paired actual playback and switch-motion acceptance remain. Compact quota components independently ease to the original 0.3 opacity over 200 ms, reverse from displayed opacity and update immediately with reduced motion; paired animation acceptance remains. P4 route B keeps content/material HWND bounds and native input clips synchronized on shared spring frames. Normal, reversal and reduced-motion glass tests include the two-phase collapsed Black backing; protected motion captures have no outside spill. Other displays and paired perceptual playback still need acceptance.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
@@ -691,14 +691,14 @@
       "status": "pending",
       "evidence": [],
       "priority": "P4",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "Black 与系统 Acrylic（Mica 备选）并列；真实半透明模糊材质",
         "跟随 Windows 透明效果/高对比度，即时回退 Black 并保留用户选择",
         "Windows 10/旧 Windows 11 或 API 不支持时禁用并说明",
         "WPF layered/AllowsTransparency 冲突先交方案与原型真实效果截图，确认后正式接入"
       ],
-      "previewNote": "Classic and Liquid Glass need actual Windows rendering acceptance; a generic gradient or reduced effect is not accepted.",
+      "previewNote": "Route B overlays the existing hardware-rendered layered WPF content on a native NOREDIRECTIONBITMAP Composition HostBackdropBrush with a shared geometric/native clip. Windows 11 build 26200: 18 nonactive synthetic captures and 1014 spring frames; outside pixels match exactly beyond a 1-device-pixel AA fringe. Native 150% input checks pass through outside and toggle Pin inside without activation; 125% captures and a 150% DPI-message simulation pass. Classic/Liquid Glass share islandAppearance; injected transparency/high-contrast, old-system, API-failure and device-loss paths restore Black while retaining the preference. System setting events are wired, but real settings toggles, multi-monitor moves, Narrator and other GPUs still need acceptance. See docs/windows-composition-backdrop.md.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P4",
       "deferredEvidence": []

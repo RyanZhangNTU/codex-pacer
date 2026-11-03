@@ -38,6 +38,7 @@ internal sealed class EngineClient : IAsyncDisposable
     private EngineSnapshot? latestSnapshot;
     internal EngineSnapshot? LatestSnapshot => Volatile.Read(ref latestSnapshot);
     internal bool IsInitialized => initialized;
+    internal int? ProcessId => process?.Id;
     internal bool IsConnectionClosed => disposing || connectionClosed;
     internal event Action<EngineSnapshot>? Snapshot;
     internal event Action<string>? Status;

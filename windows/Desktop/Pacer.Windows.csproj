@@ -27,4 +27,15 @@
     <Content Include="../ThirdParty/WindowsAppSDK/*.txt" Link="Licenses/WindowsAppSDK/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
     <Content Include="../ThirdParty/WebView2/*.txt" Link="Licenses/WebView2/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>
+  <PropertyGroup>
+    <PacerCompositionOutput>$(MSBuildProjectDirectory)/obj/composition/$(Configuration)</PacerCompositionOutput>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="$(PacerCompositionOutput)/PacerCompositionBackdrop.dll" Link="PacerCompositionBackdrop.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
+  </ItemGroup>
+  <Target Name="BuildCompositionBackdrop" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'"
+          Inputs="../Native/CompositionBackdrop/Backdrop.cpp;../Native/CompositionBackdrop/build.ps1"
+          Outputs="$(PacerCompositionOutput)/PacerCompositionBackdrop.dll">
+    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../Native/CompositionBackdrop/build.ps1&quot; -OutputDirectory &quot;$(PacerCompositionOutput)&quot;"/>
+  </Target>
 </Project>

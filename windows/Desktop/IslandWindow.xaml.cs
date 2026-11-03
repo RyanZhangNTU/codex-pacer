@@ -43,7 +43,7 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer navigationErrorDismiss = new();
     private bool navigationErrorShown;
     private readonly Queue<string> interactionTrace = new();
-    private readonly NativeMotion motion;
+    private NativeMotion motion;
     private readonly NativeLayout geometry;
     private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
@@ -74,7 +74,8 @@ public partial class IslandWindow : Window
 
     internal IslandWindow(EngineClient engine, bool demo, bool chinese, int position = 0, bool? animationOverride = null, WindowsDesktopApplications? desktopApplications = null, int displayMode = 0, Func<bool>? canConnectDeepSeekWeb = null,
         Func<EngineNavigationPlan, EngineTaskRow, Task<bool>>? openConversation = null,
-        Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null)
+        Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
+        Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -85,6 +86,7 @@ public partial class IslandWindow : Window
         this.canConnectDeepSeekWeb = canConnectDeepSeekWeb;
         this.openConversation = openConversation ?? OpenConversationAsync;
         this.screenGeometry = screenGeometry;
+        this.backdropSystemFactory = backdropSystemFactory; this.backdropFactory = backdropFactory;
         ui = UiText.For(chinese);
         Language = PacerFonts.RenderingLanguage(ui);
         if (animationOverride != null && !demo) throw new ArgumentException("Synthetic motion overrides require demo mode.");
@@ -122,8 +124,10 @@ public partial class IslandWindow : Window
             if (presentationStopped) return;
             if (!IsVisible) StopRendering();
             else StartRendering();
+            SyncBackdrop();
         };
         ApplyPresentationLayout();
+        InitializeBackdrop();
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new IslandWindowAutomationPeer(this);
     internal Rect VisibleScreenBounds
@@ -219,7 +223,7 @@ public partial class IslandWindow : Window
             deepseekPanelStyle,
             enabledProviders = latest?.QuotaDashboard?.Providers.Select(value => value.Provider).ToArray(),
             quotaLayout = expandedQuotaStyle == "classic" ? latest?.QuotaDashboard?.Classic.Kind : latest?.QuotaDashboard?.Split.Kind,
-            language = chinese ? "zh-Hans" : "en", appearance = "classic", position, displayMode,
+            language = chinese ? "zh-Hans" : "en", appearance = islandAppearance, captureIncludesNativeBackdrop = !GlassVisible, position, displayMode,
             expanded, windowVisible = IsVisible, page, logicalWidth = viewport.Width, logicalHeight = viewport.Height,
             hostWidth = ActualWidth, hostHeight = ActualHeight, surfaceBounds, viewport,
             pixelWidth = image.PixelWidth, pixelHeight = image.PixelHeight, renderDpi = 96, windowDpi = dpi.PixelsPerInchX,
@@ -261,6 +265,7 @@ public partial class IslandWindow : Window
     internal void ApplyPreferences(DesktopPreferences preferences)
     {
         compactPreferences = preferences;
+        PreferSurface(preferences.IslandAppearance);
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
         displayMode = Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode);
         showAppButtons = preferences.ShowAppButtons;
@@ -367,9 +372,8 @@ public partial class IslandWindow : Window
     }
     private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open)
     {
-        Rect work = SystemParameters.WorkArea;
-        var bounds = screenGeometry?.Invoke() ?? (new MotionBounds(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight),
-            new MotionBounds(work.X, work.Y, work.Width, work.Height));
+        var current = IslandScreen.Read(this);
+        var bounds = screenGeometry?.Invoke() ?? (current.Screen, current.Work);
         return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
     }
     private void Relayout()
@@ -400,17 +404,19 @@ public partial class IslandWindow : Window
         contentHeight = Math.Ceiling(contentHeight);
         layout = MeasureLayout(contentWidth, contentHeight, measuredHeader, expanded);
         ApplyPresentationLayout();
-        if (layout.Target == destination && destinationExpanded == expanded) return;
+        bool blackHeader = layout.Attached && islandAppearance == "liquidGlass";
+        if (layout.Target == destination && destinationExpanded == expanded && destinationBlackHeader == blackHeader) return;
         destination = layout.Target;
         destinationExpanded = expanded;
+        destinationBlackHeader = blackHeader;
         motionRevision++;
         Expanded.Visibility = Visibility.Visible;
-        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, position: layout.Position);
+        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.Position);
         PrepareSurface();
         // Allocation can wait on the system compositor. Start the displayed
         // transition after that work, retaining the same last displayed sample.
-        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, position: layout.Position);
-        if (!AnimationsEnabled) { StopRendering(); ApplyMotion(motion.At(transitionStarted + 2)); }
+        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.Position);
+        if (!AnimationsEnabled) { StopRendering(); ApplyMotion(motion.SettledAt(transitionStarted)); }
         else StartRendering();
     }
     private void PrepareSurface()
@@ -462,7 +468,7 @@ public partial class IslandWindow : Window
             int revision = motionRevision;
             if (lastRenderedAt >= transitionStarted && lastRenderedAt > 0) worstFrameIntervalMilliseconds = Math.Max(worstFrameIntervalMilliseconds, (callbackStarted - lastRenderedAt) * 1000);
             renderedFrames++; lastRenderedAt = Clock();
-            MotionFrame frame = motion.At(AnimationsEnabled ? Clock() : Math.Max(Clock(), transitionStarted + 2)); ApplyMotion(frame);
+            MotionFrame frame = AnimationsEnabled ? motion.At(Clock()) : motion.SettledAt(Math.Max(Clock(), transitionStarted)); ApplyMotion(frame);
             if (frame.Finished && revision == motionRevision) StopRendering();
         }
         finally
@@ -494,6 +500,7 @@ public partial class IslandWindow : Window
         ((FrameworkElement)Content).UpdateLayout();
         UIElementAutomationPeer.FromElement(this)?.InvalidatePeer();
         layoutMilliseconds += (Clock() - started) * 1000;
+        SyncBackdrop();
         FrameApplied?.Invoke(frame);
     }
     private static Geometry ClipShape(double width, double height, CornerRadius corners)
@@ -517,7 +524,7 @@ public partial class IslandWindow : Window
     {
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged;
-        presentationStopped = true; StopRendering(); motion.Dispose(); collapse.Stop(); navigationErrorDismiss.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        presentationStopped = true; StopRendering(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); navigationErrorDismiss.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
     }
     private async Task Send(string method, object? parameters = null)

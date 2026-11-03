@@ -12,9 +12,10 @@ internal static class PreferencesChecks
         {
             var missing = store.Load();
             Check(!missing.Unavailable && missing.Value.IsValid && !Directory.Exists(root), "Missing settings must use defaults without creating files");
+            Check(missing.Value.IslandAppearance == "liquidGlass", "The appearance default matches the Mac preference");
             var original = new DesktopPreferences
             {
-                Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,
+                Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", IslandAppearance = "classic", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,
                 CodexHome = @"C:\中文 space\.codex", CodexExecutable = @"C:\tools 中文\codex.exe",
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekDailyBudget = 12.5, DeepSeekWeeklyBudget = 70,
                 DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, DeepSeekBalanceSource = "apiKey",
@@ -35,6 +36,9 @@ internal static class PreferencesChecks
                 && restored.Value.ProviderModes["codex"] == "disabled" && restored.Value.ProviderModes["claude"] == "automatic"
                 && restored.Value.HideProjects && !restored.Value.ShowAppButtons && !restored.Value.ShowEmbeddedCodexSessions && restored.Value.RetentionMinutes == 60, "Unicode source choices, module modes and display preferences must survive relaunch");
             byte[] before = File.ReadAllBytes(file);
+            Check(restored.Value.IslandAppearance == "classic" && JsonDocument.Parse(before).RootElement.GetProperty("islandAppearance").GetString() == "classic",
+                "The original appearance key and value survive relaunch");
+            Check(!store.Save(original with { IslandAppearance = "unknown" }), "An invalid appearance cannot replace saved settings");
             Check(!store.Save(original with { CodexHome = "relative\\folder" }), "Relative data homes cannot replace saved settings");
             Check(!store.Save(original with { RetentionMinutes = -1 }), "Invalid retention cannot replace saved settings");
             Check(!store.Save(original with { DisplayMode = "unknown" }), "An invalid display mode cannot replace saved settings");
@@ -49,6 +53,7 @@ internal static class PreferencesChecks
             Check(before.SequenceEqual(File.ReadAllBytes(file)), "Rejected settings must leave the last valid file intact");
             File.WriteAllText(file, "{\"schemaVersion\":1,\"position\":\"bottomRight\"}");
             var legacy = store.Load();
+            Check(legacy.Value.IslandAppearance == "liquidGlass", "A missing appearance uses Liquid Glass without rewriting the profile");
             Check(!legacy.Unavailable && legacy.Value.HasChosenPosition && legacy.Value.DisplayMode == "automatic"
                 && legacy.Value.LastSettingsPane == "general" && legacy.Value.ShowEmbeddedCodexSessions && legacy.Value.ExpandedQuotaStyle == "split"
                 && legacy.Value.DeepSeekMode == "balance" && legacy.Value.DeepSeekPanelStyle == "detailed" && legacy.Value.DeepSeekDailyBudget == null && legacy.Value.DeepSeekShowsTurnCost
@@ -57,6 +62,11 @@ internal static class PreferencesChecks
             var unknownStyle = store.Load();
             Check(!unknownStyle.Unavailable && unknownStyle.Value.Position == "bottomRight" && unknownStyle.Value.ExpandedQuotaStyle == "split",
                 "An unknown quota style must fall back to Split Ring without discarding unrelated choices or rewriting the profile");
+            const string futureAppearance = "{\"schemaVersion\":1,\"position\":\"topRight\",\"islandAppearance\":\"future\"}";
+            File.WriteAllText(file, futureAppearance);
+            var unknownSurface = store.Load();
+            Check(!unknownSurface.Unavailable && unknownSurface.Value.IslandAppearance == "liquidGlass" && unknownSurface.Value.Position == "topRight"
+                && File.ReadAllText(file) == futureAppearance, "A future appearance falls back without losing other choices or rewriting the file");
             foreach (string damaged in new[]
             {
                 "not JSON", "null", "{}", "{\"schemaVersion\":2}", "{\"schemaVersion\":\"one\"}",

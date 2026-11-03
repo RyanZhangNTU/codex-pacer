@@ -115,9 +115,22 @@ internal static class SettingsPresentationChecks
             Select(Find<RadioButton>(window, "settings.pane.appearance"));
             await Until(() => session.Current.LastSettingsPane == "appearance" && Find<RadioButton>(window, "appearance.mode.notch").IsEnabled,
                 "Appearance navigation must persist and expose the real position controls");
-            Check(!Find<RadioButton>(window, "appearance.style.liquidGlass").IsEnabled
+            Check(Find<RadioButton>(window, "appearance.style.liquidGlass").IsEnabled == (Environment.OSVersion.Version.Build >= 22621)
                 && !Find<ComboBox>(window, "appearance.display").IsEnabled && !Find<CheckBox>(window, "appearance.fullscreen").IsEnabled,
-                "Unsupported rendering, display and fullscreen choices must remain disabled");
+                "Glass availability follows the OS minimum while unsupported display and fullscreen choices remain disabled");
+            var solidSurface = Find<RadioButton>(window, "appearance.style.classic");
+            Select(solidSurface); await Until(() => session.Current.IslandAppearance == "classic" && solidSurface.IsEnabled,
+                "Classic surface selection persists through its accessible radio control");
+            Check(configureCalls == 3 && Find<TextBlock>(window, "appearance.status").Text == ui.Text("windows.appearance.surface_classic"),
+                "Surface selection shows its effective state without reconfiguring collectors");
+            if (Environment.OSVersion.Version.Build >= 22621)
+            {
+                var glassSurface = Find<RadioButton>(window, "appearance.style.liquidGlass");
+                Select(glassSurface); await Until(() => session.Current.IslandAppearance == "liquidGlass" && glassSurface.IsEnabled,
+                    "Liquid Glass can be restored through the same preference");
+                rejectSave = true; Select(solidSurface);
+                await Until(() => glassSurface.IsChecked == true && glassSurface.IsEnabled, "A failed surface save restores the acknowledged choice");
+            }
             string appearanceImage = Path.Combine(output, "settings-" + scenario + "-appearance.png");
             window.CapturePreview(appearanceImage); CheckOpaque(appearanceImage, window);
             var classic = Find<RadioButton>(window, "appearance.quota.classic");

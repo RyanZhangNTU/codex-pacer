@@ -81,6 +81,9 @@ public partial class App : Application
         }
         bool referenceFixture = e.Args.Contains("--reference-fixture");
         if (referenceFixture && !demo) throw new ArgumentException("Reference fixtures require demo mode.");
+        // Bitmap-only reference exports cannot sample another native HWND.
+        // Material acceptance uses protected desktop captures in BackdropTests.
+        if (referenceFixture) preferences = preferences with { IslandAppearance = "classic" };
         int quotaStyleIndex = Array.IndexOf(e.Args, "--expanded-quota-style");
         if (quotaStyleIndex >= 0)
         {
@@ -302,7 +305,7 @@ public partial class App : Application
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.Closed += (_, _) => settings = null;
         }

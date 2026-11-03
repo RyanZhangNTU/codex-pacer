@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../../desktop-platform.props"/>
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Pacer.BackdropTests</AssemblyName>
+    <ApplicationManifest>../../Desktop/app.manifest</ApplicationManifest>
+    <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
+    <WindowsAppSdkAutoInitialize>false</WindowsAppSdkAutoInitialize>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Desktop/Pacer.Windows.csproj"/>
+    <Content Include="../../Desktop/bin/$(Configuration)/net10.0-windows/Engine/**/*" Link="Engine/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
+    <Content Include="../../Desktop/bin/$(Configuration)/net10.0-windows/CodexPacerPortable_PacerCore.resources/**/*" Link="CodexPacerPortable_PacerCore.resources/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
+  </ItemGroup>
+</Project>

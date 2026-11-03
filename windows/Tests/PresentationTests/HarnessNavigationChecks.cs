@@ -51,7 +51,7 @@ internal static class HarnessNavigationChecks
             Check(peer.GetAutomationControlType() == AutomationControlType.Button && peer.GetChildren()?.Count is null or 0
                 && peer.GetName().Contains(value.Title) && ((string)row.ToolTip).Contains(ui.Text("common.open_chat")),
                 "The row must expose one named button and its original open help");
-            island.ApplyPreferences(new() { ShowAppButtons = false });
+            island.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             Check(buttons.Visibility == Visibility.Collapsed && row.IsEnabled, "Hiding app buttons cannot disable task navigation");
             Invoke(harness); await Pump(); Check(opened.Count == 0, "A cached toolbar button cannot bypass the hidden-app-button preference");
             Hover(row, true);
@@ -91,7 +91,7 @@ internal static class HarnessNavigationChecks
             Check(opened.Count == 2, "A cached UI Automation row cannot launch while its panel is collapsed");
 
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
-            launchSucceeds = true; island.ApplyPreferences(new());
+            launchSucceeds = true; island.ApplyPreferences(new() { IslandAppearance = "classic" });
             var currentHarness = buttons.Children.OfType<Button>().Single();
             Invoke(currentHarness); await Until(() => opened.Count == 3, "The toolbar must use the same launcher");
             Check(!engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
@@ -104,7 +104,7 @@ internal static class HarnessNavigationChecks
             Check(opened.Count == 3, "A cached row from a replaced page cannot act on the new task while the panel is open");
             installed = false;
             Check(!apps.Open("deepseek"), "Fresh revalidation must detect the missing installation");
-            island.ApplyPreferences(new() { ShowAppButtons = false });
+            island.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             var missingRow = Descendants(island).OfType<TaskRow>().Single();
             Check(!missingRow.IsEnabled && !missingRow.Focusable && (string)missingRow.ToolTip == ui.Text("activity.no_link") && buttons.Children.Count == 0,
                 "A missing app must disable its row and remove the toolbar action on refresh");

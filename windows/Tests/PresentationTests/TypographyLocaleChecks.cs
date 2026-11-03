@@ -24,7 +24,7 @@ internal static class TypographyLocaleChecks
                 {
                     CultureInfo.CurrentCulture = CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(host);
                     var ui = UiText.For(language == "zh-Hans"); var engine = new EngineClient();
-                    var preferences = new DesktopPreferences { LastSettingsPane = "collapsed",
+                    var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "collapsed",
                         ProviderModes = new() { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } };
                     var session = new PreferencesSession(preferences, _ => Task.CompletedTask, _ => true);
                     var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false)

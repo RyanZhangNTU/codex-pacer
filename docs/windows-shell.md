@@ -2,6 +2,10 @@
 
 The per-user installer, startup state, maintenance helpers and lifecycle checks are described in [Windows installation](windows-installation.md). The portable ZIP remains available.
 
+The island's Classic/Liquid Glass preference uses the native Composition material described in [Windows Composition glass](windows-composition-backdrop.md), including fallback, DPI, acceptance captures and performance checks. Its C++ bridge builds with the configured Visual C++ x64 tools and Windows SDK C++/WinRT headers; the DLL is copied and published with the desktop app.
+
+The bridge uses C++20 with MSVC 19.30 or newer. VS 2019 19.29 uses C++17 because that compiler hits an internal error in the SDK's C++20 projection. Both paths keep warnings as errors; newer libraries' rejection of experimental coroutine headers is handled by the standard selection, without suppressing diagnostics.
+
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 
 ```powershell

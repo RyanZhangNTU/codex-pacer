@@ -28,7 +28,7 @@ internal static class ClaudeConnectionChecks
         await using var engine = new EngineClient();
         await using var coordinator = new ClaudeConnectionCoordinator(engine, web, Application.Current.Dispatcher);
         bool rejectSave = false;
-        var preferences = new DesktopPreferences { LastSettingsPane = "claude", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "enabled", ["deepseek"] = "disabled" } };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "claude", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "enabled", ["deepseek"] = "disabled" } };
         var session = new PreferencesSession(preferences, value => engine.SendAsync("configure", value), _ => { if (!rejectSave) return true; rejectSave = false; return false; });
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine, ready.Task, claudeConnection: coordinator)

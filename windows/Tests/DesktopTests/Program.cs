@@ -104,6 +104,7 @@ internal static class Program
         });
 
         DesktopPreferences? saved = null;
+        await Test("backdrop policy, restoration, device ownership and idle scheduling", () => { BackdropChecks.Run(); return Task.CompletedTask; });
         await Test("preferences round trip, bounded corrupt files and rejected updates", () =>
         {
             saved = PreferencesChecks.Run(); return Task.CompletedTask;

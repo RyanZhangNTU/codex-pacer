@@ -20,7 +20,7 @@ internal static class ClassicLayoutChecks
         await using var engine = new EngineClient();
         var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: animations) { IsHitTestVisible = false, ShowActivated = false };
         int configurations = 0; bool rejectSave = false;
-        var preferences = new DesktopPreferences { LastSettingsPane = "appearance" };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "appearance" };
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { if (rejectSave) { rejectSave = false; return false; } return true; });
         session.Changed += island.ApplyPreferences;
         var settings = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, true, engine) { IsHitTestVisible = false, ShowActivated = false };

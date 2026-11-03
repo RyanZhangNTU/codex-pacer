@@ -18,9 +18,11 @@ internal sealed partial class SettingsWindow
     private readonly Dictionary<string, (RadioButton Button, PositionSpot Art)> positionChoices = new();
     private NativeLayout? appearanceLayout;
     private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
+    private readonly Dictionary<string, RadioButton> surfaceChoices = new();
+    private TextBlock? surfaceStatus;
 
     private void ClearAppearance()
-    { notchChoice = customChoice = null; positionRow = null; positionSeparator = null; positionChoices.Clear(); quotaStyleChoices.Clear(); }
+    { notchChoice = customChoice = null; positionRow = null; positionSeparator = null; positionChoices.Clear(); quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null; }
     private TextBlock SectionHeader(string key, double top = 2)
     {
         var text = Label(ui.Text(key), 13, FontWeights.SemiBold); text.Margin = new Thickness(10, top, 0, 8); return text;
@@ -47,9 +49,16 @@ internal sealed partial class SettingsWindow
     {
         appearanceLayout ??= new NativeLayout(Path.Combine(AppContext.BaseDirectory, "Engine"));
         form.Children.Add(SectionHeader("appearance.style"));
-        var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch(false)); solid.IsChecked = true;
-        var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch(true), false);
-        Pending(glass, "windows.appearance.glass_pending"); form.Children.Add(Card(Pair(solid, glass)));
+        var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch(false));
+        var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch(true));
+        foreach (var choice in new[] { (Name: "classic", Button: solid), (Name: "liquidGlass", Button: glass) })
+        {
+            surfaceChoices[choice.Name] = choice.Button; editors.Add(choice.Button);
+            choice.Button.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { IslandAppearance = choice.Name }); };
+        }
+        surfaceStatus = Detail(""); surfaceStatus.Margin = new Thickness(10, 0, 10, 10);
+        Identify(surfaceStatus, "appearance.status", ui.Text("appearance.style"));
+        form.Children.Add(Card(Pair(solid, glass), surfaceStatus));
 
         var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         foreach (string style in new[] { "split", "classic" })
@@ -109,6 +118,8 @@ internal sealed partial class SettingsWindow
     }
     private void RefreshAppearance()
     {
+        foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
+        RefreshSurfaceStatus();
         foreach (var item in quotaStyleChoices) item.Value.IsChecked = item.Key == session.Current.ExpandedQuotaStyle;
         if (notchChoice == null || customChoice == null || positionRow == null) return;
         bool attached = session.Current.DisplayMode == "notch";
@@ -120,6 +131,25 @@ internal sealed partial class SettingsWindow
             ((TextBlock)caption.Children[1]).Text = ui.Text(session.Current.Position == "center" ? "windows.appearance.position_center_note" : "appearance.position_side_note");
         if (customChoice.Content is StackPanel content && content.Children[0] is Grid art)
         { art.Children.Clear(); art.Children.Add(PositionSwatch(session.Current.Position)); }
+    }
+    private void RefreshSurfaceStatus()
+    {
+        if (surfaceStatus == null) return;
+        var decision = surfaceWindow?.SurfaceDecision ?? BackdropPolicy.Resolve(session.Current.IslandAppearance,
+            new(Environment.OSVersion.Version.Build, true, SystemParameters.HighContrast));
+        string key = decision.Reason switch
+        {
+            BackdropReason.Classic => "classic", BackdropReason.Available => "available", BackdropReason.OldSystem => "old_system",
+            BackdropReason.TransparencyOff => "transparency_off", BackdropReason.HighContrast => "high_contrast",
+            BackdropReason.DeviceLost => "device_lost", _ => "unavailable"
+        };
+        surfaceStatus.Text = ui.Text("windows.appearance.surface_" + key);
+        if (surfaceChoices.TryGetValue("liquidGlass", out var choice))
+        {
+            choice.IsEnabled = !busy && !session.RequiresRestart && Environment.OSVersion.Version.Build >= 22621;
+            choice.ToolTip = decision.Glass ? null : surfaceStatus.Text;
+            ToolTipService.SetShowOnDisabled(choice, true);
+        }
     }
     private static Canvas Wallpaper(double width, double height, double radius = 6)
     {

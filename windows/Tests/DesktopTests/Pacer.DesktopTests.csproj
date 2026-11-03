@@ -26,5 +26,7 @@
     <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
     <Compile Include="../../Desktop/NativeMotion.cs" Link="NativeMotion.cs"/>
     <Compile Include="../../Desktop/NativeLayout.cs" Link="NativeLayout.cs"/>
+    <Compile Include="../../Desktop/BackdropPolicy.cs" Link="BackdropPolicy.cs"/>
+    <Compile Include="../../Desktop/BackdropController.cs" Link="BackdropController.cs"/>
   </ItemGroup>
 </Project>

@@ -19,7 +19,7 @@ internal static class CodexSettingsChecks
     internal static async Task Run(string language, bool dark, string output)
     {
         await using var engine = new EngineClient();
-        var preferences = new DesktopPreferences { LastSettingsPane = "codex", ProviderModes = new()
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "codex", ProviderModes = new()
             { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } };
         bool rejectSave = false, rejectEngine = false; int configurations = 0;
         var session = new PreferencesSession(preferences, async value =>

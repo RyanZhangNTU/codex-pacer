@@ -20,7 +20,7 @@ internal static class CollapsedLayoutChecks
     internal static async Task Run(string language, bool dark, bool animations, string output)
     {
         var engine = new EngineClient();
-        var preferences = new DesktopPreferences { LastSettingsPane = "collapsed" };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "collapsed" };
         int configurations = 0, saves = 0; bool reject = false;
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { saves++; if (reject) { reject = false; return false; } return true; });
         var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: animations) { IsHitTestVisible = false, ShowActivated = false };

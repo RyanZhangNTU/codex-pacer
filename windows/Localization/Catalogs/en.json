@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/Localization/en.json": "b4304cbc59d498f791bbb9514d930c75b571df15d94172042f1ac106adc80f3f"
+    "windows/Localization/en.json": "368c674c31909ede7c7a7a18b207b0e4fc160104f9ddbaa2c70c2670e2bf0039"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -893,6 +893,13 @@
     "windows.appearance.glass_pending": "Liquid Glass rendering is not available in the Windows preview yet.",
     "windows.appearance.position_center_note": "A capsule centered near the top of the screen.",
     "windows.appearance.quota_pending": "The Classic quota view is not available in the Windows preview yet.",
+    "windows.appearance.surface_available": "Glass follows Windows transparency effects. Black when collapsed in Notch mode.",
+    "windows.appearance.surface_classic": "Solid Black surface.",
+    "windows.appearance.surface_device_lost": "The graphics device was lost. Using Black. Your glass choice is saved; try again after the display recovers.",
+    "windows.appearance.surface_high_contrast": "High contrast is on. Using Black; glass returns when it is off.",
+    "windows.appearance.surface_old_system": "Glass needs Windows 11, build 22621 or later. Using Black; your choice is saved.",
+    "windows.appearance.surface_transparency_off": "Windows transparency effects are off. Using Black; glass returns when they are on.",
+    "windows.appearance.surface_unavailable": "Glass is unavailable. Using Black; your choice is saved. Choose Classic, then Liquid Glass to retry.",
     "windows.claude.account_pending": "Claude web accounts and cloud projects are not available on Windows yet.",
     "windows.claude.cloud_pending": "Claude cloud projects are not available on Windows yet.",
     "windows.claude.connection_failed": "Couldn\u2019t connect Claude. Try again.",

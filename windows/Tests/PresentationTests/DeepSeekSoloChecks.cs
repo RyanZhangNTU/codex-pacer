@@ -51,12 +51,12 @@ internal static class DeepSeekSoloChecks
             Check(!Descendants(island).OfType<TextBlock>().Any(text => titles.Contains(text.Text))
                 && titles.All(title => !JsonSerializer.Serialize(engine.LatestSnapshot).Contains(title, StringComparison.Ordinal)),
                 "Changing privacy must remove every task name from the live solo panel and snapshot");
-            island.ApplyPreferences(new DesktopPreferences { ExpandedQuotaStyle = "classic" }); await island.WaitForPresentationAsync();
+            island.ApplyPreferences(new DesktopPreferences { IslandAppearance = "classic", ExpandedQuotaStyle = "classic" }); await island.WaitForPresentationAsync();
             Check(Descendants(island).OfType<DeepSeekSoloView>().Count() == 1 && Descendants(island).OfType<QuotaDial>().Single().ActualWidth == 132,
                 "The original DeepSeek solo exception applies in both dashboard styles");
             if (!motion) await States(wallet, ui, language, output);
             await engine.SendAsync("configure", new { enabledProviders = new[] { "codex", "claude", "deepseek" }, hideProjects = false });
-            island.ApplyPreferences(new DesktopPreferences()); await island.WaitForPresentationAsync();
+            island.ApplyPreferences(new DesktopPreferences { IslandAppearance = "classic" }); await island.WaitForPresentationAsync();
             Check(!Descendants(island).OfType<DeepSeekSoloView>().Any() && Descendants(island).OfType<QuotaDial>().Count() == 3
                 && island.LogicalTarget.Height == 440, "Returning to all providers must restore the original compact quota row without stale solo height");
             Console.WriteLine("PASS DeepSeek solo " + language + (motion ? "-motion" : "-reduced") + ": real engine routing, 132-point dial, charts, privacy, classic exception and multi-provider restore");

@@ -54,7 +54,7 @@ internal static class Program
                     await LegacyQuotaChecks.Run(output); await QuotaConnectionChecks.Run(output); await TypographyLocaleChecks.Run(output);
                 }
                 if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
-                if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); }
+                if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); await BackdropPresentationChecks.Run(); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
                     foreach (bool motion in new[] { false, true })
@@ -113,8 +113,8 @@ internal static class Program
             window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
             await window.WaitForPresentationAsync();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
-            var withQuota = await NativeCompactBar.Shared.EditAsync(new DesktopPreferences(), language,
-                NativeCompactBar.Providers(new DesktopPreferences(), engine.LatestSnapshot), new("show", "quota"));
+            var withQuota = await NativeCompactBar.Shared.EditAsync(new DesktopPreferences { IslandAppearance = "classic" }, language,
+                NativeCompactBar.Providers(new DesktopPreferences { IslandAppearance = "classic" }, engine.LatestSnapshot), new("show", "quota"));
             window.ApplyPreferences(withQuota);
             await window.SynchronizeExpansionAsync();
             await Pump();

@@ -13,6 +13,7 @@ internal sealed record DesktopPreferences
     public string Language { get; init; } = "system";
     public string Position { get; init; } = "center";
     public string DisplayMode { get; init; } = "automatic";
+    public string IslandAppearance { get; init; } = "liquidGlass";
     public string ExpandedQuotaStyle { get; init; } = "split";
     public string? CompactLayout { get; init; }
     public string CompactSingleTask { get; init; } = "stage";
@@ -51,6 +52,7 @@ internal sealed record DesktopPreferences
     internal bool IsValid => SchemaVersion == 1 && Language is "system" or "en" or "zh-Hans"
         && Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight"
         && DisplayMode is "automatic" or "notch" or "floating"
+        && IslandAppearance is "classic" or "liquidGlass"
         && ExpandedQuotaStyle is "split" or "classic"
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
         && CompactSingleTask is "stage" or "count" && CompactMetric is "remaining" or "pace"
@@ -128,6 +130,7 @@ internal sealed class PreferencesStore
                 !version.TryGetInt32(out int value) || value != 1)
                 return Unavailable();
             var settings = JsonSerializer.Deserialize<DesktopPreferences>(bytes.AsSpan(0, count), Json);
+            if (settings != null && settings.IslandAppearance is not ("classic" or "liquidGlass")) settings = settings with { IslandAppearance = "liquidGlass" };
             if (settings != null && settings.ExpandedQuotaStyle is not ("split" or "classic")) settings = settings with { ExpandedQuotaStyle = "split" };
             if (settings != null && settings.DeepSeekPanelStyle is not ("simple" or "detailed")) settings = settings with { DeepSeekPanelStyle = "detailed" };
             return settings is { IsValid: true } ? (settings, false) : Unavailable();
