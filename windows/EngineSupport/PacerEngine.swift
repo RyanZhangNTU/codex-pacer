@@ -1299,9 +1299,12 @@ actor EngineRuntime {
             quota = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider in
                 DemoScenario.quota(provider, at: date).last.map { (provider, $0) }
             })
-            var history = QuotaCycleHistory()
-            for sample in DemoScenario.quota(.codex, at: date) { history.record(sample) }
-            codexHistory.receive(snapshot: quota[.codex], history: history, warning: nil)
+            for provider in [AgentProvider.codex, .claude] {
+                var history = QuotaCycleHistory()
+                for sample in DemoScenario.quota(provider, at: date) { history.record(sample) }
+                if provider == .codex { codexHistory.receive(snapshot: quota[provider], history: history, warning: nil) }
+                else { claudeHistory.receive(snapshot: quota[provider], history: history, warning: nil) }
+            }
             walletSource = .demo(at: date)
             status = AgentProvider.allCases.map { .init(id: $0.rawValue + ":demo", provider: $0.rawValue,
                 available: true, transport: "demo", reason: nil) }
@@ -1491,11 +1494,12 @@ actor EngineRuntime {
         var history: [AgentProvider: QuotaHistoryPresentation] = enabled.contains(.codex) ? [.codex:
             codexHistory.presentation(provider: .codex, snapshot: snapshots[.codex], weekly: weekly,
                 error: quotaErrors[.codex], refreshing: !demo && codexQuotaRefreshing, now: date)] : [:]
-        if usesClaudeWeb, enabled.contains(.claude), let state = claudeQuotaState {
+        if enabled.contains(.claude), (demo && !usesClaudeWeb) || (usesClaudeWeb && claudeQuotaState != nil) {
+            let refreshing = claudeQuotaState?.refreshing ?? false
             let weekly = QuotaDashboardPresentation.Reading(provider: .claude, period: .weekly, snapshot: snapshots[.claude],
-                failed: failedProviders.contains(.claude), refreshing: state.refreshing, sourceText: sourceTexts[.claude], now: date)
+                failed: failedProviders.contains(.claude), refreshing: refreshing, sourceText: sourceTexts[.claude], now: date)
             history[.claude] = claudeHistory.presentation(provider: .claude, snapshot: snapshots[.claude], weekly: weekly,
-                error: quotaErrors[.claude], refreshing: state.refreshing, now: date)
+                error: quotaErrors[.claude], refreshing: refreshing, now: date)
         }
         let dashboard = EngineQuotaDashboard(enabled: enabled, snapshots: snapshots,
             failed: failedProviders, refreshing: refreshingProviders, sourceText: sourceTexts, errorText: quotaErrors, history: history, at: date)

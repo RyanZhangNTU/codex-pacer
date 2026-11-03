@@ -80,7 +80,7 @@ public struct WindowsFileSystem: PlatformFileSystem {
 }
 
 extension CompletionDismissalStore {
-    public init(fileURL: URL) { self.init(fileURL: fileURL, files: WindowsFileSystem()) }
+    public init(fileURL: URL) { self.init(fileURL: fileURL, files: WindowsFileSystem(), preservesDamagedFile: true) }
     public static var applicationDefault: Self {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland", isDirectory: true)

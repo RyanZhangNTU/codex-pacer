@@ -27,6 +27,7 @@ internal static class Program
         if (fixture >= 0) return SlowEngineChecks.Fixture(args[fixture + 1]);
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
         string group = args.Length > 1 ? args[1] : "all";
+        string? desktop = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
         Directory.CreateDirectory(output);
         int result = 1;
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown,
@@ -46,7 +47,7 @@ internal static class Program
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
-                if (group is "all" or "responsive") await SlowEngineChecks.Run();
+                if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
                 bool All(string name) => group == "all" || group == name;
                 if (All("quota"))
                 {
@@ -69,12 +70,13 @@ internal static class Program
                     {
                         if (All("settings"))
                         {
+                            await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
                             await SettingsPresentationChecks.Run(language, dark, output); await CodexSettingsChecks.Run(language, dark, output);
                             foreach (string provider in new[] { "claude", "deepseek" }) await ProviderHomeSettingsChecks.Run(provider, language, dark, output);
                             await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output);
                         }
                         if (All("collapsed")) foreach (bool motion in new[] { false, true }) await CollapsedLayoutChecks.Run(language, dark, motion, output);
-                        if (All("quota")) await QuotaHistoryChecks.Run(language, dark, output);
+                        if (All("quota")) { await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output); }
                         if (All("connection"))
                         {
                             await ClaudeConnectionChecks.Run(language, dark, output); await DeepSeekConnectionChecks.Run(language, dark, output);
@@ -286,6 +288,14 @@ internal static class Program
                 initialized = engine.IsInitialized, closed = engine.IsConnectionClosed
             }));
             Console.WriteLine(window.PresentationDiagnostics);
+            foreach (string field in new[] { "compactRow", "compactColumn" })
+                if (typeof(IslandWindow).GetField(field, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(window) is Dictionary<string, Button> slots)
+                    Console.WriteLine("Synthetic compact state " + field + ": " + JsonSerializer.Serialize(slots.Select(item => new
+                    {
+                        component = item.Key, visible = item.Value.IsVisible, opacity = item.Value.Opacity,
+                        baseOpacity = item.Value.GetAnimationBaseValue(UIElement.OpacityProperty),
+                        dims = item.Value.Tag is true, animated = item.Value.HasAnimatedProperties
+                    })));
             try { window.CapturePreview(Path.Combine(output, "failed-" + scenario + ".png")); }
             catch (Exception captureError) { Console.WriteLine("Diagnostic capture unavailable: " + captureError.Message); }
             throw;

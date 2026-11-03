@@ -717,7 +717,7 @@
     {
       "id": "quota-history",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "两家 quota 当前周期曲线、账户/profile 隔离、刷新与保存失败",
@@ -728,7 +728,7 @@
         "native/Sources/PacerIsland/QuotaCycleChart.swift"
       ],
       "evidence": [],
-      "previewNote": "周期历史与额度详情单独验收。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）程序化实机：Codex/Claude 周期曲线与详情、Credits/到期标记、键盘/UIA、刷新失败和缓存写入警告，以及 DeepSeek 七日消费图，中英文 × 浅深色合成数据画面均通过。磁盘重启、home/账户隔离、旧细曲线兼容、损坏/未来/过大文件和极端数值由共享/Windows 存储测试验证。DeepSeek 沿用全局计费来源与凭据指纹，不按 home 新增隔离。真实账户续跑与其他设备仍待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -1110,7 +1110,7 @@
     {
       "id": "settings-persistence",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "即时应用，文本在 Enter/失焦/chooser/关闭时提交；无效草稿保留与错误说明",
@@ -1123,7 +1123,7 @@
         "docs/guide.md"
       ],
       "evidence": [],
-      "previewNote": "完整设置提交、恢复和持久化契约。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）程序化实机：中英文 × 浅深色设置控件、双窗口编辑、真实磁盘失败回滚、完整应用进程重启与隔离偏好恢复均通过；37 个偏好字段另有真实离线引擎确认、落盘与重新读取测试。旧 schema、缺键/未知枚举、自动/显式空环、故意空布局和损坏原文件保留已验证。开机启动沿用 OS 注册服务；其他设备与真实用户配置的日用验收仍待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []

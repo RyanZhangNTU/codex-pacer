@@ -201,6 +201,7 @@
     "NativeDesktopTests.swift",
     "NoticeScenarioTableTests.swift",
     "PacerCoreTests.swift",
+    "PlatformStorageTests.swift",
     "PreferencesMigrationTests.swift",
     "PresentationScenarioFixtures.swift",
     "ProtoJSONIntegerTests.swift",

@@ -20,5 +20,7 @@
     <Compile Include="../Desktop/WindowsInstallShortcuts.cs" Link="WindowsInstallShortcuts.cs"/>
     <Compile Include="../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
     <Compile Include="../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
+    <Compile Include="../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
+    <Compile Include="../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
   </ItemGroup>
 </Project>

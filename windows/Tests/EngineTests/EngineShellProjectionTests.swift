@@ -46,4 +46,30 @@ final class EngineShellProjectionTests: XCTestCase {
         XCTAssertFalse(EngineShellProjection.methods.contains(unsupported.method))
         XCTAssertNil(EngineShellProjection.reply(unsupported))
     }
+    func testPreferenceAcknowledgementBindsCompletePayloadWithoutEchoingIt() throws {
+        var wire = try envelope(.init(layout: "{\"version\":9,\"leading\":[],\"trailing\":[]}", providers: [.codex]))
+        wire["method"] = "validatePreferences"
+        var params = try XCTUnwrap(wire["params"] as? [String: Any]), shell = try XCTUnwrap(params["shell"] as? [String: Any])
+        shell["preferences"] = "{\"schemaVersion\":1,\"privateSyntheticField\":\"SYNTHETIC_NOT_ECHOED\"}"
+        params["shell"] = shell; wire["params"] = params
+        let data = try XCTUnwrap(EngineShellProjection.reply(decode(wire)))
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let value = try XCTUnwrap(result["value"] as? [String: Any]), digest = try XCTUnwrap(value["digest"] as? String)
+        XCTAssertEqual(digest.count, 64); XCTAssertTrue(digest.allSatisfy { $0.isNumber || ("a"..."f").contains(String($0)) })
+        XCTAssertNoThrow(try JSONDecoder().decode(CompactIslandLayout.self, from: Data(try XCTUnwrap(value["layoutJSON"] as? String).utf8)))
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("SYNTHETIC_NOT_ECHOED"))
+        shell["preferences"] = "{\"schemaVersion\":1,\"privateSyntheticField\":\"OTHER_SYNTHETIC\"}"
+        params["shell"] = shell; wire["params"] = params
+        let other = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(EngineShellProjection.reply(decode(wire)))) as? [String: Any])
+        XCTAssertNotEqual((other["value"] as? [String: Any])?["digest"] as? String, digest)
+    }
+    func testMalformedOrFuturePreferenceAcknowledgementFailsWithoutChangingProjection() throws {
+        for json in ["not JSON", "[]", "{}", "{\"schemaVersion\":999}"] {
+            var wire = try envelope(.init(providers: [.codex])); wire["method"] = "validatePreferences"
+            var params = try XCTUnwrap(wire["params"] as? [String: Any]), shell = try XCTUnwrap(params["shell"] as? [String: Any])
+            shell["preferences"] = json; params["shell"] = shell; wire["params"] = params
+            XCTAssertNil(EngineShellProjection.reply(try decode(wire)))
+        }
+    }
+
 }

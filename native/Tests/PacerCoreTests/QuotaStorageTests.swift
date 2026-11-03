@@ -113,4 +113,34 @@ final class QuotaStorageTests: XCTestCase {
         XCTAssertEqual(restored.1.cycles[0].points.last?.timestamp, reading.capturedAt)
         XCTAssertEqual(try Data(contentsOf: file), bytes)
     }
+    func testOptionalHostIOKeepsMacFormatPruningAndScopeFilters() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let originalFolder = root.appendingPathComponent("original"), injectedFolder = root.appendingPathComponent("injected")
+        let original = QuotaCycleCache(directory: originalFolder)
+        let injected = QuotaCycleCache(directory: injectedFolder, files: TestFileSystem())
+        let home = root.appendingPathComponent("home"), reading = try snapshot(3000)
+        var history = QuotaCycleHistory()
+        for seconds in stride(from: 0, through: 3000, by: 30) { history.record(try snapshot(Double(seconds))) }
+        try original.save(home: home, snapshot: reading, history: history)
+        try injected.save(home: home, snapshot: reading, history: history)
+        func file(_ folder: URL) throws -> URL { try XCTUnwrap(FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).first) }
+        let oldFile = try file(originalFolder), newFile = try file(injectedFolder)
+        XCTAssertEqual(oldFile.lastPathComponent, newFile.lastPathComponent)
+        let oldBytes = try Data(contentsOf: oldFile), newBytes = try Data(contentsOf: newFile)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: oldBytes) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: newBytes) as? NSDictionary)
+        for scope in ["test-account", "other-account"] {
+            for date in [reading.capturedAt, reading.capturedAt.addingTimeInterval(8 * 86400)] {
+                let a = original.load(home: home, accountScope: scope, now: date)
+                let b = injected.load(home: home, accountScope: scope, now: date)
+                XCTAssertEqual(a?.0, b?.0); XCTAssertEqual(a?.1, b?.1)
+            }
+        }
+        XCTAssertNil(original.load(home: root.appendingPathComponent("other-home"), accountScope: "test-account", now: epoch))
+        XCTAssertNil(injected.load(home: root.appendingPathComponent("other-home"), accountScope: "test-account", now: epoch))
+        XCTAssertEqual(try Data(contentsOf: oldFile), oldBytes)
+        XCTAssertEqual(try Data(contentsOf: newFile), newBytes, "Loading never writes compacted history back")
+    }
+
 }

@@ -11,6 +11,7 @@ try {
     dotnet build windows/Tests/PresentationTests/Pacer.PresentationTests.csproj --configuration $Configuration -warnaserror "-p:Version=$($taskVersion.version)" "-p:FileVersion=$($taskVersion.version).$($taskVersion.build)"
     if ($LASTEXITCODE -ne 0) { throw 'Presentation test build failed.' }
     $taskOutput = Join-Path $taskRoot 'output/windows/presentation'
-    dotnet run --no-build --project windows/Tests/PresentationTests/Pacer.PresentationTests.csproj --configuration $Configuration -- $taskOutput $Group
+    $taskDesktop = Join-Path $taskRoot ('windows/Desktop/bin/' + $Configuration + '/net10.0-windows/CodexPacer.exe')
+    dotnet run --no-build --project windows/Tests/PresentationTests/Pacer.PresentationTests.csproj --configuration $Configuration -- $taskOutput $Group $taskDesktop
     if ($LASTEXITCODE -ne 0) { throw 'Functional presentation tests failed.' }
 } finally { $env:PACER_HARNESS_DESKTOP_FIXTURE = $taskPreviousFixture; Pop-Location }

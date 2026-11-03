@@ -289,6 +289,7 @@ internal sealed partial class SettingsWindow : Window
             schemaVersion = 1, syntheticOnly = true, acceptance = "pending", pane = activePane, language = ui.Language,
             dark = darkOverride ?? IsSystemDark(), active = IsActive, renderMode = WindowRendering.Mode(this), clientWidth = client.ActualWidth, clientHeight = client.ActualHeight,
             expandedQuotaStyle = session.Current.ExpandedQuotaStyle,
+            hideProjects = hideProjects?.IsChecked, showAppButtons = appButtons?.IsChecked, languageChoice = language?.SelectedValue as string,
             deepseekMode = activePane == "deepseek" ? session.Current.DeepSeekMode : null,
             deepseekPanelStyle = activePane == "deepseek" ? session.Current.DeepSeekPanelStyle : null,
             deepseekBudgetPeriods = activePane == "deepseek" ? engine?.LatestSnapshot?.Wallet?.Solo?.Budgets.Select(value => value.Kind).ToArray() : null,

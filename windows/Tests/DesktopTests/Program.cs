@@ -128,6 +128,7 @@ internal static class Program
             HarnessApplicationChecks.Run(Path.GetDirectoryName(engine)!); return Task.CompletedTask;
         });
         await Test("immediate settings edits serialize, recover and preserve acknowledged state", PreferencesSessionChecks.Run);
+        await Test("all settings acknowledge, persist, restart and migrate without overwriting another writer", () => PreferencesPersistenceChecks.Run(engine));
         await Test("native notification lifecycle, privacy, action payloads and permission races", NotificationChecks.Run);
         await Test("notification actions wait for initialization and cancel on quit", NotificationActionChecks.Run);
         await Test("real engine: snoozing an old notice while DeepSeek is disabled", () => NotificationActionChecks.RunWithEngine(engine));

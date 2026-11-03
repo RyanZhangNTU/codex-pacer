@@ -69,7 +69,7 @@ internal static class PreferencesChecks
                 && File.ReadAllText(file) == futureAppearance, "A future appearance falls back without losing other choices or rewriting the file");
             foreach (string damaged in new[]
             {
-                "not JSON", "null", "{}", "{\"schemaVersion\":2}", "{\"schemaVersion\":\"one\"}",
+                "not JSON", "null", "{}", "{\"schemaVersion\":3}", "{\"schemaVersion\":\"one\"}",
                 "{\"schemaVersion\":1,\"providerModes\":null}", "{\"schemaVersion\":1,\"retentionMinutes\":-1}",
                 new string('x', PreferencesStore.MaximumBytes + 1)
             })

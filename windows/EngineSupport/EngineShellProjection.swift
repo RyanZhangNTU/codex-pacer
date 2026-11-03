@@ -1,12 +1,19 @@
 import Foundation
+import CryptoKit
 
 /// Read-only shell queries use the same presentation types as the Mac host.
 enum EngineShellProjection {
-    static let methods: Set<String> = ["projectCompactBar", "layoutQuotaChart"]
+    static let methods: Set<String> = ["projectCompactBar", "layoutQuotaChart", "validatePreferences"]
     struct Request: Decodable {
+        let preferences: String?
         let compact: CompactBarPresentation.Request?
         let chart: QuotaCycleChartPresentation?
         let plotWidth: Double?
+    }
+    private struct PreferencesReply: Encodable {
+        let digest: String
+        let layoutJSON: String
+        let warnings: [String]
     }
     private struct Reply<Value: Encodable>: Encodable {
         let protocolVersion = EngineProtocol.version
@@ -22,6 +29,15 @@ enum EngineShellProjection {
             return data
         }
         switch command.method {
+        case "validatePreferences":
+            guard let json = request.preferences, json.utf8.count <= 60 * 1024,
+                  let data = json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["schemaVersion"] as? Int == 1, object.count <= 64,
+                  let input = request.compact, input.action == nil, input.context == nil,
+                  let value = CompactBarPresentation.project(input) else { return nil }
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return encode(PreferencesReply(digest: digest, layoutJSON: value.layoutJSON, warnings: value.warnings))
         case "projectCompactBar":
             guard let input = request.compact, let value = CompactBarPresentation.project(input) else { return nil }
             return encode(value)

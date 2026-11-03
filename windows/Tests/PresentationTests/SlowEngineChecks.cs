@@ -29,7 +29,7 @@ internal static class SlowEngineChecks
         {
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
             string method = json.RootElement.GetProperty("method").GetString()!;
-            if (method is "projectCompactBar" or "layoutQuotaChart")
+            if (method is "projectCompactBar" or "layoutQuotaChart" or "validatePreferences")
             {
                 requests++;
                 if (mode == "exit") return 0;
