@@ -20,7 +20,7 @@ try {
     dotnet publish windows/Desktop/Pacer.Windows.csproj --configuration Release --runtime win-x64 --self-contained true --output $taskApplication "-p:Version=$($taskVersion.version)" "-p:FileVersion=$($taskVersion.version).$($taskVersion.build)"
     if ($LASTEXITCODE -ne 0) { throw 'The self-contained desktop publish failed.' }
     $taskDesktop = Join-Path $taskRoot 'windows/Desktop/bin/Release/net10.0-windows'
-    foreach ($taskBundle in @('Engine','CodexPacerPortable_PacerCore.resources')) {
+    foreach ($taskBundle in @('Engine','Maintenance','CodexPacerPortable_PacerCore.resources')) {
         $taskSource = Join-Path $taskDesktop $taskBundle
         if (!(Test-Path -LiteralPath $taskSource -PathType Container)) { throw ('Missing runtime bundle: ' + $taskBundle) }
         Copy-Item -LiteralPath $taskSource -Destination $taskApplication -Recurse
@@ -52,6 +52,7 @@ try {
         foreach ($taskNotice in $taskNotices) { Copy-Item -LiteralPath $taskNotice.FullName -Destination $taskLicenseTarget }
     }
     $taskEngine = Get-Content -LiteralPath (Join-Path $taskRoot 'output/windows/engine-location.json') -Raw | ConvertFrom-Json
+    [IO.File]::WriteAllText((Join-Path $taskApplication 'installation-identity.json'), '{"schemaVersion":1,"qaScope":null}', [Text.UTF8Encoding]::new($false))
     $taskFiles = @(Get-ChildItem -LiteralPath $taskApplication -File -Recurse | Sort-Object FullName | ForEach-Object {
         @{ path = [IO.Path]::GetRelativePath($taskApplication, $_.FullName).Replace([char]92,[char]47); sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
     })

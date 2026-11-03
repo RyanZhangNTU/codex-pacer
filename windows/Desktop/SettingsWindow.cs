@@ -39,6 +39,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly ScrollViewer paneScroller;
     private string activePane = "general";
     private CheckBox? login, hideProjects, appButtons;
+    private TextBlock? startupStatus;
     private ComboBox? language;
     private Border? restart;
     private TextBlock? restartHint;
@@ -68,6 +69,7 @@ internal sealed partial class SettingsWindow : Window
         Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) });
         recoveryRestart.Content = ui.Text("language.restart_now"); Identify(recoveryRestart, "settings.recovery_restart", ui.Text("language.restart_now"));
         recoveryRestart.Click += (_, _) => RestartRequested?.Invoke();
+        AutomationProperties.SetAutomationId(issue, "settings.issue");
         SetResourceReference(BackgroundProperty, "SettingsBackground");
         Content = client;
         client.SetResourceReference(Panel.BackgroundProperty, "SettingsBackground");
@@ -87,7 +89,7 @@ internal sealed partial class SettingsWindow : Window
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closed += (_, _) => ShellProjection.Changed -= OnShellProjectionChanged;
-        Activated += async (_, _) => { RefreshTheme(); RefreshValues(); if (notifications != null) await notifications.RefreshAsync(); };
+        Activated += async (_, _) => { RefreshSystemState(); if (notifications != null) await notifications.RefreshAsync(); };
         Deactivated += (_, _) => RefreshTheme();
         SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
         session.Changed += OnPreferencesChanged;
@@ -214,7 +216,15 @@ internal sealed partial class SettingsWindow : Window
             else ClearIssue(); RefreshValues();
         };
         login.Checked += changeStartup; login.Unchecked += changeStartup;
-        editors.Add(login); form.Children.Add(Card(loginRow));
+        editors.Add(login);
+        startupStatus = Detail(""); startupStatus.TextWrapping = TextWrapping.Wrap;
+        Identify(startupStatus, "settings.startup.status", "");
+        AutomationProperties.SetLiveSetting(startupStatus, AutomationLiveSetting.Polite);
+        var startupSettings = new Button { Content = ui.Text("windows.settings.startup_settings"), VerticalAlignment = VerticalAlignment.Center };
+        Identify(startupSettings, "settings.startup.settings", ui.Text("windows.settings.startup_settings"));
+        startupSettings.Click += (_, _) => { if (!startup.OpenSettings()) ShowIssue("windows.settings.startup_settings_failed"); else ClearIssue(); };
+        editors.Add(startupSettings);
+        form.Children.Add(Card(loginRow, Row(startupStatus, startupSettings, 34)));
         language = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 140, MaxWidth = 240, SelectedValuePath = "Tag" };
         foreach (var choice in new[] { ("system", ui.Text("windows.language.system")), ("en", "English"), ("zh-Hans", "简体中文") })
             language.Items.Add(new ComboBoxItem { Content = choice.Item2, Tag = choice.Item1 });
@@ -322,7 +332,7 @@ internal sealed partial class SettingsWindow : Window
         {
             activePane = ResolvePane(value);
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
-            login = hideProjects = appButtons = null; language = null; restart = null; restartHint = null;
+            login = hideProjects = appButtons = null; startupStatus = null; language = null; restart = null; restartHint = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();
@@ -342,7 +352,23 @@ internal sealed partial class SettingsWindow : Window
         synchronizing = true;
         try
         {
-            if (login != null) { var state = startup.Read(); login.IsChecked = state.Registered; login.IsEnabled = !busy && !session.RequiresRestart && state.Available; }
+            if (login != null)
+            {
+                var state = startup.Read(); login.IsChecked = state.Registered; login.IsEnabled = !busy && !session.RequiresRestart && state.Available;
+                string? key = state.BlockReason switch
+                {
+                    StartupBlockReason.Disabled => "windows.settings.startup_disabled",
+                    StartupBlockReason.Policy => "windows.settings.startup_policy",
+                    StartupBlockReason.Unknown => "windows.settings.startup_unknown",
+                    StartupBlockReason.OtherInstallation => "windows.settings.startup_other",
+                    _ => null
+                };
+                if (startupStatus != null)
+                {
+                    startupStatus.Text = key == null ? "" : ui.Text(key);
+                    AutomationProperties.SetName(startupStatus, startupStatus.Text);
+                }
+            }
             if (hideProjects != null) hideProjects.IsChecked = session.Current.HideProjects;
             if (appButtons != null) appButtons.IsChecked = session.Current.ShowAppButtons;
             if (language != null) language.SelectedValue = session.Current.Language;
@@ -366,7 +392,8 @@ internal sealed partial class SettingsWindow : Window
         }
         finally { synchronizing = false; }
     }
-    private void ShowIssue(string key) { issue.Text = ui.Text(key); issue.Foreground = new SolidColorBrush(Color.FromRgb(204, 106, 32)); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
+    internal void RefreshSystemState() { RefreshTheme(); RefreshValues(); }
+    private void ShowIssue(string key) { issue.Text = ui.Text(key); AutomationProperties.SetName(issue, issue.Text); issue.Foreground = new SolidColorBrush(Color.FromRgb(204, 106, 32)); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
     private void ClearIssue() { issue.Text = ""; issue.Visibility = Visibility.Collapsed; }
     private void OnSystemPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => Dispatcher.InvokeAsync(RefreshTheme);
     private void RefreshTheme()

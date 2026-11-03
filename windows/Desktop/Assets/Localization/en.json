@@ -948,7 +948,13 @@
     "windows.settings.recovery_required": "Restart Codex Pacer before making more changes. The engine state could not be restored.",
     "windows.settings.save_failed": "The setting could not be saved. Your previous setting has been restored.",
     "windows.settings.source_pending": "This option is not available in the Windows preview yet.",
-    "windows.settings.startup_failed": "Windows could not change the startup entry. Your previous setting is unchanged.",
+    "windows.settings.startup_disabled": "Windows has disabled this entry. Allow it in Startup apps.",
+    "windows.settings.startup_failed": "Windows couldn't change this startup entry. Check Startup apps and try again.",
+    "windows.settings.startup_other": "Another installation has registered this entry. Check Startup apps first.",
+    "windows.settings.startup_policy": "A Windows policy is blocking this startup entry.",
+    "windows.settings.startup_settings": "Open Startup apps",
+    "windows.settings.startup_settings_failed": "Windows Settings couldn't open. Go to Settings > Apps > Startup.",
+    "windows.settings.startup_unknown": "The Windows startup status is unavailable. Check Startup apps.",
     "windows.show_island": "Show",
     "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
   }

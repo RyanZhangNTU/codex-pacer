@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/Localization/zh-Hans.json": "7e4501a2edf345928da652e19f01eff896ab276d55572ff0c1553b755e50a1c1"
+    "windows/Localization/zh-Hans.json": "2efa6c5b9b65eee30abc59ae9c508473b1662f9b7e3054e8b2c630371b311a65"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -952,7 +952,13 @@
     "windows.settings.recovery_required": "\u5f15\u64ce\u72b6\u6001\u672a\u80fd\u6062\u590d\uff0c\u8bf7\u91cd\u542f Codex Pacer \u540e\u518d\u4fee\u6539\u8bbe\u7f6e\u3002",
     "windows.settings.save_failed": "\u8bbe\u7f6e\u672a\u80fd\u4fdd\u5b58\uff0c\u5df2\u6062\u590d\u539f\u8bbe\u7f6e\u3002",
     "windows.settings.source_pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u6b64\u9009\u9879\u3002",
-    "windows.settings.startup_failed": "Windows \u672a\u80fd\u66f4\u6539\u542f\u52a8\u9879\uff0c\u539f\u8bbe\u7f6e\u5df2\u4fdd\u7559\u3002",
+    "windows.settings.startup_disabled": "Windows \u5df2\u7981\u7528\u6b64\u542f\u52a8\u9879\u3002\u8bf7\u5728\u201c\u542f\u52a8\u5e94\u7528\u201d\u4e2d\u5141\u8bb8\u542f\u52a8\u3002",
+    "windows.settings.startup_failed": "\u65e0\u6cd5\u66f4\u6539\u542f\u52a8\u9879\u3002\u8bf7\u5728 Windows\u201c\u542f\u52a8\u5e94\u7528\u201d\u4e2d\u68c0\u67e5\u540e\u91cd\u8bd5\u3002",
+    "windows.settings.startup_other": "\u53e6\u4e00\u4e2a\u5b89\u88c5\u4f4d\u7f6e\u5df2\u6ce8\u518c\u6b64\u542f\u52a8\u9879\u3002\u8bf7\u5148\u68c0\u67e5\u201c\u542f\u52a8\u5e94\u7528\u201d\u3002",
+    "windows.settings.startup_policy": "Windows \u7b56\u7565\u963b\u6b62\u4e86\u6b64\u542f\u52a8\u9879\u3002",
+    "windows.settings.startup_settings": "\u6253\u5f00\u542f\u52a8\u5e94\u7528",
+    "windows.settings.startup_settings_failed": "\u65e0\u6cd5\u6253\u5f00 Windows \u8bbe\u7f6e\u3002\u8bf7\u524d\u5f80\u201c\u8bbe\u7f6e > \u5e94\u7528 > \u542f\u52a8\u201d\u3002",
+    "windows.settings.startup_unknown": "\u65e0\u6cd5\u786e\u8ba4 Windows \u542f\u52a8\u72b6\u6001\u3002\u8bf7\u68c0\u67e5\u201c\u542f\u52a8\u5e94\u7528\u201d\u3002",
     "windows.show_island": "\u5c55\u5f00",
     "windows.updates.pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u81ea\u52a8\u66f4\u65b0\u3002"
   }

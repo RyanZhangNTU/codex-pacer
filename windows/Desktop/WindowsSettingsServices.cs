@@ -11,53 +11,6 @@ using Microsoft.Win32;
 
 namespace CodexPacer.Windows;
 
-internal readonly record struct StartupRegistrationState(bool Registered, bool Available);
-internal interface IStartupRegistration
-{
-    StartupRegistrationState Read();
-    bool Set(bool enabled);
-}
-
-/// Owns only Pacer's value in the current user's documented Run key.
-internal sealed class WindowsStartupRegistration : IStartupRegistration
-{
-    internal const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private readonly string executable, key;
-    internal WindowsStartupRegistration(string executable, string key = RunKey)
-    { this.executable = Path.GetFullPath(executable); this.key = key; }
-    private string Command => "\"" + executable + "\" --launch-at-login";
-    public StartupRegistrationState Read()
-    {
-        if (Command.Length > 260 || executable.Any(char.IsControl) || executable.Contains('"')) return new(false, false);
-        try
-        {
-            using var entry = Registry.CurrentUser.OpenSubKey(key, writable: false);
-            return new(entry?.GetValue("CodexPacer", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string value && !string.IsNullOrWhiteSpace(value), true);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException) { return new(false, false); }
-    }
-    public bool Set(bool enabled)
-    {
-        if (!Read().Available) return false;
-        try
-        {
-            using var entry = enabled ? Registry.CurrentUser.CreateSubKey(key, writable: true) : Registry.CurrentUser.OpenSubKey(key, writable: true);
-            if (entry == null) return !enabled;
-            if (enabled) entry.SetValue("CodexPacer", Command, RegistryValueKind.String);
-            else entry.DeleteValue("CodexPacer", throwOnMissingValue: false);
-            return true;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException) { return false; }
-    }
-}
-
-internal sealed class DemoStartupRegistration : IStartupRegistration
-{
-    private bool enabled;
-    public StartupRegistrationState Read() => new(enabled, true);
-    public bool Set(bool value) { enabled = value; return true; }
-}
-
 internal sealed record DesktopApplication(string Provider, string Name, string Family, string AppId, string? Executable = null);
 internal sealed class WindowsDesktopApplications
 {

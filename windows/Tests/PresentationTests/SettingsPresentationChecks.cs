@@ -63,6 +63,23 @@ internal static class SettingsPresentationChecks
             window.CapturePreview(screenshot); CheckOpaque(screenshot, window);
 
             Toggle(login); Check(startup.Enabled && startup.Calls == 1, "Accessible login toggles must reach only the injected startup service");
+            foreach (var blocked in new[] { (StartupBlockReason.Disabled, "windows.settings.startup_disabled"),
+                (StartupBlockReason.Policy, "windows.settings.startup_policy"), (StartupBlockReason.Unknown, "windows.settings.startup_unknown") })
+            {
+                startup.BlockReason = blocked.Item1; window.RefreshSystemState();
+                var status = Find<TextBlock>(window, "settings.startup.status");
+                Check(login.IsChecked == true && status.Text == ui.Text(blocked.Item2) &&
+                    new TextBlockAutomationPeer(status).GetName() == status.Text,
+                    "A registered but blocked entry must stay requested and expose its actual OS state accessibly");
+            }
+            var startupSettings = Find<Button>(window, "settings.startup.settings");
+            startup.RejectOpen = true; Invoke(startupSettings);
+            await Until(() => startup.OpenCalls == 1, "The system settings entry must use the injected launcher");
+            Check(Find<TextBlock>(window, "settings.issue").Text == ui.Text("windows.settings.startup_settings_failed") && login.IsChecked == true,
+                "Opening Windows Settings can fail without changing the startup choice");
+            startup.RejectOpen = false; Invoke(startupSettings);
+            await Until(() => startup.OpenCalls == 2, "The system settings entry must remain usable after failure");
+            startup.BlockReason = StartupBlockReason.None; window.RefreshSystemState();
             startup.RejectNext = true; Toggle(login);
             Check(startup.Enabled && login.IsChecked == true && startup.Calls == 2, "Rejected startup changes must restore the switch");
             Toggle(privacy);
@@ -185,8 +202,10 @@ internal static class SettingsPresentationChecks
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class StartupFixture : IStartupRegistration
     {
-        internal bool Enabled, RejectNext; internal int Calls;
-        public StartupRegistrationState Read() => new(Enabled, true);
+        internal bool Enabled, RejectNext, RejectOpen; internal int Calls, OpenCalls;
+        internal StartupBlockReason BlockReason;
+        public StartupRegistrationState Read() => new(Enabled, true, BlockReason);
         public bool Set(bool value) { Calls++; if (RejectNext) { RejectNext = false; return false; } Enabled = value; return true; }
+        public bool OpenSettings() { OpenCalls++; return !RejectOpen; }
     }
 }

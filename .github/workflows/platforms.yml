@@ -109,6 +109,23 @@ jobs:
             output/windows/*-windows-x64-preview-*.zip
             output/windows/*-windows-x64-preview-*.zip.sha256
           retention-days: 7
+      - name: Windows installer lifecycle
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-tests.log"
+      - name: Package unsigned Windows installer
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/package-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
+      - name: Upload unsigned Windows installer
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-installer-x64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/installer-artifact/*.exe
+            output/windows/installer-artifact/*.exe.sha256
+          retention-days: 7
       - name: Engine idle and shutdown protocol
         run: |
           . ./scripts/windows/environment.ps1
@@ -129,4 +146,7 @@ jobs:
             ${{ runner.temp }}/pacer-desktop-tests.log
             ${{ runner.temp }}/pacer-presentation-tests.log
             ${{ runner.temp }}/pacer-windows-package.log
+            ${{ runner.temp }}/pacer-installer-tests.log
+            ${{ runner.temp }}/pacer-installer-build.log
+            output/windows/installer-tests.json
           retention-days: 7

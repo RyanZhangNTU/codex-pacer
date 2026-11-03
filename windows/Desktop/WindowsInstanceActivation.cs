@@ -21,15 +21,25 @@ internal sealed class WindowsInstanceActivation : IDisposable
     private readonly Action<InstanceAction> activated;
     private readonly string marker;
     private readonly uint message;
+    private readonly string? maintenanceMarker;
+    private readonly uint maintenanceMessage;
+    private readonly Action? quitForMaintenance;
     private HwndSource? source;
     private IntPtr handle;
     private bool disposed;
 
-    internal WindowsInstanceActivation(Window window, Action<InstanceAction> activated, Guid? qa = null)
+    internal WindowsInstanceActivation(Window window, Action<InstanceAction> activated, Guid? qa = null, Action? quitForMaintenance = null)
     {
         this.window = window; this.activated = activated;
         string name = Scope(qa); marker = name + ".Window"; message = RegisterWindowMessageW(name);
         if (message == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        this.quitForMaintenance = quitForMaintenance;
+        if (quitForMaintenance != null)
+        {
+            maintenanceMarker = WindowsMaintenanceSignal.Marker(Environment.ProcessPath!);
+            maintenanceMessage = RegisterWindowMessageW(maintenanceMarker);
+            if (maintenanceMessage == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
         window.SourceInitialized += Initialized; window.Closed += Closed;
         if (new WindowInteropHelper(window).Handle != IntPtr.Zero) Attach();
     }
@@ -49,9 +59,17 @@ internal sealed class WindowsInstanceActivation : IDisposable
         source = HwndSource.FromHwnd(handle) ?? throw new InvalidOperationException("The app window is unavailable.");
         source.AddHook(Receive);
         if (!SetPropW(handle, marker, new IntPtr(1))) { source.RemoveHook(Receive); source = null; throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
+        if (maintenanceMarker != null && !SetPropW(handle, maintenanceMarker, new IntPtr(1)))
+        { RemovePropW(handle, marker); source.RemoveHook(Receive); source = null; throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
     }
     private IntPtr Receive(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (!disposed && maintenanceMarker != null && (uint)msg == maintenanceMessage && lParam == IntPtr.Zero &&
+            wParam == new IntPtr(WindowsMaintenanceSignal.Request))
+        {
+            window.Dispatcher.InvokeAsync(() => { if (!disposed) quitForMaintenance?.Invoke(); });
+            handled = true; return new IntPtr(WindowsMaintenanceSignal.Acknowledged);
+        }
         if (disposed || (uint)msg != message || lParam != IntPtr.Zero || wParam.ToInt64() is not (1 or 2)) return IntPtr.Zero;
         var action = (InstanceAction)wParam.ToInt32();
         window.Dispatcher.InvokeAsync(() => { if (!disposed) activated(action); });
@@ -86,6 +104,7 @@ internal sealed class WindowsInstanceActivation : IDisposable
         if (disposed) return; disposed = true;
         window.SourceInitialized -= Initialized; window.Closed -= Closed;
         if (handle != IntPtr.Zero) RemovePropW(handle, marker);
+        if (handle != IntPtr.Zero && maintenanceMarker != null) RemovePropW(handle, maintenanceMarker);
         if (source is { IsDisposed: false }) source.RemoveHook(Receive);
         source = null; handle = IntPtr.Zero;
     }

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/Localization/en.json": "4c0d70c86de8756608601f860a6c94ba87f355c6d76977f8525d073f0685edfa"
+    "windows/Localization/en.json": "b4304cbc59d498f791bbb9514d930c75b571df15d94172042f1ac106adc80f3f"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -952,7 +952,13 @@
     "windows.settings.recovery_required": "Restart Codex Pacer before making more changes. The engine state could not be restored.",
     "windows.settings.save_failed": "The setting could not be saved. Your previous setting has been restored.",
     "windows.settings.source_pending": "This option is not available in the Windows preview yet.",
-    "windows.settings.startup_failed": "Windows could not change the startup entry. Your previous setting is unchanged.",
+    "windows.settings.startup_disabled": "Windows has disabled this entry. Allow it in Startup apps.",
+    "windows.settings.startup_failed": "Windows couldn't change this startup entry. Check Startup apps and try again.",
+    "windows.settings.startup_other": "Another installation has registered this entry. Check Startup apps first.",
+    "windows.settings.startup_policy": "A Windows policy is blocking this startup entry.",
+    "windows.settings.startup_settings": "Open Startup apps",
+    "windows.settings.startup_settings_failed": "Windows Settings couldn't open. Go to Settings > Apps > Startup.",
+    "windows.settings.startup_unknown": "The Windows startup status is unavailable. Check Startup apps.",
     "windows.show_island": "Show",
     "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
   }
