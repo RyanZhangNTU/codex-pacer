@@ -40,8 +40,9 @@ internal static class OverlayProbe
             var content = new WindowInteropHelper(island).Handle;
             var frame = NativeCompositionBackdrop.Frame(island, shell, shell.Clip);
             var bounds = scene.Bounds; var visible = island.VisibleScreenBounds;
-            Check(visible.X >= bounds.Left && visible.Y >= bounds.Top && visible.Right <= bounds.Right && visible.Bottom <= bounds.Bottom, "Synthetic scene covers " + name);
-            scene.Capture(Path.Combine(output, name + ".png"), content, island.BackdropWindowHandle);
+            Check(visible.X >= bounds.Left && visible.Y >= bounds.Top && visible.Right <= bounds.Right && visible.Bottom <= bounds.Bottom,
+                $"Synthetic scene covers {name} (surface={visible}, scene={bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom})");
+            scene.Capture(Path.Combine(output, name + ".png"), ProtectedScene.Surfaces(island));
             captures.Add(new { name, x = frame.X - bounds.Left, y = frame.Y - bounds.Top, frame.Width, frame.Height, frame.Scale, frame.Polygon,
                 preferred = island.SurfaceDecision.Preferred, reason = island.SurfaceDecision.Reason.ToString(), glass = island.GlassVisible, nonactive = !island.IsActive });
         }
@@ -73,7 +74,7 @@ internal static class OverlayProbe
                 Check(Math.Max(windowBounds.Left, screenBounds.Left) >= protectedBounds.Left && Math.Max(windowBounds.Top, screenBounds.Top) >= protectedBounds.Top
                     && Math.Min(windowBounds.Right, screenBounds.Right) <= protectedBounds.Right && Math.Min(windowBounds.Bottom, screenBounds.Bottom) <= protectedBounds.Bottom,
                     $"The synthetic scene protects the on-screen interactive crop ({windowBounds.Left},{windowBounds.Top},{windowBounds.Right},{windowBounds.Bottom})");
-                scene.Capture(Path.Combine(output, "interactive-protected.png"), content, island.BackdropWindowHandle);
+                scene.Capture(Path.Combine(output, "interactive-protected.png"), ProtectedScene.Surfaces(island));
                 var clock = System.Diagnostics.Stopwatch.StartNew();
                 while (clock.Elapsed.TotalSeconds < 180 && !File.Exists(Path.Combine(output, "finish")))
                 {
@@ -163,7 +164,7 @@ internal static class OverlayProbe
             {
                 intrusion.Show(); await Dispatcher.Yield(DispatcherPriority.Render);
                 bool rejected = false;
-                try { scene.Capture(forbidden, content, island.BackdropWindowHandle); } catch (InvalidOperationException) { rejected = true; }
+                try { scene.Capture(forbidden, ProtectedScene.Surfaces(island)); } catch (InvalidOperationException) { rejected = true; }
                 Check(rejected && !File.Exists(forbidden), "A foreign overlay is rejected before any screenshot is saved");
             }
             finally { intrusion.Close(); }

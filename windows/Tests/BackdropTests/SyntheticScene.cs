@@ -85,6 +85,12 @@ internal sealed class ProtectedScene : IAsyncDisposable
     }
     internal void Theme(bool dark) => ScreenNative.SendMessage(Handle, SyntheticScene.ThemeMessage, dark ? new IntPtr(1) : IntPtr.Zero, IntPtr.Zero);
     internal ScreenNative.Bounds Bounds => ScreenNative.Read(Handle);
+    internal static IntPtr[] Surfaces(IslandWindow island)
+    {
+        IntPtr Orbit(string name) => typeof(ActivityBadge).GetProperty("RotationScheduling", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue((ActivityBadge)island.FindName(name)) is ValueTuple<bool, bool, long, IntPtr> value ? value.Item4 : IntPtr.Zero;
+        return [new WindowInteropHelper(island).Handle, island.BackdropWindowHandle, Orbit("Badge"), Orbit("StripBadge")];
+    }
     internal void Capture(string path, params IntPtr[] allowed)
     {
         var bounds = Bounds;

@@ -8,7 +8,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length != 2 || args[0] is not ("scene" or "overlay" or "cpu" or "interactive" or "input" or "motion")) return 2;
+        if (args.Length != 2 || args[0] is not ("scene" or "overlay" or "cpu" or "interactive" or "input" or "motion" or "idle")) return 2;
         string output = Path.GetFullPath(args[1]); Directory.CreateDirectory(output);
         int result = 1;
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown,
@@ -20,6 +20,7 @@ internal static class Program
             {
                 if (args[0] == "scene") { result = 0; SyntheticScene.Show(output); return; }
                 if (args[0] == "cpu") await CpuProbe.Run(output);
+                else if (args[0] == "idle") await IdleProbe.Run(output);
                 else if (args[0] == "motion") await MotionProbe.Run(output);
                 else await OverlayProbe.Run(output, args[0] == "interactive", args[0] == "input");
                 result = 0;

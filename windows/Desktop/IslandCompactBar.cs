@@ -26,6 +26,7 @@ public partial class IslandWindow
     private CompactProjection? compactData;
     private double measuredStripHeight = 135;
     private bool compactDimmed;
+    private readonly Dictionary<Button, AnimationLease> dimClocks = [];
 
     private static TextBlock CompactText(double size, FontWeight weight, Brush ink)
     {
@@ -81,7 +82,7 @@ public partial class IslandWindow
         if (latest?.Presentation?.Header is EngineHeader header)
         {
             if (horizontal.SingleTaskCount && header.ActiveCount == 1) header = header with { CoreSymbol = null };
-            Badge.Update(header, AnimationsEnabled); StripBadge.Update(header, AnimationsEnabled);
+            Badge.Update(header, DecorationsAnimate); StripBadge.Update(header, DecorationsAnimate);
         }
         UpdateValues(horizontal, false); UpdateValues(vertical, true);
         QuotaGlyph.Update(horizontal, latest?.Wallet); StripQuotaGlyph.Update(vertical, latest?.Wallet);
@@ -119,8 +120,8 @@ public partial class IslandWindow
             var quota = data.Components.Single(value => value.Id == "quota");
             var values = quota.Entries.Select(value => (value.Provider, column ? value.StripText : value.Text)).ToArray();
             var dimmed = quota.Entries.Select(value => value.Dimmed).ToArray();
-            if (column) { StripQuota.MaximumDisplayWidth = 20; StripQuota.Update(values, AnimationsEnabled, dimmed); compactStripQuotaUnit.Text = quota.StripUnit ?? ""; compactStripQuotaUnit.Visibility = quota.StripUnit == null ? Visibility.Collapsed : Visibility.Visible; }
-            else QuotaLabel.Update(values, AnimationsEnabled, dimmed);
+            if (column) { StripQuota.MaximumDisplayWidth = 20; StripQuota.Update(values, DecorationsAnimate, dimmed); compactStripQuotaUnit.Text = quota.StripUnit ?? ""; compactStripQuotaUnit.Visibility = quota.StripUnit == null ? Visibility.Collapsed : Visibility.Visible; }
+            else QuotaLabel.Update(values, DecorationsAnimate, dimmed);
             var time = data.Components.Single(value => value.Id == "timeRemaining");
             RenderTime(column ? compactStripTime : compactTime, time, column);
         }
@@ -190,10 +191,10 @@ public partial class IslandWindow
             double target = value && slot.Tag is true ? compactData.ExpandedOpacity : 1;
             if (!changed && slot.HasAnimatedProperties && AnimationsEnabled) continue;
             double from = slot.Opacity;
-            slot.BeginAnimation(OpacityProperty, null); slot.Opacity = target;
+            if (dimClocks.Remove(slot, out var old)) old.Dispose(); slot.Opacity = target;
             if (animate && AnimationsEnabled && Math.Abs(from - target) > .001)
-                slot.BeginAnimation(OpacityProperty, new DoubleAnimation(from, target, TimeSpan.FromSeconds(compactData.DimDuration))
-                { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop });
+                dimClocks[slot] = new(new DoubleAnimation(from, target, TimeSpan.FromSeconds(compactData.DimDuration))
+                { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop }, clock => slot.ApplyAnimationClock(OpacityProperty, clock), () => dimClocks.Remove(slot));
         }
     }
     private bool CompactDimStateMatches()

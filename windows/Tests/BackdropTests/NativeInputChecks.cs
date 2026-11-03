@@ -46,7 +46,7 @@ internal static class NativeInputChecks
         async Task Click(ScreenNative.Point point, IntPtr expected, string name)
         {
             // The screenshot guard checks the complete crop before input too.
-            scene.Capture(Path.Combine(output, "before-" + name + ".png"), content, island.BackdropWindowHandle);
+            scene.Capture(Path.Combine(output, "before-" + name + ".png"), ProtectedScene.Surfaces(island));
             if (ScreenNative.WindowFromPoint(point) != expected) throw new InvalidOperationException("Input target was not an owned synthetic HWND.");
             Move(point); await Task.Delay(80);
             if (ScreenNative.WindowFromPoint(point) != expected) throw new InvalidOperationException("The input target changed after pointer movement.");

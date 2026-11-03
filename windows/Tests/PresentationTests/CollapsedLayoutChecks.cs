@@ -49,6 +49,7 @@ internal static class CollapsedLayoutChecks
             var state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
             Check(state.EditorTrailing.Last() == "tps" && !state.EditorLeading.Contains("tps"), "Dropping at the lane end must move the actual shared component");
             Check(configurations == 0 && engine.LatestSnapshot.Sequence == before, "Layout edits cannot configure the engine or request another snapshot");
+            await Until(() => ((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"));
             Check(((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"),
                 "The real header must reflect the changed lane");
             await Until(() => editor.IsEnabled);
@@ -86,7 +87,11 @@ internal static class CollapsedLayoutChecks
             PressKey(island, island, Key.Escape);
             if (animations)
             {
+                // With idle clocks removed, the first timing tick may still
+                // sample the starting value. Wait for actual clock progress,
+                // rather than assuming a 30 ms dispatcher delay advanced it.
                 await Pump();
+                await Until(() => header.Where(value => value.Tag is true).All(value => value.Opacity > .3 && value.Opacity <= 1));
                 Check(header.Where(value => value.Tag is true).All(value => value.Opacity > .3 && value.Opacity <= 1), "Collapsed values must ease from their displayed opacity");
                 island.Reveal(); await island.WaitForPresentationAsync();
                 Check(header.All(value => Math.Abs(value.Opacity - (value.Tag is true ? .3 : 1)) < .001), "A reversed dim must settle without changing other components");

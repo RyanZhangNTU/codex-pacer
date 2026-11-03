@@ -18,6 +18,7 @@ public partial class TaskRow : Button
     private Action? open;
     private bool hovered, animations = true;
     private int hoverRevision;
+    private AnimationLease? hover;
     internal TaskRow(EngineTaskRow value)
     {
         InitializeComponent();
@@ -28,7 +29,7 @@ public partial class TaskRow : Button
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
         MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
-        Unloaded += (_, _) => { hovered = false; hoverRevision++; BeginAnimation(HoverProgressProperty, null); HoverProgress = 0; };
+        Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
     }
     internal void SetOpenAction(Action? action, string help, bool animate)
     { open = action; IsEnabled = action != null; Focusable = IsEnabled; ToolTip = help; animations = animate; UpdateHover(); }
@@ -36,11 +37,11 @@ public partial class TaskRow : Button
     private void UpdateHover()
     {
         double target = hovered && IsEnabled ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
-        if (!animations || from == target) { BeginAnimation(HoverProgressProperty, null); HoverProgress = target; return; }
+        hover?.Dispose(); hover = null; HoverProgress = target;
+        if (!animations || from == target) return;
         var timing = NativeTaskRowTiming.Shared;
         var animation = new DoubleAnimation(from, target, TimeSpan.FromSeconds(timing.Duration)) { EasingFunction = timing.Ease };
-        animation.Completed += (_, _) => { if (revision == hoverRevision) { BeginAnimation(HoverProgressProperty, null); HoverProgress = target; } };
-        BeginAnimation(HoverProgressProperty, animation);
+        hover = new(animation, clock => ApplyAnimationClock(HoverProgressProperty, clock), () => { if (revision == hoverRevision) hover = null; });
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new RowPeer(this);
     private sealed class RowPeer(TaskRow owner) : ButtonAutomationPeer(owner)

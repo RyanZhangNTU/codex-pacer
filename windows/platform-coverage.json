@@ -1348,5 +1348,29 @@
       "Optional application-data deletion"
     ],
     "statusPolicy": "Only these three previewStatus values move from pending to partial. Formal feature statuses and unrelated preview statuses are unchanged."
+  },
+  "p1eLocalAcceptance": {
+    "date": "2026-11-03",
+    "system": "Windows 11 x64 build 26200; 16 logical processors; 150% DPI; Release",
+    "scope": "Five-minute fixed-input Black/Glass process CPU: collapsed, expanded, hidden, and controlled owned opaque fullscreen occlusion. Empty and read-only streaming engine measurements. Visible/hidden results precede the occlusion-only fix; final covered results include it.",
+    "evidence": [
+      "docs/windows-idle-cpu.md",
+      "docs/performance/windows-idle-cpu.json",
+      "windows/Tests/PresentationTests/IdleSchedulingChecks.cs",
+      "windows/Tests/PresentationTests/OcclusionSchedulingChecks.cs",
+      "windows/Tests/EngineTests/EngineSnapshotEmissionTests.swift"
+    ],
+    "passed": [
+      "Collapsed shell <= 1% of one core; expanded <= 2%; hidden and final controlled occlusion <= 0.5%, for both Black and Glass",
+      "No running tasks: engine <= 1% of one core",
+      "No WPF Render dispatch or quota timer wake during hidden/confirmed covered idle regression; compositor fallback and notification-driven recovery",
+      "All-surface display guards retained; rejected independent-topmost samples excluded; owned test windows and engines closed"
+    ],
+    "remaining": [
+      "DWM/GPU attribution, other hardware and software fallback CPU",
+      "Real fullscreen display preference and application acceptance",
+      "Equivalent-workload comparison for streaming engine CPU"
+    ],
+    "statusPolicy": "No feature status or previewStatus changes. fullscreen-policy remains pending; this is a rendering measurement, not fullscreen behavior acceptance."
   }
 }

@@ -191,6 +191,7 @@ actor EngineRuntime {
     private var projectionReady = false
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
+    private var snapshotEmission = EngineSnapshotEmission()
     private var hideProjects = false
     private var showEmbeddedCodexSessions = true
     private var showClaudeCloudProjects = true
@@ -525,6 +526,7 @@ actor EngineRuntime {
         case "initialize", "configure":
             do { try await configure(command.params) }
             catch { failure(id: command.id, code: "invalidConfiguration"); return true }
+            if command.method == "initialize" { snapshotEmission = .init() }
             initialized = true
             await bindActivityMonitors()
             await updateSourceWatches()
@@ -551,7 +553,7 @@ actor EngineRuntime {
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name), provider != .deepseek, enabled.contains(provider) else {
                 failure(id: command.id, code: "invalidCommand"); return true
             }
-            if demo { publish(notices: []) }
+            if demo { publish(notices: [], force: true) }
             else if provider == .codex, let quotaMonitor { await quotaMonitor.refreshIfDue(expanded: expanded, force: true) }
             else if provider == .claude, let claudeQuotaMonitor { _ = await claudeQuotaMonitor.refreshIfDue(expanded: expanded, force: true) }
             else { failure(id: command.id, code: "unavailable"); return true }
@@ -1177,8 +1179,7 @@ actor EngineRuntime {
         publish(notices: [])
     }
 
-    private func publish(notices: [IslandNotice]) {
-        sequence += 1
+    private func publish(notices: [IslandNotice], force: Bool = false) {
         let date = now()
         var wallet: EngineWallet?, walletNotices: [IslandNotice] = [], compactWallet: CompactBarContext.Wallet?
         if enabled.contains(.deepseek), let source = walletSource {
@@ -1276,7 +1277,7 @@ actor EngineRuntime {
             }
         }
         let notificationProjections = visibleNotices.map { notificationProjection($0, requests: visibleRequests, at: date) }
-        let snapshot = EngineSnapshot(sequence: sequence, demo: demo, activities: visibleActivities, requests: visibleRequests,
+        let snapshot = EngineSnapshot(sequence: sequence + 1, demo: demo, activities: visibleActivities, requests: visibleRequests,
             sources: displayedSources, quota: displayedQuota,
             notices: visibleNotices, inbox: inbox, hideProjects: hideProjects, now: date, wallet: enabled.contains(.deepseek) ? wallet : nil,
             modules: moduleConfigurationActive ? AgentProvider.allCases.map {
@@ -1291,6 +1292,8 @@ actor EngineRuntime {
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }
+        guard (try? snapshotEmission.accepts(bytes, force: force)) != false else { return }
+        sequence += 1
         output(bytes + Data([10]))
     }
 

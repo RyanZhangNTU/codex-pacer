@@ -5,6 +5,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Interop;
 using System.Windows.Shapes;
 
 namespace CodexPacer.Windows;
@@ -25,6 +27,14 @@ public sealed class ActivityBadge : Grid
     private EngineHeader? previous;
     private bool rotating;
     private bool canAnimate = true;
+    private ComposedBadgeOrbit? orbit;
+    private bool compositionFailed;
+    private AnimationLease? spin;
+    private readonly List<AnimationLease> rippleClocks = [], bloomClocks = [];
+    private HwndSource? orbitSource;
+    internal (bool Composed, bool FallbackClock, long Uploads, IntPtr Window) RotationScheduling => (orbit != null && rotating, spin != null, orbit?.Uploads ?? 0, orbit?.WindowHandle ?? IntPtr.Zero);
+    internal void InjectOrbitDeviceLoss() => orbit?.InjectDeviceLoss();
+    internal bool HasEndingMarker => ending.Visibility == Visibility.Visible;
     public ActivityBadge()
     {
         Width = Height = 20; IsHitTestVisible = false;
@@ -35,7 +45,16 @@ public sealed class ActivityBadge : Grid
         Children.Add(track); Children.Add(clipped); Children.Add(core); Children.Add(ending);
         SizeChanged += (_, _) => UpdateClip();
         IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); };
-        Unloaded += (_, _) => { StopRotation(); StopTransient(); };
+        Loaded += (_, _) =>
+        {
+            orbitSource = PresentationSource.FromVisual(this) as HwndSource; orbitSource?.AddHook(OrbitMessage);
+            compositionFailed = false; UpdateRotation();
+        };
+        Unloaded += (_, _) =>
+        {
+            StopRotation(); StopTransient(); orbit?.Dispose(); orbit = null;
+            if (orbitSource is { IsDisposed: false }) orbitSource.RemoveHook(OrbitMessage); orbitSource = null;
+        };
     }
     internal void Update(EngineHeader value, bool? animations = null)
     {
@@ -85,13 +104,34 @@ public sealed class ActivityBadge : Grid
     }
     private void UpdateRotation()
     {
-        bool animate = IsVisible && canAnimate && previous?.Orbit.Values.Any(count => count > 0) == true;
+        bool animate = IsLoaded && IsVisible && canAnimate && previous?.Orbit.Values.Any(count => count > 0) == true;
         if (animate == rotating) return;
         if (!animate) { StopRotation(); return; }
+        if (!compositionFailed && IsLoaded)
+        {
+            try { orbit ??= new(this, paint, OrbitUnavailable); orbit.Set(true); }
+            catch (Exception error) when (ComposedBadgeOrbit.Recoverable(error)) { OrbitUnavailable(); }
+        }
         rotating = true;
-        rotation.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.8)) { RepeatBehavior = RepeatBehavior.Forever });
+        paint.Opacity = orbit == null ? 1 : 0;
+        if (orbit != null) return;
+        var animation = new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.8)) { RepeatBehavior = RepeatBehavior.Forever };
+        Timeline.SetDesiredFrameRate(animation, 30);
+        spin = new(animation, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
     }
-    private void StopRotation() { rotation.BeginAnimation(RotateTransform.AngleProperty, null); rotating = false; }
+    private void StopRotation() { spin?.Dispose(); spin = null; orbit?.Set(false); paint.Opacity = 1; rotating = false; }
+    private void OrbitUnavailable()
+    {
+        compositionFailed = true; orbit?.Dispose(); orbit = null; rotating = false;
+        // Retry on a display/device notification, never in an idle timer.
+        Dispatcher.BeginInvoke(UpdateRotation);
+    }
+    private IntPtr OrbitMessage(IntPtr hwnd, int message, IntPtr wparam, IntPtr lparam, ref bool handled)
+    {
+        if (message is 0x007E or 0x031E && compositionFailed)
+        { StopRotation(); compositionFailed = false; UpdateRotation(); }
+        return IntPtr.Zero;
+    }
     private void Pulse()
     {
         StopRipple();
@@ -103,21 +143,21 @@ public sealed class ActivityBadge : Grid
             RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5), IsHitTestVisible = false };
         ripple = ring; Children.Add(ring);
         var fade = NativeBadgeCurves.Ripple.Animation(opacity: true);
-        fade.Completed += (_, _) => { if (ReferenceEquals(ripple, ring)) StopRipple(); };
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, NativeBadgeCurves.Ripple.Animation());
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, NativeBadgeCurves.Ripple.Animation());
-        ring.BeginAnimation(OpacityProperty, fade);
+        rippleClocks.Add(new(NativeBadgeCurves.Ripple.Animation(), clock => scale.ApplyAnimationClock(ScaleTransform.ScaleXProperty, clock)));
+        rippleClocks.Add(new(NativeBadgeCurves.Ripple.Animation(), clock => scale.ApplyAnimationClock(ScaleTransform.ScaleYProperty, clock)));
+        rippleClocks.Add(new(fade, clock => ring.ApplyAnimationClock(OpacityProperty, clock), () => { if (ReferenceEquals(ripple, ring)) StopRipple(); }));
     }
     private void Bloom()
     {
         blooming = true;
+        foreach (var clock in bloomClocks) clock.Dispose(); bloomClocks.Clear();
         var animation = NativeBadgeCurves.Bloom.Animation();
-        animation.Completed += (_, _) => blooming = false;
-        bloom.BeginAnimation(ScaleTransform.ScaleXProperty, animation);
-        bloom.BeginAnimation(ScaleTransform.ScaleYProperty, NativeBadgeCurves.Bloom.Animation());
+        bloomClocks.Add(new(animation, clock => bloom.ApplyAnimationClock(ScaleTransform.ScaleXProperty, clock), () => blooming = false));
+        bloomClocks.Add(new(NativeBadgeCurves.Bloom.Animation(), clock => bloom.ApplyAnimationClock(ScaleTransform.ScaleYProperty, clock)));
     }
     private void StopRipple()
     {
+        foreach (var clock in rippleClocks.ToArray()) clock.Dispose(); rippleClocks.Clear();
         if (ripple == null) return;
         ripple.BeginAnimation(OpacityProperty, null);
         if (ripple.RenderTransform is ScaleTransform scale)
@@ -130,6 +170,7 @@ public sealed class ActivityBadge : Grid
     private void StopTransient()
     {
         StopRipple(); blooming = false;
+        foreach (var clock in bloomClocks.ToArray()) clock.Dispose(); bloomClocks.Clear();
         bloom.BeginAnimation(ScaleTransform.ScaleXProperty, null); bloom.BeginAnimation(ScaleTransform.ScaleYProperty, null);
     }
 }
@@ -139,10 +180,13 @@ internal sealed class OrbitPaint : FrameworkElement
 {
     private readonly record struct Stop(double Position, Color Color);
     private static readonly DependencyProperty ProgressProperty = DependencyProperty.Register("Progress", typeof(double), typeof(OrbitPaint),
-        new FrameworkPropertyMetadata(1.0, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(1.0, FrameworkPropertyMetadataOptions.AffectsRender, (sender, _) => ((OrbitPaint)sender).Changed?.Invoke()));
     private Stop[] from = [], to = [];
     private IReadOnlyDictionary<string, int>? weights;
     private bool animated;
+    private AnimationLease? transition;
+    internal event Action? Changed;
+    internal OrbitPaint() { SizeChanged += (_, _) => Changed?.Invoke(); Unloaded += (_, _) => { transition?.Dispose(); transition = null; }; }
     internal void Update(IReadOnlyDictionary<string, int> values, bool animate)
     {
         if (weights != null && animated == animate && weights.Count == values.Count && weights.All(pair => values.TryGetValue(pair.Key, out int count) && count == pair.Value)) return;
@@ -150,16 +194,16 @@ internal sealed class OrbitPaint : FrameworkElement
         var next = Stops(values, animate);
         bool ease = animated && animate && shown.Length == next.Length && shown.Length > 0;
         weights = values; animated = animate; from = shown; to = next;
-        BeginAnimation(ProgressProperty, null);
+        transition?.Dispose(); transition = null;
         SetValue(ProgressProperty, 1.0);
         if (ease)
         {
             var change = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(0.35) };
             change.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
             change.KeyFrames.Add(new SplineDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.35)), new KeySpline(0.42, 0, 0.58, 1)));
-            BeginAnimation(ProgressProperty, change);
+            transition = new(change, clock => ApplyAnimationClock(ProgressProperty, clock));
         }
-        InvalidateVisual();
+        InvalidateVisual(); Changed?.Invoke();
     }
     private Stop[] Current()
     {
@@ -197,6 +241,16 @@ internal sealed class OrbitPaint : FrameworkElement
         return stops.ToArray();
     }
     protected override void OnRender(DrawingContext drawing)
+        => Draw(drawing, ActualWidth, ActualHeight);
+    internal RenderTargetBitmap Bitmap(double scale)
+    {
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen()) Draw(drawing, Width, Height);
+        var bitmap = new RenderTargetBitmap(Math.Max(1, (int)Math.Ceiling(Width * scale)), Math.Max(1, (int)Math.Ceiling(Height * scale)),
+            96 * scale, 96 * scale, PixelFormats.Pbgra32);
+        bitmap.Render(visual); bitmap.Freeze(); return bitmap;
+    }
+    private void Draw(DrawingContext drawing, double width, double height)
     {
         Stop[] stops = Current();
         if (stops.Length == 0) return;
@@ -208,8 +262,8 @@ internal sealed class OrbitPaint : FrameworkElement
             double span = stops[index + 1].Position - stops[index].Position;
             return Mix(stops[index].Color, stops[index + 1].Color, span <= 0 ? 1 : Math.Clamp((fraction - stops[index].Position) / span, 0, 1));
         }
-        var centre = new Point(ActualWidth / 2, ActualHeight / 2);
-        double radius = Math.Max(ActualWidth, ActualHeight);
+        var centre = new Point(width / 2, height / 2);
+        double radius = Math.Max(width, height);
         Point Point(double fraction) => new(centre.X + radius * Math.Cos((-90 - fraction * 360) * Math.PI / 180),
             centre.Y + radius * Math.Sin((-90 - fraction * 360) * Math.PI / 180));
         for (int step = 0; step < 360; step++)
