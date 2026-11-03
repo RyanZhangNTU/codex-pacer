@@ -1073,6 +1073,7 @@ actor EngineRuntime {
     }
 
     private func resetSourceState(_ provider: AgentProvider) {
+        notificationActivities.removeAll { $0.provider == provider }
         inbox.remove(provider: provider)
         activities.removeAll { $0.provider == provider }
         requests.removeAll { $0.provider == provider }
@@ -1205,6 +1206,7 @@ actor EngineRuntime {
         if projectionReady { projectCollected(at: now()) }
     }
     private func purgeClaudeCloudActivities() {
+        notificationActivities.removeAll { $0.claudeCloud != nil }
         let ids = Set((activities + inbox.activities + activityState.claudeActivities).filter { $0.claudeCloud != nil }.map(\.id))
         inbox.remove(activityIDs: ids)
         activityState.claudeActivities.removeAll { $0.claudeCloud != nil }
