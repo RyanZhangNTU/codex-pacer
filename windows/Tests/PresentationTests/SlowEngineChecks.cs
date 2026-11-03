@@ -51,7 +51,9 @@ internal static class SlowEngineChecks
             ShellProjection.RequestTimeout = TimeSpan.FromMilliseconds(250);
             foreach (string mode in new[] { "silent", "slow", "exit" })
             {
-                await using var engine = new EngineClient(TimeSpan.FromMilliseconds(500));
+                // Initialization uses the normal engine budget. Presentation
+                // queries still use the artificial 250 ms deadline above.
+                await using var engine = new EngineClient();
                 await engine.StartAsync(Environment.ProcessPath!, true, mode);
                 ShellProjection.Client = engine;
                 var window = new IslandWindow(engine, true, false, animationOverride: false) { ShowActivated = false, IsHitTestVisible = false };
