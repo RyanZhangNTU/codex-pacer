@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 #if os(Windows)
 import FoundationNetworking
 #endif

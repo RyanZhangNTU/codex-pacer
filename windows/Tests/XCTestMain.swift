@@ -1,3 +1,4 @@
+import PacerEngineSupport
 import XCTest
 import PacerCore
 import CodexPacerPortablePackageDiscoveredTests

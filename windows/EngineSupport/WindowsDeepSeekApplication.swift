@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import CWindowsSupport
 
 /// Desktop metadata from the official Harness package. CLI/session detection

@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import CryptoKit
 import CWindowsSupport
 
@@ -105,8 +106,8 @@ extension ClaudeSSHDiscovery {
 }
 
 extension ClaudeSSHRouteResolver {
-    static func parse(_ data: Data) -> ClaudeSSHRoute? { ClaudeSSHRouteRules.parse(data, normalizeIPv6: WindowsIP.normalizedIPv6) }
-    static func validDestination(_ value: String) -> Bool { ClaudeSSHRouteRules.validDestination(value, normalizeIPv6: WindowsIP.normalizedIPv6) }
+    static func parse(_ data: Data) -> ClaudeSSHRoute? { ClaudeSSHRouteResolver.parse(data, normalizeIPv6: WindowsIP.normalizedIPv6) }
+    static func validDestination(_ value: String) -> Bool { ClaudeSSHRouteResolver.validDestination(value, normalizeIPv6: WindowsIP.normalizedIPv6) }
     public static func resolve(host: String, port: Int? = nil, executable: URL? = nil,
                                timeout: TimeInterval = 3) async -> ClaudeSSHRoute? {
         guard let arguments = arguments(host: host, port: port, timeout: timeout, normalizeIPv6: WindowsIP.normalizedIPv6) else { return nil }

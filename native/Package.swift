@@ -21,6 +21,7 @@ let package = Package(
         .executableTarget(name: "PacerIsland", dependencies: ["PacerCore", "PacerMacSupport", .product(name: "Sparkle", package: "Sparkle")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport"]),
+        .testTarget(name: "PacerMacSupportTests", dependencies: ["PacerCore", "PacerMacSupport"]),
         .testTarget(name: "PacerIslandTests", dependencies: ["PacerIsland", "PacerCore", "PacerMacSupport"])
     ]
 )

@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// One app-owned numeric history, matching the Mac preference's source binding.
 /// Keys, account identities, task names and source paths are never encoded.

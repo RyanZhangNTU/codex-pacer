@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import PacerCore
+@testable import PacerEngineSupport
 
 final class EngineClaudeHookSetupTests: XCTestCase {
     private actor Gate {

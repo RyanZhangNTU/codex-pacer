@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import PacerCore
 
 /// Read-only shell queries use the same presentation types as the Mac host.
 enum EngineShellProjection {

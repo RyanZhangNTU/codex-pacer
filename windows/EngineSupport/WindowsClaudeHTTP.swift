@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import FoundationNetworking
 
 private final class WindowsClaudeRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

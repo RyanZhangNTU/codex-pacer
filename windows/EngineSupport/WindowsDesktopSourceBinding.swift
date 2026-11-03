@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 
 /// One binding per collector/home. A registered global IPC server alone is
 /// insufficient: the selected rollout must be held for writing by that exact

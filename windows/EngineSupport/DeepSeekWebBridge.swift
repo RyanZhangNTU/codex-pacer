@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 struct DeepSeekWebReply: Codable, Sendable {
     let state: String

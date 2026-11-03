@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 import CWindowsSupport
 
 struct WindowsTelemetryTransport: TelemetryTransport {

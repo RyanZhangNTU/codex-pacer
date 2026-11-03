@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 
 struct WindowsChildProcessLauncher: ChildProcessLauncher {
     func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) -> Void,

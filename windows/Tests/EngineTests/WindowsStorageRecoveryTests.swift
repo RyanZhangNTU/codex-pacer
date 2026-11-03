@@ -1,4 +1,5 @@
 import Foundation
+@testable import PacerEngineSupport
 import XCTest
 @testable import PacerCore
 

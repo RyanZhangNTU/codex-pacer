@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 private actor ClaudeCookieProvider {
     let bridge: ClaudeWebBridge, context: String

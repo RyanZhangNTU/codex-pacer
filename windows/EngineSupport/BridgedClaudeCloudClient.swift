@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Concurrent stream connections share one outstanding browser read. Completed
 /// replies are not cached: each later binding check reads the owned profile again.

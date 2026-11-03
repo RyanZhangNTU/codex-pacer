@@ -125,10 +125,10 @@ public enum ClaudeQuotaDecoder {
         return formatter.date(from: text)
     }
 
-    static func digest(_ value: String) -> String {
+    package static func digest(_ value: String) -> String {
         digest(Data(value.utf8))
     }
-    static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    package static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 }
 
 public struct ClaudeOAuthCredential: Sendable {

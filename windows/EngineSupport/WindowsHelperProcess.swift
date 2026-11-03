@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 struct WindowsHelperProcessLauncher: HelperProcessLauncher {
     func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) async -> Void,

@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// A random source context authorizes owned cookie requests. Account identifiers
 /// and cloud response bodies never enter this routine host-state message.

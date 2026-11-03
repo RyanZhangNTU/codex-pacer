@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 extension ClaudeActivityMonitor {
     init(clock: @escaping @Sendable () -> Date = { Date() }) {

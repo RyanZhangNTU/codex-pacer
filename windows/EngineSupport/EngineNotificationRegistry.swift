@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Windows notification arguments refer only to these bounded, expiring
 /// records. Disk records contain hashes and fixed action names, never labels,

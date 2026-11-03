@@ -12,6 +12,7 @@ private struct ClaudeReaderTestFileSystem: PlatformFileSystem {
         try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
     }
     func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
+        #if canImport(PacerMacSupport)
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
         let device = (attributes[.systemNumber] as? NSNumber)?.uint64Value ?? 0
@@ -20,6 +21,9 @@ private struct ClaudeReaderTestFileSystem: PlatformFileSystem {
             modified: attributes[.modificationDate] as? Date ?? .distantPast,
             created: attributes[.creationDate] as? Date,
             isRegularFile: attributes[.type] as? FileAttributeType == .typeRegular)
+        #else
+        return TestFileSystem().metadata(url, followingSymbolicLinks: followingSymbolicLinks)
+        #endif
     }
     func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url)

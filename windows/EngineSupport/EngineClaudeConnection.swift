@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Routine UI state contains no cookie, account ID, organization ID or source path.
 struct EngineClaudeConnection: Codable, Equatable {

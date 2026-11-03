@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import PacerCore
+import PacerEngineSupport
 import WinSDK
 
 public struct WindowsPythonPin: Decodable, Sendable {

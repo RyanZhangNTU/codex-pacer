@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import PacerCore
+@testable import PacerEngineSupport
 
 private final class IdleFrameCapture: @unchecked Sendable {
     private let lock = NSLock()

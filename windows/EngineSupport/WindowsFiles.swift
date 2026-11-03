@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import CWindowsSupport
 
 enum WindowsFiles {
@@ -88,5 +89,4 @@ extension CompletionDismissalStore {
     }
 }
 
-extension DeepSeekSessionReader { init() { self.init(files: WindowsFileSystem()) } }
 #endif

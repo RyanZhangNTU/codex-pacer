@@ -1,5 +1,6 @@
 #if os(Windows)
 import Foundation
+import PacerCore
 import CWindowsSupport
 
 /// An observed writer may point to an editor or terminal. Only its existing

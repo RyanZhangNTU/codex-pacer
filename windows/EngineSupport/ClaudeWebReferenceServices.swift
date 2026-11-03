@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 import FoundationNetworking
 
 /// Available only to the explicit demo/reference CLI fixture. Requests still

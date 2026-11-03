@@ -1,3 +1,4 @@
+@testable import PacerEngineSupport
 #if os(Windows)
 import Foundation
 import XCTest

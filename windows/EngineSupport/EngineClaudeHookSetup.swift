@@ -1,3 +1,4 @@
+import PacerCore
 import Foundation
 
 struct EngineClaudeHookSetup: Codable, Equatable, Sendable {

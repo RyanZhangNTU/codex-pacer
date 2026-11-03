@@ -73,11 +73,14 @@ public struct CodexRolloutMetadata: Sendable {
     public let url: URL
     public let observedAt: Date?
     public let parentThreadID: String?
+    package init(origin: CodexSessionOrigin, url: URL, observedAt: Date?, parentThreadID: String?) {
+        self.origin = origin; self.url = url; self.observedAt = observedAt; self.parentThreadID = parentThreadID
+    }
     private static let dates = LogDateParser()
     private static let marker = Data(#""session_meta""#.utf8)
     /// `head` is the header a caller already read with the same bounded loop,
     /// so the reader does not read each candidate's first line twice.
-    static func read(_ url: URL, threadID: String? = nil, head known: Data? = nil) -> Self? {
+    package static func read(_ url: URL, threadID: String? = nil, head known: Data? = nil) -> Self? {
         guard url.isFileURL, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }

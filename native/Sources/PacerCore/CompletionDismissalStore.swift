@@ -5,7 +5,7 @@ import CryptoKit
 public struct CompletionDismissalStore: Sendable {
     /// Only a hashed source identity and a server timestamp survive. This
     /// bridges the same bounded idle-to-resolved transition across a relaunch.
-    struct CloudEnding: Codable, Equatable, Sendable {
+    package struct CloudEnding: Codable, Equatable, Sendable {
         let source: String
         let mark: Date
     }
@@ -25,7 +25,7 @@ public struct CompletionDismissalStore: Sendable {
         self.fileURL = fileURL; self.files = files; self.preservesDamagedFile = preservesDamagedFile
     }
 
-    static func digest(_ fields: [String]) -> String {
+    package static func digest(_ fields: [String]) -> String {
         // Length prefixes make opaque identifiers unambiguous without storing them.
         var data = Data()
         for field in fields {
@@ -53,7 +53,7 @@ public struct CompletionDismissalStore: Sendable {
     }
 
     @discardableResult
-    func saveDigests(_ digests: [String], cloudEndings: [CloudEnding] = []) -> Bool {
+    package func saveDigests(_ digests: [String], cloudEndings: [CloudEnding] = []) -> Bool {
         guard digests.count <= Self.maximumEntries, Set(digests).count == digests.count,
               digests.allSatisfy(Self.validDigest), Self.validCloudEndings(cloudEndings),
               let data = try? JSONEncoder().encode(Envelope(version: 1, digests: digests,

@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Source paths are returned only to an explicit settings query. They are not
 /// added to activity snapshots, diagnostics, or quota history.

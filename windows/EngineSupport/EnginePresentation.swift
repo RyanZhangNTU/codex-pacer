@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Bounded display metadata. The host never reconstructs provider lifecycle,
 /// task families or rate estimates from strings or from raw event payloads.

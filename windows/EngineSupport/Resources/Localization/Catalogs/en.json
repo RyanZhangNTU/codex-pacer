@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/Localization/en.json": "6f635d0e3ef7ff463b5850ce7ade83d6e0ad52ca525318704425517425d66d0c"
+    "windows/EngineSupport/Resources/Localization/en.json": "6f635d0e3ef7ff463b5850ce7ade83d6e0ad52ca525318704425517425d66d0c"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",

@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 def outputs():
     for language in ("en","zh-Hans"):
-        catalog=json.loads((ROOT/f"windows/Localization/Catalogs/{language}.json").read_text(encoding="utf8"))
+        catalog=json.loads((ROOT/f"windows/EngineSupport/Resources/Localization/Catalogs/{language}.json").read_text(encoding="utf8"))
         yield ROOT/f"windows/Desktop/Assets/Localization/{language}.json", {"schemaVersion":1,"language":language,"strings":catalog["strings"]}
     resources=ROOT/"native/Sources/PacerCore/Resources"
     yield ROOT/"windows/Desktop/Assets/Web/deepseek-scripts.json", {"schemaVersion":1,"origin":"https://platform.deepseek.com/",

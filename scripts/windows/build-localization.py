@@ -40,7 +40,7 @@ def catalogs():
     for language in LANGUAGES:
         sources = {}
         shared = f"native/Sources/PacerCore/Resources/{language}.lproj/Localizable.strings"
-        platform = f"windows/Localization/{language}.json"
+        platform = f"windows/EngineSupport/Resources/Localization/{language}.json"
         texts = {}
         for path in (shared, platform):
             text = (ROOT / path).read_text(encoding="utf-8")
@@ -73,7 +73,7 @@ def unique_pairs(pairs):
 
 def build(check=False):
     for language, document in catalogs().items():
-        target = ROOT / f"windows/Localization/Catalogs/{language}.json"
+        target = ROOT / f"windows/EngineSupport/Resources/Localization/Catalogs/{language}.json"
         expected = json.dumps(document, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
         if check:
             if not target.is_file() or target.read_text(encoding="utf-8") != expected:
