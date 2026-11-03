@@ -18,6 +18,7 @@ Use `make build` only when an app is needed for UI verification and no matching 
 | Sparkle, installation/relaunch, shutdown or signing/feed compatibility | Use isolated updater QA for signed download, extraction, installation and automatic relaunch. After publication, verify a real installed-app upgrade. |
 | Language | Check changed text/layout in English and Chinese. Default/override persistence and language relaunch are required only when language selection changes. |
 | DMG layout, packaging or first-open guidance | Inspect Finder layout and the affected manual-install/first-open path. Unchanged layout needs no repeat screenshot or Gatekeeper walkthrough. |
+| Windows updater, feed or installer identity | Use the isolated Windows update QA (`Pacer.DesktopTests --serve-update-feed` with a QA installation). After publication, verify a real installed Windows upgrade. |
 | Documentation, tests or tooling only | Validate affected tests/scripts/links. No product UI or updater matrix unless the tooling changes the resulting package. |
 
 Isolated updater QA uses a different bundle identifier, executable, singleton lock, preferences and data/cache paths, demo data, disabled SSH and a loopback feed. `--demo` alone does not isolate production locking and normally disables Sparkle. Enable the real updater only in the QA copy. Do not replace a failed required interaction with a source-code inspection; report the exact unverified check. Record actual OS/architecture/display coverage without claiming Intel hardware testing from a universal build.
@@ -33,6 +34,8 @@ For an application release, update:
 - `native/Sources/PacerCore/WhatsNew.swift`: the version's highlights for the in-app update note, with strings in both catalogs. A version without an entry updates quietly.
 - `CHANGELOG.md` and `docs/release-notes-VERSION.en.md` / `.zh-CN.md`: shipped changes and installation guidance. Keep both current note files; do not add a deferred-issue appendix unless requested.
 - README, user guide and development docs only when their behavior or instructions change. Older notes may be removed after publication; tags, Releases and the changelog retain history.
+
+Windows ships in the same GitHub Release once `scripts/release/windows-release.json` sets `publish` to `true`, a change made in the first Windows release's PR. From then on every release carries the Windows installers and `appcast-windows.xml`, and its notes cover both platforms; the publisher refuses a release that would drop the Windows feed.
 
 Run the applicable validation above. Do not repeat a passing suite, live reproduction or packaging check without a relevant source/configuration/artifact change.
 
@@ -65,7 +68,9 @@ python3 -m venv /private/tmp/codex-pacer-dmg-tools
 
 Set `PACER_DMG_PYTHON=/private/tmp/codex-pacer-dmg-tools/bin/python`, `APPLE_SIGNING_IDENTITY` and `APPLE_NOTARY_PROFILE` (see [distribution](#distribution-and-reporting)), then run `make release`. Releases are Developer ID signed and notarized from 3.0.1; `make release-unsigned` builds the former ad-hoc channel only when explicitly requested. Never switch distribution modes as a fallback for signing or notarization failure.
 
-The build script checks both executable architectures, bundled languages and code signatures, packages/verifies the DMG once, checks its mounted app and Applications link, and generates/verifies signed archive and bilingual feed data. Keep `build.json`, `update.json` and `SHA256SUMS.txt` under local ignored `output/releases/VERSION/` (`unsigned/` for that mode). Read the successful script result/receipts; do not manually rerun its identical checks.
+With Windows enabled, wait for the Platforms run on `main` for the final commit to succeed before building. The build then downloads its `windows-installer-x64-unsigned` and `windows-installer-arm64-unsigned` artifacts with `gh`, checks each installer's name, CI checksum and version resource, renames them `Codex-Pacer-VERSION-windows-ARCH-setup.exe`, and signs them and `appcast-windows.xml` with the same Sparkle key ([details](automatic-updates.md#windows)).
+
+The build script checks both executable architectures, bundled languages and code signatures, packages/verifies the DMG once, checks its mounted app and Applications link, and generates/verifies signed archive and bilingual feed data. Keep `build.json`, `update.json`, `windows-update.json` (with Windows) and `SHA256SUMS.txt` under local ignored `output/releases/VERSION/` (`unsigned/` for that mode). Read the successful script result/receipts; do not manually rerun its identical checks.
 
 Once authorized, confirm `vVERSION` is new, tag the exact committed version, push it, then publish:
 
@@ -78,7 +83,7 @@ git push origin "v$task_version"
 make publish
 ```
 
-Use `make publish-unsigned` only for an explicitly requested ad-hoc build. The publisher checks source/tag identity, distribution, checksums, feed/archive signatures and monotonically increasing build numbers. It uploads exactly the universal DMG and signed `appcast.xml` to a draft, downloads each once for byte comparison, then makes it public/latest. Source archives generated by GitHub are separate. Keep the bundle ID, `SUFeedURL` and `SUPublicEDKey` compatible with installed clients; the stable feed is `https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast.xml`.
+Use `make publish-unsigned` only for an explicitly requested ad-hoc build. The publisher checks source/tag identity, distribution, checksums, feed/archive signatures and monotonically increasing build numbers. It uploads exactly the universal DMG and signed `appcast.xml`, plus the two Windows installers and `appcast-windows.xml` when Windows is enabled, to a draft, downloads each once for byte comparison, then makes it public/latest. Source archives generated by GitHub are separate. Keep the bundle ID, `SUFeedURL` and `SUPublicEDKey` compatible with installed clients; the stable feed is `https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast.xml`.
 
 After publication, confirm public/latest status, expected tag/assets and that the stable latest-feed URL serves the intended signed feed. Do not download the DMG again after the publisher's successful comparison. If publication fails or its outcome is unknown, inspect remote state before retrying; incomplete candidates remain unpublished. Do not edit signed XML/archives or replace published tags/assets: fix problems in a new patch version/build.
 
@@ -93,6 +98,8 @@ An explicitly requested overwrite installation is a separate local test: normal-
 ## Distribution and reporting
 
 Developer ID mode is the release channel. It requires `APPLE_SIGNING_IDENTITY` (the `Developer ID Application` identity in the login Keychain) and `APPLE_NOTARY_PROFILE`, a `notarytool` Keychain profile that the release owner creates once in their own terminal with `xcrun notarytool store-credentials PROFILE --apple-id APPLE_ID --team-id TEAM_ID`, typing the app-specific password at its hidden prompt. The build signs the app, its helper and Sparkle's components with hardened runtime and secure timestamps, notarizes and staples the app and DMG, and checks both with Gatekeeper. README and Release guidance is the normal drag-to-Applications install with the one-time macOS confirmation; the Release body carries no Open Anyway help.
+
+Windows installers are not Authenticode signed. When they are included, the Release body tells users how to get past SmartScreen ("More info → Run anyway") in both languages.
 
 Unsigned output has an ad-hoc app signature, an unsigned DMG and no notarization/stapling, and uses no Apple credentials. Its Release body appends Apple's first-launch help link and the tagged Open Anyway screenshot.
 

@@ -150,7 +150,8 @@ internal sealed class UpdateFeedProxy : IAsyncDisposable
                     Interlocked.Exchange(ref value.LastRequest, Stopwatch.GetTimestamp());
                     using var feedTimeout = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
                     feedTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-                    var item = UpdateCatalog.Parse(await Fetch(channel.Feed, UpdateCatalog.FeedLimit, feedTimeout.Token), channel, architecture, current, windows, language);
+                    byte[]? signed = await Fetch(channel.Feed, UpdateCatalog.FeedLimit, feedTimeout.Token, missingIsEmpty: true);
+                    var item = signed == null ? null : UpdateCatalog.Parse(signed, channel, architecture, current, windows, language);
                     string? token = null;
                     if (item != null)
                     {
@@ -173,7 +174,7 @@ internal sealed class UpdateFeedProxy : IAsyncDisposable
                     WindowsUpdatePackage? item; lock (sync) { item = token == null ? null : value.Offers.GetValueOrDefault(token); }
                     if (item == null) { await Reply(stream, 404, [], timeout.Token); return; }
                     Interlocked.Exchange(ref value.LastRequest, Stopwatch.GetTimestamp());
-                    payload = await Fetch(item.Download, UpdateCatalog.PackageLimit, timeout.Token);
+                    payload = (await Fetch(item.Download, UpdateCatalog.PackageLimit, timeout.Token))!;
                     if (payload.LongLength != item.Length || !UpdateCatalog.Verify(payload, item.Signature, channel.PublicKey))
                         throw new InvalidDataException("The update package signature is invalid.");
                     type = "application/octet-stream";
@@ -207,23 +208,39 @@ internal sealed class UpdateFeedProxy : IAsyncDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
         {
-            var feed = await Fetch(channel.Feed, UpdateCatalog.FeedLimit, timeout.Token);
-            return UpdateCatalog.Parse(feed, channel, architecture, current, windows, language, notesForCurrentBuild: true)?.Notes;
+            var feed = await Fetch(channel.Feed, UpdateCatalog.FeedLimit, timeout.Token, missingIsEmpty: true);
+            return feed == null ? null : UpdateCatalog.Parse(feed, channel, architecture, current, windows, language, notesForCurrentBuild: true)?.Notes;
         }
         catch (Exception error) when (error is HttpRequestException or FormatException or System.Xml.XmlException)
         { throw new InvalidDataException("Signed release notes could not be verified."); }
     }
-    private async Task<byte[]> Fetch(Uri url, int limit, CancellationToken cancellation)
+    internal const int MaximumRedirects = 4;
+    // Release assets redirect from github.com to GitHub's download hosts. Each hop must stay
+    // HTTPS on a channel-listed host; a missing feed means no release for Windows yet.
+    private async Task<byte[]?> Fetch(Uri url, int limit, CancellationToken cancellation, bool missingIsEmpty = false)
     {
-        if (!channel.Allows(url)) throw new InvalidDataException("The update URL is not allowed.");
-        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellation);
-        response.EnsureSuccessStatusCode();
-        if (response.RequestMessage?.RequestUri != url || response.Content.Headers.ContentLength > limit) throw new InvalidDataException("Invalid update response.");
-        await using var input = await response.Content.ReadAsStreamAsync(cancellation);
-        using var result = new MemoryStream(); byte[] buffer = new byte[64 * 1024]; int count;
-        while ((count = await input.ReadAsync(buffer, cancellation)) > 0)
-        { if (result.Length + count > limit) throw new InvalidDataException("Update data exceeds its limit."); result.Write(buffer, 0, count); }
-        return result.ToArray();
+        Uri target = url;
+        for (int hop = 0; ; hop++)
+        {
+            if (!channel.Allows(target)) throw new InvalidDataException("The update URL is not allowed.");
+            using var response = await http.GetAsync(target, HttpCompletionOption.ResponseHeadersRead, cancellation);
+            if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
+            {
+                Uri? location = response.Headers.Location;
+                if (hop >= MaximumRedirects || location == null) throw new InvalidDataException("Invalid update redirect.");
+                Uri next = location.IsAbsoluteUri ? location : new Uri(target, location);
+                if (!channel.AllowsRedirect(next)) throw new InvalidDataException("The update redirect is not allowed.");
+                target = next; continue;
+            }
+            if (missingIsEmpty && response.StatusCode == HttpStatusCode.NotFound) return null;
+            response.EnsureSuccessStatusCode();
+            if (response.RequestMessage?.RequestUri != target || response.Content.Headers.ContentLength > limit) throw new InvalidDataException("Invalid update response.");
+            await using var input = await response.Content.ReadAsStreamAsync(cancellation);
+            using var result = new MemoryStream(); byte[] buffer = new byte[64 * 1024]; int count;
+            while ((count = await input.ReadAsync(buffer, cancellation)) > 0)
+            { if (result.Length + count > limit) throw new InvalidDataException("Update data exceeds its limit."); result.Write(buffer, 0, count); }
+            return result.ToArray();
+        }
     }
     internal WindowsUpdatePackage ValidateDownloaded(byte[] bytes)
     {

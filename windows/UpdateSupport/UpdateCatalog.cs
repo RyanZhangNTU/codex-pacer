@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -21,19 +22,27 @@ internal static class WindowsUpdateVersion
 
 internal sealed record WindowsUpdateChannel(Uri Feed, string PublicKey, string? SignerSHA256, Guid? TestScope = null, string? TestCertificateSHA256 = null, Version? TestCurrentBuild = null)
 {
+    /// Hosts a download may be redirected to. Signatures, not hosts, establish trust; QA channels never redirect.
+    internal IReadOnlySet<string> RedirectHosts { get; init; } = new HashSet<string>();
     internal bool Allows(Uri uri) => uri.IsAbsoluteUri && uri.AbsoluteUri.Length <= 4096 && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 &&
         uri.Scheme == "https" && (TestScope == null || uri.Host == "127.0.0.1");
+    internal bool AllowsRedirect(Uri uri) => TestScope == null && Allows(uri) && uri.IsDefaultPort && RedirectHosts.Contains(uri.Host);
     internal void Validate()
     {
         if (!Allows(Feed) || Convert.FromBase64String(PublicKey).Length != 32 ||
             SignerSHA256 != null && (SignerSHA256.Length != 64 || !SignerSHA256.All(Uri.IsHexDigit)) ||
             TestScope == null && (TestCurrentBuild != null || TestCertificateSHA256 != null) ||
-            TestScope != null && (TestCertificateSHA256?.Length != 64 || !TestCertificateSHA256.All(Uri.IsHexDigit)))
+            TestScope != null && (TestCertificateSHA256?.Length != 64 || !TestCertificateSHA256.All(Uri.IsHexDigit) || RedirectHosts.Count != 0))
             throw new InvalidDataException("The Windows update channel is invalid.");
     }
-    // Production endpoints and trust are intentionally unconfigured. They need
-    // a separate authorized provisioning change; no Mac update value is read.
-    internal static WindowsUpdateChannel? Production => null;
+    internal const string ReleaseFeed = "https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast-windows.xml";
+    // Windows ships in the Mac GitHub Release: appcast-windows.xml and the installers are
+    // assets of the latest release, signed with the Mac appcast's Ed25519 key (SUPublicEDKey).
+    // Installers are not Authenticode signed yet, so no signer is pinned.
+    internal static WindowsUpdateChannel Production { get; } = new(new Uri(ReleaseFeed), "XdAbV7Q9i+LVC2U0mIPfBjI4WRRH0YEb9e3aUOkjHDE=", null)
+    {
+        RedirectHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com" }
+    };
     internal static WindowsUpdateChannel ReadTest(string path, Guid scope)
     {
         using var doc = JsonDocument.Parse(UpdateFiles.Read(path, 4096));
