@@ -13,6 +13,12 @@ internal sealed record DesktopPreferences
     public string Language { get; init; } = "system";
     public string Position { get; init; } = "center";
     public string DisplayMode { get; init; } = "automatic";
+    public string DisplaySelection { get; init; } = "automatic";
+    public string DisplayID { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    public int DisplayX { get; init; }
+    public int DisplayY { get; init; }
+    public bool ShowInFullscreen { get; init; }
     public string IslandAppearance { get; init; } = "liquidGlass";
     public string ExpandedQuotaStyle { get; init; } = "split";
     public string? CompactLayout { get; init; }
@@ -41,6 +47,7 @@ internal sealed record DesktopPreferences
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
     public bool MonitorRemoteControl { get; init; } = true;
     public bool MonitorWSL { get; init; } = true;
+    public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool MonitorSSH { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -55,6 +62,9 @@ internal sealed record DesktopPreferences
     internal bool IsValid => SchemaVersion == 1 && Language is "system" or "en" or "zh-Hans"
         && Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight"
         && DisplayMode is "automatic" or "notch" or "floating"
+        && DisplaySelection is "automatic" or "primary" or "specified"
+        && ValidWindow(DisplayID) && ValidWindow(DisplayName)
+        && (DisplaySelection != "specified" || DisplayID.Length > 0 || DisplayName.Length > 0)
         && IslandAppearance is "classic" or "liquidGlass"
         && ExpandedQuotaStyle is "split" or "classic"
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
@@ -92,6 +102,7 @@ internal sealed record DesktopPreferences
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
             monitorRemoteControl = MonitorRemoteControl,
             monitorWSL = MonitorWSL,
+            showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,

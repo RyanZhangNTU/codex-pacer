@@ -118,8 +118,8 @@ internal static class SettingsPresentationChecks
             await Until(() => session.Current.LastSettingsPane == "appearance" && Find<RadioButton>(window, "appearance.mode.notch").IsEnabled,
                 "Appearance navigation must persist and expose the real position controls");
             Check(Find<RadioButton>(window, "appearance.style.liquidGlass").IsEnabled == (Environment.OSVersion.Version.Build >= 22621)
-                && !Find<ComboBox>(window, "appearance.display").IsEnabled && !Find<CheckBox>(window, "appearance.fullscreen").IsEnabled,
-                "Glass availability follows the OS minimum while unsupported display and fullscreen choices remain disabled");
+                && Find<ComboBox>(window, "appearance.display").IsEnabled && Find<CheckBox>(window, "appearance.fullscreen").IsEnabled,
+                "Glass availability follows the OS minimum while display and fullscreen controls are available");
             var solidSurface = Find<RadioButton>(window, "appearance.style.classic");
             Select(solidSurface); await Until(() => session.Current.IslandAppearance == "classic" && solidSurface.IsEnabled,
                 "Classic surface selection persists through its accessible radio control");

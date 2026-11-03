@@ -27,10 +27,11 @@ internal static class PreferencesPersistenceChecks
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekBalanceSource = "apiKey", DeepSeekDailyBudget = 25, DeepSeekWeeklyBudget = 120,
                 DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, SystemNotifications = true,
                 WarningKinds = ["ssh"], DeepSeekLowBalanceLine = 15, DeepSeekSpikeLimit = 8, LastSettingsPane = "collapsed", HideProjects = true,
-                ShowAppButtons = false, ShowEmbeddedCodexSessions = false, MonitorRemoteControl = false, MonitorWSL = false, MonitorSSH = false, ShowClaudeCloudProjects = false, RetentionMinutes = 240,
+                ShowAppButtons = false, ShowEmbeddedCodexSessions = false, ShowEmbeddedClaudeSessions = false, MonitorRemoteControl = false, MonitorWSL = false, MonitorSSH = false, ShowClaudeCloudProjects = false, RetentionMinutes = 240,
                 CodexExecutable = @"C:\合成 path\codex.exe", CodexHome = @"C:\合成 path\.codex", ClaudeHome = @"C:\合成 path\.claude",
                 ClaudeOrganization = "11111111-1111-4111-8111-111111111111", DeepseekHome = @"C:\合成 path\.dsh",
-                ProviderModes = new() { ["codex"] = "enabled", ["claude"] = "disabled", ["deepseek"] = "automatic" }
+                ProviderModes = new() { ["codex"] = "enabled", ["claude"] = "disabled", ["deepseek"] = "automatic" },
+                DisplaySelection = "specified", DisplayID = @"\\?\DISPLAY#SYNTHETIC", DisplayName = "QA Display", DisplayX = -1920, DisplayY = -120, ShowInFullscreen = true
             };
             var properties = typeof(DesktopPreferences).GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.Name != "SchemaVersion").ToArray();
             int acknowledged = 0;
@@ -46,6 +47,7 @@ internal static class PreferencesPersistenceChecks
                 {
                     var next = value with { }; property.SetValue(next, property.GetValue(alternate));
                     if (property.Name == "CompactLayout") next = next with { WarningKinds = alternate.WarningKinds };
+                    if (property.Name is "DisplaySelection" or "DisplayID") next = next with { DisplaySelection = alternate.DisplaySelection, DisplayID = alternate.DisplayID };
                     return next;
                 }) == PreferencesApplyResult.Applied, property.Name + " must acknowledge and commit");
                 var restart = new PreferencesStore(file).Load();
@@ -58,6 +60,7 @@ internal static class PreferencesPersistenceChecks
             await CheckAcknowledgement();
             CheckTransactions(root);
             CheckCanonicalKeys(root);
+            CheckEmbeddedSessionKeys(root);
             await PreferencesRecoveryChecks.Run(root);
         }
         finally { foreach (string file in Directory.EnumerateFiles(root)) File.Delete(file); Directory.Delete(root); }
@@ -117,6 +120,37 @@ internal static class PreferencesPersistenceChecks
         Check(!old.Unavailable && old.Value.HasChosenPosition && old.Value.QuotaRingOuter == "", "Version 1 keeps its corner and automatic ring semantics");
         Check(legacy.Save(old.Value) && new PreferencesStore(file).Load().Value.Language == "zh-Hans", "Legacy preferences migrate on the next successful edit");
         Check(!JsonNode.Parse(File.ReadAllBytes(file))!.AsObject().ContainsKey("quotaRingOuter"), "A migrated automatic ring is absent, as in Mac UserDefaults");
+    }
+    private static void CheckEmbeddedSessionKeys(string root)
+    {
+        string file = Path.Combine(root, "embedding.json");
+        File.WriteAllText(file, "{\"schemaVersion\":2,\"showEmbeddedCodexSessions\":false,\"showEmbeddedClaudeSessions\":true,\"futureOption\":42}");
+        var loaded = new PreferencesStore(file).Load();
+        Check(!loaded.Unavailable && !loaded.Value.ShowEmbeddedCodexSessions && loaded.Value.ShowEmbeddedClaudeSessions,
+            "Schema 2 reads the independent Mac keys without borrowing another provider's visibility");
+        foreach (var (codex, claude) in new[] { (true, false), (false, false), (false, true), (true, true) })
+        {
+            var store = new PreferencesStore(file);
+            Check(store.Save(store.Load().Value with { ShowEmbeddedCodexSessions = codex, ShowEmbeddedClaudeSessions = claude }), "Both visibility choices save independently");
+            var restarted = new PreferencesStore(file).Load();
+            Check(!restarted.Unavailable && restarted.Value.ShowEmbeddedCodexSessions == codex && restarted.Value.ShowEmbeddedClaudeSessions == claude,
+                "Restart preserves all combinations of the two provider switches");
+            using var saved = JsonDocument.Parse(File.ReadAllBytes(file)); var json = saved.RootElement;
+            Check(json.GetProperty("schemaVersion").GetInt32() == 2 && json.GetProperty("showEmbeddedCodexSessions").GetBoolean() == codex
+                && json.GetProperty("showEmbeddedClaudeSessions").GetBoolean() == claude && json.GetProperty("futureOption").GetInt32() == 42,
+                "Edits use schema 2 and the exact Mac boolean keys while preserving unknown options");
+        }
+        File.WriteAllText(file, "{\"schemaVersion\":2}");
+        var missing = new PreferencesStore(file).Load();
+        Check(!missing.Unavailable && missing.Value.ShowEmbeddedCodexSessions && missing.Value.ShowEmbeddedClaudeSessions,
+            "Missing schema 2 visibility keys default to on for both providers");
+        File.WriteAllText(file, "{\"schemaVersion\":1,\"showEmbeddedCodexSessions\":false}");
+        var legacy = new PreferencesStore(file); var first = legacy.Load();
+        Check(!first.Unavailable && !first.Value.ShowEmbeddedCodexSessions && first.Value.ShowEmbeddedClaudeSessions && legacy.Save(first.Value),
+            "An older single-switch profile migrates without hiding Claude's sessions");
+        using var migrated = JsonDocument.Parse(File.ReadAllBytes(file));
+        Check(migrated.RootElement.GetProperty("schemaVersion").GetInt32() == 2 && migrated.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
+            "The migrated profile writes the new Claude default with its Mac key");
     }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }

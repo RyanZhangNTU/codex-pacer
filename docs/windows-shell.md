@@ -12,7 +12,9 @@ The island's Classic/Liquid Glass preference uses the native Composition materia
 
 The bridge uses C++20 with MSVC 19.30 or newer. VS 2019 19.29 uses C++17 because that compiler hits an internal error in the SDK's C++20 projection. Both paths keep warnings as errors; newer libraries' rejection of experimental coroutine headers is handled by the standard selection, without suppressing diagnostics.
 
-Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. This does not implement the pending fullscreen display preference.
+Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. Fullscreen visibility uses the separate policy described below.
+
+The [display and fullscreen controls](windows-display-fullscreen.md) select a stable Windows monitor identity, retain a disconnected selection and apply the target screen's DPI/work area. The fullscreen switch controls policy hiding or nonactivating display above fullscreen apps. Local synthetic acceptance remains separate from physical multi-monitor and exclusive-fullscreen acceptance.
 
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 
@@ -36,6 +38,14 @@ Snapshots supply task labels, counts, rates, quota and wallet projections. The a
 All engine requests are asynchronous. Ordinary commands have a 15-second deadline; presentation queries have a 3-second deadline. The deadline includes waiting for the write gate, writing the command and receiving its result. The hello handshake has a 10-second deadline. An engine exit fails pending requests. Rendering reads a bounded cache and returns immediately; identical requests share one pending operation. Failed inputs are not retried by repainting. A missing or failed projection shows a loading/error placeholder, and settings edits report failure without saving an incomplete layout.
 
 `SlowEngineChecks` tests silent, slow and exiting engines. It checks dispatcher heartbeats, immediate rendering, visible errors, bounded request counts and rejection of late responses. Pipe readers await input; animation subscriptions end when motion settles. There is no request polling loop.
+
+## Embedded sessions and host applications
+
+Codex and Claude each have a “sessions from other apps” switch, enabled by default. Schema 2 stores them with the Mac keys `showEmbeddedCodexSessions` and `showEmbeddedClaudeSessions`; older profiles keep their saved Codex choice and default Claude to visible. Turning one off hides that provider's embedded families, retained completion cards, requests and reminders. Collection continues, and hidden endings remain unread. A later CLI launch record makes the family visible again. Provider and source identities keep unrelated sessions separate; Zotero translation sessions remain excluded.
+
+Windows uses the shared host tracking policy for caching, two-second scan throttling, sleep cancellation and wake retries. A bounded native process snapshot supplies parent links; every candidate is checked against its PID and creation time. The cache records the observed application's name and executable file identity while its task or completion card remains referenced.
+
+Opening a card first uses its current verified host. If that host has exited, the engine can restart the captured executable or packaged application after checking its file identity, size and modification time again. It passes no transcript arguments or prompt. Executable paths and package launch identities stay inside the engine; WPF receives a one-use navigation context. An unknown or replaced application, a failed launch, sleep or a source change leaves the ending unread. Remote Control, SSH and WSL acceptance remain separate work in the feature coverage record.
 
 The island retains a transparent HWND canvas across transitions, so its native rectangle can remain large after the visible panel closes. Its root UIA `ExpandCollapse` pattern reports the logical state and supports reveal/close actions. Input tests should read that state alongside the bounds, rather than infer expansion from the HWND size alone. Hover exit keeps the existing 0.4-second grace period used by the Mac model.
 

@@ -3,8 +3,8 @@ import Foundation
 import PacerCore
 import CWindowsSupport
 
-/// An observed writer may point to an editor or terminal. Only its existing
-/// window is activated; transcript fields cannot name an executable to run.
+/// Observed ancestry identifies an editor or terminal. Transcript fields
+/// cannot choose an executable or a process instance.
 struct WindowsProcessHost: Equatable, Sendable {
     let identity: WindowsProcessIdentity
     let provider: AgentProvider?

@@ -34,6 +34,7 @@ struct EngineCommand: Decodable {
         var showEmbeddedCodexSessions: Bool?
         var monitorRemoteControl: Bool?
         var monitorWSL: Bool?
+        var showEmbeddedClaudeSessions: Bool?
         var showClaudeCloudProjects: Bool?
         var monitorSSH: Bool?
         var deepseekSettings: EngineDeepSeekSettings?

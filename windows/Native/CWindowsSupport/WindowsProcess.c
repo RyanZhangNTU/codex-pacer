@@ -45,7 +45,7 @@ int pacer_process_alive(uint32_t pid, uint64_t started) {
     int alive = WaitForSingleObject(process, 0) == WAIT_TIMEOUT && pacer_process_start(process) == started;
     CloseHandle(process); return alive;
 }
-int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity *identity, uint16_t *image, size_t capacity) {
+int pacer_process_image(uint32_t pid, uint64_t started, pacer_process_identity *identity, uint16_t *image, size_t capacity) {
     if (identity == NULL || image == NULL || capacity == 0 || capacity > 32768) return 0;
     HANDLE process = pacer_open_user_process(pid, PROCESS_QUERY_LIMITED_INFORMATION, started);
     if (process == NULL) return 0;
@@ -53,18 +53,29 @@ int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity
     int valid = QueryFullProcessImageNameW(process, 0, (LPWSTR)image, &length) && length < capacity;
     if (valid) {
         identity->pid = pid; identity->started = pacer_process_start(process); identity->parent = 0;
-        HANDLE table = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (table != INVALID_HANDLE_VALUE) {
-            PROCESSENTRY32W entry = {0}; entry.dwSize = sizeof(entry);
-            size_t count = 0;
-            if (Process32FirstW(table, &entry)) do {
-                if (entry.th32ProcessID == pid) { identity->parent = entry.th32ParentProcessID; break; }
-            } while (++count < 8192 && Process32NextW(table, &entry));
-            CloseHandle(table);
-        }
         valid = identity->started != 0 && (started == 0 || identity->started == started);
     }
     CloseHandle(process); return valid;
+}
+int pacer_process_parents(pacer_process_identity *identities, size_t capacity) {
+    if (identities == NULL || capacity == 0 || capacity > 8192) return -1;
+    HANDLE table = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (table == INVALID_HANDLE_VALUE) return -1;
+    PROCESSENTRY32W entry = {0}; entry.dwSize = sizeof(entry); size_t count = 0;
+    int valid = Process32FirstW(table, &entry) != 0;
+    if (valid) do {
+        if (count == capacity) { valid = 0; break; }
+        identities[count++] = (pacer_process_identity){entry.th32ProcessID, entry.th32ParentProcessID, 0};
+    } while (Process32NextW(table, &entry));
+    CloseHandle(table); return valid ? (int)count : -1;
+}
+int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity *identity, uint16_t *image, size_t capacity) {
+    if (!pacer_process_image(pid, started, identity, image, capacity)) return 0;
+    pacer_process_identity *rows = HeapAlloc(GetProcessHeap(), 0, 8192 * sizeof(*rows));
+    if (rows == NULL) return 0;
+    int count = pacer_process_parents(rows, 8192);
+    for (int i = 0; i < count; ++i) if (rows[i].pid == pid) { identity->parent = rows[i].parent; break; }
+    HeapFree(GetProcessHeap(), 0, rows); return count >= 0;
 }
 typedef struct { DWORD pid; HWND window; } pacer_window_search;
 static BOOL CALLBACK pacer_find_process_window(HWND window, LPARAM argument) {
