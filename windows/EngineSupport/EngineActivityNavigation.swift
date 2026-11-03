@@ -11,8 +11,8 @@ struct EngineNavigationPlan: Codable, Equatable, Sendable {
     // This capability never crosses the protocol boundary.
     var hostApplication: ActivityHostApplication? = nil
     enum CodingKeys: String, CodingKey { case context, provider, kind, url, webURL, pid, started, terminal }
-    init(context: String, provider: AgentProvider, terminal: String) {
-        self.context = context; self.provider = provider.rawValue; kind = "terminal"; self.terminal = terminal
+    init(context: String, provider: AgentProvider, terminal: String, kind: String = "terminal") {
+        self.context = context; self.provider = provider.rawValue; self.kind = kind; self.terminal = terminal
         url = nil; webURL = nil; pid = nil; started = nil
     }
     init(context: String, provider: AgentProvider, url: URL, webURL: URL? = nil) {
@@ -41,6 +41,8 @@ struct ActivityNavigationServices: Sendable {
     struct Input: Sendable {
         let context: String, activity: SessionActivity, home: URL, transcript: URL?
         var cachedHost: ActivityHostApplication? = nil
+        var remoteControlHosts: Set<String> = []
+        var wslProfile: WindowsWSLProfile? = nil
         var remoteTarget: RemoteActivityTarget? = nil
     }
     let resolve: @Sendable (Input) async throws -> EngineNavigationPlan

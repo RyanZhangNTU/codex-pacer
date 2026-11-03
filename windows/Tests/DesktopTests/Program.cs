@@ -13,6 +13,8 @@ internal static class Program
         { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
         if (args is ["--updates-only"] or ["--updates-only", _])
         { await WindowsUpdateChecks.Run(args.Length == 2 ? args[1] : null); return 0; }
+        if (args is ["--remote-source-unit-only"])
+        { WslTerminalChecks.Run(); SshTerminalChecks.Run(); ConnectionActionChecks.Run(); await ConversationApplicationChecks.Run(); Console.WriteLine("PASS remote routing, source-bound recovery and engine-owned host navigation"); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
@@ -64,6 +66,7 @@ internal static class Program
         await Test("Windows platform capabilities fail closed", () => { WindowsPlatformChecks.Run(); return Task.CompletedTask; });
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
+        await Test("connection actions bind setup retries and quota reads to the current source", () => { ConnectionActionChecks.Run(); return Task.CompletedTask; });
         await Test("display selection, reconnect, DPI anchors and preferences", () => DisplaySelectionChecks.Run(Path.GetDirectoryName(engine)!));
         await Test("fullscreen policy isolates the selected screen and requested visibility", () => { FullscreenDisplayChecks.Run(); return Task.CompletedTask; });
 

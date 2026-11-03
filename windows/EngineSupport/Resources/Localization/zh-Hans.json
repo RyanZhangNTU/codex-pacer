@@ -114,5 +114,8 @@
   "windows.deepseek.sessions": "此电脑上的会话",
   "windows.platform.unsupported": "Codex Pacer 需要 Windows 10 内部版本 19041 或更高版本。",
   "windows.updates.view_notes": "查看发行说明",
-  "windows.updates.notes_unavailable": "当前安装版本暂无可验证签名的发行说明。"
+  "windows.updates.notes_unavailable": "当前安装版本暂无可验证签名的发行说明。",
+  "windows.connections.monitor_wsl": "监测 WSL 中的任务",
+  "windows.connections.wsl_help": "以默认 Linux 用户读取正在运行的发行版中的 Codex 和 Claude 会话。",
+  "windows.connections.read_quota": "读取额度"
 }

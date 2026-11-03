@@ -114,5 +114,8 @@
   "windows.deepseek.sessions": "Sessions on this PC",
   "windows.platform.unsupported": "Codex Pacer requires Windows 10 build 19041 or later.",
   "windows.updates.view_notes": "View release notes",
-  "windows.updates.notes_unavailable": "No signed release notes are available for this installed build."
+  "windows.updates.notes_unavailable": "No signed release notes are available for this installed build.",
+  "windows.connections.monitor_wsl": "Monitor Tasks in WSL",
+  "windows.connections.wsl_help": "Read Codex and Claude sessions in running distributions as their default Linux user.",
+  "windows.connections.read_quota": "Read Quota"
 }

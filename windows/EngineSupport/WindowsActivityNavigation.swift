@@ -27,6 +27,17 @@ enum WindowsActivityNavigation {
         if activity.claudeCloud != nil, let url = activity.threadURL, let web = activity.claudeCloudWebURL {
             return .init(context: input.context, provider: provider, url: url, webURL: web)
         }
+        if let source = activity.sourceHostID, source.hasPrefix(ConnectionSource.wslPrefix) {
+            guard let profile = input.wslProfile, profile.id == source, let session = activity.threadID,
+                  let token = WindowsWSLResume(profile: profile, provider: provider, session: session).token else { throw ActivityNavigationError.unavailable }
+            return .init(context: input.context, provider: provider, terminal: token, kind: "wslTerminal")
+        }
+        if provider == .codex, let host = activity.sourceHostID, host.hasPrefix(ConnectionSource.controlPrefix) {
+            guard input.remoteControlHosts.contains(host), host.hasPrefix(ConnectionSource.controlPrefix),
+                  let url = activity.threadURL, let route = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  route.queryItems?.filter({ $0.name == "hostId" }).map(\.value) == [host] else { throw ActivityNavigationError.unavailable }
+            return .init(context: input.context, provider: provider, url: url)
+        }
         guard let session = activity.threadID, UUID(uuidString: session) != nil else { throw ActivityNavigationError.unavailable }
         if let source = activity.sourceHostID {
             guard let target = input.remoteTarget, target.id == source,

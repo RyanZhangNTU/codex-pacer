@@ -53,7 +53,7 @@ internal static class SettingsPresentationChecks
             Check(Find<RadioButton>(window, "settings.pane.general").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.appearance").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.reminders").IsEnabled
-                && !Find<RadioButton>(window, "settings.pane.connections").IsEnabled, "Implemented settings panes are available while pending connections remain disabled");
+                && Find<RadioButton>(window, "settings.pane.connections").IsEnabled, "Implemented settings and connection panes are available");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             var apps = Find<CheckBox>(window, "settings.app_buttons");
             var login = Find<CheckBox>(window, "settings.startup");

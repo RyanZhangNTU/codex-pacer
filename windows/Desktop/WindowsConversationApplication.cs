@@ -31,6 +31,7 @@ internal sealed class WindowsConversationApplication
         try
         {
             if (plan.Kind == "terminal") return await WindowsSshTerminal.OpenAsync(plan);
+            if (plan.Kind == "wslTerminal") return await WindowsWslTerminal.OpenAsync(plan);
             if (plan.Terminal != null) return false;
             if (plan.Kind == "host") return plan.Url == null && plan.WebUrl == null && plan.Pid is > 0 && plan.Started is > 0 && host(plan.Pid.Value, plan.Started.Value);
             if (plan.Kind != "application" || plan.Pid != null || plan.Started != null || !TryDestination(plan.Provider, plan.Url, plan.WebUrl, out Uri? uri, out Uri? fallback)) return false;
@@ -42,7 +43,7 @@ internal sealed class WindowsConversationApplication
         catch (Exception error) when (Recoverable(error)) { return false; }
     }
     internal static bool IsHostPlan(EngineNavigationPlan plan) => Guid.TryParse(plan.Context, out _) && plan.Provider is "claude" or "codex"
-        && plan.Kind == "host" && plan.Url == null && plan.WebUrl == null && plan.Pid is > 0 && plan.Started is > 0;
+        && plan.Kind == "host" && plan.Url == null && plan.WebUrl == null && plan.Terminal == null && plan.Pid is > 0 && plan.Started is > 0;
     internal static bool TryDestination(string provider, string? value, string? fallbackValue, out Uri? uri, out Uri? fallback)
     {
         uri = null; fallback = null;

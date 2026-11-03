@@ -5,8 +5,9 @@ import Foundation
 public struct RemoteControlSourceBindings: Equatable, Sendable {
     public let hostIDs: Set<String>
     public let authoritative: Bool
-    public init(hostIDs: Set<String>, authoritative: Bool) {
-        self.hostIDs = hostIDs; self.authoritative = authoritative
+    public let accountScope: String?
+    public init(hostIDs: Set<String>, authoritative: Bool, accountScope: String? = nil) {
+        self.hostIDs = hostIDs; self.authoritative = authoritative; self.accountScope = accountScope
     }
 }
 

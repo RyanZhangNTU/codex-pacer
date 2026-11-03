@@ -14,7 +14,13 @@ internal sealed record EngineSnapshot(
     JsonElement? CompactContext = null, DeepSeekConnection? DeepseekConnection = null, ClaudeConnection? ClaudeConnection = null,
     ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
-    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null);
+    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null);
+internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
+    bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
+internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);
+internal sealed record ConnectionHostRow(string Id, string Name, string Kind, IReadOnlyList<ConnectionModule> Modules);
+internal sealed record ConnectionModule(string Id, string Key, string Provider, string Label, string State, string Tone,
+    string SessionsText, int Sessions, bool RetrySetup, bool ReadsQuota);
 internal sealed record ClaudeRemoteSetup(string SourceID, string Context, bool Configured, bool InFlight, bool CanRetry, string? Message, double? RetryAt);
 internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
 internal sealed record EngineNavigationFailure(string Id, string Message);
@@ -39,7 +45,9 @@ internal sealed record EngineTask(
     double? StartedAt, bool Unread, bool Failed, double? TurnCost, double? TurnPeakCost);
 
 internal sealed record EngineRequest(string Id, string Provider, string ActivityId, string Kind, string Label, double DetectedAt);
-internal sealed record EngineSource(string Id, string Provider, bool Available, string Transport, string? Reason, ConnectionFailure? Failure = null);
+internal sealed record EngineSource(string Id, string Provider, bool Available, string Transport, string? Reason, ConnectionFailure? Failure = null,
+    string? SourceName = null, string? State = null, string? StateLabel = null, int? Sessions = null,
+    IReadOnlyList<QuotaWindow>? QuotaWindows = null, bool QuotaRefreshing = false, string? QuotaError = null);
 internal sealed record ConnectionFailure(string Kind, string? Method, int? Code);
 internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled);
 internal sealed record CodexSourceCandidate(string Path, string Source, string Label);

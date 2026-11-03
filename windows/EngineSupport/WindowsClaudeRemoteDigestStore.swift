@@ -45,15 +45,23 @@ final class WindowsClaudeRemoteDigestStore: @unchecked Sendable {
 }
 
 extension EngineClaudeRemoteServices {
-    static func live(ssh: WindowsSSHServices) -> Self? {
-        guard let digest = try? ClaudeRemoteSetup.adapterDigest() else { return nil }
+    static func live(ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil) -> Self? {
+        guard ssh != nil || wsl != nil, let digest = try? ClaudeRemoteSetup.adapterDigest() else { return nil }
         let home = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacer/ClaudeRemote/setup-v1.json")
         let store = WindowsClaudeRemoteDigestStore(file: home)
-        let setup = ClaudeRemoteSetup(executable: ssh.ssh, makeOperation: { executable, args in
+        let setup = ClaudeRemoteSetup(executable: ssh?.ssh ?? WindowsExecutables.ssh, makeOperation: { executable, args in
             WindowsClaudeSetupOperation(executable: executable, arguments: args,
-                environment: ssh.environment ?? ProcessInfo.processInfo.environment)
-        }, validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { WindowsSSHServices.validIdentity($0) })
+                environment: ssh?.environment ?? ProcessInfo.processInfo.environment, wsl: wsl)
+        }, validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { WindowsSSHServices.validIdentity($0) },
+            argumentBuilder: { target, requireHome in
+                if target.id.hasPrefix(ConnectionSource.wslPrefix) {
+                    guard let wsl else { throw ClaudeRemoteSetup.Failure.invalidTarget }
+                    return try wsl.setupArguments(target, requireHome: requireHome)
+                }
+                return try ClaudeRemoteSetup.arguments(target: target, requireHome: requireHome,
+                    validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { WindowsSSHServices.validIdentity($0) })
+            })
         return .init(digest: digest, install: { try await setup.install(target: $0, requireHome: true) }, shutdown: { await setup.shutdown() },
             loadDigests: { store.load() }, saveDigests: { store.save($0) })
     }

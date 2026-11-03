@@ -41,14 +41,22 @@ actor WindowsClaudeRemoteCoordinator {
     private var didConfigure: Configured?
     private var retryWake: Task<Void, Never>?
     private var retryDate: Date?
-    init(services: EngineClaudeRemoteServices, now: @escaping @Sendable () -> Date = { Date() }) {
+    private let maximumTargets: Int
+    init(services: EngineClaudeRemoteServices, now: @escaping @Sendable () -> Date = { Date() }, maximumTargets: Int = 8) {
         self.services = services; self.now = now; configured = services.loadDigests()
+        self.maximumTargets = min(16, max(1, maximumTargets))
     }
     func configure(targets: [RemoteActivityTarget], statuses: [String: RuntimeStreamStatus], enabled: Bool,
                    version: UInt64, update: @escaping Update, didConfigure: @escaping Configured = { _, _ in }) async {
         let replacing = self.version != version || self.enabled != enabled
         self.update = update; self.didConfigure = didConfigure; self.enabled = enabled; self.version = version
-        self.targets = enabled ? Array(targets.prefix(8)) : []; self.statuses = statuses
+        let next = enabled ? Array(targets.prefix(maximumTargets)) : []
+        let changedWSL = self.targets.filter { $0.id.hasPrefix(ConnectionSource.wslPrefix) && !next.contains($0) }.map(\.id)
+        if !changedWSL.isEmpty {
+            context = UUID().uuidString.lowercased()
+            for id in changedWSL { failures[id] = nil; messages[id] = nil }
+        }
+        self.targets = next; self.statuses = statuses
         if replacing {
             context = UUID().uuidString.lowercased()
             retryWake?.cancel(); retryWake = nil; retryDate = nil
@@ -140,15 +148,29 @@ actor WindowsClaudeRemoteCoordinator {
 final class WindowsClaudeSetupOperation: ClaudeRemoteSetupOperation, @unchecked Sendable {
     private let executable: URL, arguments: [String], environment: [String: String]
     private let lock = NSLock()
-    private var bytes = Data(), problem: ClaudeRemoteSetup.Failure?, child: WindowsHelperProcess?
-    init(executable: URL, arguments: [String], environment: [String: String]) {
+    private var bytes = Data(), problem: ClaudeRemoteSetup.Failure?, child: (any ChildProcessConnection)?
+    private let wsl: WindowsWSLServices?
+    private var sourceIsCurrent: @Sendable () -> Bool = { true }
+    init(executable: URL, arguments: [String], environment: [String: String], wsl: WindowsWSLServices? = nil) {
         self.executable = executable; self.arguments = arguments; self.environment = environment
+        self.wsl = wsl
     }
     var failure: ClaudeRemoteSetup.Failure? { lock.lock(); defer { lock.unlock() }; return problem }
     func start() throws {
-        let invocation = try WindowsSSHInvocation(arguments: arguments)
         lock.lock(); defer { lock.unlock() }
         guard problem == nil, child == nil else { throw problem ?? .connectionFailed }
+        if arguments.first == "--pacer-wsl" {
+            guard arguments.count == 4, arguments[1] == "claude", let wsl,
+                  let profile = wsl.registry.profile(id: arguments[2], provider: .claude),
+                  let invocation = WindowsWSLInvocation(profile: profile, provider: .claude, command: arguments[3], setup: true) else { throw ClaudeRemoteSetup.Failure.invalidTarget }
+            sourceIsCurrent = { wsl.registry.profile(id: profile.id, provider: .claude) == profile }
+            child = try wsl.start(.init(executable: wsl.executable, arguments: invocation.arguments, environment: WindowsWSLInvocation.environment(environment)),
+                invocation.input, { [weak self] in self?.receive($0) }, {})
+            // WSL's small supervisor owns the Linux child group. Keep stdin
+            // open until completion; cancellation EOF then kills only that group.
+            return
+        }
+        let invocation = try WindowsSSHInvocation(arguments: arguments)
         let process = try WindowsHelperProcess(.init(executable: executable, arguments: invocation.arguments, environment: environment),
             initialInput: invocation.input, privateErrors: true, output: { [weak self] in self?.receive($0) }, ended: {})
         child = process; process.finishInput()
@@ -161,6 +183,7 @@ final class WindowsClaudeSetupOperation: ClaudeRemoteSetupOperation, @unchecked 
     func result() throws -> (data: Data, exitStatus: Int32)? {
         lock.lock(); defer { lock.unlock() }
         if let problem { throw problem }
+        guard sourceIsCurrent() else { throw ClaudeRemoteSetup.Failure.cancelled }
         guard let child, !child.isRunning, child.ioClosed.isFinished else { return nil }
         guard let status = child.terminationStatus else { throw ClaudeRemoteSetup.Failure.connectionFailed }
         return (bytes, status)

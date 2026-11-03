@@ -24,6 +24,8 @@ public actor ClaudeActivityMonitor {
     private var policy: ActivityRefreshPolicy = .collapsed
     private let sshExecutable: URL
     private let makeSSHArguments: @Sendable (RemoteActivityTarget) -> [String]?
+    private let remoteHome: @Sendable (RemoteActivityTarget) -> String
+    private let maximumRemoteTargets: Int
     private struct Connection {
         let target: RemoteActivityTarget
         let identity: UUID
@@ -43,11 +45,14 @@ public actor ClaudeActivityMonitor {
                 fileEvents: any ActivityFileEvents, telemetryTransport: any TelemetryTransport,
                 remoteMirrorSessionIDs: @escaping @Sendable (URL) -> Set<String>,
                 files: any PlatformFileSystem, clock: @escaping @Sendable () -> Date,
-                sshArguments: @escaping @Sendable (RemoteActivityTarget) -> [String]?) {
+                sshArguments: @escaping @Sendable (RemoteActivityTarget) -> [String]?,
+                remoteHome: @escaping @Sendable (RemoteActivityTarget) -> String = { _ in "~/.claude" }, maximumRemoteTargets: Int = 8) {
         self.sshExecutable = sshExecutable; self.processes = processes; self.fileEvents = fileEvents
         self.telemetryTransport = telemetryTransport; self.files = files; self.clock = clock
         self.remoteMirrorSessionIDs = remoteMirrorSessionIDs
         self.makeSSHArguments = sshArguments
+        self.remoteHome = remoteHome
+        self.maximumRemoteTargets = min(16, max(1, maximumRemoteTargets))
         localReader = ClaudeActivityReader(files: files, clock: clock)
     }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
@@ -73,7 +78,7 @@ public actor ClaudeActivityMonitor {
     }
     /// Reconcile discovery/settings without replacing healthy local/SSH state.
     public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget]) async {
-        wanted = Dictionary(remoteTargets.prefix(8).filter { target in
+        wanted = Dictionary(remoteTargets.prefix(maximumRemoteTargets).filter { target in
             makeSSHArguments(target) != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let before = Set(connections.keys).union(disconnected.keys)
@@ -203,7 +208,7 @@ public actor ClaudeActivityMonitor {
     private func connect(_ target: RemoteActivityTarget) {
         let identity = UUID()
         let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
-        let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(Data("~/.claude".utf8).base64EncodedString()) \(policy.interval)"
+        let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(Data(remoteHome(target).utf8).base64EncodedString()) \(policy.interval)"
         guard let arguments = makeSSHArguments(target) else { return }
         do {
             let process = try processes.launch(ChildProcessRequest(executable: sshExecutable, arguments: arguments + [command],

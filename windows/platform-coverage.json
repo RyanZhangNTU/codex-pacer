@@ -853,7 +853,7 @@
     {
       "id": "wsl-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "distro/用户/路径/主机隔离、来源发现/失联/重连/关闭生命周期",
@@ -864,8 +864,12 @@
         "native/Sources/PacerCore/ClaudeApplicationResolver.swift",
         "docs/windows-port.md"
       ],
-      "evidence": [],
-      "previewNote": "WSL 作为 Windows 来源适配，与同服务其他来源保持相同任务语义。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsWSLTests.swift",
+        "windows/Tests/EngineTests/WindowsWSLHookTests.swift",
+        "windows/Tests/DesktopTests/WslTerminalChecks.cs"
+      ],
+      "previewNote": "Synthetic discovery, distro/user/directory identities, strict UNC conversion, bounded stdin bootstrap, shared Codex/Claude monitor routes, EOF/unread, source revocation, engine switches/sleep, selected-source quota and terminal launch rejection pass. SSH and WSL share one bounded hook scheduler: version cache, 30-minute retry, manual retry and revoked late results are covered. No real distro/account was accessed. Installed WSL, real TTY and presentation acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -873,7 +877,7 @@
     {
       "id": "remote-control",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "同一 catalog/account 授权、Desktop 在线/离线/待加载会话与 source name",
@@ -884,8 +888,14 @@
         "native/Sources/PacerCore/RemoteControlCatalog.swift",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Codex Remote Control 不能长期停在编译排除状态。",
+      "evidence": [
+        "native/Tests/PacerCoreTests/RemoteControlAuthorizationTests.swift",
+        "native/Tests/PacerCoreTests/RemoteControlTests.swift",
+        "windows/Tests/EngineTests/RemoteControlEngineTests.swift",
+        "windows/Tests/EngineTests/WindowsRemoteControlHTTPTests.swift",
+        "windows/Tests/EngineTests/WindowsDesktopCollectorTests.swift"
+      ],
+      "previewNote": "Synthetic catalog/account, bounded HTTP, authenticated private-pipe runtime, exact-host navigation, offline/waiting states, retry, EOF/unread, failed/successful opens, toggles and account replacement pass. Engine/desktop Debug compilation is clean. No real Remote Control account was contacted or changed; UI preview and installed-host acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -915,7 +925,7 @@
     {
       "id": "connections-page",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "同一 ConnectionSource/SSHHost/ConnectionSummary：问题优先、服务 side-by-side、session count",
@@ -923,10 +933,16 @@
         "monitorSSH/monitorRemoteControl 开关、Claude setup retry，不重启健康来源"
       ],
       "sourceRefs": [
-        "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
+        "native/Sources/PacerIsland/SettingsConnectionsPane.swift",
+        "native/Sources/PacerCore/ConnectionPagePresentation.swift",
+        "windows/Desktop/SettingsConnections.cs"
       ],
-      "evidence": [],
-      "previewNote": "Connections 页所有来源、开关和恢复入口。",
+      "evidence": [
+        "native/Tests/PacerCoreTests/ConnectionPagePresentationTests.swift",
+        "windows/Tests/EngineTests/EngineConnectionProjectionTests.swift",
+        "windows/Tests/DesktopTests/ConnectionActionChecks.cs"
+      ],
+      "previewNote": "Shared source/host/summary rules drive problem ordering, provider columns and session counts. Synthetic Core/engine and headless desktop checks cover SSH/WSL setup state, context-bound retry, inactive-helper retry, switches, quota routing and additive protocol compatibility. Debug engine/desktop compilation is warning-free. GUI matrix and real source acceptance remain for batch integration; no real account was accessed.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []

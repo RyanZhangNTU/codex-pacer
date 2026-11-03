@@ -13,6 +13,7 @@
     <Compile Include="../../Desktop/WindowsUpdateService.cs" Link="WindowsUpdateService.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
+    <Compile Include="../../Desktop/ConnectionActions.cs" Link="ConnectionActions.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
     <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
     <Compile Include="../../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
@@ -34,6 +35,7 @@
     <Compile Include="../../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
     <Compile Include="../../Desktop/WindowsNotificationRegistration.cs" Link="WindowsNotificationRegistration.cs"/>
     <Compile Include="../../Desktop/WindowsConversationApplication.cs" Link="WindowsConversationApplication.cs"/>
+    <Compile Include="../../Desktop/WindowsWslTerminal.cs" Link="WindowsWslTerminal.cs"/>
     <Compile Include="../../Desktop/WindowsSshTerminal.cs" Link="WindowsSshTerminal.cs"/>
     <Compile Include="../../Desktop/WindowsHarnessApplication.cs" Link="WindowsHarnessApplication.cs"/>
     <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>

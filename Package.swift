@@ -25,7 +25,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
         path: "native/Sources/PacerCore", resources: [.process("Resources")]),
     .target(name: "PacerEngineSupport", dependencies: ["PacerCore", "CryptoKit", "CWindowsSupport",
         .product(name: "Subprocess", package: "swift-subprocess")], path: "windows/EngineSupport",
-        resources: [.copy("Resources/Localization")]),
+        resources: [.copy("Resources/Localization"), .copy("Resources/WSL")]),
     .executableTarget(name: "PacerEngine", dependencies: ["PacerEngineSupport"], path: "windows/Engine", exclude: ["app.manifest"],
         linkerSettings: [.unsafeFlags(["-Xlinker", "/MANIFEST:EMBED", "-Xlinker",
             "/MANIFESTINPUT:" + root.appendingPathComponent("windows/Engine/app.manifest").path])]),

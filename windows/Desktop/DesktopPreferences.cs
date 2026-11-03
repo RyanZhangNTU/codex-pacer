@@ -47,6 +47,8 @@ internal sealed record DesktopPreferences
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
+    public bool MonitorRemoteControl { get; init; } = true;
+    public bool MonitorWSL { get; init; } = true;
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool MonitorSSH { get; init; } = true;
@@ -102,6 +104,8 @@ internal sealed record DesktopPreferences
         {
             providerModes = ProviderModes, hideProjects = HideProjects, retentionMinutes = RetentionMinutes,
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
+            monitorRemoteControl = MonitorRemoteControl,
+            monitorWSL = MonitorWSL,
             showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             monitorSSH = MonitorSSH,
