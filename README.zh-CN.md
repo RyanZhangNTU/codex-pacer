@@ -5,7 +5,7 @@
 <h1 align="center">Codex Pacer</h1>
 
 <p align="center">
-  Mac 上的灵动岛，帮你盯着 <b>Codex</b>、<b>Claude Code</b> 和 <b>DeepSeek Harness</b>：<br>
+  Mac 和 Windows 上的灵动岛，帮你盯着 <b>Codex</b>、<b>Claude Code</b> 和 <b>DeepSeek Harness</b>：<br>
   正在运行的任务、输出速度、额度配速和余额，抬眼就能看到。
 </p>
 
@@ -70,6 +70,8 @@
 
 ## 安装
 
+### Mac
+
 Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 公证。
 
 1. 双击下载的 DMG，把 **Codex Pacer** 拖入“应用程序”。
@@ -77,9 +79,17 @@ Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 
 
 之后 Pacer 会自行更新：每天检查一次，由你决定何时安装，更新后会显示一次更新内容。在“设置 → 通用 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
 
+### Windows
+
+1. 从[最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)下载 `Codex-Pacer-版本号-windows-x64-setup.exe`（ARM 电脑下载 `windows-arm64-setup.exe`）并运行。按当前用户安装，无需管理员权限。
+2. 安装包暂未做代码签名。如果 SmartScreen 提示“Windows 已保护你的电脑”，点**更多信息 → 仍要运行**。
+
+之后的更新和 Mac 一样，在“设置 → 通用”中进行。在 Windows“已安装的应用”中卸载，偏好与已读记录会保留。
+
 ## 系统要求
 
 - macOS 14 Sonoma 及以上，Apple 芯片或 Intel。液态玻璃需要 macOS 26。
+- 或 Windows 10 2004（内部版本 19041）及以上，x64 或 ARM64。玻璃表面需要 Windows 11 22H2；登录 Claude 和 DeepSeek 需要 WebView2 Runtime，Windows 11 已自带。
 - 已安装并登录 Codex（应用或 CLI）、Claude Code 或 DeepSeek Harness，任意组合均可。
 - 配置工具和 SSH helper 需要 Python 3；SSH 主机需要 Python 3.6 及以上，并能免交互地通过 OpenSSH 连接。
 - 追踪 Codex Remote Control 任务时，需要保持 Codex 应用开启并连接到远程主机。

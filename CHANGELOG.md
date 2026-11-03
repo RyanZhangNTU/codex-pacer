@@ -2,6 +2,7 @@
 
 ## 4.2.1
 
+- Add Codex Pacer for Windows, with the Mac's island, task list, quota rings, reminders and Settings for Codex, Claude Code and DeepSeek Harness, including SSH hosts, WSL and Codex Remote Control. It needs Windows 10 2004 (build 19041) or later on x64 or ARM64; Windows 11 22H2 and later get the glass surface. Each release carries x64 and ARM64 installers that install per user and update from **Settings → General**. They are not code signed yet, so SmartScreen asks once (**More info → Run anyway**).
 - Fix Claude Code tasks that stayed marked as running after a skill that runs in its own agent, such as `/code-review`, had finished. Such a skill reports its agent differently from the Agent tool, so Pacer never saw that agent end. It now ends when the skill returns; a skill started in the background ends when Claude reports it finished.
 
 ## 4.2.0
