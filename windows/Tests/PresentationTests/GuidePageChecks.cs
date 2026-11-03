@@ -80,8 +80,13 @@ internal static class GuidePageChecks
             int beforeHostControl = configured; Toggle(Find<CheckBox>(noteWindow, "guide.control.showAppButtons")); await Until(() => !session.Current.ShowAppButtons);
             Check(configured == beforeHostControl && session.Current.WhatsNewVersion == null, "A release control applies its setting without configuring collectors or marking notes as read");
             var embedded = Find<CheckBox>(noteWindow, "guide.control.showEmbeddedSessions");
-            Check(!embedded.IsEnabled && AutomationProperties.GetName(embedded).Length > 0 && AutomationProperties.GetHelpText(embedded) == ui.Text("windows.claude.embedded_pending"),
-                "The unavailable combined embedded-session switch retains its accessible title and limitation");
+            Check(embedded.IsEnabled && AutomationProperties.GetName(embedded).Length > 0
+                && AutomationProperties.GetHelpText(embedded) == note.Releases.SelectMany(value => value.Items).Single(value => value.Control == "showEmbeddedSessions").Detail,
+                "The combined embedded-session switch retains its accessible title and release detail after becoming available");
+            Toggle(embedded); await Until(() => !session.Current.ShowEmbeddedCodexSessions && !session.Current.ShowEmbeddedClaudeSessions && embedded.IsEnabled);
+            Check(embedded.IsChecked == false && session.Current.WhatsNewVersion == null, "The combined release switch disables both providers without marking the note seen");
+            Toggle(embedded); await Until(() => session.Current.ShowEmbeddedCodexSessions && session.Current.ShowEmbeddedClaudeSessions && embedded.IsEnabled);
+            Check(embedded.IsChecked == true, "The same control restores both independent provider choices");
             Check(Descendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.settings.open_at_login_detail")),
                 "The login highlight uses the existing Windows caption while retaining the shared release entry");
             Invoke(Find<Button>(noteWindow, "guide.releaseNotes")); await Pump(); Check(links.Last().AbsoluteUri == note.Links["releaseNotes"], "Release Notes reaches the public default-browser boundary");

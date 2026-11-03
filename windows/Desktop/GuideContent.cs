@@ -227,7 +227,7 @@ internal sealed class GuideContent : StackPanel
                 {
                     "openAtLogin" => Login(item.Title, "guide.control.openAtLogin"),
                     "showAppButtons" => Switch(item.Title, "guide.control.showAppButtons", () => session.Current.ShowAppButtons, value => Preference(p => p with { ShowAppButtons = value })),
-                    "showEmbeddedSessions" => PendingEmbeddedControl(item.Title),
+                    "showEmbeddedSessions" => EmbeddedControl(item.Title, item.Detail),
                     _ => null
                 };
                 string detail = item.Control == "openAtLogin" ? ui.Text("windows.settings.open_at_login_detail") : item.Detail;
@@ -236,12 +236,11 @@ internal sealed class GuideContent : StackPanel
         }
         Refresh();
     }
-    private CheckBox PendingEmbeddedControl(string title)
+    private CheckBox EmbeddedControl(string title, string detail)
     {
-        var check = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), IsChecked = session.Current.ShowEmbeddedCodexSessions,
-            IsEnabled = false, ToolTip = ui.Text("windows.claude.embedded_pending") };
-        Identify(check, "guide.control.showEmbeddedSessions", title); AutomationProperties.SetHelpText(check, ui.Text("windows.claude.embedded_pending"));
-        ToolTipService.SetShowOnDisabled(check, true); return check;
+        var check = Switch(title, "guide.control.showEmbeddedSessions", () => GuideControls.ShowsEmbedded(session.Current),
+            value => Preference(p => GuideControls.SetEmbedded(p, value)));
+        AutomationProperties.SetHelpText(check, detail); return check;
     }
     internal void Help()
     {

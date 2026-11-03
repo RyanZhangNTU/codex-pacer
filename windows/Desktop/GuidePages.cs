@@ -63,3 +63,10 @@ internal static class GuideLinks
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { return false; }
     }
 }
+
+internal static class GuideControls
+{
+    internal static bool ShowsEmbedded(DesktopPreferences value) => value.ShowEmbeddedCodexSessions && value.ShowEmbeddedClaudeSessions;
+    internal static DesktopPreferences SetEmbedded(DesktopPreferences value, bool enabled)
+        => value with { ShowEmbeddedCodexSessions = enabled, ShowEmbeddedClaudeSessions = enabled };
+}
