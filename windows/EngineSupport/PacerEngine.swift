@@ -1568,11 +1568,14 @@ actor EngineRuntime {
             // not become visible cards or replay notification baselines.
             var candidates = Dictionary((visibleActivities + notificationActivities).filter { enabled.contains($0.provider) }
                 .map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values.map { $0 }
-            let hiddenEmbedded = EmbeddedSessionVisibility.embeddedActivityIDs(candidates.filter { !activityVisibility.embeddedProviders.contains($0.provider) })
-            let hiddenCloud = showClaudeCloudProjects ? Set<String>() : Set(candidates.filter { $0.claudeCloud != nil }.map(\.id))
-            candidates.removeAll { hiddenEmbedded.contains($0.id) || hiddenCloud.contains($0.id) }
+            let hidden = activityState.hiddenActivityIDs(activityVisibility)
+            candidates.removeAll { hidden.contains($0.canonicalized().id) }
             notificationNavigation.update(activities: candidates, requests: visibleRequests, inbox: inbox, cloudContext: cloudNavigationContext) {
                 [.codex, .claude].contains($0.provider) && !$0.isInternalReview && !$0.isIgnoredCodexSession
+            }
+            for (context, operation) in navigationOpens where navigationEntry(context: context) == nil {
+                navigationState.abandon(operation); navigationOpens.removeValue(forKey: context)
+                navigationHosts.removeValue(forKey: operation.id)
             }
         }
         let notificationProjections = visibleNotices.map { notificationProjection($0, requests: visibleRequests, at: date) }

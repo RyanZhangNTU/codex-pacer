@@ -13,15 +13,20 @@ private final class EmbeddedSessionFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var value: EngineSnapshot?
     private var readError: String?
+    private var openError: String?
     func append(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
         if let snapshot = try? JSONDecoder().decode(EngineSnapshot.self, from: data) { value = snapshot }
         else if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any], reply["id"] as? String == "markAllRead" {
             readError = reply["type"] as? String == "error" ? reply["code"] as? String : nil
         }
+        else if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any], reply["id"] as? String == "prepareActivityOpen" {
+            openError = reply["type"] as? String == "error" ? reply["code"] as? String : nil
+        }
     }
     func latest() throws -> EngineSnapshot { lock.lock(); defer { lock.unlock() }; return try XCTUnwrap(value) }
     func lastReadError() -> String? { lock.lock(); defer { lock.unlock() }; return readError }
+    func lastOpenError() -> String? { lock.lock(); defer { lock.unlock() }; return openError }
 }
 
 final class EngineEmbeddedSessionTests: XCTestCase {
@@ -59,7 +64,8 @@ final class EngineEmbeddedSessionTests: XCTestCase {
         }
         let parent = try start(1, embedded: true), child = try start(2, embedded: false, parent: 1)
         _ = try start(3, embedded: false)
-        let runtime = EngineRuntime(demo: false, now: { clock.date() }, dismissalStore: nil, output: { capture.append($0) })
+        let runtime = EngineRuntime(demo: false, now: { clock.date() }, dismissalStore: nil,
+            navigationServices: .demo, output: { capture.append($0) })
         _ = await runtime.receive(try command("initialize", ["codexHome": EngineCodexSourceReport.path(root), "enabledProviders": ["codex"]]))
         XCTAssertEqual(try capture.latest().tasks.count, 3)
         _ = await runtime.receive(try command("configure", ["showEmbeddedCodexSessions": false]))
@@ -82,6 +88,20 @@ final class EngineEmbeddedSessionTests: XCTestCase {
         let shown = try capture.latest(), ended = shown.tasks.filter { $0.sessionID != id(3) }
         XCTAssertEqual(ended.count, 2)
         XCTAssertTrue(ended.allSatisfy { $0.phase == "completed" && $0.unread }, "Hidden completions must survive a visible-only Mark All Read")
+        let link = try XCTUnwrap(shown.activityLinks?.first { $0.activityID == ended[0].id })
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        XCTAssertNil(capture.lastOpenError())
+        XCTAssertTrue(try capture.latest().openingActivityIDs?.contains(link.activityID) == true)
+        _ = await runtime.receive(try command("configure", ["showEmbeddedCodexSessions": false]))
+        _ = await runtime.receive(try command("configure", ["showEmbeddedCodexSessions": true]))
+        let reopened = try capture.latest(), fresh = try XCTUnwrap(reopened.activityLinks?.first { $0.activityID == link.activityID })
+        XCTAssertNotEqual(fresh.context, link.context)
+        XCTAssertFalse(reopened.openingActivityIDs?.contains(link.activityID) == true, "Hiding a row must release its captured single-flight slot")
+        _ = await runtime.receive(try command("completeActivityOpen", ["context": link.context]))
+        XCTAssertTrue(try capture.latest().tasks.first { $0.id == link.activityID }?.unread == true)
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": fresh.context]))
+        XCTAssertNil(capture.lastOpenError(), "Restoring visibility must allow a fresh navigation context")
+        _ = await runtime.receive(try command("cancelActivityOpen", ["context": fresh.context]))
         try await markVisibleRead(runtime, capture: capture)
         let read = try capture.latest()
         XCTAssertTrue(read.tasks.filter { $0.sessionID != id(3) }.allSatisfy { !$0.unread })
