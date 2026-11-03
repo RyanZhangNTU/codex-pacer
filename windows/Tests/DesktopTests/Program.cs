@@ -113,6 +113,8 @@ internal static class Program
         {
             SettingsServiceChecks.Run(); return Task.CompletedTask;
         });
+        await Test("DeepSeek replies keep bounded session identity and exclude tokens", () =>
+        { DeepSeekIdentityReplyChecks.Run(); return Task.CompletedTask; });
         await Test("startup OS disablement, policy, upgrade ownership and transactional failure recovery", () =>
         { StartupRegistrationChecks.Run(); return Task.CompletedTask; });
         await Test("installation, repair and uninstall retain user data and protect foreign registrations", () =>

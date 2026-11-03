@@ -16,13 +16,21 @@ public struct DeepSeekBalance: Equatable, Sendable {
     public let alertBound: Double?
     public let capturedAt: Date
     public let source: Source
+    /// The existing page-token digest, kept only in memory until HMAC binding.
+    public let sessionFingerprint: String?
     public init(total: Double, granted: Double? = nil, available: Bool = true, tokenEstimation: Double? = nil,
-                alertBound: Double? = nil, capturedAt: Date, source: Source) {
+                alertBound: Double? = nil, capturedAt: Date, source: Source, sessionFingerprint: String? = nil) {
         self.total = total; self.granted = granted; self.available = available; self.tokenEstimation = tokenEstimation
-        self.alertBound = alertBound; self.capturedAt = capturedAt; self.source = source
+        self.alertBound = alertBound; self.capturedAt = capturedAt; self.source = source; self.sessionFingerprint = sessionFingerprint
     }
     public var isExhausted: Bool { !available || total <= 0.005 }
     public func isStale(at now: Date) -> Bool { now.timeIntervalSince(capturedAt) > 600 }
+
+    public static func sessionIdentity(_ raw: Any?) -> String? {
+        guard let value = raw as? String, value.utf8.count == 64,
+              value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        return value
+    }
 
     static func amount(_ value: Any?) -> Double? {
         let number: Double?
@@ -55,6 +63,11 @@ public struct DeepSeekBalance: Equatable, Sendable {
         case "ok": break
         default: throw DeepSeekBalanceError.invalidReply
         }
+        let fingerprint: String?
+        if let raw = reply["sessionFingerprint"] {
+            guard let verified = sessionIdentity(raw) else { throw DeepSeekBalanceError.invalidReply }
+            fingerprint = verified
+        } else { fingerprint = nil }
         let normal = (reply["normal"] as? [Any] ?? []).compactMap(amount), bonus = (reply["bonus"] as? [Any] ?? []).compactMap(amount)
         guard !(normal.isEmpty && bonus.isEmpty) else {
             throw reply["otherCurrency"] as? Bool == true ? DeepSeekBalanceError.unsupportedCurrency : DeepSeekBalanceError.invalidReply
@@ -62,7 +75,7 @@ public struct DeepSeekBalance: Equatable, Sendable {
         let total = normal.reduce(0, +) + bonus.reduce(0, +)
         let alert = reply["alertEnabled"] as? Bool == true ? amount(reply["alertBound"]) : nil
         return Self(total: total, granted: bonus.reduce(0, +), available: total > 0, tokenEstimation: amount(reply["estimation"]),
-            alertBound: alert, capturedAt: date, source: .web)
+            alertBound: alert, capturedAt: date, source: .web, sessionFingerprint: fingerprint)
     }
 }
 

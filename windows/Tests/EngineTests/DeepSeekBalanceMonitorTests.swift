@@ -206,7 +206,7 @@ final class DeepSeekBalanceMonitorTests: XCTestCase {
         let clock = Clock(start), memory = Memory(), capture = Capture()
         memory.setMode(.account); memory.setKey("sk-synthetic-first-key-0000")
         var services = memory.services(clock)
-        services.readWeb = { _ in .init(total: 100, capturedAt: clock.read(), source: .web) }
+        services.readWeb = { _ in .init(total: 100, capturedAt: clock.read(), source: .web, sessionFingerprint: String(repeating: "1", count: 64)) }
         let monitor = DeepSeekBalanceMonitor(services: services, now: { clock.read() }, output: { await capture.append($0) })
         await monitor.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
         _ = await monitor.refreshIfDue(active: true); await monitor.refreshCompletion?.value
@@ -232,7 +232,7 @@ final class DeepSeekBalanceMonitorTests: XCTestCase {
         let clock = Clock(start), memory = Memory(), capture = Capture()
         memory.setMode(.account)
         var services = memory.services(clock)
-        services.readWeb = { _ in .init(total: 100, capturedAt: clock.read(), source: .web) }
+        services.readWeb = { _ in .init(total: 100, capturedAt: clock.read(), source: .web, sessionFingerprint: String(repeating: "1", count: 64)) }
         let monitor = DeepSeekBalanceMonitor(services: services, now: { clock.read() }, output: { await capture.append($0) })
         await monitor.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
         let initial = await monitor.currentState()
@@ -247,6 +247,30 @@ final class DeepSeekBalanceMonitorTests: XCTestCase {
         let connected = await monitor.webSessionChanged(token: failed.token); XCTAssertTrue(connected); await monitor.refreshCompletion?.value
         let fresh = await monitor.currentState(); XCTAssertEqual(fresh.balance?.total, 100)
         await monitor.stop()
+    }
+    func testReadOnlyDiagnosticsCannotPersistHistorySaltOrCredentials() async {
+        let memory = Memory(), clock = Clock(start), calls = ReadOnlyCalls()
+        let key = "sk-synthetic-readonly-history-key"
+        memory.setKey(key)
+        var live = memory.services(clock)
+        live.fingerprint = { _, _ in calls.add(); return String(repeating: "a", count: 32) }
+        live.loadHistory = { calls.add(); return .init() }
+        live.saveHistory = { _, _ in calls.add() }
+        let readOnly = live.forReadOnlyDiagnostics()
+        XCTAssertNil(readOnly.fingerprint(.apiKey, key))
+        let history = await readOnly.loadHistory()
+        XCTAssertTrue(history.samples.isEmpty)
+        await readOnly.saveHistory(.init(), 1)
+        XCTAssertFalse(readOnly.saveKey("sk-synthetic-replacement-key"))
+        XCTAssertFalse(readOnly.removeKey())
+        XCTAssertEqual(calls.count(), 0, "Diagnostics cannot invoke writable history or salt services")
+        XCTAssertEqual(memory.getKey(), key)
+        XCTAssertEqual(memory.counts().writes, 0)
+    }
+    private final class ReadOnlyCalls: @unchecked Sendable {
+        private let lock = NSLock(); private var value = 0
+        func add() { lock.lock(); value += 1; lock.unlock() }
+        func count() -> Int { lock.lock(); defer { lock.unlock() }; return value }
     }
     private final class Clock: @unchecked Sendable {
         private let lock = NSLock(); private var date: Date
@@ -281,8 +305,9 @@ final class DeepSeekBalanceMonitorTests: XCTestCase {
         func recordHistoryWrite() { lock.lock(); cacheWrites += 1; lock.unlock() }
         func historyWrites() -> Int { lock.lock(); defer { lock.unlock() }; return cacheWrites }
         func services(_ clock: Clock) -> DeepSeekBalanceServices {
-            .init(readKey: { self.getKey() }, saveKey: { self.save($0) }, removeKey: { self.removeKey() },
-                readAPI: { _ in try self.response(clock.read()) }, detect: { _, _ in self.getMode() })
+            let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
+            return .init(readKey: { self.getKey() }, saveKey: { self.save($0) }, removeKey: { self.removeKey() },
+                readAPI: { _ in try self.response(clock.read()) }, fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) }, detect: { _, _ in self.getMode() })
         }
     }
     private actor Gate {

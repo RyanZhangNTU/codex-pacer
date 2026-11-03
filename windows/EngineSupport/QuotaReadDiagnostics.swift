@@ -74,8 +74,9 @@ extension ClaudeQuotaServices {
 }
 
 extension DeepSeekBalanceServices {
-    static var readOnlyDiagnostics: Self {
-        var value = Self.live
+    static var readOnlyDiagnostics: Self { Self.live.forReadOnlyDiagnostics() }
+    func forReadOnlyDiagnostics() -> Self {
+        var value = self
         let read = value.readAPI
         value.readAPI = { key in
             QuotaReadDiagnostics.shared.started("deepseek")
@@ -83,7 +84,7 @@ extension DeepSeekBalanceServices {
             catch { QuotaReadDiagnostics.shared.finished("deepseek", success: false); throw error }
         }
         value.saveKey = { _ in false }; value.removeKey = { false }
-        value.loadHistory = { .init() }; value.saveHistory = { _, _ in }
+        value.loadHistory = { .init() }; value.saveHistory = { _, _ in }; value.fingerprint = { _, _ in nil }
         return value
     }
 }

@@ -19,11 +19,18 @@ const code = body && (body.code || (body.data && body.data.biz_code));
 if (code === 40002 || code === 40003) return { state: 'signedOut' };
 const data = body && body.data && body.data.biz_data;
 if (!data) return { state: 'invalid' };
+if (stored('userToken') !== token) return { state: 'invalid' };
+let sessionFingerprint;
+try {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
+  sessionFingerprint = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+} catch (error) { return { state: 'invalid' }; }
+if (stored('userToken') !== token) return { state: 'invalid' };
 const wallets = (list) => (Array.isArray(list) ? list : []);
 const cny = (list) => wallets(list).filter((w) => w && w.currency === 'CNY').map((w) => String(w.balance));
 const other = wallets(data.normal_wallets).concat(wallets(data.bonus_wallets)).some((w) => w && w.currency && w.currency !== 'CNY');
 const info = stored('__appKit_userInfo');
 const alert = info && info.balanceAlert && info.balanceAlert.CNY;
-return { state: 'ok', normal: cny(data.normal_wallets), bonus: cny(data.bonus_wallets), otherCurrency: other,
+return { state: 'ok', sessionFingerprint, normal: cny(data.normal_wallets), bonus: cny(data.bonus_wallets), otherCurrency: other,
   estimation: data.total_available_token_estimation == null ? null : String(data.total_available_token_estimation),
   alertEnabled: !!(alert && alert.enabled), alertBound: alert && alert.alertBound != null ? String(alert.alertBound) : null };

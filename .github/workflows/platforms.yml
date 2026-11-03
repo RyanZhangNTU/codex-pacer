@@ -78,6 +78,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Platform contract failed.' }
           python scripts/windows/build-localization.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Shared localization differs.' }
+      - name: DeepSeek web identity contract
+        run: |
+          node scripts/windows/check-deepseek-web-identity.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DeepSeek web identity contract failed.' }
       - name: Claude shell contract before compilation
         run: |
           python -S scripts/windows/check-claude-shell.py
