@@ -28,16 +28,17 @@ final class IslandModel: ObservableObject {
     }
     @Published var activities: [SessionActivity] = [] {
         didSet {
-            cachedTaskGroups = nil; cachedOverview = nil
-            observeFirstOutputs(activities); scheduleRateExpiry()
+            activityState.replaceActivities(activities, at: now)
+            if latestFirstOutputLatency != activityState.latestFirstOutput?.seconds {
+                latestFirstOutputLatency = activityState.latestFirstOutput?.seconds
+            }
+            scheduleRateExpiry()
         }
     }
     var compactPresentationCache: [Bool: (layout: CompactIslandLayout, request: CompactBarPresentation.Request, output: CompactBarPresentation.Output)] = [:]
-    private var cachedTaskGroups: [ActivityTaskGroup]?
-    private var cachedOverview: (at: Date, value: ActivityOverview)?
-    private(set) var taskGroupingComputations = 0
+    var activityState = ActivityApplicationState()
+    var taskGroupingComputations: Int { activityState.taskGroupingComputations }
     @Published private(set) var latestFirstOutputLatency: TimeInterval?
-    private var latestFirstOutputAt: Date?
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
@@ -59,8 +60,14 @@ final class IslandModel: ObservableObject {
         }
     }
     @Published private(set) var attentionRequests: [PendingAttentionRequest] = []
-    private var localActivities: [SessionActivity] = []
-    private var remoteActivities: [SessionActivity] = []
+    private var localActivities: [SessionActivity] {
+        get { activityState.localActivities }
+        set { activityState.localActivities = newValue }
+    }
+    private var remoteActivities: [SessionActivity] {
+        get { activityState.remoteActivities }
+        set { activityState.remoteActivities = newValue }
+    }
     @Published private var codexHistory = QuotaCycleHistory()
     @Published private var codexHistoryWarning: String?
     @Published private var codexErrorMessage: String?
@@ -80,10 +87,22 @@ final class IslandModel: ObservableObject {
     var deepseekActivityTask: Task<Void, Never>?
     var deepseekBalanceTask: Task<Void, Never>?
     var deepseekBalanceRequestID: UUID?
-    var deepseekReceivedActivities: [SessionActivity] = []
-    var deepseekReceivedRequests: [PendingAttentionRequest] = []
-    var deepseekAttentionRequests: [PendingAttentionRequest] = []
-    var deepseekActivityAttention = AttentionPolicy()
+    var deepseekReceivedActivities: [SessionActivity] {
+        get { activityState.deepseekActivities }
+        set { activityState.deepseekActivities = newValue }
+    }
+    var deepseekReceivedRequests: [PendingAttentionRequest] {
+        get { activityState.deepseekReceivedRequests }
+        set { activityState.deepseekReceivedRequests = newValue }
+    }
+    var deepseekAttentionRequests: [PendingAttentionRequest] {
+        get { activityState.requests.filter { $0.provider == .deepseek } }
+        set { activityState.replacePendingRequests(for: .deepseek, with: newValue) }
+    }
+    var deepseekActivityAttention: AttentionPolicy {
+        get { activityState.deepseekAttention }
+        set { activityState.deepseekAttention = newValue }
+    }
     var deepseekBalanceAttention = DeepSeekBalanceAttention()
     /// Successive balance readings, for what the account was charged beyond this Mac.
     var deepseekHistory = DeepSeekBalanceHistory()
@@ -171,14 +190,20 @@ final class IslandModel: ObservableObject {
         case .deepseek: deepseekStreamStatuses
         }
     }
-    func taskSourceName(_ activity: SessionActivity) -> String? {
-        if let cloud = activity.claudeCloud { return hideProjects ? L10n.text("connections.kind.claude_cloud") : cloud.projectName }
-        if activity.sourceHostID == nil, activity.provider == .claude || activity.launchedByEmbeddingApp {
-            return hostApplication(for: activity).flatMap { activity.provider == .claude && $0.isClaudeDesktop ? nil : $0.name }
+    func taskPresentationOptions(for values: [SessionActivity]) -> TaskPresentationOptions {
+        var hosts: [String: TaskHostLabel] = [:]
+        for value in values where value.sourceHostID == nil && (value.provider == .claude || value.launchedByEmbeddingApp) {
+            if let host = hostApplication(for: value) {
+                let label = TaskHostLabel(name: host.name, isClaudeDesktop: host.isClaudeDesktop)
+                hosts[value.id] = label
+                hosts[value.canonicalized().id] = label
+            }
         }
-        guard activity.provider == .codex, let host = activity.sourceHostID,
-              host.hasPrefix("remote-control:") else { return activity.sourceHost }
-        return streamStatuses[host]?.sourceName ?? activity.sourceHost
+        return .init(hideProjects: hideProjects, hostApplications: hosts,
+            sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost)
+    }
+    func taskSourceName(_ activity: SessionActivity) -> String? {
+        ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
     }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
         switch provider {
@@ -574,20 +599,50 @@ final class IslandModel: ObservableObject {
     private var claudeGeneration = 0
     /// Unfiltered reader state also feeds completion retention while embedded
     /// sessions are hidden. Only presentation and attention are filtered.
-    private var claudeReceivedActivities: [SessionActivity] = []
-    private var claudeReceivedRequests: [PendingAttentionRequest] = []
-    private var claudeAttentionRequests: [PendingAttentionRequest] = []
-    private var codexReceivedRequests: [PendingAttentionRequest] = []
-    private var codexLogRequests: [PendingAttentionRequest] = []
-    private var excludedCodexActivityIDs: Set<String> = []
-    private var codexAttentionRequests: [PendingAttentionRequest] = []
+    private var claudeReceivedActivities: [SessionActivity] {
+        get { activityState.claudeActivities }
+        set { activityState.claudeActivities = newValue }
+    }
+    private var claudeReceivedRequests: [PendingAttentionRequest] {
+        get { activityState.claudeReceivedRequests }
+        set { activityState.claudeReceivedRequests = newValue }
+    }
+    private var claudeAttentionRequests: [PendingAttentionRequest] {
+        get { activityState.requests.filter { $0.provider == .claude } }
+        set { activityState.replacePendingRequests(for: .claude, with: newValue) }
+    }
+    private var codexReceivedRequests: [PendingAttentionRequest] {
+        get { activityState.codexReceivedRequests }
+        set { activityState.codexReceivedRequests = newValue }
+    }
+    private var codexLogRequests: [PendingAttentionRequest] {
+        get { activityState.codexLogRequests }
+        set { activityState.codexLogRequests = newValue }
+    }
+    private var excludedCodexActivityIDs: Set<String> {
+        get { activityState.excludedCodexActivityIDs }
+        set { activityState.excludedCodexActivityIDs = newValue }
+    }
+    private var codexAttentionRequests: [PendingAttentionRequest] {
+        get { activityState.requests.filter { $0.provider == .codex } }
+        set { activityState.replacePendingRequests(for: .codex, with: newValue) }
+    }
     private var claudeStreamStatuses: [String: RuntimeStreamStatus] = [:]
     private var claudeQuotaAttention = AttentionPolicy()
-    private var claudeActivityAttention = AttentionPolicy()
+    private var claudeActivityAttention: AttentionPolicy {
+        get { activityState.claudeAttention }
+        set { activityState.claudeAttention = newValue }
+    }
     private var lastClaudeDiscovery = Date.distantPast
     lazy var notifications = NotificationDelivery(defaults: defaults)
-    private var attention = AttentionPolicy()
-    var completionInbox = CompletionInbox()
+    private var attention: AttentionPolicy {
+        get { activityState.codexAttention }
+        set { activityState.codexAttention = newValue }
+    }
+    var completionInbox: CompletionInbox {
+        get { activityState.inbox }
+        set { activityState.inbox = newValue }
+    }
     private var clock: Timer?
     private var refreshTask: Task<Void, Never>?
     private var localTask: Task<Void, Never>?
@@ -610,8 +665,14 @@ final class IslandModel: ObservableObject {
     private let demoClock: () -> Date
     /// Source tests pass nil to keep demo's I/O isolation while supplying their own events.
     private let demoArguments: [String]?
-    private var demoActivities: [SessionActivity] = []
-    private var demoRequests: [PendingAttentionRequest] = []
+    private var demoActivities: [SessionActivity] {
+        get { activityState.demoActivities }
+        set { activityState.demoActivities = newValue }
+    }
+    private var demoRequests: [PendingAttentionRequest] {
+        get { activityState.demoRequests }
+        set { activityState.demoRequests = newValue }
+    }
     var isDemo: Bool { demo }
 
     var home: URL {
@@ -627,91 +688,29 @@ final class IslandModel: ObservableObject {
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { defaults.bool(forKey: "hideProjects") }
     var displayID: Int { defaults.integer(forKey: "displayID") }
-    var taskGroups: [ActivityTaskGroup] {
-        if let cachedTaskGroups { return cachedTaskGroups }
-        let groups = ActivityTaskGroup.make(activities)
-        cachedTaskGroups = groups; taskGroupingComputations += 1
-        return groups
-    }
+    var taskGroups: [ActivityTaskGroup] { activityState.taskGroups() }
     func taskGroup(for activity: SessionActivity) -> ActivityTaskGroup? { taskGroups.first { $0.primary.id == activity.canonicalized().id } }
-    var overview: ActivityOverview {
-        if let cachedOverview, cachedOverview.at == now { return cachedOverview.value }
-        let value = ActivityOverview(groups: taskGroups, at: now)
-        cachedOverview = (now, value)
-        return value
-    }
+    var overview: ActivityOverview { activityState.overview(at: now) }
     var running: [SessionActivity] { overview.running }
     var waiting: [SessionActivity] { overview.waiting }
-    var visibleActivities: [SessionActivity] {
-        let groups = taskGroups
-        var displayed = groups.filter {
-            $0.isRunning || $0.isWaiting || [.completed, .interrupted].contains($0.primary.phase) ||
-                now.timeIntervalSince($0.primary.lastObserved ?? .distantPast) < 900
-        }.map(\.primary)
-        let known = Set(groups.flatMap { $0.members.map(\.id) })
-        var ids = Set(displayed.map(\.id))
-        for request in pendingInputRequests where !known.contains(request.activity.id) && ids.insert(request.activity.id).inserted {
-            displayed.append(request.activity)
-        }
-        return displayed.sorted {
-            let lhs = attentionKind(for: $0) != nil ? 0 : priority($0.observedPhase(at: now))
-            let rhs = attentionKind(for: $1) != nil ? 0 : priority($1.observedPhase(at: now))
-            if lhs != rhs { return lhs < rhs }
-            let left = $0.phaseChangedAt ?? .distantPast, right = $1.phaseChangedAt ?? .distantPast
-            return left == right ? $0.id < $1.id : left > right
-        }
+    var taskPresentation: ActivityTaskPresentation {
+        activityState.presentation(at: now, options: taskPresentationOptions(for: activities))
     }
+    var visibleActivities: [SessionActivity] { taskPresentation.visibleActivities }
     var completedRetention: TimeInterval {
         let minutes = defaults.object(forKey: "completedRetentionMinutes") as? Int ?? 30
         return Double([0, 5, 15, 30, 60, 240].contains(minutes) ? minutes : 30) * 60
     }
-    var pendingCompletions: [SessionActivity] {
-        let roots = Set(taskGroups.filter { !$0.isRunning }.map { $0.primary.id })
-        return completionInbox.unreadActivities.filter { roots.contains($0.id) }
-    }
+    var pendingCompletions: [SessionActivity] { taskPresentation.pendingCompletions }
     var pendingInputRequests: [PendingAttentionRequest] { attentionRequests }
     var headerStatus: String { compactTaskContext.headerStatusText(language: L10n.language) }
     var headerDisplayStatus: String { compactTaskContext.statusText(language: L10n.language) }
-    private var latestRunningTask: SessionActivity? {
-        running.max {
-            let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
-            return left == right ? $0.id < $1.id : left < right
-        }
-    }
-    /// The number always counts active tasks; attention and unread endings
-    /// change the badge's fill or mark rather than what the number means.
     func headerActivity(singleTask: ActivityBadgeSingleTask? = nil) -> HeaderActivity {
-        let active = running.count + waiting.count
-        let attention = pendingInputRequests.first?.kind ?? waiting.first.map { $0.waitingForApproval ? .approval : .input }
-        let ending = pendingCompletions.first.map { completed -> HeaderActivity.Ending in
-            completed.turnFailed ? .failed : completed.phase == .interrupted ? .interrupted : .completed(completed.provider)
-        }
-        var orbit: [AgentProvider: Int] = [:]
-        for task in running { orbit[task.provider, default: 0] += 1 }
-        let attentionSymbol = attention.map { $0 == .approval ? StatusSymbols.approval : StatusSymbols.input }
-        let core: HeaderActivity.Core
-        if active == 0 {
-            core = (attentionSymbol ?? ending.map(\.symbol)).map(HeaderActivity.Core.symbol) ?? .idle
-        } else if active == 1, (singleTask ?? ActivityBadgeSingleTask(defaults: defaults)) == .stage,
-                  let symbol = attentionSymbol ?? latestRunningTask.map({
-                      taskGroup(for: $0)?.isRunning == true && $0.phase != .running ? StatusSymbols.thinking : StatusSymbols.symbol(for: $0)
-                  }) {
-            core = .symbol(symbol)
-        } else {
-            core = .count(active)
-        }
-        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending)
+        taskPresentation.header(singleTask: singleTask ?? ActivityBadgeSingleTask(defaults: defaults), symbol: StatusSymbols.symbol)
     }
     var taskAccent: Color { Color(red: 0.56, green: 0.84, blue: 0.79) }
     func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? {
-        let group = taskGroup(for: activity)
-        let ids = Set(group?.members.map(\.id) ?? [activity.id])
-        let matching = pendingInputRequests.filter { ids.contains($0.activity.id) }
-        if matching.contains(where: { $0.kind == .approval }) { return .approval }
-        if matching.contains(where: { $0.kind == .decision }) { return .decision }
-        if !matching.isEmpty { return .input }
-        let waiting = group?.members.first { $0.phase == .waitingForInput } ?? (activity.phase == .waitingForInput ? activity : nil)
-        return waiting.map { $0.waitingForApproval ? .approval : .input }
+        taskPresentation.attentionKind(for: activity)
     }
     var hidesHeaderRate: Bool {
         isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
@@ -723,19 +722,11 @@ final class IslandModel: ObservableObject {
         })
     }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
-    private var readableCompletions: [SessionActivity] {
-        let ids = Set(taskGroups.filter {
-            !$0.isRunning && !$0.isWaiting && attentionKind(for: $0.primary) == nil
-        }.flatMap { $0.members.map(\.id) })
-        return completionInbox.unreadActivities.filter { ids.contains($0.id) }
-    }
+    private var readableCompletions: [SessionActivity] { taskPresentation.readableCompletions }
     var canMarkAllRead: Bool { !readableCompletions.isEmpty }
-    /// Acknowledge the displayed ended families across every page, without
-    /// opening a conversation or resolving an outstanding reply/approval.
     func markAllRead() {
-        let removed = Set(readableCompletions.filter { completionInbox.dismiss($0) }.map(\.id))
-        guard !removed.isEmpty else { return }
-        activities.removeAll { removed.contains($0.id) }
+        guard activityState.markAllRead(at: now) else { return }
+        applyActivityUpdate(activityState.update())
         onLayoutChange?(); onStatusChange?()
     }
     var completionSummary: String {
@@ -805,7 +796,7 @@ final class IslandModel: ObservableObject {
         }
     }
     func projectName(_ activity: SessionActivity) -> String {
-        hideProjects ? L10n.text("activity.hidden_name") : (activity.title ?? activity.project)
+        ActivityTaskRowPresentation.title(activity, hideProjects: hideProjects)
     }
 
     init(demo: Bool = false, initiallyExpanded: Bool = false, demoClock: @escaping () -> Date = { Date() },
@@ -843,7 +834,8 @@ final class IslandModel: ObservableObject {
         deepseekBalanceBinding = currentDeepSeekBalanceBinding
         if !demo { restoreDeepSeekHistory() }
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
-        completionInbox = CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault))
+        activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault)))
+        activityState.includesDemoMetadata = demo && demoArguments != nil
         bindCompletionSources(.codex)
         bindCompletionSources(.claude)
         bindCompletionSources(.deepseek)
@@ -1373,54 +1365,15 @@ final class IslandModel: ObservableObject {
 
     /// Reader metadata wins over an older retained ending. Both providers use
     /// the same visibility rule; hiding never acknowledges or deletes a card.
-    private func knownActivities(for provider: AgentProvider) -> [SessionActivity] {
-        let incoming: [SessionActivity]
-        switch provider {
-        case .codex: incoming = localActivities + remoteActivities
-        case .claude: incoming = claudeReceivedActivities
-        case .deepseek: incoming = deepseekReceivedActivities
-        }
-        var values = Dictionary(completionInbox.activities.filter { $0.provider == provider }.map { ($0.canonicalized().id, $0.canonicalized()) },
-            uniquingKeysWith: { _, latest in latest })
-        let samples = demo && demoArguments != nil ? demoActivities.filter { $0.provider == provider } : []
-        for item in samples + incoming {
-            var value = item.canonicalized()
-            if let old = values[value.id] { value.mergeDisplayMetadata(from: old) }
-            values[value.id] = value
-        }
-        return CodexSessionOrigin.inheriting(Array(values.values))
+    private func knownActivities(for provider: AgentProvider) -> [SessionActivity] { activityState.knownActivities(for: provider) }
+    private var activityVisibility: ActivityVisibilityOptions {
+        .init(embeddedProviders: Set(AgentProvider.allCases.filter { showsEmbeddedSessions(for: $0) }), showsClaudeCloudProjects: showsClaudeCloudProjects)
     }
-    private var ignoredCodexActivityIDs: Set<String> {
-        excludedCodexActivityIDs.union(knownActivities(for: .codex).filter(\.isIgnoredCodexSession).map(\.id))
-    }
-    private var hiddenEmbeddedActivityIDs: Set<String> {
-        var hidden = ignoredCodexActivityIDs
-        if !showsClaudeCloudProjects {
-            hidden.formUnion(knownActivities(for: .claude).filter { $0.claudeCloud != nil }.map(\.id))
-            hidden.formUnion(claudeReceivedRequests.filter { $0.claudeCloud != nil }.map { $0.activity.id })
-        }
-        for provider in AgentProvider.allCases where !showsEmbeddedSessions(for: provider) {
-            hidden.formUnion(Self.embeddedActivityIDs(knownActivities(for: provider)))
-        }
-        return hidden
-    }
+    private var ignoredCodexActivityIDs: Set<String> { activityState.ignoredCodexActivityIDs }
+    private var hiddenEmbeddedActivityIDs: Set<String> { activityState.hiddenActivityIDs(activityVisibility) }
     private var hiddenClaudeActivityIDs: Set<String> { hiddenEmbeddedActivityIDs }
     func refilterClaudeSessions() { refilterEmbeddedSessions() }
     func refilterEmbeddedSessions() {
-        let hidden = hiddenEmbeddedActivityIDs
-        claudeAttentionRequests = claudeReceivedRequests.filter { !hidden.contains($0.activity.id) }
-        deepseekAttentionRequests = deepseekReceivedRequests
-        let liveInputs = Set(codexReceivedRequests.filter { $0.sourceHostID == nil && $0.kind == .input }.map(\.threadID))
-        let logged = codexLogRequests.filter { request in
-            guard !liveInputs.contains(request.threadID) else { return false }
-            if let live = remoteActivities.first(where: { $0.sourceHostID == nil && $0.threadID == request.threadID && $0.hasLiveEvidence }) {
-                if let start = live.turnStartedAt, start > request.detectedAt { return false }
-                if [.completed, .interrupted].contains(live.phase), (live.phaseChangedAt ?? .distantPast) >= request.detectedAt { return false }
-            }
-            return true
-        }
-        codexAttentionRequests = (codexReceivedRequests + logged).filter { !hidden.contains($0.activity.id) }
-        observeAttentionRequests(codexAttentionRequests + claudeAttentionRequests + deepseekAttentionRequests)
         combineActivities()
         for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
     }
@@ -1538,58 +1491,28 @@ final class IslandModel: ObservableObject {
         if oldLocal != newLocal { refreshActivity() }
         else if agentStatesChanged { refreshActivity(metricsOnly: true) }
     }
+    func applyActivityUpdate(_ update: ActivityApplicationUpdate) {
+        if activities != update.activities { activities = update.activities }
+        if attentionRequests != update.requests { attentionRequests = update.requests }
+        if latestFirstOutputLatency != update.latestFirstOutputLatency { latestFirstOutputLatency = update.latestFirstOutputLatency }
+    }
     func observeAttentionRequests(_ requests: [PendingAttentionRequest]) {
-        let hidden = hiddenEmbeddedActivityIDs
-        let requests = requests.filter { !hidden.contains($0.activity.id) }
-        if attentionRequests != requests { attentionRequests = requests }
-        present(attention.requestNotices(requests.filter { $0.provider == .codex }) +
-            claudeActivityAttention.requestNotices(requests.filter { $0.provider == .claude }) +
-            deepseekActivityAttention.requestNotices(requests.filter { $0.provider == .deepseek }))
+        let notices = activityState.observeAttentionRequests(requests, visibility: activityVisibility)
+        applyActivityUpdate(activityState.update()); present(notices)
     }
     private func combineActivities() {
         let oldHeight = panelContentHeight
-        let ignored = ignoredCodexActivityIDs
-        completionInbox.remove(activityIDs: ignored)
-        let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        let merged = (ActivitySourceMerger.merge(logged: localActivities, streamed: remoteActivities) + claudeReceivedActivities + deepseekReceivedActivities).filter {
-            !ignored.contains($0.id)
-        }.map { value in
-            var value = value
-            if let old = previous[value.id] { value.mergeDisplayMetadata(from: old) }
-            return value
-        }
-        let grouped = ActivityTaskGroup.make(merged).flatMap(\.members)
-        let observed = completionInbox.observe(grouped, at: now, retention: completedRetention)
-        // An ending read in Claude needs no reminder here either.
-        for ending in completionInbox.activities where ending.claudeCloud?.readInClaude == true { completionInbox.dismiss(ending) }
-        let hidden = hiddenEmbeddedActivityIDs
-        let shown = observed.filter { !hidden.contains($0.id) }
-        observeFirstOutputs(shown)
-        let activeRoots = Set(ActivityTaskGroup.make(shown).filter(\.isRunning).map { $0.primary.id })
-        let combined = shown.filter {
-            !$0.isInternalReview && (activeRoots.contains($0.id) || ![.completed, .interrupted].contains($0.phase)) &&
-                (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
-        } + completionInbox.activities.filter { !activeRoots.contains($0.id) && !hidden.contains($0.id) }
-        if activities != combined { activities = combined }
-        if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: combined) }
+        let update = activityState.reconcile(at: now, retention: completedRetention, visibility: activityVisibility)
+        applyActivityUpdate(update)
+        if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: update.activities) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
-        let inputs = Set(pendingInputRequests.map { $0.activity.id })
-        let noticeTasks = taskGroups.filter { !($0.isRunning && [.completed, .interrupted].contains($0.primary.phase)) }.map(\.primary)
-        present(AttentionPolicy.excludingPendingReplies(attention.activityNotices(noticeTasks.filter { $0.provider == .codex }, at: now) +
-            claudeActivityAttention.activityNotices(noticeTasks.filter { $0.provider == .claude }, at: now) +
-            deepseekActivityAttention.activityNotices(noticeTasks.filter { $0.provider == .deepseek }, at: now), activityIDs: inputs))
-        onStatusChange?()
-    }
-
-    private func observeFirstOutputs(_ values: [SessionActivity]) {
-        for activity in values where !activity.isInternalReview {
-            rememberFirstOutput(activity.firstTokenLatency, reportedAt: activity.firstTokenReportedAt)
-        }
+        present(update.notices); onStatusChange?()
     }
     func rememberFirstOutput(_ latency: TimeInterval?, reportedAt: Date?) {
-        guard let latency, latency.isFinite, (0...3600).contains(latency), let reportedAt,
-              reportedAt <= now, latestFirstOutputAt.map({ reportedAt > $0 }) ?? true else { return }
-        latestFirstOutputAt = reportedAt; latestFirstOutputLatency = latency
+        activityState.rememberFirstOutput(latency, reportedAt: reportedAt, at: now)
+        if latestFirstOutputLatency != activityState.latestFirstOutput?.seconds {
+            latestFirstOutputLatency = activityState.latestFirstOutput?.seconds
+        }
     }
 
     private var currentCodexSourceSignature: String {
@@ -1704,8 +1627,9 @@ final class IslandModel: ObservableObject {
     }
     func clearSourceState() {
         navigationError = nil
-        latestFirstOutputAt = nil; latestFirstOutputLatency = nil
-        observeFirstOutputs(activities)
+        activityState.clearFirstOutput(); latestFirstOutputLatency = nil
+        activityState.replaceActivities(activities, at: now)
+        latestFirstOutputLatency = activityState.latestFirstOutput?.seconds
     }
 
     func bindCompletionSources(_ provider: AgentProvider) {
@@ -1755,9 +1679,9 @@ final class IslandModel: ObservableObject {
     }
     private func pruneCompletions() {
         let oldHeight = panelContentHeight
-        completionInbox.prune(at: now, retention: completedRetention)
-        let retained = Set(completionInbox.activities.map(\.id)).union(taskGroups.filter(\.isRunning).map { $0.primary.id })
-        activities.removeAll { [.completed, .interrupted].contains($0.phase) && !retained.contains($0.id) }
+        activityState.prune(at: now, retention: completedRetention)
+        applyActivityUpdate(activityState.update())
+        scheduleRateExpiry()
         if oldHeight != panelContentHeight { onLayoutChange?() }
     }
     private func scheduleClock() {
@@ -1769,7 +1693,7 @@ final class IslandModel: ObservableObject {
         clock?.tolerance = interval * 0.2
     }
     private func scheduleRateExpiry() {
-        let deadline = activities.compactMap(\.rateExpiresAt).filter { $0 > now }.min()
+        let deadline = activityState.nextDisplayDeadline(at: now, retention: completedRetention)
         guard deadline != rateExpiryAt else { return }
         rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
         guard !sleeping, !stopped, let deadline else { return }
@@ -1778,6 +1702,7 @@ final class IslandModel: ObservableObject {
             guard let self, !self.sleeping, !self.stopped else { return }
             self.rateExpiryWork = nil; self.rateExpiryAt = nil
             self.now = Date()
+            self.pruneCompletions()
             self.scheduleRateExpiry()
             self.onStatusChange?()
         }
@@ -1799,15 +1724,6 @@ final class IslandModel: ObservableObject {
         refreshDeepSeekBalance(scheduled: true, active: deepseekActive)
         onStatusChange?()
     }
-    private func priority(_ phase: ActivityPhase) -> Int {
-        switch phase {
-        case .waitingForInput: return 0
-        case .running: return 1
-        case .interrupted: return 2
-        case .completed: return 3
-        case .unknown: return 4
-        }
-    }
     /// The collapsed bar already shows each of these states while it lasts, so
     /// a moment only leaves the island as a system notification, when chosen.
     func present(_ notices: [IslandNotice]) {
@@ -1825,9 +1741,8 @@ final class IslandModel: ObservableObject {
         if demoArguments?.contains("--demo-completion") == true { setDemoStage(.completed) }
     }
     private func applyDemoSnapshot() {
-        let hidden = hiddenEmbeddedActivityIDs
-        activities = demoActivities.filter { isModuleEnabled($0.provider) && !hidden.contains($0.id) }
-        observeAttentionRequests(demoRequests.filter { isModuleEnabled($0.provider) && !hidden.contains($0.activity.id) })
+        let update = activityState.applyDemoSnapshot(enabled: Set(enabledProviders), at: now, visibility: activityVisibility)
+        applyActivityUpdate(update); present(update.notices)
     }
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }

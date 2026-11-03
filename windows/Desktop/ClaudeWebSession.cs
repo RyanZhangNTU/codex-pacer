@@ -9,6 +9,7 @@ namespace CodexPacer.Windows;
 internal interface IClaudeWebSession : IAsyncDisposable
 {
     bool Available { get; }
+    Task PrepareAsync(CancellationToken cancellation) => Task.CompletedTask;
     Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation);
     Task<bool> SignInAsync();
     Task ClearAsync(CancellationToken cancellation);

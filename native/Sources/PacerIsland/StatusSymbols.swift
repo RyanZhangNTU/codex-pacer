@@ -26,21 +26,22 @@ enum StatusSymbols {
     }
 
     static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil) -> String {
-        if let attention { return attention == .approval ? approval : input }
-        switch activity.phase {
-        case .waitingForInput: return activity.waitingForApproval ? approval : input
-        case .completed: return complete
-        case .interrupted: return activity.turnFailed ? failed : interrupted
-        case .unknown: return idle
-        case .running:
-            switch activity.stage {
-            case .thinking: return thinking
-            case .tool: return tool
-            case .responding: return replying
-            case .starting: return starting
-            case .working: return cloudWork
-            case .coordinating: return coordinating
-            }
+        symbol(TaskSymbol.symbol(for: activity, attention: attention))
+    }
+    static func symbol(_ kind: TaskSymbol) -> String {
+        switch kind {
+        case .thinking: thinking
+        case .tool: tool
+        case .responding: replying
+        case .starting: starting
+        case .working: cloudWork
+        case .coordinating: coordinating
+        case .approval: approval
+        case .input: input
+        case .completed: complete
+        case .interrupted: interrupted
+        case .failed: failed
+        case .unknown: idle
         }
     }
 }

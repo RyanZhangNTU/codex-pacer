@@ -44,14 +44,6 @@
   },
   "engineTransitions": [
     {
-      "owner": "B5a",
-      "files": [
-        "windows/EngineSupport/PacerEngine.swift",
-        "windows/EngineSupport/EnginePresentation.swift"
-      ],
-      "reason": "Unify activity merge, inbox, task projection and visibility orchestration with IslandModel."
-    },
-    {
       "owner": "B5c",
       "files": [
         "windows/EngineSupport/PacerEngine.swift",

@@ -11,16 +11,16 @@ struct TaskPagerView: View {
     private let rowHeight: CGFloat = 54
     private let rowSpacing: CGFloat = 2
 
-    private var tasks: [SessionActivity] { model.visibleActivities }
-    private var pagination: TaskPagination { TaskPagination(itemCount: tasks.count) }
+    private var tasks: [SessionActivity] { model.taskPresentation.visibleActivities }
+    private var pagination: TaskPagination { model.taskPresentation.pagination }
     private var currentPage: Int { pagination.clampedPage(page) }
-    private var pageTasks: [SessionActivity] { Array(tasks[pagination.range(on: currentPage)]) }
+    private var pageRows: [ActivityTaskRowPresentation] { Array(model.taskPresentation.rows[pagination.range(on: currentPage)]) }
     private var pageHeight: CGFloat {
         CGFloat(pagination.rowCapacity) * rowHeight + CGFloat(max(0, pagination.rowCapacity - 1)) * rowSpacing
     }
 
     var header: some View {
-        IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: String(tasks.count)) {
+        IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: model.taskPresentation.taskCountText) {
             if pagination.isPaginated {
                 HStack(spacing: 2) {
                     pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
@@ -43,10 +43,11 @@ struct TaskPagerView: View {
             header
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
-                    ForEach(pageTasks) { activity in
-                        TaskRowView(attention: model.attentionKind(for: activity), group: model.taskGroup(for: activity), activity: activity, name: model.projectName(activity), sourceName: model.taskSourceName(activity), now: model.now,
-                            enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.taskAccent,
-                            cost: model.displayedTurnCost(activity), costDetail: model.deepseekCostDetail(activity)) {
+                    ForEach(pageRows, id: \.activity.id) { row in
+                        let activity = row.activity
+                        TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
+                            enabled: model.canOpen(activity), accent: model.taskAccent,
+                            costDetail: model.deepseekCostDetail(activity)) {
                                 model.open(activity)
                             }
                             .frame(height: rowHeight)

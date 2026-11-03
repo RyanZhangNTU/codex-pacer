@@ -53,7 +53,7 @@ internal static class Program
                     await QuotaProjectionChecks.Run(); await ClassicQuotaChecks.Run(output); await SingleQuotaChecks.Run(output);
                     await LegacyQuotaChecks.Run(output); await QuotaConnectionChecks.Run(output); await TypographyLocaleChecks.Run(output);
                 }
-                if (All("web")) { await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
+                if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
                 if (All("host")) await IslandHostChecks.Run();
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
@@ -92,7 +92,10 @@ internal static class Program
     private static async Task Run(string language, bool motion, string output)
     {
         await using var engine = new EngineClient();
-        var window = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: motion);
+        // Absolute reference geometry uses one logical viewport. The HWND
+        // still renders at the actual monitor DPI.
+        var window = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: motion,
+            screenGeometry: () => (new(0, 0, 2560, 1440), new(0, 0, 2560, 1400)));
         // Keep the real desktop pointer from steering UI Automation scenarios.
         // Explicit routed hover/key events below still use the window handlers.
         window.IsHitTestVisible = false;

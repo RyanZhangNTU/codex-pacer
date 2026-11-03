@@ -258,6 +258,7 @@ struct EngineSnapshot: Codable, Equatable {
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
          hideProjects: Bool, now: Date, wallet: EngineWallet? = nil, modules: [EngineModule]? = nil, quotaDashboard: EngineQuotaDashboard? = nil,
          showsDeepSeekTurnCost: Bool = true, compactWarnings: [CompactWarningPresentation.Item]? = nil, compactContext: CompactBarContext? = nil,
+         taskPresentation: ActivityTaskPresentation? = nil,
          deepseekConnection: EngineDeepSeekConnection? = nil, claudeConnection: EngineClaudeConnection? = nil,
          claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
@@ -265,10 +266,10 @@ struct EngineSnapshot: Codable, Equatable {
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
         self.requests = requests.map(EngineRequest.init); self.sources = sources; self.quota = quota
         self.notices = notices.map { EngineNotice($0, hideProjects: hideProjects) }
-        let overview = ActivityOverview(activities: activities, at: now)
+        let overview = taskPresentation?.overview ?? ActivityOverview(activities: activities, at: now)
         runningCount = overview.running.count; waitingCount = overview.waiting.count
         totalTokensPerSecond = overview.displayedRate; rateIsFresh = overview.rateIsFresh
-        presentation = EnginePresentation(activities: activities, requests: requests, inbox: inbox, hideProjects: hideProjects, at: now, showsDeepSeekTurnCost: showsDeepSeekTurnCost)
+        presentation = taskPresentation.map(EnginePresentation.init) ?? EnginePresentation(activities: activities, requests: requests, inbox: inbox, hideProjects: hideProjects, at: now, showsDeepSeekTurnCost: showsDeepSeekTurnCost)
         self.wallet = wallet
         self.modules = modules
         self.quotaDashboard = quotaDashboard

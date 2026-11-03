@@ -22,9 +22,10 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
     private readonly Dictionary<string, Task<bool>> connecting = new();
     private bool disposed, started, unsupported;
     private bool? availability;
+    private Task? starting;
     internal string? LastFailure { get; private set; }
     internal bool IsOfflineDemo => !bridgeEnabled;
-    internal bool Available => !disposed && started && session.Available;
+    internal bool Available => !disposed && started && (!bridgeEnabled || availability == true) && session.Available;
     internal ClaudeConnectionCoordinator(EngineClient engine, IClaudeWebSession session, Dispatcher dispatcher, bool bridgeEnabled = true)
     {
         this.engine = engine; this.session = session; this.dispatcher = dispatcher; this.bridgeEnabled = bridgeEnabled;
@@ -32,9 +33,25 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
     }
     internal async Task StartAsync()
     {
+        if (starting != null) { await starting; return; }
+        var pending = Start(); starting = pending;
+        try { await pending; }
+        finally { if (ReferenceEquals(starting, pending)) starting = null; }
+    }
+    private async Task Start()
+    {
         if (disposed || unsupported) return;
-        started = true; if (!bridgeEnabled) return;
-        bool available = session.Available; if (availability == available) return;
+        if (!bridgeEnabled) { started = true; return; }
+        bool available = session.Available;
+        if (available && availability != true)
+        {
+            try { await session.PrepareAsync(lifetime.Token); }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
+            catch (Exception error) when (ProviderLoginWindow.Recoverable(error))
+            { available = false; LastFailure = "windows.claude.connection_failed"; }
+        }
+        if (disposed || lifetime.IsCancellationRequested) return;
+        started = true; if (availability == available) return;
         availability = available;
         try { await engine.SetClaudeWebHostAsync(available); }
         catch (EngineCommandException error) when (error.Code is "unknownMethod" or "unavailable") { started = false; unsupported = true; }

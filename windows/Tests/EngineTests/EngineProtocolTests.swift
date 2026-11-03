@@ -13,6 +13,17 @@ private final class FrameCapture: @unchecked Sendable {
     }
 }
 
+private final class ReferenceDisplayClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired: (@Sendable () -> Void)?
+    func arm(_ fired: @escaping @Sendable () -> Void) { lock.lock(); self.fired = fired; lock.unlock() }
+    func date() -> Date {
+        lock.lock(); let callback = fired; fired = nil; lock.unlock()
+        callback?()
+        return Date(timeIntervalSince1970: 1_800_000_000)
+    }
+}
+
 final class EngineProtocolTests: XCTestCase {
     private func command(_ method: String, _ params: [String: Any] = [:], version: Int = 1) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": version, "id": method, "method": method, "params": params])
@@ -155,6 +166,34 @@ final class EngineProtocolTests: XCTestCase {
         XCTAssertEqual(replay.presentation.rows.map(\.id), original.presentation.rows.map(\.id))
         XCTAssertEqual(replay.runningCount, original.runningCount)
         XCTAssertTrue(replay.requests.isEmpty)
+        await runtime.stop()
+    }
+
+    func testMissingMarkReadTargetCannotAcknowledgeAllTasks() async throws {
+        let capture = FrameCapture()
+        let runtime = EngineRuntime(demo: true, now: { Date(timeIntervalSince1970: 1_800_000_000) }, output: { capture.append($0) })
+        _ = await runtime.receive(try command("initialize"))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        let before = try XCTUnwrap(capture.snapshots().last)
+        XCTAssertTrue(before.tasks.contains(where: \.unread))
+        _ = await runtime.receive(try command("markRead", ["snapshotSequence": before.sequence]))
+        let after = try XCTUnwrap(capture.snapshots().last)
+        XCTAssertEqual(after.tasks, before.tasks)
+        XCTAssertEqual(after.requests, before.requests)
+        await runtime.stop()
+    }
+
+    func testElapsedTimerCannotPublishWhenTheReferenceClockHasNotExpired() async throws {
+        let capture = FrameCapture(), clock = ReferenceDisplayClock()
+        let runtime = EngineRuntime(demo: true, now: { clock.date() }, output: { capture.append($0) })
+        _ = await runtime.receive(try command("initialize"))
+        let before = try capture.snapshots()
+        let wake = expectation(description: "display timer checks the injected clock")
+        clock.arm { wake.fulfill() }
+        await fulfillment(of: [wake], timeout: 5)
+        // Queue behind the timer's synchronous actor turn before inspecting it.
+        _ = await runtime.receive(try command("inspectClaudeLocalState"))
+        XCTAssertEqual(try capture.snapshots(), before, "A frozen reference clock cannot produce a new or identical display snapshot")
         await runtime.stop()
     }
 }

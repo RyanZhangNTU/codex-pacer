@@ -196,6 +196,9 @@ public partial class IslandWindow
                 { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop });
         }
     }
+    private bool CompactDimStateMatches()
+        => compactData == null || compactRow.Values.Concat(compactColumn.Values).All(slot =>
+            Math.Abs(slot.Opacity - (expanded && slot.Tag is true ? compactData.ExpandedOpacity : 1)) < .001);
     private sealed class CompactComponentButton : Button
     {
         protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);

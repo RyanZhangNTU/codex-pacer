@@ -8,7 +8,12 @@
       "evidence": [
         "native/Tests/PacerCoreTests/CodexConnectionFailureTests.swift",
         "native/Tests/PacerCoreTests/CodexProcessPortTests.swift",
-        "scripts/windows/test_contract.py"
+        "scripts/windows/test_contract.py",
+        "native/Sources/PacerCore/ActivityApplicationState.swift",
+        "native/Sources/PacerCore/ActivityTaskPresentation.swift",
+        "native/Tests/PacerCoreTests/ActivityApplicationStateTests.swift",
+        "native/Tests/PacerCoreTests/ActivityTaskPresentationTests.swift",
+        "windows/Tests/EngineTests/EnginePresentationTests.swift"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -19,8 +24,8 @@
         "C 最终两端编译整个 PacerCore；删除源/测试挑选清单，合同拒绝系统模块，平台实现移出核心"
       ],
       "previewNote": "One source for provider identity, lifecycle, rates, quota and cost calculations; Windows shared suites pass. A deterministic shared concurrency check covers stderr read/append ordering; the original Mac early-exit, recovery and redaction assertions remain.",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
-      "cleanupOwner": "B5a",
+      "note": "B5a shares activity application state, task rows, grouping caches, TTFT and display deadlines. Lifecycle and source/test selection cleanup remain in B5c; installed-host acceptance remains pending.",
+      "cleanupOwner": "B5c",
       "deferredEvidence": [
         "native/Tests/PacerCoreTests/ProcessErrorCollectorTests.swift"
       ]
@@ -311,7 +316,12 @@
       "status": "pending",
       "evidence": [
         "windows/EngineSupport/EngineActivityNavigation.swift",
-        "windows/Tests/EngineTests/ActivityNavigationTests.swift"
+        "windows/Tests/EngineTests/ActivityNavigationTests.swift",
+        "native/Sources/PacerCore/ActivityApplicationState.swift",
+        "native/Sources/PacerCore/ActivityTaskPresentation.swift",
+        "native/Tests/PacerCoreTests/ActivityApplicationStateTests.swift",
+        "native/Tests/PacerCoreTests/ActivityTaskPresentationTests.swift",
+        "windows/Tests/EngineTests/EnginePresentationTests.swift"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -735,7 +745,13 @@
         "native/Sources/PacerCore/EmbeddedSessionVisibility.swift",
         "native/Sources/PacerIsland/SettingsView.swift"
       ],
-      "evidence": [],
+      "evidence": [
+        "native/Sources/PacerCore/ActivityApplicationState.swift",
+        "native/Sources/PacerCore/ActivityTaskPresentation.swift",
+        "native/Tests/PacerCoreTests/ActivityApplicationStateTests.swift",
+        "native/Tests/PacerCoreTests/ActivityTaskPresentationTests.swift",
+        "windows/Tests/EngineTests/EnginePresentationTests.swift"
+      ],
       "previewNote": "Codex 与 Claude 的其他应用会话开关和过滤边界。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
@@ -1164,7 +1180,6 @@
     "CodexConnectionFailureTests.swift": "shared-model",
     "CodexDiagnosticTests.swift": "codex-quota",
     "CodexExecutableResolverTests.swift": "codex-quota",
-    "CodexLogAttentionTests.swift": "shared-model",
     "CodexSessionOriginTests.swift": "shared-model",
     "CompletionDismissalStoreTests.swift": "completion",
     "DesktopEventTests.swift": "codex-runtime",
