@@ -49,6 +49,7 @@ internal static class CollapsedLayoutChecks
             var state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
             Check(state.EditorTrailing.Last() == "tps" && !state.EditorLeading.Contains("tps"), "Dropping at the lane end must move the actual shared component");
             Check(configurations == 0 && engine.LatestSnapshot.Sequence == before, "Layout edits cannot configure the engine or request another snapshot");
+            await Until(() => ((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"));
             Check(((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.tps"),
                 "The real header must reflect the changed lane");
             await Until(() => editor.IsEnabled);
