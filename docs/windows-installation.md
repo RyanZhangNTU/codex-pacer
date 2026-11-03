@@ -4,7 +4,7 @@ Windows CI 保留便携 ZIP（windows-app-x64-unsigned），并提供未签名�
 
 安装器使用 Inno Setup，默认安装到 %LOCALAPPDATA%\Programs\Codex Pacer。注册项和开始菜单快捷方式属于当前用户，不申请管理员权限。这由 [PrivilegesRequired=lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm) 指定。安装器向导目前使用英文；应用支持中英文。
 
-安装包包含 .NET、Swift 和 VC 运行库。应用本体可离线启动，网页登录需要 Windows 提供的 WebView2 Runtime。安装过程不下载运行库、不安装系统服务，也不更改系统或显卡设置。
+安装包包含 .NET、Swift、VC 和 Claude helper 所需的 Python 运行库。应用本体可离线启动，网页登录需要 Windows 提供的 WebView2 Runtime。安装过程不下载运行库、不安装系统服务，也不更改系统或显卡设置。Claude 的路径、所有权与安全更新见 [本机运行时说明](windows-claude-runtime.md)。
 
 ## 升级和修复
 
@@ -32,7 +32,7 @@ StartupApproved 的二进制格式没有公开 API 契约。当前识别已观�
 
 卸载移除当前安装自有的安装登记、开始菜单快捷方式、启动项和通知注册。不同路径的启动项、其他应用的注册值，以及用户改过的快捷方式会保留。通知清理先核对激活程序路径，再调用 SDK 的 [UnregisterAll](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.unregisterall)，并移除当前可执行文件的路径映射。
 
-Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 Pacer 自有的当前或旧版 hook 命令；status-line 仍是 Pacer 包装时恢复原值；只移除安装记录里由 Pacer 添加且未被用户修改的环境值。原有或后来添加的用户 hooks、status-line 和其他配置不删除。只处理当前本机的默认或已配置 Claude home，不处理远程 hooks。无安装记录时不推测归属。
+Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 Pacer 自有的当前或旧版 hook 命令；status-line 仍是 Pacer 包装时恢复原值；只移除安装记录里由 Pacer 添加且未被用户修改的环境值。原有或后来添加的用户 hooks、status-line 和其他配置不删除。处理本机默认、已配置及运行时索引记录的 Claude home，不处理远程 hooks。无安装记录时不推测归属。全部 hook 清理后，再按所有权和引用检查删除共享运行时；未知文件或用户引用会阻止删除。
 
 偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；正常清理后，配置不再引用这些脚本。
 
@@ -49,5 +49,7 @@ Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 
 生命周期测试编译独立 QA 标识的安装器，使用中文路径、独立启动项、开始菜单目录和合成 Claude 配置。它验证安装、损坏修复、文件占用失败、运行中覆盖安装、合成偏好与已读文件保留、启动项、卸载清理和离线 demo。无效 Claude JSON 场景覆盖静默中止、交互取消、重复重试和明确继续卸载，并检查原始字节及日志隐私；交互选择通过仅限 QA 包的参数调用同一维护入口。测试后卸载并清理测试目录。截图只包含 demo 数据。
 
 使用屏幕前，测试确认没有原型或展示测试进程占用桌面；占用时每分钟检查一次，最多等 30 分钟。测试只关闭自己安装位置的应用。可选 ProtectedProcessId 参数只检查指定进程仍存在，不向它发送消息。
+
+本机 Codex 进程树的 HKCU 被隔离；树内注册表测试不能证明真实系统生效。真实 HKCU 的登记、启动项、通知和卸载检查需在进程树外的当前交互用户任务中补跑，CI 安装生命周期测试也必须通过。文件系统检查仍是实际文件系统。
 
 这些检查不代替重新登录、干净系统、其他 Windows 设备或 ARM64 的验收。以 coverage 中记录的实机范围为准。

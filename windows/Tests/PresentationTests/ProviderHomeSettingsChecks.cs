@@ -41,6 +41,20 @@ internal static class ProviderHomeSettingsChecks
             var module = Find<CheckBox>(window, prefix + ".enabled");
             Check(module.IsEnabled && module.IsChecked == true && window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600,
                 "The provider page must retain native canvas geometry and acknowledged module state");
+            if (provider == "claude")
+            {
+                var ui = UiText.For(language == "zh-Hans");
+                var setup = new ClaudeHookSetup("ready", true, true, true, false, false, "powershell");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup) == ui.Text("windows.claude.setup_ready") + " " + ui.Text("windows.claude.setup_slow"), "A slow launcher must explain its per-event startup cost");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { LaunchMode = "direct" }) == ui.Text("windows.claude.setup_ready"), "The direct route must retain its ready message");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { LaunchMode = "shortPath" }) == ui.Text("windows.claude.setup_ready"), "The 8.3 route must retain its ready message");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { TelemetryConflict = true }).Contains(ui.Text("windows.claude.setup_conflict")), "The cost notice must retain the existing telemetry conflict");
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "failed", setup) == ui.Text("windows.claude.setup_failed"), "A failed setup must retain its actionable error");
+                Check(Find<TextBlock>(window, "settings.claude.setup").Text == UiText.For(language == "zh-Hans").Text("windows.claude.setup_ready"),
+                    "The demo must show the localized Claude setup state");
+                Check(!Find<Button>(window, "settings.claude.retry_setup").IsEnabled,
+                    "A demo must never invoke the live hook installer");
+            }
             if (provider == "claude") window.CapturePreview(Path.Combine(output, "settings-" + scenario + ".png"));
             var disclosure = Find<Expander>(window, prefix + ".locations"); disclosure.IsExpanded = true; await Pump();
             var field = Find<TextBox>(window, prefix + ".home"); field.BringIntoView(); await Pump();
@@ -82,6 +96,12 @@ internal static class ProviderHomeSettingsChecks
             Check(field.Text == "", "Reopening must restore the acknowledged source");
             await engine.SendAsync("shutdown"); await Until(() => !field.IsEnabled && !Find<CheckBox>(window, prefix + ".enabled").IsEnabled);
             Check(!Find<Button>(window, prefix + ".choose_home").IsEnabled, "A closed engine must also disable the folder picker");
+            if (provider == "claude")
+            {
+                Check(Find<TextBlock>(window, "settings.claude.setup").Text == UiText.For(language == "zh-Hans").Text("windows.claude.setup_failed") &&
+                    !Find<Button>(window, "settings.claude.retry_setup").IsEnabled,
+                    "Engine exit must show a setup error and disable retries without a synchronous request");
+            }
             Console.WriteLine("PASS provider home " + scenario + ": initialization, existing/missing/file/relative paths, normalized Unicode, duplicate/stale drafts, engine/save rollback, default restoration, module modes, navigation and closed connection");
         }
         finally { ready.TrySetResult(); window.AllowClose = true; window.Close(); Directory.Delete(root, true); CultureInfo.CurrentUICulture = previous; }

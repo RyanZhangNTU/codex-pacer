@@ -88,13 +88,21 @@ public enum PacerEngine {
             notificationStore = .init(url: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("notification-qa-" + qa.uuidString.lowercased())
                 .appendingPathComponent("actions.json"), files: WindowsFileSystem())
         }
+        var hookServices: EngineClaudeHookServices?
+        if !demo && !readOnly, CommandLine.arguments.contains("--manage-claude-hooks"),
+           let index = CommandLine.arguments.firstIndex(of: "--claude-runtime-root"), CommandLine.arguments.indices.contains(index + 1) {
+            let path = CommandLine.arguments[index + 1]
+            if path.utf16.count < 16000, WindowsCodexExecutableDiscovery.absolute(path), !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                hookServices = .live(root: URL(fileURLWithPath: path, isDirectory: true))
+            }
+        }
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
             notificationStore: notificationStore,
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
-            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference)
+            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -174,6 +182,11 @@ actor EngineRuntime {
     private let now: @Sendable () -> Date
     private var stage = DemoTaskStage.thinking
     private var initialized = false
+    private let claudeHookServices: EngineClaudeHookServices?
+    private var claudeHookSetup: EngineClaudeHookSetup?
+    private var claudeHookTask: Task<Void, Never>?
+    private var claudeHookHome: URL?, claudeHookRequest: UUID?
+    private var claudeHooksEnabled = false
     private var expanded = false
     private var projectionReady = false
     private var generation: UInt64 = 0
@@ -300,6 +313,7 @@ actor EngineRuntime {
          navigationServices: ActivityNavigationServices? = nil,
          allowsLiveClaudeWeb: Bool = false,
          claudeWebReference: Bool = false,
+         claudeHookServices: EngineClaudeHookServices? = nil,
          sourceSettings: CodexSourceSettingsServices = .live,
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
              await Task.detached(priority: .utility) { ProviderInstallationDetection.detect() }.value
@@ -312,6 +326,7 @@ actor EngineRuntime {
         self.cloudServices = cloudServices
         self.navigationServices = navigationServices ?? (demo ? .demo : .live)
         self.claudeWebReference = claudeWebReference && demo
+        self.claudeHookServices = claudeHookServices
         self.detectInstallation = installationDetection
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
@@ -503,6 +518,10 @@ actor EngineRuntime {
                 output(bytes + Data([10]))
             } else { failure(id: command.id, code: "sourceReportLimit") }
             return true
+        case "retryClaudeSetup":
+            guard claudeHookServices != nil, enabled.contains(.claude), !demo else { failure(id: command.id, code: "claudeSetupUnavailable"); return true }
+            scheduleClaudeHooks(force: true)
+            publish(notices: [])
         case "initialize", "configure":
             do { try await configure(command.params) }
             catch { failure(id: command.id, code: "invalidConfiguration"); return true }
@@ -731,6 +750,7 @@ actor EngineRuntime {
 
     private func bindActivityMonitors() async {
         guard !demo else { return }
+        scheduleClaudeHooks()
         let context = generation
         if enabled.contains(.claude) {
             await claudeActivityMonitor.start(home: claudeHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance in
@@ -745,6 +765,25 @@ actor EngineRuntime {
         } else {
             await deepseekActivityMonitor.shutdown(); deepseekLocal = LocalActivitySnapshot(); deepseekUsage = DeepSeekLocalUsage()
         }
+    }
+    private func scheduleClaudeHooks(force: Bool = false) {
+        guard let services = claudeHookServices else { return }
+        let active = enabled.contains(.claude), home = claudeHome
+        guard force || claudeHookHome != home || claudeHooksEnabled != active else { return }
+        claudeHookTask?.cancel()
+        claudeHookHome = home; claudeHooksEnabled = active
+        let request = UUID(); claudeHookRequest = request
+        claudeHookSetup = .init(active ? .settingUp : .disabled)
+        claudeHookTask = Task { [weak self] in
+            let result = await services.perform(active ? .ensure : .remove, home)
+            guard !Task.isCancelled else { return }
+            await self?.receiveClaudeHookSetup(result, request: request, home: home)
+        }
+    }
+    private func receiveClaudeHookSetup(_ report: EngineClaudeHookSetup, request: UUID, home: URL) {
+        guard initialized, claudeHookRequest == request, claudeHookHome == home else { return }
+        claudeHookTask = nil; claudeHookSetup = report
+        publish(notices: [])
     }
     private static func measured(_ rows: [SessionActivity], _ performance: [SessionPerformanceUpdate]) -> [SessionActivity] {
         var result = rows
@@ -1248,7 +1287,7 @@ actor EngineRuntime {
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
-            notificationProjections: notificationProjections)
+            notificationProjections: notificationProjections, claudeSetup: claudeHookSetup)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }
@@ -1256,6 +1295,7 @@ actor EngineRuntime {
     }
 
     func stop() async {
+        claudeHookTask?.cancel(); claudeHookTask = nil; claudeHookRequest = nil
         navigation.invalidate()
         notificationNavigation.invalidate(); notificationActivities = []
         generation += 1; initialized = false; projectionReady = false

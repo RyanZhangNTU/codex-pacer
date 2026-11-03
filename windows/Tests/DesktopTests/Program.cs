@@ -147,7 +147,16 @@ internal static class Program
         await Test("real engine: correlated source queries and explicit default restoration", async () =>
         {
             await using var client = new EngineClient();
-            await client.StartAsync(engine, true, "en");
+            var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            client.Snapshot += snapshot =>
+            {
+                if (snapshot.DeepseekConnection is { Refreshing: false } && snapshot.Wallet?.Balance != null)
+                    settled.TrySetResult();
+            };
+            await client.StartAsync(engine, true, "en", referenceFixture: true);
+            // Initialization can finish before the demo wallet's async read.
+            // Establish the query baseline after that independent projection.
+            await settled.Task.WaitAsync(Deadline);
             ulong sequence = client.LatestSnapshot!.Sequence;
             var queries = await Task.WhenAll(Enumerable.Range(1, 3).Select(index => client.QueryAsync<CodexSourceReport>("inspectCodexSource",
                 new { codexExecutable = @"C:\Demo\" + index + @"\codex.exe", codexHome = @"C:\Demo\" + index })));

@@ -47,7 +47,7 @@ internal sealed class EngineClient : IAsyncDisposable
 
     internal EngineClient(TimeSpan? commandTimeout = null) => this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
 
-    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null)
+    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null)
     {
         if (process != null) throw new InvalidOperationException("Engine already started.");
         callbacks = SynchronizationContext.Current;
@@ -68,6 +68,11 @@ internal sealed class EngineClient : IAsyncDisposable
         if (claudeWebFixture) start.ArgumentList.Add("--claude-web-fixture");
         if (readOnlyDiagnostics) start.ArgumentList.Add("--read-only-diagnostics");
         if (notificationQa is Guid qa) { start.ArgumentList.Add("--notification-qa"); start.ArgumentList.Add(qa.ToString("D")); }
+        if (!demo && !readOnlyDiagnostics && claudeRuntimeRoot != null)
+        {
+            start.ArgumentList.Add("--manage-claude-hooks");
+            start.ArgumentList.Add("--claude-runtime-root"); start.ArgumentList.Add(Path.GetFullPath(claudeRuntimeRoot));
+        }
         start.ArgumentList.Add("--language"); start.ArgumentList.Add(language);
         job = new OwnedJob();
         try

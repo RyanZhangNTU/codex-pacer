@@ -116,7 +116,11 @@
       "status": "partial",
       "evidence": [
         "windows/Tests/EngineTests/EngineProviderHomeSettingsTests.swift",
-        "native/Sources/PacerCore/ClaudeActivityReader.swift"
+        "native/Sources/PacerCore/ClaudeActivityReader.swift",
+        "windows/Tests/EngineTests/WindowsClaudeRuntimeTests.swift",
+        "windows/Tests/EngineTests/EngineClaudeHookSetupTests.swift",
+        "windows/Tests/EngineTests/WindowsTelemetryTests.swift",
+        "scripts/windows/test-claude-runtime.py"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -126,7 +130,7 @@
         "F1：仅观察后新建文件与追加允许 8 MiB 积压；冷历史保持 512 KiB 尾读和总字节上限断言，保留 mirror/父链",
         "三种阶段/审批/回复、父子分组、结束/失败/中断、速率/TTFT 与隐私"
       ],
-      "previewNote": "Shared transcript parsing now drains Windows Desktop's initial metadata within an 8 MiB backlog limit, preserving prompt ownership with the original per-read budgets. Newly created files require post-observation creation and event times before their first records count as live; copied history and excluded-file reattachment remain historical. Actual process checks cover first-file notification, completion/unread evidence and IPC redaction. Settled projections prevent partial historical baselines from flashing as active, and source/module resets clear the observation boundary. Module/source Settings remain connected. Hooks, telemetry, embedded-session filtering, owner navigation and broader real-session acceptance remain.",
+      "previewNote": "Shared transcript parsing preserves the original per-read budgets: cold history uses a 512 KiB tail; post-observation new files and attached appends allow an 8 MiB backlog. Copied history and excluded-file reattachment remain historical. Existing process checks cover notification, completion/unread evidence, settled projections and IPC redaction. P1c adds a pinned, shared LocalAppData Python runtime for hooks/status-line and retains native loopback telemetry. Packaged commands were exercised locally in cmd, Git Bash and PowerShell with synthetic documented stdin, Chinese/space paths and no user Python; tool/approval ownership, privacy, concurrent writes, kernel-lock deadline, unsafe-path refusal, repair, moved installation and two-home shared uninstall passed. Engine setup is asynchronous, bounded and triggered by configuration changes rather than idle polling. Safe paths launch Python directly, usable 8.3 names avoid an extra interpreter, and only the remaining paths use a byte-preserving PowerShell fallback with a settings cost notice. All three tiers were exercised locally through cmd, Git Bash and PowerShell; UTF-8 forwarding, oversized-input rejection and short-path reference retention passed. Native OTLP reception and privacy projection also passed through both Claude-supported shells. Actual QA installation and an outside-Codex interactive task also verified two-home hook restoration and owned-runtime deletion, plus real HKCU registration cleanup. Embedded-session filtering, owner navigation and real Claude-session acceptance remain pending; previewStatus stays partial.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": [
@@ -1319,7 +1323,7 @@
       "uninstall",
       "startup"
     ],
-    "method": "Actual per-user QA installer with isolated application identity, chosen Unicode/space path and synthetic data; production maintenance and shared hook uninstall code.",
+    "method": "Actual per-user QA installer with isolated application identity, chosen Unicode/space path and synthetic data; production maintenance and shared hook uninstall code. Codex-tree HKCU checks use an isolated registry view. A separate non-elevated current-user interactive scheduled task confirmed real HKCU install/Run/StartupApproved/notification registration and uninstall cleanup outside Codex ancestry; CI remains authoritative for registry lifecycle coverage.",
     "passed": [
       "Install/shortcut/HKCU registration; no machine registration",
       "Same-version repair after corrupting the installed .NET main assembly",

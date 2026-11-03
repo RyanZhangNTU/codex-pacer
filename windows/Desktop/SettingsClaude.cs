@@ -8,14 +8,15 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private CheckBox? claudeEnabled, claudeCloudProjects;
-    private Button? claudeAutomatic;
-    private TextBlock? claudeDetection, claudeLocalState;
+    private Button? claudeAutomatic, claudeSetupRetry;
+    private TextBlock? claudeDetection, claudeLocalState, claudeSetupState;
     private StackPanel? claudeSections;
 
     private void ClearClaude()
     {
         ClearClaudeConnection();
         claudeEnabled = claudeCloudProjects = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
+        claudeSetupRetry = null; claudeSetupState = null;
     }
     private void BuildClaude()
     {
@@ -38,6 +39,16 @@ internal sealed partial class SettingsWindow
         claudeSections.Children.Add(SectionHeader("windows.provider.local", 10));
         claudeLocalState = Detail(""); Identify(claudeLocalState, "settings.claude.local_state", "");
         var help = Detail(ui.Text("windows.claude.local_help")); help.Margin = new Thickness(10, 0, 10, 10);
+        claudeSetupState = Detail(""); Identify(claudeSetupState, "settings.claude.setup", "");
+        claudeSetupRetry = new Button { Content = ui.Text("windows.claude.retry_setup"), Style = (Style)FindResource("SettingsLink") };
+        Identify(claudeSetupRetry, "settings.claude.retry_setup", ui.Text("windows.claude.retry_setup"));
+        claudeSetupRetry.Click += async (sender, _) =>
+        {
+            if (sourceClosed || !ReferenceEquals(sender, claudeSetupRetry) || engine == null || !claudeSetupRetry.IsEnabled) return;
+            try { await engine.SendAsync("retryClaudeSetup"); }
+            catch (System.Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
+            { if (!sourceClosed && ReferenceEquals(sender, claudeSetupRetry)) claudeSetupState?.SetCurrentValue(TextBlock.TextProperty, ui.Text("windows.claude.setup_failed")); }
+        };
         var cloud = Toggle("claude.cloud_projects", "claude.cloud_projects_help", "settings.claude.cloud_projects", out var cloudSwitch);
         claudeCloudProjects = cloudSwitch; editors.Add(cloudSwitch);
         RoutedEventHandler cloudChanged = async (_, _) =>
@@ -52,6 +63,7 @@ internal sealed partial class SettingsWindow
         embeddedSwitch.IsEnabled = false;
         // Unsupported actions stay outside editors so a successful preference change cannot enable them.
         claudeSections.Children.Add(Card(Row(Label(ui.Text("windows.claude.local_logs")), claudeLocalState), help,
+            Row(claudeSetupState, claudeSetupRetry),
             BuildClaudeConnection(), cloud, embedded, ProviderHomeEditor("claude")));
         BuildClaudeHistory(claudeSections);
     }
@@ -73,6 +85,15 @@ internal sealed partial class SettingsWindow
         claudeCloudProjects.IsEnabled = enabled && connected && !busy && !claudeAccountBusy && !session.RequiresRestart;
         claudeLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>
             (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true ? "provider.state.found" : "provider.state.no_home");
+        string setup = !connected ? "failed" : snapshot?.ClaudeSetup?.State ?? (snapshot?.Demo == true ? "ready" : "failed");
+        claudeSetupState!.Text = ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup);
+        claudeSetupRetry!.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
         RefreshClaudeConnection(connected && enabled);
+    }
+    internal static string ClaudeSetupDescription(UiText ui, string state, ClaudeHookSetup? setup)
+    {
+        string message = ui.Text("windows.claude.setup_" + (state switch
+        { "ready" when setup?.TelemetryConflict == true => "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
+        return state == "ready" && setup?.LaunchMode == "powershell" ? message + " " + ui.Text("windows.claude.setup_slow") : message;
     }
 }

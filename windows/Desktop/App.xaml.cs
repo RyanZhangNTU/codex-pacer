@@ -260,7 +260,11 @@ public partial class App : Application
         engineExecutable = executable;
         try
         {
-            await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture);
+            string? runtimeRoot = null;
+            if (!demo)
+                try { runtimeRoot = Path.Combine(WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory).DataRoot, "ClaudeRuntime"); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
+            await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture, claudeRuntimeRoot: runtimeRoot);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             await webConnection.StartAsync();

@@ -6,8 +6,11 @@ import WinSDK
 /// remain in the shared ClaudeHookInstaller.
 public struct WindowsClaudeHookStorage: ClaudeHookStorage {
     public init() {}
-    private static func wide(_ url: URL) -> [UInt16] {
-        Array(url.path.replacingOccurrences(of: "/", with: "\\").utf16) + [0]
+    static func wide(_ url: URL) -> [UInt16] {
+        let path = url.path.replacingOccurrences(of: "/", with: "\\")
+        // Match the engine's extended-path IO without changing stored URLs.
+        // validate() restricts this adapter to local drive paths.
+        return Array((path.hasPrefix("\\\\?\\") ? path : "\\\\?\\" + path).utf16) + [0]
     }
     public func validate(_ url: URL) throws {
         guard url.isFileURL, url.path.utf16.count < 32760,
@@ -36,27 +39,7 @@ public struct WindowsClaudeHookStorage: ClaudeHookStorage {
             throw ClaudeHookInstaller.Failure.unsafePath
         }
         defer { if let descriptor { _ = LocalFree(descriptor) } }
-        var token: HANDLE?
-        guard OpenProcessToken(GetCurrentProcess(), DWORD(TOKEN_QUERY), &token), let token else {
-            throw ClaudeHookInstaller.Failure.unsafePath
-        }
-        defer { _ = CloseHandle(token) }
-        func matches(_ kind: TOKEN_INFORMATION_CLASS, defaultOwner: Bool) -> Bool {
-            var size: DWORD = 0
-            _ = GetTokenInformation(token, kind, nil, 0, &size)
-            guard size > 0, size <= 65536 else { return false }
-            let buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<TOKEN_USER>.alignment)
-            defer { buffer.deallocate() }
-            guard GetTokenInformation(token, kind, buffer, size, &size) else { return false }
-            let sid = defaultOwner ? buffer.assumingMemoryBound(to: TOKEN_OWNER.self).pointee.Owner
-                : buffer.assumingMemoryBound(to: TOKEN_USER.self).pointee.User.Sid
-            return EqualSid(owner, sid)
-        }
-        // Windows can assign the token's default owner group to files this
-        // process creates (notably on hosted CI), rather than TokenUser.
-        guard matches(TokenUser, defaultOwner: false) || matches(TokenOwner, defaultOwner: true) else {
-            throw ClaudeHookInstaller.Failure.unsafePath
-        }
+        try WindowsClaudeFileOwner.validate(owner)
     }
     public func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
     public func isDirectory(_ url: URL) -> Bool {
@@ -77,7 +60,6 @@ public struct WindowsClaudeHookStorage: ClaudeHookStorage {
     }
     public func remove(_ url: URL) throws { try validate(url); try FileManager.default.removeItem(at: url) }
 }
-
 public enum WindowsClaudeHookCleanup {
     /// Existing Pacer installations used this shared python3 command format.
     /// This adapter does not install hooks or launch Python.
@@ -91,28 +73,11 @@ public enum WindowsClaudeHookCleanup {
     }
     public static func uninstall(home: URL, checkOnly: Bool = false) throws {
         let storage: any ClaudeHookStorage = checkOnly
-            ? UninstallCheckStorage(base: WindowsClaudeHookStorage()) : WindowsClaudeHookStorage()
+            ? WindowsClaudeHookPlanStorage() : WindowsClaudeHookStorage()
         let manifest = home.appendingPathComponent("pacer/installation.json")
         try storage.validate(home); try storage.validate(manifest)
         guard storage.exists(manifest) else { return }
-        try installer(storage: storage).uninstall(home: home)
+        try WindowsClaudeHookCommands.installer(home: home, root: WindowsClaudeRuntimeStore.defaultRoot, storage: storage).uninstall(home: home)
         guard !storage.exists(manifest) else { throw ClaudeHookInstaller.Failure.changedSettings }
     }
-}
-
-/// Run the shared ownership/JSON checks without changing provider files. A
-/// failed preflight lets the uninstaller offer Cancel before any cleanup.
-private final class UninstallCheckStorage: ClaudeHookStorage, @unchecked Sendable {
-    private let base: any ClaudeHookStorage
-    // One synchronous installer owns this adapter; it is never shared.
-    private var removed = Set<URL>()
-    init(base: any ClaudeHookStorage) { self.base = base }
-    func validate(_ url: URL) throws { try base.validate(url) }
-    func exists(_ url: URL) -> Bool { !removed.contains(url) && base.exists(url) }
-    func isDirectory(_ url: URL) -> Bool { base.isDirectory(url) }
-    func isReadable(_ url: URL) -> Bool { base.isReadable(url) }
-    func read(_ url: URL) throws -> Data { try base.read(url) }
-    func createDirectory(_ url: URL, permissions: UInt16) throws { throw ClaudeHookInstaller.Failure.unsafePath }
-    func replace(_ url: URL, with data: Data, permissions: UInt16) throws { try base.validate(url) }
-    func remove(_ url: URL) throws { try base.validate(url); removed.insert(url) }
 }

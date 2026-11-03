@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import PacerCore
+@testable import WindowsInstallerSupport
 
 final class WindowsTelemetryTests: XCTestCase {
     private final class Frames: @unchecked Sendable {
@@ -9,7 +10,7 @@ final class WindowsTelemetryTests: XCTestCase {
         func append(_ data: Data) { lock.lock(); bytes.append(data); lock.unlock() }
         var all: [Data] { lock.lock(); defer { lock.unlock() }; return bytes }
     }
-    private var python: URL { get throws { URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_TEST_PYTHON"])) } }
+    private var python: URL { get throws { URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_CLAUDE_PYTHON_PACKAGE"])).appendingPathComponent("python.exe") } }
     func testLoopbackFragmentedIdentityGzipPortConflictAndImmediateRebind() async throws {
         let frames = Frames(), receiver = ClaudeActivityTelemetry(port: 0) { frames.append($0) }
         try receiver.start(); defer { receiver.stop() }
@@ -32,7 +33,9 @@ final class WindowsTelemetryTests: XCTestCase {
             "endTimeUnixNano": "1790000002000000000", "attributes": attributes]
         try JSONSerialization.data(withJSONObject: ["resourceSpans": [["scopeSpans": [["spans": [span]]]]]]).write(to: file)
         let script = #"""
-        import gzip,json,socket,sys
+        import gzip,json,socket,sys,os,shutil
+        os.environ['PATH']=os.path.join(os.environ['SystemRoot'],'System32')
+        assert all(shutil.which(name) is None for name in ('python','python3','py'))
         data=open(sys.argv[2],'rb').read();statuses=[]
         for body,encoding in [(data,'identity'),(gzip.compress(data,mtime=0),'gzip')]:
             with socket.create_connection(('127.0.0.1',int(sys.argv[1])),2) as client:
@@ -57,6 +60,100 @@ final class WindowsTelemetryTests: XCTestCase {
         receiver.stop()
         let replacement = ClaudeActivityTelemetry(port: port) { _ in }
         try replacement.start(); XCTAssertEqual(replacement.listeningPort, port); replacement.stop()
+    }
+    func testTelemetryAcrossDirectShortAndFallbackLaunchesInBothWindowsShells() async throws {
+        let frames = Frames(), receiver = ClaudeActivityTelemetry(port: 0) { frames.append($0) }
+        try receiver.start(); defer { receiver.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-shell-telemetry-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let python = try python
+        // Claude emits OTLP itself; a synthetic emitter stands in for that
+        // process. The receiver, HTTP decoding and privacy projection are real.
+        let sender = #"""
+        import http.client,json,os,sys
+        from pathlib import Path
+        from urllib.parse import urlsplit
+        home=Path(sys.argv[2]); settings=json.loads((home/'settings.json').read_bytes())
+        os.environ.update(settings['env'])
+        assert os.environ['OTEL_TRACES_EXPORTER']=='otlp'
+        assert os.environ['OTEL_EXPORTER_OTLP_TRACES_PROTOCOL']=='http/json'
+        endpoint=urlsplit(os.environ['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'])
+        body=(home/'request.json').read_bytes()
+        connection=http.client.HTTPConnection(endpoint.hostname,endpoint.port,timeout=2)
+        connection.request('POST',endpoint.path,body,{'Content-Type':'application/json'})
+        response=connection.getresponse();response.read();print(response.status)
+        connection.close()
+        """#
+        let attributes: [[String: Any]] = [
+            ["key": "session.id", "value": ["stringValue": "synthetic-shell-session"]],
+            ["key": "prompt.id", "value": ["stringValue": "synthetic-shell-prompt"]],
+            ["key": "request_id", "value": ["stringValue": "synthetic-shell-request"]],
+            ["key": "output_tokens", "value": ["intValue": "160"]],
+            ["key": "duration_ms", "value": ["doubleValue": 2000]],
+            ["key": "user_prompt", "value": ["stringValue": "PRIVATE_SYNTHETIC_SHELL"]]
+        ]
+        let span: [String: Any] = ["name": "claude_code.llm_request", "startTimeUnixNano": "1790000000000000000",
+            "endTimeUnixNano": "1790000002000000000", "attributes": attributes]
+        let body = try JSONSerialization.data(withJSONObject: ["resourceSpans": [["scopeSpans": [["spans": [span]]]]]])
+        func home(_ name: String) throws -> URL {
+            let home = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let installer = try WindowsClaudeHookCommands.installer(home: home, root: python.deletingLastPathComponent().deletingLastPathComponent(),
+                storage: WindowsClaudeHookStorage(), script: Data(sender.utf8))
+            XCTAssertTrue(try installer.install(home: home).telemetryConfigured)
+            let settingsURL = home.appendingPathComponent("settings.json")
+            var settings = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any])
+            var env = try XCTUnwrap(settings["env"] as? [String: String])
+            XCTAssertEqual(env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"], "http://127.0.0.1:4319/v1/traces")
+            // An ephemeral test port avoids claiming another session's 4319.
+            env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://127.0.0.1:\(receiver.listeningPort)/v1/traces"
+            settings["env"] = env
+            try JSONSerialization.data(withJSONObject: settings).write(to: settingsURL)
+            try body.write(to: home.appendingPathComponent("request.json"))
+            return home
+        }
+        let spaced = try home("Claude space 用户"), plain = try home("ClaudeDirect")
+        let values = WindowsClaudeHookCommands.arguments(python: python, home: spaced, kind: .hook)
+        var routes = [["mode": "powershell", "command": WindowsClaudeHookCommands.fallback(values)]]
+        let selection = WindowsClaudeHookCommands.selection(values)
+        if selection.mode == "shortPath" { routes.append(["mode": "shortPath", "command": selection.command]) }
+        let safePython = WindowsClaudeHookCommands.directSafe(python.path) ? python.path : WindowsClaudeHookCommands.shortPath(python)
+        let safeHome = WindowsClaudeHookCommands.directSafe(plain.path) ? plain.path : WindowsClaudeHookCommands.shortPath(plain)
+        if let safePython, let safeHome {
+            let direct = WindowsClaudeHookCommands.selection(WindowsClaudeHookCommands.arguments(python: URL(fileURLWithPath: safePython), home: URL(fileURLWithPath: safeHome), kind: .hook))
+            XCTAssertEqual(direct.mode, "direct"); routes.append(["mode": "direct", "command": direct.command])
+        }
+        let driver = #"""
+        import json,os,subprocess,sys,time
+        from pathlib import Path
+        routes=json.loads(sys.argv[1]);env=dict(os.environ)
+        for key in ('MSYS_NO_PATHCONV','MSYS2_ARG_CONV_EXCL','MSYS2_ENV_CONV_EXCL','BASH_ENV','ENV'):env.pop(key,None)
+        system=Path(os.environ['SystemRoot'])/'System32'
+        env['PATH']=str(system)+os.pathsep+str(system/'WindowsPowerShell/v1.0')
+        executors={'bash':[str(Path(os.environ['ProgramFiles'])/'Git/bin/bash.exe'),'--noprofile','--norc','-c'],
+            'powershell':[str(system/'WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-NonInteractive','-Command']}
+        results=[]
+        for route in routes:
+            for shell,prefix in executors.items():
+                started=time.monotonic()
+                result=subprocess.run(prefix+[route['command']],env=env,input=b'{}',capture_output=True,timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                results.append({'mode':route['mode'],'executor':shell,'status':200 if result.stdout.strip()==b'200' else 0,
+                    'exit':result.returncode,'errorBytes':len(result.stderr),'milliseconds':round((time.monotonic()-started)*1000)})
+        print(json.dumps(results))
+        """#
+        let arguments = String(decoding: try JSONSerialization.data(withJSONObject: routes), as: UTF8.self)
+        let result = await WindowsSubprocess.capture(executable: python, arguments: ["-S", "-c", driver, arguments], timeout: 30, limit: 16384)
+        let results = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(result)) as? [[String: Any]])
+        XCTAssertEqual(results.count, routes.count * 2)
+        for item in results {
+            XCTAssertEqual(item["status"] as? Int, 200); XCTAssertEqual(item["exit"] as? Int, 0); XCTAssertEqual(item["errorBytes"] as? Int, 0)
+            print("Telemetry launch " + String(decoding: try JSONSerialization.data(withJSONObject: item, options: [.sortedKeys]), as: UTF8.self))
+        }
+        XCTAssertEqual(frames.all.count, routes.count * 2)
+        XCTAssertEqual(receiver.counters.projectedRequests, routes.count * 2)
+        XCTAssertFalse(frames.all.contains { String(decoding: $0, as: UTF8.self).contains("PRIVATE") })
     }
     func testStopReleasesEightBlockedSocketsAndRejectsNinthClient() async throws {
         let receiver = ClaudeActivityTelemetry(port: 0) { _ in XCTFail("A partial request cannot project activity") }

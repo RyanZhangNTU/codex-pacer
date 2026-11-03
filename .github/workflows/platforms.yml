@@ -78,6 +78,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Platform contract failed.' }
           python scripts/windows/build-localization.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Shared localization differs.' }
+      - name: Claude shell contract before compilation
+        run: |
+          python -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'The parent-created Claude fixture failed.' }
+          # Git Bash can change TokenOwner while keeping elevation. Exercise
+          # both inherited administrator-owned and Bash-created user-owned files.
+          $taskPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source.Replace('\','/')
+          $taskBash = Join-Path $env:ProgramFiles 'Git/bin/bash.exe'
+          & $taskBash --noprofile --norc -c 'exec "$@"' pacer $taskPython -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'The Bash-created Claude fixture failed.' }
       - name: Pinned Swift toolchain
         run: ./scripts/windows/setup-swift.ps1
       - name: Shared source compilation and engine tests
@@ -96,6 +106,8 @@ jobs:
         run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
       - name: Desktop integration tests
         run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
+      - name: Claude runtime without user Python
+        run: ./scripts/windows/test-claude-runtime.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-claude-runtime.log"
       - name: Functional presentation tests
         run: ./scripts/windows/test-presentation.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
       - name: Package unsigned Windows application
@@ -144,6 +156,8 @@ jobs:
             ${{ runner.temp }}/pacer-windows-idle.json
             ${{ runner.temp }}/pacer-desktop-build.log
             ${{ runner.temp }}/pacer-desktop-tests.log
+            ${{ runner.temp }}/pacer-claude-runtime.log
+            output/windows/claude-runtime-tests.json
             ${{ runner.temp }}/pacer-presentation-tests.log
             ${{ runner.temp }}/pacer-windows-package.log
             ${{ runner.temp }}/pacer-installer-tests.log
