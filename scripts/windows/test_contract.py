@@ -44,6 +44,37 @@ class CoreBoundaryTests(unittest.TestCase):
         text = 'import Foundation\nlet script = #"""\nimport os\nimport Darwin\n#if os(Windows)\n"""#\n/* import WinSDK */\n'
         self.assertEqual(self.check(text), (False, 0, 0))
 
+    def test_shared_test_functions_cannot_hide_in_platform_conditionals(self):
+        for text in (
+            '#if canImport(PacerMacSupport)\nfunc testMacOnly() {}\n#endif',
+            '#if os(macOS)\nfinal class Cases {\n@MainActor func testHost() {}\n}\n#endif',
+            '#if !os(Windows)\nfunc testMissingOnWindows() {}\n#endif',
+            '#if DEBUG\n#if canImport(AppKit)\nfunc testNested() {}\n#endif\n#endif',
+            '#if DEBUG\n#elseif canImport(PacerMacSupport)\nfunc testElseIf() {}\n#endif',
+            '#if !canImport(PacerMacSupport)\n#else\nfunc testMacElse() {}\n#endif',
+        ):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                contract.shared_test_contract('Fixture.swift', text)
+
+    def test_shared_test_imports_and_fixture_selection_remain_allowed(self):
+        text = ('#if canImport(PacerMacSupport)\nimport PacerMacSupport\n#else\nimport PacerEngineSupport\n#endif\n'
+                'func fixture() {\n#if canImport(PacerMacSupport)\nlet path = 1\n#else\nlet path = 2\n#endif\n}\n'
+                'func testShared() {}\n#if DEBUG\nfunc testDebug() {}\n#endif\n'
+                'let script = #"""\n#if os(macOS)\nfunc testNotSwift() {}\n#endif\n"""#\n')
+        contract.shared_test_contract('Fixture.swift', text)
+
+    def test_shared_test_scan_is_recursive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Nested').mkdir()
+            (root / 'Shared.swift').write_text('func testShared() {}', encoding='utf-8')
+            nested = root / 'Nested/NewTests.swift'
+            nested.write_text('#if canImport(PacerMacSupport)\nfunc testHidden() {}\n#endif', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, r'Nested/NewTests.swift:2'):
+                contract.shared_tests_contract(root)
+            nested.write_text('func testNowShared() {}', encoding='utf-8')
+            contract.shared_tests_contract(root)
+
     def test_package_wiring_describes_targets_and_dependencies_without_hashing_the_file(self):
         text = '.target(name: "PacerMacSupport", dependencies: ["PacerCore"]),\n' \
                '.executableTarget(name: "PacerIsland", dependencies: ["PacerCore", .product(name: "Sparkle", package: "Sparkle")])'

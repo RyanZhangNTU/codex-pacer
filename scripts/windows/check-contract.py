@@ -14,6 +14,9 @@ AVAILABILITY_MODULES = {"FoundationNetworking", "CoreGraphics"}
 OWNERS = {"P1", "P2", "P3", "P4"}
 IMPORT = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|typealias|let|var|func)\s+)?(\w+)", re.M)
 BRANCH = re.compile(r"^\s*#(?:if|elseif)\s+(.+)", re.M)
+PLATFORM_TEST_CONDITION = re.compile(
+    r"\b(?:os|targetEnvironment)\s*\(|\bcanImport\s*\(\s*(?:PacerMacSupport|PacerEngineSupport|"
+    r"AppKit|SwiftUI|Security|LocalAuthentication|CoreServices|CoreGraphics|CoreFoundation|Darwin|Glibc|WinSDK)\s*\)")
 GENERATED = ("ActivityNavigationTargetPortable.swift", "ClaudeCloudPortable.swift",
              "ClaudeDesktopRecordsPortable.swift", "ClaudeWebQuotaPortable.swift")
 
@@ -65,6 +68,28 @@ def swift_code(text):
             if result[index] not in "\r\n":
                 result[index] = " "
     return "".join(result)
+
+
+def shared_test_contract(name, text):
+    """Platform imports and fixture paths may vary; test functions may not."""
+    groups = []
+    for number, line in enumerate(swift_code(text).splitlines(), 1):
+        directive = re.match(r"^\s*#(if|elseif|else|endif)\b(.*)", line)
+        if directive:
+            kind, expression = directive.groups()
+            if kind == "if":
+                groups.append(bool(PLATFORM_TEST_CONDITION.search(expression)))
+            elif kind == "elseif" and groups:
+                groups[-1] |= bool(PLATFORM_TEST_CONDITION.search(expression))
+            elif kind == "endif" and groups:
+                groups.pop()
+        if any(groups) and re.search(r"\bfunc\s+test\w*\s*\(", line):
+            raise ValueError(f"Platform-conditional test belongs in a host test target: {name}:{number}")
+
+
+def shared_tests_contract(directory):
+    for path in sorted(directory.rglob("*.swift")):
+        shared_test_contract(path.relative_to(directory).as_posix(), path.read_text(encoding="utf-8"))
 
 
 def source_contract(name, text):
@@ -223,6 +248,7 @@ def check(root=ROOT, require_parity=False):
         if "build-claude-core" in text or any(copy in text for copy in GENERATED):
             raise ValueError("Build/test still invokes generated Claude sources: " + name)
     all_sources, counts = core_contract(core)
+    shared_tests_contract(root / "native/Tests/PacerCoreTests")
     gzip = root / "native/Sources/CGzip"
     provenance = read("native/Sources/CGzip/provenance.json")
     for name, digest in provenance["sha256"].items():
