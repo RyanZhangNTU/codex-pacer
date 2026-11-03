@@ -991,6 +991,13 @@
     "windows.storage.use_defaults": "Back Up and Use Defaults",
     "windows.support.share_message": "Codex Pacer keeps Codex, Claude Code and DeepSeek Harness activity in a desktop island on Windows.",
     "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link.",
-    "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
+    "windows.updates.available": "An update is available. Use the update window to download and install it.",
+    "windows.updates.expired": "The update operation was idle for 30 minutes and its local connection closed. Download will start with a fresh check.",
+    "windows.updates.failed": "The update could not finish. Try again; if it timed out, restart Pacer first.",
+    "windows.updates.install_failed": "The update did not finish. Pacer has reopened; check for updates to try again.",
+    "windows.updates.notes_unavailable": "No signed release notes are available for this installed build.",
+    "windows.updates.pending": "Automatic updates are not available in the Windows preview yet.",
+    "windows.updates.unconfigured": "The Windows update feed and trust key have not been configured.",
+    "windows.updates.view_notes": "View release notes"
   }
 }

@@ -4,6 +4,8 @@ The per-user installer, startup state, maintenance helpers and lifecycle checks 
 
 Preference keys, edit acknowledgements, migration and protected history storage are described in [Windows preferences and quota history](windows-preferences.md).
 
+The WinSparkle host, scoped local proxy, update verification and installation handoff are described in [Windows automatic updates](windows-automatic-updates.md).
+
 Claude and DeepSeek sign in through separate Pacer-owned WebView2 profiles. Before showing the site, the host records the existing session's one-way fingerprint. A changed fingerprint shows confirmation and closes the window after 1.5 seconds. Continue, Ctrl+Enter, Later and the close button also finish while a session is present; an unchanged session retains its history and selected workspace. Browser-process failure cannot complete sign-in. The host checks navigation and a one-second timer only while the window is open; closing stops the observer.
 
 Login revokes old quota reads before the profile can change. Claude clears the saved organization through the normal acknowledged preference transaction only for a new session. DeepSeek passes an optional `webNewSession` flag to the existing shared coordinator; omitted flags retain the older protocol behavior. Credential fingerprints still independently protect billing history. Sign-out cancels reads before clearing the owned profile; a failed clear stays paused. No external browser profile, cookie store or account is imported.
@@ -66,6 +68,8 @@ The earlier cold `0x80040154` was a test-environment issue: a Codex child saw on
 ## Local acceptance
 
 Welcome, What's New, Help and Support behavior and validation are described in [Windows guide pages](windows-guide-pages.md). Use `--welcome` or `--whats-new` with a demo instance for synthetic checks; demo runs never record either page as seen.
+
+[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. Remote hooks and real remote acceptance are tracked separately.
 
 Use demo data for screenshots and interaction checks:
 

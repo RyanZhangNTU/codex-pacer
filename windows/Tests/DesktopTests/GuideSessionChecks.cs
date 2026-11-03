@@ -61,6 +61,16 @@ internal static class GuideSessionChecks
             Check(File.ReadAllBytes(file).SequenceEqual(unchanged), "Reading page metadata never saves preferences");
         }
         finally { File.Delete(file); }
+        foreach (var (welcomed, expected) in new[] { (0, "welcome"), (4, "whatsNew") })
+        {
+            var upgraded = await Query(new("4.2.0", "3.1.0", welcomed, "en", false, false, false, false));
+            var result = new UpdateInstallResult(1, true, "4.2.0.1", "Synthetic signed feed notes");
+            var startup = StartupPresentation.Resolve(upgraded, result);
+            Check(startup.Guide == expected && startup.WindowCount == 1 && startup.Failure == null,
+                "An upgraded launch opens exactly its built-in Welcome or What's New, with no additional feed-notes window");
+            Check(StartupPresentation.Resolve(upgraded, result with { Success = false }).Failure == "windows.updates.install_failed",
+                "A failed installation keeps its failure status independently of the single guide window");
+        }
     }
     private static async Task CheckForcedSettings(Func<GuideRequest, Task<GuideCatalog>> query, string file, bool welcome)
     {

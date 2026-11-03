@@ -9,6 +9,10 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["--serve-update-feed", var updateDirectory, var updateScope, var updateInstaller, var updateArchitecture])
+        { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
+        if (args is ["--updates-only"] or ["--updates-only", _])
+        { await WindowsUpdateChecks.Run(args.Length == 2 ? args[1] : null); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
@@ -30,6 +34,10 @@ internal static class Program
         { PreferencesChecks.Run(); await PreferencesSessionChecks.Run(); await GuideControlChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
+        if (args is ["--ssh-only"])
+        { SshTerminalChecks.Run(); Console.WriteLine("PASS SSH terminal argv, fallback and preference persistence"); return 0; }
+        if (args is ["--navigation-only"])
+        { await ConversationApplicationChecks.Run(); SshTerminalChecks.Run(); Console.WriteLine("PASS host capabilities and SSH navigation"); return 0; }
         if (args is ["--installation-only"])
         { InstallationServiceChecks.Run(); Console.WriteLine("PASS installation identity, repair, ownership, data retention, failure rollback and notification cleanup"); return 0; }
         if (args.Contains("--hold")) { await Task.Delay(Timeout.Infinite); return 0; }
@@ -47,6 +55,8 @@ internal static class Program
             try { await run(); passed++; Console.WriteLine("PASS " + name); }
             catch (Exception error) { failed++; Console.WriteLine("FAIL " + name + ": " + error); }
         }
+
+        await Test("Windows update verification and asynchronous lifecycle", () => WindowsUpdateChecks.Run());
 
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
         await Test("guide pages preserve version records, quiet launches and browser actions", () => GuideSessionChecks.Run(engine));
@@ -91,6 +101,7 @@ internal static class Program
         });
 
         await Test("provider-pinned conversation links, matched cloud fallback and existing host plans", ConversationApplicationChecks.Run);
+        await Test("SSH terminal argv, console fallback and shared preference key", () => { SshTerminalChecks.Run(); return Task.CompletedTask; });
         await Test("real engine: Claude/Codex/DeepSeek discovery, reads and write notifications beyond MAX_PATH", () => LongPathChecks.Run(engine));
 
         await Test("real Claude file notification: first reply after large Desktop metadata", async () =>

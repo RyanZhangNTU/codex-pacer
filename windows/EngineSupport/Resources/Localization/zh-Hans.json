@@ -1,4 +1,9 @@
 {
+  "windows.updates.expired": "更新操作已空闲 30 分钟，本地连接已关闭。再次下载时会先重新检查更新。",
+  "windows.updates.unconfigured": "Windows 更新源和信任密钥尚未配置。",
+  "windows.updates.failed": "更新未能完成，请重试；如果请求超时，请先重启 Pacer。",
+  "windows.updates.available": "有可用更新，请在更新窗口中确认下载和安装。",
+  "windows.updates.install_failed": "更新未能完成，Pacer 已重新打开。请检查更新后重试。",
   "windows.storage.restored": "设置文件已损坏，已恢复默认设置。备份：{0}",
   "windows.storage.future": "设置或历史文件由更新版本写入，当前版本不会修改它。你可以先备份，再使用默认设置。",
   "windows.storage.use_defaults": "备份并使用默认设置",
@@ -107,5 +112,7 @@
   "windows.deepseek.budget_help": "按最近 7 天的日均支出加 20% 填入；可修改或清空任一金额。预算只用于提醒，不会拦截请求。支出以账户扣费为准，包括此电脑估算和其他来源扣费；每周从周一 00:00 开始。",
   "windows.deepseek.pricing_note": "费用根据此电脑的 token 数和 DeepSeek 公布的价格估算：北京时间工作日 09:00-12:00、14:00-18:00 为双倍价格，周末和 2026 年法定节假日使用非高峰价格。调休工作日按周末处理，因此仅供估算。自 2026 年 11 月 1 日起，网页搜索按每千次 5 元计费。仅估算 DeepSeek 官方渠道，最终以平台账单为准。",
   "windows.deepseek.sessions": "此电脑上的会话",
-  "windows.platform.unsupported": "Codex Pacer 需要 Windows 10 内部版本 19041 或更高版本。"
+  "windows.platform.unsupported": "Codex Pacer 需要 Windows 10 内部版本 19041 或更高版本。",
+  "windows.updates.view_notes": "查看发行说明",
+  "windows.updates.notes_unavailable": "当前安装版本暂无可验证签名的发行说明。"
 }

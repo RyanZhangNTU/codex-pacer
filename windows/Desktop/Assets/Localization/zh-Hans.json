@@ -991,6 +991,13 @@
     "windows.storage.use_defaults": "备份并使用默认设置",
     "windows.support.share_message": "Codex Pacer 在 Windows 桌面岛中显示 Codex、Claude Code 和 DeepSeek Harness 的动态。",
     "windows.support.share_unavailable": "Windows 分享当前不可用。你可以复制项目链接后分享。",
-    "windows.updates.pending": "Windows 预览版暂不支持自动更新。"
+    "windows.updates.available": "有可用更新，请在更新窗口中确认下载和安装。",
+    "windows.updates.expired": "更新操作已空闲 30 分钟，本地连接已关闭。再次下载时会先重新检查更新。",
+    "windows.updates.failed": "更新未能完成，请重试；如果请求超时，请先重启 Pacer。",
+    "windows.updates.install_failed": "更新未能完成，Pacer 已重新打开。请检查更新后重试。",
+    "windows.updates.notes_unavailable": "当前安装版本暂无可验证签名的发行说明。",
+    "windows.updates.pending": "Windows 预览版暂不支持自动更新。",
+    "windows.updates.unconfigured": "Windows 更新源和信任密钥尚未配置。",
+    "windows.updates.view_notes": "查看发行说明"
   }
 }

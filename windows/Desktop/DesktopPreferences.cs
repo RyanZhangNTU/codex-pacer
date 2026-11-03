@@ -49,6 +49,8 @@ internal sealed record DesktopPreferences
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
+    public bool MonitorSSH { get; init; } = true;
+    public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
     public string CodexExecutable { get; init; } = "";
     public string CodexHome { get; init; } = "";
@@ -102,6 +104,7 @@ internal sealed record DesktopPreferences
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
             showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
+            monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
             reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit },

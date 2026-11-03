@@ -8,6 +8,9 @@ public enum PacerEngine {
     public static func run() async {
         WindowsResources.configure()
         #if os(Windows)
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--ssh-terminal" {
+            WindowsSSHTerminal.run(CommandLine.arguments[2]); return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--diagnose-desktop-runtime") {
             let report = WindowsDesktopDiagnostic()
             if CommandLine.arguments.indices.contains(index + 2), let thread = UUID(uuidString: CommandLine.arguments[index + 2])?.uuidString.lowercased() {
@@ -97,12 +100,14 @@ public enum PacerEngine {
                 hookServices = .live(root: URL(fileURLWithPath: path, isDirectory: true))
             }
         }
+        let ssh: WindowsSSHServices? = demo || readOnly ? nil : WindowsSSHServices()
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
             notificationStore: notificationStore,
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
+            sshServices: ssh, claudeRemoteServices: ssh.flatMap { .live(ssh: $0) },
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices, allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
@@ -203,6 +208,13 @@ actor EngineRuntime {
     private var showEmbeddedCodexSessions = true
     private var showEmbeddedClaudeSessions = true
     private var showClaudeCloudProjects = true
+    private var monitorSSH = true
+    private let sshServices: WindowsSSHServices?
+    private let claudeRemoteServices: EngineClaudeRemoteServices?
+    private lazy var claudeRemoteSetup = claudeRemoteServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now) }
+    private var claudeRemoteSetups: [EngineClaudeRemoteSetup] = []
+    private var codexRemoteTargets: [RemoteActivityTarget] = [], claudeRemoteTargets: [RemoteActivityTarget] = []
+    private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
     private var deepseekNoticePolicy = DeepSeekNoticePolicy()
@@ -232,7 +244,7 @@ actor EngineRuntime {
         var requests: [PendingAttentionRequest] = []
         var available = false
     }
-    private lazy var claudeActivityMonitor = ClaudeActivityMonitor(clock: now)
+    private lazy var claudeActivityMonitor = ClaudeActivityMonitor(clock: now, ssh: sshServices)
     private lazy var deepseekActivityMonitor = DeepSeekActivityMonitor(clock: now)
     private var claudeLocal = LocalActivitySnapshot(), deepseekLocal = LocalActivitySnapshot()
     private var deepseekUsage = DeepSeekLocalUsage()
@@ -266,7 +278,9 @@ actor EngineRuntime {
     private var desktopState: CodexDesktopState?
     private var pendingDesktopEndings: [String: SessionActivity] { get { activityState.pendingCodexEndings } set { activityState.pendingCodexEndings = newValue } }
     private var latestFirstOutput: (at: Date, seconds: Double)? { activityState.latestFirstOutput }
-    private lazy var desktopMonitor: RealtimeActivityMonitor? = desktopServices?.makeMonitor()
+    private lazy var desktopMonitor: RealtimeActivityMonitor? = desktopServices?.makeMonitor(ssh: sshServices, targets: { [weak self] _ in
+        await self?.codexRemoteTargets ?? []
+    })
     private var quota: [AgentProvider: QuotaSnapshot] = [:]
     private var codexQuota: QuotaSnapshot?
     private var codexQuotaState: CodexQuotaState?
@@ -347,6 +361,8 @@ actor EngineRuntime {
          desktopServices: CodexDesktopServices? = nil,
          balanceServices: DeepSeekBalanceServices? = nil,
          claudeServices: ClaudeQuotaServices? = nil,
+         sshServices: WindowsSSHServices? = nil,
+         claudeRemoteServices: EngineClaudeRemoteServices? = nil,
          cloudServices: ClaudeCloudServices? = nil,
          navigationServices: ActivityNavigationServices? = nil,
          navigationClock: @escaping @Sendable () -> TimeInterval = { ActivityNavigationState.monotonicNow },
@@ -367,6 +383,8 @@ actor EngineRuntime {
         self.balanceServices = balanceServices
         self.claudeServices = claudeServices; self.allowsLiveClaudeWeb = allowsLiveClaudeWeb
         self.cloudServices = cloudServices
+        self.sshServices = sshServices
+        self.claudeRemoteServices = claudeRemoteServices
         self.navigationServices = navigationServices ?? (demo ? .demo : .live)
         self.navigationClock = navigationClock; self.navigationErrorDuration = navigationErrorDuration
         self.activityHostServices = activityHostServices
@@ -501,6 +519,7 @@ actor EngineRuntime {
             do {
                 var input = ActivityNavigationServices.Input(context: context, activity: target, home: home, transcript: transcript)
                 input.cachedHost = hostTracking.application(for: target, activities: activities, inbox: inbox)
+                input.remoteTarget = (target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).first { $0.id == target.sourceHostID }
                 let plan = try await navigationServices.resolve(input)
                 guard navigationIsCurrent(entry), navigationState.owns(operation), operation.isCurrent(version: lifecycle.version(target.provider), active: active, inbox: inbox, scope: entry.cloudContext),
                       home == navigationHome(for: target.provider),
@@ -668,6 +687,13 @@ actor EngineRuntime {
                 output(bytes + Data([10]))
             } else { failure(id: command.id, code: "sourceReportLimit") }
             return true
+        case "retryClaudeRemoteSetup":
+            guard active, !demo, let source = command.params?.sourceID, source.utf8.count <= 256,
+                  let context = command.params?.context, UUID(uuidString: context) != nil,
+                  let setup = claudeRemoteSetup,
+                  await setup.retry(sourceID: source, context: context) else {
+                failure(id: command.id, code: "staleRemoteSetup"); return true
+            }
         case "retryClaudeSetup":
             guard claudeHookServices != nil, enabled.contains(.claude), !demo else { failure(id: command.id, code: "claudeSetupUnavailable"); return true }
             scheduleClaudeHooks(force: true)
@@ -876,6 +902,10 @@ actor EngineRuntime {
         if let shown = parameters.showEmbeddedCodexSessions { showEmbeddedCodexSessions = shown }
         if let shown = parameters.showEmbeddedClaudeSessions { showEmbeddedClaudeSessions = shown }
         if let shown = parameters.showClaudeCloudProjects { showClaudeCloudProjects = shown }
+        if let value = parameters.monitorSSH, value != monitorSSH {
+            monitorSSH = value; ownedWork.cancel(.init(.discovery, identifier: "ssh"))
+            codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
+        }
         if var value = parameters.deepseekSettings {
             if value.balanceSource == nil { value.balanceSource = deepseekSettings.balanceSource }
             deepseekSettings = value
@@ -889,10 +919,14 @@ actor EngineRuntime {
             deepseekNoticePolicy = .init()
         }
         if changesCodex || changesClaude || changesDeepSeek { activityState.clearFirstOutput() }
-        inbox.bindSourceHomes(provider: .codex, localHome: codexHome)
-        inbox.bindSourceHomes(provider: .claude, localHome: claudeHome)
+        if changesCodex || changesClaude {
+            ownedWork.cancel(.init(.discovery, identifier: "ssh"))
+            codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
+        }
+        bindRemoteCompletionSources()
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
         let plan = lifecycle.settings(lifecycleConfiguration)
+        await bindClaudeRemoteSetup()
         for provider in plan.changedProviders {
             resetSourceState(provider)
             navigationState.cancel(provider: provider)
@@ -936,10 +970,11 @@ actor EngineRuntime {
             scheduleClaudeHooks()
             lastClaudeDiscovery = now()
             if enabled.contains(.claude) {
-                await claudeActivityMonitor.start(home: claudeHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance in
+                await claudeActivityMonitor.start(home: claudeHome, remoteTargets: monitorSSH ? claudeRemoteTargets : [], refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance in
                     await self?.receiveClaudeLocal(rows, statuses: statuses, attention: attention, performance: performance, context: context)
                 }
             } else { await claudeActivityMonitor.shutdown(); claudeLocal = LocalActivitySnapshot() }
+            await bindClaudeRemoteSetup()
         } else if provider == .deepseek {
             if enabled.contains(.deepseek) {
                 await deepseekActivityMonitor.start(home: deepseekHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance, usage in
@@ -979,7 +1014,11 @@ actor EngineRuntime {
         guard active, lifecycle.version(.claude) == context else { return }
         inbox.remove(activityIDs: exclusions)
         let status = statuses["local"]
-        claudeLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance), requests: attention,
+        claudeRemoteStatuses = statuses.filter { $0.key != "local" && allowsRemoteSource($0.key, provider: .claude) }
+        await bindClaudeRemoteSetup()
+        guard active, lifecycle.version(.claude) == context else { return }
+        claudeLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance).filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
+            requests: attention.filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
             available: status?.connected == true && status?.sourceAvailable != false)
         if projectionReady, refreshTask == nil { projectLocal(.claude, snapshot: claudeLocal) }
     }
@@ -1084,9 +1123,11 @@ actor EngineRuntime {
                 case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, requested: force)
                 }
             case .codexActivity: await refresh(discover: true, refreshActivityMonitors: false)
-            case .remoteActivity: lastRemoteDiscovery = now() // Transport activation remains P2.
-            case .activity(let provider): await bindActivityMonitor(provider)
-            case .claudeTargets: await bindActivityMonitor(.claude)
+            case .remoteActivity: lastRemoteDiscovery = now(); scheduleRemoteDiscovery()
+            case .activity(let provider):
+                await bindActivityMonitor(provider)
+                if provider == .claude { scheduleRemoteDiscovery() }
+            case .claudeTargets: await bindActivityMonitor(.claude); scheduleRemoteDiscovery()
             case .clock: if !demo { restartPresentationClock() }
             case .displayExpiry: scheduleActivityDisplay(at: now())
             case .pruneActivities: activityState.prune(at: now(), retention: retention)
@@ -1279,24 +1320,80 @@ actor EngineRuntime {
         guard !demo, enabled.contains(.codex) else {
             desktopState = nil; await desktopMonitor?.shutdown(); return
         }
-        await desktopMonitor?.startAsync(home: codexHome, includeSSH: false, includeRemoteControl: false,
-            useSSHFallback: false, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] value in
+        await desktopMonitor?.startAsync(home: codexHome, includeSSH: monitorSSH && sshServices != nil, includeRemoteControl: false,
+            useSSHFallback: true, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] value in
                 await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
-                    attention: value.localDesktopAttention, attentionThreads: value.attentionThreads, names: value.names,
-                    performance: value.performance, status: value.localDesktopStatus))
+                    attention: value.localDesktopAttention + value.attention.filter { $0.sourceHostID != nil }, attentionThreads: value.attentionThreads, names: value.names,
+                    performance: value.performance, status: value.localDesktopStatus, remoteStatuses: value.statuses.filter { $0.key != "local" }))
             }
     }
 
     private func receiveDesktop(_ state: CodexDesktopState) {
         guard active, state.context == lifecycle.version(.codex), enabled.contains(.codex), !demo else { return }
-        desktopState = state
+        let rows = state.activities.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }
+        desktopState = .init(context: state.context, activities: rows,
+            attention: state.attention.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }, attentionThreads: state.attentionThreads,
+            names: state.names, performance: state.performance, status: state.status,
+            remoteStatuses: state.remoteStatuses.filter { allowsRemoteSource($0.key, provider: .codex) })
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
         else {
             // Initialization/source reads may be awaiting I/O. Keep endings
             // until the first projection; a later EOF can release the stream.
-            activityState.rememberCodexEndings(state.activities)
+            activityState.rememberCodexEndings(rows)
         }
+    }
+    private func allowsRemoteSource(_ source: String?, provider: AgentProvider) -> Bool {
+        guard let source else { return true }
+        return monitorSSH && (provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == source }
+    }
+
+    private func scheduleRemoteDiscovery() {
+        guard !demo, monitorSSH, let services = sshServices else { return }
+        let key = ApplicationWorkRegistry.Key(.discovery, identifier: "ssh")
+        guard ownedWork.task(key) == nil else { return }
+        let owner = ownedWork.begin(key, version: generation), codex = codexHome, claude = claudeHome
+        let codexEnabled = enabled.contains(.codex), claudeEnabled = enabled.contains(.claude)
+        let task = Task { [weak self] in
+            let codexTargets = codexEnabled ? await services.codexTargets(home: codex) : []
+            let claudeTargets = claudeEnabled ? await services.claudeTargets(codexHome: codex, claudeHome: claude) : []
+            await self?.receiveRemoteTargets(codexTargets, claude: claudeTargets, owner: owner)
+        }
+        ownedWork.attach(task, to: owner)
+    }
+    private func receiveRemoteTargets(_ codex: [RemoteActivityTarget], claude: [RemoteActivityTarget], owner: ApplicationWorkRegistry.Ticket) async {
+        guard ownedWork.owns(owner) else { return }
+        let current = lifecycle.owns(owner)
+        ownedWork.finish(owner)
+        guard active, monitorSSH, current, !Task.isCancelled else { return }
+        codexRemoteTargets = codex; claudeRemoteTargets = claude
+        await bindClaudeRemoteSetup()
+        bindRemoteCompletionSources()
+        await bindDesktopMonitor(); await bindActivityMonitor(.claude)
+    }
+    private func bindRemoteCompletionSources() {
+        inbox.bindSourceHomes(provider: .codex, localHome: codexHome,
+            remoteHomes: Dictionary((monitorSSH ? codexRemoteTargets : []).map { ($0.id, $0.home) }, uniquingKeysWith: { _, new in new }))
+        inbox.bindSourceHomes(provider: .claude, localHome: claudeHome,
+            remoteHomes: Dictionary((monitorSSH ? claudeRemoteTargets : []).map { ($0.id, $0.home) }, uniquingKeysWith: { _, new in new }))
+    }
+
+    private func bindClaudeRemoteSetup() async {
+        guard let setup = claudeRemoteSetup else { return }
+        await setup.configure(targets: claudeRemoteTargets, statuses: claudeRemoteStatuses,
+            enabled: active && monitorSSH && enabled.contains(.claude), version: lifecycle.version(.claude),
+            update: { [weak self] rows, version in await self?.receiveClaudeRemoteSetups(rows, version: version) },
+            didConfigure: { [weak self] source, version in await self?.refreshConfiguredClaudeRemote(source, version: version) })
+    }
+    private func receiveClaudeRemoteSetups(_ rows: [EngineClaudeRemoteSetup], version: UInt64) {
+        guard active, lifecycle.version(.claude) == version, rows != claudeRemoteSetups else { return }
+        claudeRemoteSetups = rows
+        if projectionReady { publish(notices: []) }
+    }
+    private func refreshConfiguredClaudeRemote(_ source: String, version: UInt64) async {
+        guard active, lifecycle.version(.claude) == version, monitorSSH,
+              claudeRemoteTargets.contains(where: { $0.id == source }) else { return }
+        await claudeActivityMonitor.refresh(remoteTargetID: source)
     }
 
     func refresh(discover: Bool, refreshActivityMonitors: Bool = true) async {
@@ -1409,6 +1506,12 @@ actor EngineRuntime {
             current = current.filter { enabled.contains($0.provider) }
             pending = pending.filter { enabled.contains($0.provider) }
         }
+        if !demo, monitorSSH {
+            status += claudeRemoteStatuses.map { id, value in
+                EngineSource(id: "claude:" + id, provider: "claude", available: value.connected && value.sourceAvailable != false,
+                    transport: "ssh", reason: nil)
+            }
+        }
         activityState.localActivities = current.filter { $0.provider == .codex }
         activityState.claudeActivities = current.filter { $0.provider == .claude }
         activityState.deepseekActivities = current.filter { $0.provider == .deepseek }
@@ -1423,6 +1526,12 @@ actor EngineRuntime {
             activityState.applyCodexMetadata(names: desktop.names, performance: desktop.performance, at: date, visibility: activityVisibility)
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
+            if monitorSSH {
+                status += desktop.remoteStatuses.map { id, value in
+                    EngineSource(id: "codex:" + id, provider: "codex", available: value.connected && value.sourceAvailable != false,
+                        transport: "ssh", reason: nil)
+                }
+            }
         } else {
             activityState.remoteActivities = []; activityState.codexReceivedRequests = []
             activityState.codexAttentionThreadIDs = []; activityState.codexStreamConnected = false
@@ -1558,6 +1667,10 @@ actor EngineRuntime {
                 if activity.provider == .deepseek { return true }
                 if demo { return true }
                 if activity.claudeCloud != nil { return activity.threadURL != nil }
+                if let source = activity.sourceHostID {
+                    return monitorSSH && (activity.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == source }
+                        && activity.threadID.flatMap(UUID.init(uuidString:)) != nil
+                }
                 #if os(Windows)
                 if activity.provider == .codex, !activity.launchedByEmbeddingApp,
                    !codexDefaultProfile { return false }
@@ -1591,7 +1704,8 @@ actor EngineRuntime {
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
             notificationProjections: notificationProjections,
-            navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup)
+            navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup,
+            claudeRemoteSetups: claudeRemoteSetups)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }
@@ -1661,13 +1775,14 @@ actor EngineRuntime {
         #endif
     }
     private func cleanupSources(quota: CodexQuotaMonitor?, claude: ClaudeQuotaMonitor?, balance: DeepSeekBalanceMonitor?, sleeping: Bool) async {
-        let cloud = claudeCloudMonitor, desktop = desktopMonitor, web = webBridge, claudeWeb = claudeWebBridge
+        let cloud = claudeCloudMonitor, desktop = desktopMonitor, web = webBridge, claudeWeb = claudeWebBridge, remoteSetup = claudeRemoteSetup
         let deadline = ShutdownDeadline(), claudeActivity = claudeActivityMonitor, deepseekActivity = deepseekActivityMonitor
         var operations: [ApplicationLifecycleCoordinator.Resource: ApplicationLifecycleCoordinator.Cleanup] = [
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claude?.stop() },
             .cloud: { if sleeping { await cloud?.suspend() } else { await cloud?.stop() } },
             .realtime: { await desktop?.shutdown(deadline: deadline) }, .balance: { await balance?.stop() },
-            .claudeActivity: { await claudeActivity.shutdown(deadline: deadline) }, .deepseekActivity: { await deepseekActivity.shutdown() }
+            .claudeActivity: { await claudeActivity.shutdown(deadline: deadline) }, .deepseekActivity: { await deepseekActivity.shutdown() },
+            .remoteSetup: { await remoteSetup?.shutdown() }
         ]
         if !sleeping {
             operations[.web] = { await web.setAvailable(false) }
@@ -1809,6 +1924,8 @@ actor EngineRuntime {
     private func navigationIsCurrent(_ entry: ActivityNavigationRegistry.Entry) -> Bool {
         active && projectionReady && navigationEntry(context: entry.link.context)?.link == entry.link && enabled.contains(entry.target.provider) &&
             entry.members.allSatisfy({ inbox.isCurrentSource($0.source) }) &&
+            (entry.target.sourceHostID == nil || entry.target.claudeCloud != nil ||
+                (monitorSSH && (entry.target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == entry.target.sourceHostID })) &&
             (entry.target.claudeCloud == nil || (showClaudeCloudProjects && entry.cloudContext == cloudNavigationContext))
     }
     func failure(id: String?, code: String) {

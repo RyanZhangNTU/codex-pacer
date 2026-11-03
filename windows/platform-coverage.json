@@ -149,15 +149,15 @@
     {
       "id": "claude-remote",
       "status": "pending",
-      "evidence": [],
+      "evidence": ["windows/Tests/EngineTests/WindowsClaudeRemoteTests.swift", "windows/Tests/EngineTests/WindowsSSHTests.swift", "docs/windows-ssh.md"],
       "priority": "P2",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "Claude SSH 发现和 Desktop 保存路由，host/user/port/identity 同一身份",
         "远端 hooks 自动设置、版本/幂等、失败状态、30 分钟重试和手动 retry",
         "持续生命周期、断线/重连、helper 退出和真实 TTY resume；不发送 prompt"
       ],
-      "previewNote": "SSH/WSL discovery, isolated remote setup, resume and owned helper shutdown need Windows coverage.",
+      "previewNote": "Synthetic Windows SSH checks cover shared hook installation, preserved user entries and renderer metadata, version/idempotence, failures, 30-minute retry/manual retry, EOF/timeout and source revocation. No real remote was modified. Real SSH/TTY lifecycle and connection-page acceptance remain pending; WSL belongs to its own feature.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -827,7 +827,7 @@
     {
       "id": "ssh-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "发现 Codex/Claude 已用 hosts、端口/身份文件与路由去重、既有非交互访问/host keys",
@@ -838,8 +838,14 @@
         "docs/guide.md",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Windows OpenSSH 与真实 TTY 对应 Mac SSH 功能。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsSSHTests.swift",
+        "windows/Tests/Fixtures/SSH/Program.cs",
+        "windows/Tests/DesktopTests/SshTerminalChecks.cs",
+        "windows/Tests/PresentationTests/SettingsPresentationChecks.cs",
+        "docs/windows-ssh.md"
+      ],
+      "previewNote": "Windows synthetic SSH executable verified saved-route discovery/deduplication, bounded command transport, ordered stdin/EOF, runtime approval/reply/endings, reconnect, disable/reopen and terminal argv/fallback. Real noninteractive remote access, real TTY resume and remote sleep/reconnect await user acceptance. Claude remote hook setup is a separate PR.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -1110,8 +1116,8 @@
         "native/Sources/PacerIsland/UpdateSettingsView.swift",
         "README.md"
       ],
-      "evidence": [],
-      "previewNote": "优先评估 WinSparkle appcast，与 Mac 共用同版中英发行说明。",
+      "evidence": ["windows/Tests/DesktopTests/WindowsUpdateChecks.cs", "windows/Tests/DesktopTests/UpdateHttpsFixture.cs", "docs/windows-automatic-updates.md"],
+      "previewNote": "Development checks on Windows cover isolated signed HTTPS feeds/packages, TLS pinning, redirects, token lifetime, async deadlines, rollback and install/relaunch ordering. WinSparkle UI and complete QA installation/relaunch await unified integration. Production feed, Ed25519 trust and Authenticode signer pin remain unconfigured. No previewStatus promotion.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []

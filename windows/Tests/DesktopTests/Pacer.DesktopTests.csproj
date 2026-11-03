@@ -7,6 +7,10 @@
     <AssemblyName>Pacer.DesktopTests</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
+    <Compile Include="../../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <Compile Include="../../Desktop/WinSparkleNative.cs" Link="WinSparkleNative.cs"/>
+    <Compile Include="../../Desktop/WindowsUpdateService.cs" Link="WindowsUpdateService.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
@@ -18,6 +22,7 @@
 
     <Compile Include="../../Desktop/PreferencesSession.cs" Link="PreferencesSession.cs"/>
     <Compile Include="../../Desktop/GuidePages.cs" Link="GuidePages.cs"/>
+    <Compile Include="../../Desktop/StartupPresentation.cs" Link="StartupPresentation.cs"/>
     <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>
     <Compile Include="../../Desktop/NotificationSession.cs" Link="NotificationSession.cs"/>
     <Compile Include="../../Desktop/NotificationActions.cs" Link="NotificationActions.cs"/>
@@ -29,6 +34,7 @@
     <Compile Include="../../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
     <Compile Include="../../Desktop/WindowsNotificationRegistration.cs" Link="WindowsNotificationRegistration.cs"/>
     <Compile Include="../../Desktop/WindowsConversationApplication.cs" Link="WindowsConversationApplication.cs"/>
+    <Compile Include="../../Desktop/WindowsSshTerminal.cs" Link="WindowsSshTerminal.cs"/>
     <Compile Include="../../Desktop/WindowsHarnessApplication.cs" Link="WindowsHarnessApplication.cs"/>
     <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
     <Compile Include="../../Desktop/NativeMotion.cs" Link="NativeMotion.cs"/>

@@ -39,7 +39,7 @@ public partial class App
             if (quitting) return;
             if (catalog.RecordLaunch && await guides.RecordAsync(false) != PreferencesApplyResult.Applied)
                 island?.SetStatus(ui.Text("windows.settings.save_failed"));
-            if (catalog.Page == null) return;
+            if (StartupPresentation.Resolve(catalog, null).Guide == null) return;
             GuideWindow? window = null;
             void Settings(string pane)
             {

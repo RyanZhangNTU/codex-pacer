@@ -29,10 +29,12 @@ struct EngineCommand: Decodable {
         var navigationMessage: String?
         var deepseekHome: String?
         var sourceHome: String?
+        var sourceID: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
         var showEmbeddedClaudeSessions: Bool?
         var showClaudeCloudProjects: Bool?
+        var monitorSSH: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
         var retentionMinutes: Int?
@@ -266,6 +268,7 @@ struct EngineSnapshot: Codable, Equatable {
     let claudeCloudConnection: EngineClaudeCloudConnection?
     let activityLinks: [EngineActivityLink]?
     let claudeSetup: EngineClaudeHookSetup?
+    let claudeRemoteSetups: [EngineClaudeRemoteSetup]?
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
 
@@ -277,7 +280,8 @@ struct EngineSnapshot: Codable, Equatable {
          deepseekConnection: EngineDeepSeekConnection? = nil, claudeConnection: EngineClaudeConnection? = nil,
          claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil,
          notificationProjections: [EngineNotice]? = nil,
-         navigationError: EngineNavigationFailure? = nil, openingActivityIDs: [String]? = nil, claudeSetup: EngineClaudeHookSetup? = nil) {
+         navigationError: EngineNavigationFailure? = nil, openingActivityIDs: [String]? = nil, claudeSetup: EngineClaudeHookSetup? = nil,
+         claudeRemoteSetups: [EngineClaudeRemoteSetup]? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
         self.demo = demo; capturedAt = now.timeIntervalSince1970
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
@@ -297,6 +301,7 @@ struct EngineSnapshot: Codable, Equatable {
         self.claudeCloudConnection = claudeCloudConnection
         self.activityLinks = activityLinks
         self.claudeSetup = claudeSetup
+        self.claudeRemoteSetups = claudeRemoteSetups
         self.navigationError = navigationError; self.openingActivityIDs = openingActivityIDs
     }
 }

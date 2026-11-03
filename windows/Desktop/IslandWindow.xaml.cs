@@ -47,6 +47,13 @@ public partial class IslandWindow : Window
     private readonly NativeLayout geometry;
     private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
+    private bool updateInputSuspended;
+    internal void SetUpdateInputSuspended(bool value)
+    {
+        updateInputSuspended = value;
+        if (value) { collapse.Stop(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
+        IsHitTestVisible = !value;
+    }
     private bool renderCallback;
     private int motionRevision;
     private double transitionStarted, measuredRowsWidth;
@@ -270,7 +277,7 @@ public partial class IslandWindow : Window
         if (interactionTrace.Count == 12) interactionTrace.Dequeue();
         interactionTrace.Enqueue($"{Clock():0.000} {value}");
     }
-    internal void Reveal() { if (presentationStopped) return; RecordInteraction("reveal"); RequestIslandVisibility(); SetPinned(true); SetExpanded(true); }
+    internal void Reveal() { if (presentationStopped || updateInputSuspended) return; RecordInteraction("reveal"); RequestIslandVisibility(); SetPinned(true); SetExpanded(true); }
     internal Task SynchronizeExpansionAsync() => Send("setExpanded", new { expanded });
     internal void ApplyPreferences(DesktopPreferences preferences)
     {
@@ -332,6 +339,7 @@ public partial class IslandWindow : Window
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
     private void SetPinned(bool value)
     {
+        value = value && !updateInputSuspended;
         pinned = value;
         PinButton.Background = value ? PacerPalette.Hover : Brushes.Transparent;
         PinButton.Foreground = value ? PacerPalette.Primary : PacerPalette.Secondary;
@@ -378,6 +386,7 @@ public partial class IslandWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; visibleRequested = false; ApplyFullscreenVisibility(); } else StopPresentation(); }
     private void SetExpanded(bool value)
     {
+        if (value && updateInputSuspended) return;
         collapse.Stop();
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
