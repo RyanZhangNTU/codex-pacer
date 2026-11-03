@@ -137,7 +137,7 @@ public partial class IslandWindow : Window
             if (!IsVisible) MoreButton.ContextMenu.IsOpen = false;
             if (presentationStopped) return;
             if (!IsVisible) { StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
-            else StartRendering();
+            else { UpdateCompactBar(); StartRendering(); }
             RefreshRowMotion();
             SyncBackdrop();
         };

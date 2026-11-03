@@ -17,6 +17,7 @@ internal sealed class AnimationLease : IDisposable
         clock = (AnimationClock)animation.CreateClock(true); clock.Completed += Completed; apply(clock);
     }
     private void Completed(object? sender, EventArgs args) { Dispose(); completed?.Invoke(); }
+    internal void Seek(TimeSpan position) => clock?.Controller?.SeekAlignedToLastTick(position, TimeSeekOrigin.BeginTime);
     public void Dispose()
     {
         if (clock == null) return;
