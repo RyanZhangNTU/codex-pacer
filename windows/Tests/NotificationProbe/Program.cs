@@ -70,7 +70,7 @@ internal static class Program
         finally
         {
             try { await manager.RemoveAllAsync(); }
-            finally { system.Dispose(); manager.UnregisterAll(); }
+            finally { system.Dispose(); QaNotificationRegistration.Remove(manager); }
             Console.WriteLine("The separate QA history and registration were removed.");
         }
     }

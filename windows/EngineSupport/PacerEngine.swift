@@ -1285,8 +1285,11 @@ actor EngineRuntime {
         case .claude:
             fields.append(claudeOrganization)
             if scope == "cloud" {
-                guard showClaudeCloudProjects, cloudState?.context == generation, cloudState?.scopeVerified == true, let scope = cloudState?.verifiedScope else { return nil }
-                fields.append(scope)
+                if demo { fields.append("demo-cloud") }
+                else {
+                    guard showClaudeCloudProjects, cloudState?.context == generation, cloudState?.scopeVerified == true, let scope = cloudState?.verifiedScope else { return nil }
+                    fields.append(scope)
+                }
             }
         case .deepseek:
             fields += [deepseekSettings.selection.rawValue, DeepSeekAuthMode.detect(home: deepseekHome)?.rawValue ?? ""]

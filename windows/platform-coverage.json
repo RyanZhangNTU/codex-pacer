@@ -517,7 +517,17 @@
       "evidence": [
         "native/Sources/PacerCore/DeepSeekNoticePolicy.swift",
         "windows/EngineSupport/EngineReminderSettings.swift",
-        "windows/Tests/EngineTests/EngineReminderTests.swift"
+        "windows/Tests/EngineTests/EngineReminderTests.swift",
+        "windows/EngineSupport/EngineNotificationRegistry.swift",
+        "windows/Tests/EngineTests/NotificationRegistryTests.swift",
+        "windows/Tests/DesktopTests/NotificationActionChecks.cs",
+        "windows/Tests/DesktopTests/NotificationChecks.cs",
+        "windows/Tests/PresentationTests/NotificationActivationWindowChecks.cs",
+        "windows/Tests/PresentationTests/ReminderSettingsChecks.cs",
+        "windows/Tests/NotificationProbe/ActivationCheck.cs",
+        "windows/Tests/NotificationProbe/NativeActivationInvoker.cs",
+        "windows/Tests/NotificationProbe/QaNotificationRegistration.cs",
+        "docs/windows-shell.md"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -527,7 +537,7 @@
         "同一 baseline/去重/隐私和 warning 选择；下一步问题不重复发送完成通知",
         "打开任务/Top Up/Open Harness/Not for an Hour，动作等待冷启动初始化并校验来源"
       ],
-      "previewNote": "App-owned opt-in and native Windows App SDK delivery are connected to engine notices. Isolated tests verify silent delivery/history/cleanup and a native warm COM callback in the original QA process. Actions wait for initialization, cancel on quit, use a fixed top-up URL and preserve Mac module-independent one-hour snooze. Harness actions use shared desktop identity checks and fresh launch validation; availability races have fixtures. The opt-in cold COM check currently fails with 0x80040154; real banner clicks, cold startup, installed Harness activation, account events and full lifecycle acceptance remain.",
+      "previewNote": "Core IslandNotice policies feed native delivery. Windows 11 25H2 synthetic checks verified OS history, cleanup and all five warm/cold COM routes after offline-engine initialization and source validation. Cold registration and invocation outside Codex succeeded; Codex descendants saw a different HKCU registration view. Fixed action names and expiring, single-use random references carry no task content. Regression tests cover privacy, denial, readiness, replay, source/ending changes and bounded HWND forwarding. Settings exposes notification status and its system-settings link. Real banner clicks, installed task/Harness activation, account events, OS setting changes and broader lifecycle acceptance remain; external launch handlers were synthetic.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": [

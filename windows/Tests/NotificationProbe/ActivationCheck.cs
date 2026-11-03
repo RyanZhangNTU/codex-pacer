@@ -73,7 +73,7 @@ internal static class ActivationCheck
                     await engine.SendAsync("completeActivityOpen", new { context = link.Context }); dispatched = "openTask"; return true;
                 });
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true, notificationQa: scope);
-            await engine.SendAsync("demoStage", new { demoStage = 3 });
+            await engine.SendAsync("demoStage", new { demoStage = 1 });
             await engine.SendAsync("configure", new { reminderSettings = new { warnings = new[] { "lowBalance", "spendSpike", "budget" }, lowLine = 100, spikeLine = 1000 } });
             await engine.SendAsync("configure", new { reminderSettings = new { warnings = new[] { "lowBalance", "spendSpike", "budget" }, lowLine = 100, spikeLine = 0.00001 } });
             if (generated.Count != 5) throw new InvalidOperationException("The offline engine did not produce all five bounded routes.");
@@ -109,7 +109,7 @@ internal static class ActivationCheck
                 try { await manager.RemoveAllAsync(); }
                 finally
                 {
-                    system.Dispose(); manager.UnregisterAll(); File.Delete(PendingPath);
+                    system.Dispose(); QaNotificationRegistration.Remove(manager); File.Delete(PendingPath);
                     await engine.DisposeAsync();
                     if (pending != null)
                     {
