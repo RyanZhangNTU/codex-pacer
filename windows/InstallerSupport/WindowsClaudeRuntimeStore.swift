@@ -38,7 +38,7 @@ public struct WindowsClaudeRuntimeStore {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("AppData/Local", isDirectory: true)
         return base.appendingPathComponent("CodexPacer/ClaudeRuntime", isDirectory: true)
     }
-    static func wide(_ url: URL) -> [UInt16] { Array(url.path.replacingOccurrences(of: "/", with: "\\").utf16) + [0] }
+    static func wide(_ url: URL) -> [UInt16] { WindowsClaudeHookStorage.wide(url) }
     static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     static func validIdentifier(_ value: String) -> Bool {
         value.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}-[0-9a-f]{12}\z"#, options: .regularExpression) != nil

@@ -6,8 +6,11 @@ import WinSDK
 /// remain in the shared ClaudeHookInstaller.
 public struct WindowsClaudeHookStorage: ClaudeHookStorage {
     public init() {}
-    private static func wide(_ url: URL) -> [UInt16] {
-        Array(url.path.replacingOccurrences(of: "/", with: "\\").utf16) + [0]
+    static func wide(_ url: URL) -> [UInt16] {
+        let path = url.path.replacingOccurrences(of: "/", with: "\\")
+        // Match the engine's extended-path IO without changing stored URLs.
+        // validate() restricts this adapter to local drive paths.
+        return Array((path.hasPrefix("\\\\?\\") ? path : "\\\\?\\" + path).utf16) + [0]
     }
     public func validate(_ url: URL) throws {
         guard url.isFileURL, url.path.utf16.count < 32760,

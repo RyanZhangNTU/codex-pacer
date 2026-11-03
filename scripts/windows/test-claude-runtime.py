@@ -123,6 +123,16 @@ try:
     checks.append('two Claude homes share one owned LocalAppData runtime; no runtime copied into a Claude home')
     probe = json.loads(failure_probe(homes[0], versions[0]/'python.exe'))
     assert probe.get('stage')=='probe-complete' and probe.get('rendererMatches'), json.dumps(probe,sort_keys=True)
+    long_home = fixture.joinpath(*(['长路径 空格 segment']*12), 'Claude home')
+    assert len(str(long_home))>260
+    long_home.mkdir(parents=True)
+    (long_home/'settings.json').write_text(json.dumps(original),encoding='utf-8')
+    assert json.loads(helper('--ensure',long_home,runtime))['state']=='ready'
+    assert execute(hook_command(long_home),{'session_id':'fixture-long-path','hook_event_name':'UserPromptSubmit',
+        'prompt_id':'fixture-long-prompt'},'cmd')==b''
+    long_rows=[json.loads(line) for line in (long_home/'pacer/events.jsonl').read_bytes().splitlines()]
+    assert any(row.get('kind')=='prompt' and row.get('promptId')=='fixture-long-prompt' for row in long_rows)
+    checks.append('actual configured hook runs from a Chinese/space Claude home beyond MAX_PATH')
 
     # Inputs follow the common fields/UserPromptSubmit/PreToolUse examples in
     # https://code.claude.com/docs/en/hooks; bodies below are synthetic.
@@ -238,6 +248,7 @@ try:
     helper('--uninstall-all', runtime, homes[0])
     assert not runtime.exists()
     assert all(settings(home)==original for home in homes)
+    assert settings(long_home)==original and not (long_home/'pacer/installation.json').exists()
     assert all(not (home/'pacer/installation.json').exists() for home in homes)
     checks.append('shared uninstall discovers the second home, leaves exactly user settings, and deletes the owned runtime root')
 

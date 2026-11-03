@@ -168,4 +168,21 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertFalse(WindowsClaudeRuntimeStore.validIdentifier(pin.identifier + "\n"))
         XCTAssertThrowsError(try WindowsClaudeHookCommands.validate(python: python, home: home.appendingPathComponent("unsafe%PATH%")))
     }
+    func testOwnerChecksAndRuntimeCleanupAcceptLongLocalPaths() throws {
+        let fixture = try fixture()
+        var directory = fixture.base
+        for index in 0..<10 { directory.appendPathComponent("长路径 空格 segment-\(index)") }
+        let home = directory.appendingPathComponent("Claude home")
+        let root = directory.appendingPathComponent("Local/CodexPacer/ClaudeRuntime")
+        XCTAssertGreaterThan(home.path.utf16.count, 260)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try write(original, home.appendingPathComponent("settings.json"))
+        let runtime = WindowsClaudeHookRuntime(root: root)
+        XCTAssertEqual(runtime.ensure(home: home, package: try package).state, "ready")
+        XCTAssertTrue(try command(home).contains(root.path))
+        try runtime.uninstall(homes: [home], checkOnly: true)
+        try runtime.uninstall(homes: [home])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: try read(home.appendingPathComponent("settings.json"))))
+    }
 }
