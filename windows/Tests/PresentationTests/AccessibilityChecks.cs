@@ -53,7 +53,7 @@ internal static class AccessibilityChecks
             await window.WaitForPresentationAsync();
             Check(main.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)) && Keyboard.FocusedElement is UIElement { IsVisible: true, Focusable: true } next && next != main,
                 "Tab advances from the primary action to a visible control");
-            main.Focus();
+            CheckFocusOrder(window, main); main.Focus();
             bool systemKeyObserved = false;
             window.AddHandler(Keyboard.KeyDownEvent, new KeyEventHandler((_, args) => { if (args.Key == Key.System && args.SystemKey == Key.Right) systemKeyObserved = true; }), true);
             var pages = (Grid)window.FindName("TaskPages");
@@ -67,10 +67,14 @@ internal static class AccessibilityChecks
             Check(UIElementAutomationPeer.CreatePeerForElement(oldPage).GetChildren()?.Count is null or 0,
                 "The exiting page immediately leaves the accessible tree");
             RejectDisabled(oldRow);
+            var hovered = Descendants(pages.Children.OfType<RevealHost>().Last()).OfType<TaskRow>().First();
+            hovered.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
+            Check(hovered.HasAnimatedProperties, "The current row has a finite hover transition to interrupt");
             appearance.Set(appearance.Current with { Animations = false }); await Drain();
             Check(window.AccessibilityMotionState is (1, 0, 0), "Disabling animation mid-page removes outgoing content and all finite clocks");
             Check(((RevealHost)pages.Children[0]).Opacity == 1 && !((RevealHost)pages.Children[0]).HasAnimatedProperties,
                 "The incoming page immediately reaches its final opacity without a retained clock");
+            Check(!hovered.HasAnimatedProperties && hovered.HoverProgress == 1, "Reduced motion immediately settles the active hover and releases its clock");
             var quota = (AlternatingQuotaText)window.FindName("QuotaLabel");
             var badge = (ActivityBadge)window.FindName("Badge");
             Check(!quota.Scheduling.Scheduled && quota.Scheduling.Clocks == 0 && !badge.RotationScheduling.Composed && !badge.RotationScheduling.FallbackClock
@@ -86,7 +90,7 @@ internal static class AccessibilityChecks
             window.FrameApplied += Interrupt; window.CollapseForAutomation(); window.Reveal(); window.CollapseForAutomation();
             await PresentationWait.UntilAsync(() => interrupted, "The window transition presents an intermediate frame");
             await window.WaitForPresentationAsync(); window.FrameApplied -= Interrupt;
-            Check(!window.IsExpandedForAutomation && window.LogicalTarget.Height == 38 && window.AccessibilityMotionState.PageClocks == 0,
+            Check(!window.IsExpandedForAutomation && window.LogicalTarget.Height == 38 && window.AccessibilityMotionState is (1, 0, 0),
                 "Mid-animation reduction settles the latest reversed window target");
             appearance.Set(appearance.Current with { Transparency = false }); await Drain();
             Check(!window.GlassVisible, "The shared appearance snapshot immediately disables transparent material");
@@ -103,10 +107,20 @@ internal static class AccessibilityChecks
             appearance.Set(appearance.Current with { HighContrast = false, Dark = true }); await Drain();
             Check(window.GlassVisible && ReferenceEquals(binding, System.Windows.Data.BindingOperations.GetBindingExpression(title, TextBlock.ForegroundProperty)),
                 "Leaving high contrast restores material and preserves the original text binding");
+            appearance.Set(appearance.Current with { Animations = true }); await Drain();
+            Invoke((Button)window.FindName("NextPage"));
+            await PresentationWait.UntilAsync(() => ((TextBlock)window.FindName("PageNumber")).Text == "2 / 3", "The hide fixture starts a normal page transition");
+            var menu = ((Button)window.FindName("MoreButton")).ContextMenu;
+            menu.IsOpen = true; await Drain();
+            var hiddenHover = Descendants(pages.Children.OfType<RevealHost>().Last()).OfType<TaskRow>().First();
+            hiddenHover.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
+            Check(hiddenHover.HasAnimatedProperties, "The hide fixture starts an active hover");
             window.Hide(); await Drain();
             Check(new IslandWindowAutomationPeer(window).GetChildren()?.Count is null or 0, "Hidden islands have no accessible children");
             Check(!main.IsEnabled && window.AccessibilityMotionState.PageClocks == 0 && !quota.Scheduling.Scheduled,
                 "Hidden islands disable actions and remove animation work");
+            Check(!menu.IsOpen && !menu.IsEnabled, "Hiding also closes and disables the separate context-menu surface");
+            Check(!hiddenHover.HasAnimatedProperties && hiddenHover.HoverProgress == 0, "Hiding immediately releases hover clocks on the retained page");
             window.Show(); await window.WaitForPresentationAsync(); Check(main.IsEnabled, "Showing the island restores its primary action");
             await Audit(window);
             await AccessibilitySettingsChecks.Run(language, appearance, engine, window);
@@ -115,9 +129,9 @@ internal static class AccessibilityChecks
         Check(appearance.Subscribers == 0 && !appearance.Disposed && surfaces.All(value => value.Disposed), "Closing releases borrowed subscriptions and every material without disposing the shared source");
         Console.WriteLine("PASS accessibility " + language + ": actual UIA, keyboard, retired pages, live appearance, motion shutdown and cleanup");
     }
-    internal static async Task Audit(Window window)
+    internal static Task Audit(Window window, string context = "island") => AuditHandle(new WindowInteropHelper(window).Handle, context);
+    internal static async Task AuditHandle(IntPtr hwnd, string context)
     {
-        IntPtr hwnd = new WindowInteropHelper(window).Handle;
         var entries = await Task.Run(() =>
         {
             var root = AutomationElement.FromHandle(hwnd);
@@ -130,12 +144,12 @@ internal static class AccessibilityChecks
         foreach (var entry in entries.Where(value => value.IsEnabled && !value.IsOffscreen))
         {
             bool action = entry.ControlType == ControlType.Button || entry.ControlType == ControlType.CheckBox || entry.ControlType == ControlType.RadioButton
-                || entry.ControlType == ControlType.ComboBox || entry.ControlType == ControlType.Edit || entry.ControlType == ControlType.Thumb || entry.ControlType == ControlType.ScrollBar || entry.IsKeyboardFocusable;
+                || entry.ControlType == ControlType.ComboBox || entry.ControlType == ControlType.Edit || entry.ControlType == ControlType.Thumb || entry.ControlType == ControlType.ScrollBar || entry.ControlType == ControlType.ListItem || entry.IsKeyboardFocusable;
             if (!action) continue; actions++;
-            Check(!string.IsNullOrWhiteSpace(entry.Name), "UIA requires a name for " + entry.ControlType.ProgrammaticName + " " + entry.ClassName + " " + entry.AutomationId);
-            if (entry.ControlType == ControlType.Button) Check(entry.Invoke, "UIA buttons expose Invoke: " + entry.AutomationId);
+            Check(!string.IsNullOrWhiteSpace(entry.Name), context + ": UIA requires a name for " + entry.ControlType.ProgrammaticName + " " + entry.ClassName + " " + entry.AutomationId);
+            if (entry.ControlType == ControlType.Button) Check(entry.Invoke || entry.Toggle, "UIA buttons expose Invoke or Toggle: " + entry.AutomationId);
             if (entry.ControlType == ControlType.CheckBox) Check(entry.Toggle, "UIA checkboxes expose Toggle: " + entry.AutomationId);
-            if (entry.ControlType == ControlType.RadioButton) Check(entry.Select, "UIA radio choices expose SelectionItem: " + entry.AutomationId);
+            if (entry.ControlType == ControlType.RadioButton) Check(entry.Select, context + ": UIA radio choices expose SelectionItem: " + entry.ClassName + " " + entry.AutomationId);
         }
         Check(actions > 0, "The actual HWND must expose interactive UIA controls");
     }
@@ -145,6 +159,26 @@ internal static class AccessibilityChecks
         try { ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke(); }
         catch (ElementNotEnabledException) { rejected = true; }
         Check(rejected, "A retained peer cannot invoke an exiting page");
+    }
+    internal static void CheckFocusOrder(Window window, UIElement first)
+    {
+        Check(first.Focus(), "The first keyboard action can receive focus");
+        var visited = new HashSet<IInputElement> { first };
+        UIElement current = first;
+        for (int step = 0; step < 32; step++)
+        {
+            if (!current.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next))) break;
+            Check(Keyboard.FocusedElement is UIElement { IsVisible: true, IsEnabled: true, Focusable: true } item && Window.GetWindow(item) == window,
+                "Tab order stays within the current visible, enabled window content");
+            current = (UIElement)Keyboard.FocusedElement;
+            if (!visited.Add(current)) break;
+            var peer = UIElementAutomationPeer.CreatePeerForElement(current);
+            Check(peer != null && !string.IsNullOrWhiteSpace(peer.GetName()), "Each keyboard stop exposes an accessible name");
+        }
+        Check(visited.Count >= 3, "The keyboard order includes the main action and neighboring controls");
+        first.Focus(); Check(first.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)), "The next keyboard action remains reachable");
+        Check(((UIElement)Keyboard.FocusedElement).MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)) && Keyboard.FocusedElement == first,
+            "Reverse focus traversal returns to the preceding primary action");
     }
     internal static IEnumerable<DependencyObject> Descendants(DependencyObject value)
     {

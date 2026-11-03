@@ -682,7 +682,7 @@
         "反向/重复输入/焦点/可访问树、遮挡和实际播放；正式版再做动画对照",
         "A/B/C 不新增参考截图、来源证明 JSON 或像素/动画检查；已有断言迁移保留"
       ],
-      "previewNote": "Original Swift geometry and curves drive a fixed WPF surface. Read-only allocation bounds cover 1 ms trajectory samples and preserve displayed state and velocity; badge clocks retain 864 checked samples. Harness rows use a shared finite 120 ms ease-out clock with Mac UnitCurve compatibility coverage and normal/reduced-motion WPF checks. Window scenarios cover reversals, native transparent hit testing and visible accessibility bounds. Frame-time diagnostics still show environment stalls; occlusion, paired actual playback and switch-motion acceptance remain. Compact quota components independently ease to the original 0.3 opacity over 200 ms, reverse from displayed opacity and update immediately with reduced motion; paired animation acceptance remains. P4 route B keeps content/material HWND bounds and native input clips synchronized on shared spring frames. Normal, reversal and reduced-motion glass tests include the two-phase collapsed Black backing; protected motion captures have no outside spill. Other displays and paired perceptual playback still need acceptance.",
+      "previewNote": "Shared Swift geometry drives the WPF surface. Existing allocation, displayed-state/velocity, 864 badge-clock samples and finite 120 ms task-row timing assertions remain. Window tests retain reversal, native transparent hits and visible accessibility bounds. Compact dimming keeps its 0.3 target and 200 ms duration. Route B keeps content/material bounds and input clips synchronized, including the collapsed Black backing and existing no-spill checks. P3c tests immediate mid-transition reduction, hover/page/dim clock release, repeated and reversed input, exiting-page rejection, normal-motion hide/close, and system-driven fallback/restoration. Frame-time environment stalls and other-display acceptance remain. 徽章曲线与 Mac 存在已知差异（线性 vs Cubic/Spring），按用户决定保留。No new reference captures, source-proof JSON or pixel/animation comparisons were added.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
@@ -694,7 +694,10 @@
         "native/Tests/PacerIslandTests/TaskRowInteractionCompatibilityTests.swift",
         "windows/Tests/PresentationTests/HarnessNavigationChecks.cs",
         "windows/Desktop/IslandCompactBar.cs",
-        "windows/Tests/PresentationTests/CollapsedLayoutChecks.cs"
+        "windows/Tests/PresentationTests/CollapsedLayoutChecks.cs",
+        "windows/Tests/PresentationTests/AccessibilityChecks.cs",
+        "windows/Desktop/IslandAccessibility.cs",
+        "docs/windows-accessibility-motion.md"
       ]
     },
     {
@@ -1131,7 +1134,7 @@
     {
       "id": "accessibility",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "UIA 可访问名/角色/焦点、隐藏与退出页移除可访问树、键盘分页/排序/关闭",
@@ -1143,10 +1146,17 @@
         "native/Sources/PacerIsland/TaskRowView.swift"
       ],
       "evidence": [],
-      "previewNote": "完整键盘与读屏交互，系统外观设置对应 Windows。",
+      "previewNote": "Synthetic EN/ZH checks use actual HWND UIA names, roles and action patterns for the island and seven current settings panes, plus the language popup. Keyboard checks cover Space, Alt arrows through WPF SystemKey, focus order, component sorting and Escape. Hidden and retired pages reject cached actions. Injected immutable snapshots cover light/dark, high contrast, reduced motion and transparency changes, semantic selection colors, binding/focus preservation and Glass restoration. Full numeric values fit measured 100/125/150/200 percent DPI budgets; the physical host remains one 150 percent display. Guide-window subscription awaits P3b integration; Narrator and other physical displays still need user acceptance.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
-      "deferredEvidence": []
+      "deferredEvidence": [
+        "windows/Tests/PresentationTests/AccessibilityChecks.cs",
+        "windows/Tests/PresentationTests/AccessibilitySettingsChecks.cs",
+        "windows/Tests/PresentationTests/AccessibleNumberChecks.cs",
+        "windows/Desktop/SystemAppearanceSource.cs",
+        "windows/Desktop/HighContrastScope.cs",
+        "docs/windows-accessibility-motion.md"
+      ]
     },
     {
       "id": "platform-matrix",

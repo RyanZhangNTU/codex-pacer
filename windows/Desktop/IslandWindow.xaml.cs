@@ -123,9 +123,12 @@ public partial class IslandWindow : Window
         IsVisibleChanged += (_, _) =>
         {
             Shell.IsEnabled = IsVisible;
+            MoreButton.ContextMenu.IsEnabled = IsVisible;
+            if (!IsVisible) MoreButton.ContextMenu.IsOpen = false;
             if (presentationStopped) return;
             if (!IsVisible) { StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
             else StartRendering();
+            RefreshRowMotion();
             SyncBackdrop();
         };
         ApplyPresentationLayout();
@@ -361,7 +364,7 @@ public partial class IslandWindow : Window
         }
         pointerDown = null;
     }
-    private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; Hide(); } }
+    private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; Hide(); } else StopPresentation(); }
     private void SetExpanded(bool value)
     {
         collapse.Stop();
@@ -642,7 +645,7 @@ public partial class IslandWindow : Window
     {
         int target = Math.Clamp(page + delta, 0, Math.Max(0, (rows.Count - 1) / 3));
         if (target == page) return;
-        page = target; BuildPage(AnimationsEnabled, Math.Sign(delta)); UpdatePager(); Relayout();
+        page = target; BuildPage(DecorationsAnimate, Math.Sign(delta)); UpdatePager(); Relayout();
     }
     private void BuildPage(bool animate, int direction)
     {
@@ -705,7 +708,7 @@ public partial class IslandWindow : Window
         bool available = link != null && (state.Value.Provider != "deepseek" || harness) &&
             !openingActivityContexts.Contains(link.Context) && latest?.OpeningActivityIDs?.Contains(state.Value.Id) != true;
         row.SetOpenAction(available ? () => _ = OpenConversationTaskAsync(row, link!) : null,
-            available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), AnimationsEnabled);
+            available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), DecorationsAnimate);
     }
     private bool CurrentConversationAction(TaskRow control, EngineActivityLink link) => !presentationStopped && expanded && Expanded.IsAccessible &&
         currentPage?.IsAccessible == true && currentPage.IsAncestorOf(control) && latest?.ActivityLinks?.Contains(link) == true;

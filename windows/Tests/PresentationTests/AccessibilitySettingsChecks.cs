@@ -7,6 +7,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using CodexPacer.Windows;
 using static AccessibilityChecks;
@@ -34,18 +35,44 @@ internal static class AccessibilitySettingsChecks
             var selected = Find<RadioButton>(window, "settings.pane.general");
             Check(ColorOf(selected.Foreground) == appearance.Current.Colors.HighlightText, "The selected navigation choice uses semantic selection text");
             Check(saves == 0 && configurations == 0, "System appearance changes do not save preferences or configure collectors");
-            await Audit(window);
+            await Audit(window, "settings.general");
+            var languageChoice = Find<ComboBox>(window, "settings.language");
+            window.Activate(); languageChoice.Focus(); languageChoice.IsDropDownOpen = true; await Drain();
+            var selectedItem = (ComboBoxItem)languageChoice.ItemContainerGenerator.ContainerFromIndex(languageChoice.SelectedIndex);
+            Check(selectedItem.Focus(), "The open choice list supports keyboard focus"); await Drain();
+            Check(selectedItem.IsHighlighted && ColorOf(selectedItem.Foreground) == appearance.Current.Colors.HighlightText,
+                "Popup selection text uses semantic high-contrast colors");
+            // WPF exposes selection through ComboBox data peers; popup wrappers supply the visual tree.
+            var choicePeer = (ComboBoxAutomationPeer)UIElementAutomationPeer.CreatePeerForElement(languageChoice);
+            var options = choicePeer.GetChildren()!.Where(value => value.GetAutomationControlType() == AutomationControlType.ListItem).ToArray();
+            Check(options.Length == languageChoice.Items.Count, "The ComboBox exposes every choice to assistive technology");
+            foreach (var option in options) Check(!string.IsNullOrWhiteSpace(option.GetName()) && option.GetPattern(PatternInterface.SelectionItem) is ISelectionItemProvider,
+                "Each logical choice exposes its name, ListItem role and SelectionItem action");
+            var currentChoice = (ISelectionItemProvider)options[languageChoice.SelectedIndex].GetPattern(PatternInterface.SelectionItem)!;
+            Check(currentChoice.IsSelected, "The current choice reports its selected state"); currentChoice.Select();
+            Check(PresentationSource.FromVisual(selectedItem) is HwndSource, "The dropdown has a real owned popup HWND");
+            await AuditHandle(((HwndSource)PresentationSource.FromVisual(selectedItem)!).Handle, "settings.language.popup");
+            languageChoice.IsDropDownOpen = false; await Drain();
+            Check(saves == 0 && configurations == 0, "Inspecting and closing the current choice does not commit a preference");
             appearance.Set(appearance.Current with { HighContrast = false }); await Drain();
             Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(31, 31, 31), "Leaving high contrast restores the selected system theme");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             window.Activate(); Check(privacy.Focus(), "A settings switch accepts keyboard focus");
+            CheckFocusOrder(window, privacy); privacy.Focus();
             PostKey(window, Key.Space); await PresentationWait.UntilAsync(() => session.Current.HideProjects, "Space toggles a focused settings choice");
             await session.WaitForChangesAsync();
             foreach (string pane in new[] { "appearance", "collapsed", "reminders", "codex", "claude", "deepseek", "general" })
             {
                 await window.NavigateAsync(pane); await ShellProjection.WhenIdleAsync(); await Drain(); window.UpdateLayout();
                 Check(Find<RadioButton>(window, "settings.pane." + pane).IsChecked == true, "Keyboard-accessible navigation selects " + pane);
-                await Audit(window);
+                await Audit(window, "settings." + pane);
+                var choice = Find<RadioButton>(window, "settings.pane." + pane); window.Activate(); choice.Focus();
+                int beforeTheme = saves;
+                appearance.Set(appearance.Current with { HighContrast = true }); await Drain();
+                Check(ColorOf(choice.Foreground) == appearance.Current.Colors.HighlightText && Keyboard.FocusedElement == choice && !island.IsActive,
+                    "New pages inherit semantic colors without moving keyboard focus to the island");
+                appearance.Set(appearance.Current with { HighContrast = false }); await Drain();
+                Check(saves == beforeTheme && Keyboard.FocusedElement == choice, "Restoring theme does not save preferences or change focus");
                 if (pane == "appearance")
                 {
                     Check(!privacy.IsEnabled, "A departed settings page disables retained controls");

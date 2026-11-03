@@ -59,6 +59,7 @@ internal sealed class ComposedBadgeOrbit : IDisposable
     private void Sync()
     {
         if (handle == IntPtr.Zero || !enabled || !badge.IsVisible || badge.ActualWidth <= 0 || badge.ActualHeight <= 0) return;
+        if (PresentationSource.FromVisual(badge) == null) { hide(handle); last = null; return; }
         try
         {
             Point start = badge.PointToScreen(new()), end = badge.PointToScreen(new(badge.ActualWidth, badge.ActualHeight));

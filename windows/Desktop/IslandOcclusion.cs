@@ -21,7 +21,7 @@ public partial class IslandWindow
                 var bounds = VisibleScreenBounds;
                 return bounds.IsEmpty ? default : new((int)Math.Floor(bounds.Left), (int)Math.Floor(bounds.Top),
                     (int)Math.Ceiling(bounds.Right), (int)Math.Ceiling(bounds.Bottom));
-            }, value => { decorationsOccluded = value; UpdateCompactBar(); }, Dispatcher);
+            }, value => { decorationsOccluded = value; if (value) FinishPageTransition(); UpdateCompactBar(); RefreshRowMotion(); }, Dispatcher);
             occlusionSource = HwndSource.FromHwnd(hwnd); occlusionSource?.AddHook(OcclusionMessage);
         };
         Loaded += (_, _) => occlusion?.Request();

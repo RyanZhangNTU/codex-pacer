@@ -15,7 +15,7 @@ internal static class SettingsPalette
             foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
             foreach (string key in new[] { "SettingsAccent", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
-            resources["SettingsKnob"] = DesktopAppearance.Ink(colors.HighlightText); return;
+            resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
         }
         void Brush(string key, byte red, byte green, byte blue) => resources[key] = new SolidColorBrush(Color.FromRgb(red, green, blue));
         void Gray(string key, byte value) => Brush(key, value, value, value);
@@ -38,6 +38,7 @@ internal static class SettingsPalette
         resources["SettingsChartMaterial"] = new SolidColorBrush(Color.FromArgb(205, dark ? (byte)55 : (byte)229, dark ? (byte)55 : (byte)229, dark ? (byte)55 : (byte)229));
         Gray("SettingsSwitchOff", dark ? (byte)49 : (byte)224);
         Gray("SettingsKnob", dark ? (byte)224 : (byte)255);
+        Gray("SettingsSelectionText", 255);
         Brush("SettingsAccent", 0, 122, 255);
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);
         Brush("SettingsSuccess", 48, 186, 85);

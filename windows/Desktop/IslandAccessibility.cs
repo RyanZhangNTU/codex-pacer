@@ -29,10 +29,12 @@ public partial class IslandWindow
         var state = appearance.Current; DesktopAppearance.Apply(this, state);
         if (!AnimationsEnabled) FinishPageTransition();
         UpdateCompactBar();
-        foreach (var row in TaskRowsIn(TaskPages)) { row.SetAnimations(AnimationsEnabled); row.ApplyAppearance(); }
+        RefreshRowMotion();
         if (rendering) OnRenderFrame(this, EventArgs.Empty);
         RefreshSurface(); semanticPaint.Apply(state);
     }
+    private void RefreshRowMotion()
+    { foreach (var row in TaskRowsIn(TaskPages)) { row.SetAnimations(DecorationsAnimate); row.ApplyAppearance(); } }
     private void DisposeAppearance()
     {
         appearance.Changed -= AppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose();
