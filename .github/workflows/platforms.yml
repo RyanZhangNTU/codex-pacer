@@ -78,6 +78,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Platform contract failed.' }
           python scripts/windows/build-localization.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Shared localization differs.' }
+      - name: Claude shell contract before compilation
+        run: |
+          python -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'Claude shell forwarding failed.' }
       - name: Pinned Swift toolchain
         run: ./scripts/windows/setup-swift.ps1
       - name: Shared source compilation and engine tests

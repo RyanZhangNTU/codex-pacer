@@ -18,6 +18,7 @@ import uuid
 parser = argparse.ArgumentParser()
 parser.add_argument('--bundle', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--bash', type=Path, help='Use a verified Git Bash runtime for compatibility checks')
 args = parser.parse_args()
 workspace = Path(__file__).resolve().parents[2]
 fixture = workspace / 'out' / ('pacer-claude-runtime-' + uuid.uuid4().hex[:8])
@@ -37,6 +38,8 @@ environment.update(PATH=str(system)+os.pathsep+str(system/'WindowsPowerShell/v1.
                    PYTHONHOME=str(fixture/'untrusted-python'), PYTHONPATH=str(fixture/'untrusted-modules'))
 for key in ('MSYS_NO_PATHCONV','MSYS2_ARG_CONV_EXCL','MSYS2_ENV_CONV_EXCL'):
     environment.pop(key,None)
+if args.bash is not None:
+    environment['CLAUDE_CODE_GIT_BASH_PATH']=str(args.bash.resolve())
 assert all(shutil.which(name,path=environment['PATH']) is None for name in ('python','python3','py'))
 
 def short_path(path):
@@ -87,15 +90,25 @@ def settings(home):
 def hook_command(home):
     return settings(home)['hooks']['SessionStart'][0]['hooks'][0]['command']
 
-def failure_probe(home, python):
+def failure_probe(home, python, shell=None):
     # Only fixed stage names, booleans and numeric Win32 facts leave this
     # synthetic fixture. Never forward paths, settings bytes or command output.
     probe = r'''
-import ctypes,importlib.util,json,os,sys
+import ctypes,importlib.util,json,os,subprocess,sys
 from pathlib import Path
 home=Path(sys.argv[1]); spec=importlib.util.spec_from_file_location('pacer_probe',home/'pacer/hook.py')
 module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 facts={'stage':'owners'}
+facts['comspecIsCmd']=Path(os.environ.get('COMSPEC','')).name.lower()=='cmd.exe'
+facts['comspecExists']=Path(os.environ.get('COMSPEC','')).is_file()
+try:
+    result=subprocess.run('exit /b 23',shell=True,input=b'',capture_output=True,timeout=2)
+    facts['defaultShellIsCmd']=result.returncode==23
+    rendered=subprocess.run('echo SYNTHETIC_RENDERER',shell=True,input=b'',capture_output=True,timeout=2)
+    facts['defaultRendererBytes']=len(rendered.stdout)
+    facts['defaultRendererMatches']=rendered.stdout.strip()==b'SYNTHETIC_RENDERER'
+except OSError as error:
+    facts['defaultShellError']=getattr(error,'winerror',None)
 try:
     module.current_owners()
     original_info=module.file_information
@@ -132,7 +145,13 @@ except Exception as error:
 print(json.dumps(facts,sort_keys=True))
 '''
     raw=b'{"rate_limits":{"five_hour":{"used_percentage":45,"resets_at":1890000000}}}'
-    return run([str(python), '-S', '-c', probe, str(home)],raw).decode('ascii').strip()
+    if shell is None:
+        return run([str(python), '-S', '-c', probe, str(home)],raw).decode('ascii').strip()
+    path=home/'pacer/synthetic-shell-probe.py'
+    path.write_text(probe,encoding='utf-8')
+    command=' '.join('"'+str(value).replace('\\','/')+'"' for value in [python,'-S',path,home])
+    if shell=='powershell':command='& '+command
+    return execute(command, json.loads(raw), shell).decode('ascii').strip()
 
 def execute(command, value, shell):
     raw = json.dumps(value, ensure_ascii=False).encode('utf-8')
@@ -140,7 +159,7 @@ def execute(command, value, shell):
         cmd = str(Path(os.environ['SystemRoot'])/'System32/cmd.exe')
         return run('"'+cmd+'" /d /s /c "'+command+'"', raw, cmd)
     if shell == 'bash':
-        bash = Path(os.environ.get('ProgramFiles', 'C:/Program Files'))/'Git/bin/bash.exe'
+        bash = args.bash or Path(os.environ.get('ProgramFiles', 'C:/Program Files'))/'Git/bin/bash.exe'
         assert bash.is_file(), 'Git Bash is required for the Windows command contract check'
         return run([str(bash), '--noprofile', '--norc', '-c', command], raw)
     powershell = Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
@@ -201,7 +220,8 @@ try:
                                'access_token':'SYNTHETIC_PRIVATE_TOKEN'}, shell)
         assert output.strip()==b'SYNTHETIC_RENDERER', ('Previous renderer failed in '+shell+
             '; outputBytes='+str(len(output))+'; cache='+str((home/'pacer/claude-statusline.json').exists())+
-            '; spool='+str((home/'pacer/events.jsonl').exists())+'; '+failure_probe(home,versions[0]/'python.exe'))
+            '; spool='+str((home/'pacer/events.jsonl').exists())+'; direct='+failure_probe(home,versions[0]/'python.exe')+
+            '; inExecutor='+failure_probe(home,versions[0]/'python.exe',shell))
     rows = [json.loads(line) for line in (homes[0]/'pacer/events.jsonl').read_bytes().splitlines()]
     for shell in ('cmd','bash','powershell'):
         owned = [row for row in rows if row.get('sessionId')=='fixture-'+shell]
@@ -216,14 +236,14 @@ try:
     checks.append('isolated PATH has no python/python3/py; prompt bodies, tool input and tokens absent from spool and quota cache')
 
     # The native argv probe reports only fixed booleans. No command line or
-    # provider path leaves the synthetic fixture. Old /D/C becomes D:/C even
-    # on machines where cmd happens to interpret the converted text usefully.
+    # provider path leaves the synthetic fixture. Depending on the Git version,
+    # MSYS converts /D/C into a path; C:/ arguments must remain unchanged.
     native=versions[0]/'python.exe'
-    program='import base64,json,sys;print(json.dumps({"convertedD":sys.argv[1].lower()=="d:/c","unchanged":sys.argv[1]=="/D/C","absolutePathPreserved":sys.argv[2]==base64.b64decode(sys.argv[3]).decode("utf-8")}))'
+    program='import base64,json,sys;print(json.dumps({"switchConverted":sys.argv[1]!="/D/C","unchanged":sys.argv[1]=="/D/C","absolutePathPreserved":sys.argv[2]==base64.b64decode(sys.argv[3]).decode("utf-8")}))'
     absolute=str(native).replace('\\','/')
     probe='"'+absolute+'" -S -c \''+program+'\' /D/C "'+absolute+'" '+base64.b64encode(absolute.encode('utf-8')).decode('ascii')
     facts=json.loads(execute(probe,{},'bash'))
-    assert facts['absolutePathPreserved'] and facts['convertedD']!=facts['unchanged'], facts
+    assert facts['absolutePathPreserved'] and facts['switchConverted']!=facts['unchanged'], facts
     print('Native argv probe '+json.dumps(facts,sort_keys=True))
 
     routes=[]
@@ -275,8 +295,29 @@ try:
         manifest_path.write_text(json.dumps(manifest),encoding='utf-8')
         for shell in ('bash','powershell'):
             assert execute(settings(slow_home)['statusLine']['command'],{'synthetic_utf8':'中文'},shell)==rendered
+        manifest['previousStatusLine']={'type':'command','command':'if [ -n "$BASH_VERSION" ]; then printf "%s" SYNTHETIC_BASH_RENDERER; fi'}
+        manifest_path.write_text(json.dumps(manifest),encoding='utf-8')
+        assert execute(settings(slow_home)['statusLine']['command'],{},'bash')==b'SYNTHETIC_BASH_RENDERER'
+        configured=environment.get('CLAUDE_CODE_GIT_BASH_PATH')
+        try:
+            environment['CLAUDE_CODE_GIT_BASH_PATH']=str(fixture/'missing-bash.exe')
+            manifest['previousStatusLine']={'type':'command','command':"Write-Output ('SYNTHETIC_' + 'POWERSHELL_RENDERER')"}
+            manifest_path.write_text(json.dumps(manifest),encoding='utf-8')
+            assert execute(settings(slow_home)['statusLine']['command'],{},'powershell').strip()==b'SYNTHETIC_POWERSHELL_RENDERER'
+            manifest['previousStatusLine']={'type':'command','command':'[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())'}
+            manifest_path.write_text(json.dumps(manifest),encoding='utf-8')
+            value={'synthetic_utf8':'中文'}
+            assert execute(settings(slow_home)['statusLine']['command'],value,'powershell')==json.dumps(value,ensure_ascii=False).encode('utf-8')
+        finally:
+            if configured is None:environment.pop('CLAUDE_CODE_GIT_BASH_PATH',None)
+            else:environment['CLAUDE_CODE_GIT_BASH_PATH']=configured
+        manifest['previousStatusLine']={'type':'command','command':'IFS= read -r raw; printf "%s" "$raw"'}
+        manifest_path.write_text(json.dumps(manifest),encoding='utf-8')
+        value={'synthetic_utf8':'中文'}
+        assert execute(settings(slow_home)['statusLine']['command'],value,'bash')==json.dumps(value,ensure_ascii=False).encode('utf-8')
     finally:manifest_path.write_bytes(before_manifest)
     checks.append('PowerShell fallback forwards UTF-8 input and previous status-line output as unchanged bytes; oversized input retains the shared silent rejection and writes no records')
+    checks.append('Bash-specific and PowerShell-specific previous renderers run in the matching Claude executor instead of COMSPEC')
     checks.append('direct, available 8.3 and forced no-8.3 PowerShell commands exercise hook/statusLine under every executor; per-call latency recorded')
 
     home = homes[0]

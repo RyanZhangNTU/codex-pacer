@@ -36,6 +36,26 @@ file_information = api(kernel, 'GetFileInformationByHandle', w.BOOL, w.HANDLE, c
 owners = []
 held_mutexes = []
 
+def renderer_arguments(command):
+    # Claude uses Git Bash when available, and PowerShell otherwise. shell=True
+    # would select COMSPEC/cmd instead, changing the user's renderer language.
+    configured = os.environ.get('CLAUDE_CODE_GIT_BASH_PATH')
+    candidates = [pathlib.Path(configured)] if configured else [
+        pathlib.Path(os.environ.get(name, 'C:/Program Files'))/'Git/bin/bash.exe'
+        for name in ('ProgramFiles', 'ProgramFiles(x86)')]
+    if not configured and os.environ.get('LOCALAPPDATA'):
+        candidates.append(pathlib.Path(os.environ['LOCALAPPDATA'])/'Programs/Git/bin/bash.exe')
+    for candidate in candidates:
+        if candidate.is_absolute() and candidate.is_file():
+            return [str(candidate), '-c', command]
+    directory = api(kernel, 'GetSystemDirectoryW', w.UINT, w.LPWSTR, w.UINT)
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = directory(buffer, len(buffer))
+    if not 0 < length < len(buffer):
+        raise OSError('system shell unavailable')
+    powershell = pathlib.Path(buffer.value)/'WindowsPowerShell/v1.0/powershell.exe'
+    return [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
+
 def current_owners():
     token = w.HANDLE()
     if not open_token(current_process(), 8, ctypes.byref(token)):
@@ -137,7 +157,23 @@ def run():
     namespace = {'__name__': 'pacer_shared_claude'}
     exec(compile(base64.b64decode(SHARED_SOURCE), '<pacer-shared-claude>', 'exec'), namespace)
     namespace['private_open'] = private_open
-    namespace['main']()
+    if len(sys.argv) > 1 and sys.argv[1] == 'statusline':
+        # This process handles one invocation. Leave the shared cache/privacy
+        # code intact and adapt only its subprocess shell selection.
+        import subprocess
+        original_run = subprocess.run
+        def windows_renderer(arguments, *positional, **options):
+            if options.get('shell') and isinstance(arguments, str):
+                arguments = renderer_arguments(arguments)
+                options['shell'] = False
+            return original_run(arguments, *positional, **options)
+        subprocess.run = windows_renderer
+        try:
+            namespace['main']()
+        finally:
+            subprocess.run = original_run
+    else:
+        namespace['main']()
 
 if __name__ == '__main__':
     try:

@@ -2,7 +2,7 @@
 
 Windows 包附带官方 CPython 3.14.10 x64 embeddable runtime。Claude hook 和 status-line 不再依赖用户安装的 Python、PATH 中的 python3 或 Microsoft Store 别名。遥测继续使用共享引擎中的本机 loopback HTTP 服务，不启动另一个 Python 服务。
 
-采用嵌入式 Python，是为了复用原有共享 helper 的事件、归属、额度和隐私规则。共享 claude_hook.py 的内容保持不变；Windows 适配层只替换文件安全检查与锁。文件按句柄检查所有者、重解析点和硬链接，检查通过后才能截断；锁使用最多等待 2 秒的 Windows 内核 mutex，不轮询。
+采用嵌入式 Python，是为了复用原有共享 helper 的事件、归属、额度和隐私规则。共享 claude_hook.py 的内容保持不变；Windows 适配层处理文件安全检查、锁和原 status-line renderer 的执行器。文件按句柄检查所有者、重解析点和硬链接，检查通过后才能截断；锁使用最多等待 2 秒的 Windows 内核 mutex，不轮询。
 
 ## 路径与升级
 
@@ -19,6 +19,8 @@ Windows 上，Claude Code 的 hook 和 statusLine 默认经 Git Bash 执行；�
 3. 最后才使用 Windows 自带 PowerShell 的 `-File` 入口。PowerShell 通过 Win32 系统目录定位，不从 PATH 查找。Python、脚本和 home 全部加双引号；薄脚本随自有运行时存放，按字节转发 stdin/stdout/stderr，不解析事件或计算额度。这个子进程使用 `RemoteSigned`，不更改全局执行策略；企业组策略仍可能阻止执行。
 
 第三档每次工具事件都会多启动一个 PowerShell，通常额外需要 150 至 400 毫秒。设置页会提示这一开销，普通路径和可用的短路径不经过 PowerShell。`test-claude-runtime.ps1` 输出每档、每种执行器下五次实际 hook 调用的耗时。本机与 CI 同时验证 hook、statusLine 和本机 HTTP telemetry；测试会清除 MSYS 参数转换的豁免变量。旧 `cmd.exe /D/C` 包装会被迁移，因为 Git Bash 可把这个开关改成 `D:/C`。[MSYS2 参数转换说明](https://www.msys2.org/docs/filesystem-paths/#process-arguments)
+
+转发用户原 status-line 时，Windows 适配层优先使用 `CLAUDE_CODE_GIT_BASH_PATH`，否则查找 Git for Windows 的标准安装位置；没有可用 Git Bash 时使用系统 PowerShell。显式指定但不可用的 Bash 路径也使用 PowerShell。原命令不会交给 Python `shell=True` 默认选择的 cmd.exe。stdin/stdout 按字节转发，保留 10 秒超时；普通 hook 不加载这层 subprocess 适配。测试分别执行 Bash 和 PowerShell 专用 renderer，并断言 UTF-8 输入原样返回。编译前的快速诊断只报告固定布尔值、字节数和错误码。
 
 根目录和每个版本目录都有 .pacer-owned.json 所有权标记。写入、修复和删除前检查文件所有者与路径上的重解析点；非空但无标记的目录不会被接管。修复只替换标记内的文件，额外文件会阻止操作。
 
