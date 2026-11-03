@@ -159,7 +159,7 @@ internal sealed partial class SettingsWindow : Window
         top.Children.Add(Navigation("codex", null, "chevron.left.forwardslash.chevron.right", Color.FromRgb(102, 205, 187), "Codex", enabled: engine != null, darkGlyph: true));
         top.Children.Add(Navigation("claude", null, "asterisk", Color.FromRgb(255, 164, 119), "Claude", enabled: engine != null, darkGlyph: true));
         top.Children.Add(Navigation("deepseek", null, "water.waves", Color.FromRgb(126, 150, 255), "DeepSeek", enabled: engine != null, darkGlyph: true));
-        top.Children.Add(Navigation("connections", "settings.pane.connections", "point.3.connected.trianglepath.dotted", Color.FromRgb(41, 128, 255)));
+        top.Children.Add(Navigation("connections", "settings.pane.connections", "point.3.connected.trianglepath.dotted", Color.FromRgb(41, 128, 255), enabled: engine != null));
         return surface;
     }
     private RadioButton Navigation(string id, string? key, string symbol, Color color, string? literal = null, bool enabled = false, bool darkGlyph = false)
@@ -329,11 +329,12 @@ internal sealed partial class SettingsWindow : Window
     {
         foreach (var editor in editors) editor.IsEnabled = enabled;
         codexHistory?.SetInteractionEnabled(enabled);
-        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" || (item.Key is "codex" or "claude" or "deepseek" or "reminders") && engine != null);
+        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" || (item.Key is "codex" or "claude" or "deepseek" or "reminders" or "connections") && engine != null);
+        RefreshConnections();
     }
     private void OnPreferencesChanged(DesktopPreferences value)
     { if (ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
-    private string ResolvePane(string value) => value is "appearance" or "collapsed" || (value is "codex" or "claude" or "deepseek" or "reminders") && engine != null ? value : "general";
+    private string ResolvePane(string value) => value is "appearance" or "collapsed" || (value is "codex" or "claude" or "deepseek" or "reminders" or "connections") && engine != null ? value : "general";
     internal async System.Threading.Tasks.Task NavigateAsync(string pane)
     { if (!sourceClosed && ResolvePane(pane) == pane) await Change(p => p with { LastSettingsPane = pane }); }
     private void RebuildPane(string value)
@@ -343,7 +344,7 @@ internal sealed partial class SettingsWindow : Window
         {
             activePane = ResolvePane(value);
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
-            login = hideProjects = appButtons = null; startupStatus = null; language = null; restart = null; restartHint = null;
+            login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; language = null; restart = null; restartHint = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();
@@ -351,8 +352,9 @@ internal sealed partial class SettingsWindow : Window
             ClearDeepSeek();
             ClearReminders();
             ClearCollapsed();
+            ClearConnections();
             paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : "settings.pane." + activePane);
-            if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else BuildDeepSeek();
+            if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else if (activePane == "connections") BuildConnections(); else BuildDeepSeek();
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
             paneScroller.ScrollToTop(); SetEditors(!busy && !session.RequiresRestart);
         }
@@ -399,6 +401,7 @@ internal sealed partial class SettingsWindow : Window
             RefreshProviderHome();
             RefreshReminders();
             RefreshCollapsed();
+            RefreshConnections();
             recoveryRestart.Visibility = session.RequiresRestart && activePane != "general" ? Visibility.Visible : Visibility.Collapsed;
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
         }

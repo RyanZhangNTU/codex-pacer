@@ -279,6 +279,11 @@ public actor RealtimeActivityMonitor {
         if retryTransport { desktopRetryAfter = .distantPast }
         await controlCatalog.invalidate()
     }
+    /// A manual source retry clears only inactive helpers' backoff. Live
+    /// transports and their unread/session state remain owned by this monitor.
+    public func retryInactiveHelpers() {
+        for id in Array(retryAfter.keys) where connections[id] == nil { retryAfter.removeValue(forKey: id) }
+    }
     private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) async {
         let id = UUID()
         let collector = services.makeDesktop(URL(fileURLWithPath: source.home), Set(hosts.keys).union(["local"]),

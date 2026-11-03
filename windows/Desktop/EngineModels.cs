@@ -14,7 +14,13 @@ internal sealed record EngineSnapshot(
     JsonElement? CompactContext = null, DeepSeekConnection? DeepseekConnection = null, ClaudeConnection? ClaudeConnection = null,
     ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
-    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null);
+    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null);
+internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
+    bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
+internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);
+internal sealed record ConnectionHostRow(string Id, string Name, string Kind, IReadOnlyList<ConnectionModule> Modules);
+internal sealed record ConnectionModule(string Id, string Key, string Provider, string Label, string State, string Tone,
+    string SessionsText, int Sessions, bool RetrySetup, bool ReadsQuota);
 internal sealed record ClaudeRemoteSetup(string SourceID, string Context, bool Configured, bool InFlight, bool CanRetry, string? Message, double? RetryAt);
 internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
 internal sealed record EngineNavigationFailure(string Id, string Message);

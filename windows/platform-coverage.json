@@ -840,9 +840,10 @@
       ],
       "evidence": [
         "windows/Tests/EngineTests/WindowsWSLTests.swift",
+        "windows/Tests/EngineTests/WindowsWSLHookTests.swift",
         "windows/Tests/DesktopTests/WslTerminalChecks.cs"
       ],
-      "previewNote": "Synthetic discovery, distro/user/directory identities, strict UNC conversion, bounded stdin bootstrap, shared Codex/Claude monitor routes, EOF/unread, source revocation, engine toggles/sleep, selected-source quota and terminal launch rejection pass. No real distro/account was accessed. Installed WSL, real TTY, presentation and combined SSH acceptance remain for integration.",
+      "previewNote": "Synthetic discovery, distro/user/directory identities, strict UNC conversion, bounded stdin bootstrap, shared Codex/Claude monitor routes, EOF/unread, source revocation, engine switches/sleep, selected-source quota and terminal launch rejection pass. SSH and WSL share one bounded hook scheduler: version cache, 30-minute retry, manual retry and revoked late results are covered. No real distro/account was accessed. Installed WSL, real TTY and presentation acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -898,7 +899,7 @@
     {
       "id": "connections-page",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "同一 ConnectionSource/SSHHost/ConnectionSummary：问题优先、服务 side-by-side、session count",
@@ -906,10 +907,16 @@
         "monitorSSH/monitorRemoteControl 开关、Claude setup retry，不重启健康来源"
       ],
       "sourceRefs": [
-        "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
+        "native/Sources/PacerIsland/SettingsConnectionsPane.swift",
+        "native/Sources/PacerCore/ConnectionPagePresentation.swift",
+        "windows/Desktop/SettingsConnections.cs"
       ],
-      "evidence": [],
-      "previewNote": "Connections 页所有来源、开关和恢复入口。",
+      "evidence": [
+        "native/Tests/PacerCoreTests/ConnectionPagePresentationTests.swift",
+        "windows/Tests/EngineTests/EngineConnectionProjectionTests.swift",
+        "windows/Tests/DesktopTests/ConnectionActionChecks.cs"
+      ],
+      "previewNote": "Shared source/host/summary rules drive problem ordering, provider columns and session counts. Synthetic Core/engine and headless desktop checks cover SSH/WSL setup state, context-bound retry, inactive-helper retry, switches, quota routing and additive protocol compatibility. Debug engine/desktop compilation is warning-free. GUI matrix and real source acceptance remain for batch integration; no real account was accessed.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []

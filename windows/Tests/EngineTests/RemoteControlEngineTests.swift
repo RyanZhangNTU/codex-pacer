@@ -132,6 +132,8 @@ final class RemoteControlEngineTests: XCTestCase {
         try await channel.send(["kind": "status", "hostId": host, "connected": false, "waitingForSession": true])
         XCTAssertEqual(fixture.read().snapshot?.sources.first { $0.transport == "remote-control" && $0.sourceName == "Workstation" }?.state, "idle")
         XCTAssertEqual(fixture.read().snapshot?.sources.first { $0.sourceName == "Notebook" }?.state, "offline")
+        XCTAssertEqual(fixture.read().snapshot?.connections?.sources.first { $0.key == host }?.module.state, "idle")
+        XCTAssertEqual(fixture.read().snapshot?.connections?.sources.first { $0.name == "Notebook" }?.module.state, "offline")
         let date = Date()
         try await channel.send(events("turn/started", at: date))
         XCTAssertEqual(fixture.read().snapshot?.tasks.first?.phase, "running")

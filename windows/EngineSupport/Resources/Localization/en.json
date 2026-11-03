@@ -91,5 +91,8 @@
   "windows.settings.startup_disabled": "Windows has disabled this entry. Allow it in Startup apps.",
   "windows.settings.startup_policy": "A Windows policy is blocking this startup entry.",
   "windows.settings.startup_unknown": "The Windows startup status is unavailable. Check Startup apps.",
-  "windows.settings.startup_other": "Another installation has registered this entry. Check Startup apps first."
+  "windows.settings.startup_other": "Another installation has registered this entry. Check Startup apps first.",
+  "windows.connections.monitor_wsl": "Monitor Tasks in WSL",
+  "windows.connections.wsl_help": "Read Codex and Claude sessions in running distributions as their default Linux user.",
+  "windows.connections.read_quota": "Read Quota"
 }

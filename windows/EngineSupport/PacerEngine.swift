@@ -234,6 +234,7 @@ actor EngineRuntime {
     private var claudeRemoteSetups: [EngineClaudeRemoteSetup] = []
     private var codexRemoteTargets: [RemoteActivityTarget] = [], claudeRemoteTargets: [RemoteActivityTarget] = []
     private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
+    private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
     private var deepseekNoticePolicy = DeepSeekNoticePolicy()
@@ -733,6 +734,9 @@ actor EngineRuntime {
                 failure(id: command.id, code: "unavailable"); return true
             }
             await bindDesktopMonitor(force: true)
+        case "refreshTaskSources":
+            guard active else { failure(id: command.id, code: "unavailable"); return true }
+            scheduleConnectionRetry()
         case "readConnectionQuota":
             guard let source = command.params?.sourceID, let name = command.params?.provider,
                   let provider = AgentProvider(rawValue: name), enabled.contains(provider), monitorWSL,
@@ -988,6 +992,7 @@ actor EngineRuntime {
 
     private func resetClaudeLocalSource() {
         claudeLocal = LocalActivitySnapshot()
+        localStreamStatuses[.claude] = nil
     }
 
     private func bindActivityMonitor(_ provider: AgentProvider) async {
@@ -1042,6 +1047,7 @@ actor EngineRuntime {
         guard active, lifecycle.version(.claude) == context else { return }
         inbox.remove(activityIDs: exclusions)
         let status = statuses["local"]
+        localStreamStatuses[.claude] = status
         claudeRemoteStatuses = statuses.filter { $0.key != "local" && allowsRemoteSource($0.key, provider: .claude) }
         await bindClaudeRemoteSetup()
         guard active, lifecycle.version(.claude) == context else { return }
@@ -1056,6 +1062,7 @@ actor EngineRuntime {
         let previous = Set(deepseekLocal.activities.filter { $0.phase == .running }.map { $0.id + "|" + ($0.turnID ?? "") })
         deepseekUsage = usage
         let status = statuses["local"]
+        localStreamStatuses[.deepseek] = status
         deepseekLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance), requests: attention,
             available: status?.connected == true && status?.sourceAvailable != false)
         updateLocalWallet()
@@ -1186,6 +1193,7 @@ actor EngineRuntime {
     }
 
     private func resetSourceState(_ provider: AgentProvider) {
+        localStreamStatuses[provider] = nil
         notificationActivities.removeAll { $0.provider == provider }
         inbox.remove(provider: provider)
         activities.removeAll { $0.provider == provider }
@@ -1530,6 +1538,87 @@ actor EngineRuntime {
             update: { [weak self] rows, version in await self?.receiveClaudeRemoteSetups(rows, version: version) },
             didConfigure: { [weak self] source, version in await self?.refreshConfiguredClaudeRemote(source, version: version) })
     }
+
+    private func scheduleConnectionRetry() {
+        let key = ApplicationWorkRegistry.Key(.remote, identifier: "connections-retry")
+        guard ownedWork.task(key) == nil else { return }
+        let owner = ownedWork.begin(key, version: generation)
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.retryConnections(owner)
+        }
+        ownedWork.attach(task, to: owner)
+    }
+    private func retryConnections(_ owner: ApplicationWorkRegistry.Ticket) async {
+        defer { ownedWork.finish(owner) }
+        guard active, owner.version == generation else { return }
+        if demo { publish(notices: [], force: true); return }
+        scheduleRemoteDiscovery(); scheduleWSLDiscovery()
+        await desktopMonitor?.retryInactiveHelpers()
+        guard active, ownedWork.owns(owner), owner.version == generation else { return }
+        await bindDesktopMonitor(force: true)
+        if enabled.contains(.claude) { await claudeActivityMonitor.refresh() }
+        if enabled.contains(.deepseek) { await deepseekActivityMonitor.refresh() }
+        guard active, ownedWork.owns(owner), owner.version == generation else { return }
+        for row in claudeRemoteSetups where row.canRetry && row.message != nil {
+            _ = await claudeRemoteSetup?.retry(sourceID: row.sourceID, context: row.context)
+            guard active, ownedWork.owns(owner), owner.version == generation else { return }
+        }
+        // Quota/balance keep their normal due-time policy; this action does
+        // not force the three services' quota requests like "refresh" does.
+        await refresh(discover: true, refreshActivityMonitors: false)
+    }
+
+    private func connectionPresentation() -> ConnectionPagePresentation {
+        var streams: [AgentProvider: [String: RuntimeStreamStatus]] = [:]
+        for provider in enabled {
+            if demo {
+                var status = RuntimeStreamStatus(); status.connected = true; status.sourceAvailable = true
+                streams[provider] = ["local": status]
+                for (source, rows) in Dictionary(grouping: activities.filter { $0.provider == provider }, by: { $0.sourceHostID ?? "local" }) {
+                    status.attachedThreads = Set(rows.map { $0.threadID ?? $0.id }).count; status.sourceName = rows.first?.sourceHost
+                    streams[provider, default: [:]][source] = status
+                }
+            } else if provider == .codex {
+                streams[provider] = desktopState?.statuses ?? [:]
+                if let status = desktopState?.status { streams[provider, default: [:]]["local"] = status }
+            } else {
+                streams[provider] = provider == .claude ? claudeRemoteStatuses : [:]
+                if let status = localStreamStatuses[provider] { streams[provider, default: [:]]["local"] = status }
+            }
+            streams[provider] = streams[provider]?.filter { source, _ in
+                if source == "local" { return true }
+                if !demo { return allowsRemoteSource(source, provider: provider) }
+                if source.hasPrefix(ConnectionSource.sshPrefix) { return monitorSSH }
+                if source.hasPrefix(ConnectionSource.controlPrefix) { return monitorRemoteControl }
+                if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL }
+                return source == ClaudeCloudProjectState.sourceID && showClaudeCloudProjects
+            }
+        }
+        if !demo, showClaudeCloudProjects, let cloud = cloudState, cloud.enabled, let status = cloud.status {
+            streams[.claude, default: [:]][ClaudeCloudProjectState.sourceID] = status
+        }
+        if !demo, monitorSSH {
+            for provider in [AgentProvider.codex, .claude] where enabled.contains(provider) {
+                for target in provider == .claude ? claudeRemoteTargets : codexRemoteTargets where streams[provider]?[target.id] == nil {
+                    var status = RuntimeStreamStatus(); status.sourceName = target.name
+                    streams[provider, default: [:]][target.id] = status
+                }
+            }
+        }
+        let catalog = !demo && monitorWSL ? wslServices?.registry.snapshot() : nil
+        for provider in [AgentProvider.codex, .claude] where enabled.contains(provider) {
+            for profile in catalog?.profiles ?? [] {
+                var status = streams[provider]?[profile.id] ?? RuntimeStreamStatus()
+                status.sourceName = "WSL · " + profile.distro; status.remoteHostOnline = catalog?.active.contains(profile.id) == true
+                if status.remoteHostOnline == false { status.connected = false }
+                if profile.target(provider) == nil { status.sourceAvailable = false; status.connected = false }
+                streams[provider, default: [:]][profile.id] = status
+            }
+        }
+        return EngineConnectionProjection.make(enabled: enabled, statuses: streams, targets: monitorSSH ? claudeRemoteTargets : [],
+            setups: claudeRemoteSetups, profiles: catalog?.profiles ?? [], activeWSL: catalog?.active ?? [], canRetrySetup: !demo && claudeRemoteServices != nil)
+    }
     private func receiveClaudeRemoteSetups(_ rows: [EngineClaudeRemoteSetup], version: UInt64) {
         guard active, lifecycle.version(.claude) == version, rows != claudeRemoteSetups else { return }
         claudeRemoteSetups = rows
@@ -1655,7 +1744,8 @@ actor EngineRuntime {
                     var reading = statuses[provider]?[profile.id] ?? RuntimeStreamStatus()
                     reading.sourceName = "WSL · " + profile.distro
                     reading.remoteHostOnline = catalog.active.contains(profile.id)
-                    if profile.target(provider) == nil { reading.sourceAvailable = false }
+                    if reading.remoteHostOnline == false { reading.connected = false }
+                    if profile.target(provider) == nil { reading.sourceAvailable = false; reading.connected = false }
                     statuses[provider, default: [:]][profile.id] = reading
                 }
             }
@@ -1871,7 +1961,7 @@ actor EngineRuntime {
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
             notificationProjections: notificationProjections,
             navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup,
-            claudeRemoteSetups: claudeRemoteSetups)
+            claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation())
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }

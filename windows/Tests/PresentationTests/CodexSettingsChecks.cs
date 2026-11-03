@@ -61,8 +61,8 @@ internal static class CodexSettingsChecks
             Check(Find<RadioButton>(window, "settings.pane.codex").IsChecked == true
                 && Find<RadioButton>(window, "settings.pane.claude").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.deepseek").IsEnabled
-                && !Find<RadioButton>(window, "settings.pane.connections").IsEnabled,
-                "Implemented provider panes must be reachable while pending connections remain disabled");
+                && Find<RadioButton>(window, "settings.pane.connections").IsEnabled,
+                "Implemented provider and connection panes must be reachable");
             window.CapturePreview(Path.Combine(output, "settings-" + name + "-codex.png"));
             var expander = Find<Expander>(window, "settings.codex.locations");
             var disclosureTitle = Descendants(expander).OfType<TextBlock>().Single(value => value.Text == ui.Text("provider.custom_locations"));

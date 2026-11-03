@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "eff3704a763041b1d8ee3e243bca8a086573a26685059afaed9ec2b65e2e2da3"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "61a10483d0ddc4d0daacf359ed115eda6d61070432df7fb8b9f8ad9812924b4f"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -924,6 +924,9 @@
     "windows.cli.relative_path": "CLI \u8def\u5f84\u4e0d\u662f\u7edd\u5bf9\u8def\u5f84\uff1a%1$@\n\u8bf7\u9009\u62e9 codex.exe \u6216\u5176\u5b89\u88c5\u6587\u4ef6\u5939\u7684\u5b8c\u6574 Windows \u8def\u5f84\u3002",
     "windows.connection.closed": "\u4efb\u52a1\u66f4\u65b0\u5df2\u505c\u6b62\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00 Codex Pacer \u4ee5\u6062\u590d\u8fde\u63a5\u3002",
     "windows.connection.refresh_failed": "\u64cd\u4f5c\u672a\u5b8c\u6210\uff0c\u8bf7\u5237\u65b0\u540e\u91cd\u8bd5\u3002",
+    "windows.connections.monitor_wsl": "\u76d1\u6d4b WSL \u4e2d\u7684\u4efb\u52a1",
+    "windows.connections.read_quota": "\u8bfb\u53d6\u989d\u5ea6",
+    "windows.connections.wsl_help": "\u4ee5\u9ed8\u8ba4 Linux \u7528\u6237\u8bfb\u53d6\u6b63\u5728\u8fd0\u884c\u7684\u53d1\u884c\u7248\u4e2d\u7684 Codex \u548c Claude \u4f1a\u8bdd\u3002",
     "windows.deepseek.budget_notifications_pending": "Windows \u6682\u4e0d\u652f\u6301\u9884\u7b97\u901a\u77e5\u3002",
     "windows.deepseek.demo_key_help": "\u6f14\u793a\u5bc6\u94a5\u4ec5\u4fdd\u5b58\u5728\u5185\u5b58\u4e2d\uff0c\u5173\u95ed\u6f14\u793a\u540e\u6e05\u9664\u3002",
     "windows.deepseek.demo_web_help": "\u79bb\u7ebf\u6f14\u793a\u4e2d\u65e0\u6cd5\u7f51\u9875\u767b\u5f55\u3002",

@@ -10,7 +10,7 @@ internal static class Program
     private static async Task<int> Main(string[] args)
     {
         if (args is ["--remote-source-unit-only"])
-        { WslTerminalChecks.Run(); Console.WriteLine("PASS WSL terminal source routing and launch rejection"); return 0; }
+        { WslTerminalChecks.Run(); SshTerminalChecks.Run(); ConnectionActionChecks.Run(); Console.WriteLine("PASS remote terminal routing, preferences and context-bound connection actions"); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
@@ -39,6 +39,7 @@ internal static class Program
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
+        await Test("connection actions bind setup retries and quota reads to the current source", () => { ConnectionActionChecks.Run(); return Task.CompletedTask; });
 
         await Test("real engine: demo, configuration rejection and acknowledged privacy", async () =>
         {

@@ -168,12 +168,20 @@ final class WindowsWSLTests: XCTestCase {
         let ended = await monitor.activities(); XCTAssertEqual(ended.first?.phase, .interrupted)
         var inbox = CompletionInbox(); inbox.bindSourceHomes(provider: .codex, localHome: home, remoteHomes: [profile.id: profile.codexHome])
         inbox.observe(running, at: Date(), retention: 600); inbox.observe(ended, at: Date(), retention: 600)
+        await monitor.retryInactiveHelpers()
+        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
+        XCTAssertEqual(launches.all().count, 1, "Retrying sources does not resubscribe a healthy helper")
         await child.disconnect()
         XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
         await monitor.invalidateRemoteControlCatalog(retryTransport: true)
         await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
         // Failed helper backoff is source-owned; explicit refresh must not
         // replace healthy helpers or acknowledge their retained completions.
+        XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
+        XCTAssertEqual(launches.all().count, 1, "Catalog retry alone retains the helper's backoff")
+        await monitor.retryInactiveHelpers()
+        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
+        XCTAssertEqual(launches.all().count, 2, "The explicit task-source retry bypasses inactive helper backoff")
         XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
         await monitor.shutdown(); XCTAssertFalse(child.isRunning)
     }
@@ -270,12 +278,15 @@ final class WindowsWSLTests: XCTestCase {
         try await child.send(["kind": "runtimeBatch", "events": [["method": "turn/started", "threadId": thread, "turnId": "one", "at": Date().timeIntervalSince1970]]])
         XCTAssertEqual(frames.latest()?.tasks.first?.sourceID, profile.id)
         XCTAssertEqual(frames.latest()?.sources.first { $0.transport == "wsl" && $0.provider == "codex" }?.state, "connected")
+        XCTAssertEqual(frames.latest()?.connections?.hosts.first?.id, profile.id)
+        XCTAssertTrue(frames.latest()?.connections?.hosts.first?.modules.first?.readsQuota == true)
         try await child.send(["kind": "runtimeBatch", "events": [["method": "turn/completed", "threadId": thread, "turnId": "one", "status": "completed", "at": Date().timeIntervalSince1970]]])
         XCTAssertTrue(frames.latest()?.tasks.first?.unread == true)
         XCTAssertNotNil(frames.latest()?.activityLinks?.first)
         _ = await runtime.receive(try command("configure", ["monitorWSL": false]))
         XCTAssertTrue(frames.latest()?.tasks.allSatisfy { $0.sourceID != profile.id } == true)
         XCTAssertFalse(child.isRunning)
+        XCTAssertTrue(frames.latest()?.connections?.hosts.isEmpty == true)
         let prior = launches.all().count
         _ = await runtime.receive(try command("configure", ["monitorWSL": true]))
         try await until { launches.all().count > prior }

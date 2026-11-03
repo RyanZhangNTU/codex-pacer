@@ -55,7 +55,7 @@ The earlier cold `0x80040154` was a test-environment issue: a Codex child saw on
 
 ## Local acceptance
 
-[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. Remote hooks and real remote acceptance are tracked separately.
+[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. SSH and WSL now share remote hook setup; real remote acceptance remains pending.
 
 Use demo data for screenshots and interaction checks:
 
@@ -96,3 +96,11 @@ Claude hooks on SSH and WSL use the same installer, digest cache and scheduler. 
 The source's quota action uses read-only Codex RPC or the shared Claude quota client with a bounded, owner-checked Linux file snapshot. It never borrows Windows credentials or writes a credential cache. Credential stamps are checked again before publishing; only formatted quota windows reach the desktop. These on-demand readings stay separate from the selected Windows account's history. Source navigation uses a dedicated console mode and validates the same distribution/user/root before opening the captured session; failure keeps the ending unread.
 
 Development tests use synthetic profiles, private helpers and intercepted transport. Real WSL lifecycle, actual terminal activation and the complete presentation pass belong to integration and preview acceptance.
+
+## Connections page
+
+The Windows page consumes `ConnectionPagePresentation`, which combines Core's `ConnectionSource`, `SSHHost` and `ConnectionSummary`. It shows local collectors, Cloud Projects and Remote Control, then SSH and WSL hosts with Codex and Claude side by side. Problems come first within those groups. Session counts exclude a Claude source whose hooks are still being configured or have failed.
+
+The page exposes the existing SSH and Remote Control preferences and the Windows WSL preference. A task-source retry clears backoff for inactive helpers, retries failed Claude setup and refreshes discovery without restarting healthy subscriptions. Quota and balance requests have their own actions. WSL quota reads remain bound to the selected Linux source; local quota rows use the existing shared freshness and error projections.
+
+SSH and WSL setup buttons use the same source/context pair. Removing a source, disabling it or replacing its identity invalidates an old button. The desktop also rejects a duplicate retry while setup is in flight. Synthetic Swift and headless desktop tests cover grouping, counts, source switches, retry ownership and protocol compatibility. Debug engine and desktop builds pass with no compiler warnings. The full display matrix, real WSL terminals and real-account read-only acceptance are deferred to the batch integration stage; no real provider account was accessed during these checks.

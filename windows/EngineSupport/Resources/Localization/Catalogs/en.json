@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "17b55d804ffec9ec4ac5cccd19e5aa97a4f10f4e58f478305a6ef367573b8f25"
+    "windows/EngineSupport/Resources/Localization/en.json": "8432d60fb30e9dec76ea3751e64ed758edd7690f83f7219f9a83d81cfb3047c2"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -924,6 +924,9 @@
     "windows.cli.relative_path": "The CLI path is not absolute: %1$@\nChoose codex.exe or its installation folder using a full Windows path.",
     "windows.connection.closed": "Task updates stopped. Restart Codex Pacer to reconnect.",
     "windows.connection.refresh_failed": "Couldn't complete the action. Refresh and try again.",
+    "windows.connections.monitor_wsl": "Monitor Tasks in WSL",
+    "windows.connections.read_quota": "Read Quota",
+    "windows.connections.wsl_help": "Read Codex and Claude sessions in running distributions as their default Linux user.",
     "windows.deepseek.budget_notifications_pending": "Budget notifications are not available on Windows yet.",
     "windows.deepseek.demo_key_help": "Demo keys stay in memory and are cleared when this demo closes.",
     "windows.deepseek.demo_web_help": "Web sign-in is unavailable in the offline demo.",

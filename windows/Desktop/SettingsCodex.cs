@@ -205,7 +205,7 @@ internal sealed partial class SettingsWindow
     private void OnProviderSnapshot(EngineSnapshot snapshot)
     {
         if (Dispatcher.HasShutdownStarted) return;
-        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); } finally { synchronizing = false; } } });
+        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshConnections(); } finally { synchronizing = false; } } });
     }
     private void OnProviderStatus(string status)
     {
@@ -215,7 +215,7 @@ internal sealed partial class SettingsWindow
             if (sourceClosed) return;
             providerConnectionClosed = true; sourceInspectionRevision++; sourceReport = null; sourceInspectionFailed = true;
             synchronizing = true;
-            try { UpdateSourceStatus(); RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); }
+            try { UpdateSourceStatus(); RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshConnections(); }
             finally { synchronizing = false; }
         });
     }

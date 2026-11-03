@@ -91,5 +91,8 @@
   "windows.settings.startup_disabled": "Windows 已禁用此启动项。请在“启动应用”中允许启动。",
   "windows.settings.startup_policy": "Windows 策略阻止了此启动项。",
   "windows.settings.startup_unknown": "无法确认 Windows 启动状态。请检查“启动应用”。",
-  "windows.settings.startup_other": "另一个安装位置已注册此启动项。请先检查“启动应用”。"
+  "windows.settings.startup_other": "另一个安装位置已注册此启动项。请先检查“启动应用”。",
+  "windows.connections.monitor_wsl": "监测 WSL 中的任务",
+  "windows.connections.wsl_help": "以默认 Linux 用户读取正在运行的发行版中的 Codex 和 Claude 会话。",
+  "windows.connections.read_quota": "读取额度"
 }

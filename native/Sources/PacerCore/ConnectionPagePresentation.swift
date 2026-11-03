@@ -37,7 +37,7 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
             configured: configured, configuring: configuring, failed: failed, names: names)
         var overrides: [String: SSHHost.State] = [:]
         for source in sourceValues where source.provider == .claude && source.key.hasPrefix(ConnectionSource.wslPrefix) && source.state != .paused {
-            if setup[source.key] == .failed { overrides[source.id] = .setupFailed }
+            if setup[source.key] == .failed && source.state == .connected { overrides[source.id] = .setupFailed }
             else if setup[source.key] == .configuring { overrides[source.id] = .configuring }
         }
         let summary = ConnectionSummary(enabledProviders: enabledProviders, sources: sourceValues, hosts: ssh, overrides: overrides)
