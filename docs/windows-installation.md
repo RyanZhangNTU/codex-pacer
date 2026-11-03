@@ -24,13 +24,17 @@ StartupApproved 的二进制格式没有公开 API 契约。当前识别已观�
 
 ## 卸载和数据
 
-从 Windows“已安装的应用”卸载 Codex Pacer。确认卸载后，先关闭当前安装并清理注册，再删除程序文件。清理失败会中止文件删除；可先修复安装后重试。
+从 Windows“已安装的应用”卸载 Codex Pacer。确认卸载后，先预检 Claude 配置，再关闭当前安装、清理自有项并删除程序文件。
+
+清理失败时可选择“重试”“继续卸载”或“取消”。取消会保留应用文件；预检发现无效 JSON、过大配置或不安全路径时，也不会更改 Claude 配置或应用注册。继续卸载会删除应用文件，清理仍能安全处理的自有注册项，保留失败项，并在卸载日志中说明手动清理方法。遗留的 Pacer hook 可能调用已删除的程序，在手动移除这些 Pacer 条目前，Claude Code 可能报错。提示只列配置文件名和定位方式，不显示配置内容或任务资料。
+
+静默卸载（/SILENT 或 /VERYSILENT）遇到清理失败会返回非零结果，保留应用文件。维护程序会在保留的数据目录中写入固定内容的 uninstall-cleanup.log，区分 Claude 配置与 Windows 注册清理失败；从 Windows 应用列表启动卸载也会启用 Inno 日志。排查命令行卸载时可另加 /LOG。重试可重复执行，不会重复删除用户配置。
 
 卸载移除当前安装自有的安装登记、开始菜单快捷方式、启动项和通知注册。不同路径的启动项、其他应用的注册值，以及用户改过的快捷方式会保留。通知清理先核对激活程序路径，再调用 SDK 的 [UnregisterAll](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.unregisterall)，并移除当前可执行文件的路径映射。
 
 Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 Pacer 自有的当前或旧版 hook 命令；status-line 仍是 Pacer 包装时恢复原值；只移除安装记录里由 Pacer 添加且未被用户修改的环境值。原有或后来添加的用户 hooks、status-line 和其他配置不删除。只处理当前本机的默认或已配置 Claude home，不处理远程 hooks。无安装记录时不推测归属。
 
-偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；配置中不再引用这些脚本。
+偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；正常清理后，配置不再引用这些脚本。
 
 ## 开发验证
 
@@ -42,7 +46,7 @@ Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 
     ./scripts/windows/test-installer.ps1 -Archive <ZIP>
     ./scripts/windows/package-installer.ps1 -Archive <ZIP>
 
-生命周期测试编译独立 QA 标识的安装器，使用中文路径、独立启动项、开始菜单目录和合成 Claude 配置。它验证安装、损坏修复、文件占用失败、运行中覆盖安装、合成偏好与已读文件保留、启动项、卸载清理和离线 demo；测试后卸载并清理测试目录。截图只包含 demo 数据。
+生命周期测试编译独立 QA 标识的安装器，使用中文路径、独立启动项、开始菜单目录和合成 Claude 配置。它验证安装、损坏修复、文件占用失败、运行中覆盖安装、合成偏好与已读文件保留、启动项、卸载清理和离线 demo。无效 Claude JSON 场景覆盖静默中止、交互取消、重复重试和明确继续卸载，并检查原始字节及日志隐私；交互选择通过仅限 QA 包的参数调用同一维护入口。测试后卸载并清理测试目录。截图只包含 demo 数据。
 
 使用屏幕前，测试确认没有原型或展示测试进程占用桌面；占用时每分钟检查一次，最多等 30 分钟。测试只关闭自己安装位置的应用。可选 ProtectedProcessId 参数只检查指定进程仍存在，不向它发送消息。
 

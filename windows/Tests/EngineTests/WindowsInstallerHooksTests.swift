@@ -20,6 +20,11 @@ final class WindowsInstallerHooksTests: XCTestCase {
         ]
         try JSONSerialization.data(withJSONObject: original).write(to: settings)
         _ = try WindowsClaudeHookCleanup.installer().install(home: home)
+        let installed = try Data(contentsOf: settings)
+        let manifest = try Data(contentsOf: home.appendingPathComponent("pacer/installation.json"))
+        try WindowsClaudeHookCleanup.uninstall(home: home, checkOnly: true)
+        XCTAssertEqual(try Data(contentsOf: settings), installed)
+        XCTAssertEqual(try Data(contentsOf: home.appendingPathComponent("pacer/installation.json")), manifest)
         try WindowsClaudeHookCleanup.uninstall(home: home)
         let restored = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
         XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: restored))
@@ -51,6 +56,7 @@ final class WindowsInstallerHooksTests: XCTestCase {
             let home = try fixture(), settings = home.appendingPathComponent("settings.json")
             _ = try WindowsClaudeHookCleanup.installer().install(home: home)
             try bytes.write(to: settings)
+            XCTAssertThrowsError(try WindowsClaudeHookCleanup.uninstall(home: home, checkOnly: true))
             XCTAssertThrowsError(try WindowsClaudeHookCleanup.uninstall(home: home)) { error in
                 XCTAssertFalse(error.localizedDescription.contains("account-private"))
                 XCTAssertFalse(error.localizedDescription.contains("task-private"))

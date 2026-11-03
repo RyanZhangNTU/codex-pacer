@@ -46,6 +46,7 @@ CloseApplications=no
 RestartApplications=no
 RestartIfNeededByRun=no
 SignedUninstaller=no
+UninstallLogging=yes
 WizardStyle=modern
 DisableWelcomePage=no
 LicenseFile={#SourceDir}\LICENSE.txt
@@ -59,6 +60,7 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "Maintenance\PacerMaintena
 [Code]
 var
   Bootstrap: String;
+  MaintenanceExitCode: Integer;
 
 function Maintenance(const Host, Operation, Extra: String): Boolean;
 var
@@ -68,6 +70,8 @@ begin
   Arguments := Operation + ' {#PacerScope} ' + AddQuotes(ExpandConstant('{app}'));
   if Extra <> '' then Arguments := Arguments + ' ' + AddQuotes(Extra);
   Result := Exec(Host, Arguments, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  MaintenanceExitCode := ExitCode;
+  if not Result then MaintenanceExitCode := 24;
   if Result then Result := ExitCode = 0;
 end;
 
@@ -90,11 +94,51 @@ begin
   end;
 end;
 
+function CleanupInstructions(const Code: Integer): String;
+begin
+  Result := '';
+  if Code <> 22 then
+    Result := 'Claude configuration could not be cleaned. The affected files are settings.json and pacer\installation.json in the Claude configuration folder: %CLAUDE_CONFIG_DIR%, otherwise %USERPROFILE%\.claude, and any Claude Home selected in Pacer settings.'#13#10#13#10 +
+      'Manual cleanup: in settings.json, remove only Pacer command entries under hooks that launch pacer/hook.py. If statusLine.command launches that Pacer wrapper, restore previousStatusLine from pacer\installation.json (or remove statusLine when the saved value is null). Remove an env value only when it still equals the value recorded in addedEnvironment. Preserve all user and other application entries. Then remove pacer\installation.json.'#13#10#13#10;
+  if (Code <> 21) then
+    Result := Result + 'Some Windows registrations could not be cleaned. Retained items may include this installation''s current-user Run/StartupApproved entry, Start menu shortcut, Software\CodexPacer\Installations marker, or notification activation registration. Remove only entries that still point to this installation; leave other entries unchanged.'#13#10#13#10;
+  Result := Result + 'Continuing removes the application but preserves anything that could not be cleaned. Retained Pacer hooks may call a deleted program and cause Claude Code errors until you remove those Pacer entries manually. Preferences and read state are retained.';
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Choice, Attempts: Integer;
+  TestChoice, Instructions: String;
 begin
   { After confirmation, before file removal. Exceptions are fatal at this step. }
   if CurUninstallStep = usUninstall then begin
-    if not Maintenance(ExpandConstant('{app}\Maintenance\PacerMaintenance.exe'), 'uninstall', '') then
-      RaiseException('Pacer could not safely remove its registrations and Claude hooks. Repair this installation and retry uninstalling.');
+    Attempts := 0;
+    while not Maintenance(ExpandConstant('{app}\Maintenance\PacerMaintenance.exe'), 'uninstall', '') do begin
+      Instructions := CleanupInstructions(MaintenanceExitCode);
+      Log('Pacer cleanup failure code ' + IntToStr(MaintenanceExitCode) + '. ' + Instructions);
+      TestChoice := '';
+      { QA packages alone can simulate the interactive decision in CI. }
+      if '{#PacerScope}' <> 'default' then
+        TestChoice := ExpandConstant('{param:PACERQAUNINSTALL|}');
+      if TestChoice = 'continue' then Choice := IDIGNORE
+      else if (TestChoice = 'retry-once') and (Attempts = 0) then Choice := IDRETRY
+      else if (TestChoice = 'cancel') or (TestChoice = 'retry-once') then Choice := IDABORT
+      else if UninstallSilent then
+        RaiseException('Pacer cleanup failed. Silent uninstall was stopped before application file removal. See the uninstall log for manual cleanup instructions.')
+      else
+        Choice := TaskDialogMsgBox('Pacer cleanup could not finish', Instructions,
+          mbError, MB_ABORTRETRYIGNORE, ['Retry', 'Continue uninstall', 'Cancel'], 0);
+      if Choice = IDRETRY then begin
+        Attempts := Attempts + 1;
+        Log('Pacer cleanup retry requested.');
+      end else if Choice = IDIGNORE then begin
+        { Same maintenance entry and ownership checks, now best-effort. }
+        if not Maintenance(ExpandConstant('{app}\Maintenance\PacerMaintenance.exe'), 'uninstall-continue', '') then
+          Log('Pacer continued cleanup code ' + IntToStr(MaintenanceExitCode) + '. ' + CleanupInstructions(MaintenanceExitCode));
+        Log('Pacer application removal explicitly continued with retained cleanup items.');
+        Break;
+      end else
+        RaiseException('Uninstall cancelled. Application files have not been removed.');
+    end;
   end;
 end;

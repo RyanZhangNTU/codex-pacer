@@ -1302,7 +1302,7 @@
   },
   "p1aLocalAcceptance": {
     "date": "2026-11-03",
-    "developBase": "56dd512f6abce3cc4c8076b298b3d4510ae05e86",
+    "developBase": "9a99177ed01bd6e5ddf627518dc42c2e74556be8",
     "system": "Windows 11 x64 build 26200, non-elevated current user",
     "scope": [
       "installation",
@@ -1319,6 +1319,8 @@
       "Current-user startup on/off, quoted command, preserved OS disablement in real StartupApproved fixtures",
       "Uninstall removes owned application/notification/startup/shortcut registrations",
       "Shared hook uninstall leaves exactly original user hooks, environment, status-line and other settings",
+      "Invalid Claude JSON: silent abort, interactive cancel and repeated retry preserve application/registrations and original provider bytes",
+      "Explicit interactive Continue removes the app and cleanable owned registrations, preserves invalid Claude bytes and records safe manual cleanup instructions",
       "Retained preference/read-state hashes, other startup values and existing preview process unchanged",
       "Test installation, processes, registrations and fixture directories cleaned"
     ],

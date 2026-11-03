@@ -10,6 +10,9 @@ using Microsoft.Win32;
 
 namespace CodexPacer.Windows;
 
+[Flags]
+internal enum UninstallFailure { None = 0, ClaudeConfiguration = 1, Registrations = 2 }
+
 internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity identity,
     IUserRegistrationStore? registrations = null, IInstallationShortcut? shortcuts = null)
 {
@@ -92,25 +95,52 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             throw;
         }
     }
-    internal async Task UninstallAsync(CancellationToken cancellation)
+    internal async Task<UninstallFailure> UninstallAsync(CancellationToken cancellation, bool continueAfterFailure = false)
     {
         _ = WindowsInstallationIdentity.Load(identity.Root, identity.QaScope, requireContext: true);
-        if (!OwnMarker || !SamePath(Text("Path"), identity.Root)) throw new InvalidDataException("This installation does not own its registration.");
-        await WindowsMaintenanceSignal.StopAsync(identity.Executable, cancellation);
+        // A previous attempt may already have removed the known marker values.
+        // A foreign/partially modified marker is never adopted on retry.
+        if (!(OwnMarker && SamePath(Text("Path"), identity.Root)) && OwnValues.Any(name => store.Read(identity.RegistryKey, name) != null))
+            return UninstallFailure.Registrations;
+        var failures = UninstallFailure.None;
         string hooks = Path.Combine(identity.Root, "Engine", "PacerInstallerHooks.exe");
-        foreach (string home in ClaudeHomes())
+        var checkedHomes = new List<string>();
+        try
         {
-            WindowsInstallationIdentity.RequireNoReparse(home);
-            string manifest = Path.Combine(home, "pacer", "installation.json");
-            WindowsInstallationIdentity.RequireNoReparse(manifest);
-            if (!File.Exists(manifest)) continue;
-            await RunAsync(hooks, ["--uninstall", home], TimeSpan.FromSeconds(10), cancellation);
+            foreach (string home in ClaudeHomes())
+            {
+                try
+                {
+                    WindowsInstallationIdentity.RequireNoReparse(home);
+                    string manifest = Path.Combine(home, "pacer", "installation.json");
+                    WindowsInstallationIdentity.RequireNoReparse(manifest);
+                    if (!File.Exists(manifest)) continue;
+                    await RunAsync(hooks, ["--check-uninstall", home], TimeSpan.FromSeconds(10), cancellation);
+                    checkedHomes.Add(home);
+                }
+                catch { failures |= UninstallFailure.ClaudeConfiguration; }
+            }
         }
-        await RunAsync(identity.Executable, ["--uninstall-notifications"], TimeSpan.FromSeconds(10), cancellation);
-        RemoveOwnedRegistrations();
+        catch { failures |= UninstallFailure.ClaudeConfiguration; }
+        if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
+        try { await WindowsMaintenanceSignal.StopAsync(identity.Executable, cancellation); }
+        catch { return failures | UninstallFailure.Registrations; }
+        foreach (string home in checkedHomes)
+        {
+            try { await RunAsync(hooks, ["--uninstall", home], TimeSpan.FromSeconds(10), cancellation); }
+            catch { failures |= UninstallFailure.ClaudeConfiguration; }
+        }
+        if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
+        try { await RunAsync(identity.Executable, ["--uninstall-notifications"], TimeSpan.FromSeconds(10), cancellation); }
+        catch { failures |= UninstallFailure.Registrations; }
+        if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
+        try { RemoveOwnedRegistrations(); }
+        catch { failures |= UninstallFailure.Registrations; }
+        return failures;
     }
     internal void RemoveOwnedRegistrations()
     {
+        if (OwnValues.All(name => store.Read(identity.RegistryKey, name) == null)) return;
         if (!OwnMarker || !SamePath(Text("Path"), identity.Root)) throw new InvalidDataException("This installation does not own its registration.");
         if (!Startup().RemoveOwned()) throw new IOException("The startup entry could not be removed.");
         string? shortcut = Text("ShortcutPath"), hash = Text("ShortcutHash");
@@ -121,7 +151,17 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             string directory = Path.GetDirectoryName(identity.Shortcut)!;
             if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory, false);
         }
-        foreach (string name in OwnValues) store.Delete(identity.RegistryKey, name);
+        var before = OwnValues.ToDictionary(name => name, name => store.Read(identity.RegistryKey, name));
+        try { foreach (string name in OwnValues) store.Delete(identity.RegistryKey, name); }
+        catch
+        {
+            // Retain the ownership proof when a partial registry removal
+            // fails, so Retry can finish. Never overwrite a concurrent edit.
+            foreach (var pair in before)
+                if (pair.Value != null && store.Read(identity.RegistryKey, pair.Key) == null)
+                    try { store.Write(identity.RegistryKey, pair.Key, pair.Value); } catch { }
+            throw;
+        }
         store.DeleteEmptyKey(identity.RegistryKey);
         store.DeleteEmptyKey(@"Software\CodexPacer\Installations");
         store.DeleteEmptyKey(@"Software\CodexPacer\StartupOwners");

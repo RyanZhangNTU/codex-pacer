@@ -89,12 +89,30 @@ public enum WindowsClaudeHookCleanup {
             }.joined(separator: " ")
         })
     }
-    public static func uninstall(home: URL) throws {
-        let storage = WindowsClaudeHookStorage()
+    public static func uninstall(home: URL, checkOnly: Bool = false) throws {
+        let storage: any ClaudeHookStorage = checkOnly
+            ? UninstallCheckStorage(base: WindowsClaudeHookStorage()) : WindowsClaudeHookStorage()
         let manifest = home.appendingPathComponent("pacer/installation.json")
         try storage.validate(home); try storage.validate(manifest)
         guard storage.exists(manifest) else { return }
         try installer(storage: storage).uninstall(home: home)
         guard !storage.exists(manifest) else { throw ClaudeHookInstaller.Failure.changedSettings }
     }
+}
+
+/// Run the shared ownership/JSON checks without changing provider files. A
+/// failed preflight lets the uninstaller offer Cancel before any cleanup.
+private final class UninstallCheckStorage: ClaudeHookStorage, @unchecked Sendable {
+    private let base: any ClaudeHookStorage
+    // One synchronous installer owns this adapter; it is never shared.
+    private var removed = Set<URL>()
+    init(base: any ClaudeHookStorage) { self.base = base }
+    func validate(_ url: URL) throws { try base.validate(url) }
+    func exists(_ url: URL) -> Bool { !removed.contains(url) && base.exists(url) }
+    func isDirectory(_ url: URL) -> Bool { base.isDirectory(url) }
+    func isReadable(_ url: URL) -> Bool { base.isReadable(url) }
+    func read(_ url: URL) throws -> Data { try base.read(url) }
+    func createDirectory(_ url: URL, permissions: UInt16) throws { throw ClaudeHookInstaller.Failure.unsafePath }
+    func replace(_ url: URL, with data: Data, permissions: UInt16) throws { try base.validate(url) }
+    func remove(_ url: URL) throws { try base.validate(url); removed.insert(url) }
 }

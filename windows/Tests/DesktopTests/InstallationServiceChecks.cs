@@ -37,6 +37,18 @@ internal static class InstallationServiceChecks
                 (string?)store.Read(identity.RegistryKey, "OtherFixture")?.Value == "preserve",
                 "Uninstall must remove its shortcut and known values while preserving an unrelated value");
             Check(Directory.Exists(identity.DataRoot), "Uninstall cannot delete retained data");
+            var removed = store.Snapshot();
+            operations.RemoveOwnedRegistrations();
+            Check(store.Same(removed), "Retrying completed registration cleanup must be idempotent and preserve unrelated values");
+            operations.Register();
+            store.FailDeleteAfter = (identity.RegistryKey, "Path");
+            try { operations.RemoveOwnedRegistrations(); throw new InvalidOperationException("An uninstall failure was swallowed."); }
+            catch (UnauthorizedAccessException) { }
+            Check((string?)store.Read(identity.RegistryKey, "Path")?.Value == identity.Root &&
+                store.Read(identity.RegistryKey, "SchemaVersion") is { Value: 1 }, "Partial removal must retain ownership proof for Retry");
+            operations.RemoveOwnedRegistrations();
+            Check(store.Read(identity.RegistryKey, "Path") == null && (string?)store.Read(identity.RegistryKey, "OtherFixture")?.Value == "preserve",
+                "Retry after partial removal must finish without deleting a foreign value");
 
             Directory.CreateDirectory(Path.GetDirectoryName(identity.Shortcut)!);
             File.WriteAllText(identity.Shortcut, @"C:\synthetic other application.exe");

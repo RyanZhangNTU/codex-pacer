@@ -24,6 +24,7 @@ $taskDemo = $null
 $taskUninstalled = $false
 $taskNotificationApp = $null
 $taskNotificationClass = $null
+$taskFailure = $null
 
 function Assert-Pacer([bool]$Value, [string]$Message) {
     if (!$Value) { throw $Message }
@@ -50,13 +51,28 @@ function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Ex
         $taskFinished = $false
         for ($taskAttempt = 0; $taskAttempt -lt 3; $taskAttempt++) {
             if ($taskProcess.WaitForExit(60000)) { $taskFinished = $true; break }
-            Write-Output 'Waiting for the owned installer test process.'
+            Write-Host 'Waiting for the owned installer test process.'
         }
         if (!$taskFinished) { $taskProcess.Kill($true); throw 'An owned installer test process exceeded three minutes.' }
         $taskText = $taskOut.GetAwaiter().GetResult()
         $taskErrorText = $taskErr.GetAwaiter().GetResult()
         if ($Expected -notcontains $taskProcess.ExitCode) { throw ('An installer test process returned ' + $taskProcess.ExitCode + '. Diagnostics were retained privately, not forwarded.') }
         Assert-Pacer ($taskText.Length -lt 16384 -and $taskErrorText.Length -lt 16384) 'The maintenance response exceeded its limit.'
+        $taskLogFlag = $Arguments | Where-Object { $_.StartsWith('/LOG=', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+        if ($taskLogFlag) {
+            # Inno's outer launcher can exit just before its worker closes the
+            # log. Wait for that worker before reading/asserting or cleanup.
+            $taskLogPath = $taskLogFlag.Substring(5)
+            $taskLogClosed = $false
+            $taskLogDeadline = [Diagnostics.Stopwatch]::StartNew()
+            while ($taskLogDeadline.Elapsed.TotalSeconds -lt 10) {
+                try {
+                    $taskLogFile = [IO.File]::Open($taskLogPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                    $taskLogFile.Dispose(); $taskLogClosed = $true; break
+                } catch [IO.IOException] { Start-Sleep -Milliseconds 100 }
+            }
+            Assert-Pacer $taskLogClosed 'The owned uninstall worker did not close its log in time.'
+        }
         return $taskText
     } finally { $taskProcess.Dispose() }
 }
@@ -96,7 +112,7 @@ function Wait-PacerScreen {
     for ($taskMinute = 0; $taskMinute -lt 30; $taskMinute++) {
         $taskBusy = @(Get-Process | Where-Object { $_.ProcessName -match 'BackdropPrototype|route.?b|Pacer\.PresentationTests' })
         if ($taskBusy.Count -eq 0) { return }
-        Write-Output 'Another prototype or presentation test is using the desktop; waiting one minute.'
+        Write-Host 'Another prototype or presentation test is using the desktop; waiting one minute.'
         Start-Sleep -Seconds 60
     }
     throw 'The desktop remained in use for thirty minutes.'
@@ -198,6 +214,37 @@ try {
     [IO.File]::WriteAllText($taskClaudeSettings, ($taskSettings | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $taskPacerHooks 'installation.json'), (@{version=1;addedEnvironment=@{CLAUDE_CODE_ENABLE_TELEMETRY='1'};previousStatusLine=($taskOriginal|ConvertFrom-Json -AsHashtable).statusLine}|ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $taskPacerHooks 'hook.py'), '# synthetic, never executed', [Text.UTF8Encoding]::new($false))
+    $taskValidSettings = [IO.File]::ReadAllBytes($taskClaudeSettings)
+    $taskManifest = Join-Path $taskPacerHooks 'installation.json'
+    $taskValidManifest = [IO.File]::ReadAllBytes($taskManifest)
+    $taskInvalidSettings = [Text.Encoding]::UTF8.GetBytes('invalid synthetic account-private task-private')
+    [IO.File]::WriteAllBytes($taskClaudeSettings, $taskInvalidSettings)
+    $taskUninstaller = Join-Path $taskApp 'unins000.exe'
+    $taskFailureLog = Join-Path $taskFixture 'uninstall-failure.log'
+    $taskSilent = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $taskFailureLog))
+    $null = Invoke-PacerTestProcess $taskMaintenance @('uninstall',$taskScope,$taskApp) @(21)
+    foreach ($taskDecision in @('', 'cancel', 'retry-once')) {
+        $taskDecisionFlags = $taskSilent
+        if ($taskDecision) { $taskDecisionFlags += '/PACERQAUNINSTALL=' + $taskDecision }
+        $null = Invoke-PacerTestProcess $taskUninstaller $taskDecisionFlags @(1)
+        Assert-Pacer ((Test-Path -LiteralPath $taskExe) -and (Test-Path -LiteralPath $taskShortcut) -and
+            (Get-PacerRegistryValue $taskInstallKey 'Path') -eq $taskApp -and
+            $null -ne (Get-PacerRegistryValue $taskArpKey 'DisplayName') -and
+            $null -ne (Get-PacerRegistryValue $taskRunKey $taskStartupName)) 'An aborted uninstall changed the application or its registrations.'
+        Assert-Pacer ([Convert]::ToBase64String([IO.File]::ReadAllBytes($taskClaudeSettings)) -eq [Convert]::ToBase64String($taskInvalidSettings) -and
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($taskManifest)) -eq [Convert]::ToBase64String($taskValidManifest)) 'Cancel, silent failure or retry changed invalid provider bytes.'
+        $taskLogText = [IO.File]::ReadAllText($taskFailureLog)
+        Assert-Pacer ($taskLogText.Contains('Claude configuration could not be cleaned') -and
+            !$taskLogText.Contains('account-private') -and !$taskLogText.Contains('task-private')) 'The uninstall log lost its safe reason or exposed provider contents.'
+        if ($taskDecision -eq 'retry-once') {
+            Assert-Pacer (([regex]::Matches($taskLogText, 'Pacer cleanup retry requested\.')).Count -eq 1) 'The QA interactive retry did not use the same cleanup entry exactly once.'
+        }
+    }
+    $taskMaintenanceLog = [IO.File]::ReadAllText((Join-Path $taskData 'uninstall-cleanup.log'))
+    Assert-Pacer ($taskMaintenanceLog.Contains('cleanup code 21') -and !$taskMaintenanceLog.Contains('account-private') -and
+        !$taskMaintenanceLog.Contains('task-private')) 'Direct silent maintenance must retain a bounded, redacted failure report.'
+    Record-Pacer 'invalid Claude JSON: silent abort, interactive cancel and repeated retry preserve installation, registrations and original bytes; safe logs'
+    [IO.File]::WriteAllBytes($taskClaudeSettings, $taskValidSettings)
     $taskMapping = 'Software\Classes\AppUserModelId\' + $taskExe.Replace('\','.')
     if (!$taskElevated) {
         $null = Invoke-PacerTestProcess $taskExe @('--qa-register-notifications')
@@ -232,9 +279,37 @@ try {
         Assert-Pacer ($taskStill -and $taskStill.StartTime -eq $taskProtectedStart) 'The protected preview process changed during the fixture.'
     }
     Record-Pacer 'uninstall removes owned registrations, shortcut, startup and shared Claude wrappers; user settings and retained data survive'
+
+    # Simulate the interactive Continue choice through a QA-only installer
+    # parameter. The production silent path cannot enable this test hook.
+    $taskUninstalled = $false
+    $null = Invoke-PacerTestProcess $taskSetup $taskFlags
+    $null = Invoke-PacerTestProcess $taskMaintenance @('startup-enable',$taskScope,$taskApp)
+    [IO.File]::WriteAllBytes($taskClaudeSettings, $taskInvalidSettings)
+    [IO.File]::WriteAllBytes($taskManifest, $taskValidManifest)
+    $null = Invoke-PacerTestProcess $taskUninstaller ($taskSilent + '/PACERQAUNINSTALL=continue')
+    $taskUninstalled = $true
+    Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskShortcut) -and
+        $null -eq (Get-PacerRegistryValue $taskRunKey $taskStartupName) -and
+        $null -eq (Get-PacerRegistryValue $taskApprovalKey $taskStartupName) -and
+        $null -eq (Get-PacerRegistryValue $taskArpKey 'DisplayName') -and
+        $null -eq (Get-PacerRegistryValue $taskInstallKey 'Path')) 'Continue must remove application files and all cleanable owned registrations.'
+    Assert-Pacer ([Convert]::ToBase64String([IO.File]::ReadAllBytes($taskClaudeSettings)) -eq [Convert]::ToBase64String($taskInvalidSettings) -and
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($taskManifest)) -eq [Convert]::ToBase64String($taskValidManifest)) 'Continue cannot change invalid Claude settings or their ownership manifest.'
+    $taskLogText = [IO.File]::ReadAllText($taskFailureLog)
+    Assert-Pacer ($taskLogText.Contains('Retained Pacer hooks may call a deleted program') -and
+        $taskLogText.Contains('settings.json') -and $taskLogText.Contains('previousStatusLine') -and
+        !$taskLogText.Contains('account-private') -and !$taskLogText.Contains('task-private')) 'Continue must retain safe manual cleanup instructions and its Claude warning.'
+    Assert-PacerSnapshot $taskRunKey $taskBeforeRun
+    Assert-PacerSnapshot $taskApprovalKey $taskBeforeApproval
+    Record-Pacer 'invalid Claude JSON: explicit interactive Continue removes the app and owned registrations, preserves invalid bytes and records manual cleanup'
     $taskReport = @{ schemaVersion=1; syntheticOnly=$true; elevated=$taskElevated; restarted=$false; checks=@($taskPasses);
         nativeNotificationCleanup=if ($taskElevated) { 'not exercised: elevated CI token' } else { 'passed' }; protectedPreviewUntouched=($null -ne $taskProtectedStart) }
     [IO.File]::WriteAllText((Join-Path $taskRoot 'output/windows/installer-tests.json'), ($taskReport|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+} catch {
+    $taskFailure = $_
+    Write-Host ('FAIL installer lifecycle after: ' + ($taskPasses | Select-Object -Last 1))
+    throw
 } finally {
     if ($taskDemo) {
         if (!$taskDemo.HasExited -and (Test-Path -LiteralPath (Join-Path $taskApp 'Maintenance/PacerMaintenance.exe'))) {
@@ -243,7 +318,7 @@ try {
         $taskDemo.Dispose()
     }
     if (!$taskUninstalled -and (Test-Path -LiteralPath (Join-Path $taskApp 'unins000.exe'))) {
-        $null = Invoke-PacerTestProcess (Join-Path $taskApp 'unins000.exe') @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')
+        $null = Invoke-PacerTestProcess (Join-Path $taskApp 'unins000.exe') @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/PACERQAUNINSTALL=continue')
         $taskUninstalled = $true
     }
     $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = $taskPreviousBundleCache
@@ -253,6 +328,10 @@ try {
         if (!$taskResolved.StartsWith($taskAllowed,[StringComparison]::OrdinalIgnoreCase) -or !(Split-Path $taskResolved -Leaf).StartsWith('pacer-install-check-')) {
             throw 'The fixture cleanup target is outside its owned workspace.'
         }
-        Remove-Item -LiteralPath $taskResolved -Recurse -Force
+        try { Remove-Item -LiteralPath $taskResolved -Recurse -Force }
+        catch {
+            if (!$taskFailure) { throw }
+            Write-Host 'QA fixture cleanup was incomplete; the original check failure is preserved.'
+        }
     }
 }
