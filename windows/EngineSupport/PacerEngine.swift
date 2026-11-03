@@ -643,6 +643,10 @@ actor EngineRuntime {
             } else { await performLifecycle(plan) }
             await updateSourceWatches()
             startMaintenance()
+            // The host must see the new account context before its browser
+            // can answer a quota request for an organization selected here.
+            await quotaMonitor?.refreshIfDue(expanded: expanded)
+            _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded)
         case "prepareForSleep":
             await prepareForSleep()
         case "resumeAfterSleep":

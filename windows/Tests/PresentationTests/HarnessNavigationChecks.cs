@@ -82,6 +82,7 @@ internal static class HarnessNavigationChecks
                     $"Error expiry must retain the unread completion: elapsed={errorClock.Elapsed.TotalSeconds:0.00}, required={NativeTaskRowTiming.Shared.NavigationErrorDuration - 1}, unread={engine.LatestSnapshot!.Presentation!.Rows.Single().Unread}");
             }
             launchSucceeds = true;
+            await Until(() => row.IsEnabled, "A failed open must release its shared single flight before another explicit click");
             Invoke(row);
             await Until(() => !engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
                 "A successful open must acknowledge only that completion before collapsing");
