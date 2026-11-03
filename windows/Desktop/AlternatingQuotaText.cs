@@ -72,8 +72,8 @@ public sealed class AlternatingQuotaText : Grid
             Typography.SetNumeralAlignment(probe, FontNumeralAlignment.Tabular);
             probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             double advance = NativeTypography.CompactWidth(text.Text, FontSize) ?? probe.DesiredSize.Width;
-            double scale = Math.Max(.7, Math.Min(1, MaximumDisplayWidth / Math.Max(1, Math.Max(advance, probe.DesiredSize.Width))));
-            text.FontSize = FontSize * scale; text.TextTrimming = TextTrimming.CharacterEllipsis;
+            double scale = Math.Min(1, MaximumDisplayWidth / Math.Max(1, Math.Max(advance, probe.DesiredSize.Width)));
+            text.FontSize = FontSize * scale; text.TextTrimming = TextTrimming.None;
             width = Math.Max(width, Math.Max(advance, probe.DesiredSize.Width)); height = Math.Max(height, probe.DesiredSize.Height);
         }
         Width = Math.Min(MaximumDisplayWidth, Math.Ceiling(width)); Height = Math.Ceiling(height);

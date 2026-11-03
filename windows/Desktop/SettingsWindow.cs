@@ -31,6 +31,9 @@ internal sealed partial class SettingsWindow : Window
     private readonly NotificationSession? notifications;
     private readonly Action openNotificationSettings;
     private readonly IslandWindow? surfaceWindow;
+    private readonly ISystemAppearanceSource appearance;
+    private readonly bool ownsAppearance;
+    private readonly HighContrastScope semanticPaint;
     private readonly Grid client = new() { Width = 780, Height = 600 };
     private readonly StackPanel form = new() { Margin = new Thickness(20, 20, 20, 16) };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
@@ -53,7 +56,7 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, ISystemAppearanceSource? appearanceSource = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
@@ -63,6 +66,9 @@ internal sealed partial class SettingsWindow : Window
         this.claudeConnection = claudeConnection;
         this.notifications = notifications;
         this.surfaceWindow = surfaceWindow;
+        appearance = appearanceSource ?? surfaceWindow?.AppearanceSource ?? new SystemAppearanceSource(action => Dispatcher.BeginInvoke(action));
+        ownsAppearance = appearanceSource == null && surfaceWindow == null; semanticPaint = new(this);
+        DesktopAppearance.Apply(this, appearance.Current);
         this.openNotificationSettings = openNotificationSettings ?? (() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }));
         this.sourceReady = sourceReady ?? Task.CompletedTask;
         Title = ui.Text("menu.settings_title"); WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -96,7 +102,7 @@ internal sealed partial class SettingsWindow : Window
         Closed += (_, _) => ShellProjection.Changed -= OnShellProjectionChanged;
         Activated += async (_, _) => { RefreshSystemState(); if (notifications != null) await notifications.RefreshAsync(); };
         Deactivated += (_, _) => RefreshTheme();
-        SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
+        appearance.Changed += OnAppearanceChanged;
         session.Changed += OnPreferencesChanged;
         if (notifications != null) notifications.Changed += OnNotificationsChanged;
         if (surfaceWindow != null) surfaceWindow.SurfaceChanged += RefreshSurfaceStatus;
@@ -105,7 +111,7 @@ internal sealed partial class SettingsWindow : Window
         Closed += (_, _) =>
         {
             sourceClosed = true; sourceInspectionRevision++; ClearProviderHome();
-            SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged; session.Changed -= OnPreferencesChanged;
+            appearance.Changed -= OnAppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose(); session.Changed -= OnPreferencesChanged;
             if (notifications != null) notifications.Changed -= OnNotificationsChanged;
             if (surfaceWindow != null) surfaceWindow.SurfaceChanged -= RefreshSurfaceStatus;
             if (engine != null) { engine.Snapshot -= OnProviderSnapshot; engine.Status -= OnProviderStatus; }
@@ -403,10 +409,11 @@ internal sealed partial class SettingsWindow : Window
     internal void RefreshSystemState() { RefreshTheme(); RefreshValues(); }
     private void ShowIssue(string key) { issue.Text = ui.Text(key); AutomationProperties.SetName(issue, issue.Text); issue.Foreground = new SolidColorBrush(Color.FromRgb(204, 106, 32)); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
     private void ClearIssue() { issue.Text = ""; issue.Visibility = Visibility.Collapsed; }
-    private void OnSystemPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => Dispatcher.InvokeAsync(RefreshTheme);
+    private void OnAppearanceChanged() => Dispatcher.InvokeAsync(() => { if (!sourceClosed) RefreshTheme(); });
     private void RefreshTheme()
     {
-        bool dark = darkOverride ?? IsSystemDark(); SettingsPalette.Apply(Resources, dark, IsActive);
+        var state = appearance.Current; DesktopAppearance.Apply(this, state);
+        semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark; SettingsPalette.Apply(Resources, dark, IsActive, state);
     }
     internal static bool IsSystemDark()
     {

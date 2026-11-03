@@ -15,7 +15,6 @@ public partial class IslandWindow
     // window. One alpha step keeps the existing WPF controls' input surface.
     private static readonly Brush SurfaceInput = PacerPalette.Ink(0, 0, 0, 1);
     private BackdropController? backdrop;
-    private BackdropSystemSource? backdropSystem;
     private HwndSource? backdropSource;
     private string islandAppearance = "classic";
     private bool destinationBlackHeader;
@@ -35,7 +34,7 @@ public partial class IslandWindow
         {
             if (presentationStopped) return;
             void Post(Action value) => Dispatcher.BeginInvoke(value, DispatcherPriority.ContextIdle);
-            var system = backdropSystemFactory?.Invoke() ?? (backdropSystem = new BackdropSystemSource(Post));
+            var system = backdropSystemFactory?.Invoke() ?? new AppearanceBackdropSource(appearance);
             backdrop = new(system, () => backdropFactory?.Invoke(this) ?? new NativeCompositionBackdrop(this), Post);
             backdrop.Changed += RefreshSurface;
             backdropSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
@@ -53,7 +52,7 @@ public partial class IslandWindow
     }
     private void RefreshSurface()
     {
-        Shell.Background = GlassVisible ? SurfaceInput : SurfaceBlack;
+        Shell.Background = appearance.Current.HighContrast ? DesktopAppearance.Ink(appearance.Current.Colors.Window) : GlassVisible ? SurfaceInput : SurfaceBlack;
         double black = GlassVisible && layout.Attached ? Math.Clamp(lastFrame.BlackOpacity, 0, 1) : 0;
         Header.Background = black > 0 ? PacerPalette.Ink(11, 12, 14, (byte)Math.Round(255 * black)) : Brushes.Transparent;
         var decision = SurfaceDecision;
@@ -73,7 +72,7 @@ public partial class IslandWindow
         if (message == 0x0021) { handled = true; return new IntPtr(3); }
         if (message is 0x02E0 or 0x007E or 0x0047) QueueDisplayRefresh();
         if (message is 0x007E or 0x031E) backdrop?.GraphicsChanged();
-        if (message is 0x001A or 0x031A) backdropSystem?.Refresh();
+        if (message is 0x001A or 0x031A && appearance is SystemAppearanceSource source) source.Refresh();
         return IntPtr.Zero;
     }
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
@@ -83,6 +82,5 @@ public partial class IslandWindow
         if (backdropSource is { IsDisposed: false }) backdropSource.RemoveHook(BackdropMessage);
         backdropSource = null;
         if (backdrop != null) { backdrop.Changed -= RefreshSurface; backdrop.Dispose(); backdrop = null; }
-        backdropSystem = null;
     }
 }

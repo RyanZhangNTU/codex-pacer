@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -8,6 +9,7 @@ namespace CodexPacer.Windows;
 internal sealed class IslandWindowAutomationPeer(IslandWindow owner) : WindowAutomationPeer(owner), IExpandCollapseProvider
 {
     protected override Rect GetBoundingRectangleCore() => ((IslandWindow)Owner).VisibleScreenBounds;
+    protected override List<AutomationPeer>? GetChildrenCore() => owner.IsVisible ? base.GetChildrenCore() : [];
     public override object? GetPattern(PatternInterface patternInterface)
         => patternInterface == PatternInterface.ExpandCollapse ? this : base.GetPattern(patternInterface);
     ExpandCollapseState IExpandCollapseProvider.ExpandCollapseState

@@ -93,7 +93,7 @@ public partial class IslandWindow
         Fill(StripLeading, vertical.Leading, compactColumn, true, 4); Fill(StripTrailing, vertical.Trailing, compactColumn, true, 4);
         if (horizontal.Components.Length == 0)
         {
-            var placeholder = new Button { Name = "enginePlaceholder", IsHitTestVisible = false,
+            var placeholder = new Button { Name = "enginePlaceholder", IsHitTestVisible = false, IsEnabled = false, Focusable = false, IsTabStop = false,
                 Content = new TextBlock { Text = !ShellProjection.HasFailure("projectCompactBar") ? "…" : ui.Text("windows.connection.refresh_failed"),
                     Foreground = PacerPalette.Secondary, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 220 },
                 Style = (Style)FindResource("CompactComponentButton") };
@@ -149,8 +149,8 @@ public partial class IslandWindow
         var probe = CompactText(10, FontWeights.SemiBold, PacerPalette.Primary); probe.Text = number;
         probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double width = Math.Max(probe.DesiredSize.Width, NativeTypography.CompactWidth(number, 10) ?? 0);
-        text.Text = number; text.FontSize = 10 * Math.Max(.7, Math.Min(1, 20 / Math.Max(1, width)));
-        text.MaxWidth = 20; text.TextTrimming = TextTrimming.CharacterEllipsis;
+        text.Text = number; text.FontSize = 10 * Math.Min(1, 20 / Math.Max(1, width));
+        text.MaxWidth = 20; text.TextTrimming = TextTrimming.None;
     }
     private static void Fill(StackPanel panel, string[] ids, Dictionary<string, Button> slots, bool vertical, double gap)
     {
@@ -190,8 +190,8 @@ public partial class IslandWindow
         {
             double target = value && slot.Tag is true ? compactData.ExpandedOpacity : 1;
             dimClocks.TryGetValue(slot, out var old);
-            var next = CompactComponentOpacity.Apply(slot, target, !changed && AnimationsEnabled,
-                animate && AnimationsEnabled, compactData.DimDuration, old, () => dimClocks.Remove(slot));
+            var next = CompactComponentOpacity.Apply(slot, target, !changed && DecorationsAnimate,
+                animate && DecorationsAnimate, compactData.DimDuration, old, () => dimClocks.Remove(slot));
             if (next == null) dimClocks.Remove(slot); else dimClocks[slot] = next;
         }
     }

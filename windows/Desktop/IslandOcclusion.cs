@@ -8,7 +8,7 @@ public partial class IslandWindow
     private FullscreenOcclusionObserver? occlusion;
     private HwndSource? occlusionSource;
     private bool decorationsOccluded;
-    private bool DecorationsAnimate => AnimationsEnabled && !decorationsOccluded;
+    private bool DecorationsAnimate => IsVisible && AnimationsEnabled && !decorationsOccluded;
     internal bool DecorationsOccluded => decorationsOccluded;
     private void InitializeOcclusion()
     {

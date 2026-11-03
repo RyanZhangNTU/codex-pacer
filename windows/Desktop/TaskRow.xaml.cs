@@ -30,13 +30,15 @@ public partial class TaskRow : Button
         MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
+        Loaded += (_, _) => ApplyAppearance();
     }
     internal void SetOpenAction(Action? action, string help, bool animate)
     { open = action; IsEnabled = action != null; Focusable = IsEnabled; ToolTip = help; animations = animate; UpdateHover(); }
     internal void SetAnimations(bool value) { animations = value; if (!value) UpdateHover(); }
+    internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()
     {
-        double target = hovered && IsEnabled ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
+        double target = hovered && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
         hover?.Dispose(); hover = null; HoverProgress = target;
         if (!animations || from == target) return;
         var timing = NativeTaskRowTiming.Shared;
