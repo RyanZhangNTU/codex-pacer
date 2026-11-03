@@ -39,7 +39,7 @@ All engine requests are asynchronous. Ordinary commands have a 15-second deadlin
 
 ## Embedded sessions and host applications
 
-Codex and Claude each have a “sessions from other apps” switch, enabled by default. Turning one off hides that provider's embedded families, retained completion cards, requests and reminders. Collection continues, and hidden endings remain unread. A later CLI launch record makes the family visible again. Provider and source identities keep unrelated sessions separate; Zotero translation sessions remain excluded.
+Codex and Claude each have a “sessions from other apps” switch, enabled by default. Schema 2 stores them with the Mac keys `showEmbeddedCodexSessions` and `showEmbeddedClaudeSessions`; older profiles keep their saved Codex choice and default Claude to visible. Turning one off hides that provider's embedded families, retained completion cards, requests and reminders. Collection continues, and hidden endings remain unread. A later CLI launch record makes the family visible again. Provider and source identities keep unrelated sessions separate; Zotero translation sessions remain excluded.
 
 Windows uses the shared host tracking policy for caching, two-second scan throttling, sleep cancellation and wake retries. A bounded native process snapshot supplies parent links; every candidate is checked against its PID and creation time. The cache records the observed application's name and executable file identity while its task or completion card remains referenced.
 
