@@ -136,6 +136,18 @@ public partial class App : Application
         instance = new Mutex(true, instanceName, out bool created);
         if (!created)
         {
+            if (e.Args.Contains("----AppNotificationActivated:"))
+            {
+                // COM can race the first process's HWND/registration. Let the
+                // SDK deliver its opaque ref, then forward it for validation.
+                using var pendingNotification = new WindowsSystemNotifications(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"));
+                var forwarded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pendingNotification.Activated += arguments => forwarded.TrySetResult(WindowsInstanceActivation.TryActivateNotification(arguments));
+                await pendingNotification.EnableAsync();
+                bool delivered = false;
+                try { delivered = await forwarded.Task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (TimeoutException) { }
+                instance.Dispose(); Shutdown(delivered ? 0 : 1); return;
+            }
             bool sent = WindowsInstanceActivation.TryActivate(e.Args.Contains("--settings") ? InstanceAction.Settings : InstanceAction.Show, activationQa);
             if (!sent && activationQa == null)
                 MessageBox.Show(UiText.For(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh").Text("windows.instance.already_running"), "Codex Pacer", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -187,7 +199,7 @@ public partial class App : Application
                         settingsVisible = settings?.IsVisible == true }));
                     activationForCapture.TrySetResult(action);
                 }
-            }, activationQa, Quit);
+            }, activationQa, Quit, arguments => { if (!quitting && notifications?.DesiredEnabled == true) _ = notificationActions?.HandleReferenceAsync(arguments); });
         if (activationQa != null && capture >= 0) { island.IsHitTestVisible = false; island.ShowActivated = false; }
         try { startupRegistration = demo ? new DemoStartupRegistration() : WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory).Startup(); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
@@ -197,11 +209,18 @@ public partial class App : Application
             await engineReady.Task;
             await engine.SendAsync("configure", configuration);
         }, value => demo || preferencesStore?.Save(value) == true);
-        notificationActions = new NotificationActions(engineReady.Task, () => quitting, island.Reveal,
-            () => engine.SendAsync("snoozeDeepSeekSpike"), OpenNotificationLink, notificationLifetime.Token, () => applications.Open("deepseek"));
+        notificationActions = new NotificationActions(engineReady.Task, () => quitting || settingsSession.Current.SystemNotifications != true, island.Reveal,
+            () => engine.SendAsync("snoozeDeepSeekSpike"), OpenNotificationLink, notificationLifetime.Token, () => applications.Open("deepseek"),
+            (kind, reference) => engine.QueryAsync<EngineNotificationActivation>("activateNotification", new { context = reference, notificationAction = kind }),
+            async link =>
+            {
+                var plan = await engine.QueryAsync<EngineNavigationPlan>("prepareActivityOpen", new { context = link.Context });
+                if (quitting || !settingsSession.Current.SystemNotifications || plan.Context != link.Context || plan.Provider != link.Provider || !await applications.OpenConversationAsync(plan)) return false;
+                await engine.SendAsync("completeActivityOpen", new { context = link.Context }); return true;
+            });
         notifications = new NotificationSession(settingsSession,
             demo ? new DemoSystemNotifications() : new WindowsSystemNotifications(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico")),
-            action => Dispatcher.InvokeAsync(action), action => _ = notificationActions.HandleAsync(action), demo, () => applications.CanOpenHarness);
+            action => Dispatcher.InvokeAsync(action), action => _ = notificationActions.HandleReferenceAsync(action), demo, () => applications.CanOpenHarness);
         engine.Snapshot += notifications.Receive;
         await notifications.RefreshAsync();
         int? launchPosition = positionIndex >= 0 ? position : null;

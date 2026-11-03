@@ -24,6 +24,7 @@ struct EngineCommand: Decodable {
         var claudeSession: ClaudeWebSessionReply?
         var requestID: String?
         var context: String?
+        var notificationAction: String?
         var deepseekHome: String?
         var sourceHome: String?
         var hideProjects: Bool?
@@ -204,7 +205,7 @@ struct EngineQuota: Codable, Equatable {
 }
 
 struct EngineNotice: Codable, Equatable {
-    struct Action: Codable, Equatable { let kind: String; let title: String }
+    struct Action: Codable, Equatable { let kind: String; let title: String; var reference: String? = nil }
     let id: String
     let kind: String
     let title: String
@@ -212,7 +213,8 @@ struct EngineNotice: Codable, Equatable {
     let category: String?
     let body: String?
     let privateBody: String?
-    let actions: [Action]?
+    var actions: [Action]?
+    var defaultAction: Action? = nil
     init(_ value: IslandNotice, hideProjects: Bool) {
         id = value.id; kind = value.kind.rawValue; title = value.title
         detail = hideProjects && value.kind != .lowQuota ? L10n.text("activity.local_task") : value.detail
@@ -260,12 +262,13 @@ struct EngineSnapshot: Codable, Equatable {
          showsDeepSeekTurnCost: Bool = true, compactWarnings: [CompactWarningPresentation.Item]? = nil, compactContext: CompactBarContext? = nil,
          taskPresentation: ActivityTaskPresentation? = nil,
          deepseekConnection: EngineDeepSeekConnection? = nil, claudeConnection: EngineClaudeConnection? = nil,
-         claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil) {
+         claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil,
+         notificationProjections: [EngineNotice]? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
         self.demo = demo; capturedAt = now.timeIntervalSince1970
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
         self.requests = requests.map(EngineRequest.init); self.sources = sources; self.quota = quota
-        self.notices = notices.map { EngineNotice($0, hideProjects: hideProjects) }
+        self.notices = notificationProjections ?? notices.map { EngineNotice($0, hideProjects: hideProjects) }
         let overview = taskPresentation?.overview ?? ActivityOverview(activities: activities, at: now)
         runningCount = overview.running.count; waitingCount = overview.waiting.count
         totalTokensPerSecond = overview.displayedRate; rateIsFresh = overview.rateIsFresh

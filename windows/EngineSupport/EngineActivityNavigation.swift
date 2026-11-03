@@ -45,6 +45,7 @@ struct ActivityNavigationRegistry {
     struct Member: Equatable {
         let id: String, thread: String?, parent: String?, turn: String?
         let started: Date?, phase: ActivityPhase
+        let ending: String?
         let source: CompletionInbox.SourceToken
     }
     struct Ending {
@@ -68,7 +69,11 @@ struct ActivityNavigationRegistry {
                   canOpen(target) else { continue }
             let members = group.members.sorted { $0.id < $1.id }.map {
                 Member(id: $0.id, thread: $0.threadID, parent: $0.parentThreadID, turn: $0.turnID,
-                       started: $0.turnStartedAt, phase: $0.phase, source: inbox.sourceToken(for: $0))
+                       started: $0.turnStartedAt, phase: $0.phase,
+                       ending: [.completed, .interrupted].contains($0.phase) ? CompletionDismissalStore.digest([
+                           $0.phase.rawValue, $0.turnFailed ? "failed" : "ok", $0.phaseChangedAt.map { String($0.timeIntervalSince1970) } ?? "",
+                           $0.claudeCloud?.completionMark.map { String($0.timeIntervalSince1970) } ?? ""]) : nil,
+                       source: inbox.sourceToken(for: $0))
             }
             let ids = Set(group.members.map { $0.canonicalized().id })
             let endings: [Ending] = group.isRunning || group.isWaiting || group.members.contains(where: { pending.contains($0.id) }) ? [] :

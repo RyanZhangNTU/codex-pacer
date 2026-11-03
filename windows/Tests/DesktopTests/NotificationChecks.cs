@@ -10,7 +10,7 @@ internal static class NotificationChecks
         var queue = new Queue<Action>(); void Pump() { while (queue.TryDequeue(out var action)) action(); }
         var deliveredActions = new List<string>(); var system = new Fake(); int configurations = 0; bool save = true;
         var preferences = new PreferencesSession(new(), _ => { configurations++; return Task.CompletedTask; }, _ => save);
-        using var session = new NotificationSession(preferences, system, queue.Enqueue, deliveredActions.Add, false);
+        using var session = new NotificationSession(preferences, system, queue.Enqueue, value => deliveredActions.Add(NotificationPayload.ParseAction(value)!), false);
         session.Receive(Frame(1, notice)); Pump(); Check(system.Delivered.Count == 0, "The default is off");
         Check(await session.SetEnabledAsync(true) == NotificationChangeResult.Applied && preferences.Current.SystemNotifications && configurations == 0,
             "The system switch is host-only and is saved after native enable succeeds");
@@ -47,11 +47,16 @@ internal static class NotificationChecks
         Check(session.Availability == NotificationAvailability.Failed && system.Delivered.Count == 4, "A transient delivery failure is visible");
         session.Receive(Frame(13, notice)); Pump();
         Check(session.Availability == NotificationAvailability.Available && system.Delivered.Count == 5, "The next new notice can recover without replaying the failed one");
+        system.Result = NotificationAvailability.Denied; session.Receive(Frame(14, notice)); Pump();
+        Check(session.Availability == NotificationAvailability.Denied && preferences.Current.SystemNotifications && system.Delivered.Count == 5,
+            "Revocation after registration reports OS denial without erasing the saved preference");
+        system.Result = NotificationAvailability.Available; session.Receive(Frame(15, notice)); Pump();
+        Check(session.Availability == NotificationAvailability.Available && system.Delivered.Count == 6, "Delivery recovers when the OS enables notifications again");
         using (var demo = new NotificationSession(preferences, new Fake(), queue.Enqueue, _ => throw new Exception(), true))
         { await demo.RefreshAsync(); demo.Receive(Frame(9, notice)); Pump(); }
 
         bool harnessAvailable = true; var harnessActions = new List<string>(); var harnessSystem = new Fake();
-        using (var harness = new NotificationSession(preferences, harnessSystem, queue.Enqueue, harnessActions.Add, false, () => harnessAvailable))
+        using (var harness = new NotificationSession(preferences, harnessSystem, queue.Enqueue, value => harnessActions.Add(NotificationPayload.ParseAction(value)!), false, () => harnessAvailable))
         {
             await harness.RefreshAsync(); harness.Receive(Frame(1, notice)); Pump();
             Check(harnessSystem.Delivered.Single().Actions.Select(value => value.Kind).SequenceEqual(new[] { "snoozeSpike", "openHarness" }),
@@ -87,11 +92,11 @@ internal static class NotificationChecks
             Check(deniedSystem.Delivered.Count == 1 && denied.Availability == NotificationAvailability.Available, "An OS permission change is recognized on the next new notice without reopening settings");
         }
 
-        var payload = new NotificationContent("secret/task/path", "A < B", "Reply & approve <tag>", [new("topUp", "Top <Up>"), new("malicious&action=topUp", "Bad")]);
+        var payload = new NotificationContent("secret/task/path", "A < B", "Reply & approve <tag>", [new("topUp", "Top <Up>", new string('a', 32)), new("malicious&action=topUp", "Bad", new string('b', 32))]);
         XElement xml = XElement.Parse(NotificationPayload.Xml(payload));
         Check(xml.Descendants("text").Select(value => value.Value).SequenceEqual(new[] { "A < B", "Reply & approve <tag>" })
             && xml.Descendants("action").Count() == 1 && xml.Element("audio")?.Attribute("silent")?.Value == "true", "Text is XML-escaped and notifications stay silent");
-        Check(NotificationPayload.ParseAction(NotificationPayload.Argument("snoozeSpike")) == "snoozeSpike"
+        Check(NotificationPayload.ParseAction(NotificationPayload.Argument("snoozeSpike", new string('a', 32))) == "snoozeSpike"
             && NotificationPayload.ParseAction("pacer=1&action=topUp&url=https://untrusted.invalid") == null
             && NotificationPayload.ParseAction("pacer=1&action=TOPUP") == null, "Launch arguments are exact, not open-ended commands");
         Check(NotificationPayload.Tag(payload.Id).Length == 16 && !NotificationPayload.Xml(payload).Contains(payload.Id), "Raw task identities never enter OS launch arguments");
@@ -107,6 +112,7 @@ internal static class NotificationChecks
         internal NotificationAvailability Result = NotificationAvailability.Available;
         internal Task<NotificationAvailability>? Pending;
         internal bool Registered;
+        public NotificationAvailability? CurrentAvailability => Result;
         internal int ClearCount;
         internal bool RejectNextDelivery;
         internal readonly List<NotificationContent> Delivered = [];
@@ -119,7 +125,7 @@ internal static class NotificationChecks
             if (RejectNextDelivery) { RejectNextDelivery = false; return false; }
             Delivered.Add(content); return true;
         }
-        internal void Fire(string action) => Activated?.Invoke(action);
+        internal void Fire(string action) => Activated?.Invoke(NotificationPayload.Argument(action, new string('a', 32)));
         public void Dispose() { Registered = false; }
     }
 }

@@ -105,11 +105,13 @@ internal sealed class NotificationSession : IDisposable
             {
                 string body = preferences.Current.HideProjects ? notice.PrivateBody ?? notice.Title : notice.Body ?? notice.Title + " · " + notice.Detail;
                 var actions = (notice.Actions ?? []).Where(value => SupportedAction(value.Kind)).ToArray();
-                if (!system.Deliver(new(notice.Id, "Codex Pacer", body, actions)))
+                var defaultAction = notice.DefaultAction is { } main && (main.Kind == "showIsland" || SupportedAction(main.Kind)) ? main : null;
+                if (!system.Deliver(new(notice.Id, "Codex Pacer", body, actions, defaultAction)))
                 {
                     // A transient SDK failure must not disable all later
                     // notices. The adapter checks the OS setting every time.
-                    if (Availability != NotificationAvailability.Denied) Availability = NotificationAvailability.Failed;
+                    Availability = system.CurrentAvailability is NotificationAvailability.Denied or NotificationAvailability.Unsupported
+                        ? system.CurrentAvailability : Availability == NotificationAvailability.Denied ? Availability : NotificationAvailability.Failed;
                     Changed?.Invoke(); break;
                 }
                 if (Availability != NotificationAvailability.Available) { Availability = NotificationAvailability.Available; Changed?.Invoke(); }
@@ -118,7 +120,7 @@ internal sealed class NotificationSession : IDisposable
     }
 
     private static bool CanAttempt(NotificationAvailability? availability) => availability is NotificationAvailability.Available or NotificationAvailability.Denied;
-    private bool SupportedAction(string action) => action is "snoozeSpike" or "topUp" || action == "openHarness" && canOpenHarness();
+    private bool SupportedAction(string action) => action is "openTask" or "snoozeSpike" or "topUp" || action == "openHarness" && canOpenHarness();
 
     private void PreferencesChanged(DesktopPreferences value)
     {
@@ -135,7 +137,8 @@ internal sealed class NotificationSession : IDisposable
     }
     private void Activated(string action) => post(() =>
     {
-        if (!disposed && preferences.Current.SystemNotifications && (action == "showIsland" || SupportedAction(action))) activate(action);
+        string? kind = NotificationPayload.ParseAction(action);
+        if (!disposed && preferences.Current.SystemNotifications && kind != null && (kind == "showIsland" || SupportedAction(kind))) activate(action);
     });
     public void Dispose()
     {
