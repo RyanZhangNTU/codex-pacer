@@ -10,6 +10,7 @@ internal sealed class AnimationLease : IDisposable
     private AnimationClock? clock;
     private Action<AnimationClock?>? apply;
     private readonly Action? completed;
+    internal bool IsActive => clock != null;
     internal AnimationLease(AnimationTimeline animation, Action<AnimationClock?> apply, Action? completed = null)
     {
         this.apply = apply; this.completed = completed;

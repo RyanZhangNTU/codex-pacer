@@ -61,6 +61,7 @@ internal static class Program
                 if (All("idle")) { await IdleSchedulingChecks.Run(); await OcclusionSchedulingChecks.Run(); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
+                    if (All("accessibility")) { AccessibleNumberChecks.Run(language); await AccessibilityChecks.Run(language); }
                     foreach (bool motion in new[] { false, true })
                     {
                         if (All("island")) await Run(language, motion, output);

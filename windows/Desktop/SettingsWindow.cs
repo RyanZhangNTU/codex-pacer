@@ -110,7 +110,7 @@ internal sealed partial class SettingsWindow : Window
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
         {
-            sourceClosed = true; sourceInspectionRevision++; ClearProviderHome();
+            sourceClosed = true; IsEnabled = false; sourceInspectionRevision++; ClearProviderHome();
             appearance.Changed -= OnAppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose(); session.Changed -= OnPreferencesChanged;
             if (notifications != null) notifications.Changed -= OnNotificationsChanged;
             if (surfaceWindow != null) surfaceWindow.SurfaceChanged -= RefreshSurfaceStatus;
@@ -345,6 +345,8 @@ internal sealed partial class SettingsWindow : Window
         try
         {
             activePane = ResolvePane(value);
+            foreach (UIElement child in form.Children)
+                if (child != issue && child != recoveryRestart) PageAccessibility.Retire(child);
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
             login = hideProjects = appButtons = null; startupStatus = null; language = null; restart = null; restartHint = null;
             ClearAppearance();
@@ -355,6 +357,7 @@ internal sealed partial class SettingsWindow : Window
             ClearReminders();
             ClearCollapsed();
             paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : "settings.pane." + activePane);
+            AutomationProperties.SetName(paneScroller, paneTitle.Text);
             if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else BuildDeepSeek();
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
             paneScroller.ScrollToTop(); SetEditors(!busy && !session.RequiresRestart);

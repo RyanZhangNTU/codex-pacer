@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "6f635d0e3ef7ff463b5850ce7ade83d6e0ad52ca525318704425517425d66d0c"
+    "windows/EngineSupport/Resources/Localization/en.json": "e9d7710c2aac3134c20dec7415e27a1c120aed5bb7a389f0e4abcc71028ffb8b"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -887,6 +887,9 @@
     "whats_new.title": "What\u2019s New in Codex Pacer",
     "whats_new.version": "Version %@",
     "whats_new.window_title": "What\u2019s New",
+    "windows.accessibility.scroll.pageDown": "Page Down",
+    "windows.accessibility.scroll.pageUp": "Page Up",
+    "windows.accessibility.scroll.position": "Scroll Position",
     "windows.app.open_failed": "Windows could not open the desktop app. Check that it is still installed.",
     "windows.appearance.display_pending": "Display selection is not available in the Windows preview yet.",
     "windows.appearance.fullscreen_pending": "Fullscreen visibility settings are not available in the Windows preview yet.",

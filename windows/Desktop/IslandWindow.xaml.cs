@@ -106,6 +106,7 @@ public partial class IslandWindow : Window
         SetButtonName(MarkReadButton, ui.Text("activity.mark_all_read")); SetButtonName(PinButton, ui.Text("common.pin")); SetButtonName(MoreButton, ui.Text("common.more"));
         SetButtonName(PreviousPage, ui.Text("activity.previous_page")); SetButtonName(NextPage, ui.Text("activity.next_page"));
         SetButtonName(SettingsButton, ui.Text("common.settings"));
+        AutomationProperties.SetName(ExpandedScroll, ui.Text("activity.task_list"));
         RefreshMenu.Header = ui.Text("common.refresh"); QuitMenu.Header = ui.Text("common.quit"); SettingsMenu.Header = ui.Text("common.settings");
         // Hover and connection errors can expand the HWND before the first
         // engine snapshot. Give every measured lane a real initial value.
@@ -121,6 +122,7 @@ public partial class IslandWindow : Window
         Closed += (_, _) => StopPresentation();
         IsVisibleChanged += (_, _) =>
         {
+            Shell.IsEnabled = IsVisible;
             if (presentationStopped) return;
             if (!IsVisible) { StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
             else StartRendering();

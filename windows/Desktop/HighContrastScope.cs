@@ -52,7 +52,7 @@ internal sealed class HighContrastScope(FrameworkElement root) : IDisposable
                 if (value is TextElement) properties.Add(TextElement.ForegroundProperty);
                 if (value is IconGlyph) properties.Add(IconGlyph.InkProperty);
                 if (value is Control) { properties.Add(Control.ForegroundProperty); properties.Add(Control.BackgroundProperty); }
-                if (value is Border) properties.Add(Border.BorderBrushProperty);
+                if (value is Border) { properties.Add(Border.BorderBrushProperty); properties.Add(Border.BackgroundProperty); }
                 if (properties.Count > 0)
                 {
                     var list = new List<Paint>(); entries[value] = list;
@@ -69,7 +69,7 @@ internal sealed class HighContrastScope(FrameworkElement root) : IDisposable
                     void Observe(DependencyProperty property)
                     {
                         var descriptor = DependencyPropertyDescriptor.FromProperty(property, value.GetType());
-                        EventHandler handler = (_, _) => { foreach (var paint in list) Update(paint); };
+                        EventHandler handler = (_, _) => { foreach (var entry in entries.Values) foreach (var paint in entry) Update(paint); };
                         descriptor.AddValueChanged(value, handler); observed.Add((descriptor, handler));
                     }
                 }
@@ -85,9 +85,10 @@ internal sealed class HighContrastScope(FrameworkElement root) : IDisposable
         object value = paint.Owner.GetValue(paint.Property);
         if (!ReferenceEquals(value, paint.Applied)) paint.Original = value;
         bool selected = Selected(paint.Owner);
-        Brush next = paint.Property == Control.BackgroundProperty ? selected ? highlight : control
+        bool transparent = paint.Original is null or SolidColorBrush { Color.A: 0 } || paint.Original is Brush { Opacity: 0 };
+        object? next = paint.Property == Control.BackgroundProperty || paint.Property == Border.BackgroundProperty ? transparent ? paint.Original : selected ? highlight : control
             : paint.Property == Border.BorderBrushProperty ? value is SolidColorBrush { Color.A: 0 } ? (Brush)value : highlight
-            : paint.Owner is UIElement { IsEnabled: false } ? disabled : selected ? highlightText : paint.Owner is Control ? controlText : text;
+            : paint.Owner is UIElement { IsEnabled: false } or ContentElement { IsEnabled: false } ? disabled : selected ? highlightText : paint.Owner is Control ? controlText : text;
         applying = true;
         try { paint.Applied = next; paint.Owner.SetCurrentValue(paint.Property, next); }
         finally { applying = false; }

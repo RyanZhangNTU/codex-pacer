@@ -85,7 +85,7 @@
    </Grid>
    <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,38,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
     <local:RevealHost.RenderTransform><TranslateTransform x:Name="RevealOffset"/></local:RevealHost.RenderTransform>
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
+    <ScrollViewer x:Name="ExpandedScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
      <StackPanel x:Name="ExpandedContent" Margin="0,4,0,14">
       <Grid x:Name="TaskToolbar" Height="24" Margin="9,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

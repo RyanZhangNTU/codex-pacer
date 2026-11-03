@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "33cc7d396af5c9532cf47367459be5a6efd08d48a13621e5a7398a1b7c0d0b07"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "527344852e45fb143ec9eb998f0244ca1d7cfc62f95020ab83228c0321d845f9"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -887,6 +887,9 @@
     "whats_new.title": "Codex Pacer \u66f4\u65b0\u5185\u5bb9",
     "whats_new.version": "\u7248\u672c %@",
     "whats_new.window_title": "\u66f4\u65b0\u5185\u5bb9",
+    "windows.accessibility.scroll.pageDown": "\u5411\u4e0b\u7ffb\u9875",
+    "windows.accessibility.scroll.pageUp": "\u5411\u4e0a\u7ffb\u9875",
+    "windows.accessibility.scroll.position": "\u6eda\u52a8\u4f4d\u7f6e",
     "windows.app.open_failed": "Windows \u672a\u80fd\u6253\u5f00\u684c\u9762\u5e94\u7528\uff0c\u8bf7\u786e\u8ba4\u5e94\u7528\u4ecd\u5df2\u5b89\u88c5\u3002",
     "windows.appearance.display_pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u9009\u62e9\u663e\u793a\u5668\u3002",
     "windows.appearance.fullscreen_pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u8bbe\u7f6e\u5168\u5c4f\u65f6\u7684\u663e\u793a\u884c\u4e3a\u3002",

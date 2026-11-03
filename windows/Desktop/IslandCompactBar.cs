@@ -143,7 +143,7 @@ public partial class IslandWindow
         }
         if (column) { var unit = CompactText(9, FontWeights.Medium, PacerPalette.Tertiary); unit.Text = "%"; unit.Margin = new Thickness(0, 1, 0, 0); host.Children.Add(unit); }
     }
-    private static void FitStripNumber(TextBlock text, string? value)
+    internal static void FitStripNumber(TextBlock text, string? value)
     {
         string number = value ?? "—";
         var probe = CompactText(10, FontWeights.SemiBold, PacerPalette.Primary); probe.Text = number;
