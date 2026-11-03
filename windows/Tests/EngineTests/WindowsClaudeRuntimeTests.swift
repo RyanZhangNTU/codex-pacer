@@ -1,9 +1,27 @@
 import Foundation
 import XCTest
 import PacerCore
+import WinSDK
 @testable import WindowsInstallerSupport
 
 final class WindowsClaudeRuntimeTests: XCTestCase {
+    func testOwnerPolicyRequiresElevatedEnabledAdministratorsAndRejectsOtherOwners() throws {
+        func sid(_ kind: WELL_KNOWN_SID_TYPE) throws -> UnsafeMutableRawPointer {
+            let value = UnsafeMutableRawPointer.allocate(byteCount: 68, alignment: MemoryLayout<UInt64>.alignment)
+            var size: DWORD = 68
+            guard CreateWellKnownSid(kind, nil, value, &size) else { value.deallocate(); throw ClaudeHookInstaller.Failure.unsafePath }
+            addTeardownBlock { value.deallocate() }
+            return value
+        }
+        let user = try sid(WinLocalSystemSid), admin = try sid(WinBuiltinAdministratorsSid), other = try sid(WinWorldSid)
+        for elevated in [false, true] {
+            for enabled in [false, true] {
+                XCTAssertTrue(WindowsClaudeFileOwner.allows(user, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled))
+                XCTAssertEqual(WindowsClaudeFileOwner.allows(admin, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled), elevated && enabled)
+                XCTAssertFalse(WindowsClaudeFileOwner.allows(other, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled), "Another owner stays foreign even for an elevated administrator")
+            }
+        }
+    }
     private func fixture(aliasAncestors: Bool = false) throws -> (base: URL, root: URL, homes: [URL]) {
         let originalTemporary = FileManager.default.temporaryDirectory.standardizedFileURL
         let temporary = aliasAncestors ? WindowsClaudeHookCommands.shortPath(originalTemporary).map { URL(fileURLWithPath: $0, isDirectory: true) } ?? originalTemporary : originalTemporary

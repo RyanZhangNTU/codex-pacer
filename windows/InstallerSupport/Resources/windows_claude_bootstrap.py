@@ -14,6 +14,9 @@ def api(library, name, result, *arguments):
 close = api(kernel, 'CloseHandle', w.BOOL, w.HANDLE)
 current_process = api(kernel, 'GetCurrentProcess', w.HANDLE)
 open_token = api(security, 'OpenProcessToken', w.BOOL, w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE))
+duplicate_token = api(security, 'DuplicateToken', w.BOOL, w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE))
+check_membership = api(security, 'CheckTokenMembership', w.BOOL, w.HANDLE, w.LPVOID, ctypes.POINTER(w.BOOL))
+well_known_sid = api(security, 'CreateWellKnownSid', w.BOOL, w.DWORD, w.LPVOID, w.LPVOID, ctypes.POINTER(w.DWORD))
 token_information = api(security, 'GetTokenInformation', w.BOOL, w.HANDLE, w.DWORD, w.LPVOID, w.DWORD, ctypes.POINTER(w.DWORD))
 get_security = api(security, 'GetSecurityInfo', w.DWORD, w.HANDLE, w.DWORD, w.DWORD,
                    ctypes.POINTER(w.LPVOID), w.LPVOID, w.LPVOID, w.LPVOID, ctypes.POINTER(w.LPVOID))
@@ -34,6 +37,9 @@ class FileInformation(ctypes.Structure):
 
 file_information = api(kernel, 'GetFileInformationByHandle', w.BOOL, w.HANDLE, ctypes.POINTER(FileInformation))
 owners = []
+administrator_sid = ctypes.create_string_buffer(68)  # SECURITY_MAX_SID_SIZE
+elevated = False
+administrators_enabled = False
 held_mutexes = []
 
 def renderer_arguments(command):
@@ -57,11 +63,13 @@ def renderer_arguments(command):
     return [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
 
 def current_owners():
+    global elevated, administrators_enabled
+    owners.clear()
     token = w.HANDLE()
-    if not open_token(current_process(), 8, ctypes.byref(token)):
+    if not open_token(current_process(), 8 | 2, ctypes.byref(token)):
         raise OSError('token unavailable')
     try:
-        for kind in (1, 4):  # TokenUser and TokenOwner, matching the host adapter.
+        for kind in (1, 4):  # Keep TokenOwner only for fixed diagnostic facts.
             length = w.DWORD()
             token_information(token, kind, None, 0, ctypes.byref(length))
             if not 0 < length.value <= 65536:
@@ -70,6 +78,22 @@ def current_owners():
             if not token_information(token, kind, buffer, length, ctypes.byref(length)):
                 raise OSError('token unavailable')
             owners.append((buffer, ctypes.cast(buffer, ctypes.POINTER(w.LPVOID))[0]))
+        size = w.DWORD(len(administrator_sid))
+        if not well_known_sid(26, None, administrator_sid, ctypes.byref(size)):  # WinBuiltinAdministratorsSid
+            raise OSError('administrator SID unavailable')
+        elevation, length = w.DWORD(), w.DWORD()
+        if not token_information(token, 20, ctypes.byref(elevation), ctypes.sizeof(elevation), ctypes.byref(length)):
+            raise OSError('elevation unavailable')
+        elevated = bool(elevation.value)
+        membership, enabled = w.HANDLE(), w.BOOL()
+        if not duplicate_token(token, 1, ctypes.byref(membership)):  # SecurityIdentification
+            raise OSError('membership unavailable')
+        try:
+            if not check_membership(membership, administrator_sid, ctypes.byref(enabled)):
+                raise OSError('membership unavailable')
+            administrators_enabled = bool(enabled.value)
+        finally:
+            close(membership)
     finally:
         close(token)
 
@@ -88,13 +112,17 @@ def check_parents(path):
         elif value & 0x400:
             raise OSError('unsafe parent')
 
+def owner_allowed(is_user, is_administrators, is_elevated, administrators_are_enabled):
+    return is_user or is_administrators and is_elevated and administrators_are_enabled
+
 def own_file(handle):
     owner = w.LPVOID()
     descriptor = w.LPVOID()
     if get_security(handle, 1, 1, ctypes.byref(owner), None, None, None, ctypes.byref(descriptor)) != 0:
         raise OSError('owner unavailable')
     try:
-        if not any(equal_sid(owner, sid) for _, sid in owners):
+        if not owner_allowed(bool(equal_sid(owner, owners[0][1])),
+                             bool(equal_sid(owner, administrator_sid)), elevated, administrators_enabled):
             raise OSError('foreign owner')
     finally:
         if descriptor:

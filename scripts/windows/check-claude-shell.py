@@ -30,6 +30,12 @@ home=Path(sys.argv[1]); output=Path(sys.argv[2])
 facts={'defaultShellIsCmd':subprocess.run('exit /b 23',shell=True,input=b'',capture_output=True,timeout=2).returncode==23}
 spec=importlib.util.spec_from_file_location('pacer_shell_check',home/'pacer/hook.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+for elevated in (False,True):
+    for enabled in (False,True):
+        assert module.owner_allowed(True,False,elevated,enabled)
+        assert module.owner_allowed(False,True,elevated,enabled)==(elevated and enabled)
+        assert not module.owner_allowed(False,False,elevated,enabled)
+facts['ownerPolicyCasesPassed']=True
 original_owner=module.own_file
 original_run=subprocess.run
 def observe(arguments,*positional,**options):
@@ -48,6 +54,8 @@ def owner(handle):
             facts['ownerMatchesUser']=bool(module.equal_sid(sid,module.owners[0][1]))
             facts['ownerMatchesTokenOwner']=bool(module.equal_sid(sid,module.owners[1][1]))
             facts['tokenOwnerIsUser']=bool(module.equal_sid(module.owners[0][1],module.owners[1][1]))
+            facts['tokenElevated']=module.elevated
+            facts['administratorsEnabled']=module.administrators_enabled
         finally:module.local_free(descriptor)
     return original_owner(handle)
 module.own_file=owner

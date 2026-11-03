@@ -39,27 +39,7 @@ public struct WindowsClaudeHookStorage: ClaudeHookStorage {
             throw ClaudeHookInstaller.Failure.unsafePath
         }
         defer { if let descriptor { _ = LocalFree(descriptor) } }
-        var token: HANDLE?
-        guard OpenProcessToken(GetCurrentProcess(), DWORD(TOKEN_QUERY), &token), let token else {
-            throw ClaudeHookInstaller.Failure.unsafePath
-        }
-        defer { _ = CloseHandle(token) }
-        func matches(_ kind: TOKEN_INFORMATION_CLASS, defaultOwner: Bool) -> Bool {
-            var size: DWORD = 0
-            _ = GetTokenInformation(token, kind, nil, 0, &size)
-            guard size > 0, size <= 65536 else { return false }
-            let buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<TOKEN_USER>.alignment)
-            defer { buffer.deallocate() }
-            guard GetTokenInformation(token, kind, buffer, size, &size) else { return false }
-            let sid = defaultOwner ? buffer.assumingMemoryBound(to: TOKEN_OWNER.self).pointee.Owner
-                : buffer.assumingMemoryBound(to: TOKEN_USER.self).pointee.User.Sid
-            return EqualSid(owner, sid)
-        }
-        // Windows can assign the token's default owner group to files this
-        // process creates (notably on hosted CI), rather than TokenUser.
-        guard matches(TokenUser, defaultOwner: false) || matches(TokenOwner, defaultOwner: true) else {
-            throw ClaudeHookInstaller.Failure.unsafePath
-        }
+        try WindowsClaudeFileOwner.validate(owner)
     }
     public func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
     public func isDirectory(_ url: URL) -> Bool {
