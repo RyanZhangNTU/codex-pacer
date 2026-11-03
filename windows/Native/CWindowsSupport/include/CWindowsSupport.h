@@ -45,6 +45,13 @@ typedef struct { uint32_t pid; uint32_t parent; uint64_t started; } pacer_proces
 // Creation times use the original 100 ns FILETIME ticks, never rounded dates.
 int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity *identity,
                           uint16_t *image, size_t image_capacity);
+int pacer_process_image(uint32_t pid, uint64_t started, pacer_process_identity *identity,
+                        uint16_t *image, size_t image_capacity);
+int pacer_process_parents(pacer_process_identity *identities, size_t capacity);
+typedef struct { uint64_t volume, low, high, modified, size; } pacer_application_stamp;
+int pacer_process_application(uint32_t pid, uint64_t started, uint16_t *image, size_t capacity,
+                              uint16_t *application_id, size_t id_capacity, pacer_application_stamp *stamp);
+int pacer_application_open(const uint16_t *image, const uint16_t *application_id, const pacer_application_stamp *stamp);
 int pacer_pipe_peer_identity(void *pipe, pacer_process_identity *identity);
 // Metadata only: current-user/session writers of this exact file identity.
 // A negative result means ownership could not be established.

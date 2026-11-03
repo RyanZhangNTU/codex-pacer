@@ -755,7 +755,7 @@
     {
       "id": "embedded-sessions",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "两家独立开关，默认显示；隐藏父/子/保留完成/请求与提醒但不停止采集或确认已读",
@@ -771,9 +771,13 @@
         "native/Sources/PacerCore/ActivityTaskPresentation.swift",
         "native/Tests/PacerCoreTests/ActivityApplicationStateTests.swift",
         "native/Tests/PacerCoreTests/ActivityTaskPresentationTests.swift",
-        "windows/Tests/EngineTests/EnginePresentationTests.swift"
+        "windows/Tests/EngineTests/EnginePresentationTests.swift",
+        "windows/Tests/EngineTests/EngineEmbeddedSessionTests.swift",
+        "native/Tests/PacerCoreTests/EmbeddedSessionVisibilityTests.swift",
+        "windows/Tests/DesktopTests/PreferencesChecks.cs",
+        "windows/Tests/PresentationTests/ProviderHomeSettingsChecks.cs"
       ],
-      "previewNote": "Codex 与 Claude 的其他应用会话开关和过滤边界。",
+      "previewNote": "Windows synthetic Codex/Claude data verifies independent visible defaults, family/completion filtering, retained unread state and restoration by later CLI metadata. Shared request, notice and source isolation assertions still run. Sessions from installed third-party apps remain unverified.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -781,7 +785,7 @@
     {
       "id": "host-application-tracking",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "live registry/procStart 与 PID 创建身份、进程祖先、已知宿主缓存及显示名",
@@ -792,8 +796,15 @@
         "native/Sources/PacerIsland/HostApplicationTracking.swift",
         "native/Sources/PacerIsland/HostApplication.swift"
       ],
-      "evidence": [],
-      "previewNote": "同一任务必须能回到已确认的启动应用，包括应用退出后的恢复。",
+      "evidence": [
+        "windows/EngineSupport/ActivityHostServices.swift",
+        "windows/EngineSupport/WindowsHostApplication.swift",
+        "windows/Native/CWindowsSupport/HostApplication.c",
+        "native/Tests/PacerCoreTests/HostApplicationTrackingStateTests.swift",
+        "windows/Tests/EngineTests/WindowsHostApplicationTests.swift",
+        "windows/Tests/EngineTests/ActivityNavigationTests.swift"
+      ],
+      "previewNote": "Windows synthetic processes cover PID/creation identity, ancestry and reuse rejection. A private helper was captured, stopped and relaunched without its old arguments; changed file identity is rejected. Shared cache, throttle, sleep/wake and late-scan tests pass. Real host and packaged-app recovery remain unverified.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []

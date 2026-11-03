@@ -11,6 +11,23 @@ struct WindowsSourceFileIdentity: Equatable, Sendable {
 }
 enum WindowsProcessOwnership {
     typealias Lookup = (UInt32, UInt64) -> WindowsProcessRecord?
+    struct Snapshot: Sendable {
+        let parents: [UInt32: UInt32]
+        func inspect(_ pid: UInt32, _ started: UInt64) -> WindowsProcessRecord? {
+            guard let parent = parents[pid] else { return nil }
+            var identity = pacer_process_identity(), image = [UInt16](repeating: 0, count: 32768)
+            guard pacer_process_image(pid, started, &identity, &image, image.count) != 0 else { return nil }
+            let path = String(decoding: image.prefix { $0 != 0 }, as: UTF16.self)
+            guard identity.pid == pid, identity.started != 0, WindowsCodexExecutableDiscovery.absolute(path) else { return nil }
+            return .init(identity: .init(pid: pid, started: identity.started), parent: parent, executable: URL(fileURLWithPath: path))
+        }
+    }
+    static func snapshot() -> Snapshot? {
+        var rows = [pacer_process_identity](repeating: .init(), count: 8192)
+        let count = pacer_process_parents(&rows, rows.count)
+        guard count >= 0, count <= rows.count else { return nil }
+        return .init(parents: Dictionary(rows.prefix(Int(count)).map { ($0.pid, $0.parent) }, uniquingKeysWith: { _, latest in latest }))
+    }
     static func inspect(_ pid: UInt32, started: UInt64 = 0) -> WindowsProcessRecord? {
         var identity = pacer_process_identity(), image = [UInt16](repeating: 0, count: 32768)
         guard pacer_process_details(pid, started, &identity, &image, image.count) != 0 else { return nil }

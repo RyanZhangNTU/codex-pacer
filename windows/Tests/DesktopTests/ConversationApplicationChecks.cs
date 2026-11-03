@@ -45,6 +45,12 @@ internal static class ConversationApplicationChecks
         Check(!await apps.OpenConversationAsync(new(context, "claude", "host", local, null, 12, 34)), "An owner plan cannot contain an executable or URI");
         Check(!await apps.OpenConversationAsync(new(context, "claude", "host", null, null, 12, 0)), "An owner PID without its creation identity is insufficient");
         Check(!await apps.OpenConversationAsync(new(context, "claude", "demo", null, null, null, null)), "The OS launcher cannot execute a demo plan");
+        var capabilities = new List<string>();
+        Task<bool> ActivatePrepared(string value) { capabilities.Add(value); return Task.FromResult(false); }
+        Check(!await apps.OpenConversationAsync(new(context, "codex", "host", null, null, 12, 34), ActivatePrepared) && capabilities.Count == 1 && capabilities[0] == context && hosts.Count == 1,
+            "A failed prepared-host activation stays failed and cannot fall through to a live PID or provider URI");
+        Check(!await apps.OpenConversationAsync(new(context, "codex", "host", local, null, 12, 34), ActivatePrepared) && capabilities.Count == 1,
+            "A prepared host must reject mixed executable or URI payloads before asking the engine");
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

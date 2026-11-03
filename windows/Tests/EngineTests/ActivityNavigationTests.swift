@@ -26,6 +26,17 @@ private actor NavigationGate {
         guard let input else { return }; resume?.resume(returning: .init(demoContext: input.context, provider: input.activity.provider)); resume = nil
     }
 }
+private actor HostActivationGate {
+    var calls: [ActivityHostApplication] = []
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private var released: Bool?
+    func activate(_ host: ActivityHostApplication) async -> Bool {
+        calls.append(host)
+        if let released { return released }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func release(_ value: Bool) { released = value; continuation?.resume(returning: value); continuation = nil }
+}
 
 final class ActivityNavigationTests: XCTestCase {
     private let date = Date(timeIntervalSince1970: 1_800_000_000)
@@ -147,6 +158,55 @@ final class ActivityNavigationTests: XCTestCase {
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         XCTAssertNil(frames.snapshot?.navigationError, "The shared error deadline publishes a display-only expiry")
+        XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        await runtime.stop()
+    }
+    func testHostActivationUsesAnOpaqueSingleUseCapabilityAndAcknowledgesOnlyAfterSuccess() async throws {
+        let frames = NavigationFrames(), gate = HostActivationGate()
+        let runtime = EngineRuntime(demo: true, navigationServices: .init { input in
+            .init(context: input.context, provider: input.activity.provider, host: .init(identity: .init(pid: 42, started: 84),
+                provider: nil, name: "Synthetic editor", home: input.home))
+        }, activityHostServices: .init(resolve: { _ in [:] }, activate: { await gate.activate($0) }), output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"]]))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        let link = try XCTUnwrap(frames.snapshot?.activityLinks?.first { link in frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true })
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        XCTAssertEqual(try frames.plan().kind, "host")
+        let data = try command("activateActivityHost", ["context": link.context])
+        let activating = Task { await runtime.receive(data) }
+        for _ in 0..<400 { if await !gate.calls.isEmpty { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        let calls = await gate.calls
+        XCTAssertEqual(calls.map(\.identity), [.init(pid: 42, started: 84)])
+        XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        _ = await runtime.receive(data)
+        XCTAssertEqual(frames.error, "staleActivityOpen", "An OS launch capability can be consumed only once")
+        await gate.release(true); _ = await activating.value
+        XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true, "Activation alone never marks a completion read")
+        _ = await runtime.receive(try command("completeActivityOpen", ["context": link.context]))
+        XCTAssertFalse(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        await runtime.stop()
+    }
+    func testFailedHostRestartKeepsUnreadAndSleepRevokesThePendingCapability() async throws {
+        let frames = NavigationFrames(), gate = HostActivationGate()
+        let runtime = EngineRuntime(demo: true, navigationServices: .init { input in
+            .init(context: input.context, provider: input.activity.provider, pid: 42, started: 84)
+        }, activityHostServices: .init(resolve: { _ in [:] }, activate: { await gate.activate($0) }), output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"]]))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        let link = try XCTUnwrap(frames.snapshot?.activityLinks?.first { link in frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true })
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        let data = try command("activateActivityHost", ["context": link.context])
+        let activating = Task { await runtime.receive(data) }
+        for _ in 0..<400 { if await !gate.calls.isEmpty { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        await gate.release(false); _ = await activating.value
+        _ = await runtime.receive(try command("failActivityOpen", ["context": link.context, "navigationMessage": "Synthetic editor was removed"]))
+        XCTAssertEqual(frames.snapshot?.navigationError?.message, "Synthetic editor was removed")
+        XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        await runtime.prepareForSleep(); await runtime.resumeAfterSleep()
+        _ = await runtime.receive(data)
+        XCTAssertEqual(frames.error, "staleActivityOpen")
+        let calls = await gate.calls; XCTAssertEqual(calls.count, 1, "Wake cannot reactivate a pre-sleep host capability")
         XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
         await runtime.stop()
     }

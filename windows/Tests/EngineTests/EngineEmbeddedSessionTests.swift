@@ -89,4 +89,47 @@ final class EngineEmbeddedSessionTests: XCTestCase {
         XCTAssertNil(read.presentation.header.ending)
         await runtime.stop()
     }
+    func testClaudeSwitchIsIndependentAndLatestMetadataRestoresAHiddenFamilyWithoutAcknowledgment() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-embedding-" + UUID().uuidString)
+        let spool = root.appendingPathComponent("pacer")
+        try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = spool.appendingPathComponent("events.jsonl"); try Data().write(to: file)
+        let capture = EmbeddedSessionFrames(), clock = EmbeddedSessionClock()
+        let runtime = EngineRuntime(demo: false, now: { clock.date() }, dismissalStore: nil,
+            claudeHookServices: .init { _, _ in .init(.ready) }, output: { capture.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["claude"], "claudeHome": EngineCodexSourceReport.path(root)]))
+        let parent = "11111111-1111-4111-8111-111111111111", child = "22222222-2222-4222-8222-222222222222", terminal = "33333333-3333-4333-8333-333333333333"
+        func row(_ kind: String, _ session: String, _ extra: [String: Any] = [:]) throws -> Data {
+            var value: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": session, "promptId": session, "at": clock.date().timeIntervalSince1970]
+            value.merge(extra) { _, latest in latest }
+            return try JSONSerialization.data(withJSONObject: value) + Data([10])
+        }
+        func append(_ data: Data) throws { let handle = try FileHandle(forWritingTo: file); try handle.seekToEnd(); try handle.write(contentsOf: data); try handle.close() }
+        func until(_ condition: () throws -> Bool) async throws {
+            for _ in 0..<400 { if try condition() { return }; try await Task.sleep(nanoseconds: 5_000_000) }
+            XCTFail("The private Claude fixture did not publish its matching state")
+        }
+        try append(row("metadata", parent, ["embedded": true]) + row("prompt", parent) +
+            row("subagentStart", child, ["parentId": parent]) + row("prompt", terminal))
+        try await until { try capture.latest().tasks.count == 3 }
+        _ = await runtime.receive(try command("configure", ["showEmbeddedCodexSessions": false]))
+        XCTAssertEqual(try capture.latest().tasks.count, 3, "Codex's switch cannot hide Claude's sessions")
+        _ = await runtime.receive(try command("configure", ["showEmbeddedClaudeSessions": false]))
+        XCTAssertEqual(try capture.latest().tasks.map(\.sessionID), [terminal])
+        clock.advance()
+        try append(row("stopVerified", parent) + row("stopVerified", child))
+        await runtime.refresh(discover: false)
+        try await until { try capture.latest().tasks.map(\.sessionID) == [terminal] }
+        XCTAssertTrue(try capture.latest().notices.isEmpty)
+        try await markVisibleRead(runtime, capture: capture)
+        _ = await runtime.receive(try command("configure", ["showEmbeddedClaudeSessions": true]))
+        try await until { try capture.latest().tasks.filter { $0.sessionID != terminal }.allSatisfy { $0.phase == "completed" && $0.unread } && capture.latest().tasks.count == 3 }
+        XCTAssertEqual(try capture.latest().tasks.filter { $0.unread }.count, 2)
+        _ = await runtime.receive(try command("configure", ["showEmbeddedClaudeSessions": false]))
+        clock.advance(); try append(row("metadata", parent, ["embedded": false]))
+        try await until { try capture.latest().tasks.count == 3 }
+        XCTAssertEqual(try capture.latest().tasks.filter { $0.unread }.count, 2, "New CLI metadata restores retained endings without marking them read")
+        await runtime.stop()
+    }
 }
