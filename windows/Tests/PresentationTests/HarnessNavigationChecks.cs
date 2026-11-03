@@ -72,6 +72,8 @@ internal static class HarnessNavigationChecks
             Check(opened.Single() == fixture && island.LogicalTarget.Height > 38
                 && engine.LatestSnapshot!.Presentation!.Rows.Single().Unread, "Failed opens must leave the panel and unread completion intact");
             var status = (TextBlock)island.FindName("StatusLabel");
+            await Until(() => engine.LatestSnapshot?.NavigationError != null && status.Visibility == Visibility.Visible && row.IsEnabled,
+                "A failed launch must publish its shared error and release the single flight before checking the message");
             Check(status.Text == ui.Text("windows.app.open_failed"), "A launch failure cannot be mislabeled as a missing installation");
             if (language == "en" && !motion)
             {
