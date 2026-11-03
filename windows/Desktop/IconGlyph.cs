@@ -18,6 +18,7 @@ public sealed class IconGlyph : FrameworkElement
 
     private static readonly IReadOnlyDictionary<string, Geometry> Paths = CreatePaths();
     public IconGlyph() { IsHitTestVisible = false; Focusable = false; }
+    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble";
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
@@ -28,7 +29,7 @@ public sealed class IconGlyph : FrameworkElement
         drawing.PushTransform(new ScaleTransform(width / 24, height / 24));
         var pen = new Pen(ink, 1.55) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
         if (symbol.EndsWith(".circle", StringComparison.Ordinal)) drawing.DrawEllipse(null, pen, new Point(12, 12), 9.3, 9.3);
-        bool filled = symbol is "pin.fill" or "sparkle" or "flame.fill" or "smallcircle.filled.circle";
+        bool filled = symbol is "pin.fill" or "sparkle" or "flame.fill" or "smallcircle.filled.circle" or "star.fill";
         if (Paths.TryGetValue(symbol, out Geometry? path)) drawing.DrawGeometry(filled ? ink : null, filled ? null : pen, path);
         if (symbol is "ellipsis" or "ellipsis.bubble")
             foreach (double x in new[] { 7.5, 12.0, 16.5 }) drawing.DrawEllipse(ink, null, new Point(x, symbol == "ellipsis" ? 12 : 10.8), 1, 1);
@@ -39,6 +40,10 @@ public sealed class IconGlyph : FrameworkElement
         var paths = new Dictionary<string, string>
         {
             ["sparkle"] = "M12,2 C13.1,8.8 15.2,10.9 22,12 C15.2,13.1 13.1,15.2 12,22 C10.9,15.2 8.8,13.1 2,12 C8.8,10.9 10.9,8.8 12,2 Z",
+            ["star.fill"] = "M12,2.5 L14.9,8.6 L21.5,9.4 L16.6,13.9 L17.9,20.5 L12,17.2 L6.1,20.5 L7.4,13.9 L2.5,9.4 L9.1,8.6 Z",
+            ["square.and.arrow.up"] = "M12,2.5 V14.5 M8,6.5 L12,2.5 L16,6.5 M8.5,10 H6 Q4.5,10 4.5,11.5 V19.5 Q4.5,21 6,21 H18 Q19.5,21 19.5,19.5 V11.5 Q19.5,10 18,10 H15.5",
+            ["cup.and.saucer"] = "M4.5,7 H16.5 V12 Q16.5,17 10.5,17 Q4.5,17 4.5,12 Z M16.5,8.5 H18 Q20.5,8.5 20.5,11 Q20.5,13.5 18,13.5 H16.2 M2.5,20 H18.5 M8,2.5 Q7,3.7 8,5 M11.5,2.5 Q10.5,3.7 11.5,5",
+            ["qrcode"] = "M3.5,3.5 H9.5 V9.5 H3.5 Z M14.5,3.5 H20.5 V9.5 H14.5 Z M3.5,14.5 H9.5 V20.5 H3.5 Z M14.5,14.5 H17 V17 H14.5 Z M18.5,18.5 H20.5 V20.5 H18.5 Z M6,6 H7 V7 H6 Z M17,6 H18 V7 H17 Z M6,17 H7 V18 H6 Z",
             ["flame.fill"] = "M12,1.5 C14,6 21,9 20.5,15 C20,21 15,23 10,22 C3,21 1,13 6,7 C6,11 8,12 9,10 C10,8 9,5 12,1.5 Z M12,12 C9,15 8,17 10,19 C12,22 16,19 15,17 C14,15 13,15 12,12 Z",
             ["terminal"] = "M5,4.5 H19 Q21,4.5 21,6.5 V17.5 Q21,19.5 19,19.5 H5 Q3,19.5 3,17.5 V6.5 Q3,4.5 5,4.5 Z M7,9 L10,12 L7,15 M13.5,15 H17.5",
             ["text.bubble"] = "M5,3.5 H19 Q21,3.5 21,5.5 V15 Q21,17 19,17 H10 L5,21 V17 Q3,17 3,15 V5.5 Q3,3.5 5,3.5 Z M7,8 H17 M7,11.5 H14.5",
@@ -89,7 +94,15 @@ public sealed class IconGlyph : FrameworkElement
             ["paintpalette"] = "M21,12 C23,4 15,1 9,3 C2,5 0,12 5,18 C8,22 13,23 15,20 C17,17 10,15 15,13 C17,12 20,15 21,12 Z M8,7 V7.5 M13,6 V6.5 M17,8 V8.5 M5,12 V12.5",
             ["rectangle.topthird.inset.filled"] = "M4,4 H20 Q22,4 22,6 V18 Q22,20 20,20 H4 Q2,20 2,18 V6 Q2,4 4,4 Z M5,8 H19 M5,10.5 H19",
             ["bell.badge"] = "M5,16 H19 L17,12 V9 C17,2 7,2 7,9 V12 Z M9,19 Q12,23 15,19 M17,3 L20,6 M20,3 L17,6",
-            ["point.3.connected.trianglepath.dotted"] = "M7,8 L11,15 M17,8 L13,15 M8,6 H16 M7,6 A2,2 0 1 1 3,6 A2,2 0 1 1 7,6 Z M21,6 A2,2 0 1 1 17,6 A2,2 0 1 1 21,6 Z M14,18 A2,2 0 1 1 10,18 A2,2 0 1 1 14,18 Z"
+            ["point.3.connected.trianglepath.dotted"] = "M7,8 L11,15 M17,8 L13,15 M8,6 H16 M7,6 A2,2 0 1 1 3,6 A2,2 0 1 1 7,6 Z M21,6 A2,2 0 1 1 17,6 A2,2 0 1 1 21,6 Z M14,18 A2,2 0 1 1 10,18 A2,2 0 1 1 14,18 Z",
+            ["switch.2"] = "M7,3.5 H17 A3.5,3.5 0 0 1 17,10.5 H7 A3.5,3.5 0 0 1 7,3.5 Z M18.5,7 A1.5,1.5 0 1 1 15.5,7 A1.5,1.5 0 1 1 18.5,7 Z M7,13.5 H17 A3.5,3.5 0 0 1 17,20.5 H7 A3.5,3.5 0 0 1 7,13.5 Z M8.5,17 A1.5,1.5 0 1 1 5.5,17 A1.5,1.5 0 1 1 8.5,17 Z",
+            ["slider.horizontal.3"] = "M3,6 H13 M17,6 H21 M17,6 A2,2 0 1 1 13,6 A2,2 0 1 1 17,6 Z M3,12 H6 M10,12 H21 M10,12 A2,2 0 1 1 6,12 A2,2 0 1 1 10,12 Z M3,18 H11 M15,18 H21 M15,18 A2,2 0 1 1 11,18 A2,2 0 1 1 15,18 Z",
+            ["cursorarrow.rays"] = "M10,10 L20.5,14 L16,15.8 L14.2,20.5 Z M10,2.5 V5.5 M4.2,4.2 L6.3,6.3 M2.5,10 H5.5 M4.2,15.8 L6.3,13.7 M15.8,4.2 L13.7,6.3",
+            ["arrow.up.forward.app"] = "M10.5,3.5 H6 Q3.5,3.5 3.5,6 V18 Q3.5,20.5 6,20.5 H18 Q20.5,20.5 20.5,18 V13.5 M13.5,3.5 H20.5 V10.5 M20.5,3.5 L11,13",
+            ["book"] = "M12,6.5 C9.5,4.5 5.5,4 2.5,5 V19.5 C5.5,18.5 9.5,19 12,21 C14.5,19 18.5,18.5 21.5,19.5 V5 C18.5,4 14.5,4.5 12,6.5 Z M12,6.5 V21",
+            ["exclamationmark.bubble"] = "M5,3.5 H19 Q21,3.5 21,5.5 V15 Q21,17 19,17 H10 L5,21 V17 Q3,17 3,15 V5.5 Q3,3.5 5,3.5 Z M12,6.5 V11 M12,13.8 V14",
+            ["square.on.square"] = "M10,8 H19 Q21,8 21,10 V19 Q21,21 19,21 H10 Q8,21 8,19 V10 Q8,8 10,8 Z M16,8 V5 Q16,3 14,3 H5 Q3,3 3,5 V14 Q3,16 5,16 H8",
+            ["chart.pie"] = "M10.5,4.5 A8.5,8.5 0 1 0 19.5,13.5 H10.5 Z M13.5,2.5 A8,8 0 0 1 21.5,10.5 H13.5 Z"
         };
         var result = new Dictionary<string, Geometry>();
         foreach (var entry in paths) { Geometry geometry = Geometry.Parse(entry.Value); geometry.Freeze(); result[entry.Key] = geometry; }
