@@ -100,7 +100,7 @@ final class RealtimeTransportTests: XCTestCase {
         fixture_receive=Session.receive
         def fixture_received(self,value):
             result=fixture_receive(self,value)
-            if value.get('method')=='thread/name/updated' and value.get('params',{}).get('threadName')=='cadence-pending':
+            if isinstance(value,dict) and value.get('method')=='thread/name/updated' and value.get('params',{}).get('threadName')=='cadence-pending':
                 emit({'kind':'testCadenceQueued'})
             return result
         Session.receive=fixture_received
