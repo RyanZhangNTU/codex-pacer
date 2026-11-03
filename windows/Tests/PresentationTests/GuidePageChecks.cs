@@ -1,0 +1,162 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using CodexPacer.Windows;
+
+internal static class GuidePageChecks
+{
+    internal static async Task Run(string language, bool dark, string output)
+    {
+        var ui = UiText.For(language == "zh-Hans"); await using var engine = new EngineClient();
+        await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
+        await PresentationWait.UntilAsync(() => engine.LatestSnapshot != null, "Guide samples require the first acknowledged demo snapshot");
+        Task<GuideCatalog> Query(string? seen, bool welcome = false) => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.2.0", seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
+        var catalog = await Query(null, true); int configured = 0, saved = 0; bool reject = false;
+        var session = new PreferencesSession(new(), async value => { configured++; await engine.SendAsync("configure", value); }, _ => { saved++; if (!reject) return true; reject = false; return false; });
+        var startup = new Startup(); var links = new List<Uri>(); var settingsActions = new List<string>(); int welcomeActions = 0;
+        using var notifications = new NotificationSession(session, new DemoSystemNotifications(), action => action(), _ => { }, true);
+        EngineSnapshot? snapshot = engine.LatestSnapshot;
+        GuideContent Body(GuideCatalog value) => new(ui, session, startup, value, settingsActions.Add, () => welcomeActions++, engine, notifications, uri => { links.Add(uri); return true; }, () => snapshot);
+        var body = Body(catalog); var window = new GuideWindow(ui, body, catalog, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            window.Show(); await Pump();
+            Check(window.Title == ui.Text("welcome.window_title") && Find<TextBlock>(window, "welcome.progress").Text == catalog.Steps[0], "Welcome title and first step are localized and accessible");
+            Check(Descendants(body).OfType<ActivityBadge>().Count() == 4 && Descendants(body).OfType<CompactQuotaGlyph>().Any()
+                && Descendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
+            Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
+            Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Space(Find<Button>(window, "welcome.next")); await Pump();
+            Check(Find<TextBlock>(window, "welcome.progress").Text == catalog.Steps[1], "Space on the focused Next action reaches the second step");
+            foreach (string provider in new[] { "codex", "claude", "deepseek" })
+            {
+                var toggle = Find<CheckBox>(window, "welcome.module." + provider); Toggle(toggle);
+                await Until(() => !toggle.IsEnabled || session.Current.ProviderModes[provider] != "automatic");
+                await Until(() => toggle.IsEnabled);
+                Check(session.Current.ProviderModes[provider] == (toggle.IsChecked == true ? "enabled" : "disabled"), "Each module saves an explicit enabled or disabled choice");
+            }
+            var codex = Find<CheckBox>(window, "welcome.module.codex"); var beforeRejected = session.Current;
+            reject = true; Toggle(codex); await Until(() => !reject && codex.IsEnabled);
+            Check(session.Current == beforeRejected && Find<TextBlock>(body, "guide.issue").Text == ui.Text("windows.settings.save_failed"), "Rejected module changes restore the acknowledged profile and show an accessible error");
+            Toggle(Find<CheckBox>(window, "welcome.notifications")); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging);
+            Check(session.Current.SystemNotifications, "The welcome notification switch uses the existing permission and preference coordinator");
+            Toggle(Find<CheckBox>(window, "welcome.startup")); Check(startup.Enabled && startup.Calls == 1, "Open at Login uses the injected OS registration without an invented preference");
+            startup.Blocked = true; body.Refresh(); Check(Find<TextBlock>(window, "welcome.system.status").Text == ui.Text("windows.settings.startup_disabled"), "Blocked OS startup state remains visible");
+            Invoke(Find<Button>(window, "welcome.collapsed")); await Pump(); Check(settingsActions.Last() == "collapsed", "The collapsed-bar shortcut navigates to its settings pane");
+            await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } });
+            snapshot = engine.LatestSnapshot! with { Modules = new[] { new EngineModule("codex", "enabled", false, true), new EngineModule("claude", "enabled", true, true), new EngineModule("deepseek", "enabled", true, true) },
+                ClaudeConnection = new("qa-context", true, false, false, true, "workspaceNeeded", null), Wallet = null };
+            body.Refresh();
+            Check(Find<TextBlock>(window, "welcome.module.codex.status").Text == ui.Text("welcome.module.codex_missing")
+                && Find<Button>(window, "welcome.module.claude.action").Content!.ToString() == ui.Text("claude.quota.choose_workspace"), "Missing installation and workspace states each show the matching single action");
+            Invoke(Find<Button>(window, "welcome.module.claude.action")); await Pump(); Check(settingsActions.Last() == "claude", "Workspace actions dispatch to the provider coordinator boundary");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(Find<TextBlock>(window, "welcome.progress").Text == catalog.Steps[0], "Back restores the first step");
+            Invoke(Find<Button>(window, "welcome.next")); await Pump();
+            Invoke(Find<Button>(window, "guide.done")); await Pump(); Check(!window.IsVisible, "The default Done action closes the guide");
+        }
+        finally { window.Close(); }
+        var note = await Query("3.0.0"); var noteBody = Body(note); var noteWindow = new GuideWindow(ui, noteBody, note, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            noteWindow.Show(); await Pump(); var scroll = Find<ScrollViewer>(noteWindow, "guide.highlights");
+            Check(noteWindow.ClientContent.ActualHeight <= 640.1 && scroll.ScrollableHeight > 0, "Cumulative highlights obey the 640-point cap and scroll inside the fixed chrome");
+            var done = Find<Button>(noteWindow, "guide.done"); double footerBefore = done.TranslatePoint(new Point(), noteWindow).Y;
+            scroll.ScrollToEnd(); await Pump(); Check(Math.Abs(done.TranslatePoint(new Point(), noteWindow).Y - footerBefore) < .1, "Scrolling highlights cannot move the title or footer");
+            int beforeHostControl = configured; Toggle(Find<CheckBox>(noteWindow, "guide.control.showAppButtons")); await Until(() => !session.Current.ShowAppButtons);
+            Check(configured == beforeHostControl && session.Current.WhatsNewVersion == null, "A release control applies its setting without configuring collectors or marking notes as read");
+            var embedded = Find<CheckBox>(noteWindow, "guide.control.showEmbeddedSessions");
+            Check(embedded.IsEnabled && AutomationProperties.GetName(embedded).Length > 0
+                && AutomationProperties.GetHelpText(embedded) == note.Releases.SelectMany(value => value.Items).Single(value => value.Control == "showEmbeddedSessions").Detail,
+                "The combined embedded-session switch retains its accessible title and release detail after becoming available");
+            Toggle(embedded); await Until(() => !session.Current.ShowEmbeddedCodexSessions && !session.Current.ShowEmbeddedClaudeSessions && embedded.IsEnabled);
+            Check(embedded.IsChecked == false && session.Current.WhatsNewVersion == null, "The combined release switch disables both providers without marking the note seen");
+            Toggle(embedded); await Until(() => session.Current.ShowEmbeddedCodexSessions && session.Current.ShowEmbeddedClaudeSessions && embedded.IsEnabled);
+            Check(embedded.IsChecked == true, "The same control restores both independent provider choices");
+            Check(Descendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.settings.open_at_login_detail")),
+                "The login highlight uses the existing Windows caption while retaining the shared release entry");
+            Invoke(Find<Button>(noteWindow, "guide.releaseNotes")); await Pump(); Check(links.Last().AbsoluteUri == note.Links["releaseNotes"], "Release Notes reaches the public default-browser boundary");
+            Capture(noteWindow.ClientContent, Path.Combine(output, "pages-whats-new-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Escape(noteWindow); Check(!noteWindow.IsVisible, "Escape closes What's New");
+        }
+        finally { noteWindow.Close(); }
+        string? copied = null;
+        var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value) { ShowActivated = false, IsHitTestVisible = false };
+        settings.WelcomeRequested += () => welcomeActions++;
+        try
+        {
+            settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
+            Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
+            Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
+            foreach (string provider in new[] { "claude", "deepseek", "codex" })
+            { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }
+            Invoke(Find<Button>(settings, "help.welcome")); await Pump(); Check(welcomeActions == 1, "Help can reopen the two-step guide");
+            foreach (string action in new[] { "manual", "issues" }) { Invoke(Find<Button>(settings, "guide.link." + action)); await Pump(); }
+            settings.CapturePreview(Path.Combine(output, "pages-help-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Select(Find<RadioButton>(settings, "settings.pane.support")); await Until(() => Has(settings, "guide.link.star"));
+            foreach (string action in new[] { "star", "feature", "bug", "donate" }) { var button = Find<Button>(settings, "guide.link." + action); Check(button.Focusable, "Support links remain keyboard reachable"); Invoke(button); await Pump(); }
+            var copy = Find<Button>(settings, "support.copy"); Invoke(copy); await Pump();
+            Check(copied == note.Links["repository"] && copy.Content!.ToString() == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
+            var support = Descendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.wechat")); await Pump();
+            Check(support.SupportCodePopup?.IsOpen == true && Descendants(support.SupportCodePopup.Child).OfType<Image>().Single().ActualWidth == 220, "The packaged WeChat QR code opens only on request");
+            var qrClose = Find<Button>(support.SupportCodePopup!.Child, "support.wechat.close"); Space(qrClose); await Pump();
+            Check(support.SupportCodePopup.IsOpen == false && settings.IsVisible, "Keyboard closes the QR layer while preserving Settings");
+            Invoke(Find<Button>(settings, "support.wechat")); await Pump(); Escape(Find<Button>(support.SupportCodePopup.Child, "support.wechat.close")); await Pump();
+            Check(!support.SupportCodePopup.IsOpen && settings.IsVisible, "Escape belongs to the QR layer before the settings window");
+            Check(saved == beforeReadOnly && JsonSerializer.Serialize(session.Current) == beforeBytes, "Help tabs, public links and Support never write any preferences");
+            settings.CapturePreview(Path.Combine(output, "pages-support-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Select(Find<RadioButton>(settings, "settings.pane.whatsNew")); await Until(() => Descendants(settings).OfType<GuideContent>().Any(value => Descendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
+            Check(session.Current.WhatsNewVersion == null, "Settings lists all release history without marking it seen");
+            Check(links.Count == 7 && links.All(uri => uri.Scheme == "https"), "All seven requested public links dispatch once without page network access");
+            Escape(settings); Check(!settings.IsVisible, "Escape closes the auxiliary settings pages");
+        }
+        finally { settings.AllowClose = true; settings.Close(); }
+        Console.WriteLine("PASS guide pages " + language + (dark ? "-dark" : "-light") + ": welcome, history, read-only help/support, links, keyboard and UIA");
+    }
+    private static async Task Pump() { await Dispatcher.Yield(DispatcherPriority.ContextIdle); }
+    private static void Capture(FrameworkElement value, string file)
+    {
+        value.UpdateLayout(); var bitmap = new RenderTargetBitmap((int)Math.Ceiling(value.ActualWidth), (int)Math.Ceiling(value.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(value);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using var stream = File.Create(file); encoder.Save(stream);
+    }
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    { yield return root; for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child; }
+    private static bool Has(DependencyObject root, string id) => Descendants(root).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id);
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
+    private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();
+    private static void Space(Button value)
+    {
+        var source = PresentationSource.FromVisual(value); value.Focus();
+        foreach (bool down in new[] { true, false }) value.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Space) { RoutedEvent = down ? Keyboard.KeyDownEvent : Keyboard.KeyUpEvent });
+    }
+    private static void Escape(UIElement value)
+    {
+        var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(value), 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        value.RaiseEvent(key); if (!key.Handled) { key.RoutedEvent = Keyboard.KeyDownEvent; value.RaiseEvent(key); }
+    }
+    private static async Task Until(Func<bool> predicate)
+    { var clock = Stopwatch.StartNew(); while (!predicate() && clock.Elapsed.TotalSeconds < 5) await Task.Delay(20); Check(predicate(), "Guide page state did not settle"); }
+    private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+    private sealed class Startup : IStartupRegistration
+    {
+        internal bool Enabled, Blocked; internal int Calls;
+        public StartupRegistrationState Read() => new(Enabled, true, Blocked ? StartupBlockReason.Disabled : StartupBlockReason.None);
+        public bool Set(bool value) { Calls++; Enabled = value; return true; }
+    }
+}

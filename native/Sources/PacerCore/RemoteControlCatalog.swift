@@ -15,8 +15,14 @@ struct RemoteControlCatalogIdentity: Sendable {
         let value = clients.map { $0.accountUserID + ":" + $0.id }.sorted().joined(separator: "|") + "|" + (localEnvironmentID ?? "")
         return SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    static func read(home: URL) -> Self? {
-        guard let data = try? Data(contentsOf: home.appendingPathComponent(".codex-global-state.json")), data.count <= 8 * 1024 * 1024,
+    static func read(home: URL, files: (any PlatformFileSystem)? = nil) -> Self? {
+        let url = home.appendingPathComponent(".codex-global-state.json"), limit = 8 * 1024 * 1024
+        let data: Data?
+        if let files {
+            guard let info = files.metadata(url, followingSymbolicLinks: true), info.isRegularFile, info.size <= UInt64(limit) else { return nil }
+            data = try? files.read(url, offset: 0, maximumBytes: limit + 1)
+        } else { data = try? Data(contentsOf: url) }
+        guard let data, data.count <= limit,
               let fields = try? JSONFieldView.document(data).fields(["electron-remote-control-client-enrollments",
                   "electron-local-remote-control-environment-id", "selected-remote-host-id"]),
               let records = fields["electron-remote-control-client-enrollments"], records.isObject else { return nil }
@@ -52,14 +58,15 @@ struct RemoteControlCatalogIdentity: Sendable {
 
 public actor RemoteControlCatalog {
     public enum CatalogError: Error { case status(Int) }
-    private struct Refresh { let targets: [RemoteControlActivityTarget]?; let preserveCache: Bool }
-    private struct Cache { let key: String; let targets: [RemoteControlActivityTarget]?; let expires: Date }
+    private struct Refresh { let targets: [RemoteControlActivityTarget]?; let preserveCache: Bool; var scope: String? = nil }
+    private struct Cache { let key: String; let targets: [RemoteControlActivityTarget]?; let expires: Date; var scope: String? = nil }
     private var cache: Cache?
     private var pending: (id: UUID, key: String, client: CodexClient, task: Task<Refresh, Never>)?
     private var desiredKey: String?
     private let fetch: @Sendable (URLRequest) async throws -> Data
     private let makeClient: @Sendable (URL) -> CodexClient?
     private let files: any PlatformFileSystem
+    package nonisolated let authorization = RemoteControlAuthorizationView()
     public init(fetch: @escaping @Sendable (URLRequest) async throws -> Data, files: any PlatformFileSystem,
                 makeClient: @escaping @Sendable (URL) -> CodexClient?) {
         self.fetch = fetch
@@ -70,7 +77,7 @@ public actor RemoteControlCatalog {
         home.path + "|" + identity.fingerprint + "|" + (CodexClient.authenticationFingerprint(home: home, files: files) ?? "missing")
     }
     private static func currentIdentity(home: URL, matching key: String, files: any PlatformFileSystem) -> RemoteControlCatalogIdentity? {
-        guard let identity = RemoteControlCatalogIdentity.read(home: home), bindingKey(home: home, identity: identity, files: files) == key else { return nil }
+        guard let identity = RemoteControlCatalogIdentity.read(home: home, files: files), bindingKey(home: home, identity: identity, files: files) == key else { return nil }
         return identity
     }
     private static func selected(_ targets: [RemoteControlActivityTarget]?, identity: RemoteControlCatalogIdentity) -> [RemoteControlActivityTarget]? {
@@ -85,13 +92,15 @@ public actor RemoteControlCatalog {
     /// Fast, account-bound metadata for transport startup; it never does RPC
     /// or HTTP work. The full bounded directory stays cached before selection.
     func cachedTargets(home: URL) -> [RemoteControlActivityTarget]? {
-        guard let identity = RemoteControlCatalogIdentity.read(home: home), let cache,
+        guard let identity = RemoteControlCatalogIdentity.read(home: home, files: files), let cache,
               cache.key == Self.bindingKey(home: home, identity: identity, files: files) else { return nil }
         return Self.selected(cache.targets, identity: identity)
     }
 
     func targets(home: URL, now: Date = Date()) async -> [RemoteControlActivityTarget]? {
-        guard let identity = RemoteControlCatalogIdentity.read(home: home) else { await shutdown(); return nil }
+        guard let identity = RemoteControlCatalogIdentity.read(home: home, files: files) else {
+            authorization.clear(home: home); await shutdown(); return nil
+        }
         let key = Self.bindingKey(home: home, identity: identity, files: files)
         if desiredKey != key {
             desiredKey = key
@@ -111,15 +120,17 @@ public actor RemoteControlCatalog {
         let id = UUID(), fetch = fetch
         let task = Task<Refresh, Never> {
             let result: Refresh
+            var scope: String?
             do {
                 let auth = try await client.remoteControlCatalogAuthorization()
                 guard let clientID = identity.clientID(for: auth) else { throw CodexClientError.invalidResponse }
                 guard Self.currentIdentity(home: home, matching: key, files: files) != nil else { throw CodexClientError.accountMismatch }
-                result = .init(targets: try await Self.readTargets(authorization: auth, clientID: clientID, identity: identity, fetch: fetch), preserveCache: false)
+                scope = CompletionDismissalStore.digest(["remote-control-account-v1", auth.accountID, auth.accountUserIDs[0], clientID])
+                result = .init(targets: try await Self.readTargets(authorization: auth, clientID: clientID, identity: identity, fetch: fetch), preserveCache: false, scope: scope)
             } catch CodexClientError.notLoggedIn { result = .init(targets: nil, preserveCache: false) }
             catch CodexClientError.accountMismatch { result = .init(targets: nil, preserveCache: false) }
             catch CatalogError.status(let status) where [401, 403, 404].contains(status) { result = .init(targets: nil, preserveCache: false) }
-            catch { result = .init(targets: nil, preserveCache: true) }
+            catch { result = .init(targets: nil, preserveCache: true, scope: scope) }
             await client.shutdown()
             return Task.isCancelled ? .init(targets: nil, preserveCache: false) : result
         }
@@ -132,18 +143,51 @@ public actor RemoteControlCatalog {
             return nil
         }
         let targets = result.targets ?? (result.preserveCache && cache?.key == key ? cache?.targets : nil)
-        cache = .init(key: key, targets: targets, expires: now.addingTimeInterval(result.targets == nil ? 30 : 300))
+        let scope = result.scope ?? (result.preserveCache && cache?.key == key ? cache?.scope : nil)
+        cache = .init(key: key, targets: targets, expires: now.addingTimeInterval(result.targets == nil ? 30 : 300), scope: scope)
+        if let proof = FileProof(home: home, key: key, files: files) {
+            authorization.publish(home: home, scope: scope, hosts: Set(targets?.map(\.id) ?? []), verified: targets != nil,
+                                  revoked: !result.preserveCache && targets == nil, validate: { proof.isCurrent() })
+        } else { authorization.publish(home: home, scope: scope, hosts: [], verified: false, validate: { false }) }
         return Self.selected(targets, identity: current)
     }
     func invalidate() {
-        if let cache { self.cache = .init(key: cache.key, targets: cache.targets, expires: .distantPast) }
+        if let cache { self.cache = .init(key: cache.key, targets: cache.targets, expires: .distantPast, scope: cache.scope) }
     }
     func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        authorization.suspend()
         desiredKey = nil
         cache = nil
         if let current = pending {
             pending = nil; current.task.cancel()
             await deadline.perform([{ await current.client.shutdown(deadline: deadline) }])
+        }
+    }
+    private final class FileProof: @unchecked Sendable {
+        private let home: URL, key: String, files: any PlatformFileSystem
+        private let auth: String?
+        private let lock = NSLock()
+        private var metadata: PlatformFileMetadata
+        init?(home: URL, key: String, files: any PlatformFileSystem) {
+            self.home = home; self.key = key; self.files = files
+            auth = CodexClient.authenticationFingerprint(home: home, files: files)
+            let url = home.appendingPathComponent(".codex-global-state.json")
+            guard let info = files.metadata(url, followingSymbolicLinks: true),
+                  RemoteControlCatalog.currentIdentity(home: home, matching: key, files: files) != nil,
+                  files.metadata(url, followingSymbolicLinks: true) == info,
+                  CodexClient.authenticationFingerprint(home: home, files: files) == auth else { return nil }
+            metadata = info
+        }
+        func isCurrent() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard CodexClient.authenticationFingerprint(home: home, files: files) == auth else { return false }
+            let url = home.appendingPathComponent(".codex-global-state.json")
+            guard let info = files.metadata(url, followingSymbolicLinks: true) else { return false }
+            if info == metadata { return true }
+            guard RemoteControlCatalog.currentIdentity(home: home, matching: key, files: files) != nil,
+                  files.metadata(url, followingSymbolicLinks: true) == info,
+                  CodexClient.authenticationFingerprint(home: home, files: files) == auth else { return false }
+            metadata = info; return true
         }
     }
     static func readTargets(authorization: RemoteControlCatalogAuthorization, clientID: String,

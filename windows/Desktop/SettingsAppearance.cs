@@ -20,6 +20,7 @@ internal sealed partial class SettingsWindow
     private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
     private readonly Dictionary<string, RadioButton> surfaceChoices = new();
     private TextBlock? surfaceStatus;
+    private FrameworkElement? transparencyRow, expandedQuotaRow;
     private ComboBox? displayChoice;
     private CheckBox? fullscreenChoice;
     private TextBlock? displayStatus;
@@ -28,7 +29,7 @@ internal sealed partial class SettingsWindow
 
     private void ClearAppearance()
     { notchChoice = customChoice = null; positionRow = null; positionSeparator = null; positionChoices.Clear(); quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
-        displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; }
+        displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = null; }
     private TextBlock SectionHeader(string key, double top = 2)
     {
         var text = Label(ui.Text(key), 13, FontWeights.SemiBold); text.Margin = new Thickness(10, top, 0, 8); return text;
@@ -64,7 +65,11 @@ internal sealed partial class SettingsWindow
         }
         surfaceStatus = Detail(""); surfaceStatus.Margin = new Thickness(10, 0, 10, 10);
         Identify(surfaceStatus, "appearance.status", ui.Text("appearance.style"));
-        form.Children.Add(Card(Pair(solid, glass), surfaceStatus));
+        var adjust = new Button { Content = ui.Text("appearance.glass_adjust"), Style = (Style)FindResource("SettingsLink") };
+        Identify(adjust, "appearance.transparency.settings", ui.Text("appearance.glass_adjust"));
+        adjust.Click += (_, _) => { if (!SettingsPagePolicy.OpenTransparency(systemSettingsLauncher)) ShowIssue("windows.settings.open_system_failed"); };
+        transparencyRow = Row(Label(ui.Text("appearance.glass_transparency")), adjust, 36);
+        form.Children.Add(Card(Pair(solid, glass), surfaceStatus, transparencyRow));
 
         var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         foreach (string style in new[] { "split", "classic" })
@@ -76,7 +81,7 @@ internal sealed partial class SettingsWindow
         }
         var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
         segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
-        form.Children.Add(Card(Row(Label(ui.Text("appearance.expanded_quota")), segments, 40)));
+        expandedQuotaRow = Card(Row(Label(ui.Text("appearance.expanded_quota")), segments, 40)); form.Children.Add(expandedQuotaRow);
         form.Children.Add(SectionHeader("appearance.position", 20));
         notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", PositionSwatch(null));
         customChoice = ArtChoice("appearance.mode.custom", ui.Text("settings.custom"), "appearance.modes", PositionSwatch(session.Current.Position));
@@ -136,6 +141,7 @@ internal sealed partial class SettingsWindow
         if (fullscreenChoice != null) fullscreenChoice.IsChecked = session.Current.ShowInFullscreen;
         foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
         RefreshSurfaceStatus();
+        if (expandedQuotaRow != null) expandedQuotaRow.Visibility = SettingsPagePolicy.ShowExpandedQuotaStyle(CompactProviders()) ? Visibility.Visible : Visibility.Collapsed;
         foreach (var item in quotaStyleChoices) item.Value.IsChecked = item.Key == session.Current.ExpandedQuotaStyle;
         if (notchChoice == null || customChoice == null || positionRow == null) return;
         bool attached = session.Current.DisplayMode == "notch";
@@ -197,8 +203,10 @@ internal sealed partial class SettingsWindow
     private void RefreshSurfaceStatus()
     {
         if (surfaceStatus == null) return;
+        var state = appearance.Current;
         var decision = surfaceWindow?.SurfaceDecision ?? BackdropPolicy.Resolve(session.Current.IslandAppearance,
-            new(Environment.OSVersion.Version.Build, true, SystemParameters.HighContrast));
+            new(state.Build, state.Transparency, state.HighContrast, state.Available));
+        if (transparencyRow != null) transparencyRow.Visibility = session.Current.IslandAppearance == "liquidGlass" && state.Build >= 22621 ? Visibility.Visible : Visibility.Collapsed;
         string key = decision.Reason switch
         {
             BackdropReason.Classic => "classic", BackdropReason.Available => "available", BackdropReason.OldSystem => "old_system",
@@ -208,7 +216,7 @@ internal sealed partial class SettingsWindow
         surfaceStatus.Text = ui.Text("windows.appearance.surface_" + key);
         if (surfaceChoices.TryGetValue("liquidGlass", out var choice))
         {
-            choice.IsEnabled = !busy && !session.RequiresRestart && Environment.OSVersion.Version.Build >= 22621;
+            choice.IsEnabled = !busy && !session.RequiresRestart && state.Build >= 22621;
             choice.ToolTip = decision.Glass ? null : surfaceStatus.Text;
             ToolTipService.SetShowOnDisabled(choice, true);
         }

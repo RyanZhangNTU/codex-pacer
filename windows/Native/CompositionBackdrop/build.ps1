@@ -1,7 +1,9 @@
-param([Parameter(Mandatory)][string]$OutputDirectory)
+param([Parameter(Mandatory)][string]$OutputDirectory, [ValidateSet('x64','arm64')][string]$Architecture = 'x64')
+$env:PACER_ARCHITECTURE = $Architecture
+. (Join-Path $PSScriptRoot '../../../scripts/windows/environment.ps1')
 $ErrorActionPreference = 'Stop'
 $taskCompiler = Get-Command cl.exe -CommandType Application -ErrorAction SilentlyContinue
-if (!$taskCompiler) { throw 'Visual C++ x64 tools are required; run build-desktop.ps1 from its configured environment.' }
+if (!$taskCompiler -or $env:VSCMD_ARG_TGT_ARCH -ne $Architecture) { throw ('Visual C++ ' + $Architecture + ' tools are required.') }
 $taskRoots = @()
 if ($env:WindowsSdkDir) { $taskRoots += Join-Path $env:WindowsSdkDir 'Include' }
 $taskRoots += Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/Include'

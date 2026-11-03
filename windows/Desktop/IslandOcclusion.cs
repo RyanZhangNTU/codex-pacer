@@ -13,7 +13,7 @@ public partial class IslandWindow
     private bool visibleRequested, applyingPolicyVisibility;
     internal bool FullscreenSuppressed => visibleRequested && !IsVisible && fullscreen.HasApplication && fullscreen.Monitor == TargetMonitorBounds();
     internal bool FullscreenRaiseFailed { get; private set; }
-    private bool DecorationsAnimate => AnimationsEnabled && !decorationsOccluded;
+    private bool DecorationsAnimate => IsVisible && AnimationsEnabled && !decorationsOccluded;
     internal bool DecorationsOccluded => decorationsOccluded;
     private void InitializeOcclusion()
     {
@@ -29,7 +29,8 @@ public partial class IslandWindow
             }, TargetMonitorBounds, value =>
             {
                 fullscreen = value; decorationsOccluded = value.Occluded;
-                ApplyFullscreenVisibility(); UpdateCompactBar();
+                if (value.Occluded) FinishPageTransition();
+                ApplyFullscreenVisibility(); UpdateCompactBar(); RefreshRowMotion();
             }, Dispatcher);
             occlusionSource = HwndSource.FromHwnd(hwnd); occlusionSource?.AddHook(OcclusionMessage);
         };

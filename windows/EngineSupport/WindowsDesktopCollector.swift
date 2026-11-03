@@ -9,9 +9,13 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     private let connect: @Sendable () throws -> WindowsDesktopTransport
     private let onFrame: @Sendable (Data) async -> Void
     private let onClosed: @Sendable () async -> Void
+    private var hosts: Set<String>
+    private let localRuntime: Bool
+    private let authorization: (@Sendable () -> RemoteControlAuthorizationSnapshot)?
     private var transport: WindowsDesktopTransport?
     private var session: DesktopCollectionSession?
     private var gate: WindowsDesktopSourceGate?
+    private var remoteGate: WindowsRemoteControlGate?
     private var reader: Task<Void, Never>?, timer: Task<Void, Never>?
     private var timerDate: Date?
     private var threads: [String] = []
@@ -20,8 +24,11 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
 
     init(home: URL, interval: TimeInterval,
          connect: @escaping @Sendable () throws -> WindowsDesktopTransport = { try .connectCodex() },
+         hosts: Set<String> = ["local"], localRuntime: Bool = true,
+         authorization: (@Sendable () -> RemoteControlAuthorizationSnapshot)? = nil,
          onFrame: @escaping @Sendable (Data) async -> Void, onClosed: @escaping @Sendable () async -> Void) {
         self.home = home; self.interval = min(5, max(0.1, interval)); self.connect = connect
+        self.hosts = hosts; self.localRuntime = localRuntime; self.authorization = authorization
         self.onFrame = onFrame; self.onClosed = onClosed
     }
     func start() async {
@@ -34,12 +41,15 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             guard let peer = connection.peerIdentity else { connection.cancel(); throw WindowsDesktopTransport.Failure.identityMismatch }
             transport = connection
             let access = WindowsDesktopSourceGate(home: home, peer: peer)
+            let remote = WindowsRemoteControlGate(authorization: authorization)
+            let allowed = try remote.update(hosts)
             gate = access
-            let wire = try DesktopCollectionSession(hosts: ["local"], batchInterval: interval, localOrigin: { access.origin($0) }) { value in
+            remoteGate = remote
+            let wire = try DesktopCollectionSession(hosts: allowed, localRuntime: localRuntime, batchInterval: interval, localOrigin: { access.origin($0) }) { value in
                 if value["method"] as? String == "thread-stream-following-changed",
                    let params = value["params"] as? [String: Any], params["following"] as? Bool == true {
-                    guard params["hostId"] as? String == "local", let thread = params["conversationId"] as? String,
-                          access.permit(thread) else { throw WindowsDesktopSourceGate.Failure.revoked }
+                    guard let host = params["hostId"] as? String, let thread = params["conversationId"] as? String,
+                          host == "local" ? access.permit(thread) : remote.permit(host) else { throw WindowsDesktopSourceGate.Failure.revoked }
                 }
                 try connection.send(value)
             }
@@ -76,7 +86,8 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     }
     func setHosts(_ hosts: Set<String>) async {
         guard !finished else { return }
-        do { try session?.setHosts(hosts.intersection(["local"])); try await deliver(); schedule() }
+        self.hosts = hosts
+        do { if let remoteGate { try session?.setHosts(remoteGate.update(hosts)) }; try await deliver(); schedule() }
         catch { await finish(flush: false) }
     }
     func stop() async { await finish(flush: false) }
@@ -90,6 +101,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     private func receive(_ bytes: Data) async {
         guard !finished, let gate else { return }
         do {
+            guard remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
             // Global handshakes are allowed. Every thread-bearing broadcast is
             // bound before it can discover, follow or mutate a projection.
             let root = try JSONFieldView.document(bytes, projectedItems: true)
@@ -97,12 +109,16 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             if fields["type"]?.string() == "broadcast", let params = fields["params"], params.isObject {
                 let route = try params.fields(["hostId", "conversationId"])
                 if let thread = route["conversationId"]?.string() {
-                    guard route["hostId"]?.string() == "local" else { return }
-                    let owner = fields["method"]?.string() == "thread-stream-state-changed" ? fields["sourceClientId"]?.string() : nil
-                    guard gate.permit(thread, owner: owner) else {
-                        if gate.revoked { throw WindowsDesktopSourceGate.Failure.revoked }
-                        schedule()
-                        return
+                    guard let host = route["hostId"]?.string() else { return }
+                    if host != "local" {
+                        guard remoteGate?.permit(host) == true else { return }
+                    } else {
+                        let owner = fields["method"]?.string() == "thread-stream-state-changed" ? fields["sourceClientId"]?.string() : nil
+                        guard gate.permit(thread, owner: owner) else {
+                            if gate.revoked { throw WindowsDesktopSourceGate.Failure.revoked }
+                            schedule()
+                            return
+                        }
                     }
                 }
             }
@@ -114,7 +130,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     private func service() async throws {
         guard !finished, session != nil else { return }
         let now = Date()
-        guard gate?.validate() == true else { throw WindowsDesktopSourceGate.Failure.revoked }
+        guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
         if let gate {
             let ready = gate.dueRetries(at: now).filter { gate.permit($0) }.map { NativeDesktopSession.Key(host: "local", thread: $0) }
             try session?.discover(ready)
@@ -143,7 +159,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         let frames = session?.takeFrames() ?? []
         for bytes in frames {
             guard closing || !finished else { return }
-            guard gate?.validate() == true else { throw WindowsDesktopSourceGate.Failure.revoked }
+            guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
             await onFrame(bytes)
         }
     }
@@ -153,14 +169,44 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         // Release the authenticated IO before awaiting a possibly stalled consumer.
         // The last valid batch still precedes EOF; revoked proofs never flush.
         let access = gate
+        let remote = remoteGate
         transport?.cancel()
-        let frames = session?.finish(flush: flush && access?.validate() == true) ?? []
-        session = nil; gate = nil; transport = nil
+        let frames = session?.finish(flush: flush && access?.validate() == true && remote?.validate() != false) ?? []
+        session = nil; gate = nil; remoteGate = nil; transport = nil
         for bytes in frames {
-            guard access?.validate() == true else { break }
+            guard access?.validate() == true, remote?.validate() != false else { break }
             await onFrame(bytes)
         }
         await onClosed()
+    }
+}
+
+/// The authenticated Desktop pipe supplies IO; the shared catalog supplies
+/// the account scope and the exact allowed device IDs. Saved hints grant none.
+final class WindowsRemoteControlGate {
+    enum Failure: Error { case revoked }
+    private let authorization: (@Sendable () -> RemoteControlAuthorizationSnapshot)?
+    private var requested: Set<String> = []
+    private var scope: String?
+    init(authorization: (@Sendable () -> RemoteControlAuthorizationSnapshot)?) { self.authorization = authorization }
+    func update(_ hosts: Set<String>) throws -> Set<String> {
+        requested = hosts
+        let state = authorization?() ?? .init()
+        let verified = state.verified && state.scope != nil && !state.revoked
+        if let scope, !verified || state.scope != scope { throw Failure.revoked }
+        if verified { scope = state.scope }
+        let allowed = verified ? hosts.intersection(state.hostIDs).filter { $0.hasPrefix(ConnectionSource.controlPrefix) } : []
+        return Set(allowed).union(hosts.contains("local") ? ["local"] : [])
+    }
+    func validate() -> Bool {
+        guard let scope else { return true }
+        let state = authorization?() ?? .init()
+        return state.verified && !state.revoked && state.scope == scope
+    }
+    func permit(_ host: String) -> Bool {
+        guard host.hasPrefix(ConnectionSource.controlPrefix), requested.contains(host), validate() else { return false }
+        let state = authorization?() ?? .init()
+        return state.verified && !state.revoked && state.scope != nil && state.scope == scope && state.hostIDs.contains(host)
     }
 }
 

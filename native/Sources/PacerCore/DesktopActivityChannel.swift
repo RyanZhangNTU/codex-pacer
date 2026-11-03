@@ -18,14 +18,22 @@ public struct RealtimeActivityServices: Sendable {
     public let python: URL
     public let ssh: URL
     public let diagnostics: RuntimeDiagnosticObserver
+    public let sshTargets: (@Sendable (URL) async -> [RemoteActivityTarget])?
+    public let sshArguments: (@Sendable (RemoteActivityTarget) -> [String]?)?
+    public let remoteControlAuthorization: (@Sendable (URL) -> RemoteControlAuthorizationSnapshot)?
     public init(desktopAvailable: @escaping @Sendable (URL) -> Bool,
                 controlAvailable: @escaping @Sendable (URL) -> Bool,
                 makeDesktop: @escaping @Sendable (URL, Set<String>, Bool, TimeInterval,
                     @escaping @Sendable (Data) async -> Void, @escaping @Sendable () async -> Void) -> any DesktopActivityChannel,
                 processes: any HelperProcessLauncher, python: URL, ssh: URL,
-                diagnostics: RuntimeDiagnosticObserver = RuntimeDiagnosticObserver()) {
+                diagnostics: RuntimeDiagnosticObserver = RuntimeDiagnosticObserver(),
+                sshTargets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil,
+                sshArguments: (@Sendable (RemoteActivityTarget) -> [String]?)? = nil,
+                remoteControlAuthorization: (@Sendable (URL) -> RemoteControlAuthorizationSnapshot)? = nil) {
         self.desktopAvailable = desktopAvailable; self.controlAvailable = controlAvailable
         self.makeDesktop = makeDesktop; self.processes = processes; self.python = python; self.ssh = ssh
         self.diagnostics = diagnostics
+        self.sshTargets = sshTargets; self.sshArguments = sshArguments
+        self.remoteControlAuthorization = remoteControlAuthorization
     }
 }

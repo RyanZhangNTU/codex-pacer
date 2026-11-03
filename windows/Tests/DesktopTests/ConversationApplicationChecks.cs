@@ -51,6 +51,8 @@ internal static class ConversationApplicationChecks
             "A failed prepared-host activation stays failed and cannot fall through to a live PID or provider URI");
         Check(!await apps.OpenConversationAsync(new(context, "codex", "host", local, null, 12, 34), ActivatePrepared) && capabilities.Count == 1,
             "A prepared host must reject mixed executable or URI payloads before asking the engine");
+        Check(!await apps.OpenConversationAsync(new(context, "codex", "host", null, null, 12, 34, "e30="), ActivatePrepared) && capabilities.Count == 1,
+            "A prepared host must reject a mixed terminal payload before asking the engine");
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

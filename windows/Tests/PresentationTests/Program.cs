@@ -26,6 +26,20 @@ internal static class Program
         if (args is ["--fullscreen-fixture"]) return FullscreenFixture.Run();
         int fixture = Array.IndexOf(args, "--language");
         if (fixture >= 0) return SlowEngineChecks.Fixture(args[fixture + 1]);
+        if (args is ["--unit-only"])
+        {
+            try { SystemAppearanceUnitChecks.Run(); QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult(); SettingsPageUnitChecks.Run(); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
+        if (args is ["--quota-cycle-units"])
+        {
+            try
+            {
+                for (int iteration = 0; iteration < 10; iteration++) QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult();
+                Console.WriteLine("PASS quota-cycle completion: ten headless runs, unchanged deadline, stale/duplicate events, cancellation and cleanup"); return 0;
+            }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
         string group = args.Length > 1 ? args[1] : "all";
         string? desktop = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
@@ -42,61 +56,80 @@ internal static class Program
         PresentationTraceSources.DataBindingSource.Listeners.Add(new BindingErrors());
         app.Startup += async (_, _) =>
         {
+            string scenario = "common";
+            var caseFailures = new List<string>();
+            async Task Attempt(string name, Func<Task> check)
+            {
+                try { await check(); }
+                catch (Exception error) when (group == "all")
+                {
+                    string failure = name + " [" + scenario + "]: " + error.Message;
+                    caseFailures.Add(failure); Console.Error.WriteLine("FAIL " + failure); Console.Error.WriteLine(error);
+                }
+            }
             await using var projections = new EngineClient();
             try
             {
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
-                if (group is "all" or "recovery" or "persistence") await StorageRecoveryChecks.Run();
-                TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
-                if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
-                if (group == "persistence") await PreferencesResponsivenessChecks.Run();
+                if (group is "all" or "recovery" or "persistence") await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
+                SystemAppearanceUnitChecks.Run(); await Attempt(nameof(QuotaCycleCompletionChecks), () => QuotaCycleCompletionChecks.Run()); SettingsPageUnitChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await Attempt(nameof(QuotaChartBridgeChecks), () => QuotaChartBridgeChecks.Run());
+                if (group is "all" or "responsive") { await Attempt(nameof(SlowEngineChecks), () => SlowEngineChecks.Run()); await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run()); }
+                if (group == "persistence") await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run());
                 bool All(string name) => group == "all" || group == name;
                 if (All("quota"))
                 {
-                    await QuotaProjectionChecks.Run(); await ClassicQuotaChecks.Run(output); await SingleQuotaChecks.Run(output);
-                    await LegacyQuotaChecks.Run(output); await QuotaConnectionChecks.Run(output); await TypographyLocaleChecks.Run(output);
+                    await Attempt(nameof(QuotaProjectionChecks), () => QuotaProjectionChecks.Run()); await Attempt(nameof(ClassicQuotaChecks), () => ClassicQuotaChecks.Run(output)); await Attempt(nameof(SingleQuotaChecks), () => SingleQuotaChecks.Run(output));
+                    await Attempt(nameof(LegacyQuotaChecks), () => LegacyQuotaChecks.Run(output)); await Attempt(nameof(QuotaConnectionChecks), () => QuotaConnectionChecks.Run(output)); await Attempt(nameof(TypographyLocaleChecks), () => TypographyLocaleChecks.Run(output));
                 }
-                if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
-                if (group == "deepseek") { await ClaudeConnectionChecks.Run("zh-Hans", true, output); await DeepSeekWebConnectionChecks.Run("en", false, output); }
-                if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); await BackdropPresentationChecks.Run(); }
-                if (All("idle")) { await IdleSchedulingChecks.Run(); await OcclusionSchedulingChecks.Run(); }
-                if (All("display")) { await DisplayWindowChecks.Run(output); if (group != "all") await OcclusionSchedulingChecks.Run(); }
+                if (All("web")) { await Attempt(nameof(ProviderWebStartupChecks), () => ProviderWebStartupChecks.Run()); await Attempt(nameof(ClaudeWebSessionChecks), () => ClaudeWebSessionChecks.Run()); await Attempt(nameof(DeepSeekWebSessionChecks), () => DeepSeekWebSessionChecks.Run()); }
+                if (group == "deepseek") { await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run("zh-Hans", true, output)); await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run("en", false, output)); }
+                if (All("host")) { await Attempt(nameof(NotificationActivationWindowChecks), () => NotificationActivationWindowChecks.Run()); await Attempt(nameof(IslandHostChecks), () => IslandHostChecks.Run()); await Attempt(nameof(BackdropPresentationChecks), () => BackdropPresentationChecks.Run()); }
+                if (All("idle") || group == "quotaIdle") await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
+                if (All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run());
+                if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (group != "all") await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
+                    scenario = language;
+                    if (All("accessibility")) { await Attempt(nameof(AccessibleNumberChecks), () => { AccessibleNumberChecks.Run(language); return Task.CompletedTask; }); await Attempt(nameof(AccessibilityChecks), () => AccessibilityChecks.Run(language)); }
                     foreach (bool motion in new[] { false, true })
                     {
-                        if (All("island")) await Run(language, motion, output);
-                        if (All("conversation")) foreach (string provider in new[] { "codex", "claude" }) await ConversationNavigationChecks.Run(provider, language, motion);
-                        if (All("harness")) await HarnessNavigationChecks.Run(language, motion, output);
-                        if (All("quota")) { await ClassicLayoutChecks.Run(language, output, motion); await DeepSeekSoloChecks.Run(language, motion, output); }
+                        scenario = language + "/motion=" + motion;
+                        if (All("island")) await Attempt("IslandWindow", () => Run(language, motion, output));
+                        if (All("conversation")) foreach (string provider in new[] { "codex", "claude" }) await Attempt(nameof(ConversationNavigationChecks), () => ConversationNavigationChecks.Run(provider, language, motion));
+                        if (All("harness")) await Attempt(nameof(HarnessNavigationChecks), () => HarnessNavigationChecks.Run(language, motion, output));
+                        if (All("quota")) { await Attempt(nameof(ClassicLayoutChecks), () => ClassicLayoutChecks.Run(language, output, motion)); await Attempt(nameof(DeepSeekSoloChecks), () => DeepSeekSoloChecks.Run(language, motion, output)); }
                     }
                     foreach (bool dark in new[] { false, true })
                     {
+                        scenario = language + "/dark=" + dark;
                         if (group == "persistence")
                         {
-                            await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
-                            await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output);
+                            await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));
+                            await Attempt(nameof(QuotaHistoryChecks), () => QuotaHistoryChecks.Run(language, dark, output)); await Attempt(nameof(ProviderHistoryChecks), () => ProviderHistoryChecks.Run(language, dark, output));
                         }
-                        if (group == "deepseek") { await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output); }
-                        if (All("display") || group == "displaySettings") await DisplaySettingsChecks.Run(language, dark);
+                        if (group == "deepseek") { await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output)); }
+                        if (All("display") || group == "displaySettings") await Attempt(nameof(DisplaySettingsChecks), () => DisplaySettingsChecks.Run(language, dark));
+                        if (All("pages")) await Attempt(nameof(GuidePageChecks), () => GuidePageChecks.Run(language, dark, output));
                         if (All("settings"))
                         {
-                            await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
-                            await SettingsPresentationChecks.Run(language, dark, output); await CodexSettingsChecks.Run(language, dark, output);
-                            foreach (string provider in new[] { "claude", "deepseek" }) await ProviderHomeSettingsChecks.Run(provider, language, dark, output);
-                            await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output);
+                            await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));
+                            await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output)); await Attempt(nameof(CodexSettingsChecks), () => CodexSettingsChecks.Run(language, dark, output));
+                            foreach (string provider in new[] { "claude", "deepseek" }) await Attempt(nameof(ProviderHomeSettingsChecks), () => ProviderHomeSettingsChecks.Run(provider, language, dark, output));
+                            await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output));
                         }
-                        if (All("collapsed")) foreach (bool motion in new[] { false, true }) await CollapsedLayoutChecks.Run(language, dark, motion, output);
-                        if (All("quota")) { await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output); }
+                        if (group == "ssh") await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output));
+                        if (All("collapsed")) foreach (bool motion in new[] { false, true }) await Attempt(nameof(CollapsedLayoutChecks), () => CollapsedLayoutChecks.Run(language, dark, motion, output));
+                        if (All("quota")) { await Attempt(nameof(QuotaHistoryChecks), () => QuotaHistoryChecks.Run(language, dark, output)); await Attempt(nameof(ProviderHistoryChecks), () => ProviderHistoryChecks.Run(language, dark, output)); }
                         if (All("connection"))
                         {
-                            await ClaudeConnectionChecks.Run(language, dark, output); await DeepSeekConnectionChecks.Run(language, dark, output);
-                            await DeepSeekWebConnectionChecks.Run(language, dark, output);
+                            await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run(language, dark, output)); await Attempt(nameof(DeepSeekConnectionChecks), () => DeepSeekConnectionChecks.Run(language, dark, output));
+                            await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run(language, dark, output));
                         }
                     }
                 }
                 Check(Errors.Count == 0, "WPF binding/runtime errors: " + string.Join("\n", Errors));
+                Check(caseFailures.Count == 0, "Presentation cases failed: " + string.Join("\n", caseFailures));
                 Console.WriteLine("All functional presentation checks passed."); result = 0;
             }
             catch (Exception error) { Console.Error.WriteLine(error); }

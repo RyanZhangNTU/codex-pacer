@@ -31,8 +31,14 @@ internal sealed partial class SettingsWindow : Window
     private readonly NotificationSession? notifications;
     private readonly Action openNotificationSettings;
     private readonly IslandWindow? surfaceWindow;
+    private readonly ISystemAppearanceSource appearance;
+    private readonly bool ownsAppearance;
+    private readonly HighContrastScope semanticPaint;
     private readonly IDisplayTopologySource appearanceDisplays;
     private readonly bool ownsAppearanceDisplays;
+    private readonly Func<Uri, bool>? guideLinkLauncher;
+    private readonly Action<string>? guideCopyLink;
+    private readonly Func<Uri, bool>? systemSettingsLauncher;
     private readonly Grid client = new() { Width = 780, Height = 600 };
     private readonly StackPanel form = new() { Margin = new Thickness(20, 20, 20, 16) };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
@@ -42,7 +48,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly TextBlock paneTitle;
     private readonly ScrollViewer paneScroller;
     private string activePane = "general";
-    private CheckBox? login, hideProjects, appButtons;
+    private CheckBox? login, hideProjects, appButtons, monitorSSH;
     private TextBlock? startupStatus;
     private ComboBox? language;
     private Border? restart;
@@ -55,18 +61,25 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null, ISystemAppearanceSource? appearanceSource = null, Func<Uri, bool>? systemSettingsLauncher = null, WindowsUpdateService? updater = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
         this.ui = ui; this.session = session; this.startup = startup; this.demo = demo; this.darkOverride = darkOverride;
         this.engine = engine;
+        this.updater = updater;
         this.webConnection = webConnection;
         this.claudeConnection = claudeConnection;
         this.notifications = notifications;
         this.surfaceWindow = surfaceWindow;
+        appearance = appearanceSource ?? surfaceWindow?.AppearanceSource ?? new SystemAppearanceSource(action => Dispatcher.BeginInvoke(action));
+        ownsAppearance = appearanceSource == null && surfaceWindow == null; semanticPaint = new(this);
+        DesktopAppearance.Apply(this, appearance.Current);
         appearanceDisplays = displayTopology ?? surfaceWindow?.DisplayTopology ?? new WindowsDisplayTopology(action => Dispatcher.BeginInvoke(action));
         ownsAppearanceDisplays = displayTopology == null && surfaceWindow == null;
+        this.guideLinkLauncher = guideLinkLauncher;
+        this.guideCopyLink = guideCopyLink;
+        this.systemSettingsLauncher = systemSettingsLauncher;
         this.openNotificationSettings = openNotificationSettings ?? (() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }));
         this.sourceReady = sourceReady ?? Task.CompletedTask;
         Title = ui.Text("menu.settings_title"); WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -100,19 +113,21 @@ internal sealed partial class SettingsWindow : Window
         Closed += (_, _) => ShellProjection.Changed -= OnShellProjectionChanged;
         Activated += async (_, _) => { RefreshSystemState(); if (notifications != null) await notifications.RefreshAsync(); };
         Deactivated += (_, _) => RefreshTheme();
-        SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
+        appearance.Changed += OnAppearanceChanged;
         session.Changed += OnPreferencesChanged;
         if (notifications != null) notifications.Changed += OnNotificationsChanged;
         if (surfaceWindow != null) surfaceWindow.SurfaceChanged += RefreshSurfaceStatus;
+        if (updater != null) updater.Changed += OnUpdateStatus;
         appearanceDisplays.Changed += OnAppearanceDisplaysChanged;
         if (engine != null) { engine.Snapshot += OnProviderSnapshot; engine.Status += OnProviderStatus; }
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
         {
-            sourceClosed = true; sourceInspectionRevision++; ClearProviderHome();
-            SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged; session.Changed -= OnPreferencesChanged;
+            sourceClosed = true; IsEnabled = false; sourceInspectionRevision++; ClearProviderHome();
+            appearance.Changed -= OnAppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose(); session.Changed -= OnPreferencesChanged;
             if (notifications != null) notifications.Changed -= OnNotificationsChanged;
             if (surfaceWindow != null) surfaceWindow.SurfaceChanged -= RefreshSurfaceStatus;
+            if (updater != null) updater.Changed -= OnUpdateStatus;
             appearanceDisplays.Changed -= OnAppearanceDisplaysChanged;
             if (ownsAppearanceDisplays) appearanceDisplays.Dispose();
             if (engine != null) { engine.Snapshot -= OnProviderSnapshot; engine.Status -= OnProviderStatus; }
@@ -148,9 +163,9 @@ internal sealed partial class SettingsWindow : Window
         names.Children.Add(Label("Codex Pacer", 13, FontWeights.SemiBold)); names.Children.Add(Detail(Version)); brand.Children.Add(names);
         DockPanel.SetDock(brand, Dock.Top); stack.Children.Add(brand);
         var bottom = new StackPanel(); DockPanel.SetDock(bottom, Dock.Bottom); stack.Children.Add(bottom);
-        bottom.Children.Add(Navigation("whatsNew", "whats_new.window_title", "sparkle", Color.FromRgb(237, 74, 153)));
-        bottom.Children.Add(Navigation("help", "settings.pane.help", "questionmark", Color.FromRgb(133, 133, 133)));
-        bottom.Children.Add(Navigation("support", "settings.pane.support", "heart", Color.FromRgb(245, 92, 107)));
+        bottom.Children.Add(Navigation("whatsNew", "whats_new.window_title", "sparkle", Color.FromRgb(237, 74, 153), enabled: true));
+        bottom.Children.Add(Navigation("help", "settings.pane.help", "questionmark", Color.FromRgb(133, 133, 133), enabled: true));
+        bottom.Children.Add(Navigation("support", "settings.pane.support", "heart", Color.FromRgb(245, 92, 107), enabled: true));
         var quit = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Height = 26, Margin = new Thickness(0, 0, 0, 10) };
         var quitLabel = new StackPanel { Orientation = Orientation.Horizontal };
         var power = new IconGlyph { Symbol = "power", Width = 14, Height = 14, Margin = new Thickness(0, 0, 8, 0) };
@@ -166,7 +181,7 @@ internal sealed partial class SettingsWindow : Window
         top.Children.Add(Navigation("codex", null, "chevron.left.forwardslash.chevron.right", Color.FromRgb(102, 205, 187), "Codex", enabled: engine != null, darkGlyph: true));
         top.Children.Add(Navigation("claude", null, "asterisk", Color.FromRgb(255, 164, 119), "Claude", enabled: engine != null, darkGlyph: true));
         top.Children.Add(Navigation("deepseek", null, "water.waves", Color.FromRgb(126, 150, 255), "DeepSeek", enabled: engine != null, darkGlyph: true));
-        top.Children.Add(Navigation("connections", "settings.pane.connections", "point.3.connected.trianglepath.dotted", Color.FromRgb(41, 128, 255)));
+        top.Children.Add(Navigation("connections", "settings.pane.connections", "point.3.connected.trianglepath.dotted", Color.FromRgb(41, 128, 255), enabled: engine != null));
         return surface;
     }
     private RadioButton Navigation(string id, string? key, string symbol, Color color, string? literal = null, bool enabled = false, bool darkGlyph = false)
@@ -181,7 +196,7 @@ internal sealed partial class SettingsWindow : Window
         var label = Label(name); label.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = button }); row.Children.Add(label); button.Content = row;
         Identify(button, "settings.pane." + id, name);
         if (!enabled) { button.ToolTip = ui.Text("windows.settings.pane_pending"); ToolTipService.SetShowOnDisabled(button, true); }
-        button.Checked += async (_, _) => { if (!synchronizing && button.IsChecked == true) await Change(p => p with { LastSettingsPane = id }); };
+        button.Checked += async (_, _) => { if (!synchronizing && button.IsChecked == true) await NavigateAsync(id); };
         navigation[id] = button; return button;
     }
     private Border Card(params UIElement[] rows)
@@ -215,12 +230,16 @@ internal sealed partial class SettingsWindow : Window
     {
         var version = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         version.Children.Add(AppIcon(34)); var labels = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Label("Codex Pacer " + Version)); labels.Children.Add(Detail(ui.Text(demo ? "updates.demo_disabled" : "windows.updates.pending"))); version.Children.Add(labels);
-        var update = new Button { Content = ui.Text("updates.check"), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center };
+        labels.Children.Add(Label("Codex Pacer " + Version)); updateStatus = Detail(""); labels.Children.Add(updateStatus); version.Children.Add(labels);
+        var update = new Button { Content = ui.Text("updates.check"), VerticalAlignment = VerticalAlignment.Center }; updateCheck = update;
         Identify(update, "settings.update.check", ui.Text("updates.check"));
-        var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticSwitch.IsEnabled = false;
-        automaticSwitch.ToolTip = ui.Text(demo ? "updates.demo_disabled" : "windows.updates.pending");
-        form.Children.Add(Card(Row(version, update, 54), automatic));
+        var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticUpdates = automaticSwitch;
+        automaticSwitch.Checked += ChangeAutomaticUpdates; automaticSwitch.Unchecked += ChangeAutomaticUpdates;
+        update.Click += async (_, _) => { if (updater != null) _ = await updater.CheckAsync(); };
+        updateNotesButton = new Button { Content = ui.Text("windows.updates.view_notes"), Style = (Style)FindResource("SettingsLink"), Margin = new Thickness(10, 4, 10, 8), HorizontalAlignment = HorizontalAlignment.Left };
+        Identify(updateNotesButton, "settings.update.notes", ui.Text("windows.updates.view_notes")); updateNotesButton.Click += ReadUpdateNotes;
+        RefreshUpdates();
+        form.Children.Add(Card(Row(version, update, 54), automatic, updateNotesButton));
         var loginRow = Toggle("settings.open_at_login", "windows.settings.open_at_login_detail", "settings.startup", out var loginSwitch); login = loginSwitch;
         loginRow.MinHeight = 52;
         RoutedEventHandler changeStartup = (_, _) =>
@@ -262,6 +281,9 @@ internal sealed partial class SettingsWindow : Window
         ((FrameworkElement)apps.Children[0]).Margin = new Thickness(0, 11, 8, 11);
         BindToggle(appButtons, (p, value) => p with { ShowAppButtons = value }); editors.Add(appButtons);
         form.Children.Add(Card(privacy, apps));
+        var ssh = Toggle("settings.monitor_ssh", null, "settings.monitor_ssh", out var sshSwitch); monitorSSH = sshSwitch;
+        BindToggle(monitorSSH, (p, value) => p with { MonitorSSH = value }); editors.Add(monitorSSH);
+        form.Children.Add(Card(ssh));
     }
     private void BindToggle(CheckBox check, Func<DesktopPreferences, bool, DesktopPreferences> edit)
         => BindToggle(check, (value, enabled) => System.Threading.Tasks.Task.FromResult(edit(value, enabled)));
@@ -332,22 +354,35 @@ internal sealed partial class SettingsWindow : Window
     private void SetEditors(bool enabled)
     {
         foreach (var editor in editors) editor.IsEnabled = enabled;
+        RefreshUpdates();
         codexHistory?.SetInteractionEnabled(enabled);
-        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" || (item.Key is "codex" or "claude" or "deepseek" or "reminders") && engine != null);
+        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" or "whatsNew" or "help" or "support" || (item.Key is "codex" or "claude" or "deepseek" or "reminders" or "connections") && engine != null);
+        RefreshConnections();
     }
     private void OnPreferencesChanged(DesktopPreferences value)
-    { if (ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
-    private string ResolvePane(string value) => value is "appearance" or "collapsed" || (value is "codex" or "claude" or "deepseek" or "reminders") && engine != null ? value : "general";
+    { if (!ReadOnlyGuidePane(activePane) && ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
+    private string ResolvePane(string value) => value is "appearance" or "collapsed" or "whatsNew" or "help" or "support" || (value is "codex" or "claude" or "deepseek" or "reminders" or "connections") && engine != null ? value : "general";
     internal async System.Threading.Tasks.Task NavigateAsync(string pane)
-    { if (!sourceClosed && ResolvePane(pane) == pane) await Change(p => p with { LastSettingsPane = pane }); }
+    {
+        if (sourceClosed || ResolvePane(pane) != pane) return;
+        if (ReadOnlyGuidePane(pane)) RebuildPane(pane);
+        else
+        {
+            bool wasReadOnly = ReadOnlyGuidePane(activePane); if (wasReadOnly) RebuildPane(pane);
+            if (await Change(p => p with { LastSettingsPane = pane }) != PreferencesApplyResult.Applied && wasReadOnly) RebuildPane(session.Current.LastSettingsPane);
+        }
+    }
     private void RebuildPane(string value)
     {
         synchronizing = true;
         try
         {
             activePane = ResolvePane(value);
+            foreach (UIElement child in form.Children)
+                if (child != issue && child != recoveryRestart) PageAccessibility.Retire(child);
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
-            login = hideProjects = appButtons = null; startupStatus = null; language = null; restart = null; restartHint = null;
+            login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; language = null; restart = null; restartHint = null;
+            automaticUpdates = null; updateCheck = updateNotesButton = null; updateStatus = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();
@@ -355,8 +390,12 @@ internal sealed partial class SettingsWindow : Window
             ClearDeepSeek();
             ClearReminders();
             ClearCollapsed();
-            paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : "settings.pane." + activePane);
-            if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else BuildDeepSeek();
+            ClearGuidePages();
+            ClearConnections();
+            paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : activePane == "whatsNew" ? "whats_new.window_title" : "settings.pane." + activePane);
+            AutomationProperties.SetName(paneScroller, paneTitle.Text);
+            if (activePane is "help" or "support" or "whatsNew") BuildGuidePage();
+            else if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else if (activePane == "connections") BuildConnections(); else BuildDeepSeek();
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
             paneScroller.ScrollToTop(); SetEditors(!busy && !session.RequiresRestart);
         }
@@ -386,6 +425,8 @@ internal sealed partial class SettingsWindow : Window
             }
             if (hideProjects != null) hideProjects.IsChecked = session.Current.HideProjects;
             if (appButtons != null) appButtons.IsChecked = session.Current.ShowAppButtons;
+            if (monitorSSH != null) monitorSSH.IsChecked = session.Current.MonitorSSH;
+            RefreshUpdates();
             if (language != null) language.SelectedValue = session.Current.Language;
             string desired = session.Current.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : session.Current.Language;
             if (restart != null)
@@ -402,6 +443,7 @@ internal sealed partial class SettingsWindow : Window
             RefreshProviderHome();
             RefreshReminders();
             RefreshCollapsed();
+            RefreshConnections();
             recoveryRestart.Visibility = session.RequiresRestart && activePane != "general" ? Visibility.Visible : Visibility.Collapsed;
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
         }
@@ -410,10 +452,12 @@ internal sealed partial class SettingsWindow : Window
     internal void RefreshSystemState() { RefreshTheme(); RefreshValues(); }
     private void ShowIssue(string key) { issue.Text = ui.Text(key); AutomationProperties.SetName(issue, issue.Text); issue.Foreground = new SolidColorBrush(Color.FromRgb(204, 106, 32)); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
     private void ClearIssue() { issue.Text = ""; issue.Visibility = Visibility.Collapsed; }
-    private void OnSystemPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => Dispatcher.InvokeAsync(RefreshTheme);
+    private void OnAppearanceChanged() => Dispatcher.InvokeAsync(() => { if (!sourceClosed) RefreshTheme(); });
     private void RefreshTheme()
     {
-        bool dark = darkOverride ?? IsSystemDark(); SettingsPalette.Apply(Resources, dark, IsActive);
+        var state = appearance.Current; DesktopAppearance.Apply(this, state);
+        semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark; SettingsPalette.Apply(Resources, dark, IsActive, state);
+        RefreshSurfaceStatus();
     }
     internal static bool IsSystemDark()
     {

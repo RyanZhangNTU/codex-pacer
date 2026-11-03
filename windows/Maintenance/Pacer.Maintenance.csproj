@@ -1,8 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../desktop-platform.props"/>
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PacerMaintenance</AssemblyName>
@@ -14,6 +13,8 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
     <Compile Include="../Desktop/WindowsStartupRegistration.cs" Link="WindowsStartupRegistration.cs"/>
     <Compile Include="../Desktop/WindowsInstallationIdentity.cs" Link="WindowsInstallationIdentity.cs"/>
     <Compile Include="../Desktop/WindowsMaintenanceSignal.cs" Link="WindowsMaintenanceSignal.cs"/>

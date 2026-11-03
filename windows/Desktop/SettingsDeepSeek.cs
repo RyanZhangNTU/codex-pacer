@@ -71,12 +71,12 @@ internal sealed partial class SettingsWindow
         deepseekBudgetRows = new StackPanel(); deepseekRingHint = Detail(""); deepseekRingHint.Margin = new Thickness(10, 7, 4, 4);
         Identify(deepseekRingHint, "settings.deepseek.ring_hint", "");
         deepseekRingLink = new Button { Style = (Style)FindResource("SettingsLink"), FontSize = 11, Margin = new Thickness(0, 7, 10, 4) };
-        Identify(deepseekRingLink, "settings.deepseek.ring_link", ""); deepseekRingLink.Click += async (_, _) => await NavigateAsync("collapsed");
+        Identify(deepseekRingLink, "settings.deepseek.ring_link", ""); deepseekRingLink.Click += async (_, _) => await NavigateToQuotaGaugeAsync();
         var ringHint = new StackPanel { Orientation = Orientation.Horizontal }; ringHint.Children.Add(deepseekRingHint); ringHint.Children.Add(deepseekRingLink); deepseekBudgetRows.Children.Add(ringHint);
         deepseekBudgetRows.Children.Add(DeepSeekBudgetField(true)); deepseekBudgetRows.Children.Add(DeepSeekBudgetField(false));
         deepseekRingRow = Row(Label(ui.Text("deepseek.budget.ring")), DeepSeekSegments("ring", new[] { ("day", "deepseek.budget.day"), ("week", "deepseek.budget.week") }, value => ChangeDeepSeek(p => p with { DeepSeekRingPeriod = value })), 36);
         deepseekBudgetRows.Children.Add(deepseekRingRow);
-        deepseekBudgetRows.Children.Add(DeepSeekCaption(ui.Text("deepseek.budget.help")));
+        deepseekBudgetRows.Children.Add(DeepSeekCaption(ui.Text("windows.deepseek.budget_help")));
         var reminders = new Button { Content = ui.Text("settings.reminders"), Style = (Style)FindResource("SettingsLink"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(10, 0, 10, 8) };
         Identify(reminders, "settings.deepseek.reminders", ui.Text("settings.reminders")); reminders.Click += async (_, _) => await NavigateAsync("reminders"); deepseekBudgetRows.Children.Add(reminders);
         deepseekBudgetIssue = Detail(""); deepseekBudgetIssue.Margin = new Thickness(10, 0, 10, 8); deepseekBudgetIssue.Visibility = Visibility.Collapsed; Identify(deepseekBudgetIssue, "settings.deepseek.budget.issue", ""); deepseekBudgetRows.Children.Add(deepseekBudgetIssue);
@@ -96,15 +96,14 @@ internal sealed partial class SettingsWindow
         Identify(pricing, "settings.deepseek.pricing", ui.Text("deepseek.price_list"));
         pricing.Click += (_, _) =>
         {
-            try { Process.Start(new ProcessStartInfo("https://api-docs.deepseek.com/zh-cn/quick_start/pricing") { UseShellExecute = true }); }
-            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { pricing.ToolTip = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing"; }
+            if (!SettingsPagePolicy.OpenPricing(ui.Language, guideLinkLauncher)) ShowIssue("windows.pages.open_failed");
         };
         deepseekPricing = new DeepSeekPricingTimeline(ui);
-        var pricingContent = new StackPanel(); pricingContent.Children.Add(deepseekPricing); pricingContent.Children.Add(DeepSeekCaption(ui.Text("deepseek.pricing_note"))); pricingContent.Children.Add(pricing);
+        var pricingContent = new StackPanel(); pricingContent.Children.Add(deepseekPricing); pricingContent.Children.Add(DeepSeekCaption(ui.Text("windows.deepseek.pricing_note"))); pricingContent.Children.Add(pricing);
         deepseekSections.Children.Add(Card(pricingContent));
         deepseekSections.Children.Add(SectionHeader("windows.provider.local", 22)); deepseekLocalState = Detail("");
         Identify(deepseekLocalState, "settings.deepseek.local_state", "");
-        deepseekSections.Children.Add(Card(Row(Label(ui.Text("deepseek.sessions")), deepseekLocalState, 36), ProviderHomeEditor("deepseek")));
+        deepseekSections.Children.Add(Card(Row(Label(ui.Text("windows.deepseek.sessions")), deepseekLocalState, 36), ProviderHomeEditor("deepseek")));
     }
     private Task ChangeDeepSeek(Func<DesktopPreferences, DesktopPreferences> edit) => Change(edit);
     private TextBlock DeepSeekCaption(string value)

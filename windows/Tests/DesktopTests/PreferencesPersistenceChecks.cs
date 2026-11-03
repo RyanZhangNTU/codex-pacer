@@ -21,13 +21,13 @@ internal static class PreferencesPersistenceChecks
             }
             var alternate = new DesktopPreferences
             {
-                Language = "zh-Hans", Position = "bottomRight", PositionChosen = true, DisplayMode = "floating", IslandAppearance = "classic",
+                Language = "zh-Hans", WelcomeGuideVersion = 4, WhatsNewVersion = "4.2.0", Position = "bottomRight", PositionChosen = true, DisplayMode = "floating", IslandAppearance = "classic",
                 ExpandedQuotaStyle = "classic", CompactLayout = "{\"version\":9,\"leading\":[],\"trailing\":[],\"warnings\":[\"ssh\"]}",
                 CompactSingleTask = "count", CompactMetric = "pace", CodexQuotaWindow = "7d", ClaudeQuotaWindow = "5h", QuotaRingOuter = "none", QuotaRingInner = "deepseek",
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekBalanceSource = "apiKey", DeepSeekDailyBudget = 25, DeepSeekWeeklyBudget = 120,
                 DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, SystemNotifications = true,
                 WarningKinds = ["ssh"], DeepSeekLowBalanceLine = 15, DeepSeekSpikeLimit = 8, LastSettingsPane = "collapsed", HideProjects = true,
-                ShowAppButtons = false, ShowEmbeddedCodexSessions = false, ShowEmbeddedClaudeSessions = false, ShowClaudeCloudProjects = false, RetentionMinutes = 240,
+                ShowAppButtons = false, ShowEmbeddedCodexSessions = false, ShowEmbeddedClaudeSessions = false, MonitorRemoteControl = false, MonitorWSL = false, MonitorSSH = false, ShowClaudeCloudProjects = false, RetentionMinutes = 240,
                 CodexExecutable = @"C:\合成 path\codex.exe", CodexHome = @"C:\合成 path\.codex", ClaudeHome = @"C:\合成 path\.claude",
                 ClaudeOrganization = "11111111-1111-4111-8111-111111111111", DeepseekHome = @"C:\合成 path\.dsh",
                 ProviderModes = new() { ["codex"] = "enabled", ["claude"] = "disabled", ["deepseek"] = "automatic" },

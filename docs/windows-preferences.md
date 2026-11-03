@@ -20,6 +20,7 @@ Older previews cannot read schema 2. Keep a preference backup when downgrading; 
 | Sources and Claude organization | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | Empty overrides |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |
 | Notifications | `systemNotifications` | `false` |
+| Welcome and release notes | `welcomeGuideVersion`, `whatsNewVersion` | `0`, unset; only demo suppresses records when a page is explicitly opened |
 
 The layout is the same UTF-8 JSON Data saved by the Mac, represented as base64 in this JSON file. Its warnings remain inside the layout. An explicit empty layout stays empty. Present empty or unknown ring choices mean no ring; an absent key means automatic. A saved center position is distinct from an untouched position. The desktop pane name `collapsed` is stored as the Mac value `collapsedBar`.
 

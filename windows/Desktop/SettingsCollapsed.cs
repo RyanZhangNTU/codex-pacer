@@ -22,6 +22,7 @@ internal sealed partial class SettingsWindow
     private Button? compactAutomatic;
     private CompactProjection? compactProjection;
     private string compactProviderSignature = "";
+    private bool revealQuotaGauge;
 
     private void OnShellProjectionChanged(string method)
     {
@@ -41,6 +42,24 @@ internal sealed partial class SettingsWindow
         compactEditor = null; compactGroups.Clear(); compactRows.Clear(); compactOptions.Clear(); compactChecks.Clear(); compactChoices.Clear();
         compactWindowRows.Clear(); compactWindowValues.Clear(); compactNoProviders = compactRingDetail = null;
         compactAutomatic = null; compactProjection = null; compactProviderSignature = "";
+        if (activePane != "collapsed") revealQuotaGauge = false;
+    }
+    private async Task NavigateToQuotaGaugeAsync()
+    {
+        await NavigateAsync("collapsed");
+        if (sourceClosed || activePane != "collapsed") return;
+        revealQuotaGauge = true; RevealQuotaGauge();
+    }
+    private void RevealQuotaGauge()
+    {
+        if (!revealQuotaGauge || !compactRows.TryGetValue("quotaGauge", out var row)) return;
+        revealQuotaGauge = false;
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (sourceClosed || activePane != "collapsed" || !compactRows.TryGetValue("quotaGauge", out var current) || !ReferenceEquals(current, row)) return;
+            row.BringIntoView();
+            if (compactChecks.TryGetValue("quotaGauge", out var check)) check.Focus();
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
     }
     private string[] CompactProviders() => NativeCompactBar.Providers(session.Current, engine?.LatestSnapshot);
     private CompactProjection ReadCompact() => NativeCompactBar.Shared.Read(session.Current, ui.Language, CompactProviders(), engine?.LatestSnapshot?.CompactContext);
@@ -92,6 +111,7 @@ internal sealed partial class SettingsWindow
             var title = Label(""); Identify(title, "compact.window_label." + provider, "");
             compactWindowRows[provider] = Row(title, choices, 40);
         }
+        RevealQuotaGauge();
     }
     private void BuildCompactOptions(string id, StackPanel host)
     {

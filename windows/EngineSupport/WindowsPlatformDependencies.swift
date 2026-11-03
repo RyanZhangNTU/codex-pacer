@@ -111,7 +111,7 @@ extension ClaudeSSHRouteResolver {
     public static func resolve(host: String, port: Int? = nil, executable: URL? = nil,
                                timeout: TimeInterval = 3) async -> ClaudeSSHRoute? {
         guard let arguments = arguments(host: host, port: port, timeout: timeout, normalizeIPv6: WindowsIP.normalizedIPv6) else { return nil }
-        guard let data = await WindowsSubprocess.capture(executable: executable ?? WindowsExecutables.ssh, arguments: arguments,
+        guard let data = await WindowsSubprocess.capture(executable: executable ?? WindowsExecutables.ssh, arguments: WindowsSSHServices.harden(arguments),
             timeout: min(3, timeout), limit: maximumOutputBytes) else { return nil }
         return parse(data)
     }

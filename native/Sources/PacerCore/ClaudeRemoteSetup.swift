@@ -30,21 +30,29 @@ public actor ClaudeRemoteSetup {
     private let executable: URL
     private let timeout: TimeInterval
     private let validDestination: @Sendable (String) -> Bool
+    private let validIdentityFile: (@Sendable (String) -> Bool)?
+    private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool) throws -> [String])?
     private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
     private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
     public init(executable: URL, timeout: TimeInterval = 15,
                 makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation,
-                validDestination: @escaping @Sendable (String) -> Bool) {
+                validDestination: @escaping @Sendable (String) -> Bool,
+                validIdentityFile: (@Sendable (String) -> Bool)? = nil,
+                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool) throws -> [String])? = nil) {
         self.executable = executable
         self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
         self.makeOperation = makeOperation
         self.validDestination = validDestination
+        self.validIdentityFile = validIdentityFile
+        self.argumentBuilder = argumentBuilder
     }
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false) async throws -> ClaudeHookInstaller.Status {
-        let arguments = try Self.arguments(target: target, requireHome: requireHome, validDestination: validDestination)
+        let arguments: [String]
+        if let argumentBuilder { arguments = try argumentBuilder(target, requireHome) }
+        else { arguments = try Self.arguments(target: target, requireHome: requireHome, validDestination: validDestination, validIdentityFile: validIdentityFile) }
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
@@ -76,16 +84,22 @@ public actor ClaudeRemoteSetup {
     }
 
     public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false,
-                                 validDestination: (String) -> Bool) throws -> [String] {
-        guard let arguments = target.sshArguments(validDestination: validDestination) else { throw Failure.invalidTarget }
+                                 validDestination: (String) -> Bool, validIdentityFile: ((String) -> Bool)? = nil) throws -> [String] {
+        guard let arguments = target.sshArguments(validDestination: validDestination, validIdentityFile: validIdentityFile) else { throw Failure.invalidTarget }
+        return arguments + [try command(requireHome: requireHome)]
+    }
+    /// Hosts with another transport can use the same additive installer. The
+    /// default keeps SSH's original home and serialized command unchanged.
+    public static func command(home: String = "~/.claude", requireHome: Bool = false) throws -> String {
+        guard !home.isEmpty, home.utf8.count <= 4096, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidTarget }
         let (installer, hook) = try resources()
-        // Remote collectors use the default Claude home. Never reuse a Codex
-        // target's home field or put a local/remote private path into this command.
-        var request: [String: Any] = ["home": "~/.claude", "hook": hook.base64EncodedString()]
+        // SSH keeps its original default. Other transports must select their
+        // bound Claude root; a Codex target is never a Claude home.
+        var request: [String: Any] = ["home": home, "hook": hook.base64EncodedString()]
         if requireHome { request["requireHome"] = true }
         let payload = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
         let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(installer.base64EncodedString())\").decode())' \(payload.base64EncodedString())"
-        return arguments + [command]
+        return command
     }
 
     /// Identifies the shipped installer and hook. A host configured with an

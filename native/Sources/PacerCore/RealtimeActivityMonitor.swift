@@ -20,10 +20,11 @@ public actor RealtimeActivityMonitor {
         let name: String?
         let alias: String?
         let home: String
+        var target: RemoteActivityTarget? = nil
         var desktopIPC = false
         var refreshPolicy = ActivityRefreshPolicy.collapsed
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.id == rhs.id && lhs.name == rhs.name && lhs.alias == rhs.alias && lhs.home == rhs.home && lhs.desktopIPC == rhs.desktopIPC
+            lhs.id == rhs.id && lhs.name == rhs.name && lhs.alias == rhs.alias && lhs.home == rhs.home && lhs.desktopIPC == rhs.desktopIPC && lhs.target == rhs.target
         }
     }
     private struct Connection {
@@ -63,6 +64,8 @@ public actor RealtimeActivityMonitor {
     private var startGeneration = 0
     private var knownControls: [String: RemoteControlActivityTarget]?
     private var remoteControlBindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
+    private var controlAccountScope: String?
+    private var controlAuthorizationRevision: UInt64 = 0
     public init(controlCatalog: RemoteControlCatalog, services: RealtimeActivityServices, retryInterval: TimeInterval = 30) {
         self.controlCatalog = controlCatalog; self.services = services
         self.retryInterval = retryInterval.isFinite ? min(30, max(0.01, retryInterval)) : 30
@@ -102,6 +105,7 @@ public actor RealtimeActivityMonitor {
         startGeneration += 1
         let generation = startGeneration
         if let previous = configuration, previous.home != home {
+            controlAccountScope = nil; controlAuthorizationRevision = 0
             callback = nil
             configuration = nil; retryTask?.cancel(); retryTask = nil; localCandidates = []
             let old = desktop; desktop = nil
@@ -135,16 +139,36 @@ public actor RealtimeActivityMonitor {
         let generation = startGeneration
         let local = Source(id: "local", name: nil, alias: nil, home: home.path,
             desktopIPC: !services.controlAvailable(home), refreshPolicy: refreshPolicy)
+        let authorization = includeRemoteControl ? services.remoteControlAuthorization?(home) : nil
+        let scope = includeRemoteControl ? authorization?.scope : controlAccountScope
+        let revision = authorization?.revision ?? 0
+        let authorizationChanged = revision != controlAuthorizationRevision || scope != controlAccountScope
+        if includeRemoteControl, controlAccountScope != nil, scope != controlAccountScope {
+            let old = desktop; desktop = nil
+            if let local = old?.states["local"] { disconnected["local"] = local.activities.filter { [.completed, .interrupted].contains($0.phase) } }
+            disconnected = disconnected.filter { !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
+            attentionRequests = attentionRequests.filter { $0.value.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) != true }
+            pendingHints = pendingHints.filter { !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
+            lastDesktopObservedRuntimeHosts = lastDesktopObservedRuntimeHosts.filter { !$0.hasPrefix(ConnectionSource.controlPrefix) }
+            desktopRetryAfter = .distantPast
+            if let old { await ShutdownDeadline().perform([{ await old.collector.stop() }]) }
+            guard generation == startGeneration else { return }
+        }
+        controlAccountScope = scope; controlAuthorizationRevision = revision
         primaryLocalIsDesktop = local.desktopIPC
         var sources: [Source] = []
         localUnavailable = !(services.controlAvailable(home) || services.desktopAvailable(home))
         if !localUnavailable && !local.desktopIPC { sources.append(local) }
-        let targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : []
+        let targets: [RemoteActivityTarget]
+        if includeSSH, let discover = services.sshTargets { targets = await discover(home) }
+        else { targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : [] }
+        guard generation == startGeneration else { return }
         if includeSSH && useSSHFallback {
-            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshPolicy: refreshPolicy) }
+            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, target: $0, refreshPolicy: refreshPolicy) }
         }
-        let controls = includeRemoteControl ? catalog ?? RemoteControlActivityTarget.configured(home: home) : []
-        remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || catalog != nil)
+        let controls = includeRemoteControl && authorization?.revoked != true ? catalog ?? RemoteControlActivityTarget.configured(home: home) : []
+        remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || catalog != nil || authorization?.revoked == true,
+                                      accountScope: scope)
         let controlTargets = catalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
         knownControls = controlTargets
         let names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
@@ -155,7 +179,7 @@ public actor RealtimeActivityMonitor {
             guard generation == startGeneration else { return }
             attentionRequests.removeAll(); desktopRetryAfter = .distantPast
         }
-        if var current = desktop, Set(current.hosts.keys) != Set(names.keys) {
+        if var current = desktop, Set(current.hosts.keys) != Set(names.keys) || authorizationChanged {
             let allowed = Set(names.keys).union(["local"])
             for (host, state) in current.states where !allowed.contains(host) {
                 disconnected[host] = state.activities.filter { [.completed, .interrupted].contains($0.phase) }
@@ -251,7 +275,15 @@ public actor RealtimeActivityMonitor {
         ])
         for child in children where child.isRunning { child.terminateImmediately() }
     }
-    public func invalidateRemoteControlCatalog() async { await controlCatalog.invalidate() }
+    public func invalidateRemoteControlCatalog(retryTransport: Bool = false) async {
+        if retryTransport { desktopRetryAfter = .distantPast }
+        await controlCatalog.invalidate()
+    }
+    /// A manual source retry clears only inactive helpers' backoff. Live
+    /// transports and their unread/session state remain owned by this monitor.
+    public func retryInactiveHelpers() {
+        for id in Array(retryAfter.keys) where connections[id] == nil { retryAfter.removeValue(forKey: id) }
+    }
     private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) async {
         let id = UUID()
         let collector = services.makeDesktop(URL(fileURLWithPath: source.home), Set(hosts.keys).union(["local"]),
@@ -349,8 +381,13 @@ public actor RealtimeActivityMonitor {
         if let alias = source.alias {
             executable = services.ssh
             let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime \(source.refreshPolicy.interval)"
-            arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
-                "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
+            if let build = services.sshArguments, let target = source.target {
+                guard let route = build(target) else { failed[source.id] = source; return }
+                arguments = route + [command]
+            } else {
+                arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
+                    "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
+            }
         } else {
             executable = services.python
             arguments = ["-u", "-c", source.desktopIPC ? DesktopEventProbe.script : RealtimeProbe.script,

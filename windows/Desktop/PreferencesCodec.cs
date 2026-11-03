@@ -18,6 +18,7 @@ internal static class PreferencesCodec
         ["codexQuotaWindow"] = "quotaWindowID", ["claudeQuotaWindow"] = "claudeQuotaWindowID",
         ["retentionMinutes"] = "completedRetentionMinutes", ["lastSettingsPane"] = "settingsPane",
         ["claudeOrganization"] = "claudeWebOrganizationID",
+        ["automaticUpdates"] = "SUEnableAutomaticChecks",
         ["deepSeekPanelStyle"] = "deepseekPanelStyle", ["deepSeekMode"] = "deepseekMode",
         ["deepSeekBalanceSource"] = "deepseekBalanceSource", ["deepSeekDailyBudget"] = "deepseekDailyBudget",
         ["deepSeekWeeklyBudget"] = "deepseekWeeklyBudget", ["deepSeekRingPeriod"] = "deepseekRingPeriod",

@@ -4,12 +4,13 @@ import PacerCore
 
 /// Read-only shell queries use the same presentation types as the Mac host.
 enum EngineShellProjection {
-    static let methods: Set<String> = ["projectCompactBar", "layoutQuotaChart", "validatePreferences"]
+    static let methods: Set<String> = ["projectCompactBar", "layoutQuotaChart", "validatePreferences", "guidePages"]
     struct Request: Decodable {
         let preferences: String?
         let compact: CompactBarPresentation.Request?
         let chart: QuotaCycleChartPresentation?
         let plotWidth: Double?
+        let guide: EngineGuidePages.Request?
     }
     private struct PreferencesReply: Encodable {
         let digest: String
@@ -39,6 +40,9 @@ enum EngineShellProjection {
                   let value = CompactBarPresentation.project(input) else { return nil }
             let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
             return encode(PreferencesReply(digest: digest, layoutJSON: value.layoutJSON, warnings: value.warnings))
+        case "guidePages":
+            guard let guide = request.guide, let value = EngineGuidePages.project(guide) else { return nil }
+            return encode(value)
         case "projectCompactBar":
             guard let input = request.compact, let value = CompactBarPresentation.project(input) else { return nil }
             return encode(value)

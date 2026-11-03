@@ -53,10 +53,12 @@ internal static class SettingsPresentationChecks
             Check(Find<RadioButton>(window, "settings.pane.general").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.appearance").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.reminders").IsEnabled
-                && !Find<RadioButton>(window, "settings.pane.connections").IsEnabled, "Implemented settings panes are available while pending connections remain disabled");
+                && Find<RadioButton>(window, "settings.pane.connections").IsEnabled, "Implemented settings and connection panes are available");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             var apps = Find<CheckBox>(window, "settings.app_buttons");
             var login = Find<CheckBox>(window, "settings.startup");
+            var ssh = Find<CheckBox>(window, "settings.monitor_ssh");
+            Check(ssh.IsChecked == true, "SSH monitoring uses the shared default");
             Check(privacy.ActualWidth == 36 && privacy.ActualHeight == 18 && privacy.IsChecked == false && apps.IsChecked == true,
                 "Switch geometry and defaults must match the source preferences");
             string screenshot = Path.Combine(output, "settings-" + scenario + "-general.png");
@@ -175,6 +177,14 @@ internal static class SettingsPresentationChecks
                 Check(Find<RadioButton>(reopened, "settings.pane.appearance").IsChecked == true
                     && Find<RadioButton>(reopened, "appearance.position.bottomRight").IsChecked == true,
                     "Reopening settings must restore the last pane and position");
+                Select(Find<RadioButton>(reopened, "settings.pane.general"));
+                await Until(() => Find<RadioButton>(reopened, "settings.pane.general").IsChecked == true, "General must open before editing SSH");
+                await Until(() => Descendants(reopened).OfType<CheckBox>().Any(value =>
+                    AutomationProperties.GetAutomationId(value) == "settings.monitor_ssh" && value.IsEnabled),
+                    "The General pane must finish its asynchronous preference edit before the SSH toggle is used");
+                var reopenedSSH = Find<CheckBox>(reopened, "settings.monitor_ssh");
+                Toggle(reopenedSSH); await Until(() => !session.Current.MonitorSSH && reopenedSSH.IsEnabled, "The SSH switch awaits engine acknowledgement");
+                Toggle(reopenedSSH); await Until(() => session.Current.MonitorSSH && reopenedSSH.IsEnabled, "SSH monitoring can be enabled again");
             }
             finally { reopened.AllowClose = true; reopened.Close(); }
             Console.WriteLine("PASS settings " + scenario + ": General/Appearance bounds, captures, UI Automation, position rules, rollback and lifecycle actions");

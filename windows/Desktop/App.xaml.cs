@@ -41,6 +41,11 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (!WindowsPlatformPolicy.Supports(Environment.OSVersion.Version.Major, Environment.OSVersion.Version.Build))
+        {
+            MessageBox.Show(UiText.For(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh").Text("windows.platform.unsupported"), "Codex Pacer");
+            Shutdown(1); return;
+        }
         if (e.Args is ["--uninstall-notifications"])
         {
             try { _ = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory); Shutdown(await WindowsNotificationCleanup.UninstallAsync() ? 0 : 1); }
@@ -183,6 +188,7 @@ public partial class App : Application
         int languageIndex = Array.IndexOf(e.Args, "--language");
         if (languageIndex >= 0 && languageIndex + 1 < e.Args.Length && e.Args[languageIndex + 1] is "en" or "zh-Hans") language = e.Args[languageIndex + 1];
         ui = UiText.For(language == "zh-Hans");
+        await CreateWindowsUpdaterAsync(e.Args, activationQa, referenceFixture);
         engine = new EngineClient();
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         ShellProjection.Client = engine;
@@ -205,7 +211,7 @@ public partial class App : Application
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
             {
-                if (quitting) return;
+                if (quitting || updates?.Status.Busy == true) return;
                 bool wasVisible = island.IsVisible, wasExpanded = island.LogicalTarget.Height > 38;
                 if (action == InstanceAction.Settings) OpenSettings();
                 else { island.Reveal(); island.Activate(); }
@@ -293,6 +299,8 @@ public partial class App : Application
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
             if (demo && !e.Args.Contains("--collapsed")) island.Reveal();
+            if (capture < 0 && !preferencesUnavailable) await BeginGuidesAsync(e.Args);
+            if (capture < 0) await StartWindowsUpdaterAsync(e.Args);
             if (capture >= 0)
             {
                 if (activationQa != null)
@@ -324,13 +332,15 @@ public partial class App : Application
 
     private void OpenSettings()
     {
-        if (quitting || settingsSession == null || startupRegistration == null || ui == null) return;
+        if (quitting || updates?.Status.Busy == true || settingsSession == null || startupRegistration == null || ui == null) return;
         island?.DismissForSettings();
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore, updater: updates);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
+            settings.WelcomeRequested += () => _ = ShowGuideAsync(true);
+            settings.SignedReleaseNotesRequested += ShowSignedUpdateNotes;
             settings.Closed += (_, _) => settings = null;
         }
         settings.Show(); settings.Activate();
@@ -383,10 +393,12 @@ public partial class App : Application
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         instanceActivation?.Dispose();
         notificationLifetime.Cancel();
+        guideWindow?.Close();
         if (settingsSession != null) await settingsSession.WaitForChangesAsync();
         if (settings != null) { settings.AllowClose = true; settings.Close(); }
         if (webConnection != null) await webConnection.DisposeAsync();
         if (claudeConnection != null) await claudeConnection.DisposeAsync();
+        if (updates != null) await updates.DisposeAsync();
         island?.StopPresentation();
         if (engine != null && notifications != null) engine.Snapshot -= notifications.Receive;
         notifications?.Dispose();

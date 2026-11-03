@@ -26,6 +26,16 @@ private final class ReferenceDisplayClock: @unchecked Sendable {
 }
 
 final class EngineProtocolTests: XCTestCase {
+    func testTerminalPlanPayloadsRoundTripWithoutHostCapabilities() throws {
+        for kind in ["terminal", "wslTerminal"] {
+            let plan = EngineNavigationPlan(context: UUID().uuidString, provider: .claude, terminal: "e30=", kind: kind)
+            let bytes = try JSONEncoder().encode(plan), decoded = try JSONDecoder().decode(EngineNavigationPlan.self, from: bytes)
+            let row = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            XCTAssertEqual(row["terminal"] as? String, "e30="); XCTAssertEqual(row["kind"] as? String, kind)
+            XCTAssertNil(row["hostApplication"]); XCTAssertNil(row["pid"]); XCTAssertNil(row["started"])
+            XCTAssertEqual(decoded, plan); XCTAssertNil(decoded.hostApplication)
+        }
+    }
     private func command(_ method: String, _ params: [String: Any] = [:], version: Int = 1) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": version, "id": method, "method": method, "params": params])
     }

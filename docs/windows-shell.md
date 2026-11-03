@@ -4,6 +4,8 @@ The per-user installer, startup state, maintenance helpers and lifecycle checks 
 
 Preference keys, edit acknowledgements, migration and protected history storage are described in [Windows preferences and quota history](windows-preferences.md).
 
+The WinSparkle host, scoped local proxy, update verification and installation handoff are described in [Windows automatic updates](windows-automatic-updates.md).
+
 Claude and DeepSeek sign in through separate Pacer-owned WebView2 profiles. Before showing the site, the host records the existing session's one-way fingerprint. A changed fingerprint shows confirmation and closes the window after 1.5 seconds. Continue, Ctrl+Enter, Later and the close button also finish while a session is present; an unchanged session retains its history and selected workspace. Browser-process failure cannot complete sign-in. The host checks navigation and a one-second timer only while the window is open; closing stops the observer.
 
 Login revokes old quota reads before the profile can change. Claude clears the saved organization through the normal acknowledged preference transaction only for a new session. DeepSeek passes an optional `webNewSession` flag to the existing shared coordinator; omitted flags retain the older protocol behavior. Credential fingerprints still independently protect billing history. Sign-out cancels reads before clearing the owned profile; a failed clear stays paused. No external browser profile, cookie store or account is imported.
@@ -65,6 +67,10 @@ The earlier cold `0x80040154` was a test-environment issue: a Codex child saw on
 
 ## Local acceptance
 
+Welcome, What's New, Help and Support behavior and validation are described in [Windows guide pages](windows-guide-pages.md). Use `--welcome` or `--whats-new` with a demo instance for synthetic checks; demo runs never record either page as seen.
+
+[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. SSH and WSL now share remote hook setup; real remote acceptance remains pending.
+
 Use demo data for screenshots and interaction checks:
 
 ```powershell
@@ -80,3 +86,35 @@ python scripts/windows/check-engine-idle.py --engine <engine-path> --seconds 300
 ```
 
 This option reads real sources for at least five minutes, does not change source configuration or record protocol bodies, and reports engine CPU and shutdown time. The default mode uses empty provider homes. CPU results cover the engine process; they do not establish complete feature acceptance. Record manual evidence in `windows/platform-coverage.json` without promoting features whose remaining requirements are untested.
+
+## Codex Remote Control
+
+`monitorRemoteControl` defaults to true, matching the Mac preference. Windows reads the paired-device directory through the shared catalog and projects its names, online state and runtime with the shared Realtime monitor. The authenticated Desktop pipe carries the stream. A saved routing hint alone grants no subscription or navigation.
+
+The catalog keeps bearer credentials inside the read-only RPC/HTTP operation. Its Windows HTTP session has no cookie, credential or response cache, refuses redirects, caps the response at 512 KiB, and limits requests/resources to 8/10 seconds. Initialization owns catalog work separately so a slow directory cannot block the local task source or the 650 ms cleanup budget.
+
+Only a currently verified account and exact device ID can open a Remote Control thread. Account and enrollment changes revoke old pipe proofs and navigation. A hashed account scope separates completion acknowledgments even when two accounts use the same device/thread/turn IDs. A token refresh for the same verified account retains its scope. EOF retains unread endings; failed opens retain unread state and report an error. Retry bypasses transport backoff without replacing a healthy channel.
+
+Development checks use synthetic catalogs, RPC replies and a private named-pipe fixture. They do not send prompts, activate a real provider, or modify real accounts. The Remote Control switch and source rows still need the integration presentation pass and installed-host acceptance.
+
+## WSL sources
+
+Windows discovers installed and running distributions with the documented [WSL list commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands). Automatic probes run only inside distributions already running, as their default Linux user. They read directory metadata; they do not install WSL, Python, a provider, or change a distribution's state or settings. The feature needs an existing `/usr/bin/python3`.
+
+A source binds the distribution, Linux user and UID, canonical home and directory identity. Codex and Claude retain separate roots. Helpers verify that identity before starting, then run the shared Core protocol and parsers. Their program travels through bounded stdin, following the reviewed #157 SSH adapter pattern; Windows command lines stay below the platform limit. Windows credential/environment overrides are removed. A Windows drive or another distribution's UNC path cannot become this source's Linux profile.
+
+Discovery, active helpers and quota reads have owned work slots. Sleep, source changes and switches cancel them; a late scan cannot claim a newer slot. Offline sources keep their identity for unread retention, while directory replacement revokes old navigation and acknowledgments. Each provider shares one monitor for up to eight SSH and eight WSL targets.
+
+Claude hooks on SSH and WSL use the same installer, digest cache and scheduler. Successful setup is reused until the adapter changes; failures wait 30 minutes or a manual retry. WSL verifies the Linux source before setup and discards results after that source is revoked. Its Linux supervisor terminates the owned installer when stdin closes, without stopping the distribution. Tests cover both transports, retry timing, version changes and late results after root replacement.
+
+The source's quota action uses read-only Codex RPC or the shared Claude quota client with a bounded, owner-checked Linux file snapshot. It never borrows Windows credentials or writes a credential cache. Credential stamps are checked again before publishing; only formatted quota windows reach the desktop. These on-demand readings stay separate from the selected Windows account's history. Source navigation uses a dedicated console mode and validates the same distribution/user/root before opening the captured session; failure keeps the ending unread.
+
+Development tests use synthetic profiles, private helpers and intercepted transport. Real WSL lifecycle, actual terminal activation and the complete presentation pass belong to integration and preview acceptance.
+
+## Connections page
+
+The Windows page consumes `ConnectionPagePresentation`, which combines Core's `ConnectionSource`, `SSHHost` and `ConnectionSummary`. It shows local collectors, Cloud Projects and Remote Control, then SSH and WSL hosts with Codex and Claude side by side. Problems come first within those groups. Session counts exclude a Claude source whose hooks are still being configured or have failed.
+
+The page exposes the existing SSH and Remote Control preferences and the Windows WSL preference. A task-source retry clears backoff for inactive helpers, retries failed Claude setup and refreshes discovery without restarting healthy subscriptions. Quota and balance requests have their own actions. WSL quota reads remain bound to the selected Linux source; local quota rows use the existing shared freshness and error projections.
+
+SSH and WSL setup buttons use the same source/context pair. Removing a source, disabling it or replacing its identity invalidates an old button. The desktop also rejects a duplicate retry while setup is in flight. Synthetic Swift and headless desktop tests cover grouping, counts, source switches, retry ownership and protocol compatibility. Debug engine and desktop builds pass with no compiler warnings. The full display matrix, real WSL terminals and real-account read-only acceptance are deferred to the batch integration stage; no real provider account was accessed during these checks.

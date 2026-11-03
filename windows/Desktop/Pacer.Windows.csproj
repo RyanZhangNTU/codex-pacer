@@ -3,6 +3,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <OutputPath>bin/$(Configuration)/net10.0-windows/</OutputPath>
+    <OutputPath Condition="'$(PacerArchitecture)' == 'arm64'">bin/$(Configuration)/net10.0-windows/arm64/</OutputPath>
+    <IntermediateOutputPath>obj/$(Configuration)/$(TargetFramework)/$(PacerArchitecture)/</IntermediateOutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <UseWPF>true</UseWPF>
@@ -15,6 +17,8 @@
     <ApplicationIcon>Assets/Pacer.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="[2.6.4]"/>
     <PackageReference Include="Microsoft.Web.WebView2" Version="[1.0.4314.35]"/>
     <Resource Include="Assets/Fonts/*.ttf"/>
@@ -26,16 +30,25 @@
     <Content Include="Assets/Pacer.ico" CopyToOutputDirectory="PreserveNewest"/>
     <Content Include="../ThirdParty/WindowsAppSDK/*.txt" Link="Licenses/WindowsAppSDK/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
     <Content Include="../ThirdParty/WebView2/*.txt" Link="Licenses/WebView2/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
+    <Content Include="../ThirdParty/BouncyCastle/LICENSE.txt" Link="Licenses/BouncyCastle/LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
   </ItemGroup>
   <PropertyGroup>
-    <PacerCompositionOutput>$(MSBuildProjectDirectory)/obj/composition/$(Configuration)</PacerCompositionOutput>
+    <PacerWinSparkleDirectory>$(MSBuildProjectDirectory)/../../output/toolchains/winsparkle/0.9.4/$(PacerArchitecture)</PacerWinSparkleDirectory>
+    <PacerCompositionOutput>$(MSBuildProjectDirectory)/obj/composition/$(Configuration)/$(PacerArchitecture)</PacerCompositionOutput>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="$(PacerWinSparkleDirectory)/WinSparkle.dll" Link="WinSparkle.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
+    <Content Include="$(PacerWinSparkleDirectory)/COPYING;$(PacerWinSparkleDirectory)/COPYING.expat" Link="Licenses/WinSparkle/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
     <Content Include="$(PacerCompositionOutput)/PacerCompositionBackdrop.dll" Link="PacerCompositionBackdrop.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
   </ItemGroup>
   <Target Name="BuildCompositionBackdrop" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'"
           Inputs="../Native/CompositionBackdrop/Backdrop.cpp;../Native/CompositionBackdrop/build.ps1"
           Outputs="$(PacerCompositionOutput)/PacerCompositionBackdrop.dll">
-    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../Native/CompositionBackdrop/build.ps1&quot; -OutputDirectory &quot;$(PacerCompositionOutput)&quot;"/>
+    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../Native/CompositionBackdrop/build.ps1&quot; -Architecture $(PacerArchitecture) -OutputDirectory &quot;$(PacerCompositionOutput)&quot;"/>
+  </Target>
+  <Target Name="PrepareWinSparkle" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'"
+          Inputs="../winsparkle-lock.json;../../scripts/windows/setup-winsparkle.ps1"
+          Outputs="$(PacerWinSparkleDirectory)/WinSparkle.dll;$(PacerWinSparkleDirectory)/COPYING">
+    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../../scripts/windows/setup-winsparkle.ps1&quot; -Architecture $(PacerArchitecture)"/>
   </Target>
 </Project>

@@ -87,6 +87,7 @@ return 0;
 
 static async Task Runtime(NamedPipeServerStream pipe, FileStream rollout, string mode, string ready, CancellationToken token)
 {
+    string runtimeHost = mode == "runtime-remote" ? "remote-control:work" : "local";
     const string thread = "019a0000-0000-7000-8000-000000000001", foreign = "019a0000-0000-7000-8000-000000000002",
         child = "019a0000-0000-7000-8000-000000000003", owner = "019a0000-0000-7000-8000-000000000020";
     async Task Send(object value)
@@ -105,7 +106,7 @@ static async Task Runtime(NamedPipeServerStream pipe, FileStream rollout, string
         return JsonDocument.Parse(data);
     }
     object Wire(string id, object change) => new { type = "broadcast", method = "thread-stream-state-changed", version = 11,
-        sourceClientId = owner, @params = new { hostId = "local", conversationId = id, change } };
+        sourceClientId = owner, @params = new { hostId = runtimeHost, conversationId = id, change } };
     bool attached = false, approval = false, completed = false;
     bool repaired = false;
     int revision = 0;
@@ -127,13 +128,18 @@ static async Task Runtime(NamedPipeServerStream pipe, FileStream rollout, string
                         result = new { clientId = "00000000-0000-4000-8000-000000000010" } });
                     foreach (string id in new[] { foreign, thread })
                         await Send(new { type = "broadcast", method = "thread-stream-following-status-requested", version = 1,
-                            sourceClientId = owner, @params = new { hostId = "local", conversationId = id } });
+                            sourceClientId = owner, @params = new { hostId = runtimeHost, conversationId = id } });
+                    if (runtimeHost != "local")
+                        await Send(new { type = "broadcast", method = "thread-stream-following-status-requested", version = 1,
+                            sourceClientId = owner, @params = new { hostId = "remote-control:foreign", conversationId = thread } });
                     await Send(Wire(foreign, new { type = "snapshot", revision = 0, conversationState = new { title = "FOREIGN-TITLE" } }));
                 }
             }
             if (method == "thread-stream-following-changed" && row.GetProperty("params").GetProperty("following").GetBoolean())
             {
                 string id = row.GetProperty("params").GetProperty("conversationId").GetString()!;
+                string route = row.GetProperty("params").GetProperty("hostId").GetString()!;
+                if (route != runtimeHost) File.WriteAllText(ready + ".foreign-host-follow", "foreign");
                 if (id != thread) File.WriteAllText(ready + ".foreign-follow", id);
                 else if (!attached)
                 {
@@ -145,7 +151,7 @@ static async Task Runtime(NamedPipeServerStream pipe, FileStream rollout, string
                             new { turnId = "current", status = "inProgress", turnStartedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 5000,
                                 items = new object[] {
                                     new { id = "tool", type = "commandExecution", status = "inProgress", command = "PRIVATE-COMMAND" },
-                                    new { id = "child", type = "collabAgentToolCall", status = "completed", receiverThreadIds = new[] { child } }
+                                    new { id = "child", type = "collabAgentToolCall", status = "completed", receiverThreadIds = runtimeHost == "local" ? new[] { child } : Array.Empty<string>() }
                                 } }
                         }, unrelatedHistory = "PRIVATE-HISTORY" } }));
                     File.WriteAllText(ready + ".streaming", "streaming");

@@ -10,12 +10,14 @@ internal sealed class AnimationLease : IDisposable
     private AnimationClock? clock;
     private Action<AnimationClock?>? apply;
     private readonly Action? completed;
+    internal bool IsActive => clock != null;
     internal AnimationLease(AnimationTimeline animation, Action<AnimationClock?> apply, Action? completed = null)
     {
         this.apply = apply; this.completed = completed;
         clock = (AnimationClock)animation.CreateClock(true); clock.Completed += Completed; apply(clock);
     }
     private void Completed(object? sender, EventArgs args) { Dispose(); completed?.Invoke(); }
+    internal void Seek(TimeSpan position) => clock?.Controller?.SeekAlignedToLastTick(position, TimeSeekOrigin.BeginTime);
     public void Dispose()
     {
         if (clock == null) return;

@@ -149,15 +149,15 @@
     {
       "id": "claude-remote",
       "status": "pending",
-      "evidence": [],
+      "evidence": ["windows/Tests/EngineTests/WindowsClaudeRemoteTests.swift", "windows/Tests/EngineTests/WindowsSSHTests.swift", "docs/windows-ssh.md"],
       "priority": "P2",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "Claude SSH 发现和 Desktop 保存路由，host/user/port/identity 同一身份",
         "远端 hooks 自动设置、版本/幂等、失败状态、30 分钟重试和手动 retry",
         "持续生命周期、断线/重连、helper 退出和真实 TTY resume；不发送 prompt"
       ],
-      "previewNote": "SSH/WSL discovery, isolated remote setup, resume and owned helper shutdown need Windows coverage.",
+      "previewNote": "Synthetic Windows SSH checks cover shared hook installation, preserved user entries and renderer metadata, version/idempotence, failures, 30-minute retry/manual retry, EOF/timeout and source revocation. No real remote was modified. Real SSH/TTY lifecycle and connection-page acceptance remain pending; WSL belongs to its own feature.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -483,7 +483,7 @@
         "三家 module/恢复自动、本机状态、Claude setup retry、CLI 扫描/候选、路径 chooser/清空",
         "平台系统设置快捷入口、所有内部链接和错误提示有对应 Windows 操作"
       ],
-      "previewNote": "General, Appearance, Collapsed Bar, Reminders, Codex, Claude and DeepSeek connect privacy, startup, positions, modules, source/history, budgets, warnings, retention, notifications and compact display options. Claude account controls connect login, explicit workspaces, refresh, account switching, sign-out and history through the real browser/engine; EN/ZH light/dark synthetic checks cover save rollback, stale controls and failed clearing. The Claude cloud-project toggle connects source visibility and account-scoped monitoring; real Cloud Projects and navigation still need acceptance. Claude and DeepSeek share the validated source-folder editor. The real compact editor supports cross-lane dragging, wrapping, arrows, context menus and arrangement restore. Four panes, embedded-session filtering, broader real-account coverage, folder-picker manual acceptance, other appearance choices, updater, actual restart/login and complete input/visual/motion acceptance remain.",
+      "previewNote": "Eleven Mac settings panes were compared in docs/windows-settings-parity.md. Ten Windows panes have implementations; Connections belongs to lane A and automatic updates to lane B. Existing EN/ZH synthetic checks cover privacy, startup, source/history, budgets, warnings, retention, notifications, compact editing and save rollback. P3d headless units cover first-enabled Help defaults, the DeepSeek-only appearance row, localized pricing links, the fixed Windows transparency-settings entry, and public-only sharing with failure/disposal. New quota-row scrolling, actual system sharing, guide subscriptions and the complete UIA/presentation matrix await unified integration; these interactions have not been marked as physically accepted.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
@@ -519,7 +519,11 @@
         "windows/Desktop/CompactLayoutEditorView.cs",
         "windows/Desktop/SettingsCollapsed.cs",
         "windows/Tests/PresentationTests/CollapsedLayoutChecks.cs",
-        "windows/References/macos-compact-settings-provenance.json"
+        "windows/References/macos-compact-settings-provenance.json",
+        "docs/windows-settings-parity.md",
+        "windows/Desktop/SettingsPagePolicy.cs",
+        "windows/Desktop/SupportShareSheet.cs",
+        "windows/Tests/PresentationTests/SettingsPageUnitChecks.cs"
       ]
     },
     {
@@ -598,27 +602,35 @@
         "所有页面/菜单/错误/tooltip/通知/引导/更新说明完整中英；保留同一格式化语义",
         "平台措辞显式注入，本机/系统设置/路径名称不通过共享业务内 OS 分叉"
       ],
-      "previewNote": "Shared English/Chinese catalogs and format tests pass. Actual windows now select their rendering language independently of the host culture. Glyph-run checks cover Settings, tasks and vector text under English/Japanese host cultures, packaged Latin font bytes, Simplified Chinese fallback and stable task widths. Other font installations, optical glyph/weight matching, all characters, DPI and full localization/accessibility acceptance remain.",
+      "previewNote": "Shared English/Chinese catalogs and format tests remain. P3d adds Windows-specific DeepSeek budget/pricing/session captions and sharing text, uses the Windows notification-settings caption in the guide, and selects pricing documentation by app language. Seven headless catalog tests cover generated data, literal UI keys, platform-only wording/isolation and positional/composite argument parity; the generator now rejects argument mismatches. Existing glyph/culture/packaged-font assertions are preserved. New page layout, fonts, DPI and the complete display matrix await unified integration; previewStatus remains partial.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
         "windows/Desktop/PacerFonts.cs",
         "windows/Tests/PresentationTests/TypographyLocaleChecks.cs",
-        "windows/References/windows-rendered-typography-provenance.json"
+        "windows/References/windows-rendered-typography-provenance.json",
+        "docs/windows-settings-parity.md",
+        "scripts/windows/build-localization.py",
+        "scripts/windows/test_contract.py"
       ]
     },
     {
       "id": "onboarding",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
       "priority": "P3",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "首次或跨主版本的两步说明、组件标注/徽章/悬停示范",
         "三家模块检测/开关/登录；布局、通知、开机启动快捷入口",
         "关闭后记已看版本、Help 可重开、更新版本转 Whats New；演示无生产副作用"
       ],
-      "previewNote": "Welcome, What's New, help and support windows remain.",
+      "previewNote": "两步窗口、中英文/浅深色、真实组件、三家显式模块选择、状态/动作、通知/登录启动注入服务、键盘/UIA 和新进程版本读回通过。真实账户连接、OS 开关、跨屏验收及 #151 后的 schema 2 接线待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -682,7 +694,7 @@
         "反向/重复输入/焦点/可访问树、遮挡和实际播放；正式版再做动画对照",
         "A/B/C 不新增参考截图、来源证明 JSON 或像素/动画检查；已有断言迁移保留"
       ],
-      "previewNote": "Original Swift geometry and curves drive a fixed WPF surface. Read-only allocation bounds cover 1 ms trajectory samples and preserve displayed state and velocity; badge clocks retain 864 checked samples. Harness rows use a shared finite 120 ms ease-out clock with Mac UnitCurve compatibility coverage and normal/reduced-motion WPF checks. Window scenarios cover reversals, native transparent hit testing and visible accessibility bounds. Frame-time diagnostics still show environment stalls; occlusion, paired actual playback and switch-motion acceptance remain. Compact quota components independently ease to the original 0.3 opacity over 200 ms, reverse from displayed opacity and update immediately with reduced motion; paired animation acceptance remains. P4 route B keeps content/material HWND bounds and native input clips synchronized on shared spring frames. Normal, reversal and reduced-motion glass tests include the two-phase collapsed Black backing; protected motion captures have no outside spill. Other displays and paired perceptual playback still need acceptance.",
+      "previewNote": "Shared Swift geometry drives the WPF surface. Existing allocation, displayed-state/velocity, 864 badge-clock samples and finite 120 ms task-row timing assertions remain. Window tests retain reversal, native transparent hits and visible accessibility bounds. Compact dimming keeps its 0.3 target and 200 ms duration. Route B keeps content/material bounds and input clips synchronized, including the collapsed Black backing and existing no-spill checks. P3c tests immediate mid-transition reduction, hover/page/dim clock release, repeated and reversed input, exiting-page rejection, normal-motion hide/close, and system-driven fallback/restoration. Frame-time environment stalls and other-display acceptance remain. 徽章曲线与 Mac 存在已知差异（线性 vs Cubic/Spring），按用户决定保留。No new reference captures, source-proof JSON or pixel/animation comparisons were added.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
@@ -694,7 +706,10 @@
         "native/Tests/PacerIslandTests/TaskRowInteractionCompatibilityTests.swift",
         "windows/Tests/PresentationTests/HarnessNavigationChecks.cs",
         "windows/Desktop/IslandCompactBar.cs",
-        "windows/Tests/PresentationTests/CollapsedLayoutChecks.cs"
+        "windows/Tests/PresentationTests/CollapsedLayoutChecks.cs",
+        "windows/Tests/PresentationTests/AccessibilityChecks.cs",
+        "windows/Desktop/IslandAccessibility.cs",
+        "docs/windows-accessibility-motion.md"
       ]
     },
     {
@@ -812,7 +827,7 @@
     {
       "id": "ssh-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "发现 Codex/Claude 已用 hosts、端口/身份文件与路由去重、既有非交互访问/host keys",
@@ -823,8 +838,14 @@
         "docs/guide.md",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Windows OpenSSH 与真实 TTY 对应 Mac SSH 功能。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsSSHTests.swift",
+        "windows/Tests/Fixtures/SSH/Program.cs",
+        "windows/Tests/DesktopTests/SshTerminalChecks.cs",
+        "windows/Tests/PresentationTests/SettingsPresentationChecks.cs",
+        "docs/windows-ssh.md"
+      ],
+      "previewNote": "Windows synthetic SSH executable verified saved-route discovery/deduplication, bounded command transport, ordered stdin/EOF, runtime approval/reply/endings, reconnect, disable/reopen and terminal argv/fallback. Real noninteractive remote access, real TTY resume and remote sleep/reconnect await user acceptance. Claude remote hook setup is a separate PR.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -832,7 +853,7 @@
     {
       "id": "wsl-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "distro/用户/路径/主机隔离、来源发现/失联/重连/关闭生命周期",
@@ -843,8 +864,12 @@
         "native/Sources/PacerCore/ClaudeApplicationResolver.swift",
         "docs/windows-port.md"
       ],
-      "evidence": [],
-      "previewNote": "WSL 作为 Windows 来源适配，与同服务其他来源保持相同任务语义。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsWSLTests.swift",
+        "windows/Tests/EngineTests/WindowsWSLHookTests.swift",
+        "windows/Tests/DesktopTests/WslTerminalChecks.cs"
+      ],
+      "previewNote": "Synthetic discovery, distro/user/directory identities, strict UNC conversion, bounded stdin bootstrap, shared Codex/Claude monitor routes, EOF/unread, source revocation, engine switches/sleep, selected-source quota and terminal launch rejection pass. SSH and WSL share one bounded hook scheduler: version cache, 30-minute retry, manual retry and revoked late results are covered. No real distro/account was accessed. Installed WSL, real TTY and presentation acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -852,7 +877,7 @@
     {
       "id": "remote-control",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "同一 catalog/account 授权、Desktop 在线/离线/待加载会话与 source name",
@@ -863,8 +888,14 @@
         "native/Sources/PacerCore/RemoteControlCatalog.swift",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Codex Remote Control 不能长期停在编译排除状态。",
+      "evidence": [
+        "native/Tests/PacerCoreTests/RemoteControlAuthorizationTests.swift",
+        "native/Tests/PacerCoreTests/RemoteControlTests.swift",
+        "windows/Tests/EngineTests/RemoteControlEngineTests.swift",
+        "windows/Tests/EngineTests/WindowsRemoteControlHTTPTests.swift",
+        "windows/Tests/EngineTests/WindowsDesktopCollectorTests.swift"
+      ],
+      "previewNote": "Synthetic catalog/account, bounded HTTP, authenticated private-pipe runtime, exact-host navigation, offline/waiting states, retry, EOF/unread, failed/successful opens, toggles and account replacement pass. Engine/desktop Debug compilation is clean. No real Remote Control account was contacted or changed; UI preview and installed-host acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -894,7 +925,7 @@
     {
       "id": "connections-page",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "同一 ConnectionSource/SSHHost/ConnectionSummary：问题优先、服务 side-by-side、session count",
@@ -902,10 +933,16 @@
         "monitorSSH/monitorRemoteControl 开关、Claude setup retry，不重启健康来源"
       ],
       "sourceRefs": [
-        "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
+        "native/Sources/PacerIsland/SettingsConnectionsPane.swift",
+        "native/Sources/PacerCore/ConnectionPagePresentation.swift",
+        "windows/Desktop/SettingsConnections.cs"
       ],
-      "evidence": [],
-      "previewNote": "Connections 页所有来源、开关和恢复入口。",
+      "evidence": [
+        "native/Tests/PacerCoreTests/ConnectionPagePresentationTests.swift",
+        "windows/Tests/EngineTests/EngineConnectionProjectionTests.swift",
+        "windows/Tests/DesktopTests/ConnectionActionChecks.cs"
+      ],
+      "previewNote": "Shared source/host/summary rules drive problem ordering, provider columns and session counts. Synthetic Core/engine and headless desktop checks cover SSH/WSL setup state, context-bound retry, inactive-helper retry, switches, quota routing and additive protocol compatibility. Debug engine/desktop compilation is warning-free. GUI matrix and real source acceptance remain for batch integration; no real account was accessed.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -962,7 +999,7 @@
     {
       "id": "whats-new",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "同版本一次展示、版本持久化，历史自 3.1 起新到旧",
@@ -972,8 +1009,13 @@
         "native/Sources/PacerIsland/SettingsWhatsNewPane.swift",
         "native/Sources/PacerIsland/WhatsNewView.swift"
       ],
-      "evidence": [],
-      "previewNote": "更新说明历史、一次弹窗和内联选项。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "复用 WhatsNew.releases；条件、定向基线、不回退、历史、保存失败、固定页头/页脚、640 点高度与滚动、链接和键盘/UIA 通过。内嵌会话合并开关因 Claude Windows 能力未完成而禁用；schema 2 接线待 #151。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -981,7 +1023,7 @@
     {
       "id": "help",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "共用组件/徽章/任务/配速/提醒图例、Codex/Claude/DeepSeek 详情切换",
@@ -990,8 +1032,13 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsHelpPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "帮助页与两步引导的重开入口。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "通用图例、三家详情切换、真实组件、重开引导、手册/issues 动作、Esc/UIA 和不保存偏好通过；真实浏览器与多屏用户验收待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -999,7 +1046,7 @@
     {
       "id": "support",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "感谢、star、feature-request/bug-report 表单，外部浏览器打开",
@@ -1009,8 +1056,13 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsSupportPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Support 的全部按钮和弹层保留。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "Star、feature/bug、捐赠链接分派、二维码开关和键盘/UIA、只读偏好通过；复制有两秒反馈，测试替身不读写用户剪贴板。实际浏览器、手机扫码和 Windows 分享面板待验收或接入。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -1080,8 +1132,8 @@
         "native/Sources/PacerIsland/UpdateSettingsView.swift",
         "README.md"
       ],
-      "evidence": [],
-      "previewNote": "优先评估 WinSparkle appcast，与 Mac 共用同版中英发行说明。",
+      "evidence": ["windows/Tests/DesktopTests/WindowsUpdateChecks.cs", "windows/Tests/DesktopTests/UpdateHttpsFixture.cs", "docs/windows-automatic-updates.md"],
+      "previewNote": "Development checks on Windows cover isolated signed HTTPS feeds/packages, TLS pinning, redirects, token lifetime, async deadlines, rollback and install/relaunch ordering. WinSparkle UI and complete QA installation/relaunch await unified integration. Production feed, Ed25519 trust and Authenticode signer pin remain unconfigured. No previewStatus promotion.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -1153,7 +1205,7 @@
     {
       "id": "accessibility",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "UIA 可访问名/角色/焦点、隐藏与退出页移除可访问树、键盘分页/排序/关闭",
@@ -1165,15 +1217,25 @@
         "native/Sources/PacerIsland/TaskRowView.swift"
       ],
       "evidence": [],
-      "previewNote": "完整键盘与读屏交互，系统外观设置对应 Windows。",
+      "previewNote": "Synthetic EN/ZH checks use actual HWND UIA names, roles and action patterns for the island and seven current settings panes, plus the language popup. Keyboard checks cover Space, Alt arrows through WPF SystemKey, focus order, component sorting and Escape. Hidden and retired pages reject cached actions. Injected immutable snapshots cover light/dark, high contrast, reduced motion and transparency changes, semantic selection colors, binding/focus preservation and Glass restoration. Full numeric values fit measured 100/125/150/200 percent DPI budgets; the physical host remains one 150 percent display. Guide-window subscription and ten-pane/guide UIA cases are implemented; these new display cases await the unified integration run. Headless unit checks cover key routing, borrowed snapshot ownership, semantic binding restoration, retirement and finite-clock disposal. Narrator and other physical displays still need user acceptance.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
-      "deferredEvidence": []
+      "deferredEvidence": [
+        "windows/Tests/PresentationTests/AccessibilityChecks.cs",
+        "windows/Tests/PresentationTests/AccessibilitySettingsChecks.cs",
+        "windows/Tests/PresentationTests/AccessibleNumberChecks.cs",
+        "windows/Desktop/SystemAppearanceSource.cs",
+        "windows/Desktop/HighContrastScope.cs",
+        "docs/windows-accessibility-motion.md",
+        "windows/Tests/PresentationTests/AccessibilityGuideChecks.cs",
+        "windows/Tests/PresentationTests/SystemAppearanceUnitChecks.cs",
+        "windows/Desktop/GuideWindow.cs"
+      ]
     },
     {
       "id": "platform-matrix",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "Mac arm64/Intel 完整 make test 和 make build；Windows x64/ARM64 原生依赖与宿主",
@@ -1185,10 +1247,16 @@
         "windows/toolchain-lock.json"
       ],
       "evidence": [],
-      "previewNote": "支持范围与实际验证范围分别记录。",
+      "previewNote": "Support target: Windows 10 build 19041+ and Windows 11, x64 and ARM64. Build coverage: architecture-aware engine, desktop, Swift/Composition native libraries, Python, maintenance and installer paths; native ARM64 CI builds/packages only with symmetric artifacts and PE validation. The new CI has not run during batch development. Actual validation: Windows 11 x64 Debug zero-warning compilation and targeted tests for version/API failure, schema/dependency selection and synthetic PE images. ARM64 and Windows 10 are build-path covered, physical runtime acceptance pending; no claim of a complete platform matrix. WinSparkle ARM64 binaries are supplied by lane B through PacerArchitecture.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
-      "deferredEvidence": []
+      "deferredEvidence": [
+        "docs/windows-platform-matrix.md",
+        "scripts/windows/architecture.ps1",
+        "scripts/windows/check-architecture.py",
+        "windows/Tests/DesktopTests/WindowsPlatformChecks.cs",
+        "windows/Tests/EngineTests/WindowsPlatformCompatibilityTests.swift"
+      ]
     },
     {
       "id": "cross-platform-delivery",

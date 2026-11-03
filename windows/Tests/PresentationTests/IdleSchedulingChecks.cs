@@ -56,17 +56,33 @@ internal static class IdleSchedulingChecks
                     "An unchanged hold has no WPF render callbacks or timer wakeups, without forcing GC");
             }
             long beforeSnapshots = Interlocked.Read(ref snapshots), beforeFrames = frames;
-            await Task.Delay(3400);
+            // Keep the real hold deadline and both actual WPF clocks. Advance
+            // the finite fade explicitly, so a delayed WPF timing tick cannot
+            // turn the unchanged 3400 ms bound into a wall-clock race.
+            int controlledFades = 0;
+            void FinishFade(TimeSpan duration)
+            {
+                Check(quota.Scheduling.Clocks == 2 && duration > TimeSpan.Zero, "The controlled fade must own both actual finite WPF clocks");
+                controlledFades++; quota.SeekFadeForAutomation(duration);
+            }
+            quota.FadeStartedForAutomation += FinishFade;
+            try { await quota.WaitForNextCycleAsync(TimeSpan.FromMilliseconds(3400)); }
+            catch (TimeoutException error) { throw new InvalidOperationException("The quota cycle exceeded its original deadline; " + quota.CycleDiagnostics + ", quota=" + quota.Scheduling, error); }
+            finally { quota.FadeStartedForAutomation -= FinishFade; }
+            Check(controlledFades == 1, "Exactly one real fade must finish before its next hold is observed");
             Check(quota.Scheduling.Wakes == 1 && quota.Scheduling.Clocks == 0 && quota.Scheduling.Scheduled,
-                "The four-second switch releases both fade clocks and schedules only its next deadline");
+                "The four-second switch releases both fade clocks and schedules only its next deadline; actual=" + quota.Scheduling);
             Check(Interlocked.Read(ref snapshots) == beforeSnapshots && frames == beforeFrames, "The frozen unchanged engine emits no snapshots or native window frames");
             await Task.Delay(250); long settled = Interlocked.Read(ref renders); await Task.Delay(350);
-            Check(Interlocked.Read(ref renders) == settled, "Fade completion leaves no orphan root clock in the render manager");
+            Check(Interlocked.Read(ref renders) == settled, "Fade completion leaves no orphan root clock in the render manager; render delta="
+                + (Interlocked.Read(ref renders) - settled) + ", quota=" + quota.Scheduling + ", badge=" + badge.RotationScheduling
+                + ", window=" + window.AccessibilityMotionState);
             window.Hide(); await Task.Delay(250); var hidden = quota.Scheduling; settled = Interlocked.Read(ref renders);
             await Task.Delay(550);
             Check(!hidden.Scheduled && hidden.Clocks == 0 && quota.Scheduling.Wakes == hidden.Wakes && Interlocked.Read(ref renders) == settled,
                 "Hidden quotas have no clocks, timers, or continuing render work");
-            window.Show(); await Task.Delay(250); Check(quota.Scheduling.Scheduled, "Showing the island restores the original alternating values");
+            window.Show(); await Task.Delay(250); Check(quota.Scheduling.Scheduled, "Showing the island restores the original alternating values; quota="
+                + quota.Scheduling + ", visible=" + window.IsVisible + ", occluded=" + window.DecorationsOccluded);
             if (composed)
             {
                 badge.Update(header, true); await Task.Delay(150);

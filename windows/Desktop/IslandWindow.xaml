@@ -7,6 +7,14 @@
  ShowActivated="False" MouseEnter="OnMouseEnter" MouseLeave="OnMouseLeave" KeyDown="OnKeyDown"
  TextOptions.TextFormattingMode="Ideal">
  <Window.Resources>
+  <Style x:Key="IslandMainAction" TargetType="Button">
+   <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
+   <Setter Property="Padding" Value="0"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Focus" Background="{TemplateBinding Background}" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6"/>
+    <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/></Trigger></ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
   <Style x:Key="CompactComponentButton" TargetType="Button">
    <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#F5F5F5"/>
    <Setter Property="Padding" Value="0,4"/><Setter Property="BorderThickness" Value="0"/>
@@ -44,6 +52,7 @@
   <Grid>
    <Grid x:Name="Header" Height="38" Margin="15,0" VerticalAlignment="Top" Cursor="Hand" MouseLeftButtonUp="OnHeaderClick">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Button x:Name="HeaderAction" Grid.ColumnSpan="3" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>
     <StackPanel x:Name="HeaderLeading" Orientation="Horizontal" VerticalAlignment="Center">
      <local:ActivityBadge x:Name="Badge"/>
      <StackPanel x:Name="RatePanel" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
@@ -58,6 +67,7 @@
     </StackPanel>
    </Grid>
    <Grid x:Name="Strip" Width="32" Visibility="Collapsed" Cursor="Hand" MouseLeftButtonUp="OnHeaderClick">
+    <Button x:Name="StripAction" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>
     <StackPanel x:Name="StripLeading" VerticalAlignment="Top" Margin="0,12,0,0" HorizontalAlignment="Center">
      <local:ActivityBadge x:Name="StripBadge"/>
      <StackPanel x:Name="StripRatePanel" Margin="0,4,0,0" HorizontalAlignment="Center">
@@ -75,7 +85,7 @@
    </Grid>
    <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,38,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
     <local:RevealHost.RenderTransform><TranslateTransform x:Name="RevealOffset"/></local:RevealHost.RenderTransform>
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
+    <ScrollViewer x:Name="ExpandedScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
      <StackPanel x:Name="ExpandedContent" Margin="0,4,0,14">
       <Grid x:Name="TaskToolbar" Height="24" Margin="9,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

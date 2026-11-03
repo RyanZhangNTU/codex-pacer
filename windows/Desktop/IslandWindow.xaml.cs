@@ -38,7 +38,7 @@ public partial class IslandWindow : Window
     private string appAvailabilitySignature = "";
     private double nextAppAvailabilityScan;
     private readonly bool? animationOverride;
-    private bool AnimationsEnabled => animationOverride ?? SystemParameters.ClientAreaAnimation;
+    private bool AnimationsEnabled => animationOverride ?? appearance.Current.Animations;
     private readonly DispatcherTimer collapse = new() { Interval = TimeSpan.FromMilliseconds(400) };
     private bool navigationErrorShown;
     private string? navigationFailureID;
@@ -47,6 +47,13 @@ public partial class IslandWindow : Window
     private readonly NativeLayout geometry;
     private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
+    private bool updateInputSuspended;
+    internal void SetUpdateInputSuspended(bool value)
+    {
+        updateInputSuspended = value;
+        if (value) { collapse.Stop(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
+        IsHitTestVisible = !value;
+    }
     private bool renderCallback;
     private int motionRevision;
     private double transitionStarted, measuredRowsWidth;
@@ -77,7 +84,7 @@ public partial class IslandWindow : Window
         Func<EngineNavigationPlan, EngineTaskRow, Task<bool>>? openConversation = null,
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
         Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
-        Func<IDisplayTopologySource>? displayTopologyFactory = null)
+        Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -93,6 +100,7 @@ public partial class IslandWindow : Window
         Language = PacerFonts.RenderingLanguage(ui);
         if (animationOverride != null && !demo) throw new ArgumentException("Synthetic motion overrides require demo mode.");
         this.animationOverride = animationOverride;
+        InitializeAppearance(appearanceSource);
         string directory = Path.Combine(AppContext.BaseDirectory, "Engine");
         geometry = new NativeLayout(directory);
         displays = displayTopologyFactory?.Invoke() ?? new WindowsDisplayTopology(action => Dispatcher.BeginInvoke(action, DispatcherPriority.ContextIdle));
@@ -108,6 +116,7 @@ public partial class IslandWindow : Window
         SetButtonName(MarkReadButton, ui.Text("activity.mark_all_read")); SetButtonName(PinButton, ui.Text("common.pin")); SetButtonName(MoreButton, ui.Text("common.more"));
         SetButtonName(PreviousPage, ui.Text("activity.previous_page")); SetButtonName(NextPage, ui.Text("activity.next_page"));
         SetButtonName(SettingsButton, ui.Text("common.settings"));
+        AutomationProperties.SetName(ExpandedScroll, ui.Text("activity.task_list"));
         RefreshMenu.Header = ui.Text("common.refresh"); QuitMenu.Header = ui.Text("common.quit"); SettingsMenu.Header = ui.Text("common.settings");
         // Hover and connection errors can expand the HWND before the first
         // engine snapshot. Give every measured lane a real initial value.
@@ -121,12 +130,15 @@ public partial class IslandWindow : Window
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closing += OnClosing;
         Closed += (_, _) => StopPresentation();
-        SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
         IsVisibleChanged += (_, _) =>
         {
+            Shell.IsEnabled = IsVisible;
+            MoreButton.ContextMenu.IsEnabled = IsVisible;
+            if (!IsVisible) MoreButton.ContextMenu.IsOpen = false;
             if (presentationStopped) return;
-            if (!IsVisible) StopRendering();
-            else StartRendering();
+            if (!IsVisible) { StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
+            else { UpdateCompactBar(); StartRendering(); }
+            RefreshRowMotion();
             SyncBackdrop();
         };
         ApplyPresentationLayout();
@@ -149,17 +161,6 @@ public partial class IslandWindow : Window
     internal double VisibleWidth => Shell.ActualWidth;
     internal double VisibleHeight => Shell.ActualHeight;
     private static void SetButtonName(Button button, string title) { button.ToolTip = title; AutomationProperties.SetName(button, title); }
-    private void OnSystemParametersChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName != null && args.PropertyName != nameof(SystemParameters.ClientAreaAnimation)) return;
-        Dispatcher.InvokeAsync(() =>
-        {
-            if (presentationStopped) return;
-            UpdateCompactBar();
-            foreach (var row in TaskRowsIn(TaskPages)) row.SetAnimations(AnimationsEnabled);
-            if (rendering) OnRenderFrame(this, EventArgs.Empty);
-        });
-    }
     private void OnShellProjectionChanged(string method)
     {
         if (method.Length > 0 && method != "projectCompactBar") return;
@@ -276,7 +277,7 @@ public partial class IslandWindow : Window
         if (interactionTrace.Count == 12) interactionTrace.Dequeue();
         interactionTrace.Enqueue($"{Clock():0.000} {value}");
     }
-    internal void Reveal() { if (presentationStopped) return; RecordInteraction("reveal"); RequestIslandVisibility(); SetPinned(true); SetExpanded(true); }
+    internal void Reveal() { if (presentationStopped || updateInputSuspended) return; RecordInteraction("reveal"); RequestIslandVisibility(); SetPinned(true); SetExpanded(true); }
     internal Task SynchronizeExpansionAsync() => Send("setExpanded", new { expanded });
     internal void ApplyPreferences(DesktopPreferences preferences)
     {
@@ -338,11 +339,13 @@ public partial class IslandWindow : Window
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
     private void SetPinned(bool value)
     {
+        value = value && !updateInputSuspended;
         pinned = value;
         PinButton.Background = value ? PacerPalette.Hover : Brushes.Transparent;
         PinButton.Foreground = value ? PacerPalette.Primary : PacerPalette.Secondary;
         ((IconGlyph)PinButton.Content).Symbol = value ? "pin.fill" : "pin";
         SetButtonName(PinButton, ui.Text(value ? "common.unpin" : "common.pin"));
+        UpdateMainAction();
     }
     private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence }); }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Send("refresh", new { discover = true });
@@ -358,7 +361,8 @@ public partial class IslandWindow : Window
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape) { RecordInteraction("escape"); SetPinned(false); SetExpanded(false); e.Handled = true; }
-        if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0 && e.Key is Key.Left or Key.Right) { ChangePage(e.Key == Key.Left ? -1 : 1); e.Handled = true; }
+        if (IsPagingInput(e.Key, e.SystemKey, Keyboard.Modifiers, IsEditing(e.OriginalSource as DependencyObject)))
+        { Key key = e.Key == Key.System ? e.SystemKey : e.Key; ChangePage(key == Key.Left ? -1 : 1); e.Handled = true; }
         if (demo && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key >= Key.D1 && e.Key <= Key.D4)
             _ = Send("demoStage", new { demoStage = (int)e.Key - (int)Key.D1 });
     }
@@ -379,9 +383,10 @@ public partial class IslandWindow : Window
         }
         pointerDown = null;
     }
-    private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; visibleRequested = false; ApplyFullscreenVisibility(); } }
+    private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; visibleRequested = false; ApplyFullscreenVisibility(); } else StopPresentation(); }
     private void SetExpanded(bool value)
     {
+        if (value && updateInputSuspended) return;
         collapse.Stop();
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
@@ -557,7 +562,7 @@ public partial class IslandWindow : Window
         presentationStopped = true; StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
-        SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
+        DisposeAppearance();
         displays.Changed -= DisplayTopologyChanged; displays.Dispose();
     }
     private async Task Send(string method, object? parameters = null)
@@ -670,7 +675,7 @@ public partial class IslandWindow : Window
     {
         int target = Math.Clamp(page + delta, 0, Math.Max(0, (rows.Count - 1) / 3));
         if (target == page) return;
-        page = target; BuildPage(AnimationsEnabled, Math.Sign(delta)); UpdatePager(); Relayout();
+        page = target; BuildPage(DecorationsAnimate, Math.Sign(delta)); UpdatePager(); Relayout();
     }
     private void BuildPage(bool animate, int direction)
     {
@@ -699,7 +704,7 @@ public partial class IslandWindow : Window
         }
         if (outgoing != null)
         {
-            outgoing.IsHitTestVisible = false; outgoing.SetAccessible(false);
+            outgoing.IsEnabled = false; outgoing.IsHitTestVisible = false; outgoing.SetAccessible(false);
             KeyboardNavigation.SetTabNavigation(outgoing, KeyboardNavigationMode.None);
             if (outgoing.IsKeyboardFocusWithin) Keyboard.ClearFocus();
         }
@@ -707,7 +712,7 @@ public partial class IslandWindow : Window
         if (animate && outgoing != null)
         {
             TaskPages.Children.Add(outgoing);
-            var fade = new DoubleAnimation(outgoing.Opacity, 0, TimeSpan.FromSeconds(0.18));
+            var fade = PageAnimation(outgoing.Opacity, 0);
             pageClocks.Add(new(fade, clock => outgoing.ApplyAnimationClock(OpacityProperty, clock), () => TaskPages.Children.Remove(outgoing)));
             var transform = (TranslateTransform)outgoing.RenderTransform;
             pageClocks.Add(new(PageAnimation(transform.X, -direction * 18), clock => transform.ApplyAnimationClock(TranslateTransform.XProperty, clock)));
@@ -733,7 +738,7 @@ public partial class IslandWindow : Window
         bool available = link != null && (state.Value.Provider != "deepseek" || harness) &&
             !openingActivityContexts.Contains(link.Context) && latest?.OpeningActivityIDs?.Contains(state.Value.Id) != true;
         row.SetOpenAction(available ? () => _ = OpenConversationTaskAsync(row, link!) : null,
-            available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), AnimationsEnabled);
+            available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), DecorationsAnimate);
     }
     private bool CurrentConversationAction(TaskRow control, EngineActivityLink link) => !presentationStopped && expanded && Expanded.IsAccessible &&
         currentPage?.IsAccessible == true && currentPage.IsAncestorOf(control) && latest?.ActivityLinks?.Contains(link) == true;

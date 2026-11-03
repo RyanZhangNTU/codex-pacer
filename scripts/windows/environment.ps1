@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+. (Join-Path $PSScriptRoot 'architecture.ps1')
+$taskArchitecture = Get-PacerArchitecture
+$taskHostArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
 function Set-PacerEnvironmentPrefix([string]$Name, [string[]]$Entries) {
     $taskExisting = [Environment]::GetEnvironmentVariable($Name, 'Process')
     $taskSeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -13,14 +16,15 @@ function Set-PacerEnvironmentPrefix([string]$Name, [string[]]$Entries) {
 }
 $taskVsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 if (Test-Path -LiteralPath $taskVsWhere) {
-    $taskVs = & $taskVsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    $taskComponent = if ($taskArchitecture.Name -eq 'arm64') { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
+    $taskVs = & $taskVsWhere -latest -products '*' -requires $taskComponent -property installationPath
     $taskVsReady = $taskVs -and $env:VSINSTALLDIR -and
         [string]::Equals($taskVs.TrimEnd('\'), $env:VSINSTALLDIR.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -and
-        $env:VSCMD_ARG_TGT_ARCH -eq 'x64' -and $env:VSCMD_ARG_HOST_ARCH -eq 'x64' -and
+        $env:VSCMD_ARG_TGT_ARCH -eq $taskArchitecture.Name -and $env:VSCMD_ARG_HOST_ARCH -eq $taskHostArchitecture -and
         [bool](Get-Command cl.exe -CommandType Application -ErrorAction SilentlyContinue)
     if ($taskVs -and !$taskVsReady) {
         Import-Module (Join-Path $taskVs 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
-        Enter-VsDevShell -VsInstallPath $taskVs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+        Enter-VsDevShell -VsInstallPath $taskVs -SkipAutomaticLocation -DevCmdArguments ('-arch=' + $taskArchitecture.Name + ' -host_arch=' + $taskHostArchitecture)
     }
 }
 $taskRuntime = $null
@@ -35,13 +39,13 @@ if (Test-Path -LiteralPath $taskSwiftRoot) {
 # A workspace SDK can be used without installing or replacing the system SDK.
 $taskSdkRoot = if ($env:PACER_WINDOWS_SDK_ROOT) { $env:PACER_WINDOWS_SDK_ROOT } else { Join-Path $taskRoot 'output/toolchains' }
 $taskSdk = Join-Path $taskSdkRoot 'microsoft.windows.sdk.cpp/c'
-$taskSdkLibraries = Join-Path $taskSdkRoot 'microsoft.windows.sdk.cpp.x64/c'
+$taskSdkLibraries = Join-Path $taskSdkRoot ('microsoft.windows.sdk.cpp.' + $taskArchitecture.Name + '/c')
 $taskSwiftFlags = @()
 if (Test-Path -LiteralPath $taskSdk) {
     $taskSdkVersion = Get-ChildItem -LiteralPath (Join-Path $taskSdk 'Include') -Directory | Sort-Object Name -Descending | Select-Object -First 1
     $taskIncludes = @('ucrt','shared','um','winrt','cppwinrt') | ForEach-Object { Join-Path $taskSdkVersion.FullName $_ }
     Set-PacerEnvironmentPrefix 'INCLUDE' $taskIncludes
-    Set-PacerEnvironmentPrefix 'LIB' @((Join-Path $taskSdkLibraries 'ucrt/x64'), (Join-Path $taskSdkLibraries 'um/x64'))
+    Set-PacerEnvironmentPrefix 'LIB' @((Join-Path $taskSdkLibraries ('ucrt/' + $taskArchitecture.Name)), (Join-Path $taskSdkLibraries ('um/' + $taskArchitecture.Name)))
     $env:WindowsSdkDir = $taskSdk + '\'
     $env:WindowsSDKVersion = $taskSdkVersion.Name + '\'
     $env:UniversalCRTSdkDir = $taskSdk + '\'
@@ -71,5 +75,6 @@ $env:NUGET_PACKAGES = Join-Path $taskRoot 'output/nuget-packages'
 
 # Sources are immutable snapshots; dependencies and object files reuse one isolated cache.
 $taskScratchPath = if ($env:PACER_WINDOWS_SCRATCH_PATH) { [IO.Path]::GetFullPath($env:PACER_WINDOWS_SCRATCH_PATH) } else {
-    Join-Path ([IO.Path]::GetTempPath()) 'codex-pacer-windows/build-6.4.2-x64'
+    Join-Path ([IO.Path]::GetTempPath()) ('codex-pacer-windows/build-6.4.2-' + $taskArchitecture.Name)
 }
+$taskSwiftTargetFlags = @('--triple', $taskArchitecture.Triple)

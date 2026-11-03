@@ -9,6 +9,14 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["--quota-schedule-only"])
+        { QuotaScheduleChecks.Run(); Console.WriteLine("PASS quota hold, early/late wake, completed slot and clock-boundary scheduling"); return 0; }
+        if (args is ["--serve-update-feed", var updateDirectory, var updateScope, var updateInstaller, var updateArchitecture])
+        { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
+        if (args is ["--updates-only"] or ["--updates-only", _])
+        { await WindowsUpdateChecks.Run(args.Length == 2 ? args[1] : null); return 0; }
+        if (args is ["--remote-source-unit-only"])
+        { WslTerminalChecks.Run(); SshTerminalChecks.Run(); ConnectionActionChecks.Run(); await ConversationApplicationChecks.Run(); Console.WriteLine("PASS remote routing, source-bound recovery and engine-owned host navigation"); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
@@ -19,8 +27,21 @@ internal static class Program
             await DisplaySelectionChecks.Run(Path.GetDirectoryName(Path.GetFullPath(displayEngine))!);
             FullscreenDisplayChecks.Run(); Console.WriteLine("PASS display selection, preference restart and fullscreen policy"); return 0;
         }
+        if (args is ["--guide-preferences-read", var guideFile, var guideVersion, var guideMajor]) return GuideSessionChecks.ReadAfterRestart(guideFile, guideVersion, guideMajor);
+        if (args is ["--guide-controls-only"])
+        { await GuideControlChecks.Run(); Console.WriteLine("PASS combined embedded-session flags, schema 2 reopen and save rollback"); return 0; }
+        if (args is ["--conversation-only"])
+        { await ConversationApplicationChecks.Run(); Console.WriteLine("PASS conversation routing and prepared-host activation boundaries"); return 0; }
+        if (args is ["--platform-only"])
+        { WindowsPlatformChecks.Run(); Console.WriteLine("PASS Windows 10 minimum, notification capability failures and glass fallback"); return 0; }
+        if (args is ["--pages-only", var pagesEngine])
+        { PreferencesChecks.Run(); await PreferencesSessionChecks.Run(); await GuideControlChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
+        if (args is ["--ssh-only"])
+        { SshTerminalChecks.Run(); Console.WriteLine("PASS SSH terminal argv, fallback and preference persistence"); return 0; }
+        if (args is ["--navigation-only"])
+        { await ConversationApplicationChecks.Run(); SshTerminalChecks.Run(); Console.WriteLine("PASS host capabilities and SSH navigation"); return 0; }
         if (args is ["--installation-only"])
         { InstallationServiceChecks.Run(); Console.WriteLine("PASS installation identity, repair, ownership, data retention, failure rollback and notification cleanup"); return 0; }
         if (args.Contains("--hold")) { await Task.Delay(Timeout.Infinite); return 0; }
@@ -39,9 +60,15 @@ internal static class Program
             catch (Exception error) { failed++; Console.WriteLine("FAIL " + name + ": " + error); }
         }
 
+        await Test("Windows update verification and asynchronous lifecycle", () => WindowsUpdateChecks.Run());
+
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
+        await Test("guide pages preserve version records, quiet launches and browser actions", () => GuideSessionChecks.Run(engine));
+        await Test("legacy guide controls coordinate independent embedded-session preferences", GuideControlChecks.Run);
+        await Test("Windows platform capabilities fail closed", () => { WindowsPlatformChecks.Run(); return Task.CompletedTask; });
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
+        await Test("connection actions bind setup retries and quota reads to the current source", () => { ConnectionActionChecks.Run(); return Task.CompletedTask; });
         await Test("display selection, reconnect, DPI anchors and preferences", () => DisplaySelectionChecks.Run(Path.GetDirectoryName(engine)!));
         await Test("fullscreen policy isolates the selected screen and requested visibility", () => { FullscreenDisplayChecks.Run(); return Task.CompletedTask; });
 
@@ -79,6 +106,7 @@ internal static class Program
         });
 
         await Test("provider-pinned conversation links, matched cloud fallback and existing host plans", ConversationApplicationChecks.Run);
+        await Test("SSH terminal argv, console fallback and shared preference key", () => { SshTerminalChecks.Run(); return Task.CompletedTask; });
         await Test("real engine: Claude/Codex/DeepSeek discovery, reads and write notifications beyond MAX_PATH", () => LongPathChecks.Run(engine));
 
         await Test("real Claude file notification: first reply after large Desktop metadata", async () =>

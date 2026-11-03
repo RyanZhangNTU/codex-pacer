@@ -5,8 +5,18 @@ namespace CodexPacer.Windows;
 
 internal static class SettingsPalette
 {
-    internal static void Apply(ResourceDictionary resources, bool dark, bool active)
+    internal static void Apply(ResourceDictionary resources, bool dark, bool active, SystemAppearance? appearance = null)
     {
+        if (appearance is { HighContrast: true })
+        {
+            var colors = appearance.Colors;
+            foreach (string key in new[] { "SettingsBackground", "SettingsSidebar", "SettingsPopup", "SettingsInput", "SettingsChartMaterial" }) resources[key] = DesktopAppearance.Ink(colors.Window);
+            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsButton", "SettingsSwitchOff" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator" }) resources[key] = DesktopAppearance.Ink(colors.Text);
+            resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
+            foreach (string key in new[] { "SettingsAccent", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
+            resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
+        }
         void Brush(string key, byte red, byte green, byte blue) => resources[key] = new SolidColorBrush(Color.FromRgb(red, green, blue));
         void Gray(string key, byte value) => Brush(key, value, value, value);
         Gray("SettingsBackground", dark ? (byte)31 : (byte)255);
@@ -28,6 +38,7 @@ internal static class SettingsPalette
         resources["SettingsChartMaterial"] = new SolidColorBrush(Color.FromArgb(205, dark ? (byte)55 : (byte)229, dark ? (byte)55 : (byte)229, dark ? (byte)55 : (byte)229));
         Gray("SettingsSwitchOff", dark ? (byte)49 : (byte)224);
         Gray("SettingsKnob", dark ? (byte)224 : (byte)255);
+        Gray("SettingsSelectionText", 255);
         Brush("SettingsAccent", 0, 122, 255);
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);
         Brush("SettingsSuccess", 48, 186, 85);
