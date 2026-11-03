@@ -57,13 +57,14 @@ internal static class Program
         app.Startup += async (_, _) =>
         {
             string scenario = "common";
+            var caseFailures = new List<string>();
             async Task Attempt(string name, Func<Task> check)
             {
                 try { await check(); }
                 catch (Exception error) when (group == "all")
                 {
                     string failure = name + " [" + scenario + "]: " + error.Message;
-                    Errors.Add(failure); Console.Error.WriteLine("FAIL " + failure); Console.Error.WriteLine(error);
+                    caseFailures.Add(failure); Console.Error.WriteLine("FAIL " + failure); Console.Error.WriteLine(error);
                 }
             }
             await using var projections = new EngineClient();
@@ -127,6 +128,7 @@ internal static class Program
                     }
                 }
                 Check(Errors.Count == 0, "WPF binding/runtime errors: " + string.Join("\n", Errors));
+                Check(caseFailures.Count == 0, "Presentation cases failed: " + string.Join("\n", caseFailures));
                 Console.WriteLine("All functional presentation checks passed."); result = 0;
             }
             catch (Exception error) { Console.Error.WriteLine(error); }
