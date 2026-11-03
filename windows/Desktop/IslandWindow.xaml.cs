@@ -234,7 +234,7 @@ public partial class IslandWindow : Window
         await ShellProjection.WhenIdleAsync();
         await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         var timeout = Stopwatch.StartNew();
-        while (rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height))
+        while (rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height) || !CompactDimStateMatches())
         {
             if (timeout.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("The synthetic window did not settle.");
             await Task.Delay(25);
