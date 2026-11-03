@@ -602,13 +602,16 @@
         "所有页面/菜单/错误/tooltip/通知/引导/更新说明完整中英；保留同一格式化语义",
         "平台措辞显式注入，本机/系统设置/路径名称不通过共享业务内 OS 分叉"
       ],
-      "previewNote": "Shared English/Chinese catalogs and format tests pass. Actual windows now select their rendering language independently of the host culture. Glyph-run checks cover Settings, tasks and vector text under English/Japanese host cultures, packaged Latin font bytes, Simplified Chinese fallback and stable task widths. Other font installations, optical glyph/weight matching, all characters, DPI and full localization/accessibility acceptance remain.",
+      "previewNote": "Shared English/Chinese catalogs and format tests remain. P3d adds Windows-specific DeepSeek budget/pricing/session captions and sharing text, uses the Windows notification-settings caption in the guide, and selects pricing documentation by app language. Seven headless catalog tests cover generated data, literal UI keys, platform-only wording/isolation and positional/composite argument parity; the generator now rejects argument mismatches. Existing glyph/culture/packaged-font assertions are preserved. New page layout, fonts, DPI and the complete display matrix await unified integration; previewStatus remains partial.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
         "windows/Desktop/PacerFonts.cs",
         "windows/Tests/PresentationTests/TypographyLocaleChecks.cs",
-        "windows/References/windows-rendered-typography-provenance.json"
+        "windows/References/windows-rendered-typography-provenance.json",
+        "docs/windows-settings-parity.md",
+        "scripts/windows/build-localization.py",
+        "scripts/windows/test_contract.py"
       ]
     },
     {

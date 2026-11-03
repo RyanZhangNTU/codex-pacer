@@ -169,7 +169,7 @@ internal sealed class GuideContent : StackPanel
             refresh.Add(() => notification.IsEnabled = !changing && !session.RequiresRestart && notifications != null);
             var state = Text("", 11); Identify(state, "welcome.system.status", "");
             refresh.Add(() => state.Text = notifications?.Availability == NotificationAvailability.Denied
-                ? ui.Text("settings.notification_denied") : StartupDetail());
+                ? ui.Text("windows.settings.notification_denied") : StartupDetail());
             Children.Add(Card(Row(ui.Text("welcome.layout.title"), ui.Text("welcome.layout.detail"), Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"))),
                 Row(ui.Text("settings.system_notifications"), ui.Text("welcome.notifications_detail"), notification),
                 Row(ui.Text("settings.open_at_login"), ui.Text("windows.settings.open_at_login_detail"), Login(ui.Text("settings.open_at_login"), "welcome.startup")), state));

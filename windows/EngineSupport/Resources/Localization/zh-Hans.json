@@ -103,5 +103,8 @@
   "windows.settings.startup_other": "另一个安装位置已注册此启动项。请先检查“启动应用”。",
   "windows.settings.open_system_failed": "无法打开 Windows 设置。请在 Windows 设置中打开“辅助功能 > 视觉效果”。",
   "windows.support.share_message": "Codex Pacer 在 Windows 桌面岛中显示 Codex、Claude Code 和 DeepSeek Harness 的动态。",
-  "windows.support.share_unavailable": "Windows 分享当前不可用。你可以复制项目链接后分享。"
+  "windows.support.share_unavailable": "Windows 分享当前不可用。你可以复制项目链接后分享。",
+  "windows.deepseek.budget_help": "按最近 7 天的日均支出加 20% 填入；可修改或清空任一金额。预算只用于提醒，不会拦截请求。支出以账户扣费为准，包括此电脑估算和其他来源扣费；每周从周一 00:00 开始。",
+  "windows.deepseek.pricing_note": "费用根据此电脑的 token 数和 DeepSeek 公布的价格估算：北京时间工作日 09:00-12:00、14:00-18:00 为双倍价格，周末和 2026 年法定节假日使用非高峰价格。调休工作日按周末处理，因此仅供估算。自 2026 年 11 月 1 日起，网页搜索按每千次 5 元计费。仅估算 DeepSeek 官方渠道，最终以平台账单为准。",
+  "windows.deepseek.sessions": "此电脑上的会话"
 }

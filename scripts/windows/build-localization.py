@@ -59,7 +59,24 @@ def catalogs():
         result[language] = {"schemaVersion": 1, "language": language, "sources": sources, "strings": strings}
     if set(result["en"]["strings"]) != set(result["zh-Hans"]["strings"]):
         raise ValueError("English and Chinese localization keys must match")
+    validate_formats(result["en"]["strings"], result["zh-Hans"]["strings"])
     return result
+
+
+def format_signature(value):
+    # Match Core's positional printf arguments and the host's .NET arguments.
+    value = value.replace("%%", "")
+    printf = re.compile(r"%(?:(\d+)\$)?(ld|d|g|(?:\.\d+)?f|@)")
+    arguments = sorted((int(match[1] or index + 1), match[2])
+                       for index, match in enumerate(printf.finditer(value)))
+    composite = sorted(int(match[1]) for match in re.finditer(r"(?<!\{)\{(\d+)(?:,[^}:]+)?(?::[^}]+)?\}(?!\})", value))
+    return arguments, composite
+
+
+def validate_formats(english, chinese):
+    for key in english:
+        if format_signature(english[key]) != format_signature(chinese[key]):
+            raise ValueError("English and Chinese format arguments differ: " + key)
 
 
 def unique_pairs(pairs):

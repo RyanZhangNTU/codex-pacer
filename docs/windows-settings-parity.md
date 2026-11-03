@@ -23,3 +23,11 @@ P3d 逐项对照了 Mac 的 11 个 `SettingsPane`，以当前 C 通道的固定�
 定向测试覆盖 Help 默认服务、DeepSeek 单服务行、双语价格文档链接、固定 Windows 设置入口、启动失败、分享链接校验、重复调用、失败和释放后的拒绝。实际页面滚动、焦点、UIA 和完整展示矩阵留给集成阶段，当前不把这些新交互记为实机通过。原有展示与引擎断言全部保留。
 
 系统分享按 Microsoft 的 [桌面 WinRT 窗口互操作说明](https://learn.microsoft.com/en-us/windows/apps/develop/ui/display-ui-objects#for-classes-that-implement-idatatransfermanagerinterop) 获取所属窗口的 `DataTransferManager`，通过 `ShowShareUIForWindow` 显示。点击分享前不创建系统分享对象；C 通道不会选择接收者或自动发送内容。
+
+## 本地化
+
+补齐了 Windows 的 DeepSeek 预算说明、价格估算说明、会话标题和分享文字。金额、阈值、价格时段、计费起始日和预算行为与 Mac 原文一致，仅替换平台称呼并整理表达。欢迎页的通知拒绝提示复用 Windows 系统设置路径。Mac 目录和历史更新记录原文不变。
+
+`build-localization.py` 现在检查两种语言的 printf 参数编号/类型/次数和 .NET 参数编号/次数，允许译文调整顺序。`WindowsLocalizationTests` 的 7 项定向测试检查生成目录、所有直接引用的 UI 键、Mac 专属说明误用、Windows 键隔离、英文目录，以及格式参数的顺序、丢失、重复和错误类型。它们接入现有 `test_contract.py`，集成时沿用已有三端 CI 入口，不新增工作流。
+
+本轮通过上述目录检查及引擎的 `LocalizationTests`、`EngineGuidePagesTests` 定向测试。中英文页面布局、字体和不同 DPI 的完整展示验收仍留给集成阶段；coverage 保持 `partial`。
