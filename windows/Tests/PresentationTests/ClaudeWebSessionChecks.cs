@@ -42,6 +42,7 @@ internal static class ClaudeWebSessionChecks
             Check(!signingIn.IsCompleted && window.IsVisible, "Page-world overrides cannot forge the private HttpOnly cookie store");
             SignIn(site.Core); Invoke(Find<Button>(window, "claude.login.continue")); await Pump(); await window.CheckCompletion;
             Check(await signingIn, "Continue must accept the owned profile's valid session");
+            Check(session.SignInWasNew, "A first private session is a new sign-in");
             var known = await session.ReadAsync(CancellationToken.None);
             Check(known != null && known.OrganizationID == Organization && known.SessionHash == Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Key))),
                 "The bridge must keep the original one-way session scope and explicit organization");
@@ -51,6 +52,7 @@ internal static class ClaudeWebSessionChecks
             Check(known!.CookieHeader.Contains("sessionKey=" + Key, StringComparison.Ordinal) && !known.CookieHeader.Contains("third-party", StringComparison.Ordinal) &&
                 !known.CookieHeader.Contains("wrong-path", StringComparison.Ordinal) && !known.ToString().Contains(Key, StringComparison.Ordinal),
                 "Only API-applicable Claude cookies may cross the ephemeral bridge, and diagnostics must redact them");
+            await Lifecycle(session, site, root);
             site.Mutate = core => Put(core, "lastActiveOrg", "not-a-workspace");
             var invalidChoice = await session.ReadAsync(CancellationToken.None);
             Check(invalidChoice != null && invalidChoice.OrganizationID == null && invalidChoice.SessionHash == known.SessionHash,
@@ -105,6 +107,27 @@ internal static class ClaudeWebSessionChecks
             }
         }
     }
+    private static async Task Lifecycle(ClaudeWebSession session, Site site, string root)
+    {
+        site.Ready = false; var existing = session.SignInAsync();
+        await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.Ready);
+        var window = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single();
+        await Task.Delay(1700); Check(!existing.IsCompleted, "The baseline cookie cannot count as a new Claude account");
+        window.Close(); Check(await existing && !session.SignInWasNew, "Closing a same-session Claude challenge preserves the selected organization");
+        foreach (string key in new[] { "synthetic-other-claude-session-000000", Key })
+        {
+            site.Ready = false; var changed = session.SignInAsync();
+            await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.Ready);
+            window = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single();
+            Put(site.Core!, "sessionKey", key);
+            Check(await changed.WaitAsync(TimeSpan.FromSeconds(8)) && session.SignInWasNew && !window.IsVisible,
+                "A changed HttpOnly cookie must automatically finish Claude sign-in");
+        }
+        int checks = window.SessionChecks; await Task.Delay(1100);
+        Check(window.SessionChecks == checks, "Claude's session observer stops after closing");
+        await using var isolated = new ClaudeWebSession(UiText.For(false), Path.Combine(root, "Isolated"), site.Bind, false);
+        Check(await isolated.ReadAsync(CancellationToken.None) == null, "Another Claude private profile cannot inherit the account");
+    }
     private static void SignIn(CoreWebView2 core)
     {
         Put(core, "sessionKey", Key); Put(core, "lastActiveOrg", Organization);
@@ -125,7 +148,7 @@ internal static class ClaudeWebSessionChecks
             Core = core; var mutate = Mutate; Mutate = null; mutate?.Invoke(core);
             if (!bound.Add(core)) return;
             Controllers++;
-            core.NavigationCompleted += (_, _) => Ready = true;
+            core.NavigationCompleted += (_, _) => { if (core.Source == "https://claude.ai/") Ready = true; };
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
             core.WebResourceRequested += (_, e) =>
             {

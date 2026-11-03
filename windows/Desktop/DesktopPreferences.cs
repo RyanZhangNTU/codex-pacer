@@ -10,9 +10,17 @@ namespace CodexPacer.Windows;
 internal sealed record DesktopPreferences
 {
     public int SchemaVersion { get; init; } = 1;
+    public int WelcomeGuideVersion { get; init; }
+    public string? WhatsNewVersion { get; init; }
     public string Language { get; init; } = "system";
     public string Position { get; init; } = "center";
     public string DisplayMode { get; init; } = "automatic";
+    public string DisplaySelection { get; init; } = "automatic";
+    public string DisplayID { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    public int DisplayX { get; init; }
+    public int DisplayY { get; init; }
+    public bool ShowInFullscreen { get; init; }
     public string IslandAppearance { get; init; } = "liquidGlass";
     public string ExpandedQuotaStyle { get; init; } = "split";
     public string? CompactLayout { get; init; }
@@ -49,9 +57,13 @@ internal sealed record DesktopPreferences
     public Dictionary<string, string> ProviderModes { get; init; } = new()
         { ["codex"] = "automatic", ["claude"] = "automatic", ["deepseek"] = "automatic" };
 
-    internal bool IsValid => SchemaVersion == 1 && Language is "system" or "en" or "zh-Hans"
+    internal bool IsValid => SchemaVersion == 1 && WelcomeGuideVersion >= 0 && (WhatsNewVersion == null || WhatsNewVersion.Length <= 64)
+        && Language is "system" or "en" or "zh-Hans"
         && Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight"
         && DisplayMode is "automatic" or "notch" or "floating"
+        && DisplaySelection is "automatic" or "primary" or "specified"
+        && ValidWindow(DisplayID) && ValidWindow(DisplayName)
+        && (DisplaySelection != "specified" || DisplayID.Length > 0 || DisplayName.Length > 0)
         && IslandAppearance is "classic" or "liquidGlass"
         && ExpandedQuotaStyle is "split" or "classic"
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)

@@ -23,6 +23,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args is ["--fullscreen-fixture"]) return FullscreenFixture.Run();
         int fixture = Array.IndexOf(args, "--language");
         if (fixture >= 0) return SlowEngineChecks.Fixture(args[fixture + 1]);
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
@@ -57,8 +58,10 @@ internal static class Program
                     await LegacyQuotaChecks.Run(output); await QuotaConnectionChecks.Run(output); await TypographyLocaleChecks.Run(output);
                 }
                 if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
+                if (group == "deepseek") { await ClaudeConnectionChecks.Run("zh-Hans", true, output); await DeepSeekWebConnectionChecks.Run("en", false, output); }
                 if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); await BackdropPresentationChecks.Run(); }
                 if (All("idle")) { await IdleSchedulingChecks.Run(); await OcclusionSchedulingChecks.Run(); }
+                if (All("display")) { await DisplayWindowChecks.Run(output); if (group != "all") await OcclusionSchedulingChecks.Run(); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
                     if (All("accessibility")) { AccessibleNumberChecks.Run(language); await AccessibilityChecks.Run(language); }
@@ -76,6 +79,9 @@ internal static class Program
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));
                             await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output);
                         }
+                        if (group == "deepseek") { await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output); }
+                        if (All("display") || group == "displaySettings") await DisplaySettingsChecks.Run(language, dark);
+                        if (All("pages")) await GuidePageChecks.Run(language, dark, output);
                         if (All("settings"))
                         {
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));

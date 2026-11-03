@@ -22,7 +22,11 @@ internal static class DeepSeekSettingsChecks
         CultureInfo previous = CultureInfo.CurrentUICulture; CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
         await using var engine = new EngineClient(); bool reject = false; int configurations = 0;
         var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "deepseek", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "enabled" } };
-        var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { if (reject) { reject = false; return false; } return true; });
+        string root = Path.Combine(Path.GetTempPath(), "pacer-budget-ui-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        string file = Path.Combine(root, "preferences.json"); var store = new PreferencesStore(file); _ = store.Load();
+        Check(store.Save(preferences), "An isolated budget UI profile initializes");
+        var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, value => { if (reject) { reject = false; return false; } return store.Save(value); },
+            value => PreferencesAcknowledgement.ValidateAsync(engine, value));
         var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false) { IsHitTestVisible = false, ShowActivated = false };
         session.Changed += island.ApplyPreferences;
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine) { IsHitTestVisible = false, ShowActivated = false };
@@ -69,6 +73,26 @@ internal static class DeepSeekSettingsChecks
                 "Balance mode must retain saved amounts while suspending their effect");
             Select(budget); await Until(() => session.Current.DeepSeekMode == "budget" && budget.IsEnabled);
             Check(session.Current.DeepSeekDailyBudget == 12.5 && session.Current.DeepSeekWeeklyBudget == 75, "Returning to budgets must restore saved amounts rather than replace them with a new suggestion");
+            Select(Find<RadioButton>(window, "settings.deepseek.speed.account")); await Until(() => session.Current.DeepSeekSpeedSource == "account" && budget.IsEnabled);
+            Check(new PreferencesStore(file).Load().Value.DeepSeekSpeedSource == "account", "The displayed account speed option survives a storage restart");
+            Select(Find<RadioButton>(window, "settings.deepseek.speed.local")); await Until(() => session.Current.DeepSeekSpeedSource == "local" && budget.IsEnabled);
+            Check(new PreferencesStore(file).Load().Value.DeepSeekSpeedSource == "local", "The displayed local speed option survives a storage restart");
+            var originalRings = session.Current;
+            await session.ChangeAsync(async value => await NativeCompactBar.Shared.EditAsync(value with {
+                ProviderModes = new(value.ProviderModes) { ["codex"] = "enabled" }, QuotaRingOuter = "deepseek", QuotaRingInner = "codex"
+            }, language, ["codex", "deepseek"], new("show", "quotaGauge")));
+            await Until(() => Find<TextBlock>(window, "settings.deepseek.ring_hint").Text == UiText.For(language == "zh-Hans").Text("deepseek.ring_hint.outer"));
+            Check((string)Find<Button>(window, "settings.deepseek.ring_link").Content == UiText.For(language == "zh-Hans").Text("deepseek.ring_hint.change"), "The ring hint uses the shared chosen slot instead of provider count");
+            Invoke(Find<Button>(window, "settings.deepseek.ring_link")); await Until(() => session.Current.LastSettingsPane == "collapsed");
+            await Until(() => Find<ComboBox>(window, "compact.ring.0").SelectedValue as string == "deepseek");
+            Check(Find<ComboBox>(window, "compact.ring.0").SelectedValue as string == "deepseek", "The ring link opens the actual collapsed-bar editor");
+            await session.ChangeAsync(value => value with { ProviderModes = originalRings.ProviderModes, QuotaRingOuter = originalRings.QuotaRingOuter,
+                QuotaRingInner = originalRings.QuotaRingInner, CompactLayout = originalRings.CompactLayout, WarningKinds = originalRings.WarningKinds });
+            await window.NavigateAsync("deepseek"); await Pump();
+            daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
+            budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
+            simple = Find<RadioButton>(window, "settings.deepseek.panel.simple"); detailed = Find<RadioButton>(window, "settings.deepseek.panel.detailed");
+            module = Find<CheckBox>(window, "settings.deepseek.enabled");
             ulong sequence = engine.LatestSnapshot!.Sequence; int beforeStyle = configurations;
             Select(simple); await Until(() => session.Current.DeepSeekPanelStyle == "simple" && simple.IsEnabled); await island.WaitForPresentationAsync();
             Check(configurations == beforeStyle && engine.LatestSnapshot!.Sequence == sequence && !Descendants(island).OfType<DeepSeekWeekView>().Any() && !Descendants(island).OfType<DeepSeekDistributionView>().Any(),
@@ -92,7 +116,8 @@ internal static class DeepSeekSettingsChecks
             Check(Find<TextBlock>(window, "settings.deepseek.budget.issue").Visibility == Visibility.Collapsed, "Connection shutdown cannot leave an unrelated amount error");
             Console.WriteLine("PASS DeepSeek settings " + scenario + ": real engine budgets, Core suggestions, independent amount edits, rejection/rollback, period rings, host-only panel style, cost display, module restore and closed-connection controls");
         }
-        finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); CultureInfo.CurrentUICulture = previous; }
+        finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); CultureInfo.CurrentUICulture = previous;
+            foreach (string entry in Directory.EnumerateFiles(root)) File.Delete(entry); Directory.Delete(root); }
     }
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
     private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();

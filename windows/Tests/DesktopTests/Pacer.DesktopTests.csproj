@@ -17,6 +17,7 @@
     <Compile Include="../../Desktop/PreferencesAcknowledgement.cs" Link="PreferencesAcknowledgement.cs"/>
 
     <Compile Include="../../Desktop/PreferencesSession.cs" Link="PreferencesSession.cs"/>
+    <Compile Include="../../Desktop/GuidePages.cs" Link="GuidePages.cs"/>
     <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>
     <Compile Include="../../Desktop/NotificationSession.cs" Link="NotificationSession.cs"/>
     <Compile Include="../../Desktop/NotificationActions.cs" Link="NotificationActions.cs"/>
@@ -37,5 +38,6 @@
     <Compile Include="../../Desktop/QuotaAlternationSchedule.cs" Link="QuotaAlternationSchedule.cs"/>
     <Compile Include="../../Desktop/FullscreenOcclusionPolicy.cs" Link="FullscreenOcclusionPolicy.cs"/>
     <Compile Include="../../Desktop/TrailingRefreshThrottle.cs" Link="TrailingRefreshThrottle.cs"/>
+    <Compile Include="../../Desktop/DisplaySelection.cs" Link="DisplaySelection.cs"/>
   </ItemGroup>
 </Project>

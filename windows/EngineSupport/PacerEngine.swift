@@ -705,14 +705,16 @@ actor EngineRuntime {
                   await webBridge.complete(id: id, context: context, reply: reply) else {
                 failure(id: command.id, code: "staleSource"); return true
             }
-        case "deepSeekWebSessionChanged", "beginDeepSeekDisconnect", "completeDeepSeekDisconnect":
+        case "deepSeekWebSessionChanged", "beginDeepSeekWebSignIn", "beginDeepSeekDisconnect", "completeDeepSeekDisconnect":
             guard enabled.contains(.deepseek), let monitor = balanceMonitor, let context = command.params?.balanceContext else {
                 failure(id: command.id, code: "unavailable"); return true
             }
             let state = await monitor.currentState()
             guard state.token == context else { failure(id: command.id, code: "staleSource"); return true }
-            if command.method == "deepSeekWebSessionChanged" {
-                guard await monitor.webSessionChanged(token: context) else { failure(id: command.id, code: "staleSource"); return true }
+            if command.method == "beginDeepSeekWebSignIn" {
+                await webBridge.revoke(context: context)
+            } else if command.method == "deepSeekWebSessionChanged" {
+                guard await monitor.webSessionChanged(token: context, newSession: command.params?.webNewSession ?? true) else { failure(id: command.id, code: "staleSource"); return true }
             } else if command.method == "beginDeepSeekDisconnect" {
                 guard let next = await monitor.beginDisconnect(token: context) else { failure(id: command.id, code: "credentialStore"); return true }
                 send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "ok": true, "value": ["context": next]])

@@ -10,6 +10,7 @@ Older previews cannot read schema 2. Keep a preference backup when downgrading; 
 | --- | --- | --- |
 | Language | `appLanguage` | `system` |
 | Position and attachment | `islandPosition`, `islandDisplayMode`, legacy `floatingIsland` | No explicit position; `automatic`, then the legacy floating choice |
+| Display and fullscreen | `displayID`, `displayName`, `displayX`, `displayY`, `showInFullscreen` | Main Display, fullscreen off |
 | Surface and quota style | `islandAppearance`, `expandedQuotaStyle` | `liquidGlass`, `split`; the existing platform fallback still applies |
 | Collapsed bar | `compactIslandLayout`, `compactSingleTask`, `compactMetric` | Core's standard layout, `stage`, `remaining` |
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`; absent ring keys mean automatic |
@@ -19,12 +20,19 @@ Older previews cannot read schema 2. Keep a preference backup when downgrading; 
 | Sources and Claude organization | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | Empty overrides |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |
 | Notifications | `systemNotifications` | `false` |
+| Welcome and release notes | `welcomeGuideVersion`, `whatsNewVersion` | `0`, unset; only demo suppresses records when a page is explicitly opened |
 
 The layout is the same UTF-8 JSON Data saved by the Mac, represented as base64 in this JSON file. Its warnings remain inside the layout. An explicit empty layout stays empty. Present empty or unknown ring choices mean no ring; an absent key means automatic. A saved center position is distinct from an untouched position. The desktop pane name `collapsed` is stored as the Mac value `collapsedBar`.
+
+`displayID` follows Mac's main-display meaning: an absent, null or empty value, numeric `0`, and string `"0"` all select Main Display. A specified Windows display uses its device-interface path string; Mac's nonzero numeric display IDs do not identify Windows devices. `displayName` and physical desktop coordinates `displayX` / `displayY` provide a unique name-and-position fallback when an interface path changes. Disconnecting falls back to Main Display while retaining the saved choice for reconnection. `showInFullscreen` uses the Mac boolean key and defaults to false.
+
+The picker offers one Main Display choice plus individual devices. Old `displaySelection` values `automatic` and `primary` both mean Main Display. Schema-1 profiles retain their original values and bytes when read, then migrate only on a successful edit. New schema-2 profiles derive selection from `displayID` without writing a new selection key. Unrelated edits preserve an existing main-display representation, including a legacy alias retained in a schema-2 file. These fields never reconfigure collectors.
 
 Open at Login remains an OS registration managed by the startup service, as on Mac. It has no invented preference key. Appearance follows the system theme; `--theme` is a demo fixture. Credentials and browser sessions remain in their existing separate stores.
 
 ## Applying edits
+
+DeepSeek's Balance/Budget switch retains saved daily and weekly amounts in balance mode. Switching to an empty budget uses Core's suggestion; clearing a field or entering zero disables that amount. The day/week selector, account/local speed source, Simple/Detailed panel and turn-cost choice use the same saved keys as Mac. Ring hints use Core's actual drawable rings and link to the collapsed-bar editor. Low-balance and spending-spike thresholds remain in Reminders, with automatic defaults when unset. WPF does not recalculate budgets, billing, thresholds or local day/week boundaries.
 
 Every persisted field waits asynchronously for `validatePreferences`. The engine validates the shared compact presentation input and returns a SHA-256 acknowledgement of the complete preference payload. This read-only query has a three-second deadline and returns no source paths or organization identifiers. Collector changes also wait for the existing `configure` acknowledgement, with its fifteen-second deadline. Host-only edits do not reconfigure collectors.
 
@@ -49,6 +57,8 @@ The optional Core file adapters and acknowledgement protection default to the ex
 ## Regression and demo checks
 
 `PreferencesPersistenceChecks` submits every public preference field to a real offline engine, saves it, and reads it through a fresh store. It also covers legacy migration, key presence, unknown values, independent writers, failed acknowledgements and damaged files. Existing session and settings assertions remain in place.
+
+`DisplaySelectionChecks` also launches a new test process to read specified displays, legacy aliases and each supported main-display representation. It checks schema-2 migration, exact key names, preserved bytes during reads, fallback metadata and fullscreen persistence.
 
 `PersistentSettingsChecks` edits real settings controls, checks two windows and disk-failure rollback, then starts a new desktop process with the isolated saved profile. It checks English/Chinese and light/dark captures. `PreferencesResponsivenessChecks` covers silent, slow and exiting engines, dispatcher callbacks, visible errors, one-shot requests and rejection of late replies.
 

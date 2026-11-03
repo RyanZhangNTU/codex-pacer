@@ -76,7 +76,8 @@ public partial class IslandWindow : Window
     internal IslandWindow(EngineClient engine, bool demo, bool chinese, int position = 0, bool? animationOverride = null, WindowsDesktopApplications? desktopApplications = null, int displayMode = 0, Func<bool>? canConnectDeepSeekWeb = null,
         Func<EngineNavigationPlan, EngineTaskRow, Task<bool>>? openConversation = null,
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
-        Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null, ISystemAppearanceSource? appearanceSource = null)
+        Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
+        Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -95,6 +96,8 @@ public partial class IslandWindow : Window
         InitializeAppearance(appearanceSource);
         string directory = Path.Combine(AppContext.BaseDirectory, "Engine");
         geometry = new NativeLayout(directory);
+        displays = displayTopologyFactory?.Invoke() ?? new WindowsDisplayTopology(action => Dispatcher.BeginInvoke(action, DispatcherPriority.ContextIdle));
+        displays.Changed += DisplayTopologyChanged;
         layout = MeasureLayout(404, 402, 160, false);
         destination = layout.Target;
         surfaceBounds = destination;
@@ -134,13 +137,16 @@ public partial class IslandWindow : Window
         ApplyPresentationLayout();
         InitializeBackdrop();
         InitializeOcclusion();
+        Loaded += (_, _) => QueueDisplayRefresh();
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new IslandWindowAutomationPeer(this);
     internal Rect VisibleScreenBounds
+        => IsVisible ? PresentationScreenBounds : Rect.Empty;
+    private Rect PresentationScreenBounds
     {
         get
         {
-            if (!IsVisible || PresentationSource.FromVisual(this) == null) return Rect.Empty;
+            if (PresentationSource.FromVisual(this) == null) return Rect.Empty;
             var point = Shell.PointToScreen(new Point()); var dpi = VisualTreeHelper.GetDpi(this);
             return new(point.X, point.Y, Shell.ActualWidth * dpi.DpiScaleX, Shell.ActualHeight * dpi.DpiScaleY);
         }
@@ -245,7 +251,7 @@ public partial class IslandWindow : Window
         await ShellProjection.WhenIdleAsync();
         await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         var timeout = Stopwatch.StartNew();
-        while (rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height) || !CompactDimStateMatches())
+        while (displayRefreshPending || rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height) || !CompactDimStateMatches())
         {
             if (timeout.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("The synthetic window did not settle.");
             await Task.Delay(25);
@@ -264,10 +270,12 @@ public partial class IslandWindow : Window
         if (interactionTrace.Count == 12) interactionTrace.Dequeue();
         interactionTrace.Enqueue($"{Clock():0.000} {value}");
     }
-    internal void Reveal() { if (presentationStopped) return; RecordInteraction("reveal"); Show(); SetPinned(true); SetExpanded(true); }
+    internal void Reveal() { if (presentationStopped) return; RecordInteraction("reveal"); RequestIslandVisibility(); SetPinned(true); SetExpanded(true); }
     internal Task SynchronizeExpansionAsync() => Send("setExpanded", new { expanded });
     internal void ApplyPreferences(DesktopPreferences preferences)
     {
+        bool screenChanged = compactPreferences.DisplaySelection != preferences.DisplaySelection || compactPreferences.DisplayID != preferences.DisplayID
+            || compactPreferences.DisplayName != preferences.DisplayName || compactPreferences.DisplayX != preferences.DisplayX || compactPreferences.DisplayY != preferences.DisplayY;
         compactPreferences = preferences;
         PreferSurface(preferences.IslandAppearance);
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
@@ -279,7 +287,10 @@ public partial class IslandWindow : Window
             deepseekPanelStyle = preferences.DeepSeekPanelStyle;
             if (latest != null) RenderQuota(latest);
         }
-        UpdateAppButtons(); UpdateCompactBar(); Relayout();
+        UpdateAppButtons(); UpdateCompactBar();
+        if (screenChanged && PresentationSource.FromVisual(this) != null && screenGeometry == null) QueueDisplayRefresh(force: true);
+        else Relayout();
+        ApplyFullscreenVisibility(); occlusion?.Request();
     }
     private void UpdateAppButtons()
     {
@@ -364,7 +375,7 @@ public partial class IslandWindow : Window
         }
         pointerDown = null;
     }
-    private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; Hide(); } else StopPresentation(); }
+    private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; visibleRequested = false; ApplyFullscreenVisibility(); } else StopPresentation(); }
     private void SetExpanded(bool value)
     {
         collapse.Stop();
@@ -378,11 +389,11 @@ public partial class IslandWindow : Window
     }
     private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open)
     {
-        var current = IslandScreen.Read(this);
+        var current = IslandScreen.Read(this, SelectedDisplay.Display);
         var bounds = screenGeometry?.Invoke() ?? (current.Screen, current.Work);
         return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
     }
-    private void Relayout()
+    private void Relayout(bool snap = false)
     {
         double Probe(string text, double size, FontWeight weight)
         {
@@ -411,6 +422,15 @@ public partial class IslandWindow : Window
         layout = MeasureLayout(contentWidth, contentHeight, measuredHeader, expanded);
         ApplyPresentationLayout();
         bool blackHeader = layout.Attached && islandAppearance == "liquidGlass";
+        if (snap)
+        {
+            StopRendering(); motion.Dispose();
+            destination = layout.Target; destinationExpanded = expanded; destinationBlackHeader = blackHeader; surfaceBounds = destination;
+            motionRevision++; transitionStarted = Clock();
+            motion = new NativeMotion(Path.Combine(AppContext.BaseDirectory, "Engine"), destination, expanded, blackHeader, layout.Position);
+            NativeWindowBounds.Apply(this, surfaceBounds); ApplyMotion(motion.SettledAt(transitionStarted));
+            return;
+        }
         if (layout.Target == destination && destinationExpanded == expanded && destinationBlackHeader == blackHeader) return;
         destination = layout.Target;
         destinationExpanded = expanded;
@@ -534,6 +554,7 @@ public partial class IslandWindow : Window
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
         DisposeAppearance();
+        displays.Changed -= DisplayTopologyChanged; displays.Dispose();
     }
     private async Task Send(string method, object? parameters = null)
     {

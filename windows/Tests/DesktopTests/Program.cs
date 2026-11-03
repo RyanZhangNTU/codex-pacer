@@ -11,6 +11,17 @@ internal static class Program
     {
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
+        if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
+        if (args is ["--display-preferences-read", var preferences, var expected])
+            return DisplaySelectionChecks.ReadAfterRestart(preferences, expected);
+        if (args is ["--display-only", var displayEngine])
+        {
+            await DisplaySelectionChecks.Run(Path.GetDirectoryName(Path.GetFullPath(displayEngine))!);
+            FullscreenDisplayChecks.Run(); Console.WriteLine("PASS display selection, preference restart and fullscreen policy"); return 0;
+        }
+        if (args is ["--guide-preferences-read", var guideFile, var guideVersion, var guideMajor]) return GuideSessionChecks.ReadAfterRestart(guideFile, guideVersion, guideMajor);
+        if (args is ["--pages-only", var pagesEngine])
+        { PreferencesChecks.Run(); await PreferencesSessionChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--installation-only"])
@@ -32,8 +43,11 @@ internal static class Program
         }
 
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
+        await Test("guide pages preserve version records, quiet launches and browser actions", () => GuideSessionChecks.Run(engine));
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
+        await Test("display selection, reconnect, DPI anchors and preferences", () => DisplaySelectionChecks.Run(Path.GetDirectoryName(engine)!));
+        await Test("fullscreen policy isolates the selected screen and requested visibility", () => { FullscreenDisplayChecks.Run(); return Task.CompletedTask; });
 
         await Test("real engine: demo, configuration rejection and acknowledged privacy", async () =>
         {
@@ -131,6 +145,7 @@ internal static class Program
         });
         await Test("immediate settings edits serialize, recover and preserve acknowledged state", PreferencesSessionChecks.Run);
         await Test("all settings acknowledge, persist, restart and migrate without overwriting another writer", () => PreferencesPersistenceChecks.Run(engine));
+        await Test("DeepSeek options persist and restore through independent engine restarts", () => DeepSeekOptionPersistenceChecks.Run(engine));
         await Test("native notification lifecycle, privacy, action payloads and permission races", NotificationChecks.Run);
         await Test("notification actions wait for initialization and cancel on quit", NotificationActionChecks.Run);
         await Test("real engine: snoozing an old notice while DeepSeek is disabled", () => NotificationActionChecks.RunWithEngine(engine));

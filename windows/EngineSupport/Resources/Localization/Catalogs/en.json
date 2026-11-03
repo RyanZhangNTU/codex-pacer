@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "e9d7710c2aac3134c20dec7415e27a1c120aed5bb7a389f0e4abcc71028ffb8b"
+    "windows/EngineSupport/Resources/Localization/en.json": "ff1fffecea47bdc885f2d266b9399372d25d8b6180a202f6e4a6a6c94157e202"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -891,7 +891,11 @@
     "windows.accessibility.scroll.pageUp": "Page Up",
     "windows.accessibility.scroll.position": "Scroll Position",
     "windows.app.open_failed": "Windows could not open the desktop app. Check that it is still installed.",
+    "windows.appearance.display_disconnected": "Disconnected",
+    "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
     "windows.appearance.display_pending": "Display selection is not available in the Windows preview yet.",
+    "windows.appearance.display_unavailable": "Windows could not read the displays. The island stays on the current screen.",
+    "windows.appearance.fullscreen": "Show above fullscreen apps",
     "windows.appearance.fullscreen_pending": "Fullscreen visibility settings are not available in the Windows preview yet.",
     "windows.appearance.glass_pending": "Liquid Glass rendering is not available in the Windows preview yet.",
     "windows.appearance.position_center_note": "A capsule centered near the top of the screen.",
@@ -911,7 +915,7 @@
     "windows.claude.embedded_pending": "Filtering Claude sessions from other apps is not available on Windows yet.",
     "windows.claude.local_help": "Tracks local Claude activity, tool events and requests for input.",
     "windows.claude.local_logs": "Local task logs",
-    "windows.claude.login.instructions": "Sign in below, then choose Continue or press Ctrl+Enter.",
+    "windows.claude.login.instructions": "Sign in to show Claude quota. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "windows.claude.retry_setup": "Retry setup",
     "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
     "windows.claude.setup_conflict": "Activity tracking is ready. Existing telemetry settings were kept; some rate readings may be unavailable.",
@@ -934,7 +938,7 @@
     "windows.deepseek.elsewhere_help": "The account was charged this amount, but no task on this PC accounts for it. Common causes include web search, background requests, or another device using the same account.",
     "windows.deepseek.invalid_budget": "Enter an amount. Leave it blank or enter 0 to turn this budget off.",
     "windows.deepseek.key_help": "Saved in Windows Credential Manager and used only to read your balance.",
-    "windows.deepseek.login.instructions": "Sign in below, then choose Continue or press Ctrl+Enter.",
+    "windows.deepseek.login.instructions": "Sign in to show your DeepSeek balance. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "windows.deepseek.runtime_download": "Download",
     "windows.deepseek.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
     "windows.deepseek.speed_basis_help": "This PC uses estimates from local responses. Account spending includes other devices and updates when the balance is read.",
@@ -946,6 +950,8 @@
     "windows.open.claude": "Open Claude",
     "windows.open.codex": "Open Codex",
     "windows.open.deepseek": "Open DeepSeek Harness",
+    "windows.pages.copy_failed": "Windows couldn't copy the link. Try again.",
+    "windows.pages.open_failed": "Windows couldn't open the link. Try again in your browser.",
     "windows.provider.detected": "Detected on this PC",
     "windows.provider.local": "This PC",
     "windows.provider.not_detected": "Not detected on this PC",

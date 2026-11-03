@@ -76,6 +76,11 @@ public enum WhatsNew {
     public static func pending(current: String, defaults: UserDefaults = .standard,
                                releases: [Release] = releases) -> [Release] {
         let seen = defaults.string(forKey: defaultsKey)
+        return pending(current: current, seen: seen, releases: releases)
+    }
+
+    /// Hosts with their own preference store supply the last confirmed note.
+    public static func pending(current: String, seen: String?, releases: [Release] = releases) -> [Release] {
         return releases.filter { release in
             guard !newer(release.version, than: current) else { return false }
             if let required = release.requiredSeenVersion {
@@ -100,7 +105,7 @@ public enum WhatsNew {
         defaults.set(version, forKey: defaultsKey)
     }
 
-    static func newer(_ version: String, than other: String) -> Bool {
+    package static func newer(_ version: String, than other: String) -> Bool {
         version.compare(other, options: .numeric) == .orderedDescending
     }
 }

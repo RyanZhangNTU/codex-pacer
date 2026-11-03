@@ -610,15 +610,20 @@
     {
       "id": "onboarding",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
       "priority": "P3",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "首次或跨主版本的两步说明、组件标注/徽章/悬停示范",
         "三家模块检测/开关/登录；布局、通知、开机启动快捷入口",
         "关闭后记已看版本、Help 可重开、更新版本转 Whats New；演示无生产副作用"
       ],
-      "previewNote": "Welcome, What's New, help and support windows remain.",
+      "previewNote": "两步窗口、中英文/浅深色、真实组件、三家显式模块选择、状态/动作、通知/登录启动注入服务、键盘/UIA 和新进程版本读回通过。真实账户连接、OS 开关、跨屏验收及 #151 后的 schema 2 接线待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -739,7 +744,7 @@
     {
       "id": "deepseek-budgets",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "Balance/Budget、日/周金额、最近七天均值+20% 建议、清空停用、切回保留金额",
@@ -750,7 +755,7 @@
         "native/Sources/PacerIsland/SettingsDeepSeekPane.swift"
       ],
       "evidence": [],
-      "previewNote": "预算、速度来源和单服务面板的全部选项。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）程序化实机：schema 2 的预算/余额、日周金额与清空、ring day/week、outer/inner 选择、Simple/Detailed、本机/账户速度、turn-cost、低余额/突增自动与自定义等 26 次写入、存储重读及独立引擎重启通过。中英文 × 浅深色预算与提醒页通过，含 Core 建议、切回保留金额、实际环槽位与编辑链接、失败回滚。阈值、超额与当地周期仍由共享模型及原有引擎测试验证；真实账户长时间使用与其他设备待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -864,7 +869,7 @@
     {
       "id": "browser-session-lifecycle",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "Claude/DeepSeek 独立 Pacer WebView2 profile，登录/挑战成功后自动关闭窗口",
@@ -878,7 +883,7 @@
         "native/Sources/PacerIsland/DeepSeekWebBalance.swift"
       ],
       "evidence": [],
-      "previewNote": "跟上最新 develop 的网页登录自动完成与历史隔离行为。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）真实 WebView2、合成私有 profile 实测：Claude/DeepSeek 新指纹自动完成，同指纹关闭后保留历史/工作区，换账户清旧归属，退出/重登录、独立 profile、浏览器进程重启、迟到读取撤销、清理失败暂停均通过。关闭窗口后观察计数不再增加；所有页面请求由夹具拦截，未使用真实账户。真实站点登录/挑战、其他 Windows 设备及运行库首次安装待验收。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []
@@ -905,7 +910,7 @@
     {
       "id": "display-selection",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "主显示器/指定显示器、名称与稳定设备身份、断开/重新连接/主屏变化",
@@ -915,16 +920,22 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsAppearancePane.swift"
       ],
-      "evidence": [],
-      "previewNote": "显示器选择使用 Windows 多显示器与 per-monitor DPI。",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
+      "evidence": [
+        "docs/windows-display-fullscreen.md",
+        "docs/performance/windows-display-fullscreen.json",
+        "windows/Tests/DesktopTests/DisplaySelectionChecks.cs",
+        "windows/Tests/PresentationTests/DisplayWindowChecks.cs",
+        "windows/Tests/PresentationTests/DisplaySettingsChecks.cs"
+      ],
+      "previewNote": "Single physical display at 150% DPI: selection controls, persistence/rollback and injected left/right topology move, fallback, reconnect and resolution changes passed. Shared layout tests cover 100/125/150/200% DPI and negative coordinates. Physical multi-monitor, hotplug and mixed-DPI acceptance remain.",
+      "note": "P3a implements event-driven display selection and work-area/DPI relocation. Synthetic topology is not physical multi-monitor acceptance.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
     },
     {
       "id": "fullscreen-policy",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "开关开启时在目标显示器全屏应用上方显示，关闭时隐藏并在退出全屏后恢复",
@@ -934,16 +945,21 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsAppearancePane.swift"
       ],
-      "evidence": [],
-      "previewNote": "全屏空间对等为全屏应用上方显示策略。",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
+      "evidence": [
+        "docs/windows-display-fullscreen.md",
+        "docs/performance/windows-display-fullscreen.json",
+        "windows/Tests/DesktopTests/FullscreenDisplayChecks.cs",
+        "windows/Tests/PresentationTests/DisplayWindowChecks.cs"
+      ],
+      "previewNote": "Independent synthetic borderless fullscreen app: off/on, sustained hidden detection, all-surface ordering, nonactivation, outside-island hit testing, minimize/exit restoration and manual-hide retention passed under Classic/Liquid Glass preferences. Injected topology verifies target-screen isolation. Real applications, physical multi-monitor and exclusive/special-desktop behavior remain unverified.",
+      "note": "P3a separates fullscreen presence from known opaque occlusion and reuses the 250 ms trailing throttle. Full formal acceptance remains pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
     },
     {
       "id": "whats-new",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "同版本一次展示、版本持久化，历史自 3.1 起新到旧",
@@ -953,8 +969,13 @@
         "native/Sources/PacerIsland/SettingsWhatsNewPane.swift",
         "native/Sources/PacerIsland/WhatsNewView.swift"
       ],
-      "evidence": [],
-      "previewNote": "更新说明历史、一次弹窗和内联选项。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "复用 WhatsNew.releases；条件、定向基线、不回退、历史、保存失败、固定页头/页脚、640 点高度与滚动、链接和键盘/UIA 通过。内嵌会话合并开关因 Claude Windows 能力未完成而禁用；schema 2 接线待 #151。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -962,7 +983,7 @@
     {
       "id": "help",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "共用组件/徽章/任务/配速/提醒图例、Codex/Claude/DeepSeek 详情切换",
@@ -971,8 +992,13 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsHelpPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "帮助页与两步引导的重开入口。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "通用图例、三家详情切换、真实组件、重开引导、手册/issues 动作、Esc/UIA 和不保存偏好通过；真实浏览器与多屏用户验收待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -980,7 +1006,7 @@
     {
       "id": "support",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "感谢、star、feature-request/bug-report 表单，外部浏览器打开",
@@ -990,8 +1016,13 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsSupportPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Support 的全部按钮和弹层保留。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "Star、feature/bug、捐赠链接分派、二维码开关和键盘/UIA、只读偏好通过；复制有两秒反馈，测试替身不读写用户剪贴板。实际浏览器、手机扫码和 Windows 分享面板待验收或接入。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []

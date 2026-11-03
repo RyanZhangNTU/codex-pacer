@@ -4,11 +4,17 @@ The per-user installer, startup state, maintenance helpers and lifecycle checks 
 
 Preference keys, edit acknowledgements, migration and protected history storage are described in [Windows preferences and quota history](windows-preferences.md).
 
+Claude and DeepSeek sign in through separate Pacer-owned WebView2 profiles. Before showing the site, the host records the existing session's one-way fingerprint. A changed fingerprint shows confirmation and closes the window after 1.5 seconds. Continue, Ctrl+Enter, Later and the close button also finish while a session is present; an unchanged session retains its history and selected workspace. Browser-process failure cannot complete sign-in. The host checks navigation and a one-second timer only while the window is open; closing stops the observer.
+
+Login revokes old quota reads before the profile can change. Claude clears the saved organization through the normal acknowledged preference transaction only for a new session. DeepSeek passes an optional `webNewSession` flag to the existing shared coordinator; omitted flags retain the older protocol behavior. Credential fingerprints still independently protect billing history. Sign-out cancels reads before clearing the owned profile; a failed clear stays paused. No external browser profile, cookie store or account is imported.
+
 The island's Classic/Liquid Glass preference uses the native Composition material described in [Windows Composition glass](windows-composition-backdrop.md), including fallback, DPI, acceptance captures and performance checks. Its C++ bridge builds with the configured Visual C++ x64 tools and Windows SDK C++/WinRT headers; the DLL is copied and published with the desktop app.
 
 The bridge uses C++20 with MSVC 19.30 or newer. VS 2019 19.29 uses C++17 because that compiler hits an internal error in the SDK's C++20 projection. Both paths keep warnings as errors; newer libraries' rejection of experimental coroutine headers is handled by the standard selection, without suppressing diagnostics.
 
-Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. This does not implement the pending fullscreen display preference.
+Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. Fullscreen visibility uses the separate policy described below.
+
+The [display and fullscreen controls](windows-display-fullscreen.md) select a stable Windows monitor identity, retain a disconnected selection and apply the target screen's DPI/work area. The fullscreen switch controls policy hiding or nonactivating display above fullscreen apps. Local synthetic acceptance remains separate from physical multi-monitor and exclusive-fullscreen acceptance.
 
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 
@@ -18,6 +24,8 @@ The WPF shell renders the shared engine's presentations over protocol version 1.
 ./scripts/windows/test-presentation.ps1 -Configuration Release
 ./scripts/windows/package-preview.ps1 -SkipBuild
 ```
+
+For focused DeepSeek checks, use the `web` and `deepseek` presentation groups once each. They use intercepted pages and isolated synthetic profiles. `DeepSeekOptionPersistenceChecks` also covers 26 schema-2 option writes, fresh stores and independent engine restarts. Production accounts are not needed for these checks.
 
 The unsigned ZIP and SHA-256 file are written under `output/windows`. The `windows-app-x64-unsigned` CI artifact contains both. Packaging validates the extracted application with a restricted runtime environment, Unicode paths, demo capture, and single-instance activation. It does not create a tag or release. The shipping Mac package and release workflow are unchanged.
 
@@ -48,6 +56,8 @@ Native delivery/history and all five warm and cold COM routes passed on Windows 
 The earlier cold `0x80040154` was a test-environment issue: a Codex child saw one QA `HKCU\Software\Classes\CLSID\...\LocalServer32` and AppUserModelId, while a same-user, same-session external caller saw neither. Both callers had medium integrity, no restricted SIDs and belonged to a Job; Job membership alone does not explain the difference. Registering and invoking outside Codex succeeded with `0x00000000`. No matching DistributedCOM failure event was found. An Application event from a separate clean-environment check reported the QA probe's missing global .NET 10 runtime; publishing the probe as self-contained fixed that deployment issue. Real notification-banner clicks, real installed task/Harness activation and system notification-setting changes still need user acceptance, so notification preview coverage remains partial.
 
 ## Local acceptance
+
+Welcome, What's New, Help and Support behavior and validation are described in [Windows guide pages](windows-guide-pages.md). Use `--welcome` or `--whats-new` with a demo instance for synthetic checks; demo runs never record either page as seen.
 
 Use demo data for screenshots and interaction checks:
 

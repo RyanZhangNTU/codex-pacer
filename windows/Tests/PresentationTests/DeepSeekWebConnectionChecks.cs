@@ -63,10 +63,11 @@ internal static class DeepSeekWebConnectionChecks
             await Menu(window, "settings.deepseek.account.switch");
             login = await Login(site); site.NormalBalance = "35.60"; await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
-            await Menu(window, "settings.deepseek.account.switch"); login = await Login(site);
             site.Hold = true;
             await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot!.DeepseekConnection!.Context });
             await Until(() => site.Deferred != null);
+            // The old-account read must begin before login revokes profile reads.
+            await Menu(window, "settings.deepseek.account.switch"); login = await Login(site);
             await Source(window, settings, "apiKey");
             var key = Find<PasswordBox>(window, "settings.deepseek.key.input"); key.Password = "sk-synthetic-web-switch-key-0000";
             Invoke(Find<Button>(window, "settings.deepseek.key.save"));
@@ -220,6 +221,7 @@ internal static class DeepSeekWebConnectionChecks
         internal bool FailClear;
         internal bool Unavailable;
         public bool Available => !Unavailable && session.Available;
+        public bool SignInWasNew => session.SignInWasNew;
         public Task<DeepSeekWebReply> ReadAsync(CancellationToken cancellation) => session.ReadAsync(cancellation);
         public Task<bool> SignInAsync() => session.SignInAsync();
         public Task ClearAsync(CancellationToken cancellation) => FailClear ? Task.FromException(new IOException("Synthetic profile clear failure")) : session.ClearAsync(cancellation);

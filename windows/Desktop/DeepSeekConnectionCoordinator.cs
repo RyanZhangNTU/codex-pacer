@@ -23,6 +23,7 @@ internal sealed class DeepSeekConnectionCoordinator : IAsyncDisposable
     private volatile bool disposed;
     private bool started;
     private bool unsupported;
+    private Guid? signInOwner;
     private bool? hostAvailability;
     internal string? LastFailure { get; private set; }
     internal bool IsOfflineDemo => !bridgeEnabled;
@@ -64,7 +65,7 @@ internal sealed class DeepSeekConnectionCoordinator : IAsyncDisposable
             return;
         }
         if (cancelled.Remove(request.RequestID) || reads.ContainsKey(request.RequestID)) return;
-        if (!Available || reads.Count >= 4 || !Current(request.Context) || engine.LatestSnapshot?.DeepseekConnection?.Mode == "apiKey")
+        if (!Available || signInOwner != null || reads.Count >= 4 || !Current(request.Context) || engine.LatestSnapshot?.DeepseekConnection?.Mode == "apiKey")
         { _ = Reply(request, new("offline")); return; }
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         reads[request.RequestID] = cancellation;
@@ -103,9 +104,19 @@ internal sealed class DeepSeekConnectionCoordinator : IAsyncDisposable
     }
     private async Task<bool> Connect(string context)
     {
-        if (!await session.SignInAsync() || !Current(context) || engine.LatestSnapshot?.DeepseekConnection?.Mode == "apiKey") return false;
-        try { await engine.SendAsync("deepSeekWebSessionChanged", new { balanceContext = context }); return true; }
-        catch (EngineCommandException error) when (error.Code == "staleSource") { return false; }
+        var owner = Guid.NewGuid(); signInOwner = owner;
+        foreach (var pending in reads.Values) pending.Cancel();
+        try
+        {
+            await engine.SendAsync("beginDeepSeekWebSignIn", new { balanceContext = context });
+            if (!await session.SignInAsync() || !Current(context) || engine.LatestSnapshot?.DeepseekConnection?.Mode == "apiKey") return false;
+            // Allow the forced read produced by the confirmation to use the new profile.
+            if (signInOwner == owner) signInOwner = null;
+            await engine.SendAsync("deepSeekWebSessionChanged", new { balanceContext = context, webNewSession = session.SignInWasNew }); return true;
+        }
+        catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
+        { LastFailure = error is EngineCommandException command ? command.Code : "offline"; return false; }
+        finally { if (signInOwner == owner) signInOwner = null; }
     }
     private sealed record DisconnectScope(string Context);
     internal async Task DisconnectAsync(string context)
