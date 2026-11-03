@@ -149,49 +149,38 @@ struct CompactIslandComponent: View {
     /// Expanded rings repeat these values in more detail, so the header quiets
     /// them instead of moving the row.
     static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
-        [.quota, .quotaGauge, .quotaLabel, .timeRemaining, .priceClock].contains(component)
+        CompactBarPresentation.dimsWhenExpanded(component)
     }
     private var dimmed: Bool { model.expanded && Self.dimsWhenExpanded(component) }
 
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
-        guard component.isAvailable(for: Set(model.enabledProviders)) else { return false }
-        switch component {
-        case .tps: return model.showsRate && model.rate != nil && (!showsStatus || !model.hidesHeaderRate)
-        case .warnings: return !activeWarnings(model).isEmpty
-        case .quotaGauge: return !model.compactRingProviders.isEmpty || model.compactGaugeShowsPriceClock
-        default: return true
+        if component == .tps {
+            return CompactBarPresentation.rateIsVisible(context: model.compactTaskContext, attached: model.isAttached,
+                strip: model.sideDock != nil, showsStatus: showsStatus, language: L10n.language)
         }
+        return model.compactComponent(component, showsStatus: showsStatus).visible
     }
     /// Alternation skips providers without a value, so an unavailable service
     /// never spends half the time as a dash; with none known, the first shows one.
     static func alternatingProviders(_ model: IslandModel) -> [AgentProvider] {
-        let providers = model.enabledProviders
-        let known = providers.filter {
-            $0 == .deepseek ? model.deepseekBalance != nil || model.deepseekValueShowsBudget : model.compactQuotaValue($0) != nil
-        }
-        return known.isEmpty ? Array(providers.prefix(1)) : known
+        model.compactComponent(.quota).entries.map(\.provider)
     }
     /// Enabled warnings whose condition holds now, in display order. DeepSeek
     /// shows only its most urgent alert; an empty wallet shows even when its
     /// reminder is off.
     static func activeWarnings(_ model: IslandModel) -> [CompactIslandLayout.Warning] {
-        let enabled = model.compactLayout.warnings
-        var result = CompactIslandLayout.Warning.allCases.filter { warning in
-            guard enabled.contains(warning) else { return false }
-            switch warning {
-            case .fiveHour: return !fiveHourAlerts(model).isEmpty
-            case .ssh: return model.hasSSHConnectionIssue
-            case .quotaDelay: return !delayedQuotaProviders(model).isEmpty
-            case .lowBalance, .spendSpike, .budget: return false
+        model.compactWarningItems.reduce(into: []) { result, item in
+            let warning: CompactIslandLayout.Warning
+            switch item.kind {
+            case .fiveHour: warning = .fiveHour
+            case .ssh: warning = .ssh
+            case .quotaDelay: warning = .quotaDelay
+            case .spike: warning = .spendSpike
+            case .overBudget, .nearingBudget: warning = .budget
+            case .exhausted, .lowBalance: warning = .lowBalance
             }
+            if !result.contains(warning) { result.append(warning) }
         }
-        switch model.deepseekAlert {
-        case nil: break
-        case .exhausted?, .lowBalance?: result.append(.lowBalance)
-        case .spike?: result.append(.spendSpike)
-        case .overBudget?, .nearingBudget?: result.append(.budget)
-        }
-        return result
     }
     static func fiveHourAlerts(_ model: IslandModel) -> [(provider: AgentProvider, alert: FiveHourQuotaAlert)] {
         model.enabledProviders.compactMap { provider in
@@ -200,12 +189,7 @@ struct CompactIslandComponent: View {
     }
     /// A late DeepSeek balance dims its ring and value instead of adding a mark.
     private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
-        model.enabledProviders.filter { provider in
-            guard provider != .deepseek else { return false }
-            return model.providerQuotaError(provider) != nil ||
-                model.providerQuota(provider)?.isStale(at: model.now) == true ||
-                model.providerSelectedWindow(provider)?.resetsAt.map({ $0 <= model.now }) == true
-        }
+        model.warningItems(warnings: [.quotaDelay]).first { $0.kind == .quotaDelay }?.affectedProviders.compactMap(AgentProvider.init(rawValue:)) ?? []
     }
     var body: some View {
         Button(action: action) {
@@ -215,8 +199,8 @@ struct CompactIslandComponent: View {
             .buttonStyle(.plain)
             .lineLimit(1)
             .help(help)
-            .opacity(dimmed ? 0.3 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: dimmed)
+            .opacity(dimmed ? CompactBarPresentation.expandedOpacity : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: CompactBarPresentation.dimDuration), value: dimmed)
     }
     @ViewBuilder private var content: some View {
         switch component {
@@ -233,7 +217,7 @@ struct CompactIslandComponent: View {
                 Text("t/s").font(.system(size: 9, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
             }.fixedSize(horizontal: true, vertical: false)
         case .firstOutput:
-            Text(model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—")
+            Text(model.compactComponent(.firstOutput).text ?? "—")
                 .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(L10n.text("performance.first_output", model.latestFirstOutputLatency.map { String(format: "%.2f s", $0) } ?? "—"))
@@ -255,15 +239,8 @@ struct CompactIslandComponent: View {
             .accessibilityLabel(providers.map { L10n.text("provider.compact_quota", $0.displayName, quotaText($0)) }.joined(separator: ", "))
         case .quotaGauge:
             if model.compactGaugeShowsPriceClock { priceClock } else {
-                QuotaRingsGlyph(rings: model.compactRingProviders.map { provider in
-                    if provider == .deepseek {
-                        let budget = model.deepseekWallet.ringBudget(prefer: model.deepseekRingPeriod)
-                        return .init(tint: provider.tint, remaining: budget.map { max(0, $0.remaining) / $0.limit * 100 },
-                            stale: model.deepseekWalletDimmed)
-                    }
-                    let window = model.providerSelectedWindow(provider)
-                    return .init(tint: provider.tint, remaining: model.providerQuotaError(provider) == nil ? window?.remainingPercent : nil,
-                        stale: model.providerQuotaIsStale(provider))
+                QuotaRingsGlyph(rings: model.compactPresentation().rings.map { ring in
+                    .init(tint: ring.provider.tint, remaining: ring.remaining, stale: ring.dimmed)
                 })
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(gaugeSummary)
@@ -380,38 +357,7 @@ struct CompactIslandComponent: View {
             }
         }
     }
-    private var fiveHourSummary: String {
-        Self.fiveHourAlerts(model).map { item in
-            switch item.alert {
-            case .low(let remaining): L10n.text("quota.five_hour_low", item.provider.displayName, "\(Int(remaining.rounded()))%")
-            case .exhausted: L10n.text("quota.five_hour_exhausted", item.provider.displayName)
-            }
-        }.joined(separator: " · ")
-    }
-    private var warningSummary: String {
-        Self.activeWarnings(model).map { warning in
-            switch warning {
-            case .fiveHour: fiveHourSummary
-            case .ssh: L10n.text("source.ssh_retrying")
-            case .quotaDelay: Self.delayedQuotaProviders(model).map(\.displayName).joined(separator: " · ")
-                + " · " + warning.label
-            case .lowBalance, .spendSpike, .budget: deepseekAlertSummary
-            }
-        }.joined(separator: "\n")
-    }
-    private var deepseekAlertSummary: String {
-        let wallet = model.deepseekWallet
-        switch model.deepseekAlert {
-        case .exhausted?: return "DeepSeek · " + L10n.text("deepseek.notice.exhausted")
-        case .lowBalance?: return "DeepSeek · " + L10n.text("deepseek.notice.low")
-        case .spike?: return "DeepSeek · " + L10n.text("deepseek.notice.spike")
-        case .overBudget(let kind)?: return "DeepSeek · " + L10n.text(kind == .day ? "deepseek.notice.day_over" : "deepseek.notice.week_over")
-        case .nearingBudget(let kind)?:
-            let used = Int(((wallet.budget(kind)?.usedFraction ?? 0.8) * 100).rounded())
-            return "DeepSeek · " + L10n.text(kind == .day ? "deepseek.alert.day_used" : "deepseek.alert.week_used", used)
-        case nil: return ""
-        }
-    }
+    private var warningSummary: String { CompactWarningPresentation.summary(model.compactWarningItems) }
     private var gaugeSummary: String {
         model.compactRingProviders.map { provider in
             if provider == .deepseek {

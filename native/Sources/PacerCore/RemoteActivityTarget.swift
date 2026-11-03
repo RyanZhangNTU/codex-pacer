@@ -20,11 +20,12 @@ public struct RemoteActivityTarget: Equatable, Sendable {
     public var effectiveSSHHost: String { sshDestination ?? alias }
 
     /// Arguments are passed individually, never interpolated into a shell.
-    public func sshArguments(terminal: Bool = false) -> [String]? {
+    public func sshArguments(terminal: Bool = false, validDestination: (String) -> Bool,
+                             validIdentityFile: ((String) -> Bool)? = nil) -> [String]? {
         guard alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil,
-              ClaudeSSHRouteResolver.validDestination(effectiveSSHHost),
+              validDestination(effectiveSSHHost),
               sshPort.map({ (1...65535).contains($0) }) ?? true,
-              sshIdentityFile.map(Self.validIdentityFile) ?? true else { return nil }
+              sshIdentityFile.map(validIdentityFile ?? Self.validIdentityFile) ?? true else { return nil }
         var args = [terminal ? "-t" : "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
                     "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
         if !terminal { args += ["-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2"] }
@@ -39,9 +40,9 @@ public struct RemoteActivityTarget: Equatable, Sendable {
     }
 
     public static func configured(home: URL) -> [RemoteActivityTarget] { readConfiguration(home: home) ?? [] }
-    public static func claudeConfigured(codexHome: URL, claudeHome: URL,
-                                        userHome: URL = FileManager.default.homeDirectoryForCurrentUser) async -> [RemoteActivityTarget] {
-        await ClaudeSSHDiscovery.shared.configured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome)
+    public static func claudeConfigured(codexHome: URL, claudeHome: URL, userHome: URL,
+                                        discovery: ClaudeSSHDiscovery) async -> [RemoteActivityTarget] {
+        await discovery.configured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome)
     }
     /// Initial Codex routes are available without suspended SSH route reads.
     public static func claudeCodexTargets(home: URL) -> [RemoteActivityTarget] {

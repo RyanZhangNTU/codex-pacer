@@ -1,5 +1,7 @@
 import Foundation
-import Security
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// The DeepSeek platform wallet in CNY. Granted credit is spent first.
 public struct DeepSeekBalance: Equatable, Sendable {
@@ -14,15 +16,23 @@ public struct DeepSeekBalance: Equatable, Sendable {
     public let alertBound: Double?
     public let capturedAt: Date
     public let source: Source
+    /// The existing page-token digest, kept only in memory until HMAC binding.
+    public let sessionFingerprint: String?
     public init(total: Double, granted: Double? = nil, available: Bool = true, tokenEstimation: Double? = nil,
-                alertBound: Double? = nil, capturedAt: Date, source: Source) {
+                alertBound: Double? = nil, capturedAt: Date, source: Source, sessionFingerprint: String? = nil) {
         self.total = total; self.granted = granted; self.available = available; self.tokenEstimation = tokenEstimation
-        self.alertBound = alertBound; self.capturedAt = capturedAt; self.source = source
+        self.alertBound = alertBound; self.capturedAt = capturedAt; self.source = source; self.sessionFingerprint = sessionFingerprint
     }
     public var isExhausted: Bool { !available || total <= 0.005 }
     public func isStale(at now: Date) -> Bool { now.timeIntervalSince(capturedAt) > 600 }
 
-    static func amount(_ value: Any?) -> Double? {
+    public static func sessionIdentity(_ raw: Any?) -> String? {
+        guard let value = raw as? String, value.utf8.count == 64,
+              value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        return value
+    }
+
+    package static func amount(_ value: Any?) -> Double? {
         let number: Double?
         switch value {
         case let text as String: number = Double(text.trimmingCharacters(in: .whitespaces))
@@ -53,6 +63,11 @@ public struct DeepSeekBalance: Equatable, Sendable {
         case "ok": break
         default: throw DeepSeekBalanceError.invalidReply
         }
+        let fingerprint: String?
+        if let raw = reply["sessionFingerprint"] {
+            guard let verified = sessionIdentity(raw) else { throw DeepSeekBalanceError.invalidReply }
+            fingerprint = verified
+        } else { fingerprint = nil }
         let normal = (reply["normal"] as? [Any] ?? []).compactMap(amount), bonus = (reply["bonus"] as? [Any] ?? []).compactMap(amount)
         guard !(normal.isEmpty && bonus.isEmpty) else {
             throw reply["otherCurrency"] as? Bool == true ? DeepSeekBalanceError.unsupportedCurrency : DeepSeekBalanceError.invalidReply
@@ -60,7 +75,7 @@ public struct DeepSeekBalance: Equatable, Sendable {
         let total = normal.reduce(0, +) + bonus.reduce(0, +)
         let alert = reply["alertEnabled"] as? Bool == true ? amount(reply["alertBound"]) : nil
         return Self(total: total, granted: bonus.reduce(0, +), available: total > 0, tokenEstimation: amount(reply["estimation"]),
-            alertBound: alert, capturedAt: date, source: .web)
+            alertBound: alert, capturedAt: date, source: .web, sessionFingerprint: fingerprint)
     }
 }
 
@@ -82,42 +97,25 @@ public enum DeepSeekBalanceError: Error, LocalizedError, Equatable {
     public var needsConnection: Bool { [.signedOut, .missingKey, .invalidKey, .challenge].contains(self) }
 }
 
-/// A key pasted into Pacer, kept in Pacer's own login-keychain item. It is
-/// sent only to the balance endpoint and never written to preferences or logs.
-public enum DeepSeekAPIKeyStore {
-    static let service = "Codex Pacer DeepSeek balance"
-    static let account = "api-key"
-    private static var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-    }
+/// A user-supplied balance key. Storage is supplied by the host.
+public struct DeepSeekAPIKeyStore: Sendable {
+    private let store: any PlatformCredentialStore
+    public init(store: any PlatformCredentialStore) { self.store = store }
     public static func validated(_ raw: String) -> String? {
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard key.utf8.count >= 16, key.utf8.count <= 256,
               key.range(of: #"^[A-Za-z0-9._-]+\z"#, options: .regularExpression) != nil else { return nil }
         return key
     }
-    public static func read() -> String? {
-        var request = query
-        request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8).flatMap(validated)
+    public func read() -> String? {
+        store.read().flatMap { String(data: $0, encoding: .utf8) }.flatMap(Self.validated)
     }
-    public static var exists: Bool {
-        var request = query; request[kSecReturnAttributes as String] = true
-        return SecItemCopyMatching(request as CFDictionary, nil) == errSecSuccess
+    public var hasKey: Bool { store.exists }
+    @discardableResult public func save(_ raw: String) -> Bool {
+        guard let key = Self.validated(raw) else { return false }
+        return store.save(Data(key.utf8))
     }
-    @discardableResult public static func save(_ raw: String) -> Bool {
-        guard let key = validated(raw) else { return false }
-        let data = Data(key.utf8)
-        let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if update == errSecSuccess { return true }
-        guard update == errSecItemNotFound else { return false }
-        var item = query
-        item[kSecValueData as String] = data; item[kSecAttrLabel as String] = "Codex Pacer DeepSeek balance key"
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
-    }
-    public static func remove() { _ = SecItemDelete(query as CFDictionary) }
+    public func remove() { store.remove() }
 }
 
 public enum DeepSeekAPIBalanceClient {

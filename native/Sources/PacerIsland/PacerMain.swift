@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import SwiftUI
 import PacerCore
@@ -8,6 +9,7 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 @main
 enum PacerMain {
     @MainActor static func main() {
+        L10n.configureResources(bundle: MacResources.bundle)
         if let index = CommandLine.arguments.firstIndex(of: "--diagnose-claude-cache") {
             let action = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : ""
             let result = ClaudeQuotaClient.credentialCacheDiagnostics(action: action)
@@ -257,7 +259,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         model.onRelaunch = { [weak self] in self?.relaunchForLanguage() }
         model.onClaudeLogin = { [weak self] in
             self?.model.close()
-            ClaudeWebLogin.open { [weak self] in self?.model.retryClaudeWebConnection(afterSignIn: true) }
+            ClaudeWebLogin.open { [weak self] newSession in self?.model.retryClaudeWebConnection(afterSignIn: newSession) }
         }
         model.onClaudeOrganizationSelection = { [weak self] organizations in
             self?.model.close()
@@ -540,9 +542,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         ClaudeWebLogin.close()
         if let reopenObserver { DistributedNotificationCenter.default().removeObserver(reopenObserver) }
         panel.stop()
-        Task {
-            await model.shutdown()
+        let deadline = ShutdownDeadline(), model = self.model
+        // This reply also runs if cooperative cleanup tasks never resume.
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShutdownDeadline.maximumWait) {
+            OwnedProcessTermination.terminateAll()
             sender.reply(toApplicationShouldTerminate: true)
+        }
+        Task { @MainActor in
+            await deadline.perform([{ await model?.shutdown() }])
         }
         return .terminateLater
     }

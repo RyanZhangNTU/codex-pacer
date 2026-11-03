@@ -27,7 +27,7 @@ final class DeepSeekIslandTests: XCTestCase {
 
     func testTurnCostFollowsItsSettingAndDisablingDeepSeekKeepsTheOtherModule() async throws {
         let (defaults, _) = try defaults(ProviderModules(codexMode: .enabled, claudeMode: .disabled, deepseekMode: .enabled))
-        let model = IslandModel(demo: true, defaults: defaults, installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults, installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
         model.activities = []
         let session = "019a0000-0000-7000-8000-000000000a01"
         let codex = ended(.codex, session: session, cost: 0.5), deepseek = ended(.deepseek, session: session, cost: 0.42)
@@ -54,6 +54,55 @@ final class DeepSeekIslandTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testLiveProjectionPreservesPreDisableCompletionsAndDeepSeekRequests() async throws {
+        let now = Date()
+        let session = "019a0000-0000-7000-8000-000000000a21"
+        var codex = ended(.codex, session: session)
+        codex.setCodexOrigin(.init(embedded: true, ignored: false))
+        let deepseek = ended(.deepseek, session: "019a0000-0000-7000-8000-000000000a22")
+        let request = PendingAttentionRequest(id: "synthetic-pre-disable-request", threadID: session,
+            sourceHostID: nil, sourceName: nil, kind: .input, detectedAt: now.addingTimeInterval(-2), provider: .deepseek)
+        var retained = CompletionInbox()
+        retained.observe([codex], at: now, retention: 0)
+
+        // The inbox and queued update predate these module choices. Source
+        // cleanup owns disabling; the live projection keeps its existing rules.
+        let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .disabled))
+        let root = URL(fileURLWithPath: try XCTUnwrap(defaults.string(forKey: "deepseekHome")))
+        defaults.set(root.appendingPathComponent("codex").path, forKey: "codexHome")
+        defaults.set(root.appendingPathComponent("claude").path, forKey: "claudeHome")
+        defaults.set(false, forKey: "monitorRemoteControl")
+        defaults.set(false, forKey: "systemNotifications")
+        let model = IslandModel(demo: false, defaults: defaults,
+            installation: .init(codexInstalled: false, claudeInstalled: false),
+            completionDismissalStore: CompletionDismissalStore(fileURL: root.appendingPathComponent("dismissals.json")))
+        model.hostApplicationResolver = { _, _, _ in [:] }
+        model.completionInbox = retained
+        model.refilterEmbeddedSessions()
+        XCTAssertFalse(model.isDemo)
+        XCTAssertTrue(model.enabledProviders.isEmpty)
+        XCTAssertEqual(model.visibleActivities.map(\.id), [codex.id])
+        XCTAssertTrue(model.isUnreadCompletion(codex))
+
+        model.receiveDeepSeekUpdate([deepseek], statuses: [:], requests: [request])
+        let endings: Set<String> = [codex.id, deepseek.id]
+        let visible = endings.union([request.activity.id])
+        XCTAssertEqual(Set(model.activities.map(\.id)), endings)
+        XCTAssertEqual(Set(model.visibleActivities.map(\.id)), visible)
+        XCTAssertEqual(Set(model.pendingCompletions.map(\.id)), endings)
+        XCTAssertEqual(model.pendingInputRequests, [request])
+
+        model.receiveDeepSeekUpdate([], statuses: [:], requests: [request])
+        XCTAssertEqual(Set(model.visibleActivities.map(\.id)), visible, "Reader eviction keeps independently retained cards")
+        XCTAssertEqual(model.pendingInputRequests, [request])
+        defaults.set(false, forKey: IslandModel.showsEmbeddedCodexSessionsKey)
+        model.refilterEmbeddedSessions()
+        XCTAssertEqual(Set(model.visibleActivities.map(\.id)), [deepseek.id, request.activity.id])
+        XCTAssertEqual(model.pendingInputRequests, [request], "Hiding a Codex session cannot hide the DeepSeek request with the same UUID")
+        XCTAssertTrue(model.isUnreadCompletion(codex), "Hiding still does not acknowledge the retained ending")
+        await model.shutdown()
+    }
+
     func testBalanceReadsFollowTheChosenSourceAndStopAskingAfterARejectedKey() async throws {
         let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
         defaults.set(DeepSeekBalanceSource.apiKey.rawValue, forKey: DeepSeekBalanceSource.defaultsKey)
@@ -68,7 +117,7 @@ final class DeepSeekIslandTests: XCTestCase {
         }
         model.deepseekBalanceReads.web = {
             webReads += 1
-            return DeepSeekBalance(total: 120, alertBound: 150, capturedAt: Date(), source: .web)
+            return DeepSeekBalance(total: 120, alertBound: 150, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))
         }
         func settle() async {
             for _ in 0..<200 where model.deepseekRefreshing { try? await Task.sleep(nanoseconds: 5_000_000) }
@@ -110,17 +159,17 @@ final class DeepSeekIslandTests: XCTestCase {
     func testBalanceNoticesFireOnceEachTimeTheLineIsCrossed() {
         let now = Date()
         func wallet(_ total: Double) -> DeepSeekWallet {
-            DeepSeekWallet(balance: DeepSeekBalance(total: total, capturedAt: now, source: .web), connected: true,
+            DeepSeekWallet(balance: DeepSeekBalance(total: total, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)), connected: true,
                 ledger: DeepSeekSpendLedger(), now: now)
         }
-        var attention = DeepSeekBalanceAttention()
-        XCTAssertTrue(attention.notices(wallet(50)).isEmpty)
-        XCTAssertEqual(attention.notices(wallet(8)).map(\.id), ["deepseek:balance:low"])
-        XCTAssertTrue(attention.notices(wallet(7)).isEmpty, "Staying low does not repeat")
-        XCTAssertEqual(attention.notices(wallet(0)).map(\.id), ["deepseek:balance:exhausted"])
-        XCTAssertTrue(attention.notices(wallet(5)).isEmpty, "A small top-up after running out is not a new low warning")
-        XCTAssertTrue(attention.notices(wallet(80)).isEmpty)
-        let again = attention.notices(wallet(9))
+        var attention = DeepSeekNoticePolicy()
+        XCTAssertTrue(attention.balanceNotices(wallet(50)).isEmpty)
+        XCTAssertEqual(attention.balanceNotices(wallet(8)).map(\.id), ["deepseek:balance:low"])
+        XCTAssertTrue(attention.balanceNotices(wallet(7)).isEmpty, "Staying low does not repeat")
+        XCTAssertEqual(attention.balanceNotices(wallet(0)).map(\.id), ["deepseek:balance:exhausted"])
+        XCTAssertTrue(attention.balanceNotices(wallet(5)).isEmpty, "A small top-up after running out is not a new low warning")
+        XCTAssertTrue(attention.balanceNotices(wallet(80)).isEmpty)
+        let again = attention.balanceNotices(wallet(9))
         XCTAssertEqual(again.map(\.id), ["deepseek:balance:low"], "Crossing again after recovering warns again")
         XCTAssertEqual(again.first?.kind, .lowQuota, "Balance notices stay readable when project names are hidden")
     }
@@ -132,10 +181,10 @@ final class DeepSeekIslandTests: XCTestCase {
             ledger = DeepSeekSpendLedger()
             ledger.record(id: "early", at: Calendar.current.startOfDay(for: now).addingTimeInterval(1), cost: spent)
             if recent { ledger.record(id: "recent", at: now.addingTimeInterval(-60), cost: 6) }
-            return DeepSeekWallet(balance: DeepSeekBalance(total: 80, capturedAt: now, source: .web), connected: true,
+            return DeepSeekWallet(balance: DeepSeekBalance(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)), connected: true,
                 ledger: ledger, now: now, budgets: DeepSeekBudgets(daily: 10), spikeLimit: 5)
         }
-        var attention = DeepSeekBalanceAttention()
+        var attention = DeepSeekNoticePolicy()
         func ids(_ wallet: DeepSeekWallet, snoozed: Date = .distantPast) -> [String] {
             attention.spendNotices(wallet, spike: true, budget: true, snoozedUntil: snoozed, now: now).map { $0.id.components(separatedBy: ":").prefix(2).joined(separator: ":") }
         }
@@ -189,9 +238,9 @@ final class DeepSeekIslandTests: XCTestCase {
         var delivered: [UNNotificationRequest] = []
         model.notifications = NotificationDelivery(defaults: defaults, authorizationStatus: { .authorized }, addRequest: { delivered.append($0) })
         let now = Date()
-        var ledger = DeepSeekSpendLedger(), attention = DeepSeekBalanceAttention()
+        var ledger = DeepSeekSpendLedger(), attention = DeepSeekNoticePolicy()
         func wallet() -> DeepSeekWallet {
-            DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web), connected: true,
+            DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)), connected: true,
                 ledger: ledger, now: now, budgets: .init(daily: 5, weekly: 5), spikeLimit: 5)
         }
         XCTAssertTrue(attention.spendNotices(wallet(), spike: true, budget: true, snoozedUntil: .distantPast, now: now).isEmpty)
@@ -320,7 +369,7 @@ final class DeepSeekIslandTests: XCTestCase {
                 await waitUntil { api != nil }
                 let replacement = try XCTUnwrap(model.deepseekBalanceTask)
                 let stale: Result<DeepSeekBalance, DeepSeekBalanceError> = staleSucceeds
-                    ? .success(.init(total: 1, capturedAt: Date(), source: .web)) : .failure(.signedOut)
+                    ? .success(.init(total: 1, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))) : .failure(.signedOut)
                 let fresh = DeepSeekBalance(total: 80, capturedAt: Date(), source: .apiKey)
                 if staleReturnsFirst {
                     try XCTUnwrap(web).resume(returning: stale); await obsolete.value
@@ -342,6 +391,75 @@ final class DeepSeekIslandTests: XCTestCase {
         }
     }
 
+    func testSignInReplacesPendingReadsAndOnlyNewSessionsClearHistory() async throws {
+        for newSession in [false, true] {
+            for staleSucceeds in [true, false] {
+                for staleReturnsFirst in [true, false] {
+                    let (model, defaults) = try balanceModel(source: .web)
+                    let now = Date()
+                    var history = DeepSeekBalanceHistory()
+                    history.record(total: 100, at: now.addingTimeInterval(-600), source: "web")
+                    history.record(total: 95, at: now.addingTimeInterval(-60), source: "web")
+                    history.save(to: defaults); model.deepseekHistory = history
+                    var oldRead: CheckedContinuation<Result<DeepSeekBalance, DeepSeekBalanceError>, Never>?
+                    var newRead: CheckedContinuation<Result<DeepSeekBalance, DeepSeekBalanceError>, Never>?
+                    var reads = 0
+                    defer {
+                        model.cancelDeepSeekBalanceRead()
+                        oldRead?.resume(returning: .failure(.connectionFailed))
+                        newRead?.resume(returning: .failure(.connectionFailed))
+                    }
+                    model.deepseekBalanceReads.web = {
+                        reads += 1
+                        return try await withCheckedContinuation { continuation in
+                            if reads == 1 { oldRead = continuation } else { newRead = continuation }
+                        }.get()
+                    }
+                    model.refreshDeepSeekBalance(force: true)
+                    await waitUntil { oldRead != nil }
+                    let obsolete = try XCTUnwrap(model.deepseekBalanceTask)
+
+                    model.completeDeepSeekSignIn(newSession: newSession)
+                    var expectedHistory = newSession ? DeepSeekBalanceHistory() : history
+                    XCTAssertEqual(model.deepseekHistory, expectedHistory)
+                    XCTAssertEqual(DeepSeekBalanceHistory.load(from: defaults), expectedHistory,
+                        "Only a new session removes saved account readings")
+                    await waitUntil { newRead != nil }
+                    let replacement = try XCTUnwrap(model.deepseekBalanceTask)
+                    let stale: Result<DeepSeekBalance, DeepSeekBalanceError> = staleSucceeds
+                        ? .success(.init(total: 1, capturedAt: now.addingTimeInterval(10), source: .web, sessionFingerprint: String(repeating: "1", count: 64))) : .failure(.challenge)
+                    let fresh = DeepSeekBalance(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64))
+                    if staleReturnsFirst {
+                        let pending = try XCTUnwrap(oldRead); oldRead = nil
+                        pending.resume(returning: stale); await obsolete.value
+                        XCTAssertTrue(model.deepseekRefreshing, "A pre-sign-in result cannot release the new read's slot")
+                        XCTAssertNotNil(model.deepseekBalanceTask)
+                        XCTAssertNil(model.deepseekBalance)
+                        XCTAssertNil(model.deepseekBalanceError)
+                        let current = try XCTUnwrap(newRead); newRead = nil
+                        current.resume(returning: .success(fresh)); await replacement.value
+                    } else {
+                        let current = try XCTUnwrap(newRead); newRead = nil
+                        current.resume(returning: .success(fresh)); await replacement.value
+                        let pending = try XCTUnwrap(oldRead); oldRead = nil
+                        pending.resume(returning: stale); await obsolete.value
+                    }
+                    expectedHistory.record(total: fresh.total, at: fresh.capturedAt, source: "web",
+                        credentialFingerprint: DeepSeekHistoryCredential(defaults: defaults).fingerprint(source: .web, identity: String(repeating: "1", count: 64)))
+                    XCTAssertEqual(reads, 2)
+                    XCTAssertEqual(model.deepseekBalance, fresh)
+                    XCTAssertNil(model.deepseekBalanceError)
+                    XCTAssertFalse(model.deepseekConnectionNeeded)
+                    XCTAssertFalse(model.deepseekRefreshing)
+                    XCTAssertEqual(model.deepseekFailureCount, 0)
+                    XCTAssertEqual(model.deepseekHistory, expectedHistory, "A stale result cannot record a balance drop")
+                    XCTAssertEqual(DeepSeekBalanceHistory.load(from: defaults), expectedHistory)
+                    await model.shutdown()
+                }
+            }
+        }
+    }
+
     func testAutomaticBillingChangeClearsOldConnectionErrorInBothDirections() async throws {
         for startsWithAccount in [true, false] {
             let (model, _) = try balanceModel(source: .automatic)
@@ -349,7 +467,7 @@ final class DeepSeekIslandTests: XCTestCase {
             model.deepseekBalanceReads.web = {
                 webReads += 1
                 if startsWithAccount { throw DeepSeekBalanceError.signedOut }
-                return .init(total: 120, capturedAt: Date(), source: .web)
+                return .init(total: 120, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))
             }
             model.deepseekBalanceReads.api = { _ in
                 apiReads += 1
@@ -390,7 +508,7 @@ final class DeepSeekIslandTests: XCTestCase {
         await waitUntil { web != nil }
         let obsolete = try XCTUnwrap(model.deepseekBalanceTask)
         try "provider: deepseek-official\n".write(to: profile, atomically: true, encoding: .utf8)
-        try XCTUnwrap(web).resume(returning: .init(total: 1, capturedAt: Date(), source: .web))
+        try XCTUnwrap(web).resume(returning: .init(total: 1, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64)))
         await obsolete.value
         await waitUntil { model.deepseekBalance?.source == .apiKey }
         XCTAssertEqual(apiReads, 1)

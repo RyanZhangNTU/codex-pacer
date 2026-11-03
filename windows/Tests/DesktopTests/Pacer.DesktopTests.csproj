@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Pacer.DesktopTests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
+    <Compile Include="../../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <Compile Include="../../Desktop/WinSparkleNative.cs" Link="WinSparkleNative.cs"/>
+    <Compile Include="../../Desktop/WindowsUpdateService.cs" Link="WindowsUpdateService.cs"/>
+    <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
+    <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
+    <Compile Include="../../Desktop/ConnectionActions.cs" Link="ConnectionActions.cs"/>
+    <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
+    <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
+    <Compile Include="../../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
+    <Compile Include="../../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
+    <Compile Include="../../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>
+    <Compile Include="../../Desktop/PreferencesAcknowledgement.cs" Link="PreferencesAcknowledgement.cs"/>
+
+    <Compile Include="../../Desktop/PreferencesSession.cs" Link="PreferencesSession.cs"/>
+    <Compile Include="../../Desktop/GuidePages.cs" Link="GuidePages.cs"/>
+    <Compile Include="../../Desktop/StartupPresentation.cs" Link="StartupPresentation.cs"/>
+    <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>
+    <Compile Include="../../Desktop/NotificationSession.cs" Link="NotificationSession.cs"/>
+    <Compile Include="../../Desktop/NotificationActions.cs" Link="NotificationActions.cs"/>
+    <Compile Include="../../Desktop/WindowsSettingsServices.cs" Link="WindowsSettingsServices.cs"/>
+    <Compile Include="../../Desktop/WindowsStartupRegistration.cs" Link="WindowsStartupRegistration.cs"/>
+    <Compile Include="../../Desktop/WindowsInstallationIdentity.cs" Link="WindowsInstallationIdentity.cs"/>
+    <Compile Include="../../Desktop/WindowsMaintenanceSignal.cs" Link="WindowsMaintenanceSignal.cs"/>
+    <Compile Include="../../Desktop/WindowsInstallShortcuts.cs" Link="WindowsInstallShortcuts.cs"/>
+    <Compile Include="../../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
+    <Compile Include="../../Desktop/WindowsNotificationRegistration.cs" Link="WindowsNotificationRegistration.cs"/>
+    <Compile Include="../../Desktop/WindowsConversationApplication.cs" Link="WindowsConversationApplication.cs"/>
+    <Compile Include="../../Desktop/WindowsWslTerminal.cs" Link="WindowsWslTerminal.cs"/>
+    <Compile Include="../../Desktop/WindowsSshTerminal.cs" Link="WindowsSshTerminal.cs"/>
+    <Compile Include="../../Desktop/WindowsHarnessApplication.cs" Link="WindowsHarnessApplication.cs"/>
+    <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
+    <Compile Include="../../Desktop/NativeMotion.cs" Link="NativeMotion.cs"/>
+    <Compile Include="../../Desktop/NativeLayout.cs" Link="NativeLayout.cs"/>
+    <Compile Include="../../Desktop/BackdropPolicy.cs" Link="BackdropPolicy.cs"/>
+    <Compile Include="../../Desktop/WindowsPlatformPolicy.cs" Link="WindowsPlatformPolicy.cs"/>
+    <Compile Include="../../Desktop/BackdropController.cs" Link="BackdropController.cs"/>
+    <Compile Include="../../Desktop/QuotaAlternationSchedule.cs" Link="QuotaAlternationSchedule.cs"/>
+    <Compile Include="../../Desktop/FullscreenOcclusionPolicy.cs" Link="FullscreenOcclusionPolicy.cs"/>
+    <Compile Include="../../Desktop/TrailingRefreshThrottle.cs" Link="TrailingRefreshThrottle.cs"/>
+    <Compile Include="../../Desktop/DisplaySelection.cs" Link="DisplaySelection.cs"/>
+  </ItemGroup>
+</Project>

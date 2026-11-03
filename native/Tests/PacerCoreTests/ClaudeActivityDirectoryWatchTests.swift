@@ -1,3 +1,8 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -7,7 +12,12 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
     private let newSession = "cccccccc-3333-4333-8333-333333333333"
 
     private func fixture() throws -> (home: URL, alpha: URL, beta: URL, sessionDirectory: URL) {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-directory-" + UUID().uuidString)
+        #if canImport(PacerMacSupport)
+        let base = URL(fileURLWithPath: "/private/tmp")
+        #else
+        let base = FileManager.default.temporaryDirectory
+        #endif
+        let home = base.appendingPathComponent("pacer-claude-directory-" + UUID().uuidString)
         let alpha = home.appendingPathComponent("projects/alpha"), beta = home.appendingPathComponent("projects/beta")
         let sessionDirectory = alpha.appendingPathComponent(rootSession)
         try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
@@ -22,7 +32,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
 
     func testOrdinaryReadsKeepDiscoveredProjectAndNearestSubagentParentWatchesWithoutRescanning() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
-        var reader = ClaudeActivityReader()
+        var reader = ClaudeActivityReader(files: TestFileSystem())
         let first = reader.read(home: fixture.home, discover: true)
         let next = reader.read(home: fixture.home, discover: false)
         let inventory = Set(first.watchURLs.map(\.path))
@@ -83,4 +93,6 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertLessThanOrEqual(finalWatches, 32 + ClaudeActivityReader.maximumDirectoryWatches)
         await monitor.shutdown()
     }
+
+
 }

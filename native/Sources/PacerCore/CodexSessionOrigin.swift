@@ -14,7 +14,10 @@ public struct CodexSessionOrigin: Equatable, Sendable {
     public static func classify(originator: String?, cwd: String?) -> Self? {
         guard let originator, !originator.isEmpty, originator.utf8.count <= 256 else { return nil }
         let embedded = !officialClients.contains(originator)
-        let parts = (cwd ?? "").split(separator: "/")
+        let path = cwd ?? ""
+        let windows = path.hasPrefix("\\\\") || path.range(of: #"^[A-Za-z]:[\\/]"#, options: .regularExpression) != nil
+        let normalized = windows ? path.replacingOccurrences(of: "\\", with: "/").lowercased() : path
+        let parts = normalized.split(separator: "/")
         // Zotero Agent 0.14.0 uses these dedicated translation/catalog folders.
         // Its Codex ACP adapter ignores ephemeral, so these rollouts exist.
         let translation = parts.suffix(2).map(String.init) == ["zotero-chat", "translate"]
@@ -54,7 +57,10 @@ public struct CodexSessionOrigin: Equatable, Sendable {
     def codex_origin(originator,cwd):
         if not isinstance(originator,str) or not originator or len(originator.encode('utf-8'))>256:return None
         embedded=originator not in CODEX_OFFICIAL_CLIENTS
-        parts=[v for v in (cwd if isinstance(cwd,str) else '').split('/') if v]
+        path=cwd if isinstance(cwd,str) else ''
+        windows=path.startswith(chr(92)*2) or (len(path)>2 and ('A'<=path[0]<='Z' or 'a'<=path[0]<='z') and path[1]==':' and path[2] in ('/',chr(92)))
+        path=path.replace(chr(92),'/').lower() if windows else path
+        parts=[v for v in path.split('/') if v]
         ignored=embedded and (parts[-2:]==['zotero-chat','translate'] or bool(parts and parts[-1].startswith('zotero-chat-catalog.')))
         return {'embedded':embedded,'ignoredSession':ignored}
     """
@@ -67,11 +73,14 @@ public struct CodexRolloutMetadata: Sendable {
     public let url: URL
     public let observedAt: Date?
     public let parentThreadID: String?
+    package init(origin: CodexSessionOrigin, url: URL, observedAt: Date?, parentThreadID: String?) {
+        self.origin = origin; self.url = url; self.observedAt = observedAt; self.parentThreadID = parentThreadID
+    }
     private static let dates = LogDateParser()
     private static let marker = Data(#""session_meta""#.utf8)
     /// `head` is the header a caller already read with the same bounded loop,
     /// so the reader does not read each candidate's first line twice.
-    static func read(_ url: URL, threadID: String? = nil, head known: Data? = nil) -> Self? {
+    package static func read(_ url: URL, threadID: String? = nil, head known: Data? = nil) -> Self? {
         guard url.isFileURL, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
@@ -83,12 +92,12 @@ public struct CodexRolloutMetadata: Sendable {
                 head.append(chunk)
             }
         }
-        var rows = head.split(separator: 10).map(Data.init)
+        var rows: [Data] = head.split(separator: UInt8(10)).map { Data($0) }
         if size > UInt64(head.count), head.last != 10 { rows.removeLast() }
         if size > UInt64(head.count) {
             try? handle.seek(toOffset: size - min(size, 128 * 1024))
             let tail = (try? handle.read(upToCount: 128 * 1024)) ?? Data()
-            rows += tail.split(separator: 10).dropFirst().map(Data.init)
+            rows += tail.split(separator: UInt8(10)).dropFirst().map { Data($0) }
         }
         var found: Self?
         for row in rows {
@@ -114,13 +123,13 @@ public struct CodexRolloutMetadata: Sendable {
 }
 
 /// One lookup object per collector; no global profile or account cache.
-final class CodexOriginLookup {
+public final class CodexOriginLookup {
     private let home: URL
     private var files: [URL] = []
     private var scannedAt = Date.distantPast
     private var cache: [URL: (inode: UInt64, size: UInt64, modified: Date, value: CodexRolloutMetadata?)] = [:]
-    init(home: URL) { self.home = home }
-    func lookup(_ threadID: String) -> CodexRolloutMetadata? {
+    public init(home: URL) { self.home = home }
+    public func lookup(_ threadID: String) -> CodexRolloutMetadata? {
         lookup(threadID, visited: [])
     }
     private func lookup(_ threadID: String, visited: Set<String>) -> CodexRolloutMetadata? {

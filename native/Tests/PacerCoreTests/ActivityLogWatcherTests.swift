@@ -1,9 +1,14 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
 final class ActivityLogWatcherTests: XCTestCase {
     func testExpansionFlushesPendingFiveSecondAppendWithoutAnotherWrite() async throws {
-        let folder = URL(fileURLWithPath: "/private/tmp/pacer-watch-expand-" + String(UUID().uuidString.prefix(8)))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-watch-expand-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appendingPathComponent("fixture.jsonl")
@@ -23,7 +28,7 @@ final class ActivityLogWatcherTests: XCTestCase {
     }
 
     func testAppendAndDirectoryCreationWakeAndStoppingCancelsPendingDelivery() async throws {
-        let folder = URL(fileURLWithPath: "/private/tmp/pacer-watch-" + String(UUID().uuidString.prefix(8)))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-watch-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appendingPathComponent("fixture.jsonl")

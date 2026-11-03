@@ -1,0 +1,25 @@
+{
+  "syntheticOnly": true,
+  "physicalMonitorCount": 1,
+  "fullscreen": "borderless",
+  "styles": [
+    {
+      "appearance": "classic",
+      "scale": 1.5,
+      "hideRestore": true,
+      "aboveAllSurfaces": true,
+      "outsideHit": true,
+      "activated": false
+    },
+    {
+      "appearance": "liquidGlass",
+      "scale": 1.5,
+      "hideRestore": true,
+      "aboveAllSurfaces": true,
+      "outsideHit": true,
+      "activated": false
+    }
+  ],
+  "injectedTopology": true,
+  "windowsClosed": true
+}

@@ -19,17 +19,18 @@ struct DeepSeekDayDial: View {
     let size: CGFloat
 
     private var scale: CGFloat { size / 108 }
-    private var connectTitle: String? {
-        guard wallet.balance == nil, !model.deepseekRefreshing,
-              model.deepseekConnectionNeeded || model.deepseekBalanceMode == nil else { return nil }
-        return L10n.text(model.deepseekBalanceMode == .apiKey ? "deepseek.paste_key_short" : "deepseek.sign_in")
+    private var presentation: DeepSeekDialPresentation {
+        .init(wallet: wallet, at: model.now, refreshing: model.deepseekRefreshing,
+            needsConnection: model.deepseekConnectionNeeded || model.deepseekBalanceMode == nil,
+            apiKey: model.deepseekBalanceMode == .apiKey)
     }
+    private var connectTitle: String? { presentation.connectTitle }
 
     var body: some View {
         ZStack {
             DeepSeekDialFace(hourly: wallet.hourly, peak: wallet.peakToday.map { wallet.angle(of: $0.start)...wallet.angle(of: $0.end) },
                 now: wallet.angle(of: model.now), color: segmentColor)
-                .opacity(wallet.state == .stale && wallet.balance != nil ? 0.55 : 1)
+                .opacity(presentation.dimmedFace ? 0.55 : 1)
             centre
         }
         .frame(width: size, height: size)
@@ -39,14 +40,13 @@ struct DeepSeekDayDial: View {
     }
 
     @ViewBuilder private var centre: some View {
-        if let balance = wallet.balance {
+        if wallet.balance != nil {
             VStack(spacing: 2 * scale) {
-                let parts = String(format: "%.2f", max(0, balance.total)).split(separator: ".")
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text("¥").font(.system(size: 10 * scale, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
-                    Text(String(parts.first ?? "0")).font(.system(size: 21 * scale, weight: .semibold, design: .rounded))
-                        .foregroundStyle(wallet.state == .normal ? PacerPalette.primary : DeepSeekWalletColors.balance(wallet.state))
-                    Text("." + String(parts.last ?? "00")).font(.system(size: 9 * scale, weight: .semibold, design: .rounded))
+                    Text(presentation.balanceWhole).font(.system(size: 21 * scale, weight: .semibold, design: .rounded))
+                        .foregroundStyle(presentation.balanceTone.color)
+                    Text(presentation.balanceCents).font(.system(size: 9 * scale, weight: .semibold, design: .rounded))
                         .foregroundStyle(PacerPalette.secondary)
                 }
                 .monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
@@ -69,50 +69,28 @@ struct DeepSeekDayDial: View {
         }
     }
 
-    private var todayText: String { L10n.text("deepseek.today", Self.amount(wallet.todayTotal)) }
-    private var subtitle: String {
-        switch wallet.state {
-        case .exhausted: return L10n.text("deepseek.wallet.exhausted")
-        case .stale: return model.deepseekBalanceFreshness
-        default:
-            guard let days = wallet.runwayDays else { return todayText }
-            return days >= 365 ? L10n.text("deepseek.runway_year") : L10n.text("deepseek.runway_short", max(1, Int(days.rounded(.down))))
-        }
-    }
-    private var subtitleColor: Color {
-        switch wallet.state {
-        case .exhausted: PacerPalette.danger
-        case .stale: PacerPalette.tertiary
-        case .low: PacerPalette.attention
-        default: PacerPalette.secondary
-        }
-    }
-    private var segmentColor: Color {
-        switch wallet.state {
-        case .stale where wallet.balance != nil: Color(white: 0.36)
-        case .exhausted: PacerPalette.danger
-        default: AgentProvider.deepseek.tint
+    private var todayText: String { presentation.todayText }
+    private var subtitle: String { presentation.subtitle }
+    private var subtitleColor: Color { presentation.subtitleTone.color }
+    private var segmentColor: Color { presentation.segmentTone.color }
+    private var help: String { presentation.help }
+    private var accessibilityLabel: String { presentation.accessibilityLabel }
+    static func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
+}
+
+extension DeepSeekDialPresentation.Tone {
+    var color: Color {
+        switch self {
+        case .primary: PacerPalette.primary
+        case .secondary: PacerPalette.secondary
+        case .tertiary: PacerPalette.tertiary
+        case .attention: PacerPalette.attention
+        case .danger: PacerPalette.danger
+        case .provider: AgentProvider.deepseek.tint
+        case .staleSegment: Color(white: 0.36)
         }
     }
 
-    private var help: String {
-        var lines = [L10n.text("deepseek.dial_help")]
-        if !wallet.peakToday.isEmpty { lines.append(L10n.text("deepseek.peak_hours_help")) }
-        lines.append(L10n.text("deepseek.estimate_help"))
-        if let days = wallet.runwayDays, wallet.balance != nil { lines.append(L10n.text("deepseek.runway_help_days", Self.amount(wallet.averageDaily ?? 0), Int(days.rounded(.down)))) }
-        if wallet.balance != nil { lines.append(model.deepseekBalanceFreshness) }
-        return lines.joined(separator: "\n")
-    }
-    private var accessibilityLabel: String {
-        let balance = wallet.balance.map { Self.amount($0.total) } ?? L10n.text("common.unknown")
-        return L10n.text("deepseek.dial_accessibility", balance, Self.amount(wallet.todayTotal),
-            L10n.text(wallet.peakNow ? "deepseek.now.peak" : "deepseek.now.offpeak"))
-    }
-
-    /// Two decimals in the details: `¥3.12`, `¥86.40`, `¥1.2k` from a thousand.
-    static func amount(_ value: Double) -> String {
-        value < 1000 ? String(format: "¥%.2f", max(0, value)) : DeepSeekWallet.compactAmount(value)
-    }
 }
 
 /// The face alone, also drawn small in Help. Angles run clockwise from
@@ -185,36 +163,19 @@ struct DeepSeekPeakChip: View {
 struct DeepSeekBudgetReading {
     let period: DeepSeekBudgetPeriod
     let now: Date
-    var fraction: Double { min(1, max(0, period.remaining / period.limit)) }
-    var timeFraction: Double? { period.window.remainingTimePercent(at: now).map { $0 / 100 } }
-    var verdict: QuotaPaceVerdict? { period.exceeded ? nil : period.window.pacePercent(at: now).map { QuotaPaceVerdict(pace: $0) } }
-    var pressing: Bool { !period.exceeded && (fraction <= 0.15 || verdict == .fast) }
-    /// Today's arc turns amber when pressing, as the 5h arc does; an exceeded period is red.
-    var tint: Color {
-        period.exceeded ? PacerPalette.danger : period.kind == .day && pressing ? PacerPalette.attention : AgentProvider.deepseek.tint
-    }
-    var valueColor: Color { period.exceeded ? PacerPalette.danger : pressing ? PacerPalette.attention : PacerPalette.primary }
-    var paceText: String { period.window.pacePercent(at: now).map { "\(Int($0.rounded()))%" } ?? "—" }
-    /// Time to the reset, as under the quota rings.
-    var countdown: String { CompactDuration.text(max(0, period.interval.end.timeIntervalSince(now))) }
-    /// Budgets always reset at midnight, so the moment needs no date.
-    var resetText: String { L10n.text(period.kind == .day ? "deepseek.reset_day" : "deepseek.reset_week") }
-    var projection: (text: String, warns: Bool)? {
-        if period.exceeded { return (L10n.text("deepseek.over_by", DeepSeekDayDial.amount(-period.remaining)), true) }
-        switch period.window.projection(at: now) {
-        case nil: return nil
-        case .tooEarly?: return (L10n.text("dashboard.projection_early"), false)
-        case .remainingAtReset(let left)?: return (L10n.text("deepseek.projection_left", DeepSeekDayDial.amount(left / 100 * period.limit)), false)
-        case .runsOut(let seconds)?:
-            return (L10n.text("deepseek.projection_out", L10n.moment(now.addingTimeInterval(seconds), relativeTo: now)), true)
-        }
-    }
-    var label: String { L10n.text(period.kind == .day ? "deepseek.budget.day" : "deepseek.budget.week") }
-    /// `¥4.10`, or `−¥3.20` once over.
-    var amount: (whole: String, cents: String) {
-        let value = abs(period.remaining), parts = String(format: "%.2f", value).split(separator: ".")
-        return ((period.exceeded && value >= 0.005 ? "−¥" : "¥") + String(parts.first ?? "0"), "." + String(parts.last ?? "00"))
-    }
+    private var presentation: DeepSeekSoloPresentation.Budget { DeepSeekSoloPresentation.budget(period, at: now) }
+    var fraction: Double { presentation.fraction }
+    var timeFraction: Double? { presentation.timeFraction }
+    var verdict: QuotaPaceVerdict? { presentation.verdict }
+    var pressing: Bool { presentation.pressing }
+    var tint: Color { presentation.exceeded ? PacerPalette.danger : period.kind == .day && pressing ? PacerPalette.attention : AgentProvider.deepseek.tint }
+    var valueColor: Color { presentation.exceeded ? PacerPalette.danger : pressing ? PacerPalette.attention : PacerPalette.primary }
+    var paceText: String { presentation.paceText }
+    var countdown: String { presentation.countdown }
+    var resetText: String { presentation.resetText }
+    var projection: (text: String, warns: Bool)? { presentation.projectionText.map { ($0, presentation.projectionWarns) } }
+    var label: String { presentation.label }
+    var amount: (whole: String, cents: String) { (presentation.whole, presentation.cents) }
 }
 
 /// Budgets as a ring: today on the upper arc and the week on the lower one,
@@ -343,17 +304,19 @@ struct DeepSeekBalanceStatusView: View {
     @ObservedObject var model: IslandModel
 
     var body: some View {
-        if let error = model.deepseekBalanceError {
+        if let presentation = DeepSeekBalanceStatusPresentation(error: model.deepseekBalanceError, refreshing: model.deepseekRefreshing) {
             VStack(spacing: 6) {
-                Text(error.errorDescription ?? "").font(.system(size: 11))
-                    .foregroundStyle(error.needsConnection ? PacerPalette.secondary : PacerPalette.attention)
+                Text(presentation.message).font(.system(size: 11))
+                    .foregroundStyle(presentation.tone == .secondary ? PacerPalette.secondary : PacerPalette.attention)
                     .fixedSize(horizontal: false, vertical: true)
-                if !error.needsConnection {
+                if !presentation.actions.isEmpty {
                     HStack(spacing: 6) {
-                        QuotaLinkButton(title: L10n.text(model.deepseekRefreshing ? "common.retrying" : "common.retry")) {
-                            model.refreshDeepSeekBalance(force: true)
-                        }.disabled(model.deepseekRefreshing)
-                        QuotaLinkButton(title: L10n.text("common.settings")) { model.openSettings(for: .deepseek) }
+                        ForEach(presentation.actions, id: \.kind) { action in
+                            QuotaLinkButton(title: action.title) {
+                                if action.kind == .retry { model.refreshDeepSeekBalance(force: true) }
+                                else { model.openSettings(for: .deepseek) }
+                            }.disabled(!action.enabled)
+                        }
                     }
                 }
             }.multilineTextAlignment(.center)
@@ -371,7 +334,8 @@ struct DeepSeekSoloDashboard: View {
         let wallet = model.deepseekWallet
         let budget = model.deepseekShowsBudgetDial
         let detailed = model.deepseekPanelStyle == .detailed
-        let moving = wallet.speed.contains { $0 >= 0.005 }, spent = wallet.todayTotal >= 0.005
+        let presentation = model.deepseekSoloPresentation
+        let moving = presentation.speed != nil, spent = presentation.distribution != nil
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 20) {
                 VStack(spacing: 8) {
@@ -398,10 +362,10 @@ struct DeepSeekSoloDashboard: View {
 
     private func todayRow(_ wallet: DeepSeekWallet) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(L10n.text("deepseek.group.today")).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
-            Text(DeepSeekDayDial.amount(wallet.todayTotal)).font(.system(size: 20, weight: .semibold, design: .rounded))
+            Text(model.deepseekSoloPresentation.todayLabel).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+            Text(model.deepseekSoloPresentation.todayText).font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(PacerPalette.primary).monospacedDigit()
-                .help(L10n.text("deepseek.today_help", DeepSeekDayDial.amount(wallet.today), DeepSeekDayDial.amount(wallet.elsewhereToday)))
+                .help(model.deepseekSoloPresentation.todayHelp)
         }
     }
 }
@@ -423,32 +387,26 @@ enum DeepSeekColumn {
 /// with the spend-spike line dashed in red.
 struct DeepSeekSpeedRow: View {
     let wallet: DeepSeekWallet
-
     var body: some View {
-        HStack(spacing: 10) {
-            DeepSeekColumn.label("deepseek.speed")
-            Canvas { context, size in draw(in: &context, size: size) }.frame(height: 22)
-            Text(L10n.text("deepseek.rate", DeepSeekDayDial.amount(wallet.ratePerMinute))).font(.system(size: 11, weight: .medium))
-                .monospacedDigit().foregroundStyle(wallet.spiking ? PacerPalette.danger : PacerPalette.secondary).fixedSize()
+        if let value = DeepSeekSoloPresentation.speed(wallet) {
+            HStack(spacing: 10) {
+                DeepSeekColumn.label("deepseek.speed")
+                Canvas { context, size in draw(value, in: &context, size: size) }.frame(height: 22)
+                Text(value.rateText).font(.system(size: 11, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(value.spiking ? PacerPalette.danger : PacerPalette.secondary).fixedSize()
+            }
+            .help(value.help).accessibilityElement(children: .ignore).accessibilityLabel(value.accessibilityLabel)
         }
-        .help(L10n.text("deepseek.speed_help", L10n.text("deepseek.speed_source." + wallet.speedSource.rawValue),
-            DeepSeekDayDial.amount(wallet.spikeLimit)))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.text("deepseek.speed") + " " + L10n.text("deepseek.rate", DeepSeekDayDial.amount(wallet.ratePerMinute)))
     }
-
-    private func draw(in context: inout GraphicsContext, size: CGSize) {
-        // The bars set the scale; the spike line joins it only when spend comes within a third of it.
-        let values = wallet.speed, limit = wallet.spikeLimit, largest = values.max() ?? 0
-        let top = max(0.01, largest * 1.3, limit > 0 && limit <= largest * 3 ? limit * 1.1 : 0)
-        let step = size.width / CGFloat(max(1, values.count)), width = step * 0.68
-        for (index, value) in values.enumerated() {
-            let height = max(1, CGFloat(value / top) * size.height)
+    private func draw(_ value: DeepSeekSoloPresentation.Speed, in context: inout GraphicsContext, size: CGSize) {
+        let step = size.width / CGFloat(max(1, value.fractions.count)), width = step * 0.68
+        for (index, fraction) in value.fractions.enumerated() {
+            let height = max(1, CGFloat(fraction) * size.height)
             context.fill(Path(CGRect(x: CGFloat(index) * step + (step - width) / 2, y: size.height - height, width: width, height: height)),
-                with: .color(AgentProvider.deepseek.tint.opacity(index == values.count - 1 ? 1 : 0.5)))
+                with: .color(AgentProvider.deepseek.tint.opacity(index == value.fractions.count - 1 ? 1 : 0.5)))
         }
-        guard limit > 0, limit <= top else { return }
-        let y = size.height - CGFloat(limit / top) * size.height
+        guard let fraction = value.lineFraction else { return }
+        let y = size.height - CGFloat(fraction) * size.height
         var line = Path(); line.move(to: CGPoint(x: 0, y: y)); line.addLine(to: CGPoint(x: size.width, y: y))
         context.stroke(line, with: .color(PacerPalette.danger.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
     }
@@ -546,36 +504,22 @@ struct DeepSeekWhereItWent: View {
     @ObservedObject var model: IslandModel
     let wallet: DeepSeekWallet
 
-    private struct Part: Identifiable {
-        let id: String
-        let title: String
-        let amount: Double
-        let opacity: Double
-        let elsewhere: Bool
+    private typealias Part = DeepSeekSoloPresentation.Part
+    private var distribution: DeepSeekSoloPresentation.Distribution? {
+        DeepSeekSoloPresentation.distribution(wallet, hideProjects: model.hideProjects, taskTitle: model.deepseekTaskTitle)
     }
-    private var parts: [Part] {
-        let tasks = wallet.tasks.filter { $0.total >= 0.005 }
-        var result = tasks.prefix(2).enumerated().map { index, task in
-            Part(id: task.task, title: model.deepseekTaskTitle(task.task), amount: task.total, opacity: index == 0 ? 0.9 : 0.6, elsewhere: false)
-        }
-        let rest = tasks.dropFirst(2).reduce(0) { $0 + $1.total } + max(0, wallet.today - tasks.reduce(0) { $0 + $1.total })
-        if rest >= 0.005 { result.append(Part(id: "other", title: L10n.text("deepseek.others"), amount: rest, opacity: 0.32, elsewhere: false)) }
-        if wallet.elsewhereToday >= 0.005 {
-            result.append(Part(id: "elsewhere", title: L10n.text("deepseek.elsewhere"), amount: wallet.elsewhereToday, opacity: 0, elsewhere: true))
-        }
-        return result
-    }
+    private var parts: [Part] { distribution?.parts ?? [] }
 
     var body: some View {
-        let parts = self.parts, total = max(0.01, parts.reduce(0) { $0 + $1.amount })
+        let parts = self.parts
         VStack(alignment: .leading, spacing: 7) {
             Text(L10n.text("deepseek.where")).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
             GeometryReader { proxy in
                 let available = proxy.size.width - CGFloat(max(0, parts.count - 1)) * 2
                 HStack(spacing: 2) {
-                    ForEach(parts) { part in
-                        segment(part).frame(width: max(4, available * CGFloat(part.amount / total)))
-                            .help(part.title + " · " + DeepSeekDayDial.amount(part.amount) + (part.elsewhere ? "\n" + L10n.text("deepseek.elsewhere_help") : ""))
+                    ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                        segment(part).frame(width: max(4, available * CGFloat(part.fraction)))
+                            .help(part.help)
                     }
                 }
             }.frame(height: 10)
@@ -602,12 +546,12 @@ struct DeepSeekWhereItWent: View {
 
     private func legend(_ parts: [Part]) -> some View {
         FlowRow(spacing: 12, lineSpacing: 4) {
-            ForEach(parts) { part in
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                 HStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 2).fill(part.elsewhere ? Color.white.opacity(0.4) : AgentProvider.deepseek.tint.opacity(max(0.32, part.opacity)))
                         .frame(width: 7, height: 7)
                     Text(part.title).lineLimit(1).truncationMode(.tail).frame(maxWidth: 140, alignment: .leading).fixedSize()
-                    Text(DeepSeekDayDial.amount(part.amount)).foregroundStyle(PacerPalette.primary)
+                    Text(part.amountText).foregroundStyle(PacerPalette.primary)
                     if part.elsewhere {
                         // A popover would leave the panel and collapse it, so the
                         // explanation is a tooltip and the mark opens the usage page.
@@ -655,72 +599,45 @@ struct DeepSeekWeekChart: View {
     let wallet: DeepSeekWallet
     let now: Date
     private static let height: CGFloat = 44
-    /// A week says something only once two earlier days had spend.
-    static func hasHistory(_ wallet: DeepSeekWallet) -> Bool { wallet.dayTotals.dropLast().filter { $0 >= 0.005 }.count >= 2 }
-
+    static func hasHistory(_ wallet: DeepSeekWallet) -> Bool { DeepSeekSoloPresentation.week(wallet) != nil }
     var body: some View {
-        let days = wallet.days, totals = wallet.dayTotals
-        let budget = wallet.daily?.limit
-        let line = budget ?? (wallet.averageDaily.flatMap { $0 >= 0.005 ? $0 : nil })
-        let top = max(0.01, totals.max() ?? 0, (line ?? 0) * 1.15)
-        VStack(alignment: .leading, spacing: 6) {
-            // The line's amount sits on the title row, where no bar can cover it.
-            HStack(alignment: .firstTextBaseline) {
-                Text(L10n.text("deepseek.week_title")).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
-                Spacer(minLength: 8)
-                if let line {
-                    Text(L10n.text(budget != nil ? "deepseek.daily_budget_line" : "deepseek.daily_average", DeepSeekDayDial.amount(line)))
-                        .font(.system(size: 9)).foregroundStyle(PacerPalette.tertiary).monospacedDigit()
-                }
-            }
-            ZStack(alignment: .topLeading) {
-                HStack(alignment: .bottom, spacing: 0) {
-                    ForEach(Array(zip(days, totals).enumerated()), id: \.offset) { index, item in
-                        bar(day: item.0, total: item.1, today: index == days.count - 1, budget: budget, top: top)
+        if let value = DeepSeekSoloPresentation.week(wallet) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(value.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+                    Spacer(minLength: 8)
+                    if let text = value.lineText {
+                        Text(text).font(.system(size: 9)).foregroundStyle(PacerPalette.tertiary).monospacedDigit()
                     }
                 }
-                if let line {
-                    GeometryReader { proxy in
-                        let y = Self.height - CGFloat(line / top) * Self.height
-                        Path { path in path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: proxy.size.width, y: y)) }
-                            .stroke(PacerPalette.secondary.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                ZStack(alignment: .topLeading) {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        ForEach(Array(value.days.enumerated()), id: \.offset) { _, day in bar(day) }
                     }
-                    .frame(height: Self.height).allowsHitTesting(false)
+                    if let fraction = value.lineFraction {
+                        GeometryReader { proxy in
+                            let y = Self.height - CGFloat(fraction) * Self.height
+                            Path { path in path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: proxy.size.width, y: y)) }
+                                .stroke(PacerPalette.secondary.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        }.frame(height: Self.height).allowsHitTesting(false)
+                    }
                 }
-            }
-            HStack(spacing: 0) {
-                ForEach(Array(days.enumerated()), id: \.offset) { index, day in
-                    let today = index == days.count - 1
-                    Text(today ? L10n.text("deepseek.today_label") : day.start.formatted(Date.FormatStyle().weekday(.narrow).locale(L10n.locale)))
-                        .font(.system(size: 9, weight: today ? .semibold : .regular))
-                        .foregroundStyle(today ? PacerPalette.primary : PacerPalette.tertiary)
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 0) {
+                    ForEach(Array(value.days.enumerated()), id: \.offset) { _, day in
+                        Text(day.label).font(.system(size: 9, weight: day.today ? .semibold : .regular))
+                            .foregroundStyle(day.today ? PacerPalette.primary : PacerPalette.tertiary).frame(maxWidth: .infinity)
+                    }
                 }
-            }
+            }.accessibilityElement(children: .ignore).accessibilityLabel(value.accessibilityLabel)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.text("deepseek.week_accessibility_total", DeepSeekDayDial.amount(totals.reduce(0, +))))
     }
-
-    private func bar(day: DeepSeekSpendLedger.Day, total: Double, today: Bool, budget: Double?, top: Double) -> some View {
-        let within = budget.map { min(total, $0) } ?? total, over = budget.map { max(0, total - $0) } ?? 0
-        let scale = Self.height / CGFloat(top)
-        var help = day.start.formatted(Date.FormatStyle().weekday(.abbreviated).month(.defaultDigits).day().locale(L10n.locale))
-            + " · " + DeepSeekDayDial.amount(total)
-        if over >= 0.005 { help += "\n" + L10n.text("deepseek.day_over", DeepSeekDayDial.amount(over)) }
+    private func bar(_ day: DeepSeekSoloPresentation.Day) -> some View {
+        let within = CGFloat(day.withinFraction) * Self.height, over = CGFloat(day.overFraction) * Self.height
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
-            if over * Double(scale) >= 0.5 {
-                RoundedRectangle(cornerRadius: 2).fill(PacerPalette.danger.opacity(today ? 0.95 : 0.6)).frame(height: CGFloat(over) * scale)
-            }
-            if within * Double(scale) >= 0.5 {
-                RoundedRectangle(cornerRadius: 2).fill(AgentProvider.deepseek.tint.opacity(today ? 1 : 0.5)).frame(height: CGFloat(within) * scale)
-            }
-        }
-        .frame(width: 22, height: Self.height)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .help(help)
+            if over >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(PacerPalette.danger.opacity(day.today ? 0.95 : 0.6)).frame(height: over) }
+            if within >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(AgentProvider.deepseek.tint.opacity(day.today ? 1 : 0.5)).frame(height: within) }
+        }.frame(width: 22, height: Self.height).frame(maxWidth: .infinity).contentShape(Rectangle()).help(day.help)
     }
 }
 

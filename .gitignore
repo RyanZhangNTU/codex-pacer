@@ -1,5 +1,10 @@
 # Generated builds, exports and local data
 output/
+.build/
+.swiftpm/
+# .NET outputs; packaging marks artifacts built from an unclean worktree.
+windows/**/obj/
+windows/**/bin/
 native/.build/
 native/.swiftpm/
 *.log
@@ -28,3 +33,6 @@ __pycache__/
 .vscode/
 .idea/
 *.sw?
+
+# Optional short workspace build/test root on Windows
+/out/

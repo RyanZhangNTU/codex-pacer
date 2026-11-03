@@ -1,12 +1,11 @@
 import Foundation
 import CryptoKit
-import Darwin
 
 /// Persists acknowledged endings without retaining session, account or path text.
 public struct CompletionDismissalStore: Sendable {
     /// Only a hashed source identity and a server timestamp survive. This
     /// bridges the same bounded idle-to-resolved transition across a relaunch.
-    struct CloudEnding: Codable, Equatable, Sendable {
+    package struct CloudEnding: Codable, Equatable, Sendable {
         let source: String
         let mark: Date
     }
@@ -20,15 +19,13 @@ public struct CompletionDismissalStore: Sendable {
     private static let maximumCloudEndings = 128
     private let fileURL: URL
 
-    public init(fileURL: URL) { self.fileURL = fileURL }
-
-    public static var applicationDefault: CompletionDismissalStore {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CodexPacerIsland", isDirectory: true)
-        return CompletionDismissalStore(fileURL: directory.appendingPathComponent("completion-dismissals-v1.json"))
+    private let files: any PlatformFileSystem
+    private let preservesDamagedFile: Bool
+    public init(fileURL: URL, files: any PlatformFileSystem, preservesDamagedFile: Bool = false) {
+        self.fileURL = fileURL; self.files = files; self.preservesDamagedFile = preservesDamagedFile
     }
 
-    static func digest(_ fields: [String]) -> String {
+    package static func digest(_ fields: [String]) -> String {
         // Length prefixes make opaque identifiers unambiguous without storing them.
         var data = Data()
         for field in fields {
@@ -41,41 +38,31 @@ public struct CompletionDismissalStore: Sendable {
     func loadDigests() -> [String] { load().digests }
 
     func load() -> (digests: [String], cloudEndings: [CloudEnding]) {
-        guard let attributes = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              attributes.isRegularFile == true, let size = attributes.fileSize, size <= Self.maximumBytes,
-              let handle = try? FileHandle(forReadingFrom: fileURL) else { return ([], []) }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: Self.maximumBytes + 1), data.count <= Self.maximumBytes,
+        guard let envelope = readEnvelope() else { return ([], []) }
+        return (envelope.digests, envelope.cloudEndings ?? [])
+    }
+    private func readEnvelope() -> Envelope? {
+        guard let metadata = files.metadata(fileURL), metadata.isRegularFile, metadata.size <= Self.maximumBytes,
+              let data = try? files.read(fileURL, offset: 0, maximumBytes: Self.maximumBytes + 1), data.count <= Self.maximumBytes,
               let envelope = try? JSONDecoder().decode(Envelope.self, from: data), envelope.version == 1,
               envelope.digests.count <= Self.maximumEntries,
               Set(envelope.digests).count == envelope.digests.count,
               envelope.digests.allSatisfy(Self.validDigest),
-              Self.validCloudEndings(envelope.cloudEndings ?? []) else { return ([], []) }
-        return (envelope.digests, envelope.cloudEndings ?? [])
+              Self.validCloudEndings(envelope.cloudEndings ?? []) else { return nil }
+        return envelope
     }
 
     @discardableResult
-    func saveDigests(_ digests: [String], cloudEndings: [CloudEnding] = []) -> Bool {
+    package func saveDigests(_ digests: [String], cloudEndings: [CloudEnding] = []) -> Bool {
         guard digests.count <= Self.maximumEntries, Set(digests).count == digests.count,
               digests.allSatisfy(Self.validDigest), Self.validCloudEndings(cloudEndings),
               let data = try? JSONEncoder().encode(Envelope(version: 1, digests: digests,
                   cloudEndings: cloudEndings.isEmpty ? nil : cloudEndings)),
               data.count <= Self.maximumBytes else { return false }
-        let directory = fileURL.deletingLastPathComponent()
-        let temporary = directory.appendingPathComponent(".completion-dismissals-" + UUID().uuidString)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700])
-            guard FileManager.default.createFile(atPath: temporary.path, contents: nil,
-                attributes: [.posixPermissions: 0o600]) else { return false }
-            defer { try? FileManager.default.removeItem(at: temporary) }
-            let handle = try FileHandle(forWritingTo: temporary)
-            do { try handle.write(contentsOf: data); try handle.close() }
-            catch { try? handle.close(); return false }
-            return temporary.path.withCString { source in
-                fileURL.path.withCString { destination in rename(source, destination) == 0 }
-            }
-        } catch { return false }
+        if preservesDamagedFile, files.metadata(fileURL) != nil || FileManager.default.fileExists(atPath: fileURL.path) {
+            guard readEnvelope() != nil else { return false }
+        }
+        return files.replace(fileURL, with: data)
     }
 
     static func bounded(_ digests: [String]) -> [String] { Array(digests.suffix(maximumEntries)) }

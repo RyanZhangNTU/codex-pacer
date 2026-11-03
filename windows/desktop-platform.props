@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <PacerArchitecture Condition="'$(PacerArchitecture)' == '' and '$(RuntimeIdentifier)' == 'win-arm64'">arm64</PacerArchitecture>
+    <PacerArchitecture Condition="'$(PacerArchitecture)' == ''">x64</PacerArchitecture>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier>win-$(PacerArchitecture)</RuntimeIdentifier>
+    <PlatformTarget>$(PacerArchitecture)</PlatformTarget>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
+    <!-- WPF pack resources and the Swift bundle own all app localization. -->
+    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
+  </PropertyGroup>
+</Project>

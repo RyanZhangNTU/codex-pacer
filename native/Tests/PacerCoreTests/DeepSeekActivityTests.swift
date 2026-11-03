@@ -1,3 +1,8 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -250,7 +255,7 @@ final class DeepSeekActivityTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let log = directory.appendingPathComponent(DeepSeekSessionReader.logName)
         try opening.write(to: log)
-        var reader = DeepSeekSessionReader()
+        var reader = DeepSeekSessionReader(files: TestFileSystem())
         let now = peak.addingTimeInterval(60)
         let first = reader.read(home: home, discover: true, now: now)
         XCTAssertTrue(first.available); XCTAssertTrue(first.caughtUp)
@@ -288,7 +293,7 @@ final class DeepSeekActivityTests: XCTestCase {
             try headers[index].write(to: log)
             try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(Double(2 - index))], ofItemAtPath: log.path)
         }
-        var reader = DeepSeekSessionReader()
+        var reader = DeepSeekSessionReader(files: TestFileSystem())
         reader.perPassBytes = 1 // Exhaust a pass before the second captured baseline can be read.
         let first = reader.read(home: home, discover: true, now: now)
         XCTAssertFalse(first.caughtUp)
@@ -317,7 +322,7 @@ final class DeepSeekActivityTests: XCTestCase {
         let log = home.appendingPathComponent("sessions/workspace/session/\(DeepSeekSessionReader.logName)")
         try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
         try opening.prefix(40).write(to: log)
-        var reader = DeepSeekSessionReader()
+        var reader = DeepSeekSessionReader(files: TestFileSystem())
         XCTAssertTrue(reader.read(home: home, discover: true).lines.isEmpty)
         let writer = try FileHandle(forWritingTo: log)
         try writer.seekToEnd(); try writer.write(contentsOf: opening.dropFirst(40) + closing); try writer.close()

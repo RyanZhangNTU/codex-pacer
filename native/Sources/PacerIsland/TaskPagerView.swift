@@ -4,45 +4,50 @@ import PacerCore
 
 struct TaskPagerView: View {
     @ObservedObject var model: IslandModel
+    var language: AppLanguage = L10n.language
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
     @State private var direction: CGFloat = 1
     private let rowHeight: CGFloat = 54
     private let rowSpacing: CGFloat = 2
 
-    private var tasks: [SessionActivity] { model.visibleActivities }
-    private var pagination: TaskPagination { TaskPagination(itemCount: tasks.count) }
+    private var tasks: [SessionActivity] { model.taskPresentation.visibleActivities }
+    private var pagination: TaskPagination { model.taskPresentation.pagination }
     private var currentPage: Int { pagination.clampedPage(page) }
-    private var pageTasks: [SessionActivity] { Array(tasks[pagination.range(on: currentPage)]) }
+    private var pageRows: [ActivityTaskRowPresentation] { Array(model.taskPresentation.rows[pagination.range(on: currentPage)]) }
     private var pageHeight: CGFloat {
         CGFloat(pagination.rowCapacity) * rowHeight + CGFloat(max(0, pagination.rowCapacity - 1)) * rowSpacing
     }
 
+    var header: some View {
+        IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: model.taskPresentation.taskCountText) {
+            if pagination.isPaginated {
+                HStack(spacing: 2) {
+                    pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
+                    Text("\(currentPage + 1) / \(pagination.pageCount)")
+                        .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
+                        .frame(minWidth: 30)
+                        .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
+                    pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
+                }
+                Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
+            }
+            IslandPanelControls(model: model, language: language)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: String(tasks.count)) {
-                if pagination.isPaginated {
-                    HStack(spacing: 2) {
-                        pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
-                        Text("\(currentPage + 1) / \(pagination.pageCount)")
-                            .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
-                            .frame(minWidth: 30)
-                            .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
-                        pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
-                    }
-                    Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
-                }
-                IslandPanelControls(model: model)
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
-
+            header
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
-                    ForEach(pageTasks) { activity in
-                        TaskRowView(attention: model.attentionKind(for: activity), group: model.taskGroup(for: activity), activity: activity, name: model.projectName(activity), sourceName: model.taskSourceName(activity), now: model.now,
-                            enabled: model.canOpen(activity), unread: model.isUnreadCompletion(activity), accent: model.taskAccent,
-                            cost: model.displayedTurnCost(activity), costDetail: model.deepseekCostDetail(activity)) {
+                    ForEach(pageRows, id: \.activity.id) { row in
+                        let activity = row.activity
+                        TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
+                            enabled: model.canOpen(activity), accent: model.taskAccent,
+                            costDetail: model.deepseekCostDetail(activity)) {
                                 model.open(activity)
                             }
                             .frame(height: rowHeight)

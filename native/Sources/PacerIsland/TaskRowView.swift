@@ -4,17 +4,18 @@ import PacerCore
 /// Line one names the task and its speed, line two its state and model, so the
 /// trailing column pairs a rate with the model that produced it.
 struct TaskRowView: View {
-    var attention: PendingAttentionRequest.Kind? = nil
-    var group: ActivityTaskGroup? = nil
-    let activity: SessionActivity
-    let name: String
-    let sourceName: String?
+    let presentation: ActivityTaskRowPresentation
+    let group: ActivityTaskGroup?
+    private var activity: SessionActivity { presentation.activity }
+    private var attention: PendingAttentionRequest.Kind? { presentation.attention }
+    private var name: String { presentation.title }
+    private var sourceName: String? { presentation.source }
     let now: Date
     let enabled: Bool
-    let unread: Bool
+    private var unread: Bool { presentation.unread }
     let accent: Color
     /// DeepSeek's estimated cost of this turn, when shown.
-    var cost: Double? = nil
+    private var cost: Double? { presentation.cost == nil ? nil : activity.turnCost }
     /// The turn was billed at the doubled peak price, and the task's spend today.
     var costDetail: (peak: Bool, help: String)? = nil
     let action: () -> Void
@@ -23,46 +24,24 @@ struct TaskRowView: View {
     /// A long title stops widening the panel here; a panel that other rows
     /// made wider still shows more of it.
     static let measuredTitleWidth: CGFloat = 200
-    private var phase: ActivityPhase { group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now) }
-    private var status: String {
-        var base = phase == .completed ? activity.endingLabel : activity.detail(at: now)
-        if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { base = L10n.text("activity.running_long") }
-        guard let attention else { return base }
-        let prompt = attention.label
-        guard phase == .running else { return prompt }
-        switch activity.phase == .running ? activity.stage : nil {
-        case .tool?: return prompt + " · " + L10n.text("activity.tool_compact")
-        case .responding?: return prompt + " · " + L10n.text("activity.responding_compact")
-        default: return prompt + " · " + base
-        }
-    }
-    private var subagents: Int { (group?.runningSubagentCount ?? 0) + (phase == .running ? activity.claudeCloud?.additionalWorkers ?? 0 : 0) }
+    private var phase: ActivityPhase { presentation.phase }
+    private var status: String { presentation.status }
+    private var subagents: Int { presentation.subagents }
     private var subagentText: String {
         if activity.claudeCloud != nil { return L10n.text("claude.cloud.workers_help", subagents) }
         return L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents)
     }
-    private var rate: OutputEstimate? { group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now) }
-    private var turnTime: String? { Self.turnTimeText(activity, phase: phase, now: now) }
-    /// A running turn counts up; an ended turn keeps how long it took.
+    private var rate: OutputEstimate? { presentation.rate }
+    private var turnTime: String? { presentation.turnTime }
     static func turnTimeText(_ activity: SessionActivity, phase: ActivityPhase, now: Date) -> String? {
-        guard let start = activity.turnStartedAt else { return nil }
-        if phase == .running { return start <= now ? CompactDuration.text(now.timeIntervalSince(start)) : nil }
-        guard [.completed, .interrupted].contains(phase), [.completed, .interrupted].contains(activity.phase),
-              let end = activity.phaseChangedAt, end >= start else { return nil }
-        return CompactDuration.text(end.timeIntervalSince(start))
+        ActivityTaskRowPresentation.turnTimeText(activity, phase: phase, now: now)
     }
-    /// A read ending steps back so running, waiting and unread rows lead.
-    /// Failures stay red.
     static func isDimmed(phase: ActivityPhase, unread: Bool, attention: Bool, failed: Bool) -> Bool {
-        !unread && !attention && !failed && [.completed, .interrupted].contains(phase)
+        ActivityTaskRowPresentation.isDimmed(phase: phase, unread: unread, attention: attention, failed: failed)
     }
-    private var dimmed: Bool { Self.isDimmed(phase: phase, unread: unread, attention: attention != nil, failed: activity.turnFailed) }
-    private var modelLabel: String {
-        activity.modelName.map { Self.shortened(ModelDisplay.name($0), limit: 22) } ?? activity.provider.displayName
-    }
-    private var effortLabel: String? {
-        activity.modelName == nil ? nil : activity.reasoningEffort.flatMap { ModelDisplay.effortLabel($0) }
-    }
+    private var dimmed: Bool { presentation.dimmed }
+    private var modelLabel: String { presentation.model }
+    private var effortLabel: String? { presentation.effort }
     private var latencyText: String {
         L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.1f s", $0) } ?? "—")
     }
@@ -107,10 +86,7 @@ struct TaskRowView: View {
         if attention != nil || phase == .waitingForInput { return PacerPalette.attention }
         return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
-    private var symbol: String {
-        if attention == nil, group?.isRunning == true, activity.phase != .running { return StatusSymbols.thinking }
-        return StatusSymbols.symbol(for: activity, attention: attention)
-    }
+    private var symbol: String { StatusSymbols.symbol(presentation.symbol) }
     private var modelHelp: String? {
         guard let raw = activity.modelName else { return nil }
         return [raw, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " · ")
@@ -125,13 +101,13 @@ struct TaskRowView: View {
         .background {
             rowContent(measuring: true).fixedSize(horizontal: true, vertical: false)
                 .background(GeometryReader { geometry in
-                    Color.clear.preference(key: TaskRowIdealWidth.self, value: geometry.size.width)
+                    Color.clear.preference(key: ExpandedContentIdealWidth.self, value: geometry.size.width)
                 })
                 .hidden().allowsHitTesting(false).accessibilityHidden(true)
         }
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
         .help(enabled ? [name, openHelp, modelHelp].compactMap { $0 }.joined(separator: "\n") : L10n.text("activity.no_link"))
         .accessibilityLabel(accessibilityText)
     }
@@ -179,7 +155,7 @@ struct TaskRowView: View {
             if subagents > 0 {
                 HStack(spacing: 3) {
                     Image(systemName: "person.2").font(.system(size: 9, weight: .semibold))
-                    Text(String(subagents)).monospacedDigit()
+                    Text(presentation.subagentText).monospacedDigit()
                 }
                 .foregroundStyle(PacerPalette.secondary).fixedSize()
                 .help(subagentText)
@@ -202,7 +178,7 @@ struct TaskRowView: View {
     private var rateLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let rate {
-                Text(String(format: "%.1f", rate.value)).font(.system(size: 13, weight: .semibold))
+                Text(presentation.rateText ?? "").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(rate.isFresh && !dimmed ? PacerPalette.primary : PacerPalette.secondary)
                 Text(" t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
             } else if activity.claudeCloud == nil {
@@ -241,19 +217,11 @@ struct TaskRowView: View {
         .help(modelHelp ?? "")
     }
 
-    static func shortened(_ text: String, limit: Int) -> String {
-        text.count > limit ? String(text.prefix(limit - 1)) + "…" : text
-    }
-
-    /// Host names usually differ at the end (`gpu-03`), so keep both ends.
-    static func middleTruncated(_ text: String, limit: Int) -> String {
-        guard text.count > limit else { return text }
-        let half = (limit - 1) / 2
-        return String(text.prefix(half)) + "…" + String(text.suffix(limit - 1 - half))
-    }
+    static func shortened(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.shortened(text, limit: limit) }
+    static func middleTruncated(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.middleTruncated(text, limit: limit) }
 }
 
-struct TaskRowIdealWidth: PreferenceKey {
+struct ExpandedContentIdealWidth: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

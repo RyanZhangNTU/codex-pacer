@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Supplied only by Pacer's own WebKit profile. Cookie values stay in memory;
 /// neither this adapter nor its quota history writes or imports browser cookies.
@@ -29,7 +32,7 @@ public struct ClaudeWebAccountBinding: Equatable, Sendable {
 }
 
 public enum ClaudeWebQuotaDecoder {
-    static func uuid(_ text: String?) -> String? {
+    package static func uuid(_ text: String?) -> String? {
         guard let text, text.count == 36 else { return nil }
         return UUID(uuidString: text)?.uuidString.lowercased()
     }
@@ -56,7 +59,7 @@ public enum ClaudeWebQuotaDecoder {
         return result
     }
 
-    static func sessionKey(_ value: ClaudeWebSession) -> String? {
+    package static func sessionKey(_ value: ClaudeWebSession) -> String? {
         guard !value.cookieHeader.isEmpty, value.cookieHeader.utf8.count <= 65_536,
               !value.cookieHeader.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               value.sessionHash.count == 64, value.sessionHash.allSatisfy(\.isHexDigit) else { return nil }
@@ -82,7 +85,7 @@ public enum ClaudeWebQuotaDecoder {
 public actor ClaudeWebQuotaClient {
     public typealias CookieProvider = @Sendable () async -> ClaudeWebSession?
     public typealias MetadataProvider = @Sendable () -> ClaudeWebAccountBinding
-    typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     private struct Identity {
         let sessionHash: String
         let account: String
@@ -93,7 +96,7 @@ public actor ClaudeWebQuotaClient {
     private let metadataProvider: MetadataProvider
     private let selectedOrganizationProvider: @Sendable () -> String?
     private let transport: Transport
-    private let session: URLSession?
+    private let invalidateTransport: @Sendable () -> Void
     private let now: @Sendable () -> Date
     private var identity: Identity?
     private var verifiedScope: String?
@@ -103,33 +106,13 @@ public actor ClaudeWebQuotaClient {
     private var throttle: Throttle?
     private var task: Task<QuotaSnapshot, Error>?
 
-    public init(cookieProvider: @escaping CookieProvider, home: URL? = nil,
-                userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
-                selectedOrganizationProvider: @escaping @Sendable () -> String? = { nil },
-                metadataProvider: MetadataProvider? = nil, timeout: TimeInterval = 12) {
-        self.cookieProvider = cookieProvider; self.selectedOrganizationProvider = selectedOrganizationProvider
-        let home = home ?? userHome.appendingPathComponent(".claude")
-        self.metadataProvider = metadataProvider ?? { Self.observedBinding(userHome: userHome, home: home) }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil; configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = min(30, max(1, timeout))
-        configuration.timeoutIntervalForResource = min(35, max(2, timeout + 3))
-        let session = URLSession(configuration: configuration, delegate: ClaudeWebQuotaRedirectDelegate(), delegateQueue: nil)
-        self.session = session
-        transport = { request in
-            let (data, response) = try await session.data(for: request)
-            guard let response = response as? HTTPURLResponse else { throw ClaudeQuotaError.invalidReply }
-            return (data, response)
-        }
-        now = { Date() }
-    }
-
-    init(cookieProvider: @escaping CookieProvider, metadataProvider: @escaping MetadataProvider,
+    public init(cookieProvider: @escaping CookieProvider, metadataProvider: @escaping MetadataProvider,
          selectedOrganizationProvider: @escaping @Sendable () -> String? = { nil },
-         transport: @escaping Transport, now: @escaping @Sendable () -> Date) {
+         transport: @escaping Transport, now: @escaping @Sendable () -> Date,
+         invalidateTransport: @escaping @Sendable () -> Void = {}) {
         self.cookieProvider = cookieProvider; self.metadataProvider = metadataProvider
         self.selectedOrganizationProvider = selectedOrganizationProvider; self.transport = transport; self.now = now
-        session = nil
+        self.invalidateTransport = invalidateTransport
     }
 
     public func currentAccountScope() -> String? { verifiedScope }
@@ -147,7 +130,7 @@ public actor ClaudeWebQuotaClient {
     public func shutdown() {
         task?.cancel(); task = nil; identity = nil; verifiedScope = nil; source = nil
         verifiedSessionHash = nil; verifiedBinding = nil; throttle = nil
-        session?.invalidateAndCancel()
+        invalidateTransport()
     }
 
     private func fetchQuota() async throws -> QuotaSnapshot {
@@ -262,23 +245,18 @@ public actor ClaudeWebQuotaClient {
         identity = nil; verifiedScope = nil; verifiedSessionHash = nil; verifiedBinding = nil; source = nil; throttle = nil
     }
 
-    public nonisolated static func observedBinding(userHome: URL, home: URL) -> ClaudeWebAccountBinding {
-        let cli = ClaudeCredentialStore.identity(userHome: userHome, home: home)
+    public nonisolated static func observedBinding(userHome: URL, home: URL,
+                                                   desktopConfiguration: URL?, files: any PlatformFileSystem) -> ClaudeWebAccountBinding {
+        let cli = ClaudeCredentialStore.identity(userHome: userHome, home: home, files: files)
         var desktopAccount: String?
         if home.standardizedFileURL == userHome.appendingPathComponent(".claude").standardizedFileURL,
-           let data = ClaudeCredentialStore.boundedData(at: userHome.appendingPathComponent("Library/Application Support/Claude/config.json")),
+           let desktopConfiguration,
+           let data = ClaudeCredentialStore.boundedData(at: desktopConfiguration, files: files),
            let config = try? ClaudeQuotaDecoder.dictionary(data) {
             desktopAccount = ClaudeWebQuotaDecoder.uuid(config["lastKnownAccountUuid"] as? String)
         }
         let cliAccount = cli.flatMap { ClaudeWebQuotaDecoder.uuid($0.accountID) }
         return ClaudeWebAccountBinding(accountID: cliAccount ?? desktopAccount, organizationID: cli?.organizationID,
             conflictingAccounts: (cli != nil && cliAccount == nil) || (cliAccount != nil && desktopAccount != nil && cliAccount != desktopAccount))
-    }
-}
-
-private final class ClaudeWebQuotaRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }

@@ -32,7 +32,7 @@ final class ProviderDisplayTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(true, forKey: "monitorSSH")
         defaults.set(0, forKey: "completedRetentionMinutes")
-        let model = IslandModel(demo: true, defaults: defaults,
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true))
         model.activities = []
         model.selectProvider(.codex); model.quota = nil; model.history = QuotaCycleHistory()
@@ -294,7 +294,12 @@ final class ProviderDisplayTests: XCTestCase {
                 dispatched.fulfill()
                 return outcome
             }
-            model.onStatusChange = { processed.fulfill() }
+            // Observe the open result once. Expanding after a failed open also
+            // publishes quota progress, which is not another navigation result.
+            model.onStatusChange = { [weak model] in
+                model?.onStatusChange = nil
+                processed.fulfill()
+            }
             model.open(completed)
             await fulfillment(of: [dispatched, processed], timeout: 2)
             XCTAssertEqual(model.activities.contains { $0.id == completed.id && $0.turnID == completed.turnID }, !acknowledges)

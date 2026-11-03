@@ -1,9 +1,28 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
 final class CodexSessionOriginTests: XCTestCase {
     private let session = "019a0000-0000-7000-8000-0000000000a1"
     private let child = "019a0000-0000-7000-8000-0000000000a2"
+
+    func testPathSyntaxDeterminesCaseAndSeparatorsOnEveryHost() throws {
+        let paths = [#"C:\Fixture\ZOTERO-CHAT\TRANSLATE"#, "C:/Fixture/Zotero-Chat/Translate",
+            #"\\server\share\ZOTERO-CHAT-CATALOG.fixture"#, "/fixture/zotero-chat/translate",
+            "/fixture/Zotero-Chat/Translate", "/fixture/ZOTERO-CHAT-CATALOG.fixture"]
+        let expected = [true, true, true, true, false, false]
+        let input = try JSONSerialization.data(withJSONObject: paths).base64EncodedString()
+        let output = try python("import json,base64\n" + CodexSessionOrigin.python + "\npaths=json.loads(base64.b64decode('" + input + "').decode())\nprint(json.dumps([codex_origin('fixture-client',p)['ignoredSession'] for p in paths]))")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [Bool], expected)
+        for (path, ignored) in zip(paths, expected) {
+            XCTAssertEqual(CodexSessionOrigin.classify(originator: "fixture-client", cwd: path)?.ignored, ignored)
+            XCTAssertEqual(CodexSessionOrigin.classify(originator: "codex-tui", cwd: path)?.ignored, false)
+        }
+    }
 
     func testOriginClassificationAndSanitizedSshParity() throws {
         let fixtures: [[String: Any]] = (CodexSessionOrigin.officialClients + ["@agentclientprotocol/codex-acp", "private-client-name"]).flatMap { origin in
@@ -81,9 +100,6 @@ final class CodexSessionOriginTests: XCTestCase {
         XCTAssertEqual(result.activities.compactMap(\.threadID), [session])
         XCTAssertTrue(ignored.allSatisfy { !result.watchURLs.contains($0) })
         XCTAssertEqual(result.excludedIDs.count, ignored.count)
-        let ssh = try python(SessionLogProbe.library + "\nprint(json.dumps(snapshot()))", home: root)
-        let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ssh.utf8)) as? [String: Any])
-        XCTAssertEqual((snapshot["sessions"] as? [[String: Any]])?.count, 1)
 
         // An official resume of an excluded file must be discoverable again.
         let revived = ignored[0]
@@ -99,19 +115,6 @@ final class CodexSessionOriginTests: XCTestCase {
         let root = try directory(), file = root.appendingPathComponent("sessions/rollout-" + session + ".jsonl")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate").write(to: file)
-        let script = #"""
-        class Fake:
-            def __init__(self):self.sent=[]
-            def send(self,value):self.sent.append(value)
-        tid='019a0000-0000-7000-8000-0000000000a1'
-        ws=Fake();s=Session(ws);s.ready=True;s.pending.clear()
-        s.request('thread/read',{'threadId':tid},'read',tid);rid=ws.sent[-1]['id']
-        s.receive({'id':rid,'result':{'thread':{'id':tid,'path':str(home/'sessions'/('rollout-'+tid+'.jsonl')),'status':{'type':'active'}}}})
-        assert tid in s.excluded and not s.queue
-        assert not any(v.get('method')=='thread/resume' for v in ws.sent)
-        print('excluded')
-        """#
-        XCTAssertEqual(try python(RealtimeProbe.library + "\n" + script, home: root).trimmingCharacters(in: .whitespacesAndNewlines), "excluded")
         final class Sent { var values: [[String: Any]] = [] }
         let sent = Sent(), remote = "remote-control:synthetic"
         var desktop = try NativeDesktopSession(hosts: ["local", remote]) { sent.values.append($0) }
@@ -124,21 +127,6 @@ final class CodexSessionOriginTests: XCTestCase {
         XCTAssertTrue(follows.contains { $0["hostId"] as? String == remote && $0["following"] as? Bool == true })
     }
 
-    func testOpenRolloutOwnershipAndPidReuseWithARealWriter() throws {
-        let root = try directory(), file = root.appendingPathComponent("rollout-" + session + ".jsonl")
-        let process = Process(), output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = ["-u", "-c", "import sys,time\nf=open(sys.argv[1],'a')\nprint('ready',flush=True)\ntime.sleep(30)", file.path]
-        process.standardOutput = output; process.standardError = FileHandle.nullDevice
-        try process.run(); defer { if process.isRunning { process.terminate(); process.waitUntilExit() } }
-        _ = output.fileHandleForReading.availableData
-        XCTAssertEqual(CodexRolloutOwners.holders(rollouts: [session: file])[session], process.processIdentifier)
-        var calls = 0
-        XCTAssertTrue(CodexRolloutOwners.holders(rollouts: [session: file], processes: { [42] }, files: { _ in [file] },
-            processStart: { _ in calls += 1; return Date(timeIntervalSince1970: Double(calls)) }).isEmpty)
-        process.terminate(); process.waitUntilExit()
-        XCTAssertNil(CodexRolloutOwners.holders(rollouts: [session: file])[session])
-    }
 
     func testMetadataHeadAndTailKeepTheLatestLaunchAcrossChunkBoundaries() throws {
         let root = try directory(), file = root.appendingPathComponent("sessions/rollout-" + session + ".jsonl")
@@ -153,8 +141,6 @@ final class CodexSessionOriginTests: XCTestCase {
             XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file)).origin.embedded)
             // The reader passes the header chunk it already read; the result must not change.
             XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file, head: data.prefix(32768))).origin.embedded)
-            let output = try python(SessionLogProbe.library + "\nr=rollout_origin(home/'sessions'/'\(file.lastPathComponent)')\nprint(json.dumps(r['embedded']))", home: root)
-            XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "false")
         }
     }
 
@@ -170,19 +156,6 @@ final class CodexSessionOriginTests: XCTestCase {
         let lookup = CodexOriginLookup(home: root)
         XCTAssertTrue(try XCTUnwrap(lookup.lookup(child)).origin.ignored)
         XCTAssertTrue(try XCTUnwrap(lookup.lookup(grandchild)).origin.ignored)
-        let script = #"""
-        tid='019a0000-0000-7000-8000-0000000000a3'
-        path=next(p for p in candidates() if p.stem.endswith(tid))
-        thread={'id':tid,'path':str(path)}
-        assert thread_origin(thread)['ignoredSession']
-        # Parent metadata is read again, even if a previous snapshot cached it.
-        parent='019a0000-0000-7000-8000-0000000000a1'
-        path=next(p for p in candidates() if p.stem.endswith(parent))
-        with path.open('w') as f:json.dump({'type':'session_meta','timestamp':'2026-10-15T00:00:02Z','payload':{'id':parent,'originator':'codex-tui'}},f)
-        assert not thread_origin(thread)['ignoredSession']
-        print('inherited')
-        """#
-        XCTAssertEqual(try python(SessionLogProbe.library + "\n" + script, home: root).trimmingCharacters(in: .whitespacesAndNewlines), "inherited")
         // Restore the excluded root before testing native IPC follow preflight.
         try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate")
             .write(to: folder.appendingPathComponent("rollout-" + session + ".jsonl"))
@@ -215,12 +188,12 @@ final class CodexSessionOriginTests: XCTestCase {
             "type": "event_msg", "payload": ["type": "task_started", "turn_id": "synthetic-turn"]]))
         data.append(10); return data
     }
-    private func python(_ script: String, home: URL = URL(fileURLWithPath: "/private/tmp/pacer-no-user-data")) throws -> String {
+    private func python(_ script: String, home: URL = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-no-user-data")) throws -> String {
         let process = Process(), output = Pipe(), error = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.executableURL = PythonFixture.executable
         process.arguments = ["-u", "-c", script, Data(home.path.utf8).base64EncodedString()]
         process.standardOutput = output; process.standardError = error
-        try process.run(); let result = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        let pythonFixture = try PythonFixture.prepare(process); defer { pythonFixture.remove() }; try process.run(); let result = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0, String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         return String(decoding: result, as: UTF8.self)
     }

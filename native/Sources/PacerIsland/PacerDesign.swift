@@ -44,25 +44,12 @@ enum IslandMetrics {
     static let rowInset: CGFloat = headerInset - edgeInset
 }
 
-/// Countdowns and elapsed turns share one coarse wording, e.g. 3天 4小时,
-/// 2小时 9分 or <1分, so a two-second clock never makes text flicker.
-enum CompactDuration {
-    static func text(_ seconds: TimeInterval) -> String {
-        guard seconds >= 60 else { return L10n.text("dashboard.countdown_soon") }
-        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
-        if days > 0 { return L10n.text("dashboard.countdown_days", days, hours) }
-        if hours > 0 { return L10n.text("dashboard.countdown_hours", hours, minutes) }
-        return L10n.text("dashboard.countdown_minutes", minutes)
-    }
-}
-
 /// The existing pace thresholds: below 85% spends faster than time passes,
 /// above 115% leaves spare quota for the rest of the window. Only a fast pace
 /// is colored: Claude's orange would otherwise resemble the attention amber.
-enum QuotaPaceVerdict: String {
-    case spare, steady, fast
-    init(pace: Double) { self = pace < 85 ? .fast : pace > 115 ? .spare : .steady }
-    var label: String { L10n.text("quota.verdict." + rawValue) }
+typealias QuotaPaceVerdict = QuotaDashboardPresentation.Verdict
+
+extension QuotaDashboardPresentation.Verdict {
     var tint: Color {
         switch self {
         case .spare: PacerPalette.primary
@@ -105,14 +92,25 @@ struct IslandSectionHeader<Trailing: View>: View {
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
+        header.background {
+            header.fixedSize(horizontal: true, vertical: false)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: ExpandedContentIdealWidth.self, value: geometry.size.width)
+                })
+                .hidden().allowsHitTesting(false).accessibilityHidden(true)
+        }
+    }
+
+    private var header: some View {
         HStack(spacing: 6) {
             Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
+                .fixedSize()
             if let detail {
                 Text(detail).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor)
-                    .monospacedDigit()
+                    .monospacedDigit().fixedSize()
             }
             Spacer(minLength: 8)
-            trailing()
+            trailing().fixedSize(horizontal: true, vertical: false)
         }
         .frame(height: 24)
         .padding(.horizontal, IslandMetrics.rowInset)

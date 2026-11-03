@@ -2,13 +2,13 @@ import Foundation
 
 /// Views into one bounded wire frame. Unused values are validated and skipped,
 /// never materialized as dictionaries, arrays, transcripts or tool output.
-struct JSONFieldView {
+package struct JSONFieldView {
     enum Failure: Error { case malformed, limit }
     private let data: Data
     private let range: Range<Int>
     /// Set only by our streaming decoder, never by a field in the wire data.
     let projectedItems: Bool
-    static func document(_ data: Data, maximumBytes: Int = 16 * 1024 * 1024, projectedItems: Bool = false) throws -> Self {
+    package static func document(_ data: Data, maximumBytes: Int = 16 * 1024 * 1024, projectedItems: Bool = false) throws -> Self {
         guard data.count <= maximumBytes else { throw Failure.limit }
         let range = try data.withUnsafeBytes { raw -> Range<Int> in
             var cursor = Cursor(bytes: raw.bindMemory(to: UInt8.self), position: 0, end: data.count)
@@ -20,7 +20,7 @@ struct JSONFieldView {
         }
         return Self(data: data, range: range, projectedItems: projectedItems)
     }
-    var isObject: Bool { data[range.lowerBound] == 123 }
+    package var isObject: Bool { data[range.lowerBound] == 123 }
     var isArray: Bool { data[range.lowerBound] == 91 }
     var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
     var hasNonemptyString: Bool { data[range.lowerBound] == 34 && range.count > 2 }
@@ -46,7 +46,7 @@ struct JSONFieldView {
         return false
     }
 
-    func fields(_ allowed: Set<String>? = nil, maximumCount: Int = 512) throws -> [String: Self] {
+    package func fields(_ allowed: Set<String>? = nil, maximumCount: Int = 512) throws -> [String: Self] {
         try data.withUnsafeBytes { raw in
             var cursor = Cursor(bytes: raw.bindMemory(to: UInt8.self), position: range.lowerBound, end: range.upperBound)
             try cursor.require(123); cursor.whitespace()
@@ -119,7 +119,7 @@ struct JSONFieldView {
             } while true
         }
     }
-    func string(limit: Int = 256) -> String? {
+    package func string(limit: Int = 256) -> String? {
         guard data[range.lowerBound] == 34, range.count <= limit * 6 + 2,
               let value = try? JSONDecoder().decode(String.self, from: data.subdata(in: range)) else { return nil }
         return String(value.prefix(limit))

@@ -5,7 +5,7 @@
 <h1 align="center">Codex Pacer</h1>
 
 <p align="center">
-  A Dynamic Island for your Mac that keeps an eye on <b>Codex</b>, <b>Claude Code</b> and <b>DeepSeek Harness</b>:<br>
+  A Dynamic Island for your Mac or Windows PC that keeps an eye on <b>Codex</b>, <b>Claude Code</b> and <b>DeepSeek Harness</b>:<br>
   running tasks, output speed, quota pace and balance, right at the notch.
 </p>
 
@@ -13,6 +13,7 @@
   <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?label=release&color=2f9e8f"></a>
   <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple">
   <img alt="Universal app for Apple Silicon and Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555555">
+  <img alt="Windows 10 2004 or later, x64 and ARM64" src="https://img.shields.io/badge/Windows-10%202004%2B%20x64%20%2B%20ARM64-0078D4?logo=windows">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?color=555555"></a>
 </p>
 
@@ -70,6 +71,8 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 ## Install
 
+### Mac
+
 Codex Pacer is distributed as a universal DMG signed with Developer ID and notarized by Apple.
 
 1. Double-click the downloaded DMG and drag **Codex Pacer** into **Applications**.
@@ -77,9 +80,17 @@ Codex Pacer is distributed as a universal DMG signed with Developer ID and notar
 
 After that, Pacer updates itself: it checks daily, installs when you choose to and shows what changed once after an update. **Settings → General → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
 
+### Windows
+
+1. Download `Codex-Pacer-VERSION-windows-x64-setup.exe` from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest), or `windows-arm64-setup.exe` on an ARM PC, and run it. It installs for the current user without administrator rights.
+2. The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**.
+
+Updates then work as on the Mac, from **Settings → General**. Uninstall from Windows **Installed apps**; preferences and read history are kept.
+
 ## Requirements
 
 - macOS 14 Sonoma or later, on Apple silicon or Intel. Liquid Glass needs macOS 26.
+- Or Windows 10 2004 (build 19041) or later, x64 or ARM64. The glass surface needs Windows 11 22H2, and Claude and DeepSeek sign-in need the WebView2 Runtime, which Windows 11 includes.
 - Codex (app or CLI), Claude Code or DeepSeek Harness, any combination, installed and signed in.
 - Python 3 for the setup and SSH helpers; SSH hosts need Python 3.6 or later and non-interactive OpenSSH access.
 - For Codex Remote Control tasks, keep the Codex app open and connected to the remote host.

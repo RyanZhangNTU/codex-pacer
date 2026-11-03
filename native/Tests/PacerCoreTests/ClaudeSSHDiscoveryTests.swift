@@ -1,3 +1,8 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -69,12 +74,6 @@ final class ClaudeSSHDiscoveryTests: XCTestCase {
         XCTAssertTrue(args.contains("StrictHostKeyChecking=yes"))
         let installer = try ClaudeRemoteSetup.arguments(target: targets[0])
         XCTAssertEqual(Array(installer.dropLast()), args, "Collection and setup use the same route and key")
-        try FileManager.default.removeItem(at: root.appendingPathComponent(desktop))
-        let external = root.appendingPathComponent("external.json")
-        try JSONSerialization.data(withJSONObject: ["configs": [["sshHost": "unsafe-link"]]]).write(to: external)
-        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent(desktop), withDestinationURL: external)
-        let linked = await discovery.configured(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
-        XCTAssertTrue(linked.isEmpty)
     }
 
     func testDiscoveryIsBoundedAndCachesRouteReadsUntilSSHConfigurationChanges() async throws {

@@ -1,0 +1,58 @@
+<Button x:Class="CodexPacer.Windows.TaskRow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:CodexPacer.Windows"
+ Height="54" Padding="0" BorderThickness="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+ FocusVisualStyle="{x:Null}" AutomationProperties.Name="{Binding AccessibleName}">
+ <Button.Template>
+  <ControlTemplate TargetType="{x:Type local:TaskRow}">
+   <Grid>
+    <Border CornerRadius="12" Background="{TemplateBinding Background}" Opacity="{TemplateBinding HoverProgress}" IsHitTestVisible="False"/>
+    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+    <Border x:Name="Focus" CornerRadius="12" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False"/>
+   </Grid>
+   <ControlTemplate.Triggers>
+    <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:DesktopAppearance.HighContrast" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
+     <Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+    </MultiTrigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate>
+ </Button.Template>
+ <Border CornerRadius="12" Padding="9,8" Background="Transparent">
+  <Grid VerticalAlignment="Center">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <local:IconGlyph Symbol="{Binding Value.Symbol}" Ink="{Binding StatusInk}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+   <Grid Grid.Column="2">
+    <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="3"/><RowDefinition Height="15"/></Grid.RowDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <TextBlock Text="{Binding Value.Title}" FontSize="13" FontWeight="SemiBold" Foreground="{Binding TitleInk}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+    <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextOptions.TextFormattingMode="Ideal">
+     <Run Text="{Binding RateText, Mode=OneWay}" FontSize="{Binding RateSize}" FontWeight="SemiBold" Foreground="{Binding RateInk}"/>
+     <Run Text="{Binding RateUnit, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="#6B6B6B"/>
+     <Run Text="{Binding RateSeparator, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="#6B6B6B"/>
+     <Run Text="{Binding Value.TurnTime, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{Binding DurationInk}"/>
+    </TextBlock>
+    <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center">
+     <TextBlock Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" TextTrimming="CharacterEllipsis"/>
+     <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SubagentsVisible}">
+      <local:IconGlyph Symbol="person.2" Ink="#9E9E9E" Width="11" Height="11" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding Value.SubagentText}" FontSize="11" FontWeight="Medium" Foreground="#9E9E9E" Margin="3,0,0,0"/>
+     </StackPanel>
+     <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SourceVisible}">
+      <local:IconGlyph Symbol="{Binding SourceSymbol}" Ink="#9E9E9E" Width="11" Height="11" Margin="0,0,3,0" VerticalAlignment="Center" Visibility="{Binding SourceIconVisible}"/>
+      <TextBlock Text="{Binding Value.SourceLabel}" FontSize="11" FontWeight="Medium" Foreground="#9E9E9E"/>
+     </StackPanel>
+    </StackPanel>
+    <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="{Binding ModelOpacity}">
+     <StackPanel Orientation="Horizontal" Margin="0,0,7,0" Visibility="{Binding CostVisible}">
+      <Ellipse Fill="#FFBD61" Width="5" Height="5" Margin="0,0,4,0" VerticalAlignment="Center" Visibility="{Binding PeakVisible}"/>
+      <TextBlock Text="{Binding Value.Cost}" Foreground="#D3D3D3" FontSize="11" FontWeight="Medium"/>
+     </StackPanel>
+     <TextBlock Text="{Binding Value.Model}" Foreground="{Binding ProviderInk}" FontSize="11" FontWeight="Medium"/>
+     <TextBlock Text="{Binding Value.Effort}" Foreground="{Binding ProviderInk}" Opacity="0.62" FontSize="11" FontWeight="Medium" Margin="4,0,0,0" Visibility="{Binding EffortVisible}"/>
+    </StackPanel>
+   </Grid>
+  </Grid>
+ </Border>
+</Button>

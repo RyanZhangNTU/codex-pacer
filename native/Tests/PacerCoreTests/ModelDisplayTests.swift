@@ -131,10 +131,10 @@ final class ModelDisplayTests: XCTestCase {
 
     private func python(_ script: String) throws -> String {
         let process = Process(), output = Pipe(), error = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.executableURL = PythonFixture.executable
         process.arguments = ["-u", "-c", script, Data("/private/tmp/pacer-no-user-data".utf8).base64EncodedString()]
         process.standardOutput = output; process.standardError = error
-        try process.run(); let result = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        let pythonFixture = try PythonFixture.prepare(process); defer { pythonFixture.remove() }; try process.run(); let result = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0, String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         return String(decoding: result, as: UTF8.self)
     }

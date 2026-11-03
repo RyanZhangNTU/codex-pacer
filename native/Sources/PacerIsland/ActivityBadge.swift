@@ -3,8 +3,8 @@ import PacerCore
 import SwiftUI
 
 /// What the badge core shows while exactly one task is active.
-enum ActivityBadgeSingleTask: String, CaseIterable {
-    case stage, count
+typealias ActivityBadgeSingleTask = CompactBarPresentation.SingleTask
+extension CompactBarPresentation.SingleTask {
     static let defaultsKey = "compactSingleTask"
     init(defaults: UserDefaults = .standard) {
         self = defaults.string(forKey: Self.defaultsKey).flatMap(Self.init(rawValue:)) ?? .stage
@@ -12,38 +12,15 @@ enum ActivityBadgeSingleTask: String, CaseIterable {
     var label: String { L10n.text("layout.single_task." + rawValue) }
 }
 
-/// One collapsed status: the core says what or how many, the orbit says work
-/// is running, the solid fill says it needs you, and a corner mark keeps an
-/// unread ending visible beside running work.
-struct HeaderActivity: Equatable {
-    enum Core: Equatable { case idle, symbol(String), count(Int) }
-    enum Ending: Equatable {
-        case completed(AgentProvider), interrupted, failed
-        var symbol: String {
-            switch self {
-            case .completed: StatusSymbols.complete
-            case .interrupted: StatusSymbols.interrupted
-            case .failed: StatusSymbols.failed
-            }
-        }
-        var tint: Color {
-            switch self {
-            case .completed(let provider): provider.tint
-            case .interrupted: PacerPalette.paused
-            case .failed: PacerPalette.danger
-            }
+extension HeaderActivity.Ending {
+    var symbol: String { StatusSymbols.symbol(kind) }
+    var tint: Color {
+        switch self {
+        case .completed(let provider): provider.tint
+        case .interrupted: PacerPalette.paused
+        case .failed: PacerPalette.danger
         }
     }
-    var core: Core
-    var activeCount: Int
-    /// Running task counts by provider; empty when nothing is running.
-    var orbit: [AgentProvider: Int]
-    var attention: PendingAttentionRequest.Kind?
-    var ending: Ending?
-
-    /// With nothing active or waiting, the ending itself occupies the core.
-    var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
-    var showsEndingMark: Bool { ending != nil && !endingIsCore }
 }
 
 struct ActivityBadge: View {
@@ -116,7 +93,7 @@ struct ActivityBadge: View {
             Image(systemName: StatusSymbols.enclosed(name)).font(.system(size: 9, weight: .bold))
                 .foregroundStyle(ink).contentTransition(.symbolEffect(.replace))
         case .count(let count):
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .bold, design: .rounded))
+            Text(HeaderActivity.countText(count)).font(.system(size: 10, weight: .bold, design: .rounded))
                 .monospacedDigit().foregroundStyle(ink).contentTransition(.numericText(value: Double(count)))
         }
     }

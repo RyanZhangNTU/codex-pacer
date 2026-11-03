@@ -1,32 +1,14 @@
 import Foundation
 
-/// Local spend estimate and billing provider derived from the session logs.
-public struct DeepSeekLocalUsage: Equatable, Sendable {
-    public let ledger: DeepSeekSpendLedger
-    /// The billing provider of the newest request, such as `deepseek-account`.
-    public let provider: String?
-    /// Each delegated session's parent session.
-    public let parents: [String: String]
-    /// Session titles from the logs, for tasks whose rows are gone.
-    public let titles: [String: String]
-    public init(ledger: DeepSeekSpendLedger = DeepSeekSpendLedger(), provider: String? = nil, parents: [String: String] = [:],
-                titles: [String: String] = [:]) {
-        self.ledger = ledger; self.provider = provider; self.parents = parents; self.titles = titles
-    }
-    /// The task a session's spend counts toward: its root session.
-    public func task(of session: String) -> String { DeepSeekActivityState.root(of: session, parents: parents) }
-    /// Delegated sessions under a root task.
-    public func subagents(of task: String) -> Int { parents.keys.filter { $0 != task && self.task(of: $0) == task }.count }
-}
-
-/// Reads DeepSeek Harness session logs on this Mac. File events drive reads;
+/// Reads local DeepSeek Harness session logs. File events drive reads;
 /// a minute tick rediscovers sessions and checks open turns for a live writer.
 public actor DeepSeekActivityMonitor {
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [PendingAttentionRequest],
                                          [SessionPerformanceUpdate], DeepSeekLocalUsage) async -> Void
     private var callback: Update?
+    private var generation = UUID()
     private var home: URL?
-    private var reader = DeepSeekSessionReader()
+    private var reader: DeepSeekSessionReader
     private var state = DeepSeekActivityState()
     private var baselinePending = false
     private var watcher: ActivityLogWatcher?
@@ -35,16 +17,24 @@ public actor DeepSeekActivityMonitor {
     private var retry: Task<Void, Never>?
     private var pendingPublish: Task<Void, Never>?
     private var policy: ActivityRefreshPolicy = .collapsed
+    private let files: any PlatformFileSystem
+    private let fileEvents: any ActivityFileEvents
+    private let clock: @Sendable () -> Date
     private let liveSessions: @Sendable ([String: URL]) -> Set<String>
-    public init() { liveSessions = { DeepSeekSessionLocks.held($0) } }
-    init(liveSessions: @escaping @Sendable ([String: URL]) -> Set<String>) { self.liveSessions = liveSessions }
+    public init(files: any PlatformFileSystem, fileEvents: any ActivityFileEvents,
+                liveSessions: @escaping @Sendable ([String: URL]) -> Set<String>, clock: @escaping @Sendable () -> Date = { Date() }) {
+        self.files = files; self.fileEvents = fileEvents; self.clock = clock
+        reader = DeepSeekSessionReader(files: files); self.liveSessions = liveSessions
+    }
 
     public func start(home: URL, refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
         callback = update; policy = refreshPolicy
         guard self.home != home else { await publish(); return }
         stop(); self.home = home; reader.reset(); state = DeepSeekActivityState(); baselinePending = true
-        watcher = ActivityLogWatcher(interval: 0.1, maximumDirectoryWatches: 4) { [weak self] discover in Task { await self?.read(discover: discover) } }
+        let generation = self.generation
+        watcher = ActivityLogWatcher(files: files, events: fileEvents, interval: 0.1, maximumDirectoryWatches: 4) { [weak self] discover in Task { await self?.fileChanged(discover: discover, generation: generation) } }
         await read(discover: true)
+        guard self.generation == generation, self.home == home else { return }
         discovery = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -63,21 +53,26 @@ public actor DeepSeekActivityMonitor {
         callback = nil; stop(); home = nil; reader.reset(); state = DeepSeekActivityState()
     }
     private func stop() {
+        generation = UUID()
         discovery?.cancel(); discovery = nil; catchup?.cancel(); catchup = nil; retry?.cancel(); retry = nil
         pendingPublish?.cancel(); pendingPublish = nil; watcher?.stop(); watcher = nil
     }
+    private func fileChanged(discover: Bool, generation: UUID) async {
+        guard self.generation == generation else { return }
+        await read(discover: discover)
+    }
     private func maintain() async {
         await read(discover: true)
-        state.pruneLedger()
+        state.pruneLedger(now: clock())
         // A turn quiet for a minute is live only while Harness holds its lock.
-        let quiet = state.openSessions(quietFor: 60)
+        let quiet = state.openSessions(quietFor: 60, now: clock())
         if !quiet.isEmpty { state.expire(candidates: quiet, live: liveSessions(reader.lockURLs(sessions: quiet))) }
         await publish()
     }
     private func read(discover: Bool) async {
         guard let home else { return }
-        let result = reader.read(home: home, discover: discover)
-        for line in result.lines { state.consume(line.record, session: line.session, attaching: line.attaching) }
+        let date = clock(), result = reader.read(home: home, discover: discover, now: clock())
+        for line in result.lines { state.consume(line.record, session: line.session, attaching: line.attaching, now: date) }
         state.setAvailable(result.available, watching: !result.watchURLs.isEmpty)
         if baselinePending, result.caughtUp {
             baselinePending = false

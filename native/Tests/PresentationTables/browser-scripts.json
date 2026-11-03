@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "origin": "https://platform.deepseek.com/",
+  "scripts": [
+    {
+      "name": "summaryScript"
+    },
+    {
+      "name": "sessionFingerprintScript"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import PacerCore
+import SwiftUI
 import WebKit
 
 /// Pacer owns this WebKit profile. It never imports another app's cookies or
@@ -69,7 +70,7 @@ enum ClaudeWebSessionStore {
 
 /// Only an explicit sign-in action creates a web view. Closing the owned
 /// window releases all views; the persistent cookie store remains available.
-/// Keep the native Continue shortcut ahead of a focused WebKit responder.
+/// Keep the native Done shortcut (⌘Return) ahead of a focused WebKit responder.
 /// Other chords still follow the ordinary window/content responder chain.
 @MainActor
 final class ClaudeLoginWindow: NSWindow {
@@ -85,16 +86,20 @@ final class ClaudeLoginWindow: NSWindow {
     }
 }
 
+/// Signing in on the page is enough: a new `sessionKey` in Pacer's profile
+/// shows the signed-in banner and closes the window. Closing it any other way
+/// still completes when a session is present, so the sign-in is never lost.
 @MainActor
-final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKHTTPCookieStoreObserver {
     private static let shared = ClaudeWebLogin()
+    private static let loginURL = URL(string: "https://claude.ai/login")!
     private var window: NSWindow?
     private var webView: WKWebView?
     private var popups: [ObjectIdentifier: (window: NSWindow, webView: WKWebView)] = [:]
-    private var completions: [@MainActor () -> Void] = []
-    private let address = NSTextField(labelWithString: "claude.ai")
-    private let message = NSTextField(wrappingLabelWithString: "")
-    private var continueButton: NSButton?
+    private var completions: [@MainActor (_ newSession: Bool) -> Void] = []
+    private let banner = WebLoginBannerState()
+    private var watch = WebLoginSessionWatch()
+    private var autoClose: Task<Void, Never>?
     private var organizationWindow: NSWindow?
     private var organizationPicker: NSPopUpButton?
     private var organizationContinueButton: NSButton?
@@ -102,10 +107,13 @@ final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
     private var lastVisibility = false
     static var onVisibilityChange: (@MainActor (Bool) -> Void)?
     static var isVisible: Bool { shared.window != nil || shared.organizationWindow != nil }
-    private var continuing = false
+    private var finishing = false
+    private var closeRequested = false
     private var loginGeneration = 0
 
-    static func open(completion: @escaping @MainActor () -> Void) {
+    /// `newSession` is false when the window closes on the session it opened
+    /// with, so a retry keeps the chosen organization.
+    static func open(completion: @escaping @MainActor (_ newSession: Bool) -> Void) {
         shared.completions.append(completion)
         shared.show()
     }
@@ -123,58 +131,36 @@ final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
             return
         }
         loginGeneration += 1
+        watch = WebLoginSessionWatch(); banner.phase = .prompt
+        finishing = false; closeRequested = false
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = ClaudeWebSessionStore.dataStore
         let browser = WKWebView(frame: .zero, configuration: configuration)
         browser.navigationDelegate = self; browser.uiDelegate = self
-        browser.translatesAutoresizingMaskIntoConstraints = false
         webView = browser
         recordUserAgent(from: browser)
 
         let panel = makeWindow(width: 760, height: 800, handlesLoginShortcut: true)
-        let container = NSView()
-        let header = NSStackView()
-        header.orientation = .horizontal; header.spacing = 12
-        header.translatesAutoresizingMaskIntoConstraints = false
-        address.font = .systemFont(ofSize: 12, weight: .medium)
-        address.textColor = .secondaryLabelColor
-        let reload = NSButton(image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: L10n.text("common.refresh"))!,
-            target: self, action: #selector(reloadPage))
-        reload.bezelStyle = .inline; reload.toolTip = L10n.text("common.refresh")
-        header.addArrangedSubview(address); header.addArrangedSubview(NSView()); header.addArrangedSubview(reload)
-
-        message.stringValue = L10n.text("claude.login.instructions")
-        message.font = .systemFont(ofSize: 12); message.textColor = .secondaryLabelColor
-        message.translatesAutoresizingMaskIntoConstraints = false
-        let proceed = NSButton(title: L10n.text("claude.login.continue"), target: self, action: #selector(continueAfterSignIn))
-        proceed.bezelStyle = .rounded
-        proceed.keyEquivalent = "\r"; proceed.keyEquivalentModifierMask = [.command]
-        proceed.toolTip = L10n.text("claude.login.continue_shortcut")
-        proceed.translatesAutoresizingMaskIntoConstraints = false
-        continueButton = proceed
-        container.addSubview(header); container.addSubview(browser); container.addSubview(message); container.addSubview(proceed)
-        NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
-            header.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
-            header.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            header.heightAnchor.constraint(equalToConstant: 24),
-            browser.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            browser.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            browser.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
-            browser.bottomAnchor.constraint(equalTo: message.topAnchor, constant: -14),
-            message.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
-            message.trailingAnchor.constraint(equalTo: proceed.leadingAnchor, constant: -16),
-            message.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
-            proceed.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
-            proceed.centerYAnchor.constraint(equalTo: message.centerYAnchor),
-            proceed.widthAnchor.constraint(greaterThanOrEqualToConstant: 88)
-        ])
-        panel.contentView = container
+        let copy = WebLoginBanner.Copy(prompt: L10n.text("claude.login.prompt"), promptDetail: L10n.text("claude.login.prompt_detail"),
+            signedIn: L10n.text("claude.login.signed_in"), signedInDetail: L10n.text("claude.login.signed_in_detail"))
+        let strip = NSHostingView(rootView: WebLoginBanner(provider: .claude, copy: copy, state: banner,
+            onReload: { [weak self] in self?.reloadPage() },
+            onLater: { [weak self] in self?.window?.performClose(nil) },
+            onDone: { [weak self] in self?.finish(requiringSession: true) }))
+        panel.contentView = NSView.webLoginContainer(banner: strip, page: browser)
+        panel.title = Self.title(host: Self.loginURL.host)
         window = panel
-        browser.load(URLRequest(url: URL(string: "https://claude.ai/login")!))
+        // The session at open is the baseline a new sign-in must differ from.
+        ClaudeWebSessionStore.dataStore.httpCookieStore.add(self)
+        checkSession()
+        browser.load(URLRequest(url: Self.loginURL))
         panel.center(); panel.makeKeyAndOrderFront(nil)
         publishVisibility()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private static func title(host: String?) -> String {
+        L10n.text("claude.login.title") + " · " + (host ?? "claude.ai")
     }
 
     private func makeWindow(width: CGFloat, height: CGFloat, handlesLoginShortcut: Bool = false) -> NSWindow {
@@ -185,7 +171,7 @@ final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
         let panel: NSWindow
         if handlesLoginShortcut {
             let login = ClaudeLoginWindow(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
-            login.onContinue = { [weak self] in self?.continueAfterSignIn() }
+            login.onContinue = { [weak self] in self?.finish(requiringSession: true) }
             panel = login
         } else {
             panel = NSWindow(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
@@ -196,7 +182,12 @@ final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
         return panel
     }
 
-    @objc private func reloadPage() { webView?.reload() }
+    private func reloadPage() {
+        guard let webView else { return }
+        if banner.phase == .loadFailed { banner.phase = .prompt }
+        // A failed first load leaves nothing to reload.
+        if webView.url == nil { webView.load(URLRequest(url: Self.loginURL)) } else { webView.reload() }
+    }
 
     private func recordUserAgent(from browser: WKWebView) {
         // Isolated client-world metadata cannot read or modify sign-in fields.
@@ -207,41 +198,72 @@ final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
         }
     }
 
-    @objc private func continueAfterSignIn() {
-        guard window != nil, !continuing else { return }
-        continuing = true
+    /// Compares the profile's session with the one the window opened with.
+    private func checkSession() {
         let generation = loginGeneration
         Task { @MainActor [weak self] in
-            let session = await ClaudeWebSessionStore.session()
+            let fingerprint = await ClaudeWebSessionStore.session()?.sessionHash
+            guard let self, self.window != nil, self.loginGeneration == generation, !self.finishing,
+                  self.watch.observe(fingerprint), self.banner.phase != .signedIn else { return }
+            self.banner.phase = .signedIn
+            self.autoClose = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: WebLoginBanner.autoCloseDelay)
+                guard let self, !Task.isCancelled, self.loginGeneration == generation else { return }
+                self.finish(requiringSession: true)
+            }
+        }
+    }
+
+    /// A session present now completes the sign-in, as a new one when it
+    /// differs from the session at open. Without one, Done and ⌘Return keep
+    /// the window open, while closing it simply closes.
+    private func finish(requiringSession: Bool) {
+        guard window != nil, !finishing else { return }
+        finishing = true
+        let generation = loginGeneration
+        Task { @MainActor [weak self] in
+            let fingerprint = await ClaudeWebSessionStore.session()?.sessionHash
             guard let self, self.window != nil, self.loginGeneration == generation else { return }
-            defer { if self.loginGeneration == generation { self.continuing = false } }
-            guard session != nil else {
-                self.message.stringValue = L10n.text("claude.login.instructions")
+            let outcome = self.watch.outcome(for: fingerprint)
+            if outcome == .none, requiringSession, !self.closeRequested {
+                self.finishing = false
                 return
             }
-            let callbacks = self.completions
+            let callbacks = outcome == .none ? [] : self.completions
             self.completions.removeAll()
             self.window?.close()
             // Presence of an owned cookie is a candidate session. The quota
             // client independently verifies membership and the usage response.
-            callbacks.forEach { $0() }
+            callbacks.forEach { $0(outcome == .new) }
         }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window else { return true }
+        closeRequested = true
+        finish(requiringSession: false)
+        return false
+    }
+
+    func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+        if window != nil { checkSession() }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView === self.webView {
-            address.stringValue = webView.url?.host ?? "claude.ai"
-            message.stringValue = L10n.text("claude.login.instructions")
+            window?.title = Self.title(host: webView.url?.host)
+            if banner.phase == .loadFailed { banner.phase = .prompt }
+            checkSession()
         }
         if let popup = popups[ObjectIdentifier(webView)] {
-            popup.window.title = L10n.text("claude.login.title") + " · " + (webView.url?.host ?? "claude.ai")
+            popup.window.title = Self.title(host: webView.url?.host)
         }
         recordUserAgent(from: webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if webView === self.webView, (error as NSError).code != NSURLErrorCancelled {
-            message.stringValue = L10n.text("claude.login.load_failed")
+        if webView === self.webView, (error as NSError).code != NSURLErrorCancelled, banner.phase != .signedIn {
+            banner.phase = .loadFailed
         }
     }
 
@@ -345,13 +367,15 @@ final class ClaudeWebLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WK
         guard let closing = notification.object as? NSWindow else { return }
         if closing === window {
             (closing as? ClaudeLoginWindow)?.onContinue = nil
-            loginGeneration += 1; continuing = false
+            ClaudeWebSessionStore.dataStore.httpCookieStore.remove(self)
+            autoClose?.cancel(); autoClose = nil
+            loginGeneration += 1; finishing = false; closeRequested = false
             let children = Array(popups.values)
             for child in children { child.window.close() }
             popups.removeAll()
             webView?.stopLoading(); webView?.navigationDelegate = nil; webView?.uiDelegate = nil
             webView?.removeFromSuperview(); closing.contentView = nil
-            webView = nil; window = nil; continueButton = nil; completions.removeAll()
+            webView = nil; window = nil; completions.removeAll()
         } else if let key = popups.first(where: { $0.value.window === closing })?.key,
                   let child = popups.removeValue(forKey: key) {
             child.webView.stopLoading(); child.webView.navigationDelegate = nil; child.webView.uiDelegate = nil

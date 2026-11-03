@@ -1,3 +1,4 @@
+import PacerMacSupport
 import XCTest
 import Darwin
 import AppKit
@@ -60,7 +61,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         defaults.set(true, forKey: "monitorSSH")
         ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
         let monitor = ClaudeActivityMonitor(sshExecutable: collector)
-        let model = IslandModel(demo: true, defaults: defaults,
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
             claudeMonitor: monitor, claudeRemoteSetup: ClaudeRemoteSetup(executable: installer, timeout: blockingSetup ? 5 : 2))
         addTeardownBlock {

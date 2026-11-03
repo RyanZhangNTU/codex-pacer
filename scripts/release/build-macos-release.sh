@@ -70,7 +70,14 @@ trap - EXIT
 cp -X "$task_dmg" "$task_output/$task_name"
 python3 scripts/release/prepare-update.py --info-plist "$task_app/Contents/Info.plist" --archive "$task_output/$task_name" \
     --tools "$task_sparkle_tools" --notes "$task_notes" --notes-zh "$task_notes_zh"
-(cd "$task_output" && shasum -a 256 "$task_name" appcast.xml > SHA256SUMS.txt)
+# Windows installers come from the Platforms run on this commit and share the Mac update key.
+task_windows=()
+if python3 scripts/release/prepare-windows-update.py --enabled; then
+    python3 scripts/release/prepare-windows-update.py --output "$task_output" --tools "$task_sparkle_tools" \
+        --notes "$task_notes" --notes-zh "$task_notes_zh"
+    task_windows=("Codex-Pacer-${task_version}-windows-x64-setup.exe" "Codex-Pacer-${task_version}-windows-arm64-setup.exe" appcast-windows.xml)
+fi
+(cd "$task_output" && shasum -a 256 "$task_name" appcast.xml ${task_windows[@]+"${task_windows[@]}"} > SHA256SUMS.txt)
 python3 - "$task_output" "$task_build" "$task_version" "$(git rev-parse HEAD)" "$task_mode" "$task_name" <<'PY'
 import json, pathlib, sys
 out, build, version, commit, mode, filename = sys.argv[1:]

@@ -1,0 +1,13 @@
+{
+  "version": "3.14.10",
+  "architecture": "arm64",
+  "url": "https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-arm64.zip",
+  "sha256": "bbe116bb1248820359cbf25127ac5c7794ea161869d83686cfbc9a45203ff836",
+  "signer": "Python Software Foundation",
+  "signedFiles": [
+    "python.exe",
+    "pythonw.exe",
+    "python3.dll",
+    "python314.dll"
+  ]
+}

@@ -1,13 +1,18 @@
 import Foundation
-import Darwin
 
 /// Claude's local collector stays native; only configured SSH hosts receive an
 /// owned Python helper, whose lifetime is tied to this actor's input pipe.
 public actor ClaudeActivityMonitor {
+    private let processes: any HelperProcessLauncher
+    private let fileEvents: any ActivityFileEvents
+    private let telemetryTransport: any TelemetryTransport
+    private let files: any PlatformFileSystem
+    private let clock: @Sendable () -> Date
+    private let remoteMirrorSessionIDs: @Sendable (URL) -> Set<String>
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [PendingAttentionRequest], [SessionPerformanceUpdate]) async -> Void
     private var callback: Update?
     private var home: URL?
-    private var localReader = ClaudeActivityReader()
+    private var localReader: ClaudeActivityReader
     private var local = ClaudeActivityState()
     private var localMirrorRoots: Set<String> = []
     private var watcher: ActivityLogWatcher?
@@ -18,18 +23,16 @@ public actor ClaudeActivityMonitor {
     private var pendingPublish: Task<Void, Never>?
     private var policy: ActivityRefreshPolicy = .collapsed
     private let sshExecutable: URL
+    private let makeSSHArguments: @Sendable (RemoteActivityTarget) -> [String]?
+    private let remoteHome: @Sendable (RemoteActivityTarget) -> String
+    private let maximumRemoteTargets: Int
     private struct Connection {
         let target: RemoteActivityTarget
-        let process: Process
-        let input: FileHandle
-        let output: FileHandle
-        let reader: PipeChunkReader
-        let continuation: AsyncStream<Data>.Continuation
-        let readHandler: @Sendable (FileHandle) -> Void
-        var task: Task<Void, Never>?
+        let identity: UUID
+        let process: any ChildProcessConnection
         var buffer = Data()
         var state: ClaudeActivityState
-        var lastFrame = Date()
+        var lastFrame: Date
     }
     private var connections: [String: Connection] = [:]
     private var disconnected: [String: ClaudeActivityState] = [:]
@@ -38,17 +41,30 @@ public actor ClaudeActivityMonitor {
     /// Polled separately, published with everything else. It outlives this
     /// actor's shutdown because cloud work continues while the Mac sleeps.
     private var cloud: (activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) = ([], nil, [])
-    public init() { sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh") }
-    init(sshExecutable: URL) { self.sshExecutable = sshExecutable }
+    public init(sshExecutable: URL, processes: any HelperProcessLauncher,
+                fileEvents: any ActivityFileEvents, telemetryTransport: any TelemetryTransport,
+                remoteMirrorSessionIDs: @escaping @Sendable (URL) -> Set<String>,
+                files: any PlatformFileSystem, clock: @escaping @Sendable () -> Date,
+                sshArguments: @escaping @Sendable (RemoteActivityTarget) -> [String]?,
+                remoteHome: @escaping @Sendable (RemoteActivityTarget) -> String = { _ in "~/.claude" }, maximumRemoteTargets: Int = 8) {
+        self.sshExecutable = sshExecutable; self.processes = processes; self.fileEvents = fileEvents
+        self.telemetryTransport = telemetryTransport; self.files = files; self.clock = clock
+        self.remoteMirrorSessionIDs = remoteMirrorSessionIDs
+        self.makeSSHArguments = sshArguments
+        self.remoteHome = remoteHome
+        self.maximumRemoteTargets = min(16, max(1, maximumRemoteTargets))
+        localReader = ClaudeActivityReader(files: files, clock: clock)
+    }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
         callback = update; policy = refreshPolicy
         if self.home != home {
             stopLocal(); self.home = home; localReader.reset(); local = ClaudeActivityState()
-            watcher = ActivityLogWatcher(interval: 0.1, maximumDirectoryWatches: ClaudeActivityReader.maximumDirectoryWatches) { [weak self] discover in Task { await self?.readLocal(discover: discover) } }
             let generation = localGeneration
-            let receiver = ClaudeActivityTelemetry { [weak self] bytes in Task { await self?.receiveTelemetry(bytes, generation: generation) } }
+            watcher = ActivityLogWatcher(files: files, events: fileEvents, interval: 0.1, maximumDirectoryWatches: ClaudeActivityReader.maximumDirectoryWatches) { [weak self] discover in Task { await self?.fileChanged(discover: discover, generation: generation) } }
+            let receiver = ClaudeActivityTelemetry(transport: telemetryTransport) { [weak self] bytes in Task { await self?.receiveTelemetry(bytes, generation: generation) } }
             do { try receiver.start(); telemetry = receiver } catch { receiver.stop() }
             await readLocal(discover: true, attaching: true)
+            guard localGeneration == generation, self.home == home else { return }
             discovery = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -62,8 +78,8 @@ public actor ClaudeActivityMonitor {
     }
     /// Reconcile discovery/settings without replacing healthy local/SSH state.
     public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget]) async {
-        wanted = Dictionary(remoteTargets.prefix(8).filter { target in
-            target.sshArguments() != nil
+        wanted = Dictionary(remoteTargets.prefix(maximumRemoteTargets).filter { target in
+            makeSSHArguments(target) != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
@@ -114,16 +130,20 @@ public actor ClaudeActivityMonitor {
         policy = value
         for connection in connections.values {
             if var data = try? JSONSerialization.data(withJSONObject: ["kind": "settings", "batchInterval": value.interval, "flushPending": flushPending]) {
-                data.append(10); try? connection.input.write(contentsOf: data)
+                data.append(10); try? connection.process.write(data)
             }
         }
         if flushPending { Task { await readLocal(discover: false); await publish() } }
     }
-    public func shutdown() async {
+    public func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
+        let children = connections.values.map(\.process)
         callback = nil; stopLocal(); home = nil
         for id in Array(connections.keys) { stopRemote(id) }
         wanted.removeAll(); disconnected.removeAll(); retry.removeAll(); localReader.reset(); local = ClaudeActivityState()
+        await deadline.finish(readers: [], children: children)
     }
+    public func transcriptURL(for sessionID: String) -> URL? { localReader.transcriptURL(for: sessionID) }
+    public func knownLocalSessionIDs() -> Set<String> { local.knownStartedSessionIDs }
     private func stopLocal() {
         localGeneration = UUID()
         localMirrorRoots.removeAll()
@@ -133,9 +153,9 @@ public actor ClaudeActivityMonitor {
     private func maintain() async {
         await readLocal(discover: true)
         // Rechecking recent baseline tails rides this existing minute tick.
-        local.expireUnconfirmedBaseline()
-        for id in Array(connections.keys) { connections[id]?.state.expireUnconfirmedBaseline() }
-        for (id, connection) in connections where Date().timeIntervalSince(connection.lastFrame) > 45 { closed(id, process: connection.process) }
+        local.expireUnconfirmedBaseline(now: clock())
+        for id in Array(connections.keys) { connections[id]?.state.expireUnconfirmedBaseline(now: clock()) }
+        for (id, connection) in connections where clock().timeIntervalSince(connection.lastFrame) > 45 { closed(id, identity: connection.identity) }
         await connectWanted(); await publish()
     }
     private func readLocal(discover: Bool, attaching: Bool = false) async {
@@ -153,9 +173,9 @@ public actor ClaudeActivityMonitor {
                 watchURLs.removeAll { removed.contains($0) }
             }
         }
-        for bytes in result.records { local.consume(bytes) }
-        if result.caughtUp { local.finalizeHistoricalBaseline() }
-        if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status) }
+        for bytes in result.records { local.consume(bytes, now: clock()) }
+        if result.caughtUp { local.finalizeHistoricalBaseline(now: clock()) }
+        if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }
         watcher?.update(watchURLs, interval: 0.1)
         if !result.caughtUp, catchup == nil {
@@ -167,96 +187,78 @@ public actor ClaudeActivityMonitor {
         }
         if result.caughtUp { await schedulePublish(immediate: attaching || result.records.contains(where: Self.urgent)) }
     }
+    private func fileChanged(discover: Bool, generation: UUID) async {
+        guard localGeneration == generation else { return }
+        await readLocal(discover: discover)
+    }
     private func refreshLocalExclusions(home: URL) {
-        localMirrorRoots = ClaudeApplicationResolver.remoteMirrorSessionIDs(claudeHome: home)
+        localMirrorRoots = remoteMirrorSessionIDs(home)
         local.setExcludedSessionIDs(localMirrorRoots)
     }
     private func continueRead() async { catchup = nil; await readLocal(discover: false) }
     private func receiveTelemetry(_ bytes: Data, generation: UUID) async {
         guard localGeneration == generation, home != nil else { return }
-        local.consume(bytes); await schedulePublish(immediate: false)
+        local.consume(bytes, now: clock()); await schedulePublish(immediate: false)
     }
     @discardableResult private func connectWanted() async -> Bool {
-        let due = wanted.values.filter { connections[$0.id] == nil && Date() >= (retry[$0.id] ?? .distantPast) }
+        let due = wanted.values.filter { connections[$0.id] == nil && clock() >= (retry[$0.id] ?? .distantPast) }
         for target in due { connect(target) }
         return !due.isEmpty
     }
     private func connect(_ target: RemoteActivityTarget) {
-        let process = Process(), input = Pipe(), output = Pipe()
+        let identity = UUID()
         let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
-        let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(Data("~/.claude".utf8).base64EncodedString()) \(policy.interval)"
-        process.executableURL = sshExecutable
-        guard let arguments = target.sshArguments() else { return }
-        process.arguments = arguments + [command]
-        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
-        // OS readiness callbacks read available bytes without occupying Swift's
-        // cooperative executor while a quiet SSH pipe waits for a heartbeat.
-        // Rearming only after actor consumption keeps ordered backpressure.
-        let reader = PipeChunkReader(descriptor: output.fileHandleForReading.fileDescriptor)
-        let channel = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(64))
-        let readHandler = reader.pausingHandler(channel.continuation)
-        output.fileHandleForReading.readabilityHandler = readHandler
-        do { try process.run() }
-        catch {
-            reader.stop(); output.fileHandleForReading.readabilityHandler = nil; channel.continuation.finish()
-            try? input.fileHandleForWriting.close(); try? output.fileHandleForReading.close()
-            retry[target.id] = Date().addingTimeInterval(30); disconnected[target.id] = ClaudeActivityState(sourceID: target.id, sourceName: target.name); return
+        let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(Data(remoteHome(target).utf8).base64EncodedString()) \(policy.interval)"
+        guard let arguments = makeSSHArguments(target) else { return }
+        do {
+            let process = try processes.launch(ChildProcessRequest(executable: sshExecutable, arguments: arguments + [command],
+                environment: ProcessInfo.processInfo.environment), output: { [weak self] bytes in
+                    await self?.receiveRemote(bytes, id: target.id, identity: identity)
+                }, ended: { [weak self] in await self?.remoteEOF(target.id, identity: identity) })
+            connections[target.id] = Connection(target: target, identity: identity, process: process,
+                state: disconnected.removeValue(forKey: target.id) ?? ClaudeActivityState(sourceID: target.id, sourceName: target.name), lastFrame: clock())
+        } catch {
+            retry[target.id] = clock().addingTimeInterval(30)
+            disconnected[target.id] = ClaudeActivityState(sourceID: target.id, sourceName: target.name)
         }
-        var connection = Connection(target: target, process: process, input: input.fileHandleForWriting, output: output.fileHandleForReading,
-            reader: reader, continuation: channel.continuation, readHandler: readHandler,
-            state: disconnected.removeValue(forKey: target.id) ?? ClaudeActivityState(sourceID: target.id, sourceName: target.name))
-        connection.task = Task { [weak self] in
-            for await bytes in channel.stream {
-                guard !Task.isCancelled else { return }
-                await self?.receiveRemote(bytes, id: target.id, process: process)
-            }
-            await self?.remoteEOF(target.id, process: process)
-        }
-        connections[target.id] = connection
     }
-    private func receiveRemote(_ bytes: Data, id: String, process: Process) async {
-        guard var connection = connections[id], connection.process === process else { return }
-        defer {
-            if let current = connections[id], current.process === process { current.output.readabilityHandler = current.readHandler }
-        }
+    private func receiveRemote(_ bytes: Data, id: String, identity: UUID) async {
+        guard var connection = connections[id], connection.identity == identity else { return }
         connection.buffer.append(bytes)
-        guard connection.buffer.count <= 2 * 1024 * 1024 else { closed(id, process: process); await publish(); return }
+        guard connection.buffer.count <= 2 * 1024 * 1024 else { closed(id, identity: identity); await publish(); return }
         var urgent = false, received = false, missingHome = false
         while let end = connection.buffer.firstIndex(of: 10) {
             let frame = Data(connection.buffer.prefix(upTo: end)); connection.buffer.removeSubrange(...end)
             guard let value = try? JSONSerialization.jsonObject(with: frame) as? [String: Any] else { continue }
-            connection.state.consume(frame); connection.lastFrame = Date(); received = true
+            connection.state.consume(frame, now: clock()); connection.lastFrame = clock(); received = true
             urgent = urgent || Self.urgent(value)
             if value["kind"] as? String == "status" { missingHome = value["claudeHome"] as? Bool == false }
         }
         connections[id] = connection
-        if missingHome { park(id, process: process); await publish(); return }
+        if missingHome { park(id, identity: identity); await publish(); return }
         if received { await schedulePublish(immediate: urgent) }
     }
     /// SSH works but the host has no Claude home. That is not a connection
     /// failure: release the helper and look again much later.
-    private func park(_ id: String, process: Process) {
-        guard var connection = connections[id], connection.process === process else { return }
+    private func park(_ id: String, identity: UUID) {
+        guard var connection = connections[id], connection.identity == identity else { return }
         // Invalidate at the final park boundary too: lifecycle records may
         // have followed the missing-home status in the same pipe chunk.
         connection.state.sourceMissing()
-        disconnected[id] = connection.state; retry[id] = Date().addingTimeInterval(1800); stopRemote(id)
+        disconnected[id] = connection.state; retry[id] = clock().addingTimeInterval(1800); stopRemote(id)
     }
-    private func remoteEOF(_ id: String, process: Process) async { closed(id, process: process); await publish() }
-    private func closed(_ id: String, process: Process) {
-        guard var connection = connections[id], connection.process === process else { return }
-        connection.state.unavailable(); disconnected[id] = connection.state; retry[id] = Date().addingTimeInterval(30); stopRemote(id)
+    private func remoteEOF(_ id: String, identity: UUID) async {
+        guard connections[id]?.identity == identity else { return }
+        closed(id, identity: identity); await publish()
+    }
+    private func closed(_ id: String, identity: UUID) {
+        guard var connection = connections[id], connection.identity == identity else { return }
+        connection.state.unavailable(); disconnected[id] = connection.state; retry[id] = clock().addingTimeInterval(30); stopRemote(id)
     }
     private func stopRemote(_ id: String) {
         guard let connection = connections.removeValue(forKey: id) else { return }
-        // EOF first allows the remote helper to close its listener and watches.
-        try? connection.input.close(); connection.reader.stop(); connection.output.readabilityHandler = nil
-        connection.continuation.finish(); connection.task?.cancel(); try? connection.output.close()
-        if connection.process.isRunning {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
-                if connection.process.isRunning { connection.process.terminate() }
-            }
-        }
+        // The host owns stdin EOF, IO cancellation and termination escalation.
+        connection.process.close()
     }
     private func publish() async {
         pendingPublish?.cancel(); pendingPublish = nil

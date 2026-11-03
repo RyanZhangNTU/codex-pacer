@@ -3,7 +3,30 @@ import Foundation
 /// Pacer keeps its hooks current while the Claude module is on, like Codex
 /// needs no setup step. Existing hooks, environment variables and a user's
 /// status-line renderer are preserved and reversible.
-public enum ClaudeHookInstaller {
+public protocol ClaudeHookStorage: Sendable {
+    func validate(_ url: URL) throws
+    func exists(_ url: URL) -> Bool
+    func isDirectory(_ url: URL) -> Bool
+    func isReadable(_ url: URL) -> Bool
+    func read(_ url: URL) throws -> Data
+    func createDirectory(_ url: URL, permissions: UInt16) throws
+    func replace(_ url: URL, with data: Data, permissions: UInt16) throws
+    func remove(_ url: URL) throws
+}
+
+public struct ClaudeHookInstaller {
+    public enum CommandKind: Equatable, Sendable { case hook, statusLine }
+    private let storage: any ClaudeHookStorage
+    private let python: String
+    private let serialize: @Sendable ([String]) -> String
+    private let helperScript: Data?
+    private let additionalOwnedCommand: @Sendable (String, URL, CommandKind) -> Bool
+    public init(storage: any ClaudeHookStorage, python: String, serialize: @escaping @Sendable ([String]) -> String,
+                helperScript: Data? = nil,
+                additionalOwnedCommand: @escaping @Sendable (String, URL, CommandKind) -> Bool = { _, _, _ in false }) {
+        self.storage = storage; self.python = python; self.serialize = serialize
+        self.helperScript = helperScript; self.additionalOwnedCommand = additionalOwnedCommand
+    }
     public enum EnsureResult: Equatable, Sendable { case current, installed, missingHome, failed }
     public struct Status: Equatable, Sendable {
         public let hooksConfigured: Bool
@@ -23,32 +46,31 @@ public enum ClaudeHookInstaller {
             }
         }
     }
-    private static let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop", "StopFailure", "SessionEnd", "Notification", "SubagentStart", "SubagentStop", "Elicitation", "ElicitationResult"]
+    private let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop", "StopFailure", "SessionEnd", "Notification", "SubagentStart", "SubagentStop", "Elicitation", "ElicitationResult"]
     /// Claude holds each displayed batch until its hooks return. Numeric OTLP
     /// spans already report TTFT, so the display observer is registered only
     /// without Pacer telemetry, and then runs in the background.
-    private static let displayEvent = "MessageDisplay"
-    private static let environment: [String: String] = [
+    private let displayEvent = "MessageDisplay"
+    private let environment: [String: String] = [
         "CLAUDE_CODE_ENABLE_TELEMETRY": "1", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1", "OTEL_TRACES_EXPORTER": "otlp",
         "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/json", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:4319/v1/traces",
         "OTEL_TRACES_EXPORT_INTERVAL": "1000"
     ]
-    public static func status(home: URL) -> Bool { details(home: home).hooksConfigured }
+    public func status(home: URL) -> Bool { details(home: home).hooksConfigured }
     /// Never creates a Claude home and writes nothing when already current. An
     /// update is applied in place first, so optional entries the user removed
     /// stay removed; missing required hooks are installed again.
-    public static func ensureInstalled(home: URL) -> EnsureResult {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: home.path, isDirectory: &isDirectory), isDirectory.boolValue else { return .missingHome }
+    public func ensureInstalled(home: URL) -> EnsureResult {
+        guard storage.isDirectory(home) else { return .missingHome }
         let status = details(home: home)
         if status.hooksConfigured && !status.updateAvailable { return .current }
         if status.hooksConfigured, migrate(home: home), !details(home: home).updateAvailable { return .installed }
         return (try? install(home: home)) != nil ? .installed : .failed
     }
-    public static func details(home: URL) -> Status {
+    public func details(home: URL) -> Status {
         let value = (try? settings(home: home).value) ?? [:], hooks = value["hooks"] as? [String: [[String: Any]]] ?? [:]
         let script = home.appendingPathComponent("pacer/hook.py")
-        let scriptAvailable = (try? safe(script)) != nil && FileManager.default.isReadableFile(atPath: script.path)
+        let scriptAvailable = (try? safe(script)) != nil && storage.isReadable(script)
         let configured = scriptAvailable && events.allSatisfy { event in hooks[event]?.contains { containsOwned($0, home: home) } == true }
         let env = value["env"] as? [String: String] ?? [:]
         let telemetry = environment.allSatisfy { env[$0.key] == $0.value }
@@ -56,12 +78,12 @@ public enum ClaudeHookInstaller {
             telemetryConflict(env)
         let lineCommand = (value["statusLine"] as? [String: Any])?["command"] as? String
         var status = Status(hooksConfigured: configured, telemetryConfigured: telemetry,
-            statusLineConfigured: lineCommand == statusLineCommand(home: home) || lineCommand == legacyStatusLineCommand(home: home),
+            statusLineConfigured: ownsStatusLine(lineCommand, home: home),
             telemetryConflict: conflict)
         status.updateAvailable = configured && (migrated(value, home: home) != nil || installedScriptOutdated(home: home))
         return status
     }
-    @discardableResult public static func install(home: URL) throws -> Status {
+    @discardableResult public func install(home: URL) throws -> Status {
         try safe(home)
         let existing = try settings(home: home), directory = home.appendingPathComponent("pacer"), manifestURL = directory.appendingPathComponent("installation.json")
         try safe(directory); try safe(manifestURL)
@@ -83,7 +105,7 @@ public enum ClaudeHookInstaller {
         let previousLine = value["statusLine"]
         if let previousLine, !(previousLine is [String: Any]) { throw Failure.invalidSettings }
         let previousCommand = (previousLine as? [String: Any])?["command"] as? String
-        if previousCommand == legacyStatusLineCommand(home: home) {
+        if previousCommand != statusLineCommand(home: home) && ownsStatusLine(previousCommand, home: home) {
             var line = previousLine as? [String: Any] ?? [:]; line["command"] = statusLineCommand(home: home); value["statusLine"] = line
         } else if previousCommand != statusLineCommand(home: home) {
             manifest["previousStatusLine"] = previousLine ?? NSNull()
@@ -92,25 +114,25 @@ public enum ClaudeHookInstaller {
             value["statusLine"] = wrapper
         }
         manifest["version"] = 1
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try storage.createDirectory(directory, permissions: 0o700)
         try safe(directory); try safe(home.appendingPathComponent("settings.json")); try safe(manifestURL)
         try writeScript(home: home)
         guard try settings(home: home).bytes == existing.bytes else { throw Failure.changedSettings }
-        let previousManifest = try? Data(contentsOf: manifestURL)
+        let previousManifest = try? storage.read(manifestURL)
         try write(manifest, to: manifestURL)
         do { try write(value, to: home.appendingPathComponent("settings.json")) }
         catch {
-            if let previousManifest { try? previousManifest.write(to: manifestURL, options: [.atomic]) }
-            else { try? FileManager.default.removeItem(at: manifestURL) }
+            if let previousManifest { try? storage.replace(manifestURL, with: previousManifest, permissions: 0o600) }
+            else { try? storage.remove(manifestURL) }
             throw error
         }
         return details(home: home)
     }
     /// Upgrade an existing installation in place: refresh Pacer's adapter and
     /// rewrite only Pacer-owned entries. Nothing the user removed is re-added.
-    @discardableResult public static func migrate(home: URL) -> Bool {
+    @discardableResult public func migrate(home: URL) -> Bool {
         let manifestURL = home.appendingPathComponent("pacer/installation.json")
-        guard (try? safe(home)) != nil, (try? safe(manifestURL)) != nil, FileManager.default.fileExists(atPath: manifestURL.path),
+        guard (try? safe(home)) != nil, (try? safe(manifestURL)) != nil, storage.exists(manifestURL),
               let existing = try? settings(home: home) else { return false }
         var changed = false
         if installedScriptOutdated(home: home), (try? writeScript(home: home)) != nil { changed = true }
@@ -119,7 +141,7 @@ public enum ClaudeHookInstaller {
               (try? write(updated, to: home.appendingPathComponent("settings.json"))) != nil else { return changed }
         return true
     }
-    public static func uninstall(home: URL) throws {
+    public func uninstall(home: URL) throws {
         try safe(home)
         let existing = try settings(home: home), directory = home.appendingPathComponent("pacer"), manifestURL = directory.appendingPathComponent("installation.json")
         guard let manifest = try? readObject(manifestURL) else { return }
@@ -134,18 +156,18 @@ public enum ClaudeHookInstaller {
         for (key, setting) in manifest["addedEnvironment"] as? [String: String] ?? [:] where env[key] == setting { env.removeValue(forKey: key) }
         if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env }
         let lineCommand = (value["statusLine"] as? [String: Any])?["command"] as? String
-        if lineCommand == statusLineCommand(home: home) || lineCommand == legacyStatusLineCommand(home: home) {
+        if ownsStatusLine(lineCommand, home: home) {
             if let previous = manifest["previousStatusLine"], !(previous is NSNull) { value["statusLine"] = previous } else { value.removeValue(forKey: "statusLine") }
         }
         guard try settings(home: home).bytes == existing.bytes else { throw Failure.changedSettings }
         try write(value, to: home.appendingPathComponent("settings.json"))
         // Keep the sanitized spool/metadata for late accounting. Only settings
         // entries owned by Pacer are removed; no transcript is touched.
-        try? FileManager.default.removeItem(at: manifestURL)
+        try? storage.remove(manifestURL)
     }
     /// Settings with only Pacer-owned entries brought current, or nil when
     /// nothing differs. Missing events, environment or wrappers stay absent.
-    private static func migrated(_ value: [String: Any], home: URL) -> [String: Any]? {
+    private func migrated(_ value: [String: Any], home: URL) -> [String: Any]? {
         guard var hooks = value["hooks"] as? [String: Any] else { return nil }
         var result = value
         for event in events {
@@ -157,25 +179,30 @@ public enum ClaudeHookInstaller {
             setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value }, home: home)
         }
         result["hooks"] = hooks
-        if var line = value["statusLine"] as? [String: Any], line["command"] as? String == legacyStatusLineCommand(home: home) {
+        if var line = value["statusLine"] as? [String: Any], line["command"] as? String != statusLineCommand(home: home),
+           ownsStatusLine(line["command"] as? String, home: home) {
             line["command"] = statusLineCommand(home: home); result["statusLine"] = line
         }
         return NSDictionary(dictionary: result).isEqual(to: value) ? nil : result
     }
-    private static func ownedEntry(home: URL, background: Bool) -> [String: Any] {
+    private func ownedEntry(home: URL, background: Bool) -> [String: Any] {
         var entry: [String: Any] = ["type": "command", "command": hookCommand(home: home), "timeout": 5]
         if background { entry["async"] = true }
         return entry
     }
-    private static func owned(_ entry: [String: Any], home: URL) -> Bool {
+    private func owned(_ entry: [String: Any], home: URL) -> Bool {
         guard entry["type"] as? String == "command", let command = entry["command"] as? String else { return false }
-        return command == hookCommand(home: home) || command == legacyHookCommand(home: home)
+        return command == hookCommand(home: home) || command == legacyHookCommand(home: home) || additionalOwnedCommand(command, home, .hook)
     }
-    private static func containsOwned(_ group: [String: Any], home: URL) -> Bool {
+    private func ownsStatusLine(_ command: String?, home: URL) -> Bool {
+        guard let command else { return false }
+        return command == statusLineCommand(home: home) || command == legacyStatusLineCommand(home: home) || additionalOwnedCommand(command, home, .statusLine)
+    }
+    private func containsOwned(_ group: [String: Any], home: URL) -> Bool {
         (group["hooks"] as? [[String: Any]])?.contains { owned($0, home: home) } == true
     }
     /// Exactly one current owned entry, kept where an older one already was.
-    private static func ensureOwned(_ groups: [[String: Any]], home: URL, background: Bool) -> [[String: Any]] {
+    private func ensureOwned(_ groups: [[String: Any]], home: URL, background: Bool) -> [[String: Any]] {
         var placed = false
         var result = groups.compactMap { group -> [String: Any]? in
             guard let entries = group["hooks"] as? [[String: Any]], entries.contains(where: { owned($0, home: home) }) else { return group }
@@ -191,62 +218,68 @@ public enum ClaudeHookInstaller {
         if !placed { result.append(["hooks": [ownedEntry(home: home, background: background)]]) }
         return result
     }
-    private static func removingOwned(_ groups: [[String: Any]], home: URL) -> [[String: Any]] {
+    private func removingOwned(_ groups: [[String: Any]], home: URL) -> [[String: Any]] {
         groups.compactMap { group -> [String: Any]? in
             guard let entries = group["hooks"] as? [[String: Any]] else { return group }
             var group = group; let kept = entries.filter { !owned($0, home: home) }
             if kept.isEmpty { return nil }; group["hooks"] = kept; return group
         }
     }
-    private static func setDisplayObserver(_ hooks: inout [String: Any], wanted: Bool, home: URL) {
+    private func setDisplayObserver(_ hooks: inout [String: Any], wanted: Bool, home: URL) {
         let groups = hooks[displayEvent] as? [[String: Any]] ?? []
         let updated = wanted ? ensureOwned(groups, home: home, background: true) : removingOwned(groups, home: home)
         if updated.isEmpty { hooks.removeValue(forKey: displayEvent) } else { hooks[displayEvent] = updated }
     }
-    private static func writeScript(home: URL) throws {
+    private func writeScript(home: URL) throws {
+        if let helperScript {
+            let script = home.appendingPathComponent("pacer/hook.py"); try safe(script)
+            try storage.replace(script, with: helperScript, permissions: 0o700)
+            return
+        }
         guard let resource = Bundle.module.url(forResource: "claude_hook", withExtension: "py") else { throw Failure.invalidSettings }
         let script = home.appendingPathComponent("pacer/hook.py"); try safe(script)
-        let scriptData = try Data(contentsOf: resource); try scriptData.write(to: script, options: [.atomic]); try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        let scriptData = try Data(contentsOf: resource); try storage.replace(script, with: scriptData, permissions: 0o700)
     }
-    private static func installedScriptOutdated(home: URL) -> Bool {
+    private func installedScriptOutdated(home: URL) -> Bool {
         let script = home.appendingPathComponent("pacer/hook.py")
+        if let helperScript {
+            guard (try? safe(script)) != nil, let installed = try? storage.read(script) else { return false }
+            return helperScript != installed
+        }
         guard let resource = Bundle.module.url(forResource: "claude_hook", withExtension: "py"),
-              (try? safe(script)) != nil, let installed = try? Data(contentsOf: script) else { return false }
+              (try? safe(script)) != nil, let installed = try? storage.read(script) else { return false }
         return (try? Data(contentsOf: resource)) != installed
     }
     /// The adapter uses only the standard library, so `-S` skips site-packages
     /// startup. Avoid `-E`/`-I`: macOS's bundled Python then loses its bytecode
     /// cache and recompiles imported modules on every hook.
-    private static func hookCommand(home: URL) -> String { "python3 -S " + quote(home.appendingPathComponent("pacer/hook.py").path) + " hook " + quote(home.path) }
-    private static func legacyHookCommand(home: URL) -> String { "python3 " + quote(home.appendingPathComponent("pacer/hook.py").path) + " hook " + quote(home.path) }
-    private static func telemetryConflict(_ env: [String: String]) -> Bool {
+    private func hookCommand(home: URL) -> String { serialize([python, "-S", home.appendingPathComponent("pacer/hook.py").path, "hook", home.path]) }
+    private func legacyHookCommand(home: URL) -> String { serialize([python, home.appendingPathComponent("pacer/hook.py").path, "hook", home.path]) }
+    private func telemetryConflict(_ env: [String: String]) -> Bool {
         if ["OTEL_EXPORTER_OTLP_TRACES_HEADERS", "OTEL_EXPORTER_OTLP_HEADERS"].contains(where: { env[$0]?.isEmpty == false }) { return true }
         if let endpoint = env["OTEL_EXPORTER_OTLP_ENDPOINT"], !["http://127.0.0.1:4319", "http://127.0.0.1:4319/v1/traces"].contains(endpoint) { return true }
         if let protocolName = env["OTEL_EXPORTER_OTLP_PROTOCOL"], protocolName != "http/json" { return true }
         return false
     }
-    private static func statusLineCommand(home: URL) -> String { "python3 -S " + quote(home.appendingPathComponent("pacer/hook.py").path) + " statusline " + quote(home.path) }
-    private static func legacyStatusLineCommand(home: URL) -> String { "python3 " + quote(home.appendingPathComponent("pacer/hook.py").path) + " statusline " + quote(home.path) }
-    private static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-    private static func settings(home: URL) throws -> (value: [String: Any], bytes: Data?) {
+    private func statusLineCommand(home: URL) -> String { serialize([python, "-S", home.appendingPathComponent("pacer/hook.py").path, "statusline", home.path]) }
+    private func legacyStatusLineCommand(home: URL) -> String { serialize([python, home.appendingPathComponent("pacer/hook.py").path, "statusline", home.path]) }
+    private func settings(home: URL) throws -> (value: [String: Any], bytes: Data?) {
         let file = home.appendingPathComponent("settings.json"); try safe(file)
-        guard FileManager.default.fileExists(atPath: file.path) else { return ([:], nil) }
-        let bytes = try Data(contentsOf: file)
+        guard storage.exists(file) else { return ([:], nil) }
+        let bytes = try storage.read(file)
         guard bytes.count <= 2 * 1024 * 1024, let value = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw Failure.invalidSettings }
         return (value, bytes)
     }
-    private static func readObject(_ file: URL) throws -> [String: Any] {
-        try safe(file); let bytes = try Data(contentsOf: file)
+    private func readObject(_ file: URL) throws -> [String: Any] {
+        try safe(file); let bytes = try storage.read(file)
         guard bytes.count <= 2 * 1024 * 1024, let value = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw Failure.invalidSettings }; return value
     }
-    private static func safe(_ file: URL) throws {
+    private func safe(_ file: URL) throws {
         guard !file.path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.unsafePath }
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: file.path) {
-            guard attrs[.type] as? FileAttributeType != .typeSymbolicLink, (attrs[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { throw Failure.unsafePath }
-        }
+        try storage.validate(file)
     }
-    private static func write(_ value: [String: Any], to file: URL) throws {
+    private func write(_ value: [String: Any], to file: URL) throws {
         try safe(file); let data = try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed])
-        try data.write(to: file, options: [.atomic]); try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        try storage.replace(file, with: data, permissions: 0o600)
     }
 }

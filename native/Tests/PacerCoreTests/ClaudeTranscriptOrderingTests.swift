@@ -41,16 +41,16 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
     private func ssh(_ program: String, arguments: [String]) throws -> Data {
         let script = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
         let child = Process(), output = Pipe()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.executableURL = PythonFixture.executable
         child.arguments = ["-c", "__name__='fixture'\nimport base64,json,sys,pathlib\nexec(base64.b64decode('" + script + "').decode(),globals())\n" + program] + arguments
         child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = FileHandle.nullDevice
-        try child.run(); let data = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+        let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }; try child.run(); let data = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
         XCTAssertEqual(child.terminationStatus, 0)
         return data
     }
 
     func testNativeAndSshEndTheOwnedTurnWhenAnAttachmentPrecedesItsParentAcrossReads() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-order-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-order-" + UUID().uuidString)
         let project = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -94,7 +94,7 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
     }
 
     func testParentWrittenAfterTheEndingReleasesTheDeferredEndingInNativeSshAndReplay() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-late-parent-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-late-parent-" + UUID().uuidString)
         let project = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -186,7 +186,7 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         XCTAssertEqual(arrive("missing-0"), [], "The oldest awaited ID was evicted")
         XCTAssertEqual(arrive("missing-599"), [prompt + "/item-599"])
 
-        let fixture = URL(fileURLWithPath: "/private/tmp/pacer-claude-compressed-" + UUID().uuidString + ".json")
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-compressed-" + UUID().uuidString + ".json")
         try JSONSerialization.data(withJSONObject: records).write(to: fixture)
         defer { try? FileManager.default.removeItem(at: fixture) }
         let program = "class Counting(dict):\n lookups=0\n def get(self,key,default=None):\n  Counting.lookups+=1;return dict.get(self,key,default)\ncursor={'session':sys.argv[1],'parent':None,'context':Counting()};tailer=Tailer(pathlib.Path('/synthetic'))\nowners=[tailer.prompt_context_record(row,cursor) for row in json.loads(pathlib.Path(sys.argv[2]).read_text())]\nlate={'session':sys.argv[1],'parent':None}\ndef wait(uid,parent,item):\n tailer.prompt_context_record({'type':'system','sessionId':sys.argv[1],'uuid':uid,'parentUuid':parent},late)\n tailer.defer_record(late,[{'kind':'stopVerified','promptId':PENDING_OWNER,'itemId':'item-%d'%item}],False)\ndef arrive(uid):\n tailer.prompt_context_record({'type':'user','sessionId':sys.argv[1],'uuid':uid,'promptId':sys.argv[3]},late)\n return [row['promptId']+'/'+row['itemId'] for row in late.pop('released',[])]\ndef deferred():return sum(slot[0] for slot in late.get('deferred',{}).values())\nfor i in range(100):wait('same-%d'%i,'shared-parent',i)\nchecks=[deferred(),arrive('shared-parent')]\nfor i in range(600):wait('wait-%d'%i,'missing-%d'%i,i)\nchecks+=[deferred(),arrive('missing-0'),arrive('missing-599')]\ntailer.close();print(json.dumps({'owners':owners,'lookups':Counting.lookups,'checks':checks}))\n"
@@ -251,7 +251,7 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         // No Hook: transcript fallback must protect both a running turn and
         // an already completed turn while the legacy record remains unowned.
         for completed in [false, true] {
-            let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-legacy-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-legacy-" + UUID().uuidString)
             let project = home.appendingPathComponent("projects/synthetic")
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: home) }
@@ -358,7 +358,7 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
         context = ClaudeTranscriptContext()
         records.append(["reset": true])
         XCTAssertNil(resolve(row("system", id: "after-gap", parent: parent)), "Resetting after a gap drops all ownership links")
-        let fixture = URL(fileURLWithPath: "/private/tmp/pacer-claude-context-" + UUID().uuidString + ".json")
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-context-" + UUID().uuidString + ".json")
         try JSONSerialization.data(withJSONObject: records).write(to: fixture)
         defer { try? FileManager.default.removeItem(at: fixture) }
         let program = "cursor={'session':sys.argv[1],'parent':None};tailer=Tailer(pathlib.Path('/synthetic'));owners=[];largest=0\nfor row in json.loads(pathlib.Path(sys.argv[2]).read_text()):\n if row.get('reset'):\n  cursor={'session':sys.argv[1],'parent':None};continue\n owners.append(tailer.prompt_context_record(row,cursor));largest=max(largest,len(cursor.get('context',{})))\ntailer.close();print(json.dumps({'owners':owners,'largest':largest}))\n"
@@ -373,7 +373,7 @@ final class ClaudeTranscriptOrderingTests: XCTestCase {
     /// older hook turn is still current, so the newest transcript ending must
     /// wait rather than be dropped as another turn's and leave a stale run.
     func testNativeColdReplayDrainsTheHookBacklogBeforeCorrelatingTheTranscriptEnding() throws {
-        let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-hook-backlog-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-hook-backlog-" + UUID().uuidString)
         let projects = home.appendingPathComponent("projects/synthetic"), spool = home.appendingPathComponent("pacer")
         try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)

@@ -1,38 +1,47 @@
 import Foundation
-import Darwin
-import zlib
+import CGzip
 
-/// Pacer owns this loopback-only OTLP HTTP/JSON endpoint. Exported spans are
-/// reduced to request identifiers and numeric timing before leaving the reader.
-/// Prompt, account, tool, error and response content are validated but skipped.
-final class ClaudeActivityTelemetry: @unchecked Sendable {
-    struct Counters: Equatable, Sendable {
-        let httpRequests: Int
-        let projectedRequests: Int
-        let missingCorrelations: Int
-        let rejectedRequests: Int
+public enum TelemetryTransportFailure: Error { case timeout, closed, unavailable }
+public protocol TelemetryConnection: AnyObject, Sendable {
+    func read(maximumBytes: Int, timeout: TimeInterval) throws -> Data
+    func write(_ data: Data) throws
+    /// Interrupts blocked IO; the worker retains close ownership.
+    func interrupt()
+    func close()
+}
+public protocol TelemetryListener: AnyObject, Sendable {
+    var port: UInt16 { get }
+    func stop()
+}
+public protocol TelemetryTransport: Sendable {
+    /// Binding is synchronous. Accepted connections are delivered asynchronously.
+    func listen(port: UInt16, backlog: Int,
+                accepted: @escaping @Sendable (any TelemetryConnection) -> Void) throws -> any TelemetryListener
+}
+
+/// Pacer's loopback OTLP endpoint. HTTP limits, numeric projection and privacy
+/// rules are shared; the host supplies socket ownership and interruptible IO.
+public final class ClaudeActivityTelemetry: @unchecked Sendable {
+    public struct Counters: Equatable, Sendable {
+        public let httpRequests: Int
+        public let projectedRequests: Int
+        public let missingCorrelations: Int
+        public let rejectedRequests: Int
     }
     static let maximumBodyBytes = 1024 * 1024
     static let maximumHeaderBytes = 16 * 1024
     static let maximumConnections = 8
     private static let requestTimeout: TimeInterval = 5
-
     private let port: UInt16
+    private let transport: any TelemetryTransport
     private let onFrame: @Sendable (Data) -> Void
     private let lock = NSLock()
-    private let acceptQueue = DispatchQueue(label: "pacer.claude.telemetry", qos: .utility)
-    private let acceptQueueKey = DispatchSpecificKey<Bool>()
-    private var listener: DispatchSourceRead?
-    private var listenerClosed: DispatchSemaphore?
-    private var listenerDescriptor: Int32 = -1
+    private var listener: (any TelemetryListener)?
     private var generation = UUID()
-    private var connections: Set<Int32> = []
-    private var boundPort: UInt16 = 0
+    private var connections: [UUID: any TelemetryConnection] = [:]
     private var counts = Counters(httpRequests: 0, projectedRequests: 0, missingCorrelations: 0, rejectedRequests: 0)
-
-    /// Port zero is useful for an isolated socket fixture. Production uses 4319.
-    var listeningPort: UInt16 { lock.lock(); defer { lock.unlock() }; return boundPort }
-    var counters: Counters { lock.lock(); defer { lock.unlock() }; return counts }
+    public var listeningPort: UInt16 { lock.lock(); defer { lock.unlock() }; return listener?.port ?? 0 }
+    public var counters: Counters { lock.lock(); defer { lock.unlock() }; return counts }
 
     private func recordCounters(http: Int = 0, projected: Int = 0, missing: Int = 0, rejected: Int = 0) {
         lock.lock(); defer { lock.unlock() }
@@ -40,143 +49,68 @@ final class ClaudeActivityTelemetry: @unchecked Sendable {
         counts = Counters(httpRequests: adding(counts.httpRequests, http), projectedRequests: adding(counts.projectedRequests, projected),
                           missingCorrelations: adding(counts.missingCorrelations, missing), rejectedRequests: adding(counts.rejectedRequests, rejected))
     }
-
-    init(port: UInt16 = 4319, onFrame: @escaping @Sendable (Data) -> Void) {
-        self.port = port; self.onFrame = onFrame
-        acceptQueue.setSpecific(key: acceptQueueKey, value: true)
+    public init(port: UInt16 = 4319, transport: any TelemetryTransport, onFrame: @escaping @Sendable (Data) -> Void) {
+        self.port = port; self.transport = transport; self.onFrame = onFrame
     }
-
-    /// Binding is synchronous: an occupied port is an error, never an available
-    /// telemetry source. The listener accepts only IPv4 loopback connections.
-    func start() throws {
+    public func start() throws {
         lock.lock(); defer { lock.unlock() }
-        guard listener == nil else { throw POSIXError(.EALREADY) }
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw Self.socketError() }
-        var owned = true
-        defer { if owned { Darwin.close(fd) } }
-        try Self.closeOnExec(fd)
-        var reuse: Int32 = 1
-        guard Darwin.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout.size(ofValue: reuse))) == 0 else { throw Self.socketError() }
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = port.bigEndian
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        guard listener == nil else { throw TelemetryTransportFailure.unavailable }
+        let token = UUID(); generation = token
+        listener = try transport.listen(port: port, backlog: Self.maximumConnections) { [weak self] connection in
+            guard let self else { connection.close(); return }
+            self.accept(connection, generation: token)
         }
-        guard result == 0, Darwin.listen(fd, Int32(Self.maximumConnections)) == 0 else { throw Self.socketError() }
-        let flags = Darwin.fcntl(fd, F_GETFL)
-        guard flags >= 0, Darwin.fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { throw Self.socketError() }
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        guard withUnsafeMutablePointer(to: &address, { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(fd, $0, &length) }
-        }) == 0 else { throw Self.socketError() }
-        let token = UUID(), source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: acceptQueue)
-        let closed = DispatchSemaphore(value: 0)
-        generation = token; listenerDescriptor = fd; boundPort = UInt16(bigEndian: address.sin_port)
-        source.setEventHandler { [weak self] in self?.acceptConnections(fd, generation: token) }
-        source.setCancelHandler { Darwin.close(fd); closed.signal() }
-        listener = source; listenerClosed = closed; owned = false
-        source.resume()
     }
-
-    func stop() {
+    public func stop() {
         lock.lock()
-        let source = listener, fd = listenerDescriptor, closed = listenerClosed
-        listener = nil; listenerClosed = nil; listenerDescriptor = -1; boundPort = 0; generation = UUID()
-        for client in connections { _ = Darwin.shutdown(client, SHUT_RDWR) }
+        let listener = self.listener, clients = Array(connections.values)
+        self.listener = nil; generation = UUID()
         lock.unlock()
-        // Shutdown wakes blocked readers. Each owned worker closes its socket;
-        // the source's cancel handler closes its listener after pending events.
-        if fd >= 0 { _ = Darwin.shutdown(fd, SHUT_RDWR) }
-        source?.cancel()
-        // Module toggles can immediately start a new owner of the same port.
-        // Await descriptor release, except when deinitializing on this queue.
-        if DispatchQueue.getSpecific(key: acceptQueueKey) == nil { _ = closed?.wait(timeout: .now() + 1) }
+        for client in clients { client.interrupt() }
+        listener?.stop()
     }
-
     deinit { stop() }
-
-    private static func socketError() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-    private static func closeOnExec(_ fd: Int32) throws {
-        let flags = Darwin.fcntl(fd, F_GETFD)
-        guard flags >= 0, Darwin.fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0 else { throw socketError() }
+    private func accept(_ client: any TelemetryConnection, generation token: UUID) {
+        let id = UUID()
+        lock.lock()
+        let allowed = generation == token && listener != nil && connections.count < Self.maximumConnections
+        if allowed { connections[id] = client }
+        lock.unlock()
+        guard allowed else { client.close(); return }
+        DispatchQueue.global(qos: .utility).async { [self] in receive(client, id: id, generation: token) }
     }
-
-    private func acceptConnections(_ fd: Int32, generation token: UUID) {
-        while true {
-            lock.lock()
-            let current = listenerDescriptor == fd && generation == token
-            lock.unlock()
-            guard current else { return }
-            let client = Darwin.accept(fd, nil, nil)
-            if client < 0 {
-                if errno == EINTR { continue }
-                return
-            }
-            lock.lock()
-            let allowed = listenerDescriptor == fd && generation == token && connections.count < Self.maximumConnections
-            if allowed { connections.insert(client) }
-            lock.unlock()
-            guard allowed else { Darwin.close(client); continue }
-            DispatchQueue.global(qos: .utility).async { [self] in receive(client, generation: token) }
-        }
-    }
-
-    private func receive(_ fd: Int32, generation token: UUID) {
+    private func receive(_ client: any TelemetryConnection, id: UUID, generation token: UUID) {
         defer {
-            lock.lock(); connections.remove(fd); Darwin.close(fd); lock.unlock()
+            client.close()
+            lock.lock(); connections.removeValue(forKey: id); lock.unlock()
         }
         do {
-            try Self.closeOnExec(fd)
-            let flags = Darwin.fcntl(fd, F_GETFL)
-            guard flags >= 0, Darwin.fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0 else { throw Self.socketError() }
-            var noSignal: Int32 = 1, sendTimeout = timeval(tv_sec: 1, tv_usec: 0)
-            guard Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal))) == 0,
-                  Darwin.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout.size(ofValue: sendTimeout))) == 0 else { throw Self.socketError() }
-            let body = try Self.requestBody(fd) { recordCounters(http: 1) }
+            let body = try Self.requestBody(client) { recordCounters(http: 1) }
             let projection = try Self.project(body)
             lock.lock(); let current = generation == token && listener != nil; lock.unlock()
             if current {
                 recordCounters(projected: projection.projectedRequests, missing: projection.missingCorrelations, rejected: projection.rejectedRequests)
                 for frame in projection.frames { onFrame(frame) }
             }
-            Self.respond(fd, status: 200, reason: "OK")
+            Self.respond(client, status: 200, reason: "OK")
         } catch let error as HTTPFailure {
-            recordCounters(rejected: 1)
-            Self.respond(fd, status: error.status, reason: error.reason)
+            recordCounters(rejected: 1); Self.respond(client, status: error.status, reason: error.reason)
         } catch is JSONFieldView.Failure {
-            recordCounters(rejected: 1)
-            Self.respond(fd, status: 400, reason: "Bad Request")
-        } catch {
-            recordCounters(rejected: 1)
-            // Neither a rejected payload nor transport errors are logged: they
-            // can contain arbitrary private input and do not prove availability.
-        }
+            recordCounters(rejected: 1); Self.respond(client, status: 400, reason: "Bad Request")
+        } catch { recordCounters(rejected: 1) }
     }
-
-    private struct HTTPFailure: Error {
-        let status: Int
-        let reason: String
-    }
-
-    private static func requestBody(_ fd: Int32, onRequest: () -> Void) throws -> Data {
+    private struct HTTPFailure: Error { let status: Int; let reason: String }
+    private static func requestBody(_ client: any TelemetryConnection, onRequest: () -> Void) throws -> Data {
         let deadline = ProcessInfo.processInfo.systemUptime + requestTimeout
-        var buffer = Data(), scratch = [UInt8](repeating: 0, count: 4096)
+        var buffer = Data()
         func append(upTo count: Int = 4096) throws {
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else { throw HTTPFailure(status: 408, reason: "Request Timeout") }
-            let microseconds = max(1, Int(remaining * 1_000_000))
-            var timeout = timeval(tv_sec: microseconds / 1_000_000, tv_usec: Int32(microseconds % 1_000_000))
-            guard Darwin.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout))) == 0 else { throw socketError() }
-            let capacity = min(scratch.count, count)
-            let received = scratch.withUnsafeMutableBytes { Darwin.recv(fd, $0.baseAddress!, capacity, 0) }
-            if received > 0 { buffer.append(contentsOf: scratch.prefix(received)) }
-            else if received < 0 && errno == EINTR { try append(upTo: count) }
-            else if received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { throw HTTPFailure(status: 408, reason: "Request Timeout") }
-            else { throw POSIXError(.EPIPE) }
+            do {
+                let bytes = try client.read(maximumBytes: min(4096, count), timeout: remaining)
+                guard !bytes.isEmpty else { throw TelemetryTransportFailure.closed }
+                buffer.append(bytes)
+            } catch TelemetryTransportFailure.timeout { throw HTTPFailure(status: 408, reason: "Request Timeout") }
         }
         let separator = Data([13, 10, 13, 10])
         var headerEnd: Range<Data.Index>?
@@ -213,50 +147,27 @@ final class ClaudeActivityTelemetry: @unchecked Sendable {
         guard count > 0, count <= maximumBodyBytes else { throw HTTPFailure(status: 413, reason: "Content Too Large") }
         guard buffer.count - end <= count else { throw HTTPFailure(status: 400, reason: "Bad Request") }
         while buffer.count - end < count { try append(upTo: count - (buffer.count - end)) }
-        return try decodedBody(buffer.subdata(in: end..<buffer.count), encoding: encoding)
+        return try Self.decodedBody(buffer.subdata(in: end..<buffer.count), encoding: encoding)
     }
 
     static func decodedBody(_ data: Data, encoding: String) throws -> Data {
         guard !data.isEmpty, data.count <= maximumBodyBytes else { throw HTTPFailure(status: 413, reason: "Content Too Large") }
         if encoding == "identity" { return data }
         guard encoding == "gzip" else { throw HTTPFailure(status: 415, reason: "Unsupported Media Type") }
-        var stream = z_stream()
-        guard inflateInit2_(&stream, MAX_WBITS + 16, zlibVersion(), Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
-            throw HTTPFailure(status: 400, reason: "Bad Request")
-        }
-        defer { inflateEnd(&stream) }
-        return try data.withUnsafeBytes { input in
-            stream.next_in = UnsafeMutablePointer(mutating: input.bindMemory(to: UInt8.self).baseAddress!)
-            stream.avail_in = uInt(data.count)
-            var result = Data(), chunk = [UInt8](repeating: 0, count: 16 * 1024)
-            while true {
-                let capacity = min(chunk.count, maximumBodyBytes - result.count + 1)
-                let before = stream.total_in
-                let status = chunk.withUnsafeMutableBufferPointer { output -> Int32 in
-                    stream.next_out = output.baseAddress; stream.avail_out = uInt(capacity)
-                    return inflate(&stream, Z_NO_FLUSH)
-                }
-                let produced = capacity - Int(stream.avail_out)
-                guard produced <= maximumBodyBytes - result.count else { throw HTTPFailure(status: 413, reason: "Content Too Large") }
-                result.append(contentsOf: chunk.prefix(produced))
-                if status == Z_STREAM_END {
-                    guard stream.avail_in == 0, !result.isEmpty else { throw HTTPFailure(status: 400, reason: "Bad Request") }
-                    return result
-                }
-                guard status == Z_OK, produced > 0 || stream.total_in > before else { throw HTTPFailure(status: 400, reason: "Bad Request") }
+        var output = Data(count: maximumBodyBytes + 1), written = 0
+        let status = data.withUnsafeBytes { input in
+            output.withUnsafeMutableBytes { result in
+                pacer_gzip_decode(input.bindMemory(to: UInt8.self).baseAddress, data.count,
+                    result.bindMemory(to: UInt8.self).baseAddress, maximumBodyBytes, &written)
             }
         }
+        guard status != -2 else { throw HTTPFailure(status: 413, reason: "Content Too Large") }
+        guard status == 1 else { throw HTTPFailure(status: 400, reason: "Bad Request") }
+        output.count = written
+        return output
     }
-
-    private static func respond(_ fd: Int32, status: Int, reason: String) {
-        let data = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".utf8)
-        var offset = 0
-        while offset < data.count {
-            let count = data.withUnsafeBytes { Darwin.send(fd, $0.baseAddress!.advanced(by: offset), data.count - offset, 0) }
-            if count > 0 { offset += count }
-            else if count < 0 && errno == EINTR { continue }
-            else { return }
-        }
+    private static func respond(_ client: any TelemetryConnection, status: Int, reason: String) {
+        try? client.write(Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".utf8))
     }
 
     /// Shared wire projection for fixture checks and native/remote parity. No

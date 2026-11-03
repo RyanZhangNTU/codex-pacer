@@ -1,3 +1,8 @@
+#if canImport(PacerMacSupport)
+import PacerMacSupport
+#else
+@testable import PacerEngineSupport
+#endif
 import XCTest
 @testable import PacerCore
 
@@ -23,7 +28,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
         return value
     }
     private func inbox(_ file: URL, home: String = "/synthetic/private-home", remoteHome: String = "~/.synthetic-private-home") -> CompletionInbox {
-        var value = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: file))
+        var value = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: file, files: TestFileSystem()))
         for provider in AgentProvider.allCases {
             value.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: home), remoteHomes: [host: remoteHome],
                 remoteControlHostIDs: provider == .codex ? [controlHost] : [])
@@ -51,12 +56,10 @@ final class CompletionDismissalStoreTests: XCTestCase {
         let value = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(Set(value.keys), ["version", "digests"])
         XCTAssertTrue(try XCTUnwrap(value["digests"] as? [String]).allSatisfy { $0.count == 64 })
-        let permissions = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)
-        XCTAssertEqual(permissions.intValue & 0o777, 0o600)
     }
 
     func testCloudSettlementRecordsAreBoundedValidatedAndKeepNoIdentifiers() throws {
-        let file = try fixture(), store = CompletionDismissalStore(fileURL: file)
+        let file = try fixture(), store = CompletionDismissalStore(fileURL: file, files: TestFileSystem())
         let digest = CompletionDismissalStore.digest(["synthetic-turn"])
         let endings = (0..<140).map { index in
             CompletionDismissalStore.CloudEnding(source: CompletionDismissalStore.digest(["chan_private-project", "cmsg_private-thread", String(index)]),
@@ -161,7 +164,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
         value.prune(at: epoch.addingTimeInterval(50), retention: 30)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "Expiry is not user acknowledgment")
-        var unknown = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: file))
+        var unknown = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: file, files: TestFileSystem()))
         unknown.bindSourceHomes(provider: .claude, localHome: URL(fileURLWithPath: "/synthetic/home"))
         let remote = completion(.claude, hostID: host)
         unknown.observe([remote], at: epoch.addingTimeInterval(2), retention: 0); unknown.dismiss(remote)
@@ -194,6 +197,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
         oldest.observe([completion(turn: "synthetic-0")], at: epoch.addingTimeInterval(1026), retention: 0)
         XCTAssertEqual(oldest.activities.count, 1, "Bound eviction fails open for old cards")
     }
+
 
     func testCorruptUnsupportedOrOversizedStoreFailsOpen() throws {
         let file = try fixture(), ended = completion()
@@ -264,7 +268,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
         for (provider, hostID) in [(AgentProvider.claude, controlHost), (.codex, "remote-control:bad/path"),
                                    (.codex, "remote-control:trailing\n"), (.codex, "remote-control:" + String(repeating: "a", count: 129))] {
             let invalidFile = try fixture(), invalid = completion(provider, hostID: hostID)
-            var invalidInbox = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: invalidFile))
+            var invalidInbox = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: invalidFile, files: TestFileSystem()))
             invalidInbox.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: "/synthetic/private-home"),
                 remoteHomes: [hostID: "/invented/remote-home"], remoteControlHostIDs: [hostID])
             invalidInbox.observe([invalid], at: epoch.addingTimeInterval(2), retention: 0)

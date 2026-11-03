@@ -177,8 +177,11 @@ public enum DemoScenario {
                              sourceID: String? = nil, sourceName: String? = nil) -> SessionActivity {
         var stream = RuntimeEventState(sourceID: sourceID, sourceName: sourceName)
         stream.consume(["kind": "status", "connected": true, "attached": 1])
+        // Epoch conversion can round a Date a fraction of a microsecond forward.
+        // Keep synthetic events just behind the clock that projects their rates.
+        let eventTime = now.addingTimeInterval(-0.001)
         func event(_ method: String, _ ago: Double, _ fields: [String: Any] = [:]) -> [String: Any] {
-            var value: [String: Any] = ["method": method, "threadId": id, "turnId": "demo-turn", "at": now.addingTimeInterval(ago).timeIntervalSince1970]
+            var value: [String: Any] = ["method": method, "threadId": id, "turnId": "demo-turn", "at": eventTime.addingTimeInterval(ago).timeIntervalSince1970]
             value.merge(fields) { _, new in new }; return value
         }
         var events = [event("metadata", -30, ["name": name, "model": "gpt-6.1-sol", "reasoningEffort": "high"]), event("turn/started", -30),

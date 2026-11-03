@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// Claude Code registers each running process as `<home>/sessions/<pid>.json`.
@@ -15,11 +14,11 @@ public enum ClaudeLiveSessionRegistry {
 
     private static let recordLimit = 64 * 1024
 
-    public static func holder(for sessionID: String, claudeHome: URL, currentProcess: pid_t = getpid(),
-                              processStart: (pid_t) -> Date? = processStartDate) -> pid_t? {
+    public static func holder(for sessionID: String, claudeHome: URL, currentProcess: Int32,
+                              files: any PlatformFileSystem, processStart: (Int32) -> Date?) -> Int32? {
         guard sessionID.count == 36, let session = UUID(uuidString: sessionID) else { return nil }
         return holders(claudeHome: claudeHome, currentProcess: currentProcess,
-                       processStart: processStart)[session.uuidString.lowercased()]
+                       files: files, processStart: processStart)[session.uuidString.lowercased()]
     }
 
     /// Every verified live holder, keyed by lowercase session UUID; the first
@@ -27,21 +26,18 @@ public enum ClaudeLiveSessionRegistry {
     /// kind, and a parked interactive record does not hold its session.
     /// `procStart` must match the live process, so a stale record whose PID was
     /// reused is never trusted.
-    public static func holders(claudeHome: URL, currentProcess: pid_t = getpid(),
-                               processStart: (pid_t) -> Date? = processStartDate) -> [String: pid_t] {
-        guard claudeHome.isFileURL, claudeHome.path.hasPrefix("/") else { return [:] }
-        var result: [String: pid_t] = [:]
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+    public static func holders(claudeHome: URL, currentProcess: Int32,
+                               files: any PlatformFileSystem, processStart: (Int32) -> Date?) -> [String: Int32] {
+        guard claudeHome.isFileURL else { return [:] }
+        var result: [String: Int32] = [:]
         let directory = claudeHome.appendingPathComponent("sessions", isDirectory: true)
-        let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys),
-                                                                   options: [.skipsHiddenFiles])) ?? [])
+        let candidates = ((try? files.entries(in: directory)) ?? [])
             .filter { $0.pathExtension == "json" && $0.deletingPathExtension().lastPathComponent.range(
                 of: #"^[1-9][0-9]{0,9}\z"#, options: .regularExpression) != nil }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }.prefix(256)
-        for file in files {
-            guard let values = try? file.resourceValues(forKeys: keys),
-                  values.isRegularFile == true, values.isSymbolicLink != true, (values.fileSize ?? .max) <= recordLimit,
-                  let data = try? Data(contentsOf: file), data.count <= recordLimit,
+        for file in candidates {
+            guard let metadata = files.metadata(file), metadata.isRegularFile, metadata.size <= recordLimit,
+                  let data = try? files.read(file, offset: 0, maximumBytes: recordLimit + 1), data.count <= recordLimit,
                   let record = try? JSONDecoder().decode(Record.self, from: data),
                   String(record.pid) == file.deletingPathExtension().lastPathComponent, record.pid != currentProcess,
                   record.sessionId.count == 36, let session = UUID(uuidString: record.sessionId)?.uuidString.lowercased(),
@@ -66,10 +62,4 @@ public enum ClaudeLiveSessionRegistry {
         return formatter.date(from: fields.joined(separator: " "))
     }
 
-    public static func owner(of pid: pid_t, currentProcess: pid_t = getpid(), isApplication: (pid_t) -> Bool,
-                             parent: (pid_t) -> pid_t? = ProcessOwnership.parentProcess) -> pid_t? {
-        ProcessOwnership.owner(of: pid, currentProcess: currentProcess, isApplication: isApplication, parent: parent)
-    }
-    public static func processStartDate(_ pid: pid_t) -> Date? { ProcessOwnership.processStartDate(pid) }
-    public static func parentProcess(_ pid: pid_t) -> pid_t? { ProcessOwnership.parentProcess(pid) }
 }

@@ -4,7 +4,6 @@ import CryptoKit
 /// Reads the host lists managed by Codex and Claude. Route lookup uses `ssh -G`
 /// only; discovery never authenticates, reads keys or writes either client's files.
 public actor ClaudeSSHDiscovery {
-    public static let shared = ClaudeSSHDiscovery()
     private struct Configuration: Sendable {
         let id: String
         let name: String
@@ -17,13 +16,21 @@ public actor ClaudeSSHDiscovery {
     private struct CachedRoute { let route: ClaudeSSHRoute?; let at: Date; let signature: String }
     private var routes: [RouteKey: CachedRoute] = [:]
     private let resolve: @Sendable (String, Int?) async -> ClaudeSSHRoute?
+    private let validDestination: @Sendable (String) -> Bool
+    private let validIdentityFile: @Sendable (String) -> Bool
+    private let sshConfigFiles: [URL]?
 
-    public init() { resolve = { await ClaudeSSHRouteResolver.resolve(host: $0, port: $1) } }
-    init(resolve: @escaping @Sendable (String, Int?) async -> ClaudeSSHRoute?) { self.resolve = resolve }
+    public init(resolve: @escaping @Sendable (String, Int?) async -> ClaudeSSHRoute?,
+                validDestination: @escaping @Sendable (String) -> Bool,
+                validIdentityFile: (@Sendable (String) -> Bool)? = nil, sshConfigFiles: [URL]? = nil) {
+        self.resolve = resolve; self.validDestination = validDestination
+        self.validIdentityFile = validIdentityFile ?? { RemoteActivityTarget.validIdentityFile($0) }
+        self.sshConfigFiles = sshConfigFiles
+    }
 
-    public func configured(codexHome: URL, claudeHome: URL, userHome: URL) async -> [RemoteActivityTarget] {
+    public func configured(codexHome: URL, claudeHome: URL, userHome: URL, desktopFile: URL? = nil) async -> [RemoteActivityTarget] {
         let codex = RemoteActivityTarget.claudeCodexTargets(home: codexHome)
-        let desktopFile = userHome.appendingPathComponent("Library/Application Support/Claude/ssh_configs.json")
+        let desktopFile = desktopFile ?? userHome.appendingPathComponent("Library/Application Support/Claude/ssh_configs.json")
         let settingsFile = claudeHome.appendingPathComponent("settings.json")
         let desktop = configurations(desktopFile, field: "configs")
         let settings = configurations(settingsFile, field: "sshConfigs")
@@ -67,7 +74,7 @@ public actor ClaudeSSHDiscovery {
                   let rows = try? root.fields([field])[field]?.elements(maximumCount: 256) else { return [] }
             return rows.prefix(64).compactMap { row in
                 guard let fields = try? row.fields(["id", "name", "sshHost", "sshPort", "sshIdentityFile"]),
-                      let host = fields["sshHost"]?.string(), ClaudeSSHRouteResolver.validDestination(host) else { return nil }
+                      let host = fields["sshHost"]?.string(), validDestination(host) else { return nil }
                 let port: Int?
                 if let value = fields["sshPort"], !value.isNull {
                     guard let number = value.integer(), (1...65535).contains(number) else { return nil }
@@ -75,7 +82,7 @@ public actor ClaudeSSHDiscovery {
                 } else { port = nil }
                 let identity: String?
                 if let value = fields["sshIdentityFile"], !value.isNull {
-                    guard let path = value.string(), RemoteActivityTarget.validIdentityFile(path) else { return nil }
+                    guard let path = value.string(), validIdentityFile(path) else { return nil }
                     identity = path
                 } else { identity = nil }
                 let id = fields["id"]?.string() ?? host + ":" + String(port ?? 22)
@@ -108,8 +115,19 @@ public actor ClaudeSSHDiscovery {
     private func digest(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
+    /// Uses the same canonical route keys while retaining Codex's remote home.
+    public func configuredCodex(home: URL, userHome: URL) async -> [RemoteActivityTarget] {
+        let signature = sshSignature(userHome: userHome)
+        var seen = Set<String>(), result: [RemoteActivityTarget] = []
+        for target in RemoteActivityTarget.configured(home: home) {
+            let key = await routeKey(host: target.alias, port: nil, userHome: userHome, signature: signature)
+            guard !Task.isCancelled else { return [] }
+            if seen.insert(key).inserted { result.append(target) }
+        }
+        return result
+    }
     private func sshSignature(userHome: URL) -> String {
-        [userHome.appendingPathComponent(".ssh/config"), URL(fileURLWithPath: "/etc/ssh/ssh_config")].map {
+        (sshConfigFiles ?? [userHome.appendingPathComponent(".ssh/config"), URL(fileURLWithPath: "/etc/ssh/ssh_config")]).map {
             let attributes = try? FileManager.default.attributesOfItem(atPath: $0.path)
             return "\(attributes?[.modificationDate] ?? ""):\(attributes?[.size] ?? ""):\(attributes?[.systemFileNumber] ?? "")"
         }.joined(separator: "|")

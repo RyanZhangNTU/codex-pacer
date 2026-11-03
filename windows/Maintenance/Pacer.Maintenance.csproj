@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../desktop-platform.props"/>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>PacerMaintenance</AssemblyName>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
+    <Compile Include="../Desktop/WindowsStartupRegistration.cs" Link="WindowsStartupRegistration.cs"/>
+    <Compile Include="../Desktop/WindowsInstallationIdentity.cs" Link="WindowsInstallationIdentity.cs"/>
+    <Compile Include="../Desktop/WindowsMaintenanceSignal.cs" Link="WindowsMaintenanceSignal.cs"/>
+    <Compile Include="../Desktop/WindowsInstallShortcuts.cs" Link="WindowsInstallShortcuts.cs"/>
+    <Compile Include="../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
+    <Compile Include="../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
+    <Compile Include="../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
+    <Compile Include="../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
+    <Compile Include="../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>
+  </ItemGroup>
+</Project>

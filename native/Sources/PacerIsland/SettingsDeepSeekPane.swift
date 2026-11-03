@@ -1,3 +1,4 @@
+import PacerMacSupport
 import AppKit
 import PacerCore
 import SwiftUI
@@ -188,8 +189,8 @@ struct SettingsDeepSeekSections: View {
         Section {
             connectionRow
             // How the source was found matters while signing in or after choosing one by hand.
-            if balanceSource != .automatic || model.deepseekBalance == nil { caption(detectionText) }
-            if model.deepseekBalanceMode == .apiKey { keyEditor }
+            if connection.showDetection { caption(connection.detectedText) }
+            if connection.keyEditor { keyEditor }
         } header: {
             Text(L10n.text("deepseek.section.balance"))
         }
@@ -204,25 +205,25 @@ struct SettingsDeepSeekSections: View {
         }
     }
 
-    private var detectionText: String {
-        let detected = model.deepseekDetectedMode
-        let found = detected.map { L10n.text($0 == .account ? "deepseek.detected.account" : "deepseek.detected.api") } ?? L10n.text("deepseek.detected.unknown")
-        return balanceSource == .automatic ? found : L10n.text("deepseek.detected.overridden", found)
+    private var connection: DeepSeekConnectionPresentation {
+        .init(source: balanceSource, detected: model.deepseekDetectedMode, balance: model.deepseekBalance,
+            error: model.deepseekBalanceError, refreshing: model.deepseekRefreshing, now: model.now)
     }
 
     @ViewBuilder private var connectionRow: some View {
-        let web = model.deepseekBalanceMode != .apiKey
-        let connected = model.deepseekBalance != nil && !model.deepseekConnectionNeeded
-        let (tint, state): (Color, String) =
-            connected ? (.green, L10n.text("deepseek.connected", model.deepseekBalanceFreshness)) :
-            model.deepseekRefreshing ? (.secondary, L10n.text("claude.account.checking")) :
-            model.deepseekConnectionNeeded || model.deepseekBalanceError == nil ? (.orange, L10n.text(web ? "deepseek.signed_out" : "deepseek.no_key")) :
-            (.orange, model.deepseekBalanceError?.errorDescription ?? L10n.text("deepseek.balance.unavailable"))
-        row(L10n.text(web ? "deepseek.platform_account" : "deepseek.api_key"), state: state, tint: tint) {
-            if web, !connected {
-                Button(L10n.text("deepseek.sign_in")) { model.connectDeepSeek() }
-            } else if !web, model.deepseekBalanceError != nil || connected {
-                Button(L10n.text("common.refresh")) { model.refreshDeepSeekBalance(force: true) }.disabled(model.deepseekRefreshing)
+        let presentation = connection
+        let tint: Color = switch presentation.color {
+        case .green: .green
+        case .orange: .orange
+        case .secondary: .secondary
+        }
+        row(presentation.title, state: presentation.text, tint: tint) {
+            switch presentation.action {
+            case .signIn:
+                Button(presentation.actionLabel ?? "") { model.connectDeepSeek() }
+            case .refresh:
+                Button(presentation.actionLabel ?? "") { model.refreshDeepSeekBalance(force: true) }.disabled(model.deepseekRefreshing)
+            case nil: EmptyView()
             }
             Menu {
                 Picker(L10n.text("deepseek.balance_source"), selection: $balanceSource) {
@@ -231,7 +232,7 @@ struct SettingsDeepSeekSections: View {
                     Text(L10n.text("deepseek.source.api_short")).tag(DeepSeekBalanceSource.apiKey)
                 }
                 .pickerStyle(.inline)
-                if web, connected {
+                if !presentation.keyEditor, presentation.connected {
                     Divider()
                     Button(L10n.text("claude.account.switch")) { model.connectDeepSeek() }
                     Button(L10n.text("deepseek.sign_out")) { model.removeDeepSeekConnection() }
