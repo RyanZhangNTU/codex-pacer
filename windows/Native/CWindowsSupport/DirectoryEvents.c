@@ -85,7 +85,8 @@ void *pacer_watch_directory(const uint16_t *path, int is_directory, void *contex
         WCHAR *last = wcsrchr(directory, L'\\');
         if (last == NULL || last[1] == 0) { free(directory); return NULL; }
         filename = _wcsdup(last + 1);
-        if (last == directory + 2 && directory[1] == L':') last[1] = 0; else *last = 0;
+        if ((last == directory + 2 && directory[1] == L':') ||
+            (last == directory + 6 && wcsncmp(directory, L"\\\\?\\", 4) == 0 && directory[5] == L':')) last[1] = 0; else *last = 0;
         if (filename == NULL) { free(directory); return NULL; }
     }
     HANDLE handle = CreateFileW(directory, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,

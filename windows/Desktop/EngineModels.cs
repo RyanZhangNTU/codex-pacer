@@ -73,8 +73,9 @@ internal sealed record QuotaWindow(string Id, string Label, double? RemainingPer
     double? PacePercent, int? DurationMinutes, double? ResetsAt, string? Countdown = null,
     string? Verdict = null, string? VerdictText = null, bool Pressing = false, string ValueText = "—");
 internal sealed record EngineNotice(string Id, string Kind, string Title, string Detail, string? Category = null, string? Body = null,
-    string? PrivateBody = null, IReadOnlyList<EngineNoticeAction>? Actions = null);
-internal sealed record EngineNoticeAction(string Kind, string Title);
+    string? PrivateBody = null, IReadOnlyList<EngineNoticeAction>? Actions = null, EngineNoticeAction? DefaultAction = null);
+internal sealed record EngineNoticeAction(string Kind, string Title, string? Reference = null);
+internal sealed record EngineNotificationActivation(string Kind, EngineActivityLink? Link);
 
 internal sealed record EnginePresentation(IReadOnlyList<EngineTaskRow> Rows, int PageSize, int RowCapacity,
     int PageCount, EngineHeader Header, string? TaskCountText = null);

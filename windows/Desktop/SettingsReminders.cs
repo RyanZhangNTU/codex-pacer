@@ -98,7 +98,17 @@ internal sealed partial class SettingsWindow
         };
         check.Checked += toggleNotifications; check.Unchecked += toggleNotifications; editors.Add(check);
         notificationIssue = Detail(""); notificationIssue.Margin = new Thickness(66, 0, 10, 10); notificationIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(notificationIssue, "settings.reminders.notifications.issue", "");
-        var notificationRows = new StackPanel(); notificationRows.Children.Add(notifications); notificationRows.Children.Add(notificationIssue); form.Children.Add(Card(notificationRows));
+        var notificationRows = new StackPanel(); notificationRows.Children.Add(notifications); notificationRows.Children.Add(notificationIssue);
+        var systemSettings = new Button { Content = ui.Text("common.open_settings"), Style = (Style)FindResource("SettingsLink"),
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(66, 0, 10, 10) };
+        Identify(systemSettings, "settings.reminders.notifications.settings", ui.Text("settings.system_notifications") + ": " + ui.Text("common.open_settings"));
+        systemSettings.Click += (_, _) =>
+        {
+            try { openNotificationSettings(); }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or System.IO.IOException)
+            { ShowIssue("windows.settings.notifications_failed"); }
+        };
+        notificationRows.Children.Add(systemSettings); form.Children.Add(Card(notificationRows));
         reminderRetention = new ComboBox { MinWidth = 140, VerticalAlignment = VerticalAlignment.Center, SelectedValuePath = "Tag" };
         foreach (var item in new[] { (5, "settings.five_minutes"), (15, "settings.fifteen_minutes"), (30, "settings.thirty_minutes"), (60, "settings.one_hour"), (240, "settings.four_hours"), (0, "settings.until_clicked") })
             reminderRetention.Items.Add(new ComboBoxItem { Tag = item.Item1, Content = ui.Text(item.Item2) });

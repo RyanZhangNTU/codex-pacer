@@ -20,7 +20,7 @@ struct WindowsActivityLogWatcher: ActivityFileEvents {
     func watch(_ url: URL, isDirectory: Bool,
                changed: @escaping @Sendable (ActivityFileEvent) -> Void) -> (any ActivityFileWatch)? {
         let context = Unmanaged.passRetained(Signal(changed))
-        let path = Array(WindowsCodexExecutableDiscovery.path(url).utf16) + [0]
+        let path = WindowsFiles.wide(url)
         let handle = path.withUnsafeBufferPointer {
             pacer_watch_directory($0.baseAddress, isDirectory ? 1 : 0, context.toOpaque(), { pointer, flags in
                 guard let pointer else { return }

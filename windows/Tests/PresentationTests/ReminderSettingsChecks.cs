@@ -20,14 +20,15 @@ internal static class ReminderSettingsChecks
     internal static async Task Run(string language, bool dark, string output)
     {
         var oldCulture = CultureInfo.CurrentCulture; CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(language);
-        await using var engine = new EngineClient(); int configurations = 0; bool reject = false;
+        await using var engine = new EngineClient(); int configurations = 0, systemSettingsOpened = 0; bool reject = false;
         var preferences = new DesktopPreferences { LastSettingsPane = "reminders" };
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { if (reject) { reject = false; return false; } return true; });
         var system = new Notifications();
         using var notifications = new NotificationSession(session, system, value => Application.Current.Dispatcher.InvokeAsync(value), _ => { }, true);
         var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false) { IsHitTestVisible = false, ShowActivated = false };
         session.Changed += island.ApplyPreferences;
-        SettingsWindow Make() => new(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine, notifications: notifications) { IsHitTestVisible = false, ShowActivated = false };
+        SettingsWindow Make() => new(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine, notifications: notifications,
+            openNotificationSettings: () => systemSettingsOpened++) { IsHitTestVisible = false, ShowActivated = false };
         var window = Make(); string scenario = language + (dark ? "-dark" : "-light");
         try
         {
@@ -64,6 +65,12 @@ internal static class ReminderSettingsChecks
             var systemSwitch = Find<CheckBox>(window, "settings.reminders.notifications"); system.Result = NotificationAvailability.Denied;
             before = configurations; Toggle(systemSwitch); await Until(() => !notifications.IsChanging);
             Check(!session.Current.SystemNotifications && systemSwitch.IsChecked == false && Find<TextBlock>(window, "settings.reminders.notifications.issue").Visibility == Visibility.Visible, "Native denial resets the switch and explains the Windows setting");
+            var systemSettings = Find<Button>(window, "settings.reminders.notifications.settings");
+            var settingsPeer = new ButtonAutomationPeer(systemSettings);
+            Check(systemSettings.Focusable && settingsPeer.GetName().Contains(UiText.For(language == "zh-Hans").Text("settings.system_notifications")),
+                "The system settings link remains keyboard accessible and names the notification setting");
+            ((IInvokeProvider)settingsPeer.GetPattern(PatternInterface.Invoke)).Invoke(); await Pump();
+            Check(systemSettingsOpened == 1 && configurations == before, "The native settings entry opens once without changing collectors");
             system.Result = NotificationAvailability.Available; Toggle(systemSwitch); await Until(() => session.Current.SystemNotifications && !notifications.IsChanging);
             Check(configurations == before, "System notification choices do not reconfigure collectors");
             Toggle(systemSwitch); await Until(() => !session.Current.SystemNotifications && !notifications.IsChanging);

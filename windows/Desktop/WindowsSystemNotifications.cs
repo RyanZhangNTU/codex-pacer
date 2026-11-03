@@ -8,13 +8,23 @@ namespace CodexPacer.Windows;
 
 /// The current Microsoft native notification API. Registration is lazy: demo
 /// and capture sessions use an injected service and never register with the OS.
-internal sealed class WindowsSystemNotifications(string iconPath, string displayName = "Codex Pacer", bool suppressDisplay = false) : ISystemNotifications
+internal sealed class WindowsSystemNotifications(string iconPath, string displayName = "Codex Pacer", bool suppressDisplay = false, bool longDuration = false) : ISystemNotifications
 {
     private AppNotificationManager? manager;
     private bool disposed;
     private string? lastActivation;
     private long lastActivationAt;
     public event Action<string>? Activated;
+    internal event Action? Registered;
+    public NotificationAvailability? CurrentAvailability
+    {
+        get
+        {
+            try { return manager == null ? null : manager.Setting switch
+                { AppNotificationSetting.Enabled => NotificationAvailability.Available, AppNotificationSetting.Unsupported => NotificationAvailability.Unsupported, _ => NotificationAvailability.Denied }; }
+            catch (Exception error) when (error is COMException or InvalidOperationException) { return NotificationAvailability.Failed; }
+        }
+    }
     public Task<NotificationAvailability> EnableAsync()
     {
         if (disposed) return Task.FromResult(NotificationAvailability.Failed);
@@ -28,6 +38,7 @@ internal sealed class WindowsSystemNotifications(string iconPath, string display
                 try { candidate.Register(displayName, new Uri(System.IO.Path.GetFullPath(iconPath))); }
                 catch { candidate.NotificationInvoked -= Invoked; throw; }
                 manager = candidate;
+                Registered?.Invoke();
                 var args = AppInstance.GetCurrent().GetActivatedEventArgs();
                 if (args.Kind == ExtendedActivationKind.AppNotification && args.Data is AppNotificationActivatedEventArgs activated) Activate(activated.Argument);
             }
@@ -48,14 +59,14 @@ internal sealed class WindowsSystemNotifications(string iconPath, string display
             if (disposed || arguments == lastActivation && now - lastActivationAt < 1500) return;
             lastActivation = arguments; lastActivationAt = now;
         }
-        Activated?.Invoke(action);
+        Activated?.Invoke(arguments);
     }
     public bool Deliver(NotificationContent content)
     {
         try
         {
             if (disposed || manager?.Setting != AppNotificationSetting.Enabled) return false;
-            var notification = new AppNotification(NotificationPayload.Xml(content)) { Tag = NotificationPayload.Tag(content.Id), Group = "pacer", SuppressDisplay = suppressDisplay };
+            var notification = new AppNotification(NotificationPayload.Xml(content, longDuration)) { Tag = NotificationPayload.Tag(content.Id), Group = "pacer", SuppressDisplay = suppressDisplay };
             manager.Show(notification); return notification.Id != 0;
         }
         catch (Exception error) when (error is COMException or InvalidOperationException or ArgumentException or UnauthorizedAccessException) { return false; }

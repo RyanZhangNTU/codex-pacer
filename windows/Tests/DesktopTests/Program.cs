@@ -63,6 +63,7 @@ internal static class Program
         });
 
         await Test("provider-pinned conversation links, matched cloud fallback and existing host plans", ConversationApplicationChecks.Run);
+        await Test("real engine: Claude/Codex/DeepSeek discovery, reads and write notifications beyond MAX_PATH", () => LongPathChecks.Run(engine));
 
         await Test("real Claude file notification: first reply after large Desktop metadata", async () =>
         {

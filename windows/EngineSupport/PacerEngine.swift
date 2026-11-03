@@ -82,8 +82,15 @@ public enum PacerEngine {
         guard !claudeReference || reference else { return }
         if reference { NSTimeZone.default = TimeZone(secondsFromGMT: 0)! }
         let clock: @Sendable () -> Date = { reference ? Date(timeIntervalSince1970: 1_800_000_000) : Date() }
+        var notificationStore: EngineNotificationRegistry.Store? = demo || readOnly ? nil : .applicationDefault
+        if let index = CommandLine.arguments.firstIndex(of: "--notification-qa") {
+            guard reference, CommandLine.arguments.indices.contains(index + 1), let qa = UUID(uuidString: CommandLine.arguments[index + 1]) else { return }
+            notificationStore = .init(url: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("notification-qa-" + qa.uuidString.lowercased())
+                .appendingPathComponent("actions.json"), files: WindowsFileSystem())
+        }
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
+            notificationStore: notificationStore,
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
@@ -194,6 +201,9 @@ actor EngineRuntime {
     private let sourceSettings: CodexSourceSettingsServices
     private var codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
     private var navigation = ActivityNavigationRegistry()
+    private var notificationNavigation = ActivityNavigationRegistry()
+    private var notificationActivities: [SessionActivity] = []
+    private var notificationRegistry: EngineNotificationRegistry
     private let navigationServices: ActivityNavigationServices
     private struct LocalActivitySnapshot {
         var activities: [SessionActivity] = []
@@ -281,6 +291,7 @@ actor EngineRuntime {
 
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
+         notificationStore: EngineNotificationRegistry.Store? = nil,
          quotaServices: CodexQuotaServices? = nil,
          desktopServices: CodexDesktopServices? = nil,
          balanceServices: DeepSeekBalanceServices? = nil,
@@ -303,6 +314,7 @@ actor EngineRuntime {
         self.claudeWebReference = claudeWebReference && demo
         self.detectInstallation = installationDetection
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
+        self.notificationRegistry = .init(store: notificationStore, now: now())
         #if os(Windows)
         let demoHome = URL(fileURLWithPath: "C:/Users/Demo", isDirectory: true)
         #else
@@ -341,9 +353,26 @@ actor EngineRuntime {
             return true
         }
         switch command.method {
+        case "activateNotification":
+            guard projectionReady, let reference = command.params?.context, let kind = command.params?.notificationAction,
+                  let saved = notificationRegistry.record(reference, at: now()), saved.kind == kind else {
+                failure(id: command.id, code: "staleNotification"); return true
+            }
+            let entry = saved.target.flatMap { target in notificationNavigation.entries.values.first { EngineNotificationRegistry.target($0) == target } }
+            guard kind != "openTask" || entry.map(navigationIsCurrent) == true,
+                  notificationRegistry.consume(reference, source: notificationSource(saved.provider, scope: saved.scope), kind: kind, at: now()) != nil else {
+                failure(id: command.id, code: "staleNotification"); return true
+            }
+            if kind == "snoozeSpike" { spikeSnoozedUntil = now().addingTimeInterval(3600); publish(notices: []) }
+            struct Result: Encodable {
+                let protocolVersion = EngineProtocol.version, type = "result", ok = true
+                let id: String, value: EngineNotificationActivation
+            }
+            if let bytes = try? JSONEncoder().encode(Result(id: command.id, value: .init(kind: kind, link: entry?.link))) { output(bytes + Data([10])) }
+            return true
         case "prepareActivityOpen":
             guard let context = command.params?.context, context.utf8.count <= 128,
-                  let entry = navigation.entry(context: context), navigationIsCurrent(entry) else {
+                  let entry = navigationEntry(context: context), navigationIsCurrent(entry) else {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             let target = entry.target, home = target.provider == .claude ? claudeHome : codexHome
@@ -375,8 +404,8 @@ actor EngineRuntime {
               catch { failure(id: command.id, code: "navigationUnavailable") }
             return true
         case "completeActivityOpen":
-            guard let context = command.params?.context, let entry = navigation.entry(context: context), navigationIsCurrent(entry),
-                  navigation.acknowledge(context: context, inbox: &inbox) else {
+            guard let context = command.params?.context, let entry = navigationEntry(context: context), navigationIsCurrent(entry),
+                    acknowledgeNavigation(context: context) else {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             activityState.prune(at: now(), retention: retention)
@@ -1077,6 +1106,7 @@ actor EngineRuntime {
         } else {
             update = activityState.reconcile(at: date, retention: retention, visibility: activityVisibility)
         }
+        notificationActivities = current
         projectionReady = true
         publish(notices: update.notices)
     }
@@ -1195,7 +1225,18 @@ actor EngineRuntime {
                 #endif
                 return activity.sourceHostID == nil && activity.threadID.flatMap(UUID.init(uuidString:)) != nil
             }
+            // Retain a separate navigation view of cold log endings. They do
+            // not become visible cards or replay notification baselines.
+            var candidates = Dictionary((visibleActivities + notificationActivities).filter { enabled.contains($0.provider) }
+                .map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values.map { $0 }
+            let hiddenCodex = showEmbeddedCodexSessions ? Set<String>() : EmbeddedSessionVisibility.embeddedActivityIDs(candidates.filter { $0.provider == .codex })
+            let hiddenClaude = showClaudeCloudProjects ? Set<String>() : Set(candidates.filter { $0.claudeCloud != nil }.map(\.id))
+            candidates.removeAll { hiddenCodex.contains($0.id) || hiddenClaude.contains($0.id) }
+            notificationNavigation.update(activities: candidates, requests: visibleRequests, inbox: inbox, cloudContext: cloudNavigationContext) {
+                [.codex, .claude].contains($0.provider) && !$0.isInternalReview && !$0.isIgnoredCodexSession
+            }
         }
+        let notificationProjections = visibleNotices.map { notificationProjection($0, requests: visibleRequests, at: date) }
         let snapshot = EngineSnapshot(sequence: sequence, demo: demo, activities: visibleActivities, requests: visibleRequests,
             sources: displayedSources, quota: displayedQuota,
             notices: visibleNotices, inbox: inbox, hideProjects: hideProjects, now: date, wallet: enabled.contains(.deepseek) ? wallet : nil,
@@ -1206,7 +1247,8 @@ actor EngineRuntime {
             compactWarnings: compactWarnings, compactContext: compactContext, taskPresentation: taskPresentation,
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
-            claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [])
+            claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
+            notificationProjections: notificationProjections)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }
@@ -1215,6 +1257,7 @@ actor EngineRuntime {
 
     func stop() async {
         navigation.invalidate()
+        notificationNavigation.invalidate(); notificationActivities = []
         generation += 1; initialized = false; projectionReady = false
         activityDisplayTask?.cancel(); activityDisplayTask = nil; activityDisplayDeadline = nil
         maintenance?.cancel(); maintenance = nil
@@ -1234,8 +1277,61 @@ actor EngineRuntime {
         ])
     }
     private var cloudNavigationContext: String? { cloudState.map { $0.connectionContext + "|" + claudeOrganization } }
+    private func notificationSource(_ provider: AgentProvider, scope: String) -> String? {
+        let home = provider == .codex ? codexHome : provider == .claude ? claudeHome : deepseekHome
+        var fields = ["notification-source-v1", provider.rawValue, home.standardizedFileURL.resolvingSymlinksInPath().path]
+        switch provider {
+        case .codex: fields.append(codexExecutable)
+        case .claude:
+            fields.append(claudeOrganization)
+            if scope == "cloud" {
+                guard showClaudeCloudProjects, cloudState?.context == generation, cloudState?.scopeVerified == true, let scope = cloudState?.verifiedScope else { return nil }
+                fields.append(scope)
+            }
+        case .deepseek:
+            fields += [deepseekSettings.selection.rawValue, DeepSeekAuthMode.detect(home: deepseekHome)?.rawValue ?? ""]
+        }
+        if scope == "quota" {
+            guard enabled.contains(provider), let account = (provider == .claude ? claudeQuotaState?.snapshot : codexQuota)?.accountScope else { return nil }
+            fields.append(account)
+        }
+        fields.append(scope)
+        return CompletionDismissalStore.digest(fields)
+    }
+    private func notificationProjection(_ notice: IslandNotice, requests: [PendingAttentionRequest], at date: Date) -> EngineNotice {
+        var value = EngineNotice(notice, hideProjects: hideProjects)
+        let requested = requests.first { "request:" + $0.id == notice.id }?.activity.id
+        let entry = notificationNavigation.entries.values.first { entry in
+            entry.members.contains { member in requested == member.id || notice.id.hasPrefix(member.id + ":") }
+        }
+        let deepseek = notice.category?.hasPrefix("deepseek.") == true || notice.id.hasPrefix("deepseek:") ||
+            notificationActivities.contains { $0.provider == .deepseek && (requested == $0.id || notice.id.hasPrefix($0.id + ":")) }
+        let provider = entry?.target.provider ?? (deepseek ? .deepseek : notice.id.hasPrefix("claude:") ? .claude : .codex)
+        let scope = entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
+        guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
+        let target = entry.map(EngineNotificationRegistry.target)
+        let kind = target != nil ? "openTask" : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
+        value.defaultAction = .init(kind: kind, title: L10n.text("common.open_chat"),
+            reference: notificationRegistry.issue(kind: kind, provider: provider, source: source, scope: scope, target: target, now: date))
+        var actions = value.actions ?? []
+        if target != nil { actions.insert(.init(kind: "openTask", title: L10n.text("common.open_chat")), at: 0) }
+        else if deepseek && notice.kind != .lowQuota { actions.append(.init(kind: "openHarness", title: L10n.text("deepseek.notice.open_harness"))) }
+        value.actions = actions.map { action in
+            var action = action
+            action.reference = notificationRegistry.issue(kind: action.kind, provider: provider, source: source, scope: scope, target: action.kind == "openTask" ? target : nil, now: date)
+            return action
+        }
+        return value
+    }
+    private func navigationEntry(context: String) -> ActivityNavigationRegistry.Entry? {
+        navigation.entry(context: context) ?? notificationNavigation.entry(context: context)
+    }
+    private func acknowledgeNavigation(context: String) -> Bool {
+        if navigation.entry(context: context) != nil { return navigation.acknowledge(context: context, inbox: &inbox) }
+        return notificationNavigation.acknowledge(context: context, inbox: &inbox)
+    }
     private func navigationIsCurrent(_ entry: ActivityNavigationRegistry.Entry) -> Bool {
-        initialized && projectionReady && navigation.entry(context: entry.link.context)?.link == entry.link && enabled.contains(entry.target.provider) &&
+        initialized && projectionReady && navigationEntry(context: entry.link.context)?.link == entry.link && enabled.contains(entry.target.provider) &&
             entry.members.allSatisfy({ inbox.isCurrentSource($0.source) }) &&
             (entry.target.claudeCloud == nil || (showClaudeCloudProjects && entry.cloudContext == cloudNavigationContext))
     }

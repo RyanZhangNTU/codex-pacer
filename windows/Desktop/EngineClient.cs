@@ -46,12 +46,13 @@ internal sealed class EngineClient : IAsyncDisposable
 
     internal EngineClient(TimeSpan? commandTimeout = null) => this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
 
-    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false)
+    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null)
     {
         if (process != null) throw new InvalidOperationException("Engine already started.");
         callbacks = SynchronizationContext.Current;
         if (referenceFixture && !demo) throw new ArgumentException("Reference fixtures require demo mode.");
         if (claudeWebFixture && (!demo || !referenceFixture)) throw new ArgumentException("Claude web fixtures require the offline reference mode.");
+        if (notificationQa != null && (!demo || !referenceFixture)) throw new ArgumentException("Notification fixtures require offline reference inputs.");
         executable = Path.GetFullPath(executable);
         if (!File.Exists(executable)) throw new FileNotFoundException("PacerEngine.exe is missing.");
         var start = new ProcessStartInfo(executable)
@@ -64,6 +65,8 @@ internal sealed class EngineClient : IAsyncDisposable
         if (demo) start.ArgumentList.Add("--demo");
         if (referenceFixture) start.ArgumentList.Add("--reference-fixture");
         if (claudeWebFixture) start.ArgumentList.Add("--claude-web-fixture");
+        if (readOnlyDiagnostics) start.ArgumentList.Add("--read-only-diagnostics");
+        if (notificationQa is Guid qa) { start.ArgumentList.Add("--notification-qa"); start.ArgumentList.Add(qa.ToString("D")); }
         start.ArgumentList.Add("--language"); start.ArgumentList.Add(language);
         job = new OwnedJob();
         try

@@ -3,10 +3,18 @@ import Foundation
 import CWindowsSupport
 
 enum WindowsFiles {
-    static func wide(_ url: URL) -> [UInt16] { Array(WindowsCodexExecutableDiscovery.path(url).utf16) + [0] }
+    // Win32 IO gets the extended path; stored URLs and source identities stay
+    // canonical. This also works in hosts that have not opted out of MAX_PATH.
+    static func extendedPath(_ path: String) -> String {
+        let value = path.replacingOccurrences(of: "/", with: "\\")
+        if value.hasPrefix("\\\\?\\") { return value }
+        if value.hasPrefix("\\\\") { return "\\\\?\\UNC\\" + value.dropFirst(2) }
+        if value.count >= 3, value[value.index(after: value.startIndex)] == ":" { return "\\\\?\\" + value }
+        return value
+    }
+    static func wide(_ url: URL) -> [UInt16] { Array(extendedPath(WindowsCodexExecutableDiscovery.path(url)).utf16) + [0] }
     static func replace(_ source: URL, with destination: URL) -> Bool {
-        let from = Array(source.withUnsafeFileSystemRepresentation { String(cString: $0!) }.utf16) + [0]
-        let to = Array(destination.withUnsafeFileSystemRepresentation { String(cString: $0!) }.utf16) + [0]
+        let from = wide(source), to = wide(destination)
         return pacer_replace_file(from, to) != 0
     }
 }
@@ -54,7 +62,7 @@ public struct WindowsFileSystem: PlatformFileSystem {
         try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
     }
     public func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: url)
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: WindowsFiles.extendedPath(WindowsCodexExecutableDiscovery.path(url))))
         defer { try? handle.close() }
         try handle.seek(toOffset: offset)
         return try handle.read(upToCount: maximumBytes) ?? Data()

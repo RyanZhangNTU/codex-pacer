@@ -5,6 +5,40 @@ import XCTest
 @testable import PacerCore
 
 final class WindowsFileSystemTests: XCTestCase {
+    func testProviderLogsBeyondMaxPathAreDiscoveredReadAndWatched() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-long-path-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = WindowsFileSystem()
+        for provider in ["claude", "codex", "deepseek"] {
+            // Claude encodes the whole project path in one directory component.
+            // Keep each component below NTFS's limit while exceeding MAX_PATH.
+            let directory = root.appendingPathComponent(provider).appendingPathComponent("C--synthetic-" + String(repeating: "project-", count: 27) + "中文")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let file = directory.appendingPathComponent("11111111-2222-4333-8444-555555555555.jsonl")
+            let initial = Data("{\"type\":\"synthetic\"}\n".utf8)
+            try initial.write(to: file)
+            XCTAssertGreaterThan(WindowsCodexExecutableDiscovery.path(file).utf16.count, 260)
+            XCTAssertNotNil(files.metadata(file), provider + " metadata must not disappear beyond MAX_PATH")
+            XCTAssertEqual(try files.entries(in: directory), [file], provider + " discovery keeps canonical URLs")
+            XCTAssertEqual(try files.read(file, offset: 0, maximumBytes: 4096), initial)
+            let changed = expectation(description: provider + " append wakes a long-path watch")
+            changed.assertForOverFulfill = false
+            let watch = WindowsActivityLogWatcher().watch(file, isDirectory: false) { _ in changed.fulfill() }
+            XCTAssertNotNil(watch, provider + " native watch must open the long directory")
+            guard let watch else { changed.fulfill(); await fulfillment(of: [changed], timeout: 0.1); continue }
+            let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: WindowsFiles.extendedPath(WindowsCodexExecutableDiscovery.path(file))))
+            try handle.seekToEnd(); try handle.write(contentsOf: Data("appended\n".utf8)); try handle.close()
+            await fulfillment(of: [changed], timeout: 3)
+            watch.stop()
+            XCTAssertEqual(try files.read(file, offset: UInt64(initial.count), maximumBytes: 8), Data("appended".utf8))
+        }
+    }
+    func testExtendedPathsPreserveUnicodeAndUNCWithoutChangingCanonicalURLs() {
+        XCTAssertEqual(WindowsFiles.extendedPath("C:/synthetic/中文/file.jsonl"), "\\\\?\\C:\\synthetic\\中文\\file.jsonl")
+        XCTAssertEqual(WindowsFiles.extendedPath("\\\\server\\share\\file"), "\\\\?\\UNC\\server\\share\\file")
+        XCTAssertEqual(WindowsFiles.extendedPath("\\\\?\\C:\\synthetic\\file"), "\\\\?\\C:\\synthetic\\file")
+        XCTAssertEqual(WindowsFiles.extendedPath("relative/file"), "relative\\file")
+    }
     func testMetadataUsesAStableFullIdentityAndReadsStayBounded() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-file-port-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

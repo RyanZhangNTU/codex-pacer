@@ -12,13 +12,14 @@ namespace CodexPacer.Windows;
 
 internal enum InstanceAction { Show = 1, Settings = 2 }
 
-/// A second launch can only request Show or Settings in this user's desktop.
-/// No task, path, credential, notification payload or arbitrary command crosses.
+/// A second launch can request Show, Settings or a bounded notification ref
+/// in this user's desktop. Task content, paths and credentials never cross.
 internal sealed class WindowsInstanceActivation : IDisposable
 {
     private const int Acknowledged = 0x50414331;
     private readonly Window window;
     private readonly Action<InstanceAction> activated;
+    private readonly Action<string>? notificationActivated;
     private readonly string marker;
     private readonly uint message;
     private readonly string? maintenanceMarker;
@@ -28,9 +29,9 @@ internal sealed class WindowsInstanceActivation : IDisposable
     private IntPtr handle;
     private bool disposed;
 
-    internal WindowsInstanceActivation(Window window, Action<InstanceAction> activated, Guid? qa = null, Action? quitForMaintenance = null)
+    internal WindowsInstanceActivation(Window window, Action<InstanceAction> activated, Guid? qa = null, Action? quitForMaintenance = null, Action<string>? notificationActivated = null)
     {
-        this.window = window; this.activated = activated;
+        this.window = window; this.activated = activated; this.notificationActivated = notificationActivated;
         string name = Scope(qa); marker = name + ".Window"; message = RegisterWindowMessageW(name);
         if (message == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         this.quitForMaintenance = quitForMaintenance;
@@ -70,6 +71,15 @@ internal sealed class WindowsInstanceActivation : IDisposable
             window.Dispatcher.InvokeAsync(() => { if (!disposed) quitForMaintenance?.Invoke(); });
             handled = true; return new IntPtr(WindowsMaintenanceSignal.Acknowledged);
         }
+        if (!disposed && msg == 0x004A && lParam != IntPtr.Zero && notificationActivated != null)
+        {
+            var value = Marshal.PtrToStructure<CopyData>(lParam);
+            if (value.Tag != new IntPtr(0x50414332) || value.Bytes is < 2 or > 256 || value.Bytes % 2 != 0 || value.Data == IntPtr.Zero || Marshal.ReadInt16(value.Data, value.Bytes - 2) != 0) return IntPtr.Zero;
+            string? arguments = Marshal.PtrToStringUni(value.Data, value.Bytes / 2 - 1);
+            if (NotificationPayload.ParseAction(arguments) == null) return IntPtr.Zero;
+            window.Dispatcher.InvokeAsync(() => { if (!disposed) notificationActivated(arguments!); });
+            handled = true; return new IntPtr(Acknowledged);
+        }
         if (disposed || (uint)msg != message || lParam != IntPtr.Zero || wParam.ToInt64() is not (1 or 2)) return IntPtr.Zero;
         var action = (InstanceAction)wParam.ToInt32();
         window.Dispatcher.InvokeAsync(() => { if (!disposed) activated(action); });
@@ -98,6 +108,32 @@ internal sealed class WindowsInstanceActivation : IDisposable
         // still acknowledges on the first attempt.
         } while (deadline.Elapsed < TimeSpan.FromSeconds(8));
         return false;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct CopyData { internal IntPtr Tag; internal int Bytes; internal IntPtr Data; }
+    internal static bool TryActivateNotification(string arguments, Guid? qa = null)
+    {
+        if (NotificationPayload.ParseAction(arguments) == null) return false;
+        string marker = Scope(qa) + ".Window";
+        IntPtr text = Marshal.StringToHGlobalUni(arguments), data = Marshal.AllocHGlobal(Marshal.SizeOf<CopyData>());
+        try
+        {
+            Marshal.StructureToPtr(new CopyData { Tag = new IntPtr(0x50414332), Bytes = (arguments.Length + 1) * 2, Data = text }, data, false);
+            var deadline = Stopwatch.StartNew();
+            do
+            {
+                bool sent = false;
+                EnumWindows((hwnd, _) =>
+                {
+                    if (GetPropW(hwnd, marker) != new IntPtr(1)) return true;
+                    sent = SendMessageTimeoutW(hwnd, 0x004A, IntPtr.Zero, data, 2, 300, out var result) != IntPtr.Zero && result == new IntPtr(Acknowledged);
+                    return !sent;
+                }, IntPtr.Zero);
+                if (sent) return true;
+                Thread.Sleep(40);
+            } while (deadline.Elapsed < TimeSpan.FromSeconds(8));
+            return false;
+        }
+        finally { Marshal.FreeHGlobal(data); Marshal.FreeHGlobal(text); }
     }
     public void Dispose()
     {

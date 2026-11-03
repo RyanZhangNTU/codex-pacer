@@ -29,6 +29,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly DeepSeekConnectionCoordinator? webConnection;
     private readonly ClaudeConnectionCoordinator? claudeConnection;
     private readonly NotificationSession? notifications;
+    private readonly Action openNotificationSettings;
     private readonly Grid client = new() { Width = 780, Height = 600 };
     private readonly StackPanel form = new() { Margin = new Thickness(20, 20, 20, 16) };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
@@ -51,7 +52,7 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
@@ -60,6 +61,7 @@ internal sealed partial class SettingsWindow : Window
         this.webConnection = webConnection;
         this.claudeConnection = claudeConnection;
         this.notifications = notifications;
+        this.openNotificationSettings = openNotificationSettings ?? (() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }));
         this.sourceReady = sourceReady ?? Task.CompletedTask;
         Title = ui.Text("menu.settings_title"); WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.NoResize; SizeToContent = SizeToContent.WidthAndHeight;

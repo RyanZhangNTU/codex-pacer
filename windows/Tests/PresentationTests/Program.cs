@@ -54,7 +54,7 @@ internal static class Program
                     await LegacyQuotaChecks.Run(output); await QuotaConnectionChecks.Run(output); await TypographyLocaleChecks.Run(output);
                 }
                 if (All("web")) { await ProviderWebStartupChecks.Run(); await ClaudeWebSessionChecks.Run(); await DeepSeekWebSessionChecks.Run(); }
-                if (All("host")) await IslandHostChecks.Run();
+                if (All("host")) { await NotificationActivationWindowChecks.Run(); await IslandHostChecks.Run(); }
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
                     foreach (bool motion in new[] { false, true })
