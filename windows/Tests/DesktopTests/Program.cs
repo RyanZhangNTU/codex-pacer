@@ -22,6 +22,8 @@ internal static class Program
         if (args is ["--guide-preferences-read", var guideFile, var guideVersion, var guideMajor]) return GuideSessionChecks.ReadAfterRestart(guideFile, guideVersion, guideMajor);
         if (args is ["--guide-controls-only"])
         { await GuideControlChecks.Run(); Console.WriteLine("PASS combined embedded-session flags, schema 2 reopen and save rollback"); return 0; }
+        if (args is ["--conversation-only"])
+        { await ConversationApplicationChecks.Run(); Console.WriteLine("PASS conversation routing and prepared-host activation boundaries"); return 0; }
         if (args is ["--platform-only"])
         { WindowsPlatformChecks.Run(); Console.WriteLine("PASS Windows 10 minimum, notification capability failures and glass fallback"); return 0; }
         if (args is ["--pages-only", var pagesEngine])

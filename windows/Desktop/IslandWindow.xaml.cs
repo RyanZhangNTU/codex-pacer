@@ -776,7 +776,8 @@ public partial class IslandWindow : Window
     {
         if (row.Provider == "deepseek") return Task.FromResult(plan.Kind is "application" or "demo" &&
             plan.Url == null && plan.WebUrl == null && plan.Pid == null && plan.Started == null && desktopApplications?.Open("deepseek") == true);
-        if (plan.Kind != "demo") return desktopApplications?.OpenConversationAsync(plan) ?? Task.FromResult(false);
+        if (plan.Kind != "demo") return desktopApplications?.OpenConversationAsync(plan,
+            context => engine.QueryAsync<bool>("activateActivityHost", new { context })) ?? Task.FromResult(false);
         if (!demo) return Task.FromResult(false);
         var content = new StackPanel { Margin = new Thickness(32) };
         content.Children.Add(new TextBlock { Text = ui.Text("demo.chat_heading"), Foreground = PacerPalette.Secondary });
