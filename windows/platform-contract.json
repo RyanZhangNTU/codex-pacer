@@ -43,7 +43,7 @@
         "windows/shared-core.json",
         "windows/platform-coverage.json"
       ],
-      "reason": "C-stage closure after B5c: both hosts now compile the whole Core. Remove the temporary root Package source/test selection, shared-core.json and coverage remainingCoreSources/remainingCoreTests before feature PRs. P2 only wires remote features."
+      "reason": "C-stage closure after B5c: both hosts now compile the whole Core. Remove the temporary root Package source/test selection, shared-core.json and coverage remainingCoreSources/remainingCoreTests as the C-stage closure. P2 only wires remote features."
     }
   ],
   "nativeTargets": {
@@ -148,6 +148,6 @@
   "sourceSelectionRemoval": {
     "owner": "B5c",
     "phase": "end-of-C",
-    "reason": "Remove the root Package Core selection, shared-core.json and both coverage remaining inventories after B5c, before feature PRs P1-P4."
+    "reason": "Remove the root Package Core selection, shared-core.json and both coverage remaining inventories after B5c, as the C-stage closure."
   }
 }

@@ -805,7 +805,11 @@ actor EngineRuntime {
         if let codex { codexHome = codex }
         if let claude { claudeHome = claude }
         if let organization = parameters.claudeOrganization {
-            if organization.lowercased() != claudeOrganization { claudeQuotaState = nil; cloudState = nil }
+            if organization.lowercased() != claudeOrganization {
+                claudeQuotaState = nil
+                purgeClaudeCloudActivities()
+                cloudState = nil
+            }
             claudeOrganization = organization.lowercased()
         }
         if let deepseek { deepseekHome = deepseek }
@@ -1191,11 +1195,17 @@ actor EngineRuntime {
     private func receiveClaudeCloud(_ state: ClaudeCloudState) {
         guard active, state.context == lifecycle.version(.claude), usesClaudeWeb else { return }
         if let previous = cloudState, previous.purgeRevision != state.purgeRevision {
-            let ids = Set((activities + inbox.activities).filter { $0.claudeCloud != nil }.map(\.id))
-            inbox.remove(activityIDs: ids)
+            purgeClaudeCloudActivities()
         }
         cloudState = state
         if projectionReady { projectCollected(at: now()) }
+    }
+    private func purgeClaudeCloudActivities() {
+        let ids = Set((activities + inbox.activities + activityState.claudeActivities).filter { $0.claudeCloud != nil }.map(\.id))
+        inbox.remove(activityIDs: ids)
+        activityState.claudeActivities.removeAll { $0.claudeCloud != nil }
+        activities.removeAll { $0.claudeCloud != nil }
+        requests.removeAll { $0.activity.claudeCloud != nil }
     }
 
     private func sendClaudeHostMessage(_ message: ClaudeWebHostMessage) {
