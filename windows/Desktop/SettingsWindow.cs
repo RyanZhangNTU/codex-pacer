@@ -38,6 +38,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly bool ownsAppearanceDisplays;
     private readonly Func<Uri, bool>? guideLinkLauncher;
     private readonly Action<string>? guideCopyLink;
+    private readonly Func<Uri, bool>? systemSettingsLauncher;
     private readonly Grid client = new() { Width = 780, Height = 600 };
     private readonly StackPanel form = new() { Margin = new Thickness(20, 20, 20, 16) };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
@@ -60,7 +61,7 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null, ISystemAppearanceSource? appearanceSource = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null, ISystemAppearanceSource? appearanceSource = null, Func<Uri, bool>? systemSettingsLauncher = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
@@ -77,6 +78,7 @@ internal sealed partial class SettingsWindow : Window
         ownsAppearanceDisplays = displayTopology == null && surfaceWindow == null;
         this.guideLinkLauncher = guideLinkLauncher;
         this.guideCopyLink = guideCopyLink;
+        this.systemSettingsLauncher = systemSettingsLauncher;
         this.openNotificationSettings = openNotificationSettings ?? (() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }));
         this.sourceReady = sourceReady ?? Task.CompletedTask;
         Title = ui.Text("menu.settings_title"); WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -438,6 +440,7 @@ internal sealed partial class SettingsWindow : Window
     {
         var state = appearance.Current; DesktopAppearance.Apply(this, state);
         semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark; SettingsPalette.Apply(Resources, dark, IsActive, state);
+        RefreshSurfaceStatus();
     }
     internal static bool IsSystemDark()
     {

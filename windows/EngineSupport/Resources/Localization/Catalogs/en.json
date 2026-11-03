@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "ff1fffecea47bdc885f2d266b9399372d25d8b6180a202f6e4a6a6c94157e202"
+    "windows/EngineSupport/Resources/Localization/en.json": "6386958707ad7638179108018771bc5df36df12b93e3aa0f16765c868ef946c3"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -971,6 +971,7 @@
     "windows.settings.notifications_failed": "Couldn\u2019t enable notifications. Try turning them on again.",
     "windows.settings.notifications_unsupported": "System notifications are unavailable in this Windows session.",
     "windows.settings.open_at_login_detail": "Start Codex Pacer when you log in to Windows",
+    "windows.settings.open_system_failed": "Could not open Windows Settings. Open Accessibility > Visual effects in Windows Settings.",
     "windows.settings.pane_pending": "This pane is not available in the Windows preview yet.",
     "windows.settings.read_failed": "Settings could not be read. Defaults are in use and project names are hidden.",
     "windows.settings.recovery_required": "Restart Codex Pacer before making more changes. The engine state could not be restored.",
@@ -988,6 +989,8 @@
     "windows.storage.future": "A settings or history file was written by a newer version. This version will not modify it. You can back it up and start with defaults.",
     "windows.storage.restored": "Settings were damaged, so defaults have been restored. Backup: {0}",
     "windows.storage.use_defaults": "Back Up and Use Defaults",
+    "windows.support.share_message": "Codex Pacer keeps Codex, Claude Code and DeepSeek Harness activity in a desktop island on Windows.",
+    "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link.",
     "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
   }
 }

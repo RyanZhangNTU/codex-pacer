@@ -28,7 +28,7 @@ internal static class Program
         if (fixture >= 0) return SlowEngineChecks.Fixture(args[fixture + 1]);
         if (args is ["--unit-only"])
         {
-            try { SystemAppearanceUnitChecks.Run(); QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult(); return 0; }
+            try { SystemAppearanceUnitChecks.Run(); QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult(); SettingsPageUnitChecks.Run(); return 0; }
             catch (Exception error) { Console.Error.WriteLine(error); return 1; }
         }
         if (args is ["--quota-cycle-units"])
@@ -62,7 +62,7 @@ internal static class Program
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 if (group is "all" or "recovery" or "persistence") await StorageRecoveryChecks.Run();
-                SystemAppearanceUnitChecks.Run(); await QuotaCycleCompletionChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
+                SystemAppearanceUnitChecks.Run(); await QuotaCycleCompletionChecks.Run(); SettingsPageUnitChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
                 if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
                 if (group == "persistence") await PreferencesResponsivenessChecks.Run();
                 bool All(string name) => group == "all" || group == name;

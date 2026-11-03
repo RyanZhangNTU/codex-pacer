@@ -100,5 +100,8 @@
   "windows.settings.startup_disabled": "Windows 已禁用此启动项。请在“启动应用”中允许启动。",
   "windows.settings.startup_policy": "Windows 策略阻止了此启动项。",
   "windows.settings.startup_unknown": "无法确认 Windows 启动状态。请检查“启动应用”。",
-  "windows.settings.startup_other": "另一个安装位置已注册此启动项。请先检查“启动应用”。"
+  "windows.settings.startup_other": "另一个安装位置已注册此启动项。请先检查“启动应用”。",
+  "windows.settings.open_system_failed": "无法打开 Windows 设置。请在 Windows 设置中打开“辅助功能 > 视觉效果”。",
+  "windows.support.share_message": "Codex Pacer 在 Windows 桌面岛中显示 Codex、Claude Code 和 DeepSeek Harness 的动态。",
+  "windows.support.share_unavailable": "Windows 分享当前不可用。你可以复制项目链接后分享。"
 }

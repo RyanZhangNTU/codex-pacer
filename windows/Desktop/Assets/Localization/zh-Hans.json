@@ -967,6 +967,7 @@
     "windows.settings.notifications_failed": "未能启用通知，请重新打开通知开关。",
     "windows.settings.notifications_unsupported": "当前 Windows 会话无法使用系统通知。",
     "windows.settings.open_at_login_detail": "登录 Windows 时自动启动 Codex Pacer",
+    "windows.settings.open_system_failed": "无法打开 Windows 设置。请在 Windows 设置中打开“辅助功能 > 视觉效果”。",
     "windows.settings.pane_pending": "Windows 预览版尚未提供此设置页。",
     "windows.settings.read_failed": "设置未能读取，已使用默认设置并隐藏项目名称。",
     "windows.settings.recovery_required": "引擎状态未能恢复，请重启 Codex Pacer 后再修改设置。",
@@ -984,6 +985,8 @@
     "windows.storage.future": "设置或历史文件由更新版本写入，当前版本不会修改它。你可以先备份，再使用默认设置。",
     "windows.storage.restored": "设置文件已损坏，已恢复默认设置。备份：{0}",
     "windows.storage.use_defaults": "备份并使用默认设置",
+    "windows.support.share_message": "Codex Pacer 在 Windows 桌面岛中显示 Codex、Claude Code 和 DeepSeek Harness 的动态。",
+    "windows.support.share_unavailable": "Windows 分享当前不可用。你可以复制项目链接后分享。",
     "windows.updates.pending": "Windows 预览版暂不支持自动更新。"
   }
 }

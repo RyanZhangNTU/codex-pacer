@@ -967,6 +967,7 @@
     "windows.settings.notifications_failed": "Couldn’t enable notifications. Try turning them on again.",
     "windows.settings.notifications_unsupported": "System notifications are unavailable in this Windows session.",
     "windows.settings.open_at_login_detail": "Start Codex Pacer when you log in to Windows",
+    "windows.settings.open_system_failed": "Could not open Windows Settings. Open Accessibility > Visual effects in Windows Settings.",
     "windows.settings.pane_pending": "This pane is not available in the Windows preview yet.",
     "windows.settings.read_failed": "Settings could not be read. Defaults are in use and project names are hidden.",
     "windows.settings.recovery_required": "Restart Codex Pacer before making more changes. The engine state could not be restored.",
@@ -984,6 +985,8 @@
     "windows.storage.future": "A settings or history file was written by a newer version. This version will not modify it. You can back it up and start with defaults.",
     "windows.storage.restored": "Settings were damaged, so defaults have been restored. Backup: {0}",
     "windows.storage.use_defaults": "Back Up and Use Defaults",
+    "windows.support.share_message": "Codex Pacer keeps Codex, Claude Code and DeepSeek Harness activity in a desktop island on Windows.",
+    "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link.",
     "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
   }
 }

@@ -100,5 +100,8 @@
   "windows.settings.startup_disabled": "Windows has disabled this entry. Allow it in Startup apps.",
   "windows.settings.startup_policy": "A Windows policy is blocking this startup entry.",
   "windows.settings.startup_unknown": "The Windows startup status is unavailable. Check Startup apps.",
-  "windows.settings.startup_other": "Another installation has registered this entry. Check Startup apps first."
+  "windows.settings.startup_other": "Another installation has registered this entry. Check Startup apps first.",
+  "windows.settings.open_system_failed": "Could not open Windows Settings. Open Accessibility > Visual effects in Windows Settings.",
+  "windows.support.share_message": "Codex Pacer keeps Codex, Claude Code and DeepSeek Harness activity in a desktop island on Windows.",
+  "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link."
 }

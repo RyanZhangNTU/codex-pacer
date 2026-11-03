@@ -8,6 +8,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -33,6 +34,7 @@ internal sealed class GuideContent : StackPanel
     private bool syncing, changing;
     private Popup? code;
     private int copyRevision;
+    private SupportShareSession? share;
     internal GuideContent(UiText ui, PreferencesSession session, IStartupRegistration startup, GuideCatalog catalog,
         Action<string> settings, Action welcome, EngineClient? engine = null, NotificationSession? notifications = null, Func<Uri, bool>? launch = null, Func<EngineSnapshot?>? snapshot = null, Action<string>? copyLink = null)
     {
@@ -43,7 +45,7 @@ internal sealed class GuideContent : StackPanel
         issue = Text("", 11); Identify(issue, "guide.issue", ""); AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive);
         issue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
         Loaded += (_, _) => { session.Changed += PreferencesChanged; if (engine != null) engine.Snapshot += SnapshotChanged; if (notifications != null) notifications.Changed += Refresh; Refresh(); };
-        Unloaded += (_, _) => { copyRevision++; session.Changed -= PreferencesChanged; if (engine != null) engine.Snapshot -= SnapshotChanged; if (notifications != null) notifications.Changed -= Refresh; if (code != null) code.IsOpen = false; };
+        Unloaded += (_, _) => { copyRevision++; session.Changed -= PreferencesChanged; if (engine != null) engine.Snapshot -= SnapshotChanged; if (notifications != null) notifications.Changed -= Refresh; if (code != null) code.IsOpen = false; share?.Dispose(); share = null; };
         PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape && code?.IsOpen == true) { code.IsOpen = false; args.Handled = true; } };
     }
     private void PreferencesChanged(DesktopPreferences _) => Refresh();
@@ -58,6 +60,7 @@ internal sealed class GuideContent : StackPanel
     private void Reset()
     {
         if (code != null) code.IsOpen = false;
+        share?.Dispose(); share = null;
         foreach (UIElement child in Children) if (child != issue) PageAccessibility.Retire(child);
         Children.Clear(); refresh.Clear(); editors.Clear(); Children.Add(issue); issue.Text = "";
     }
@@ -253,7 +256,9 @@ internal sealed class GuideContent : StackPanel
             var tab = new RadioButton { Content = provider == "codex" ? "Codex" : provider == "claude" ? "Claude" : "DeepSeek", GroupName = "help.providers", Margin = new Thickness(6) };
             Identify(tab, "help.module." + provider, tab.Content.ToString()!); tab.Checked += (_, _) => ModuleHelp(details, provider); tabs.Children.Add(tab);
         }
-        Children.Add(tabs); Children.Add(details); ((RadioButton)tabs.Children[0]).IsChecked = true;
+        Children.Add(tabs); Children.Add(details);
+        string initial = SettingsPagePolicy.InitialHelpProvider(NativeCompactBar.Providers(session.Current, snapshot()));
+        ((RadioButton)tabs.Children[Array.IndexOf(new[] { "codex", "claude", "deepseek" }, initial)]).IsChecked = true;
         Heading("help.section.more"); Children.Add(Button(ui.Text("help.show_welcome"), "help.welcome", welcome)); Children.Add(Link("help.link.guide", "manual")); Children.Add(Link("help.link.issues", "issues"));
     }
     private void Legend(string key, UIElement sample, Panel? parent = null)
@@ -291,7 +296,13 @@ internal sealed class GuideContent : StackPanel
         Reset(); Children.Add(Card(Row(ui.Text("support.thanks.title"), ui.Text("support.thanks.detail"))));
         Children.Add(Card(Row(ui.Text("support.star.title"), ui.Text("support.star.detail")), Link("support.star.action", "star"), Link("support.star.feature", "feature"), Link("support.star.bug", "bug")));
         Button? copy = null; copy = Button(ui.Text("support.share.copy"), "support.copy", () => _ = Copy(copy!));
-        Children.Add(Card(Row(ui.Text("support.share.title"), ui.Text("support.share.detail")), copy));
+        var send = Button(ui.Text("support.share.action"), "support.share", () =>
+        {
+            var window = Window.GetWindow(this);
+            if (window == null || !(share ??= new()).Show(new WindowInteropHelper(window).Handle, catalog, ui)) issue.Text = ui.Text("windows.support.share_unavailable");
+        });
+        var actions = new StackPanel { Orientation = Orientation.Horizontal }; send.Margin = new Thickness(0, 3, 8, 3); actions.Children.Add(send); actions.Children.Add(copy);
+        Children.Add(Card(Row(ui.Text("support.share.title"), ui.Text("support.share.detail")), actions));
         var coffee = Card(Row(ui.Text("support.coffee.title"), ui.Text("support.coffee.detail")), Link("support.coffee.title", "donate")); Children.Add(coffee);
         string? file = catalog.SupportCode;
         if (file != null && file == Path.GetFileName(file))

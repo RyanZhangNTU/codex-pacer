@@ -483,7 +483,7 @@
         "三家 module/恢复自动、本机状态、Claude setup retry、CLI 扫描/候选、路径 chooser/清空",
         "平台系统设置快捷入口、所有内部链接和错误提示有对应 Windows 操作"
       ],
-      "previewNote": "General, Appearance, Collapsed Bar, Reminders, Codex, Claude and DeepSeek connect privacy, startup, positions, modules, source/history, budgets, warnings, retention, notifications and compact display options. Claude account controls connect login, explicit workspaces, refresh, account switching, sign-out and history through the real browser/engine; EN/ZH light/dark synthetic checks cover save rollback, stale controls and failed clearing. The Claude cloud-project toggle connects source visibility and account-scoped monitoring; real Cloud Projects and navigation still need acceptance. Claude and DeepSeek share the validated source-folder editor. The real compact editor supports cross-lane dragging, wrapping, arrows, context menus and arrangement restore. Four panes, embedded-session filtering, broader real-account coverage, folder-picker manual acceptance, other appearance choices, updater, actual restart/login and complete input/visual/motion acceptance remain.",
+      "previewNote": "Eleven Mac settings panes were compared in docs/windows-settings-parity.md. Ten Windows panes have implementations; Connections belongs to lane A and automatic updates to lane B. Existing EN/ZH synthetic checks cover privacy, startup, source/history, budgets, warnings, retention, notifications, compact editing and save rollback. P3d headless units cover first-enabled Help defaults, the DeepSeek-only appearance row, localized pricing links, the fixed Windows transparency-settings entry, and public-only sharing with failure/disposal. New quota-row scrolling, actual system sharing, guide subscriptions and the complete UIA/presentation matrix await unified integration; these interactions have not been marked as physically accepted.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
@@ -519,7 +519,11 @@
         "windows/Desktop/CompactLayoutEditorView.cs",
         "windows/Desktop/SettingsCollapsed.cs",
         "windows/Tests/PresentationTests/CollapsedLayoutChecks.cs",
-        "windows/References/macos-compact-settings-provenance.json"
+        "windows/References/macos-compact-settings-provenance.json",
+        "docs/windows-settings-parity.md",
+        "windows/Desktop/SettingsPagePolicy.cs",
+        "windows/Desktop/SupportShareSheet.cs",
+        "windows/Tests/PresentationTests/SettingsPageUnitChecks.cs"
       ]
     },
     {
