@@ -41,6 +41,16 @@ PY
 task_sparkle_tools="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sparkleTools"])' "$task_output/update.json")"
 python3 scripts/release/prepare-update.py --verify --check-latest --info-plist native/Info.plist \
     --archive "$task_dmg" --tools "$task_sparkle_tools"
+# Without Windows assets this only refuses to drop a Windows feed that the latest release already ships.
+python3 scripts/release/prepare-windows-update.py --verify --check-latest --output "$task_output" --tools "$task_sparkle_tools"
+task_windows=()
+task_windows_names=()
+task_windows_enabled=0
+if python3 scripts/release/prepare-windows-update.py --enabled; then
+    task_windows_enabled=1
+    task_windows_names=("Codex-Pacer-${task_version}-windows-x64-setup.exe" "Codex-Pacer-${task_version}-windows-arm64-setup.exe" appcast-windows.xml)
+    task_windows=("${task_windows_names[@]/#/$task_output/}")
+fi
 if [[ "$task_mode" == signed ]]; then
     xcrun stapler validate "$task_dmg"
     codesign --verify --strict "$task_dmg"
@@ -52,21 +62,31 @@ else
 fi
 # Keep the current update feed live until both new assets are uploaded and checked.
 task_verify="$(mktemp -d /private/tmp/codex-pacer-published.XXXXXX)"
-python3 - "$task_notes_en" "$task_notes" "$task_verify/release-notes.md" "$task_version" "$task_mode" <<'PY'
+python3 - "$task_notes_en" "$task_notes" "$task_verify/release-notes.md" "$task_version" "$task_mode" "$task_windows_enabled" <<'PY'
 from pathlib import Path
 import sys
 english, chinese, combined = map(Path, sys.argv[1:4])
-version, mode = sys.argv[4:6]
+version, mode, windows = sys.argv[4:7]
 body = '## English\n\n' + english.read_text() + '\n## 简体中文\n\n' + chinese.read_text()
 if mode == 'unsigned':
     # Notarized builds open normally; only ad-hoc builds need the Open Anyway walkthrough.
     body += ('\n[First-launch help / 首次打开帮助 (Apple)](https://support.apple.com/102445)\n\n'
         + f'![Privacy & Security / 隐私与安全](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/v{version}/docs/assets/macos-open-anyway.png)\n')
+if windows != '0':
+    # Windows installers are not Authenticode signed, so SmartScreen asks once.
+    body += (f'\n## Windows\n\nRun `Codex-Pacer-{version}-windows-x64-setup.exe` (ARM64: `Codex-Pacer-{version}-windows-arm64-setup.exe`). '
+        + 'The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**.\n\n'
+        + f'运行 `Codex-Pacer-{version}-windows-x64-setup.exe`（ARM64 设备用 `Codex-Pacer-{version}-windows-arm64-setup.exe`）。'
+        + '安装包暂未做代码签名；如果 SmartScreen 提示"Windows 已保护你的电脑"，点**更多信息 → 仍要运行**。\n')
 combined.write_text(body)
 PY
-gh release create "$task_tag" "$task_dmg" "$task_output/appcast.xml" --verify-tag --draft \
+gh release create "$task_tag" "$task_dmg" "$task_output/appcast.xml" ${task_windows[@]+"${task_windows[@]}"} --verify-tag --draft \
     --title "$task_title" --notes-file "$task_verify/release-notes.md"
 gh release download "$task_tag" --pattern "$task_name" --pattern appcast.xml --dir "$task_verify"
 cmp "$task_dmg" "$task_verify/$task_name"
 cmp "$task_output/appcast.xml" "$task_verify/appcast.xml"
+for task_asset in ${task_windows_names[@]+"${task_windows_names[@]}"}; do
+    gh release download "$task_tag" --pattern "$task_asset" --dir "$task_verify"
+    cmp "$task_output/$task_asset" "$task_verify/$task_asset"
+done
 gh release edit "$task_tag" --draft=false --latest

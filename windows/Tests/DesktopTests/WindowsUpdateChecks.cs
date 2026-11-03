@@ -60,6 +60,20 @@ internal static class WindowsUpdateChecks
             });
         }
     }
+    /// Absolute URLs answer with a body or a redirect; anything else is missing.
+    private sealed class Routes : HttpMessageHandler
+    {
+        internal readonly Dictionary<string, Func<HttpResponseMessage>> Map = [];
+        internal readonly List<Uri> Calls = [];
+        internal void Redirect(string from, string to) => Map[from] = () => { var response = new HttpResponseMessage(HttpStatusCode.Found); response.Headers.Location = new Uri(to); return response; };
+        internal void Serve(string at, byte[] body) => Map[at] = () => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls.Add(request.RequestUri!);
+            var response = Map.TryGetValue(request.RequestUri!.AbsoluteUri, out var reply) ? reply() : new HttpResponseMessage(HttpStatusCode.NotFound);
+            response.RequestMessage = request; return Task.FromResult(response);
+        }
+    }
     private sealed class Backend : IWindowsUpdateBackend
     {
         public event Action<UpdateBackendEvent, long>? Changed;
@@ -145,6 +159,7 @@ internal static class WindowsUpdateChecks
             await ServiceChecks(channel, feed);
             await LifetimeChecks(channel, feed, root);
             await HttpsChecks(key, channel);
+            await ProductionChecks(key);
             await HandoffChecks();
             SignerPolicyChecks(key, channel, root);
             StateChecks(root);
@@ -329,6 +344,58 @@ internal static class WindowsUpdateChecks
         using (var invalid = await http.GetAsync(wrongPin.Feed)) Check(invalid.StatusCode == HttpStatusCode.BadGateway, "A wrong isolated TLS pin fails closed");
         await Closed(wrongPin);
         Reject(() => (channel with { Feed = new Uri("http://127.0.0.1/appcast.xml") }).Validate(), "Even local QA upstream traffic must use HTTPS");
+    }
+    private static async Task ProductionChecks(SigningFixture key)
+    {
+        var production = WindowsUpdateChannel.Production; production.Validate();
+        Check(production.Feed.AbsoluteUri == WindowsUpdateChannel.ReleaseFeed && production.SignerSHA256 == null && production.TestScope == null,
+            "Production reads the latest GitHub Release feed and pins no Authenticode signer while installers are unsigned");
+        Check(production.AllowsRedirect(new Uri("https://release-assets.githubusercontent.com/asset")) && production.AllowsRedirect(new Uri("https://github.com/asset"))
+            && !production.AllowsRedirect(new Uri("https://example.com/asset")) && !production.AllowsRedirect(new Uri("http://github.com/asset"))
+            && !production.AllowsRedirect(new Uri("https://github.com:8443/asset")), "Redirects stay on GitHub's HTTPS release hosts");
+        Reject(() => (production with { TestScope = Guid.NewGuid(), TestCertificateSHA256 = new string('a', 64) }).Validate(), "A QA channel cannot inherit release redirects");
+        var channel = production with { PublicKey = key.Public };
+        const string release = "https://github.com/RyanZhangNTU/codex-pacer/releases/download/v1.2.3/", assets = "https://release-assets.githubusercontent.com/synthetic/";
+        var routes = new Routes();
+        routes.Redirect(WindowsUpdateChannel.ReleaseFeed, release + "appcast-windows.xml");
+        routes.Redirect(release + "appcast-windows.xml", assets + "feed");
+        routes.Serve(assets + "feed", key.Feed(Item(key, download: release + "setup.exe")));
+        routes.Redirect(release + "setup.exe", assets + "setup");
+        routes.Serve(assets + "setup", Payload);
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes))
+        {
+            await proxy.StartOperationAsync();
+            var url = new Uri(XDocument.Parse(await http.GetStringAsync(proxy.Feed)).Descendants("enclosure").Single().Attribute("url")!.Value);
+            Check((await http.GetByteArrayAsync(url)).SequenceEqual(Payload) && routes.Calls.Count == 5,
+                "The release feed and installer follow GitHub's download redirects and still pass their Ed25519 checks");
+            await proxy.StopOperationAsync();
+        }
+        foreach (string target in new[] { "https://example.com/feed", "http://release-assets.githubusercontent.com/feed" })
+        {
+            routes.Redirect(release + "appcast-windows.xml", target); routes.Serve(target, key.Feed(Item(key)));
+            await using var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes);
+            await proxy.StartOperationAsync(); int before = routes.Calls.Count;
+            using (var refused = await http.GetAsync(proxy.Feed))
+                Check(refused.StatusCode == HttpStatusCode.BadGateway && routes.Calls.Count == before + 2, "A redirect off GitHub's HTTPS hosts is refused before it is requested");
+            await Closed(proxy);
+        }
+        routes.Redirect(release + "appcast-windows.xml", WindowsUpdateChannel.ReleaseFeed);
+        await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes))
+        {
+            await proxy.StartOperationAsync(); int before = routes.Calls.Count;
+            using (var loop = await http.GetAsync(proxy.Feed))
+                Check(loop.StatusCode == HttpStatusCode.BadGateway && routes.Calls.Count - before == UpdateFeedProxy.MaximumRedirects + 1, "A redirect loop stops at the hop limit");
+            await Closed(proxy);
+        }
+        routes.Map.Clear();
+        await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes))
+        {
+            await proxy.StartOperationAsync();
+            Check(!XDocument.Parse(await http.GetStringAsync(proxy.Feed)).Descendants("item").Any(), "A release without a Windows feed reads as no update rather than an error");
+            Check(await proxy.ReadReleaseNotesAsync() == null, "Missing release notes are absent rather than a verification failure");
+            await proxy.StopOperationAsync();
+        }
     }
     private static async Task ServiceChecks(WindowsUpdateChannel channel, byte[] feed)
     {

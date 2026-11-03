@@ -1,10 +1,13 @@
+import base64
 import importlib.util
 import json
 from pathlib import Path
+import plistlib
 import re
 import struct
 import unittest
 import tempfile
+import xml.etree.ElementTree as ET
 
 spec = importlib.util.spec_from_file_location("contract", Path(__file__).with_name("check-contract.py"))
 contract = importlib.util.module_from_spec(spec)
@@ -247,6 +250,65 @@ class WindowsArchitectureTests(unittest.TestCase):
         for artifact in ("windows-app-arm64-unsigned", "windows-installer-arm64-unsigned"):
             self.assertIn(artifact, job)
         self.assertNotRegex(job, r"scripts/windows/test-(engine|desktop|presentation|preview|installer)\.ps1")
+
+
+class WindowsReleaseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = contract.ROOT / "scripts/release/prepare-windows-update.py"
+        spec = importlib.util.spec_from_file_location("windows_release", path)
+        cls.release = importlib.util.module_from_spec(spec); spec.loader.exec_module(cls.release)
+
+    @staticmethod
+    def image(version, plus=False):
+        """A minimal PE whose RT_VERSION resource carries a fixed file version."""
+        major, minor, patch, build = version
+        fixed = struct.pack("<IIII", 0xFEEF04BD, 0x10000, (major << 16) | minor, (patch << 16) | build) + bytes(36)
+        block = bytes(6) + "VS_VERSION_INFO".encode("utf-16-le") + bytes(4) + fixed
+        def directory(identifier, target): return struct.pack("<IIHHHH", 0, 0, 0, 0, 0, 1) + struct.pack("<II", identifier, target)
+        tree = directory(16, 0x80000000 | 24) + directory(1, 0x80000000 | 48) + directory(0, 72)
+        tree += struct.pack("<IIII", 0x1000 + 88, len(block), 0, 0) + block
+        size = 240 if plus else 224
+        optional = bytearray(size); struct.pack_into("<H", optional, 0, 0x20B if plus else 0x10B)
+        struct.pack_into("<II", optional, (112 if plus else 96) + 16, 0x1000, len(tree))
+        section = b".rsrc\0\0\0" + struct.pack("<IIII", len(tree), 0x1000, 0x200, 0x200) + bytes(16)
+        image = b"MZ" + bytes(0x3A) + struct.pack("<I", 0x40) + b"PE\0\0" + struct.pack("<HHIIIHH", 0x14C, 1, 0, 0, 0, size, 0) + bytes(optional) + section
+        return image + bytes(0x200 - len(image)) + tree
+
+    def test_windows_updates_share_the_mac_release_key_and_latest_release(self):
+        source = (contract.ROOT / "windows/UpdateSupport/UpdateCatalog.cs").read_text(encoding="utf-8")
+        info = plistlib.loads((contract.ROOT / "native/Info.plist").read_bytes())
+        feed = re.search(r'ReleaseFeed = "([^"]+)"', source).group(1)
+        key = re.search(r'Production \{ get; \} = new\(new Uri\(ReleaseFeed\), "([^"]+)", null\)', source).group(1)
+        self.assertEqual(key, info["SUPublicEDKey"])
+        self.assertEqual(feed, info["SUFeedURL"].replace("/appcast.xml", "/appcast-windows.xml"))
+        self.assertEqual(json.loads((contract.ROOT / "scripts/release/windows-release.json").read_text())["schemaVersion"], 1)
+
+    def test_release_feed_matches_the_windows_client_rules(self):
+        release = self.release
+        self.assertEqual(release.minimum_windows(), "10.0.19041")
+        signature = base64.b64encode(bytes(range(64))).decode()
+        assets = [(arch, release.asset_name("1.2.3", arch), 1000 + index, signature) for index, arch in enumerate(release.ARCHITECTURES)]
+        notes = [("en", "English notes"), ("zh-Hans", "中文说明")]
+        body = release.build_feed("1.2.3", "45", notes, assets, "10.0.19041")
+        release.validate_feed(body, "1.2.3", "45", assets, "10.0.19041")
+        item = ET.fromstring(body).find("./channel/item")
+        enclosure = item.find("enclosure")
+        self.assertEqual(enclosure.get("url"), "https://github.com/RyanZhangNTU/codex-pacer/releases/download/v1.2.3/Codex-Pacer-1.2.3-windows-x64-setup.exe")
+        self.assertEqual(enclosure.get(f"{{{release.NAMESPACE}}}os"), "windows-x64")
+        self.assertEqual(item.findtext(f"{{{release.NAMESPACE}}}version"), "1.2.3.45")
+        for broken in (assets[:1], [(arch, name, length + 1, sig) for arch, name, length, sig in assets]):
+            with self.assertRaises((ValueError, KeyError)): release.validate_feed(release.build_feed("1.2.3", "45", notes, broken, "10.0.19041"), "1.2.3", "45", assets, "10.0.19041")
+        with self.assertRaises(ValueError): release.validate_feed(release.build_feed("1.2.3", "45", notes[:1], assets, "10.0.19041"), "1.2.3", "45", assets, "10.0.19041")
+        signed = release.SIGNATURE_PREFIX + signature.encode() + b" -->\n" + body
+        self.assertEqual(release.split_feed(signed), (signature, body))
+        for invalid in (body, b"<!-- pacer-feed-ed25519:short -->\n" + body, signed.replace(b" -->\n", b"\n", 1)):
+            with self.assertRaises(ValueError): release.split_feed(invalid)
+
+    def test_installer_version_comes_from_its_own_version_resource(self):
+        for plus in (False, True):
+            self.assertEqual(self.release.file_version(self.image((4, 2, 1, 73), plus)), "4.2.1.73")
+        with self.assertRaises(ValueError): self.release.file_version(b"MZ" + bytes(0x3A) + struct.pack("<I", 0x40) + b"NE\0\0" + bytes(64))
 
 
 class WindowsLocalizationTests(unittest.TestCase):
