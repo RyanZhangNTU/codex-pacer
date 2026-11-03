@@ -70,6 +70,22 @@ internal static class StartupRegistrationChecks
         Check(startup.RemoveOwned() && (string?)store.Read(WindowsStartupRegistration.RunKey, "CodexPacer")?.Value == "foreign-command" &&
             store.Read(WindowsStartupRegistration.ApprovedKey, "CodexPacer") != null, "Uninstall cannot erase another copy's approval");
         Check(!new WindowsStartupRegistration("C:\\" + new string('x', 260) + "\\CodexPacer.exe", store: store).Set(true), "An overlong Run command must fail without registering anything");
+
+        string deleted = @"C:\synthetic deleted preview\CodexPacer\CodexPacer.exe", present = @"C:\synthetic other\Pacer\CodexPacer.exe";
+        store = new(); startup = new(exe, store: store, exists: path => path == present);
+        store.Put(WindowsStartupRegistration.RunKey, "CodexPacer", new("\"" + deleted + "\" --launch-at-login", RegistryValueKind.String));
+        store.Put(WindowsStartupRegistration.ApprovedKey, "CodexPacer", Approval(3));
+        Check(startup.Read() is { Registered: false, Available: true, BlockReason: StartupBlockReason.None }, "A deleted copy's leftover entry must not block this installation");
+        Check(startup.Set(true) && startup.Read() is { Registered: true, BlockReason: StartupBlockReason.Disabled } &&
+            disabled.SequenceEqual((byte[])store.Read(WindowsStartupRegistration.ApprovedKey, "CodexPacer")!.Value),
+            "Taking over a deleted copy's entry must keep the Windows approval untouched");
+        foreach (string command in new[] { "\"" + present + "\" --launch-at-login", "\"\\\\offline\\share\\CodexPacer.exe\" --launch-at-login", "\"" + deleted + "\" --other" })
+        {
+            store.Put(WindowsStartupRegistration.RunKey, "CodexPacer", new(command, RegistryValueKind.String));
+            before = store.Snapshot();
+            Check(startup.Read().BlockReason == StartupBlockReason.OtherInstallation && !startup.Set(true) && store.Same(before),
+                "An existing, unreachable or unrecognized registration must stay with its owner");
+        }
     }
     private static RegistrationValue Approval(uint value)
     { var bytes = new byte[12]; BitConverter.GetBytes(value).CopyTo(bytes, 0); return new(bytes, RegistryValueKind.Binary); }

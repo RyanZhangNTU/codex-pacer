@@ -67,13 +67,15 @@ internal sealed class WindowsStartupRegistration : IStartupRegistration
     private readonly string executable, key, approvedKey, ownerKey, name;
     private readonly IUserRegistrationStore store;
     private readonly Func<bool> openSettings;
+    private readonly Func<string, bool> exists;
     internal WindowsStartupRegistration(string executable, string key = RunKey, string name = "CodexPacer",
-        string? approvedKey = null, string? ownerKey = null, IUserRegistrationStore? store = null, Func<bool>? openSettings = null)
+        string? approvedKey = null, string? ownerKey = null, IUserRegistrationStore? store = null, Func<bool>? openSettings = null,
+        Func<string, bool>? exists = null)
     {
         this.executable = Path.GetFullPath(executable); this.key = key; this.name = name;
         this.approvedKey = approvedKey ?? (key == RunKey ? ApprovedKey : key + @"\Approved");
         this.ownerKey = ownerKey ?? (key == RunKey ? @"Software\CodexPacer\StartupOwners\" + name : key);
-        this.store = store ?? new UserRegistrationStore(); this.openSettings = openSettings ?? LaunchSettings;
+        this.store = store ?? new UserRegistrationStore(); this.openSettings = openSettings ?? LaunchSettings; this.exists = exists ?? File.Exists;
     }
     internal string Command => CommandFor(executable);
     private static string CommandFor(string path) => "\"" + Path.GetFullPath(path) + "\" --launch-at-login";
@@ -82,6 +84,18 @@ internal sealed class WindowsStartupRegistration : IStartupRegistration
         && string.Equals(text, path == null ? Command : CommandFor(path), StringComparison.OrdinalIgnoreCase);
     private bool OwnsMarker(RegistrationValue? value) => value is { Kind: RegistryValueKind.String, Value: string text }
         && string.Equals(text, executable, StringComparison.OrdinalIgnoreCase);
+    // A copy deleted with startup still on leaves an entry Windows can no
+    // longer launch. It belongs to no installation, so this copy may take it.
+    // Only a missing local file is conclusive; a network copy may be offline.
+    private bool Abandoned(RegistrationValue? value)
+    {
+        if (value is not { Kind: RegistryValueKind.String, Value: string text } || !text.StartsWith('"')) return false;
+        int end = text.IndexOf('"', 1);
+        if (end < 2 || text[(end + 1)..] != " --launch-at-login") return false;
+        string path = text[1..end];
+        return Path.IsPathFullyQualified(path) && !path.StartsWith(@"\\", StringComparison.Ordinal)
+            && string.Equals(Path.GetFileName(path), "CodexPacer.exe", StringComparison.OrdinalIgnoreCase) && !exists(path);
+    }
     private static bool Equal(RegistrationValue? a, RegistrationValue? b) => a == null ? b == null : a.Same(b);
     internal static bool Recoverable(Exception error) => error is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException;
 
@@ -91,7 +105,7 @@ internal sealed class WindowsStartupRegistration : IStartupRegistration
         try
         {
             var run = store.Read(key, name);
-            if (run != null && !Owns(run)) return new(false, false, StartupBlockReason.OtherInstallation);
+            if (run != null && !Owns(run)) return Abandoned(run) ? new(false, true) : new(false, false, StartupBlockReason.OtherInstallation);
             if (run == null) return new(false, true);
             var policy = store.Read(PolicyKey, "DisableCurrentUserRun");
             if (policy != null)
@@ -125,7 +139,7 @@ internal sealed class WindowsStartupRegistration : IStartupRegistration
         {
             beforeRun = store.Read(key, name); beforeOwner = store.Read(ownerKey, "Executable");
             captured = true;
-            if (beforeRun != null && !Owns(beforeRun) && (previousExecutable == null || !Owns(beforeRun, previousExecutable))) return false;
+            if (beforeRun != null && !Owns(beforeRun) && (previousExecutable == null || !Owns(beforeRun, previousExecutable)) && !Abandoned(beforeRun)) return false;
             if (!enabled && beforeRun == null) return true;
             store.Write(ownerKey, "Executable", new(executable, RegistryValueKind.String));
             if (enabled) store.Write(key, name, new(Command, RegistryValueKind.String)); else store.Delete(key, name);
