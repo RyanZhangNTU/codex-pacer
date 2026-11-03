@@ -87,7 +87,7 @@ internal sealed class GuideWindow : Window
     {
         var button = new Button { Content = ui.Text(key), IsDefault = primary, Padding = new Thickness(12, 4, 12, 4) };
         // The default action is the prominent one, as on the Mac guide.
-        if (primary) { button.SetResourceReference(Control.BackgroundProperty, "SettingsAccent"); button.Foreground = Brushes.White; }
+        if (primary) button.Style = (Style)FindResource("SettingsProminentButton");
         GuideContent.Identify(button, id, ui.Text(key)); button.Click += (_, _) => action(); return button;
     }
     private void AddButton(string key, string id, Action action, bool primary = false)
