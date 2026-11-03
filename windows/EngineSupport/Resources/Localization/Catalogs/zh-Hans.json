@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "eff3704a763041b1d8ee3e243bca8a086573a26685059afaed9ec2b65e2e2da3"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "a2a84f11795ca42e690bc9665021fd4e7f371519dbf472ae17331a46465145a8"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -979,6 +979,11 @@
     "windows.storage.future": "\u8bbe\u7f6e\u6216\u5386\u53f2\u6587\u4ef6\u7531\u66f4\u65b0\u7248\u672c\u5199\u5165\uff0c\u5f53\u524d\u7248\u672c\u4e0d\u4f1a\u4fee\u6539\u5b83\u3002\u4f60\u53ef\u4ee5\u5148\u5907\u4efd\uff0c\u518d\u4f7f\u7528\u9ed8\u8ba4\u8bbe\u7f6e\u3002",
     "windows.storage.restored": "\u8bbe\u7f6e\u6587\u4ef6\u5df2\u635f\u574f\uff0c\u5df2\u6062\u590d\u9ed8\u8ba4\u8bbe\u7f6e\u3002\u5907\u4efd\uff1a{0}",
     "windows.storage.use_defaults": "\u5907\u4efd\u5e76\u4f7f\u7528\u9ed8\u8ba4\u8bbe\u7f6e",
-    "windows.updates.pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u81ea\u52a8\u66f4\u65b0\u3002"
+    "windows.updates.available": "\u6709\u53ef\u7528\u66f4\u65b0\uff0c\u8bf7\u5728\u66f4\u65b0\u7a97\u53e3\u4e2d\u786e\u8ba4\u4e0b\u8f7d\u548c\u5b89\u88c5\u3002",
+    "windows.updates.expired": "\u66f4\u65b0\u64cd\u4f5c\u5df2\u7a7a\u95f2 30 \u5206\u949f\uff0c\u672c\u5730\u8fde\u63a5\u5df2\u5173\u95ed\u3002\u518d\u6b21\u4e0b\u8f7d\u65f6\u4f1a\u5148\u91cd\u65b0\u68c0\u67e5\u66f4\u65b0\u3002",
+    "windows.updates.failed": "\u66f4\u65b0\u672a\u80fd\u5b8c\u6210\uff0c\u8bf7\u91cd\u8bd5\uff1b\u5982\u679c\u8bf7\u6c42\u8d85\u65f6\uff0c\u8bf7\u5148\u91cd\u542f Pacer\u3002",
+    "windows.updates.install_failed": "\u66f4\u65b0\u672a\u80fd\u5b8c\u6210\uff0cPacer \u5df2\u91cd\u65b0\u6253\u5f00\u3002\u8bf7\u68c0\u67e5\u66f4\u65b0\u540e\u91cd\u8bd5\u3002",
+    "windows.updates.pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u81ea\u52a8\u66f4\u65b0\u3002",
+    "windows.updates.unconfigured": "Windows \u66f4\u65b0\u6e90\u548c\u4fe1\u4efb\u5bc6\u94a5\u5c1a\u672a\u914d\u7f6e\u3002"
   }
 }

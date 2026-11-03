@@ -1064,8 +1064,8 @@
         "native/Sources/PacerIsland/UpdateSettingsView.swift",
         "README.md"
       ],
-      "evidence": [],
-      "previewNote": "优先评估 WinSparkle appcast，与 Mac 共用同版中英发行说明。",
+      "evidence": ["windows/Tests/DesktopTests/WindowsUpdateChecks.cs", "windows/Tests/DesktopTests/UpdateHttpsFixture.cs", "docs/windows-automatic-updates.md"],
+      "previewNote": "Development checks on Windows cover isolated signed HTTPS feeds/packages, TLS pinning, redirects, token lifetime, async deadlines, rollback and install/relaunch ordering. WinSparkle UI and complete QA installation/relaunch await unified integration. Production feed, Ed25519 trust and Authenticode signer pin remain unconfigured. No previewStatus promotion.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []

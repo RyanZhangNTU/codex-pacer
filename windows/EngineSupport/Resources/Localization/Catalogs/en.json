@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "17b55d804ffec9ec4ac5cccd19e5aa97a4f10f4e58f478305a6ef367573b8f25"
+    "windows/EngineSupport/Resources/Localization/en.json": "64f721a8418672bfb4a80e9b711f057625d1157c1c0f8b6436d7161a4ea40f65"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -979,6 +979,11 @@
     "windows.storage.future": "A settings or history file was written by a newer version. This version will not modify it. You can back it up and start with defaults.",
     "windows.storage.restored": "Settings were damaged, so defaults have been restored. Backup: {0}",
     "windows.storage.use_defaults": "Back Up and Use Defaults",
-    "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
+    "windows.updates.available": "An update is available. Use the update window to download and install it.",
+    "windows.updates.expired": "The update operation was idle for 30 minutes and its local connection closed. Download will start with a fresh check.",
+    "windows.updates.failed": "The update could not finish. Try again; if it timed out, restart Pacer first.",
+    "windows.updates.install_failed": "The update did not finish. Pacer has reopened; check for updates to try again.",
+    "windows.updates.pending": "Automatic updates are not available in the Windows preview yet.",
+    "windows.updates.unconfigured": "The Windows update feed and trust key have not been configured."
   }
 }

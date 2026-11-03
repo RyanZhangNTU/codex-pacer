@@ -26,6 +26,8 @@
 [Setup]
 AppId={#PacerAppId}
 AppName={#PacerAppName}
+VersionInfoProductName={#PacerAppName}
+VersionInfoDescription={#PacerAppName} Setup
 AppVersion={#PacerVersion}
 VersionInfoVersion={#PacerFileVersion}
 AppPublisher=Codex Pacer contributors

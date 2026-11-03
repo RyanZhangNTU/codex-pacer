@@ -14,6 +14,8 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
     <Compile Include="../Desktop/WindowsStartupRegistration.cs" Link="WindowsStartupRegistration.cs"/>
     <Compile Include="../Desktop/WindowsInstallationIdentity.cs" Link="WindowsInstallationIdentity.cs"/>
     <Compile Include="../Desktop/WindowsMaintenanceSignal.cs" Link="WindowsMaintenanceSignal.cs"/>

@@ -7,6 +7,10 @@
     <AssemblyName>Pacer.DesktopTests</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]"/>
+    <Compile Include="../../UpdateSupport/*.cs" Link="UpdateSupport/%(Filename)%(Extension)"/>
+    <Compile Include="../../Desktop/WinSparkleNative.cs" Link="WinSparkleNative.cs"/>
+    <Compile Include="../../Desktop/WindowsUpdateService.cs" Link="WindowsUpdateService.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>

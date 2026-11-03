@@ -975,6 +975,11 @@
     "windows.storage.future": "设置或历史文件由更新版本写入，当前版本不会修改它。你可以先备份，再使用默认设置。",
     "windows.storage.restored": "设置文件已损坏，已恢复默认设置。备份：{0}",
     "windows.storage.use_defaults": "备份并使用默认设置",
-    "windows.updates.pending": "Windows 预览版暂不支持自动更新。"
+    "windows.updates.available": "有可用更新，请在更新窗口中确认下载和安装。",
+    "windows.updates.expired": "更新操作已空闲 30 分钟，本地连接已关闭。再次下载时会先重新检查更新。",
+    "windows.updates.failed": "更新未能完成，请重试；如果请求超时，请先重启 Pacer。",
+    "windows.updates.install_failed": "更新未能完成，Pacer 已重新打开。请检查更新后重试。",
+    "windows.updates.pending": "Windows 预览版暂不支持自动更新。",
+    "windows.updates.unconfigured": "Windows 更新源和信任密钥尚未配置。"
   }
 }

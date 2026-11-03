@@ -7,6 +7,8 @@ internal static class Program
     {
         try
         {
+            if (args is ["update", var updateScope, var updateRoot, var updatePlan])
+                return await UpdateHandoff.Apply(updateScope, updateRoot, updatePlan);
             if (args.Length is < 3 or > 4) return 2;
             Guid? scope = args[1] == "default" ? null : Guid.ParseExact(args[1], "N");
             var identity = new WindowsInstallationIdentity(WindowsInstallationIdentity.SafeRoot(args[2]), scope);

@@ -53,12 +53,14 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null,
+        WindowsUpdateService? updater = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
         this.ui = ui; this.session = session; this.startup = startup; this.demo = demo; this.darkOverride = darkOverride;
         this.engine = engine;
+        this.updater = updater;
         this.webConnection = webConnection;
         this.claudeConnection = claudeConnection;
         this.notifications = notifications;
@@ -100,6 +102,7 @@ internal sealed partial class SettingsWindow : Window
         session.Changed += OnPreferencesChanged;
         if (notifications != null) notifications.Changed += OnNotificationsChanged;
         if (surfaceWindow != null) surfaceWindow.SurfaceChanged += RefreshSurfaceStatus;
+        if (updater != null) updater.Changed += OnUpdateStatus;
         if (engine != null) { engine.Snapshot += OnProviderSnapshot; engine.Status += OnProviderStatus; }
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
@@ -108,6 +111,7 @@ internal sealed partial class SettingsWindow : Window
             SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged; session.Changed -= OnPreferencesChanged;
             if (notifications != null) notifications.Changed -= OnNotificationsChanged;
             if (surfaceWindow != null) surfaceWindow.SurfaceChanged -= RefreshSurfaceStatus;
+            if (updater != null) updater.Changed -= OnUpdateStatus;
             if (engine != null) { engine.Snapshot -= OnProviderSnapshot; engine.Status -= OnProviderStatus; }
         };
         // PreviewKeyDown yields to ComboBox's Escape handling while its menu is open.
@@ -208,11 +212,13 @@ internal sealed partial class SettingsWindow : Window
     {
         var version = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         version.Children.Add(AppIcon(34)); var labels = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Label("Codex Pacer " + Version)); labels.Children.Add(Detail(ui.Text(demo ? "updates.demo_disabled" : "windows.updates.pending"))); version.Children.Add(labels);
-        var update = new Button { Content = ui.Text("updates.check"), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center };
+        labels.Children.Add(Label("Codex Pacer " + Version)); updateStatus = Detail(""); labels.Children.Add(updateStatus); version.Children.Add(labels);
+        var update = new Button { Content = ui.Text("updates.check"), VerticalAlignment = VerticalAlignment.Center }; updateCheck = update;
         Identify(update, "settings.update.check", ui.Text("updates.check"));
-        var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticSwitch.IsEnabled = false;
-        automaticSwitch.ToolTip = ui.Text(demo ? "updates.demo_disabled" : "windows.updates.pending");
+        var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticUpdates = automaticSwitch;
+        automaticSwitch.Checked += ChangeAutomaticUpdates; automaticSwitch.Unchecked += ChangeAutomaticUpdates;
+        update.Click += async (_, _) => { if (updater != null) _ = await updater.CheckAsync(); };
+        RefreshUpdates();
         form.Children.Add(Card(Row(version, update, 54), automatic));
         var loginRow = Toggle("settings.open_at_login", "windows.settings.open_at_login_detail", "settings.startup", out var loginSwitch); login = loginSwitch;
         loginRow.MinHeight = 52;
@@ -328,6 +334,7 @@ internal sealed partial class SettingsWindow : Window
     private void SetEditors(bool enabled)
     {
         foreach (var editor in editors) editor.IsEnabled = enabled;
+        RefreshUpdates();
         codexHistory?.SetInteractionEnabled(enabled);
         foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" || (item.Key is "codex" or "claude" or "deepseek" or "reminders") && engine != null);
     }
@@ -344,6 +351,7 @@ internal sealed partial class SettingsWindow : Window
             activePane = ResolvePane(value);
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
             login = hideProjects = appButtons = null; startupStatus = null; language = null; restart = null; restartHint = null;
+            automaticUpdates = null; updateCheck = null; updateStatus = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();
@@ -383,6 +391,7 @@ internal sealed partial class SettingsWindow : Window
             if (hideProjects != null) hideProjects.IsChecked = session.Current.HideProjects;
             if (appButtons != null) appButtons.IsChecked = session.Current.ShowAppButtons;
             if (monitorSSH != null) monitorSSH.IsChecked = session.Current.MonitorSSH;
+            RefreshUpdates();
             if (language != null) language.SelectedValue = session.Current.Language;
             string desired = session.Current.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : session.Current.Language;
             if (restart != null)

@@ -183,6 +183,7 @@ public partial class App : Application
         int languageIndex = Array.IndexOf(e.Args, "--language");
         if (languageIndex >= 0 && languageIndex + 1 < e.Args.Length && e.Args[languageIndex + 1] is "en" or "zh-Hans") language = e.Args[languageIndex + 1];
         ui = UiText.For(language == "zh-Hans");
+        await CreateWindowsUpdaterAsync(e.Args, activationQa, referenceFixture);
         engine = new EngineClient();
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         ShellProjection.Client = engine;
@@ -205,7 +206,7 @@ public partial class App : Application
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
             {
-                if (quitting) return;
+                if (quitting || updates?.Status.Busy == true) return;
                 bool wasVisible = island.IsVisible, wasExpanded = island.LogicalTarget.Height > 38;
                 if (action == InstanceAction.Settings) OpenSettings();
                 else { island.Reveal(); island.Activate(); }
@@ -292,6 +293,7 @@ public partial class App : Application
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
             if (demo && !e.Args.Contains("--collapsed")) island.Reveal();
+            if (capture < 0) await StartWindowsUpdaterAsync(e.Args);
             if (capture >= 0)
             {
                 if (activationQa != null)
@@ -323,12 +325,12 @@ public partial class App : Application
 
     private void OpenSettings()
     {
-        if (quitting || settingsSession == null || startupRegistration == null || ui == null) return;
+        if (quitting || updates?.Status.Busy == true || settingsSession == null || startupRegistration == null || ui == null) return;
         island?.DismissForSettings();
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore, updater: updates);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.Closed += (_, _) => settings = null;
         }
@@ -386,6 +388,7 @@ public partial class App : Application
         if (settings != null) { settings.AllowClose = true; settings.Close(); }
         if (webConnection != null) await webConnection.DisposeAsync();
         if (claudeConnection != null) await claudeConnection.DisposeAsync();
+        if (updates != null) await updates.DisposeAsync();
         island?.StopPresentation();
         if (engine != null && notifications != null) engine.Snapshot -= notifications.Receive;
         notifications?.Dispose();

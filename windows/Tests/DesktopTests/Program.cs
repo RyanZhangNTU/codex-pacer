@@ -9,6 +9,10 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["--serve-update-feed", var updateDirectory, var updateScope, var updateInstaller, var updateArchitecture])
+        { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
+        if (args is ["--updates-only"] or ["--updates-only", _])
+        { await WindowsUpdateChecks.Run(args.Length == 2 ? args[1] : null); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
@@ -33,6 +37,8 @@ internal static class Program
             try { await run(); passed++; Console.WriteLine("PASS " + name); }
             catch (Exception error) { failed++; Console.WriteLine("FAIL " + name + ": " + error); }
         }
+
+        await Test("Windows update verification and asynchronous lifecycle", () => WindowsUpdateChecks.Run());
 
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
