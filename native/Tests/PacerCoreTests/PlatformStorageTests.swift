@@ -66,4 +66,20 @@ final class PlatformStorageTests: XCTestCase {
         XCTAssertNil(store.read())
         store.remove(); XCTAssertFalse(store.hasKey)
     }
+    func testProtectedAcknowledgmentsPreserveDamageWhileDefaultSaveIOIsUnchanged() {
+        let files = Files(), url = URL(fileURLWithPath: "/fixture/protected-dismissals.json")
+        let digest = CompletionDismissalStore.digest(["synthetic-ending"])
+        let original = CompletionDismissalStore(fileURL: url, files: files)
+        XCTAssertTrue(original.saveDigests([digest])); XCTAssertEqual(files.reads, 0, "The Mac default still writes without an extra read")
+        let valid = files.data
+        let protected = CompletionDismissalStore(fileURL: url, files: files, preservesDamagedFile: true)
+        for data in [Data("broken".utf8), Data("{\"version\":999,\"digests\":[]}".utf8), Data(repeating: 32, count: 65537)] {
+            files.data = data; files.size = UInt64(data.count)
+            XCTAssertTrue(protected.loadDigests().isEmpty)
+            XCTAssertFalse(protected.saveDigests([digest])); XCTAssertEqual(files.data, data)
+        }
+        files.data = valid; files.size = UInt64(valid.count)
+        XCTAssertTrue(protected.saveDigests([digest])); XCTAssertEqual(protected.loadDigests(), [digest])
+    }
+
 }

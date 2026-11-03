@@ -53,7 +53,7 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
@@ -86,6 +86,7 @@ internal sealed partial class SettingsWindow : Window
         var pane = new DockPanel(); Grid.SetColumn(pane, 2); client.Children.Add(pane);
         paneTitle = Label(ui.Text("settings.pane.general"), 20, FontWeights.SemiBold); paneTitle.Margin = new Thickness(28, 20, 28, 0);
         DockPanel.SetDock(paneTitle, Dock.Top); pane.Children.Add(paneTitle);
+        InitializeStorageRecovery(pane, preferencesStore);
         paneScroller = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = form };
         Identify(paneScroller, "settings.content", ui.Text("common.settings"));
         pane.Children.Add(paneScroller); RebuildPane(session.Current.LastSettingsPane);
@@ -289,6 +290,7 @@ internal sealed partial class SettingsWindow : Window
             schemaVersion = 1, syntheticOnly = true, acceptance = "pending", pane = activePane, language = ui.Language,
             dark = darkOverride ?? IsSystemDark(), active = IsActive, renderMode = WindowRendering.Mode(this), clientWidth = client.ActualWidth, clientHeight = client.ActualHeight,
             expandedQuotaStyle = session.Current.ExpandedQuotaStyle,
+            hideProjects = hideProjects?.IsChecked, showAppButtons = appButtons?.IsChecked, languageChoice = language?.SelectedValue as string,
             deepseekMode = activePane == "deepseek" ? session.Current.DeepSeekMode : null,
             deepseekPanelStyle = activePane == "deepseek" ? session.Current.DeepSeekPanelStyle : null,
             deepseekBudgetPeriods = activePane == "deepseek" ? engine?.LatestSnapshot?.Wallet?.Solo?.Budgets.Select(value => value.Kind).ToArray() : null,

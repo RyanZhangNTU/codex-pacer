@@ -117,7 +117,7 @@ public actor QuotaHistoryStore {
     private var lastWriteAt: Date?
     private var scheduledFlush: Task<Void, Never>?
     public static let saveInterval: TimeInterval = 30 * 60
-    public init(directory: URL) { cache = QuotaCycleCache(directory: directory) }
+    public init(directory: URL, files: (any PlatformFileSystem)? = nil) { cache = QuotaCycleCache(directory: directory, files: files) }
     deinit { scheduledFlush?.cancel() }
     public func restore(home: URL, accountScope: String, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
         cache.load(home: home, accountScope: accountScope, now: now)
@@ -164,19 +164,20 @@ public actor QuotaHistoryStore {
 
 /// One private file per Codex home. It contains quota readings, not session history.
 public struct QuotaCycleCache: Sendable {
-    private enum CacheError: Error { case oversized }
+    private enum CacheError: Error { case oversized, unavailable }
     private let directory: URL
+    private let files: (any PlatformFileSystem)?
     private struct Envelope: Codable {
         let version: Int
         let snapshot: QuotaSnapshot
         let history: QuotaCycleHistory
     }
-    public init(directory: URL) { self.directory = directory }
+    public init(directory: URL, files: (any PlatformFileSystem)? = nil) { self.directory = directory; self.files = files }
 
     public func load(home: URL, accountScope: String, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
         let file = location(home)
-        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 3 * 1024 * 1024,
-              let data = try? Data(contentsOf: file), let value = try? JSONDecoder().decode(Envelope.self, from: data),
+        guard let data = read(file), let value = try? JSONDecoder().decode(Envelope.self, from: data),
+              files == nil || recognized(value),
               value.version == 1, value.snapshot.accountScope == accountScope,
               value.history.accountScope == accountScope,
               now.timeIntervalSince(value.snapshot.capturedAt) >= -60,
@@ -189,6 +190,17 @@ public struct QuotaCycleCache: Sendable {
 
     public func save(home: URL, snapshot: QuotaSnapshot, history: QuotaCycleHistory) throws {
         guard snapshot.accountScope != nil else { return }
+        if let files {
+            let file = location(home)
+            if files.metadata(file) != nil || FileManager.default.fileExists(atPath: file.path) {
+                guard let data = read(file), let existing = try? JSONDecoder().decode(Envelope.self, from: data),
+                      recognized(existing) else { throw CacheError.unavailable }
+            }
+            let data = try JSONEncoder().encode(Envelope(version: 1, snapshot: snapshot, history: history))
+            guard data.count <= 3 * 1024 * 1024 else { throw CacheError.oversized }
+            guard files.replace(file, with: data) else { throw CacheError.unavailable }
+            return
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
         let data = try JSONEncoder().encode(Envelope(version: 1, snapshot: snapshot, history: history))
@@ -196,6 +208,32 @@ public struct QuotaCycleCache: Sendable {
         let file = location(home)
         try data.write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+    private func read(_ file: URL) -> Data? {
+        if let files {
+            guard let info = files.metadata(file), info.isRegularFile, info.size <= 3 * 1024 * 1024,
+                  let data = try? files.read(file, offset: 0, maximumBytes: 3 * 1024 * 1024 + 1),
+                  data.count == info.size else { return nil }
+            return data
+        }
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 3 * 1024 * 1024 else { return nil }
+        return try? Data(contentsOf: file)
+    }
+    // Host-provided IO preserves damaged/future files rather than replacing them.
+    // Account mismatches and expired readings are valid files, not corruption.
+    private func recognized(_ value: Envelope) -> Bool {
+        func date(_ value: Date) -> Bool { value.timeIntervalSince1970.isFinite && abs(value.timeIntervalSince1970) <= 1e10 }
+        return value.version == 1 && date(value.snapshot.capturedAt) &&
+            value.snapshot.accountScope == value.history.accountScope &&
+            value.history.lastCapturedAt.map(date) != false &&
+            value.snapshot.resetCredits.map { summary in
+                summary.availableCount >= 0 && (summary.credits ?? []).allSatisfy { date($0.grantedAt) && $0.expiresAt.map(date) != false }
+            } != false &&
+            value.snapshot.buckets.flatMap(\.windows).allSatisfy { $0.resetsAt.map(date) != false } &&
+            value.history.cycles.allSatisfy { cycle in
+                date(cycle.startedAt) && date(cycle.resetsAt) && cycle.resetsAt > cycle.startedAt &&
+                    cycle.points.allSatisfy { date($0.timestamp) && $0.remaining.isFinite && (0...100).contains($0.remaining) }
+            }
     }
     private func location(_ home: URL) -> URL {
         let hash = SHA256.hash(data: Data(home.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined()

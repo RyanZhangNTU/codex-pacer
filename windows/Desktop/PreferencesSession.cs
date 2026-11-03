@@ -13,19 +13,23 @@ internal sealed class PreferencesSession
     private readonly SemaphoreSlim changes = new(1, 1);
     private readonly Func<object, Task> configure;
     private readonly Func<DesktopPreferences, bool> save;
+    private readonly Func<DesktopPreferences, Task<DesktopPreferences>>? acknowledge;
     internal DesktopPreferences Current { get; private set; }
     internal bool RequiresRestart { get; private set; }
     internal event Action<DesktopPreferences>? Changed;
 
-    internal PreferencesSession(DesktopPreferences initial, Func<object, Task> configure, Func<DesktopPreferences, bool> save)
+    internal PreferencesSession(DesktopPreferences initial, Func<object, Task> configure, Func<DesktopPreferences, bool> save,
+        Func<DesktopPreferences, Task<DesktopPreferences>>? acknowledge = null)
     {
         if (!initial.IsValid) throw new ArgumentException("Invalid initial preferences.");
-        Current = initial; this.configure = configure; this.save = save;
+        Current = initial; this.configure = configure; this.save = save; this.acknowledge = acknowledge;
     }
 
     internal Task<PreferencesApplyResult> ChangeAsync(Func<DesktopPreferences, DesktopPreferences> edit)
         => ChangeAsync(value => Task.FromResult(edit(value)));
-    internal async Task<PreferencesApplyResult> ChangeAsync(Func<DesktopPreferences, Task<DesktopPreferences>> edit)
+    internal Task<PreferencesApplyResult> RecoverDefaultsAsync(Func<DesktopPreferences, bool> confirmedSave)
+        => ChangeAsync(_ => Task.FromResult(new DesktopPreferences()), confirmedSave);
+    internal async Task<PreferencesApplyResult> ChangeAsync(Func<DesktopPreferences, Task<DesktopPreferences>> edit, Func<DesktopPreferences, bool>? confirmedSave = null)
     {
         await changes.WaitAsync();
         try
@@ -36,6 +40,13 @@ internal sealed class PreferencesSession
             catch (Exception error) when (error is System.IO.IOException or OperationCanceledException or EngineCommandException)
             { return PreferencesApplyResult.EngineFailed; }
             if (!next.IsValid) return PreferencesApplyResult.Invalid;
+            if (acknowledge != null)
+            {
+                try { next = await acknowledge(next); }
+                catch (Exception error) when (error is System.IO.IOException or OperationCanceledException or EngineCommandException or TimeoutException)
+                { return PreferencesApplyResult.EngineFailed; }
+                if (!next.IsValid) return PreferencesApplyResult.Invalid;
+            }
             bool engineChanged = JsonSerializer.Serialize(previous.EngineConfiguration()) != JsonSerializer.Serialize(next.EngineConfiguration());
             if (engineChanged)
             {
@@ -48,7 +59,7 @@ internal sealed class PreferencesSession
                     return PreferencesApplyResult.EngineFailed;
                 }
             }
-            if (!save(next))
+            if (!await Task.Run(() => (confirmedSave ?? save)(next)))
             {
                 if (engineChanged)
                 {

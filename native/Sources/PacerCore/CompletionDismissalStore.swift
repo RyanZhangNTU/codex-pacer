@@ -20,7 +20,10 @@ public struct CompletionDismissalStore: Sendable {
     private let fileURL: URL
 
     private let files: any PlatformFileSystem
-    public init(fileURL: URL, files: any PlatformFileSystem) { self.fileURL = fileURL; self.files = files }
+    private let preservesDamagedFile: Bool
+    public init(fileURL: URL, files: any PlatformFileSystem, preservesDamagedFile: Bool = false) {
+        self.fileURL = fileURL; self.files = files; self.preservesDamagedFile = preservesDamagedFile
+    }
 
     static func digest(_ fields: [String]) -> String {
         // Length prefixes make opaque identifiers unambiguous without storing them.
@@ -35,14 +38,18 @@ public struct CompletionDismissalStore: Sendable {
     func loadDigests() -> [String] { load().digests }
 
     func load() -> (digests: [String], cloudEndings: [CloudEnding]) {
+        guard let envelope = readEnvelope() else { return ([], []) }
+        return (envelope.digests, envelope.cloudEndings ?? [])
+    }
+    private func readEnvelope() -> Envelope? {
         guard let metadata = files.metadata(fileURL), metadata.isRegularFile, metadata.size <= Self.maximumBytes,
               let data = try? files.read(fileURL, offset: 0, maximumBytes: Self.maximumBytes + 1), data.count <= Self.maximumBytes,
               let envelope = try? JSONDecoder().decode(Envelope.self, from: data), envelope.version == 1,
               envelope.digests.count <= Self.maximumEntries,
               Set(envelope.digests).count == envelope.digests.count,
               envelope.digests.allSatisfy(Self.validDigest),
-              Self.validCloudEndings(envelope.cloudEndings ?? []) else { return ([], []) }
-        return (envelope.digests, envelope.cloudEndings ?? [])
+              Self.validCloudEndings(envelope.cloudEndings ?? []) else { return nil }
+        return envelope
     }
 
     @discardableResult
@@ -52,6 +59,9 @@ public struct CompletionDismissalStore: Sendable {
               let data = try? JSONEncoder().encode(Envelope(version: 1, digests: digests,
                   cloudEndings: cloudEndings.isEmpty ? nil : cloudEndings)),
               data.count <= Self.maximumBytes else { return false }
+        if preservesDamagedFile, files.metadata(fileURL) != nil || FileManager.default.fileExists(atPath: fileURL.path) {
+            guard readEnvelope() != nil else { return false }
+        }
         return files.replace(fileURL, with: data)
     }
 

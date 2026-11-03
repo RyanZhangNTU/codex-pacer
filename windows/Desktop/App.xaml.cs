@@ -32,6 +32,8 @@ public partial class App : Application
     private IStartupRegistration? startupRegistration;
     private UiText? ui;
     private bool demo;
+    private string? demoPreferencesFile;
+    private Guid? demoPreferencesScope;
     private bool? demoDark;
     private string engineExecutable = "";
     private readonly TaskCompletionSource engineReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -160,14 +162,24 @@ public partial class App : Application
         if (activationStartupDelay > 0) await Task.Delay(activationStartupDelay);
         var activationForCapture = new TaskCompletionSource<InstanceAction>(TaskCreationOptions.RunContinuationsAsynchronously);
         bool preferencesUnavailable = false;
-        if (!demo)
+        int preferencesQaIndex = Array.IndexOf(e.Args, "--demo-preferences");
+        if (preferencesQaIndex >= 0)
         {
-            preferencesStore = new PreferencesStore();
+            if (!demo || !referenceFixture || (activationQa == null && capture < 0) || preferencesQaIndex + 1 >= e.Args.Length
+                || !Path.IsPathFullyQualified(e.Args[preferencesQaIndex + 1])) throw new ArgumentException("Persistent demo preferences require an isolated reference fixture.");
+            demoPreferencesFile = Path.GetFullPath(e.Args[preferencesQaIndex + 1]);
+            if (string.Equals(demoPreferencesFile, PreferencesStore.DefaultFile, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("A demo cannot use production preferences.");
+            demoPreferencesScope = activationQa;
+        }
+        if (!demo || demoPreferencesFile != null)
+        {
+            preferencesStore = new PreferencesStore(demoPreferencesFile);
             (preferences, preferencesUnavailable) = preferencesStore.Load();
             if (positionIndex < 0) position = Array.IndexOf(positions, preferences.Position);
         }
         string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en";
-        if (!demo && preferences.Language != "system") language = preferences.Language;
+        if (preferencesStore != null && preferences.Language != "system") language = preferences.Language;
         int languageIndex = Array.IndexOf(e.Args, "--language");
         if (languageIndex >= 0 && languageIndex + 1 < e.Args.Length && e.Args[languageIndex + 1] is "en" or "zh-Hans") language = e.Args[languageIndex + 1];
         ui = UiText.For(language == "zh-Hans");
@@ -213,7 +225,11 @@ public partial class App : Application
         {
             await engineReady.Task;
             await engine.SendAsync("configure", configuration);
-        }, value => demo || preferencesStore?.Save(value) == true);
+        }, value => preferencesStore?.Save(value) ?? demo, async value =>
+        {
+            await engineReady.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            return await PreferencesAcknowledgement.ValidateAsync(engine, value);
+        });
         notificationActions = new NotificationActions(engineReady.Task, () => quitting || settingsSession.Current.SystemNotifications != true, island.Reveal,
             () => engine.SendAsync("snoozeDeepSeekSpike"), OpenNotificationLink, notificationLifetime.Token, () => applications.Open("deepseek"),
             (kind, reference) => engine.QueryAsync<EngineNotificationActivation>("activateNotification", new { context = reference, notificationAction = kind }),
@@ -311,7 +327,7 @@ public partial class App : Application
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.Closed += (_, _) => settings = null;
         }
@@ -342,6 +358,12 @@ public partial class App : Application
         {
             start.ArgumentList.Add("--demo"); start.ArgumentList.Add("--language");
             start.ArgumentList.Add(preferences.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : preferences.Language);
+        }
+        if (demoPreferencesFile != null)
+        {
+            start.ArgumentList.Add("--reference-fixture"); start.ArgumentList.Add("--demo-preferences"); start.ArgumentList.Add(demoPreferencesFile);
+            if (demoPreferencesScope is Guid scope) { start.ArgumentList.Add("--activation-qa"); start.ArgumentList.Add(scope.ToString("D")); }
+            if (demoDark is bool dark) { start.ArgumentList.Add("--theme"); start.ArgumentList.Add(dark ? "dark" : "light"); }
         }
         try
         {

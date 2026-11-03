@@ -11,6 +11,11 @@
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
     <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
+    <Compile Include="../../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
+    <Compile Include="../../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
+    <Compile Include="../../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>
+    <Compile Include="../../Desktop/PreferencesAcknowledgement.cs" Link="PreferencesAcknowledgement.cs"/>
+
     <Compile Include="../../Desktop/PreferencesSession.cs" Link="PreferencesSession.cs"/>
     <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>
     <Compile Include="../../Desktop/NotificationSession.cs" Link="NotificationSession.cs"/>

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/Localization/en.json": "a655a6348e81b51cce1406b8753093f0127e58d11b41ebd60637b6ab2e61cef0"
+    "windows/Localization/en.json": "6f635d0e3ef7ff463b5850ce7ade83d6e0ad52ca525318704425517425d66d0c"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -975,6 +975,10 @@
     "windows.settings.startup_settings_failed": "Windows Settings couldn't open. Go to Settings > Apps > Startup.",
     "windows.settings.startup_unknown": "The Windows startup status is unavailable. Check Startup apps.",
     "windows.show_island": "Show",
+    "windows.storage.failed": "Recovery could not be completed. The original file or its backup has been kept. Try again.",
+    "windows.storage.future": "A settings or history file was written by a newer version. This version will not modify it. You can back it up and start with defaults.",
+    "windows.storage.restored": "Settings were damaged, so defaults have been restored. Backup: {0}",
+    "windows.storage.use_defaults": "Back Up and Use Defaults",
     "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
   }
 }

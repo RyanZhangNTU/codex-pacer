@@ -101,8 +101,8 @@ internal static class SettingsPresentationChecks
             var choicePeer = pickerPeer.GetChildren().Single(peer => peer.GetName() == (string)choice.Content);
             Check(choicePeer.GetPattern(PatternInterface.SelectionItem) is ISelectionItemProvider, "Language items must expose selection through the real ComboBox accessibility tree");
             ((ISelectionItemProvider)choicePeer.GetPattern(PatternInterface.SelectionItem)).Select();
-            expand.Collapse();
             await Until(() => session.Current.Language == alternate && picker.IsEnabled, "Accessible language selection must persist without replacing the running UI language");
+            expand.Collapse();
             var restart = Find<Button>(window, "settings.restart");
             Check(restart.IsVisible && window.Title == ui.Text("menu.settings_title") && configureCalls == 1,
                 "Changing language must offer restart and preserve the current UI and engine language until restart");

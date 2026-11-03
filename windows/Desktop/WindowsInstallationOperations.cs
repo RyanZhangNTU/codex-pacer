@@ -167,7 +167,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         string? environment = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         homes.Add(string.IsNullOrWhiteSpace(environment)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude") : WindowsInstallationIdentity.SafeRoot(environment));
-        var (preferences, unavailable) = new PreferencesStore(Path.Combine(identity.DataRoot, "preferences-v1.json")).Load();
+        var (preferences, unavailable) = new PreferencesStore(Path.Combine(identity.DataRoot, "preferences-v1.json"), recoverDamagedFiles: false).Load();
         if (unavailable) throw new InvalidDataException("Repair the unreadable preferences before uninstalling.");
         if (!string.IsNullOrWhiteSpace(preferences.ClaudeHome)) homes.Add(WindowsInstallationIdentity.SafeRoot(preferences.ClaudeHome));
         return homes.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();

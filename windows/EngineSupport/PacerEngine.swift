@@ -102,7 +102,7 @@ public enum PacerEngine {
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
-            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices)
+            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices, allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -335,6 +335,7 @@ actor EngineRuntime {
     }
     #endif
     private let output: @Sendable (Data) -> Void
+    private let allowsStorageRecovery: Bool
 
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
@@ -351,12 +352,14 @@ actor EngineRuntime {
          allowsLiveClaudeWeb: Bool = false,
          claudeWebReference: Bool = false,
          claudeHookServices: EngineClaudeHookServices? = nil,
+         allowsStorageRecovery: Bool = true,
          sourceSettings: CodexSourceSettingsServices = .live,
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
              await Task.detached(priority: .utility) { ProviderInstallationDetection.detect() }.value
          },
          output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }) {
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
+        self.allowsStorageRecovery = allowsStorageRecovery
         self.sourceSettings = sourceSettings
         self.balanceServices = balanceServices
         self.claudeServices = claudeServices; self.allowsLiveClaudeWeb = allowsLiveClaudeWeb
@@ -434,6 +437,16 @@ actor EngineRuntime {
             return true
         }
         switch command.method {
+        case "storageRecoveryStatus", "recoverFutureStorage":
+            // Demo and read-only diagnostics never mutate real application stores.
+            let recovery = WindowsStorageRecovery.shared
+            if command.method == "recoverFutureStorage", !demo {
+                guard allowsStorageRecovery else { failure(id: command.id, code: "readOnly"); return true }
+                guard recovery.recoverFutureFiles() else { failure(id: command.id, code: "storageRecoveryFailed"); return true }
+            }
+            let status: [String: Any] = demo ? ["futureFiles": [String]()] : recovery.status()
+            send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "ok": true, "value": status])
+            return true
         case "activateNotification":
             guard projectionReady, let reference = command.params?.context, let kind = command.params?.notificationAction,
                   let saved = notificationRegistry.record(reference, at: now()), saved.kind == kind else {
@@ -1299,9 +1312,12 @@ actor EngineRuntime {
             quota = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider in
                 DemoScenario.quota(provider, at: date).last.map { (provider, $0) }
             })
-            var history = QuotaCycleHistory()
-            for sample in DemoScenario.quota(.codex, at: date) { history.record(sample) }
-            codexHistory.receive(snapshot: quota[.codex], history: history, warning: nil)
+            for provider in [AgentProvider.codex, .claude] {
+                var history = QuotaCycleHistory()
+                for sample in DemoScenario.quota(provider, at: date) { history.record(sample) }
+                if provider == .codex { codexHistory.receive(snapshot: quota[provider], history: history, warning: nil) }
+                else { claudeHistory.receive(snapshot: quota[provider], history: history, warning: nil) }
+            }
             walletSource = .demo(at: date)
             status = AgentProvider.allCases.map { .init(id: $0.rawValue + ":demo", provider: $0.rawValue,
                 available: true, transport: "demo", reason: nil) }
@@ -1491,11 +1507,12 @@ actor EngineRuntime {
         var history: [AgentProvider: QuotaHistoryPresentation] = enabled.contains(.codex) ? [.codex:
             codexHistory.presentation(provider: .codex, snapshot: snapshots[.codex], weekly: weekly,
                 error: quotaErrors[.codex], refreshing: !demo && codexQuotaRefreshing, now: date)] : [:]
-        if usesClaudeWeb, enabled.contains(.claude), let state = claudeQuotaState {
+        if enabled.contains(.claude), (demo && !usesClaudeWeb) || (usesClaudeWeb && claudeQuotaState != nil) {
+            let refreshing = claudeQuotaState?.refreshing ?? false
             let weekly = QuotaDashboardPresentation.Reading(provider: .claude, period: .weekly, snapshot: snapshots[.claude],
-                failed: failedProviders.contains(.claude), refreshing: state.refreshing, sourceText: sourceTexts[.claude], now: date)
+                failed: failedProviders.contains(.claude), refreshing: refreshing, sourceText: sourceTexts[.claude], now: date)
             history[.claude] = claudeHistory.presentation(provider: .claude, snapshot: snapshots[.claude], weekly: weekly,
-                error: quotaErrors[.claude], refreshing: state.refreshing, now: date)
+                error: quotaErrors[.claude], refreshing: refreshing, now: date)
         }
         let dashboard = EngineQuotaDashboard(enabled: enabled, snapshots: snapshots,
             failed: failedProviders, refreshing: refreshingProviders, sourceText: sourceTexts, errorText: quotaErrors, history: history, at: date)
