@@ -61,7 +61,9 @@ internal static class IdleSchedulingChecks
                 "The four-second switch releases both fade clocks and schedules only its next deadline; actual=" + quota.Scheduling);
             Check(Interlocked.Read(ref snapshots) == beforeSnapshots && frames == beforeFrames, "The frozen unchanged engine emits no snapshots or native window frames");
             await Task.Delay(250); long settled = Interlocked.Read(ref renders); await Task.Delay(350);
-            Check(Interlocked.Read(ref renders) == settled, "Fade completion leaves no orphan root clock in the render manager");
+            Check(Interlocked.Read(ref renders) == settled, "Fade completion leaves no orphan root clock in the render manager; render delta="
+                + (Interlocked.Read(ref renders) - settled) + ", quota=" + quota.Scheduling + ", badge=" + badge.RotationScheduling
+                + ", window=" + window.AccessibilityMotionState);
             window.Hide(); await Task.Delay(250); var hidden = quota.Scheduling; settled = Interlocked.Read(ref renders);
             await Task.Delay(550);
             Check(!hidden.Scheduled && hidden.Clocks == 0 && quota.Scheduling.Wakes == hidden.Wakes && Interlocked.Read(ref renders) == settled,
