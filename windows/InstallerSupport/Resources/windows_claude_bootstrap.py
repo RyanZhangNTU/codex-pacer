@@ -82,7 +82,9 @@ def own_file(handle):
 
 def private_open(path, flags):
     check_parents(path)
-    access = 0x20000 | (0x40000000 if flags & (os.O_WRONLY | os.O_RDWR) else 0)
+    # READ_CONTROL checks the owner; FILE_READ_ATTRIBUTES is also required for
+    # the handle metadata check, including handles opened only for writing.
+    access = 0x20080 | (0x40000000 if flags & (os.O_WRONLY | os.O_RDWR) else 0)
     if not flags & os.O_WRONLY:
         access |= 0x80000000
     creation = 1 if flags & os.O_EXCL else 4 if flags & os.O_CREAT else 3

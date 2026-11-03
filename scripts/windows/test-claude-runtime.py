@@ -48,6 +48,53 @@ def settings(home):
 def hook_command(home):
     return settings(home)['hooks']['SessionStart'][0]['hooks'][0]['command']
 
+def failure_probe(home, python):
+    # Only fixed stage names, booleans and numeric Win32 facts leave this
+    # synthetic fixture. Never forward paths, settings bytes or command output.
+    probe = r'''
+import ctypes,importlib.util,json,os,sys
+from pathlib import Path
+home=Path(sys.argv[1]); spec=importlib.util.spec_from_file_location('pacer_probe',home/'pacer/hook.py')
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+facts={'stage':'owners'}
+try:
+    module.current_owners()
+    original_info=module.file_information
+    def information(handle, pointer):
+        result=original_info(handle,pointer)
+        facts['fileInfo']=bool(result)
+        if result:
+            facts['links']=pointer._obj.links;facts['attributes']=pointer._obj.attributes
+        else: facts['infoError']=ctypes.get_last_error()
+        return result
+    module.file_information=information
+    facts['stage']='read-manifest'
+    descriptor=module.private_open(home/'pacer/installation.json',os.O_RDONLY)
+    with os.fdopen(descriptor,'rb') as stream: manifest=json.load(stream)
+    facts['previousRenderer']=isinstance(manifest.get('previousStatusLine'),dict)
+    facts['stage']='create-write-file'
+    path=home/'pacer/synthetic-probe.tmp'
+    descriptor=module.private_open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+    os.close(descriptor);path.unlink()
+    facts['stage']='shared-statusline'
+    capture=home/'pacer/synthetic-renderer-probe.out'
+    original_stdout=sys.stdout
+    try:
+        with capture.open('w') as stream:
+            sys.stdout=stream;sys.argv=[str(home/'pacer/hook.py'),'statusline',str(home)]
+            module.run()
+    finally: sys.stdout=original_stdout
+    rendered=capture.read_bytes();capture.unlink()
+    facts['rendererBytes']=len(rendered);facts['rendererMatches']=rendered.strip()==b'SYNTHETIC_RENDERER'
+    facts['stage']='probe-complete'
+except Exception as error:
+    facts['error']=ctypes.get_last_error();facts['errno']=getattr(error,'errno',None)
+    facts['errorType']=type(error).__name__
+print(json.dumps(facts,sort_keys=True))
+'''
+    raw=b'{"rate_limits":{"five_hour":{"used_percentage":45,"resets_at":1890000000}}}'
+    return run([str(python), '-S', '-c', probe, str(home)],raw).decode('ascii').strip()
+
 def execute(command, value, shell):
     raw = json.dumps(value, ensure_ascii=False).encode('utf-8')
     if shell == 'cmd':
@@ -74,6 +121,8 @@ try:
     assert len(versions)==1 and (versions[0]/'python.exe').is_file()
     assert all(str(versions[0]/'python.exe').replace('\\','/') in hook_command(home) for home in homes)
     checks.append('two Claude homes share one owned LocalAppData runtime; no runtime copied into a Claude home')
+    probe = json.loads(failure_probe(homes[0], versions[0]/'python.exe'))
+    assert probe.get('stage')=='probe-complete' and probe.get('rendererMatches'), json.dumps(probe,sort_keys=True)
 
     # Inputs follow the common fields/UserPromptSubmit/PreToolUse examples in
     # https://code.claude.com/docs/en/hooks; bodies below are synthetic.
@@ -92,7 +141,9 @@ try:
         line = settings(home)['statusLine']['command']
         output = execute(line, {'rate_limits':{'five_hour':{'used_percentage':45,'resets_at':1890000000}},
                                'access_token':'SYNTHETIC_PRIVATE_TOKEN'}, shell)
-        assert output.strip()==b'SYNTHETIC_RENDERER'
+        assert output.strip()==b'SYNTHETIC_RENDERER', ('Previous renderer failed in '+shell+
+            '; outputBytes='+str(len(output))+'; cache='+str((home/'pacer/claude-statusline.json').exists())+
+            '; spool='+str((home/'pacer/events.jsonl').exists())+'; '+failure_probe(home,versions[0]/'python.exe'))
     rows = [json.loads(line) for line in (homes[0]/'pacer/events.jsonl').read_bytes().splitlines()]
     for shell in ('cmd','bash','powershell'):
         owned = [row for row in rows if row.get('sessionId')=='fixture-'+shell]
