@@ -15,6 +15,8 @@ internal static class Program
         { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
         if (args is ["--updates-only"] or ["--updates-only", _])
         { await WindowsUpdateChecks.Run(args.Length == 2 ? args[1] : null); return 0; }
+        if (args is ["--update-installer-only", var installerScope, var installerBuild, var installerPath])
+        { WindowsUpdateChecks.CheckInstallerFile(installerPath, installerScope, installerBuild); return 0; }
         if (args is ["--remote-source-unit-only"])
         { WslTerminalChecks.Run(); SshTerminalChecks.Run(); ConnectionActionChecks.Run(); await ConversationApplicationChecks.Run(); Console.WriteLine("PASS remote routing, source-bound recovery and engine-owned host navigation"); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])

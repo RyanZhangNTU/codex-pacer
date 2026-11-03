@@ -170,6 +170,10 @@ jobs:
           }
       - name: Build Windows desktop
         run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+      - name: Build notification acceptance probe
+        run: |
+          dotnet publish windows/Tests/NotificationProbe/Pacer.NotificationProbe.csproj --configuration Release --runtime win-x64 --self-contained true --output output/windows/notification-probe -warnaserror -p:PacerArchitecture=x64 -p:RestoreLockedMode=true *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-notification-probe-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Notification acceptance probe build failed.' }
       - name: Desktop integration tests
         run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
       - name: Claude runtime without user Python
@@ -221,6 +225,7 @@ jobs:
             ${{ runner.temp }}/pacer-windows-idle.log
             ${{ runner.temp }}/pacer-windows-idle.json
             ${{ runner.temp }}/pacer-desktop-build.log
+            ${{ runner.temp }}/pacer-notification-probe-build.log
             ${{ runner.temp }}/pacer-desktop-tests.log
             ${{ runner.temp }}/pacer-claude-runtime.log
             output/windows/claude-runtime-tests.json

@@ -34,14 +34,18 @@ internal static class GuidePageChecks
         try
         {
             window.Show(); await Pump();
-            Check(window.Title == ui.Text("welcome.window_title") && Find<TextBlock>(window, "welcome.progress").Text == catalog.Steps[0], "Welcome title and first step are localized and accessible");
+            Check(window.Title == ui.Text("welcome.window_title") && AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[0], "Welcome title and first step are localized and accessible");
+            var highlights = Find<ScrollViewer>(window, "guide.highlights");
+            var highlightsPeer = UIElementAutomationPeer.CreatePeerForElement(highlights);
+            Check(highlightsPeer.GetName() == catalog.Steps[0], "The welcome content UIA name identifies the first step");
             Check(Descendants(body).OfType<ActivityBadge>().Count() == 4 && Descendants(body).OfType<CompactQuotaGlyph>().Any()
                 && Descendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
             Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
             Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
             Space(Find<Button>(window, "welcome.next")); await Pump();
-            Check(Find<TextBlock>(window, "welcome.progress").Text == catalog.Steps[1], "Space on the focused Next action reaches the second step");
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[1], "Space on the focused Next action reaches the second step");
+            Check(highlightsPeer.GetName() == catalog.Steps[1], "The same content UIA peer updates to the second step");
             foreach (string provider in new[] { "codex", "claude", "deepseek" })
             {
                 var toggle = Find<CheckBox>(window, "welcome.module." + provider); Toggle(toggle);
@@ -65,7 +69,8 @@ internal static class GuidePageChecks
                 && Find<Button>(window, "welcome.module.claude.action").Content!.ToString() == ui.Text("claude.quota.choose_workspace"), "Missing installation and workspace states each show the matching single action");
             Invoke(Find<Button>(window, "welcome.module.claude.action")); await Pump(); Check(settingsActions.Last() == "claude", "Workspace actions dispatch to the provider coordinator boundary");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
-            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(Find<TextBlock>(window, "welcome.progress").Text == catalog.Steps[0], "Back restores the first step");
+            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[0], "Back restores the first step");
+            Check(highlightsPeer.GetName() == catalog.Steps[0], "Returning restores the first-step UIA name on the retained peer");
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Invoke(Find<Button>(window, "guide.done")); await Pump(); Check(!window.IsVisible, "The default Done action closes the guide");
         }
@@ -95,18 +100,26 @@ internal static class GuidePageChecks
         }
         finally { noteWindow.Close(); }
         string? copied = null;
-        var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value) { ShowActivated = false, IsHitTestVisible = false };
+        using var appearance = new AppearanceFixture();
+        var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };
         settings.WelcomeRequested += () => welcomeActions++;
         try
         {
             settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
             Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
             Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
+            CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
             { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }
+            appearance.Set(appearance.Current with { HighContrast = true }); await Pump(); settings.UpdateLayout();
+            CheckHelpProviderText(settings, appearance.Current.Colors.Text);
+            appearance.Set(appearance.Current with { HighContrast = false }); await Pump(); settings.UpdateLayout();
+            CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             Invoke(Find<Button>(settings, "help.welcome")); await Pump(); Check(welcomeActions == 1, "Help can reopen the two-step guide");
             foreach (string action in new[] { "manual", "issues" }) { Invoke(Find<Button>(settings, "guide.link." + action)); await Pump(); }
             settings.CapturePreview(Path.Combine(output, "pages-help-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Find<Button>(settings, "guide.link.issues").BringIntoView(); await Pump();
+            settings.CapturePreview(Path.Combine(output, "pages-help-end-" + language + (dark ? "-dark" : "-light") + ".png"));
             Select(Find<RadioButton>(settings, "settings.pane.support")); await Until(() => Has(settings, "guide.link.star"));
             foreach (string action in new[] { "star", "feature", "bug", "donate" }) { var button = Find<Button>(settings, "guide.link." + action); Check(button.Focusable, "Support links remain keyboard reachable"); Invoke(button); await Pump(); }
             var copy = Find<Button>(settings, "support.copy"); Invoke(copy); await Pump();
@@ -126,6 +139,25 @@ internal static class GuidePageChecks
         }
         finally { settings.AllowClose = true; settings.Close(); }
         Console.WriteLine("PASS guide pages " + language + (dark ? "-dark" : "-light") + ": welcome, history, read-only help/support, links, keyboard and UIA");
+    }
+    private static void CheckHelpProviderText(SettingsWindow window, Color expected)
+    {
+        var background = ((SolidColorBrush)window.Resources["SettingsBackground"]).Color;
+        foreach (string provider in new[] { "codex", "claude", "deepseek" })
+        {
+            var tab = Find<RadioButton>(window, "help.module." + provider); tab.ApplyTemplate();
+            var label = Descendants(tab).OfType<TextBlock>().SingleOrDefault();
+            Check(label != null && label.Text == AutomationProperties.GetName(tab), "Help provider names render as the segmented choice's own text");
+            // The caller switches high contrast on and off; matching colors after each switch prove the label follows the theme live.
+            Check(label!.Foreground is SolidColorBrush brush && brush.Color == expected && brush.Color.A == 255
+                && Contrast(brush.Color, background) >= 4.5, "Help provider names remain readable in light, dark and system high-contrast colors");
+        }
+    }
+    private static double Contrast(Color first, Color second)
+    {
+        static double Channel(byte value) { double normalized = value / 255.0; return normalized <= 0.04045 ? normalized / 12.92 : Math.Pow((normalized + 0.055) / 1.055, 2.4); }
+        static double Luminance(Color value) => 0.2126 * Channel(value.R) + 0.7152 * Channel(value.G) + 0.0722 * Channel(value.B);
+        double a = Luminance(first), b = Luminance(second); return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
     }
     private static async Task Pump() { await Dispatcher.Yield(DispatcherPriority.ContextIdle); }
     private static void Capture(FrameworkElement value, string file)

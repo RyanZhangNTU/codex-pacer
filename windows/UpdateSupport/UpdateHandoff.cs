@@ -145,8 +145,16 @@ internal static class UpdateHandoff
     internal static void CheckInstallerIdentity(string path, WindowsInstallationIdentity identity, Version build)
     {
         var info = FileVersionInfo.GetVersionInfo(path);
-        if (info.ProductName != identity.DisplayName || info.FileDescription != identity.DisplayName + " Setup" ||
-            !Version.TryParse(info.FileVersion, out var actual) || actual != build)
+        CheckInstallerIdentity(info.ProductName, info.FileDescription, info.FileVersion, identity, build);
+    }
+    internal static void CheckInstallerIdentity(string? productName, string? description, string? fileVersion,
+        WindowsInstallationIdentity identity, Version build)
+    {
+        // Inno reserves trailing space/NUL padding in its version resources.
+        // Keep leading/interior characters and the exact identity checks.
+        if (productName?.TrimEnd(' ', '\0') != identity.DisplayName ||
+            description?.TrimEnd(' ', '\0') != identity.DisplayName + " Setup" ||
+            !Version.TryParse(fileVersion?.TrimEnd(' ', '\0'), out var actual) || actual != build)
             throw new InvalidDataException("The installer identity or build differs from the verified update.");
     }
     internal static UpdateInstallResult? ConsumeResult(WindowsInstallationIdentity identity, string session, WindowsUpdateState state, Version current)
