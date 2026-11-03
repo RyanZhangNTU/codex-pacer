@@ -239,7 +239,7 @@ try:
     # provider path leaves the synthetic fixture. Depending on the Git version,
     # MSYS converts /D/C into a path; C:/ arguments must remain unchanged.
     native=versions[0]/'python.exe'
-    program='import base64,json,sys;print(json.dumps({"switchConverted":sys.argv[1]!="/D/C","unchanged":sys.argv[1]=="/D/C","absolutePathPreserved":sys.argv[2]==base64.b64decode(sys.argv[3]).decode("utf-8")}))'
+    program='import base64,json,pathlib,sys;value=sys.argv[1].replace(chr(92),"/").lower();converted=pathlib.PureWindowsPath(value).is_absolute() and (value=="d:/c" or value.endswith("/d/c"));print(json.dumps({"switchConverted":converted,"unchanged":sys.argv[1]=="/D/C","absolutePathPreserved":sys.argv[2]==base64.b64decode(sys.argv[3]).decode("utf-8")}))'
     absolute=str(native).replace('\\','/')
     probe='"'+absolute+'" -S -c \''+program+'\' /D/C "'+absolute+'" '+base64.b64encode(absolute.encode('utf-8')).decode('ascii')
     facts=json.loads(execute(probe,{},'bash'))
