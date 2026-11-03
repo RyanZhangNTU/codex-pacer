@@ -107,7 +107,7 @@ internal static class UpdateHandoff
             }, async () =>
             {
                 var start = new ProcessStartInfo(package) { UseShellExecute = false, WorkingDirectory = directory };
-                start.ArgumentList.Add("/SP-"); start.ArgumentList.Add("/NORESTART"); start.ArgumentList.Add("/DIR=" + identity.Root);
+                foreach (string argument in InstallerArguments(identity.Root)) start.ArgumentList.Add(argument);
                 using var process = Process.Start(start) ?? throw new IOException("The installer could not start.");
                 // Do not kill an installer in the middle of replacing files.
                 // A timed-out installer is left to the user, without relaunch.
@@ -131,6 +131,9 @@ internal static class UpdateHandoff
         }
         finally { locked?.Dispose(); }
     }
+    // The person already chose Install in the update offer: show progress
+    // only, without the wizard pages or a confirmation, like Sparkle on the Mac.
+    internal static string[] InstallerArguments(string root) => ["/SP-", "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=" + root];
     // Both handoff boundaries always verify content. A publisher certificate
     // is an additional requirement only when the channel explicitly pins one.
     internal static void VerifyPackage(string path, byte[] bytes, string digest, string signature, string key, string? signer,

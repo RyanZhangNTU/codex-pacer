@@ -93,6 +93,9 @@ internal static class WindowsUpdateChecks
     internal static async Task Run(string? nativeDirectory = null)
     {
         InstallerIdentityChecks();
+        Check(UpdateHandoff.InstallerArguments(@"C:\Users\Synthetic 中文\Codex Pacer").SequenceEqual(
+            new[] { "/SP-", "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", @"/DIR=C:\Users\Synthetic 中文\Codex Pacer" }),
+            "An accepted update installs without wizard pages or prompts, keeps its folder as one argument and never restarts Windows");
         string root = Path.Combine(Path.GetTempPath(), "Pacer update 中文 " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
