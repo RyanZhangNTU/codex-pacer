@@ -19,6 +19,17 @@ final class ClaudeActivityMacTests: XCTestCase {
         return ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(raw)!, sessionID: session)
     }
     func testRemoteHelperEOFAndClosedOutputTerminatePromptly() throws {
+        // This suite now precedes the shared Python tests. Separate the
+        // runner's first Python/import setup from the helper and EOF deadlines.
+        let warmup = Process()
+        warmup.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        warmup.arguments = ["-c", "__name__='pacer_fixture'\n" + ClaudeActivityProbe.script]
+        warmup.standardInput = FileHandle.nullDevice; warmup.standardOutput = FileHandle.nullDevice; warmup.standardError = FileHandle.nullDevice
+        try warmup.run()
+        let warmupDeadline = Date().addingTimeInterval(10)
+        while warmup.isRunning && Date() < warmupDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        if warmup.isRunning { warmup.terminate(); warmup.waitUntilExit(); XCTFail("The runner could not prepare Python for the helper fixture"); return }
+        warmup.waitUntilExit(); XCTAssertEqual(warmup.terminationStatus, 0)
         let home = URL(fileURLWithPath: "/private/tmp/pacer-claude-helper-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: home) }
         let child = Process(), input = Pipe(), output = Pipe()
