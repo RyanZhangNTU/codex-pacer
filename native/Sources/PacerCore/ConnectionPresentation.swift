@@ -134,7 +134,7 @@ public struct ConnectionSummary: Equatable {
     public let sources: Int
     public let sessions: Int
 
-    public init(enabledProviders: [AgentProvider], sources: [ConnectionSource], hosts: [SSHHost]) {
+    public init(enabledProviders: [AgentProvider], sources: [ConnectionSource], hosts: [SSHHost], overrides: [String: SSHHost.State] = [:]) {
         let enabled = Set(enabledProviders)
         var entries: [String: (state: EntryState, sessions: Int)] = [:]
         for source in sources where enabled.contains(source.provider) {
@@ -160,6 +160,17 @@ public struct ConnectionSummary: Equatable {
                 }
                 entries[id] = (state, module.sessions)
             }
+        }
+        for (id, state) in overrides where entries[id] != nil {
+            let value: EntryState = switch state {
+            case .setupFailed, .retrying: .retrying
+            case .configuring, .waiting: .connecting
+            case .paused: .paused
+            case .connected: .connected
+            }
+            let sessions: Int
+            if case .connected = value { sessions = entries[id]?.sessions ?? 0 } else { sessions = 0 }
+            entries[id] = (value, sessions)
         }
         let checking = entries.isEmpty
         // Every enabled module has a local source. One module publishing first
