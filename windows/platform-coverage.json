@@ -902,7 +902,7 @@
     {
       "id": "display-selection",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "主显示器/指定显示器、名称与稳定设备身份、断开/重新连接/主屏变化",
@@ -912,16 +912,22 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsAppearancePane.swift"
       ],
-      "evidence": [],
-      "previewNote": "显示器选择使用 Windows 多显示器与 per-monitor DPI。",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
+      "evidence": [
+        "docs/windows-display-fullscreen.md",
+        "docs/performance/windows-display-fullscreen.json",
+        "windows/Tests/DesktopTests/DisplaySelectionChecks.cs",
+        "windows/Tests/PresentationTests/DisplayWindowChecks.cs",
+        "windows/Tests/PresentationTests/DisplaySettingsChecks.cs"
+      ],
+      "previewNote": "Single physical display at 150% DPI: selection controls, persistence/rollback and injected left/right topology move, fallback, reconnect and resolution changes passed. Shared layout tests cover 100/125/150/200% DPI and negative coordinates. Physical multi-monitor, hotplug and mixed-DPI acceptance remain.",
+      "note": "P3a implements event-driven display selection and work-area/DPI relocation. Synthetic topology is not physical multi-monitor acceptance.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
     },
     {
       "id": "fullscreen-policy",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "开关开启时在目标显示器全屏应用上方显示，关闭时隐藏并在退出全屏后恢复",
@@ -931,9 +937,14 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsAppearancePane.swift"
       ],
-      "evidence": [],
-      "previewNote": "全屏空间对等为全屏应用上方显示策略。",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
+      "evidence": [
+        "docs/windows-display-fullscreen.md",
+        "docs/performance/windows-display-fullscreen.json",
+        "windows/Tests/DesktopTests/FullscreenDisplayChecks.cs",
+        "windows/Tests/PresentationTests/DisplayWindowChecks.cs"
+      ],
+      "previewNote": "Independent synthetic borderless fullscreen app: off/on, sustained hidden detection, all-surface ordering, nonactivation, outside-island hit testing, minimize/exit restoration and manual-hide retention passed under Classic/Liquid Glass preferences. Injected topology verifies target-screen isolation. Real applications, physical multi-monitor and exclusive/special-desktop behavior remain unverified.",
+      "note": "P3a separates fullscreen presence from known opaque occlusion and reuses the 250 ms trailing throttle. Full formal acceptance remains pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
     },

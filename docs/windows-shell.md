@@ -12,7 +12,9 @@ The island's Classic/Liquid Glass preference uses the native Composition materia
 
 The bridge uses C++20 with MSVC 19.30 or newer. VS 2019 19.29 uses C++17 because that compiler hits an internal error in the SDK's C++20 projection. Both paths keep warnings as errors; newer libraries' rejection of experimental coroutine headers is handled by the standard selection, without suppressing diagnostics.
 
-Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. This does not implement the pending fullscreen display preference.
+Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. Fullscreen visibility uses the separate policy described below.
+
+The [display and fullscreen controls](windows-display-fullscreen.md) select a stable Windows monitor identity, retain a disconnected selection and apply the target screen's DPI/work area. The fullscreen switch controls policy hiding or nonactivating display above fullscreen apps. Local synthetic acceptance remains separate from physical multi-monitor and exclusive-fullscreen acceptance.
 
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 

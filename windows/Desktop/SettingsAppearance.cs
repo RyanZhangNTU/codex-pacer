@@ -20,9 +20,15 @@ internal sealed partial class SettingsWindow
     private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
     private readonly Dictionary<string, RadioButton> surfaceChoices = new();
     private TextBlock? surfaceStatus;
+    private ComboBox? displayChoice;
+    private CheckBox? fullscreenChoice;
+    private TextBlock? displayStatus;
+    private IReadOnlyList<DisplayMonitor>? displayItemsSource;
+    private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
-    { notchChoice = customChoice = null; positionRow = null; positionSeparator = null; positionChoices.Clear(); quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null; }
+    { notchChoice = customChoice = null; positionRow = null; positionSeparator = null; positionChoices.Clear(); quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
+        displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; }
     private TextBlock SectionHeader(string key, double top = 2)
     {
         var text = Label(ui.Text(key), 13, FontWeights.SemiBold); text.Margin = new Thickness(10, top, 0, 8); return text;
@@ -86,11 +92,19 @@ internal sealed partial class SettingsWindow
         var caption = new StackPanel { VerticalAlignment = VerticalAlignment.Top }; caption.Children.Add(Label(ui.Text("appearance.screen_position")));
         var positionDetail = Detail(""); positionDetail.Name = "PositionDetail"; caption.Children.Add(positionDetail);
         positionRow = Row(caption, PositionPicker(), 124); caption.Margin = new Thickness(0, 11, 8, 11);
-        var display = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 150 };
-        display.Items.Add(new ComboBoxItem { Content = ui.Text("settings.main_display") }); display.SelectedIndex = 0;
-        Identify(display, "appearance.display", ui.Text("settings.display_picker")); Pending(display, "windows.appearance.display_pending");
-        var fullscreen = Toggle("settings.fullscreen", null, "appearance.fullscreen", out var full); Pending(full, "windows.appearance.fullscreen_pending");
-        var positionCard = Card(Pair(notchChoice, customChoice), positionRow, Row(Label(ui.Text("settings.display_picker")), display, 40), fullscreen);
+        displayChoice = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 150, MaxWidth = 270 };
+        Identify(displayChoice, "appearance.display", ui.Text("settings.display_picker")); editors.Add(displayChoice);
+        displayChoice.DropDownOpened += (_, _) => appearanceDisplays.Refresh();
+        displayChoice.SelectionChanged += async (_, _) =>
+        {
+            if (synchronizing || displayChoice.SelectedItem is not ComboBoxItem { Tag: DisplayOption option, IsEnabled: true }) return;
+            await Change(p => option.Monitor?.Choose(p) ?? p with { DisplaySelection = option.Mode, DisplayID = "", DisplayName = "", DisplayX = 0, DisplayY = 0 });
+        };
+        var displayCaption = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; displayCaption.Children.Add(Label(ui.Text("settings.display_picker")));
+        displayStatus = Detail(""); displayStatus.MaxWidth = 230; Identify(displayStatus, "appearance.display.status", ui.Text("settings.display_picker")); displayCaption.Children.Add(displayStatus);
+        var fullscreen = Toggle("windows.appearance.fullscreen", null, "appearance.fullscreen", out var full); fullscreenChoice = full;
+        BindToggle(full, (p, value) => p with { ShowInFullscreen = value }); editors.Add(full);
+        var positionCard = Card(Pair(notchChoice, customChoice), positionRow, Row(displayCaption, displayChoice, 40), fullscreen);
         positionSeparator = (Border)((Panel)positionCard.Child).Children[1]; form.Children.Add(positionCard);
     }
     private Canvas PositionPicker()
@@ -118,6 +132,8 @@ internal sealed partial class SettingsWindow
     }
     private void RefreshAppearance()
     {
+        RefreshDisplayChoices();
+        if (fullscreenChoice != null) fullscreenChoice.IsChecked = session.Current.ShowInFullscreen;
         foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
         RefreshSurfaceStatus();
         foreach (var item in quotaStyleChoices) item.Value.IsChecked = item.Key == session.Current.ExpandedQuotaStyle;
@@ -131,6 +147,49 @@ internal sealed partial class SettingsWindow
             ((TextBlock)caption.Children[1]).Text = ui.Text(session.Current.Position == "center" ? "windows.appearance.position_center_note" : "appearance.position_side_note");
         if (customChoice.Content is StackPanel content && content.Children[0] is Grid art)
         { art.Children.Clear(); art.Children.Add(PositionSwatch(session.Current.Position)); }
+    }
+    private void OnAppearanceDisplaysChanged()
+    {
+        if (sourceClosed) return;
+        bool previous = synchronizing; synchronizing = true;
+        try { RefreshDisplayChoices(); }
+        finally { synchronizing = previous; }
+    }
+    private void RefreshDisplayChoices()
+    {
+        if (displayChoice == null) return;
+        var topology = appearanceDisplays.Current;
+        if (!ReferenceEquals(displayItemsSource, topology))
+        {
+            displayChoice.Items.Clear(); displayItemsSource = topology;
+            Add(ui.Text("windows.appearance.display_auto"), new("automatic", null));
+            Add(ui.Text("settings.main_display"), new("primary", null));
+            foreach (var monitor in topology) Add(monitor.Name + " (" + (monitor.Bounds.Right - monitor.Bounds.Left) + " × " + (monitor.Bounds.Bottom - monitor.Bounds.Top) + ")", new("specified", monitor));
+        }
+        var resolved = DisplaySelection.Resolve(topology, session.Current);
+        var missing = displayChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(value => value.Tag is DisplayOption { Mode: "missing" });
+        if (missing != null) displayChoice.Items.Remove(missing);
+        ComboBoxItem? selected;
+        if (session.Current.DisplaySelection == "specified" && resolved.FellBack)
+        {
+            selected = Add(session.Current.DisplayName + " (" + ui.Text("windows.appearance.display_disconnected") + ")", new("missing", null));
+            selected.IsEnabled = false;
+        }
+        else selected = displayChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(value => value.Tag is DisplayOption option
+            && option.Mode == session.Current.DisplaySelection && (option.Mode != "specified" || option.Monitor == resolved.Display));
+        displayChoice.SelectedItem = selected;
+        if (displayStatus != null)
+        {
+            displayStatus.Text = topology.Count == 0 ? ui.Text("windows.appearance.display_unavailable")
+                : resolved.FellBack ? ui.Text("windows.appearance.display_fallback") : "";
+            displayStatus.Visibility = displayStatus.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        }
+        ComboBoxItem Add(string text, DisplayOption option)
+        {
+            var label = Label(text); label.MaxWidth = 240; label.TextTrimming = TextTrimming.CharacterEllipsis;
+            var item = new ComboBoxItem { Content = label, Tag = option, ToolTip = text };
+            System.Windows.Automation.AutomationProperties.SetName(item, text); displayChoice.Items.Add(item); return item;
+        }
     }
     private void RefreshSurfaceStatus()
     {
