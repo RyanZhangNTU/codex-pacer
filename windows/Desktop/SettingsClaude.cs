@@ -7,7 +7,7 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? claudeEnabled, claudeCloudProjects;
+    private CheckBox? claudeEnabled, claudeCloudProjects, claudeEmbedded;
     private Button? claudeAutomatic, claudeSetupRetry;
     private TextBlock? claudeDetection, claudeLocalState, claudeSetupState;
     private StackPanel? claudeSections;
@@ -15,7 +15,7 @@ internal sealed partial class SettingsWindow
     private void ClearClaude()
     {
         ClearClaudeConnection();
-        claudeEnabled = claudeCloudProjects = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
+        claudeEnabled = claudeCloudProjects = claudeEmbedded = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
         claudeSetupRetry = null; claudeSetupState = null;
     }
     private void BuildClaude()
@@ -59,9 +59,9 @@ internal sealed partial class SettingsWindow
             await Change(p => p with { ShowClaudeCloudProjects = value });
         };
         cloudSwitch.Checked += cloudChanged; cloudSwitch.Unchecked += cloudChanged;
-        var embedded = Toggle("claude.embedded_sessions", "windows.claude.embedded_pending", "settings.claude.embedded", out var embeddedSwitch);
-        embeddedSwitch.IsEnabled = false;
-        // Unsupported actions stay outside editors so a successful preference change cannot enable them.
+        var embedded = Toggle("claude.embedded_sessions", "claude.embedded_sessions_help", "settings.claude.embedded", out var embeddedSwitch);
+        claudeEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
+        BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedClaudeSessions = value });
         claudeSections.Children.Add(Card(Row(Label(ui.Text("windows.claude.local_logs")), claudeLocalState), help,
             Row(claudeSetupState, claudeSetupRetry),
             BuildClaudeConnection(), cloud, embedded, ProviderHomeEditor("claude")));
@@ -82,6 +82,8 @@ internal sealed partial class SettingsWindow
         claudeAutomatic.IsEnabled = claudeEnabled.IsEnabled;
         claudeSections!.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         claudeCloudProjects!.IsChecked = session.Current.ShowClaudeCloudProjects;
+        claudeEmbedded!.IsChecked = session.Current.ShowEmbeddedClaudeSessions;
+        claudeEmbedded.IsEnabled = enabled && connected && !busy && !session.RequiresRestart;
         claudeCloudProjects.IsEnabled = enabled && connected && !busy && !claudeAccountBusy && !session.RequiresRestart;
         claudeLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>
             (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true ? "provider.state.found" : "provider.state.no_home");

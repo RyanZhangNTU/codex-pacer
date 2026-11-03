@@ -14,6 +14,7 @@ internal static class PreferencesChecks
             var missing = store.Load();
             Check(!missing.Unavailable && missing.Value.IsValid && !Directory.Exists(root), "Missing settings must use defaults without creating files");
             Check(missing.Value.IslandAppearance == "liquidGlass", "The appearance default matches the Mac preference");
+            Check(missing.Value.ShowEmbeddedCodexSessions && missing.Value.ShowEmbeddedClaudeSessions, "Both independent embedding preferences default to visible");
             var original = new DesktopPreferences
             {
                 Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", IslandAppearance = "classic", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,
@@ -37,6 +38,13 @@ internal static class PreferencesChecks
                 && restored.Value.ProviderModes["codex"] == "disabled" && restored.Value.ProviderModes["claude"] == "automatic"
                 && restored.Value.HideProjects && !restored.Value.ShowAppButtons && !restored.Value.ShowEmbeddedCodexSessions && restored.Value.RetentionMinutes == 60, "Unicode source choices, module modes and display preferences must survive relaunch");
             byte[] before = File.ReadAllBytes(file);
+            var independentlyHidden = original with { ShowEmbeddedCodexSessions = true, ShowEmbeddedClaudeSessions = false };
+            Check(store.Save(independentlyHidden) && store.Load().Value.ShowEmbeddedCodexSessions && !store.Load().Value.ShowEmbeddedClaudeSessions,
+                "Hiding Claude embedding cannot borrow or overwrite Codex's separate preference");
+            using (var config = JsonDocument.Parse(JsonSerializer.Serialize(independentlyHidden.EngineConfiguration())))
+                Check(config.RootElement.GetProperty("showEmbeddedCodexSessions").GetBoolean() && !config.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
+                    "The acknowledged engine configuration carries both Mac preference keys independently");
+            Check(store.Save(original), "Restore the original saved fixture before rejected-write assertions");
             Check(restored.Value.IslandAppearance == "classic" && JsonDocument.Parse(before).RootElement.GetProperty("islandAppearance").GetString() == "classic",
                 "The original appearance key and value survive relaunch");
             Check(!store.Save(original with { IslandAppearance = "unknown" }), "An invalid appearance cannot replace saved settings");
@@ -54,6 +62,7 @@ internal static class PreferencesChecks
             Check(before.SequenceEqual(File.ReadAllBytes(file)), "Rejected settings must leave the last valid file intact");
             File.WriteAllText(file, "{\"schemaVersion\":1,\"position\":\"bottomRight\"}");
             var legacy = store.Load();
+            Check(legacy.Value.ShowEmbeddedClaudeSessions, "An older profile without the Claude embedding key keeps sessions visible");
             Check(legacy.Value.IslandAppearance == "liquidGlass", "A missing appearance uses Liquid Glass without rewriting the profile");
             Check(!legacy.Unavailable && legacy.Value.HasChosenPosition && legacy.Value.DisplayMode == "automatic"
                 && legacy.Value.LastSettingsPane == "general" && legacy.Value.ShowEmbeddedCodexSessions && legacy.Value.ExpandedQuotaStyle == "split"

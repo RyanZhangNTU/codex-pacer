@@ -31,6 +31,7 @@ struct EngineCommand: Decodable {
         var sourceHome: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
+        var showEmbeddedClaudeSessions: Bool?
         var showClaudeCloudProjects: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?

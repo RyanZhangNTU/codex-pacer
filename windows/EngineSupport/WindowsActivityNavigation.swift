@@ -42,10 +42,22 @@ enum WindowsActivityNavigation {
            WindowsHostWindow.available(pid: cached.identity.pid, started: cached.identity.started) {
             currentHost = .init(identity: cached.identity, provider: cached.provider)
         }
+        if currentHost == nil, input.transcript != nil, let cached = input.cachedHost,
+           cached.home == input.home, cached.application != nil {
+            return .init(context: input.context, provider: provider, host: cached)
+        }
+        func plan(for owner: WindowsProcessHost) -> EngineNavigationPlan {
+            let observed = WindowsHostApplication.capture(owner.identity)
+            let cached = input.cachedHost.flatMap { $0.identity == owner.identity && $0.home == input.home ? $0 : nil }
+            let application = ActivityHostApplication(identity: owner.identity, provider: owner.provider,
+                name: owner.provider?.displayName ?? observed?.executable.deletingPathExtension().lastPathComponent ?? "",
+                home: input.home, application: observed ?? cached?.application)
+            return .init(context: input.context, provider: provider, host: application)
+        }
         // A live editor or terminal outranks Desktop's saved mapping. Activating
         // that process never imports the session or resumes a model turn.
         if let owner = currentHost, provider == .codex || owner.provider != .claude {
-            return .init(context: input.context, provider: provider, pid: owner.identity.pid, started: owner.identity.started)
+            return plan(for: owner)
         }
         if provider == .claude, defaultProfile {
             let rows = records ?? ClaudeDesktopRecords.load(configFiles: WindowsClaudeAccountBinding.locations(environment: environment))
@@ -56,7 +68,7 @@ enum WindowsActivityNavigation {
             }
         }
         if let owner = currentHost {
-            return .init(context: input.context, provider: provider, pid: owner.identity.pid, started: owner.identity.started)
+            return plan(for: owner)
         }
         throw provider == .claude ? ActivityNavigationError.missingClaudeHost : ActivityNavigationError.missingCodexHost
     }
