@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "64f721a8418672bfb4a80e9b711f057625d1157c1c0f8b6436d7161a4ea40f65"
+    "windows/EngineSupport/Resources/Localization/en.json": "4e8dbbdc3a3cef4b2eb2ac04488a18559899dbb8669fea54a52c6ed5a52d2234"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -888,7 +888,11 @@
     "whats_new.version": "Version %@",
     "whats_new.window_title": "What\u2019s New",
     "windows.app.open_failed": "Windows could not open the desktop app. Check that it is still installed.",
+    "windows.appearance.display_disconnected": "Disconnected",
+    "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
     "windows.appearance.display_pending": "Display selection is not available in the Windows preview yet.",
+    "windows.appearance.display_unavailable": "Windows could not read the displays. The island stays on the current screen.",
+    "windows.appearance.fullscreen": "Show above fullscreen apps",
     "windows.appearance.fullscreen_pending": "Fullscreen visibility settings are not available in the Windows preview yet.",
     "windows.appearance.glass_pending": "Liquid Glass rendering is not available in the Windows preview yet.",
     "windows.appearance.position_center_note": "A capsule centered near the top of the screen.",

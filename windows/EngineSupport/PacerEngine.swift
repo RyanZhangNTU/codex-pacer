@@ -206,6 +206,7 @@ actor EngineRuntime {
     private var snapshotEmission = EngineSnapshotEmission()
     private var hideProjects = false
     private var showEmbeddedCodexSessions = true
+    private var showEmbeddedClaudeSessions = true
     private var showClaudeCloudProjects = true
     private var monitorSSH = true
     private let sshServices: WindowsSSHServices?
@@ -259,6 +260,7 @@ actor EngineRuntime {
     private var activityDisplayDeadline: Date?
     private var navigationState = ActivityNavigationState()
     private var navigationOpens: [String: ActivityNavigationOperation] = [:]
+    private var navigationHosts: [UUID: ActivityHostApplication] = [:]
     private var navigationFailureTask: Task<Void, Never>? {
         get { ownedWork.task(.init(.navigationError)) }
         set { setOwnedTask(newValue, key: .init(.navigationError)) }
@@ -428,7 +430,7 @@ actor EngineRuntime {
     /// source replacement or shutdown. The actor and registry still serialize
     /// ownership; only the platform lookup can remain suspended.
     func enqueue(_ data: Data) async -> Bool {
-        guard let command = try? EngineCommand.decode(data), command.method == "prepareActivityOpen" else { return await receive(data) }
+        guard let command = try? EngineCommand.decode(data), ["prepareActivityOpen", "activateActivityHost"].contains(command.method) else { return await receive(data) }
         let key = ApplicationWorkRegistry.Key(.navigation, identifier: command.id)
         let owner = ownedWork.begin(key, version: generation)
         let task = Task { [weak self] in
@@ -529,12 +531,34 @@ actor EngineRuntime {
                     let id: String, value: EngineNavigationPlan
                 }
                 if let bytes = try? JSONEncoder().encode(Result(id: command.id, value: plan)), bytes.count < 8192 {
+                    if plan.kind == "host", let pid = plan.pid, let started = plan.started {
+                        navigationHosts[operation.id] = plan.hostApplication ?? .init(identity: .init(pid: pid, started: started),
+                            provider: nil, name: "", home: home)
+                    }
                     output(bytes + Data([10])); prepared = true
                 }
                 else { failure(id: command.id, code: "navigationUnavailable") }
             } catch ActivityNavigationError.missingClaudeHost { failure(id: command.id, code: "missingClaudeHost") }
               catch ActivityNavigationError.missingCodexHost { failure(id: command.id, code: "missingCodexHost") }
               catch { failure(id: command.id, code: "navigationUnavailable") }
+            return true
+        case "activateActivityHost":
+            guard let context = command.params?.context, let entry = navigationEntry(context: context), navigationIsCurrent(entry),
+                  let operation = navigationOpens[context], navigationState.owns(operation),
+                  operation.isCurrent(version: lifecycle.version(entry.target.provider), active: active, inbox: inbox, scope: entry.cloudContext),
+                  let host = navigationHosts.removeValue(forKey: operation.id), host.home == navigationHome(for: entry.target.provider) else {
+                failure(id: command.id, code: "staleActivityOpen"); return true
+            }
+            let opened = await activityHostServices.activate(host)
+            guard navigationState.owns(operation), navigationIsCurrent(entry),
+                  operation.isCurrent(version: lifecycle.version(entry.target.provider), active: active, inbox: inbox, scope: entry.cloudContext) else {
+                failure(id: command.id, code: "staleActivityOpen"); return true
+            }
+            struct HostResult: Encodable {
+                let protocolVersion = EngineProtocol.version, type = "result", ok = true
+                let id: String, value: Bool
+            }
+            if let bytes = try? JSONEncoder().encode(HostResult(id: command.id, value: opened)) { output(bytes + Data([10])) }
             return true
         case "completeActivityOpen":
             guard let context = command.params?.context, let entry = navigationEntry(context: context), navigationIsCurrent(entry),
@@ -876,6 +900,7 @@ actor EngineRuntime {
         }
         if let hidden = parameters.hideProjects { hideProjects = hidden }
         if let shown = parameters.showEmbeddedCodexSessions { showEmbeddedCodexSessions = shown }
+        if let shown = parameters.showEmbeddedClaudeSessions { showEmbeddedClaudeSessions = shown }
         if let shown = parameters.showClaudeCloudProjects { showClaudeCloudProjects = shown }
         if let value = parameters.monitorSSH, value != monitorSSH {
             monitorSSH = value; ownedWork.cancel(.init(.discovery, identifier: "ssh"))
@@ -1527,7 +1552,9 @@ actor EngineRuntime {
     }
 
     private var activityVisibility: ActivityVisibilityOptions {
-        .init(embeddedProviders: showEmbeddedCodexSessions ? Set(AgentProvider.allCases) : [.claude, .deepseek],
+        .init(embeddedProviders: Set(AgentProvider.allCases.filter {
+                $0 == .codex ? showEmbeddedCodexSessions : $0 != .claude || showEmbeddedClaudeSessions
+            }),
             showsClaudeCloudProjects: showClaudeCloudProjects)
     }
     private func scheduleActivityDisplay(at date: Date) {
@@ -1554,6 +1581,8 @@ actor EngineRuntime {
     }
 
     private func publish(notices: [IslandNotice], force: Bool = false) {
+        let openIDs = Set(navigationOpens.values.map(\.id))
+        navigationHosts = navigationHosts.filter { openIDs.contains($0.key) }
         let date = now()
         var wallet: EngineWallet?, walletNotices: [IslandNotice] = [], compactWallet: CompactBarContext.Wallet?
         if enabled.contains(.deepseek), let source = walletSource {
@@ -1652,11 +1681,14 @@ actor EngineRuntime {
             // not become visible cards or replay notification baselines.
             var candidates = Dictionary((visibleActivities + notificationActivities).filter { enabled.contains($0.provider) }
                 .map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values.map { $0 }
-            let hiddenCodex = showEmbeddedCodexSessions ? Set<String>() : EmbeddedSessionVisibility.embeddedActivityIDs(candidates.filter { $0.provider == .codex })
-            let hiddenClaude = showClaudeCloudProjects ? Set<String>() : Set(candidates.filter { $0.claudeCloud != nil }.map(\.id))
-            candidates.removeAll { hiddenCodex.contains($0.id) || hiddenClaude.contains($0.id) }
+            let hidden = activityState.hiddenActivityIDs(activityVisibility)
+            candidates.removeAll { hidden.contains($0.canonicalized().id) }
             notificationNavigation.update(activities: candidates, requests: visibleRequests, inbox: inbox, cloudContext: cloudNavigationContext) {
                 [.codex, .claude].contains($0.provider) && !$0.isInternalReview && !$0.isIgnoredCodexSession
+            }
+            for (context, operation) in navigationOpens where navigationEntry(context: context) == nil {
+                navigationState.abandon(operation); navigationOpens.removeValue(forKey: context)
+                navigationHosts.removeValue(forKey: operation.id)
             }
         }
         let notificationProjections = visibleNotices.map { notificationProjection($0, requests: visibleRequests, at: date) }
@@ -1764,7 +1796,7 @@ actor EngineRuntime {
         if !completed { OwnedProcessTermination.terminateAll() }
     }
     private func invalidateNavigation() {
-        navigation.invalidate(); navigationState.cancel(); navigationOpens.removeAll()
+        navigation.invalidate(); navigationState.cancel(); navigationOpens.removeAll(); navigationHosts.removeAll()
         notificationNavigation.invalidate(); notificationActivities = []
         navigationFailureTask?.cancel(); navigationFailureTask = nil
     }

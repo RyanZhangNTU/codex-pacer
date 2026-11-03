@@ -8,6 +8,9 @@ struct EngineNavigationPlan: Codable, Equatable, Sendable {
     let url: String?, webURL: String?
     let pid: UInt32?, started: UInt64?
     var terminal: String? = nil
+    // This capability never crosses the protocol boundary.
+    var hostApplication: ActivityHostApplication? = nil
+    enum CodingKeys: String, CodingKey { case context, provider, kind, url, webURL, pid, started, terminal }
     init(context: String, provider: AgentProvider, terminal: String) {
         self.context = context; self.provider = provider.rawValue; kind = "terminal"; self.terminal = terminal
         url = nil; webURL = nil; pid = nil; started = nil
@@ -19,6 +22,10 @@ struct EngineNavigationPlan: Codable, Equatable, Sendable {
     init(context: String, provider: AgentProvider, pid: UInt32, started: UInt64) {
         self.context = context; self.provider = provider.rawValue; kind = "host"
         url = nil; webURL = nil; self.pid = pid; self.started = started
+    }
+    init(context: String, provider: AgentProvider, host: ActivityHostApplication) {
+        self.init(context: context, provider: provider, pid: host.identity.pid, started: host.identity.started)
+        hostApplication = host
     }
     init(demoContext: String, provider: AgentProvider) {
         context = demoContext; self.provider = provider.rawValue; kind = "demo"

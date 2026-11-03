@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace CodexPacer.Windows;
 
 /// Protocol launches target the registered provider package, rather than an
-/// arbitrary default handler. A host plan can only raise an existing process.
+/// arbitrary default handler. Host capabilities stay inside the engine.
 internal sealed class WindowsConversationApplication
 {
     private readonly Func<string, bool> registered;
@@ -41,6 +41,8 @@ internal sealed class WindowsConversationApplication
         }
         catch (Exception error) when (Recoverable(error)) { return false; }
     }
+    internal static bool IsHostPlan(EngineNavigationPlan plan) => Guid.TryParse(plan.Context, out _) && plan.Provider is "claude" or "codex"
+        && plan.Kind == "host" && plan.Url == null && plan.WebUrl == null && plan.Pid is > 0 && plan.Started is > 0;
     internal static bool TryDestination(string provider, string? value, string? fallbackValue, out Uri? uri, out Uri? fallback)
     {
         uri = null; fallback = null;

@@ -238,7 +238,8 @@ public partial class App : Application
             async link =>
             {
                 var plan = await engine.QueryAsync<EngineNavigationPlan>("prepareActivityOpen", new { context = link.Context });
-                if (quitting || !settingsSession.Current.SystemNotifications || plan.Context != link.Context || plan.Provider != link.Provider || !await applications.OpenConversationAsync(plan)) return false;
+                if (quitting || !settingsSession.Current.SystemNotifications || plan.Context != link.Context || plan.Provider != link.Provider ||
+                    !await applications.OpenConversationAsync(plan, context => engine.QueryAsync<bool>("activateActivityHost", new { context }))) return false;
                 await engine.SendAsync("completeActivityOpen", new { context = link.Context }); return true;
             });
         notifications = new NotificationSession(settingsSession,

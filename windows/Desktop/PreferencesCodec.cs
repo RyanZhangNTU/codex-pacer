@@ -42,9 +42,12 @@ internal static class PreferencesCodec
             var properties = JsonSerializer.SerializeToNode(new DesktopPreferences(), Json)!.AsObject();
             foreach (string property in properties.Select(pair => pair.Key).ToArray())
             {
-                if (property is "schemaVersion" or "compactLayout" or "warningKinds" or "providerModes" or "positionChosen") continue;
+                if (property is "schemaVersion" or "compactLayout" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID") continue;
                 if (root.TryGetPropertyValue(Key(property), out var saved)) properties[property] = saved?.DeepClone();
             }
+            string displayID = ReadDisplayID(root);
+            properties["displayID"] = displayID;
+            properties["displaySelection"] = MainDisplay(displayID) ? MainDisplayMode(root, displayID) : "specified";
             properties["lastSettingsPane"] = properties["lastSettingsPane"]?.GetValue<string>() == "collapsedBar" ? "collapsed" : properties["lastSettingsPane"]?.DeepClone();
             properties["positionChosen"] = root["islandPosition"] is JsonValue position && position.TryGetValue<string>(out var chosen)
                 && chosen is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight";
@@ -80,6 +83,7 @@ internal static class PreferencesCodec
     }
     private static DesktopPreferences Normalize(DesktopPreferences value) => value with
     {
+        DisplaySelection = value.DisplaySelection is "primary" or "specified" ? value.DisplaySelection : "automatic",
         Language = value.Language is "en" or "zh-Hans" ? value.Language : "system",
         Position = value.Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight" ? value.Position : "center",
         DisplayMode = value.DisplayMode is "notch" or "floating" ? value.DisplayMode : "automatic",
@@ -98,15 +102,23 @@ internal static class PreferencesCodec
     {
         if (!value.IsValid) throw new JsonException();
         JsonObject root = original.IsEmpty ? new() : JsonNode.Parse(original)!.AsObject();
+        bool preserveMainDisplay = root["schemaVersion"]?.GetValue<int>() == Version && MainDisplay(ReadDisplayID(root))
+            && value.DisplaySelection == MainDisplayMode(root, ReadDisplayID(root));
         var properties = JsonSerializer.SerializeToNode(value, Json)!.AsObject();
         if (root["schemaVersion"]?.GetValue<int>() == 1)
             foreach (string property in properties.Select(pair => pair.Key)) root.Remove(property);
         root["schemaVersion"] = Version;
         foreach (var property in properties)
         {
-            if (property.Key is "schemaVersion" or "compactLayout" or "warningKinds" or "providerModes" or "positionChosen") continue;
+            if (property.Key is "schemaVersion" or "compactLayout" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID") continue;
             string key = Key(property.Key);
             if (property.Value == null) root.Remove(key); else root[key] = property.Value.DeepClone();
+        }
+        if (value.DisplaySelection == "specified" && !MainDisplay(value.DisplayID)) root["displayID"] = value.DisplayID;
+        else if (!preserveMainDisplay)
+        {
+            if (value.DisplaySelection == "automatic") root.Remove("displayID");
+            else root["displayID"] = 0;
         }
         if (!value.HasChosenPosition) root.Remove("islandPosition");
         root["settingsPane"] = value.LastSettingsPane == "collapsed" ? "collapsedBar" : value.LastSettingsPane;
@@ -122,5 +134,21 @@ internal static class PreferencesCodec
         var restored = Decode(bytes);
         if (!restored.WarningKinds.Order().SequenceEqual(value.WarningKinds.Order())) throw new JsonException();
         return bytes;
+    }
+    private static bool MainDisplay(string value) => value is "" or "0";
+    private static string ReadDisplayID(JsonObject root)
+    {
+        if (root["displayID"] == null) return "";
+        if (root["displayID"] is JsonValue value)
+        {
+            if (value.TryGetValue<string>(out var path)) return path;
+            if (value.TryGetValue<double>(out double number) && number == 0) return "0";
+        }
+        throw new JsonException();
+    }
+    private static string MainDisplayMode(JsonObject root, string displayID)
+    {
+        if (root["displaySelection"] is JsonValue saved && saved.TryGetValue<string>(out var alias) && alias is "automatic" or "primary") return alias;
+        return displayID.Length == 0 ? "automatic" : "primary";
     }
 }

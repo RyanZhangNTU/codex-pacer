@@ -79,12 +79,12 @@ internal static class ProviderHomeSettingsChecks
             field.Text = ""; Enter(window, field); await Until(() => Saved() == "" && field.IsEnabled);
             var restored = await engine.QueryAsync<ProviderHomeReport>("inspectProviderHome", new { provider, sourceHome = "" });
             Check(restored.EffectiveHome.Contains("Demo", StringComparison.OrdinalIgnoreCase), "Clearing must restore the isolated demo default");
-            CheckUnsupported(window, provider);
+            await CheckEmbedding(window, provider, session);
             window.CapturePreview(Path.Combine(output, "settings-" + scenario + "-locations.png"));
             Toggle(module); await Until(() => session.Current.ProviderModes[provider] == "disabled" && module.IsEnabled);
             Check(!field.IsVisible && !field.IsEnabled, "A disabled module must hide and disable source editors");
             Toggle(module); await Until(() => session.Current.ProviderModes[provider] == "enabled" && module.IsEnabled);
-            CheckUnsupported(window, provider);
+            CheckEmbeddingEnabled(window, provider);
             var automatic = Find<Button>(window, prefix + ".automatic"); Invoke(automatic);
             await Until(() => session.Current.ProviderModes[provider] == "automatic" && automatic.Visibility == Visibility.Collapsed);
             int beforeNavigation = configurations;
@@ -106,11 +106,22 @@ internal static class ProviderHomeSettingsChecks
         }
         finally { ready.TrySetResult(); window.AllowClose = true; window.Close(); Directory.Delete(root, true); CultureInfo.CurrentUICulture = previous; }
     }
-    private static void CheckUnsupported(Window window, string provider)
+    private static async Task CheckEmbedding(Window window, string provider, PreferencesSession session)
     {
         if (provider != "claude") return;
-        Check(Find<CheckBox>(window, "settings.claude.cloud_projects").IsEnabled && !Find<CheckBox>(window, "settings.claude.embedded").IsEnabled,
-            "Cloud Projects must remain connected while unfinished embedding controls stay disabled");
+        CheckEmbeddingEnabled(window, provider);
+        var toggle = Find<CheckBox>(window, "settings.claude.embedded");
+        Check(toggle.IsChecked == true && session.Current.ShowEmbeddedCodexSessions, "The provider switches default to visible independently");
+        Toggle(toggle); await Until(() => !session.Current.ShowEmbeddedClaudeSessions && toggle.IsEnabled);
+        Check(toggle.IsChecked == false && session.Current.ShowEmbeddedCodexSessions, "Hiding Claude embedding must leave the Codex preference visible");
+        Toggle(toggle); await Until(() => session.Current.ShowEmbeddedClaudeSessions && toggle.IsEnabled);
+        Check(toggle.IsChecked == true, "Restoring Claude embedding must await the engine and restore the acknowledged switch");
+    }
+    private static void CheckEmbeddingEnabled(Window window, string provider)
+    {
+        if (provider != "claude") return;
+        Check(Find<CheckBox>(window, "settings.claude.cloud_projects").IsEnabled && Find<CheckBox>(window, "settings.claude.embedded").IsEnabled,
+            "Cloud Projects remains connected and the implemented embedding control is enabled");
     }
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();

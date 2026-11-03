@@ -10,6 +10,7 @@ Older previews cannot read schema 2. Keep a preference backup when downgrading; 
 | --- | --- | --- |
 | Language | `appLanguage` | `system` |
 | Position and attachment | `islandPosition`, `islandDisplayMode`, legacy `floatingIsland` | No explicit position; `automatic`, then the legacy floating choice |
+| Display and fullscreen | `displayID`, `displayName`, `displayX`, `displayY`, `showInFullscreen` | Main Display, fullscreen off |
 | Surface and quota style | `islandAppearance`, `expandedQuotaStyle` | `liquidGlass`, `split`; the existing platform fallback still applies |
 | Collapsed bar | `compactIslandLayout`, `compactSingleTask`, `compactMetric` | Core's standard layout, `stage`, `remaining` |
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`; absent ring keys mean automatic |
@@ -21,6 +22,10 @@ Older previews cannot read schema 2. Keep a preference backup when downgrading; 
 | Notifications | `systemNotifications` | `false` |
 
 The layout is the same UTF-8 JSON Data saved by the Mac, represented as base64 in this JSON file. Its warnings remain inside the layout. An explicit empty layout stays empty. Present empty or unknown ring choices mean no ring; an absent key means automatic. A saved center position is distinct from an untouched position. The desktop pane name `collapsed` is stored as the Mac value `collapsedBar`.
+
+`displayID` follows Mac's main-display meaning: an absent, null or empty value, numeric `0`, and string `"0"` all select Main Display. A specified Windows display uses its device-interface path string; Mac's nonzero numeric display IDs do not identify Windows devices. `displayName` and physical desktop coordinates `displayX` / `displayY` provide a unique name-and-position fallback when an interface path changes. Disconnecting falls back to Main Display while retaining the saved choice for reconnection. `showInFullscreen` uses the Mac boolean key and defaults to false.
+
+The picker offers one Main Display choice plus individual devices. Old `displaySelection` values `automatic` and `primary` both mean Main Display. Schema-1 profiles retain their original values and bytes when read, then migrate only on a successful edit. New schema-2 profiles derive selection from `displayID` without writing a new selection key. Unrelated edits preserve an existing main-display representation, including a legacy alias retained in a schema-2 file. These fields never reconfigure collectors.
 
 Open at Login remains an OS registration managed by the startup service, as on Mac. It has no invented preference key. Appearance follows the system theme; `--theme` is a demo fixture. Credentials and browser sessions remain in their existing separate stores.
 
@@ -51,6 +56,8 @@ The optional Core file adapters and acknowledgement protection default to the ex
 ## Regression and demo checks
 
 `PreferencesPersistenceChecks` submits every public preference field to a real offline engine, saves it, and reads it through a fresh store. It also covers legacy migration, key presence, unknown values, independent writers, failed acknowledgements and damaged files. Existing session and settings assertions remain in place.
+
+`DisplaySelectionChecks` also launches a new test process to read specified displays, legacy aliases and each supported main-display representation. It checks schema-2 migration, exact key names, preserved bytes during reads, fallback metadata and fullscreen persistence.
 
 `PersistentSettingsChecks` edits real settings controls, checks two windows and disk-failure rollback, then starts a new desktop process with the isolated saved profile. It checks English/Chinese and light/dark captures. `PreferencesResponsivenessChecks` covers silent, slow and exiting engines, dispatcher callbacks, visible errors, one-shot requests and rejection of late replies.
 

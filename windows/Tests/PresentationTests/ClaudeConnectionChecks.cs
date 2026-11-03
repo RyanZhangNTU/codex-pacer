@@ -111,8 +111,8 @@ internal static class ClaudeConnectionChecks
             await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "signedOut" && options.IsEnabled);
             Check(await web.ReadAsync(CancellationToken.None) == null, "Successful sign-out must clear the actual private browser profile");
             window.CapturePreview(Path.Combine(output, "claude-signed-out-" + scenario + ".png"));
-            Check(Find<CheckBox>(window, "settings.claude.cloud_projects").IsEnabled && !Find<CheckBox>(window, "settings.claude.embedded").IsEnabled,
-                "Cloud source preferences remain available without enabling unfinished embedding controls");
+            Check(Find<CheckBox>(window, "settings.claude.cloud_projects").IsEnabled && Find<CheckBox>(window, "settings.claude.embedded").IsEnabled,
+                "Signing out keeps both cloud and implemented embedded-session preferences available");
             await window.NavigateAsync("general"); bool savedCloud = session.Current.ShowClaudeCloudProjects; cloud.IsChecked = !savedCloud; await Pump();
             Check(session.Current.ShowClaudeCloudProjects == savedCloud, "A detached cloud switch cannot change the active source");
             await window.NavigateAsync("claude"); options = Find<Button>(window, "settings.claude.account_options"); signIn = Find<Button>(window, "settings.claude.sign_in");

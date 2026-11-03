@@ -8,6 +8,17 @@ namespace CodexPacer.Windows;
 
 internal static class NativeWindowBounds
 {
+    internal static void MoveToDisplay(Window window, ScreenRectangle display)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero || !display.Valid || !GetWindowRect(hwnd, out var current)) return;
+        int width = Math.Max(1, Math.Min(current.Right - current.Left, display.Right - display.Left));
+        int height = Math.Max(1, Math.Min(current.Bottom - current.Top, display.Bottom - display.Top));
+        if (!SetWindowPos(hwnd, IntPtr.Zero, display.Left + (display.Right - display.Left - width) / 2, display.Top, width, height, 0x0004 | 0x0010))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+    internal static bool RaiseWithoutActivation(Window window)
+        => SetWindowPos(new WindowInteropHelper(window).Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
     internal static void Apply(Window window, MotionBounds bounds)
     {
         if (PresentationSource.FromVisual(window) is not HwndSource source || source.CompositionTarget == null)

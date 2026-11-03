@@ -49,7 +49,10 @@ internal sealed class WindowsDesktopApplications
         harnessScanned = true; nextHarnessScan = now + 60_000; return cachedHarness;
     }
     internal bool CanOpenHarness => Harness() != null;
-    internal Task<bool> OpenConversationAsync(EngineNavigationPlan plan) => conversations.OpenAsync(plan);
+    internal Task<bool> OpenConversationAsync(EngineNavigationPlan plan, Func<string, Task<bool>>? activatePreparedHost = null) =>
+        plan.Kind == "host" && activatePreparedHost != null
+            ? WindowsConversationApplication.IsHostPlan(plan) ? activatePreparedHost(plan.Context) : Task.FromResult(false)
+            : conversations.OpenAsync(plan);
     internal IReadOnlyList<DesktopApplication> Available()
     {
         var apps = Known.Where(value => registered(value.Family)).ToList();

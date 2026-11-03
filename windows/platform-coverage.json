@@ -755,7 +755,7 @@
     {
       "id": "embedded-sessions",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "两家独立开关，默认显示；隐藏父/子/保留完成/请求与提醒但不停止采集或确认已读",
@@ -771,9 +771,13 @@
         "native/Sources/PacerCore/ActivityTaskPresentation.swift",
         "native/Tests/PacerCoreTests/ActivityApplicationStateTests.swift",
         "native/Tests/PacerCoreTests/ActivityTaskPresentationTests.swift",
-        "windows/Tests/EngineTests/EnginePresentationTests.swift"
+        "windows/Tests/EngineTests/EnginePresentationTests.swift",
+        "windows/Tests/EngineTests/EngineEmbeddedSessionTests.swift",
+        "native/Tests/PacerCoreTests/EmbeddedSessionVisibilityTests.swift",
+        "windows/Tests/DesktopTests/PreferencesChecks.cs",
+        "windows/Tests/PresentationTests/ProviderHomeSettingsChecks.cs"
       ],
-      "previewNote": "Codex 与 Claude 的其他应用会话开关和过滤边界。",
+      "previewNote": "Windows synthetic Codex/Claude data verifies independent visible defaults, family/completion filtering, retained unread state and restoration by later CLI metadata. Shared request, notice and source isolation assertions still run. Sessions from installed third-party apps remain unverified.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -781,7 +785,7 @@
     {
       "id": "host-application-tracking",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "live registry/procStart 与 PID 创建身份、进程祖先、已知宿主缓存及显示名",
@@ -792,8 +796,15 @@
         "native/Sources/PacerIsland/HostApplicationTracking.swift",
         "native/Sources/PacerIsland/HostApplication.swift"
       ],
-      "evidence": [],
-      "previewNote": "同一任务必须能回到已确认的启动应用，包括应用退出后的恢复。",
+      "evidence": [
+        "windows/EngineSupport/ActivityHostServices.swift",
+        "windows/EngineSupport/WindowsHostApplication.swift",
+        "windows/Native/CWindowsSupport/HostApplication.c",
+        "native/Tests/PacerCoreTests/HostApplicationTrackingStateTests.swift",
+        "windows/Tests/EngineTests/WindowsHostApplicationTests.swift",
+        "windows/Tests/EngineTests/ActivityNavigationTests.swift"
+      ],
+      "previewNote": "Windows synthetic processes cover PID/creation identity, ancestry and reuse rejection. A private helper was captured, stopped and relaunched without its old arguments; changed file identity is rejected. Shared cache, throttle, sleep/wake and late-scan tests pass. Real host and packaged-app recovery remain unverified.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
@@ -908,7 +919,7 @@
     {
       "id": "display-selection",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "主显示器/指定显示器、名称与稳定设备身份、断开/重新连接/主屏变化",
@@ -918,16 +929,22 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsAppearancePane.swift"
       ],
-      "evidence": [],
-      "previewNote": "显示器选择使用 Windows 多显示器与 per-monitor DPI。",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
+      "evidence": [
+        "docs/windows-display-fullscreen.md",
+        "docs/performance/windows-display-fullscreen.json",
+        "windows/Tests/DesktopTests/DisplaySelectionChecks.cs",
+        "windows/Tests/PresentationTests/DisplayWindowChecks.cs",
+        "windows/Tests/PresentationTests/DisplaySettingsChecks.cs"
+      ],
+      "previewNote": "Single physical display at 150% DPI: selection controls, persistence/rollback and injected left/right topology move, fallback, reconnect and resolution changes passed. Shared layout tests cover 100/125/150/200% DPI and negative coordinates. Physical multi-monitor, hotplug and mixed-DPI acceptance remain.",
+      "note": "P3a implements event-driven display selection and work-area/DPI relocation. Synthetic topology is not physical multi-monitor acceptance.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
     },
     {
       "id": "fullscreen-policy",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "开关开启时在目标显示器全屏应用上方显示，关闭时隐藏并在退出全屏后恢复",
@@ -937,9 +954,14 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsAppearancePane.swift"
       ],
-      "evidence": [],
-      "previewNote": "全屏空间对等为全屏应用上方显示策略。",
-      "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
+      "evidence": [
+        "docs/windows-display-fullscreen.md",
+        "docs/performance/windows-display-fullscreen.json",
+        "windows/Tests/DesktopTests/FullscreenDisplayChecks.cs",
+        "windows/Tests/PresentationTests/DisplayWindowChecks.cs"
+      ],
+      "previewNote": "Independent synthetic borderless fullscreen app: off/on, sustained hidden detection, all-surface ordering, nonactivation, outside-island hit testing, minimize/exit restoration and manual-hide retention passed under Classic/Liquid Glass preferences. Injected topology verifies target-screen isolation. Real applications, physical multi-monitor and exclusive/special-desktop behavior remain unverified.",
+      "note": "P3a separates fullscreen presence from known opaque occlusion and reuses the 250 ms trailing throttle. Full formal acceptance remains pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
     },
