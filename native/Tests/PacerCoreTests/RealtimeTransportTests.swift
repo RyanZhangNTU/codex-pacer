@@ -109,10 +109,10 @@ final class RealtimeTransportTests: XCTestCase {
         let reschedule = "if request_logs:request_logs.reschedule(now,interval,flush)"
         let stamp = "stamp=(bool(session and session.ready),len(session.attached) if session else 0)"
         for marker in [globals, settings, reschedule, stamp] { XCTAssertTrue(main.contains(marker)) }
-        main = main.replacingOccurrences(of: globals, with: globals + ",fixture_clock,fixture_check_after_loop")
+        main = main.replacingOccurrences(of: globals, with: globals + ",fixture_clock,fixture_check_after_loop,now")
         main = main.replacingOccurrences(of: settings, with:
             "if isinstance(value,dict) and value.get('kind')=='testClock':\n" +
-            "            fixture_clock=value['at'];fixture_check_after_loop=True;continue\n        " + settings)
+            "            fixture_clock=value['at'];now=fixture_clock;fixture_check_after_loop=True;continue\n        " + settings)
         main = main.replacingOccurrences(of: reschedule, with: reschedule +
             "\n                if interval==5:fixture_pending_gate.set()")
         main = main.replacingOccurrences(of: stamp, with:
