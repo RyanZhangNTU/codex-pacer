@@ -340,7 +340,7 @@ actor EngineRuntime {
          claudeServices: ClaudeQuotaServices? = nil,
          cloudServices: ClaudeCloudServices? = nil,
          navigationServices: ActivityNavigationServices? = nil,
-         navigationClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         navigationClock: @escaping @Sendable () -> TimeInterval = { ActivityNavigationState.monotonicNow },
          navigationErrorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration,
          activityHostServices: ActivityHostServices = .live,
          allowsLiveClaudeWeb: Bool = false,
@@ -639,9 +639,9 @@ actor EngineRuntime {
             if lifecycle.phase == .cold {
                 let start = lifecycle.start()
                 await performLifecycle(start)
+                await refresh(discover: true)
             } else { await performLifecycle(plan) }
             await updateSourceWatches()
-            await refresh(discover: true)
             startMaintenance()
         case "prepareForSleep":
             await prepareForSleep()
@@ -804,7 +804,10 @@ actor EngineRuntime {
         activityDisplayTask = nil; activityDisplayDeadline = nil
         if let codex { codexHome = codex }
         if let claude { claudeHome = claude }
-        if let organization = parameters.claudeOrganization { claudeOrganization = organization.lowercased() }
+        if let organization = parameters.claudeOrganization {
+            if organization.lowercased() != claudeOrganization { claudeQuotaState = nil; cloudState = nil }
+            claudeOrganization = organization.lowercased()
+        }
         if let deepseek { deepseekHome = deepseek }
         if let executable = parameters.codexExecutable { codexExecutable = executable }
         moduleSettings = updatedSettings; installation = detected
@@ -837,6 +840,7 @@ actor EngineRuntime {
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
         let plan = lifecycle.settings(lifecycleConfiguration)
         for provider in plan.changedProviders {
+            resetSourceState(provider)
             navigationState.cancel(provider: provider)
             navigationOpens = navigationOpens.filter { $0.value.activity.provider != provider }
             hostTracking.cancel(provider: provider, clearApplications: true)
@@ -846,21 +850,25 @@ actor EngineRuntime {
 
     private var lifecycleConfiguration: ApplicationLifecycleCoordinator.Configuration {
         .init(enabled: enabled, sources: [.codex: codexHome.path + "|" + codexExecutable,
-            .claude: claudeHome.path + "|" + claudeOrganization,
-            .deepseek: deepseekHome.path + "|" + deepseekSettings.selection.rawValue])
+            .claude: claudeHome.path,
+            .deepseek: deepseekHome.path])
     }
 
     private func bindQuotaMonitor() async {
         guard active else { return }
         codexHistory.bind(home: codexHome, customPath: codexExecutable)
-        await quotaMonitor?.configure(home: codexHome, customPath: codexExecutable,
-            enabled: !demo && enabled.contains(.codex), context: lifecycle.version(.codex))
         claudeHistory.bind(home: claudeHome, customPath: claudeOrganization)
-        await claudeQuotaMonitor?.configure(home: claudeHome, organization: claudeOrganization,
-            enabled: usesClaudeWeb && enabled.contains(.claude) && !claudeWebPaused, context: lifecycle.version(.claude))
-        await bindClaudeCloudMonitor()
-        await bindDesktopMonitor()
-        await bindBalanceMonitor()
+        let codex = quotaMonitor, claude = claudeQuotaMonitor
+        let codexHome = codexHome, path = codexExecutable, claudeHome = claudeHome, organization = claudeOrganization
+        let codexEnabled = !demo && enabled.contains(.codex), claudeEnabled = usesClaudeWeb && enabled.contains(.claude) && !claudeWebPaused
+        let codexVersion = lifecycle.version(.codex), claudeVersion = lifecycle.version(.claude)
+        await ApplicationLifecycleCoordinator.cleanup([
+            .codexQuota: { await codex?.configure(home: codexHome, customPath: path, enabled: codexEnabled, context: codexVersion) },
+            .claudeQuota: { await claude?.configure(home: claudeHome, organization: organization, enabled: claudeEnabled, context: claudeVersion) },
+            .cloud: { [weak self] in await self?.bindClaudeCloudMonitor() },
+            .realtime: { [weak self] in await self?.bindDesktopMonitor() },
+            .balance: { [weak self] in await self?.bindBalanceMonitor() }
+        ])
     }
 
     private func resetClaudeLocalSource() {
@@ -982,6 +990,7 @@ actor EngineRuntime {
                 for provider in enabled.subtracting(next) { inbox.remove(provider: provider) }
                 enabled = next; projectionReady = false
                 let plan = lifecycle.settings(lifecycleConfiguration)
+                for provider in plan.changedProviders { resetSourceState(provider) }
                 await bindQuotaMonitor()
                 await performLifecycle(plan)
             }
@@ -1016,7 +1025,9 @@ actor EngineRuntime {
                 switch provider {
                 case .codex: await quotaMonitor?.refreshIfDue(expanded: expanded, force: force)
                 case .claude: _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded, force: force)
-                case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, force: force)
+                // Mac's start/wake is an explicit request, without bypassing a
+                // signed-out/challenge or failed-disconnect connection state.
+                case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, requested: force)
                 }
             case .codexActivity: await refresh(discover: true, refreshActivityMonitors: false)
             case .remoteActivity: lastRemoteDiscovery = now() // Transport activation remains P2.
@@ -1043,14 +1054,35 @@ actor EngineRuntime {
         navigationOpens = navigationOpens.filter { $0.value.activity.provider != provider }
         hostTracking.cancel(provider: provider, clearApplications: true)
         ownedWork.cancel(provider: provider, kinds: [.hostScan, .hostRetry])
+        if enabled.contains(provider) {
+            switch provider {
+            case .codex: await quotaMonitor?.refreshIfDue(expanded: expanded, force: true)
+            case .claude: _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded, force: true)
+            case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: expanded, requested: true)
+            }
+        }
+        if provider != .codex { await bindActivityMonitor(provider) }
+    }
+
+    private func resetSourceState(_ provider: AgentProvider) {
+        inbox.remove(provider: provider)
+        activities.removeAll { $0.provider == provider }
+        requests.removeAll { $0.provider == provider }
+        loggedActivities.removeAll { $0.provider == provider }
+        loggedRequests.removeAll { $0.provider == provider }
+        loggedSources.removeAll { $0.provider == provider.rawValue }
         switch provider {
         case .codex:
             desktopState = nil; pendingDesktopEndings = [:]
             codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
-        case .claude: resetClaudeLocalSource(); await bindActivityMonitor(.claude)
+            codexQuotaState = nil; codexQuota = nil; codexQuotaFailed = false; codexQuotaRefreshing = false
+            activityState.codexAttention = .init()
+        case .claude:
+            resetClaudeLocalSource(); claudeQuotaState = nil; cloudState = nil
+            claudeQuotaAttention = .init(); activityState.claudeAttention = .init()
         case .deepseek:
             deepseekLocal = LocalActivitySnapshot(); deepseekUsage = .init(); deepseekNoticePolicy = .init()
-            await bindActivityMonitor(.deepseek)
+            balanceState = nil; walletSource = nil; activityState.deepseekAttention = .init()
         }
         activityState.clearFirstOutput()
     }

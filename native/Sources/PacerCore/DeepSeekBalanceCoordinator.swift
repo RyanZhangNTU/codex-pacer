@@ -94,7 +94,7 @@ public actor DeepSeekBalanceCoordinator {
             history = .init(); historyAvailable = true; await persistHistory()
             guard revision == current else { return }
         }
-        if let seed {
+        if let seed, seed.source == source, seed.mode == source.mode(detected: next) {
             history = seed.history
             lastAttempt = seed.lastAttempt; failures = seed.failureCount; successes = seed.successCount
             balance = seed.balance; error = seed.error

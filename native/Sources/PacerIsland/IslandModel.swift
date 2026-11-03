@@ -44,8 +44,7 @@ final class IslandModel: ObservableObject {
     @Published var navigationError: String?
     var navigationErrorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration
     private var navigation = ActivityNavigationState()
-    private var navigationErrorExpiry: Task<Void, Never>? { ownedWork.task(.init(.navigationError)) }
-    var navigationClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var navigationClock: () -> TimeInterval = { ActivityNavigationState.monotonicNow }
     private var claudeCloudNavigationScope: String?
     @Published private(set) var hostApplications: [AgentProvider: [String: HostApplication]] = [:]
     private var hostTracking = HostApplicationTrackingState<HostApplication>()
@@ -553,7 +552,10 @@ final class IslandModel: ObservableObject {
     private func cancelClaudeRemoteSetup() {
         claudeDiscoveryTask?.cancel(); cancelOwnedWork(.init(.discovery, provider: .claude))
         claudeRemoteSetupTasks.values.forEach { $0.cancel() }
-        ownedWork.cancel(provider: .claude, kinds: [.setup])
+        for targetID in claudeRemoteSetupTasks.keys {
+            cancelOwnedWork(.init(.setup, provider: .claude, identifier: targetID))
+            cancelOwnedWork(.init(.setup, provider: .claude, identifier: "auto:" + targetID))
+        }
         claudeRemoteSetupTasks.removeAll()
         claudeRemoteSetupIDs.removeAll()
         configuringClaudeHosts.removeAll()
@@ -907,11 +909,14 @@ final class IslandModel: ObservableObject {
         if !demo, !sleeping, !stopped {
             logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: value)
             let generation = sourceGeneration
-            Task { [weak self] in
-                guard let self, generation == self.sourceGeneration, !self.sleeping, !self.stopped else { return }
+            launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
+                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
                 await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+                guard self.lifecycle.owns(ticket) else { return }
                 await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+                guard self.lifecycle.owns(ticket) else { return }
                 await self.claudeCloudCoordinator?.setExpanded(self.expanded)
+                guard self.lifecycle.owns(ticket) else { return }
                 await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
             }
             if value { refreshActivity(metricsOnly: true) }
@@ -979,7 +984,7 @@ final class IslandModel: ObservableObject {
     private func publishNavigationFailure() {
         guard let failure = navigation.failure else { return }
         navigationError = failure.message; setExpanded(true)
-        let delay = max(0, failure.deadline - navigationClock())
+        let delay = max(0.001, failure.deadline - navigationClock() + 0.001)
         launchOwnedWork(.init(.navigationError)) { [weak self] _ in
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
             guard let self, self.navigation.expireFailure(failure.id, now: self.navigationClock()) else { return }
@@ -1355,9 +1360,10 @@ final class IslandModel: ObservableObject {
     }
     func refreshTaskSources() {
         refreshActivity()
-        Task { [weak self] in
-            guard let self else { return }
+        launchOwnedWork(.init(.discovery, identifier: "manual")) { [weak self] ticket in
+            guard let self, self.lifecycle.owns(ticket) else { return }
             await self.realtimeMonitor.invalidateRemoteControlCatalog()
+            guard self.lifecycle.owns(ticket) else { return }
             self.refreshRemote()
             await self.claudeCloudCoordinator?.refresh()
         }
@@ -1517,13 +1523,16 @@ final class IslandModel: ObservableObject {
         clearSourceState()
         let generation = sourceGeneration
         launchOwnedWork(.init(.reset, provider: .codex)) { [weak self, reader] _ in
-            guard let self, generation == self.sourceGeneration else { return }
+            guard let self else {
+                await ApplicationLifecycleCoordinator.cleanup([.codexQuota: { await previous?.stop() }]); return
+            }
+            let current = generation == self.sourceGeneration && !self.sleeping && !self.stopped && !Task.isCancelled
             let deadline = ShutdownDeadline()
             let realtime = self.realtimeMonitor
             await ApplicationLifecycleCoordinator.cleanup([
                 .codexQuota: { await previous?.stop() },
-                .realtime: { await realtime.shutdown(deadline: deadline) },
-                .reader: { await reader.reset() }
+                .realtime: { if current { await realtime.shutdown(deadline: deadline) } },
+                .reader: { if current { await reader.reset() } }
             ], deadline: deadline)
             guard generation == self.sourceGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             self.refreshCodexQuota(); self.refreshActivity(); self.refreshRemote()
@@ -1551,11 +1560,14 @@ final class IslandModel: ObservableObject {
         clearSourceState()
         let generation = claudeGeneration
         launchOwnedWork(.init(.reset, provider: .claude)) { [weak self] _ in
-            guard let self, generation == self.claudeGeneration else { return }
+            guard let self else {
+                await ApplicationLifecycleCoordinator.cleanup([.claudeQuota: { await previous?.stop() }]); return
+            }
+            let current = generation == self.claudeGeneration && !self.sleeping && !self.stopped && !Task.isCancelled
             let deadline = ShutdownDeadline()
             let monitor = self.claudeMonitor
             await ApplicationLifecycleCoordinator.cleanup([
-                .claudeQuota: { await previous?.stop() }, .claudeActivity: { await monitor.shutdown(deadline: deadline) }
+                .claudeQuota: { await previous?.stop() }, .claudeActivity: { if current { await monitor.shutdown(deadline: deadline) } }
             ], deadline: deadline)
             guard generation == self.claudeGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             self.refreshClaudeQuota(); self.startClaudeActivity()

@@ -194,4 +194,32 @@ final class SharedQuotaCoordinationTests: XCTestCase {
             await coordinator.stop()
         }
     }
+    func testBalanceReplacementRetainsTheSeededNumericHistoryAcrossSleep() async {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.connectionFailed },
+            readWeb: { _ in .init(total: 42, capturedAt: date, source: .web) }, detect: { _, _ in .account })
+        let first = DeepSeekBalanceCoordinator(services: services, now: { date }, output: { _ in })
+        await first.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
+        _ = await first.refreshIfDue(active: true, force: true)
+        await first.refreshCompletion?.value
+        let seed = await first.currentState()
+        XCTAssertFalse(seed.history.samples.isEmpty)
+        await first.stop()
+        let replacement = DeepSeekBalanceCoordinator(services: services, seed: seed, now: { date }, output: { _ in })
+        await replacement.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 2)
+        let resumed = await replacement.currentState()
+        XCTAssertEqual(resumed.history, seed.history)
+        XCTAssertEqual(resumed.balance, seed.balance)
+        XCTAssertEqual(resumed.lastAttempt, seed.lastAttempt)
+        XCTAssertEqual(resumed.successCount, seed.successCount)
+        XCTAssertNotEqual(resumed.token, seed.token)
+        await replacement.stop()
+        let changedBilling = DeepSeekBalanceCoordinator(services: services, seed: seed, now: { date }, output: { _ in })
+        await changedBilling.configure(home: home, source: .apiKey, enabled: true, recentProvider: nil, context: 3)
+        let changed = await changedBilling.currentState()
+        XCTAssertTrue(changed.history.samples.isEmpty)
+        XCTAssertNil(changed.balance, "A previous web reading cannot seed a different billing source")
+        await changedBilling.stop()
+    }
 }

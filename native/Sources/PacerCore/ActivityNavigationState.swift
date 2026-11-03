@@ -96,6 +96,10 @@ public struct ActivityNavigationOperation: Sendable {
 /// Hosts run the opener and schedule the published monotonic expiry. Core
 /// owns single-flight, captured acknowledgments and replacement error tokens.
 public struct ActivityNavigationState: Sendable {
+    /// Use the same high-resolution monotonic domain as deadline scheduling.
+    /// ProcessInfo.systemUptime is quantized on Windows and can still precede
+    /// a short error deadline when its timer has already fired.
+    public static var monotonicNow: TimeInterval { Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000 }
     public struct Failure: Equatable, Sendable {
         public let id: UUID
         public let message: String

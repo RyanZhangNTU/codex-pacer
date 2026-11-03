@@ -13,7 +13,14 @@
         "native/Sources/PacerCore/ActivityTaskPresentation.swift",
         "native/Tests/PacerCoreTests/ActivityApplicationStateTests.swift",
         "native/Tests/PacerCoreTests/ActivityTaskPresentationTests.swift",
-        "windows/Tests/EngineTests/EnginePresentationTests.swift"
+        "windows/Tests/EngineTests/EnginePresentationTests.swift",
+        "native/Sources/PacerCore/ActivityNavigationState.swift",
+        "native/Sources/PacerCore/HostApplicationTrackingState.swift",
+        "native/Sources/PacerCore/ApplicationLifecycleCoordinator.swift",
+        "native/Tests/PacerCoreTests/ActivityNavigationStateTests.swift",
+        "native/Tests/PacerCoreTests/HostApplicationTrackingStateTests.swift",
+        "native/Tests/PacerCoreTests/ApplicationLifecycleCoordinatorTests.swift",
+        "windows/Tests/EngineTests/EngineLifecycleTests.swift"
       ],
       "priority": "P1",
       "previewStatus": "partial",
@@ -24,7 +31,7 @@
         "C 最终两端编译整个 PacerCore；删除源/测试挑选清单，合同拒绝系统模块，平台实现移出核心"
       ],
       "previewNote": "One source for provider identity, lifecycle, rates, quota and cost calculations; Windows shared suites pass. A deterministic shared concurrency check covers stderr read/append ordering; the original Mac early-exit, recovery and redaction assertions remain.",
-      "note": "B5a shares activity application state, task rows, grouping caches, TTFT and display deadlines. Lifecycle and source/test selection cleanup remain in B5c; installed-host acceptance remains pending.",
+      "note": "B5a/B5b/B5c share activity state, task and connection projections, quota/Cloud/balance coordination, captured navigation, host tracking and lifecycle. All Core files compile on both hosts. The C-stage closure after B5c removes the temporary source/test inventories; installed-host acceptance remains pending.",
       "cleanupOwner": "B5c",
       "deferredEvidence": [
         "native/Tests/PacerCoreTests/ProcessErrorCollectorTests.swift"

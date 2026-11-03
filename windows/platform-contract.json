@@ -37,29 +37,13 @@
   "engineTransitions": [
     {
       "owner": "B5c",
-      "files": [
-        "windows/EngineSupport/PacerEngine.swift",
-        "windows/EngineSupport/EngineActivityNavigation.swift",
-        "windows/EngineSupport/WindowsActivityNavigation.swift"
-      ],
-      "reason": "Unify lifecycle, captured navigation acknowledgments and host-tracking orchestration; keep Windows process/window IO in the host."
-    },
-    {
-      "owner": "C2",
-      "files": [
-        "windows/shared-core.json",
-        "Package.swift"
-      ],
-      "reason": "Wire the WPF shell to this engine protocol; do not ship the WPF or animation bridge targets in C1."
-    },
-    {
-      "owner": "B5c",
+      "phase": "end-of-C",
       "files": [
         "Package.swift",
         "windows/shared-core.json",
         "windows/platform-coverage.json"
       ],
-      "reason": "At the end of C after B5c, compile the whole Core and remove per-platform source/test selection, shared-core.json and coverage remainingCoreSources/remainingCoreTests. P2 only wires remote features."
+      "reason": "C-stage closure after B5c: both hosts now compile the whole Core. Remove the temporary root Package source/test selection, shared-core.json and coverage remainingCoreSources/remainingCoreTests before feature PRs. P2 only wires remote features."
     }
   ],
   "nativeTargets": {

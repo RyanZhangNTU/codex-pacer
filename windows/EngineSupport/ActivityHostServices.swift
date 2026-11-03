@@ -4,6 +4,7 @@ struct ActivityHostApplication: Equatable, Sendable {
     let identity: ProcessInstance
     let provider: AgentProvider?
     let name: String
+    let home: URL
     var isClaudeDesktop: Bool { provider == .claude }
 }
 
@@ -25,7 +26,7 @@ struct ActivityHostServices: Sendable {
                       let row = WindowsProcessOwnership.inspect(owner.identity.pid, started: owner.identity.started),
                       row.identity == owner.identity else { continue }
                 result[session] = .init(identity: owner.identity, provider: owner.provider,
-                    name: owner.provider?.displayName ?? row.executable.deletingPathExtension().lastPathComponent)
+                    name: owner.provider?.displayName ?? row.executable.deletingPathExtension().lastPathComponent, home: input.home)
             }
             return result
         }.value

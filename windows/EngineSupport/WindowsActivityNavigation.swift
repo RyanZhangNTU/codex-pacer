@@ -36,7 +36,7 @@ enum WindowsActivityNavigation {
         if let file = input.transcript {
             currentHost = try self.currentHost(file: file, home: input.home, writers: writers, host: host)
         }
-        if currentHost == nil, let cached = input.cachedHost,
+        if currentHost == nil, input.transcript != nil, let cached = input.cachedHost, cached.home == input.home,
            WindowsProcessOwnership.inspect(cached.identity.pid, started: cached.identity.started)?.identity == cached.identity,
            WindowsHostWindow.available(pid: cached.identity.pid, started: cached.identity.started) {
             currentHost = .init(identity: cached.identity, provider: cached.provider)

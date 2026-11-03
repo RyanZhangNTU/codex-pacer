@@ -87,4 +87,22 @@ final class EngineLifecycleTests: XCTestCase {
         await runtime.refresh(discover: true)
         XCTAssertEqual(frames.snapshot?.sequence, stopped)
     }
+    func testAccountAndBillingSettingsKeepLocalCompletionOwnership() async throws {
+        let frames = LifecycleFrames(), date = Date(timeIntervalSince1970: 1_800_000_000)
+        let runtime = EngineRuntime(demo: true, now: { date }, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["claude", "deepseek"]]))
+        _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
+        func localUnread() -> Set<String> {
+            Set(frames.snapshot?.tasks.filter { $0.unread && $0.sourceID == nil }.map(\.id) ?? [])
+        }
+        let unread = localUnread()
+        XCTAssertFalse(unread.isEmpty)
+        _ = await runtime.receive(try command("configure", ["claudeOrganization": "11111111-1111-4111-8111-111111111111"]))
+        XCTAssertEqual(localUnread(), unread, "An organization change does not replace the local activity directory")
+        _ = await runtime.receive(try command("configure", ["deepseekSettings": [
+            "mode": "balance", "ringPeriod": "day", "speedSource": "local", "showsTurnCost": true, "balanceSource": "web"
+        ]]))
+        XCTAssertEqual(localUnread(), unread, "A wallet source change does not clear local completion cards")
+        await runtime.stop()
+    }
 }

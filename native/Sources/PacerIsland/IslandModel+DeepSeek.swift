@@ -418,7 +418,7 @@ extension IslandModel {
         clearSourceState()
         let generation = deepseekGeneration
         launchOwnedWork(.init(.reset, provider: .deepseek)) { [weak self] _ in
-            guard let self else { return }
+            guard let self, generation == self.deepseekGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
             let monitor = self.deepseekMonitor
             await ApplicationLifecycleCoordinator.cleanup([.deepseekActivity: { await monitor.shutdown() }])
             guard generation == self.deepseekGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
