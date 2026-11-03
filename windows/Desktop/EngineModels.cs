@@ -17,7 +17,7 @@ internal sealed record EngineSnapshot(
 internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
 internal sealed record EngineNavigationFailure(string Id, string Message);
 internal sealed record EngineActivityLink(string ActivityID, string Provider, string Context);
-internal sealed record EngineNavigationPlan(string Context, string Provider, string Kind, string? Url, string? WebUrl, uint? Pid, ulong? Started);
+internal sealed record EngineNavigationPlan(string Context, string Provider, string Kind, string? Url, string? WebUrl, uint? Pid, ulong? Started, string? Terminal = null);
 internal sealed record ClaudeConnection(string Context, bool WebAvailable, bool Refreshing, bool Paused, bool CanChooseOrganization, string State, string? Message);
 internal sealed record ClaudeCloudConnection(string Context, bool Enabled, bool WebAvailable);
 internal sealed record ClaudeAccountReport(string Context, string SelectedOrganization, IReadOnlyList<ClaudeOrganization> Organizations);

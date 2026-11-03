@@ -801,7 +801,7 @@
     {
       "id": "ssh-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "发现 Codex/Claude 已用 hosts、端口/身份文件与路由去重、既有非交互访问/host keys",
@@ -812,8 +812,14 @@
         "docs/guide.md",
         "native/Sources/PacerIsland/SettingsConnectionsPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Windows OpenSSH 与真实 TTY 对应 Mac SSH 功能。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsSSHTests.swift",
+        "windows/Tests/Fixtures/SSH/Program.cs",
+        "windows/Tests/DesktopTests/SshTerminalChecks.cs",
+        "windows/Tests/PresentationTests/SettingsPresentationChecks.cs",
+        "docs/windows-ssh.md"
+      ],
+      "previewNote": "Windows synthetic SSH executable verified saved-route discovery/deduplication, bounded command transport, ordered stdin/EOF, runtime approval/reply/endings, reconnect, disable/reopen and terminal argv/fallback. Real noninteractive remote access, real TTY resume and remote sleep/reconnect await user acceptance. Claude remote hook setup is a separate PR.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []

@@ -55,6 +55,8 @@ The earlier cold `0x80040154` was a test-environment issue: a Codex child saw on
 
 ## Local acceptance
 
+[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. Remote hooks and real remote acceptance are tracked separately.
+
 Use demo data for screenshots and interaction checks:
 
 ```powershell

@@ -20,10 +20,11 @@ public actor RealtimeActivityMonitor {
         let name: String?
         let alias: String?
         let home: String
+        var target: RemoteActivityTarget? = nil
         var desktopIPC = false
         var refreshPolicy = ActivityRefreshPolicy.collapsed
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.id == rhs.id && lhs.name == rhs.name && lhs.alias == rhs.alias && lhs.home == rhs.home && lhs.desktopIPC == rhs.desktopIPC
+            lhs.id == rhs.id && lhs.name == rhs.name && lhs.alias == rhs.alias && lhs.home == rhs.home && lhs.desktopIPC == rhs.desktopIPC && lhs.target == rhs.target
         }
     }
     private struct Connection {
@@ -139,9 +140,12 @@ public actor RealtimeActivityMonitor {
         var sources: [Source] = []
         localUnavailable = !(services.controlAvailable(home) || services.desktopAvailable(home))
         if !localUnavailable && !local.desktopIPC { sources.append(local) }
-        let targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : []
+        let targets: [RemoteActivityTarget]
+        if includeSSH, let discover = services.sshTargets { targets = await discover(home) }
+        else { targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : [] }
+        guard generation == startGeneration else { return }
         if includeSSH && useSSHFallback {
-            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, refreshPolicy: refreshPolicy) }
+            sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, target: $0, refreshPolicy: refreshPolicy) }
         }
         let controls = includeRemoteControl ? catalog ?? RemoteControlActivityTarget.configured(home: home) : []
         remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || catalog != nil)
@@ -349,8 +353,13 @@ public actor RealtimeActivityMonitor {
         if let alias = source.alias {
             executable = services.ssh
             let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(program)\").decode())' \(encodedHome) ssh-lifetime \(source.refreshPolicy.interval)"
-            arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
-                "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
+            if let build = services.sshArguments, let target = source.target {
+                guard let route = build(target) else { failed[source.id] = source; return }
+                arguments = route + [command]
+            } else {
+                arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
+                    "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
+            }
         } else {
             executable = services.python
             arguments = ["-u", "-c", source.desktopIPC ? DesktopEventProbe.script : RealtimeProbe.script,

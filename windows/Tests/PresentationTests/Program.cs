@@ -84,6 +84,7 @@ internal static class Program
                             foreach (string provider in new[] { "claude", "deepseek" }) await ProviderHomeSettingsChecks.Run(provider, language, dark, output);
                             await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output);
                         }
+                        if (group == "ssh") await SettingsPresentationChecks.Run(language, dark, output);
                         if (All("collapsed")) foreach (bool motion in new[] { false, true }) await CollapsedLayoutChecks.Run(language, dark, motion, output);
                         if (All("quota")) { await QuotaHistoryChecks.Run(language, dark, output); await ProviderHistoryChecks.Run(language, dark, output); }
                         if (All("connection"))

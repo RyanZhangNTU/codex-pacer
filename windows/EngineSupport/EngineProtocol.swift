@@ -32,6 +32,7 @@ struct EngineCommand: Decodable {
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
         var showClaudeCloudProjects: Bool?
+        var monitorSSH: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
         var retentionMinutes: Int?

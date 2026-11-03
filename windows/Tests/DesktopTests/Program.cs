@@ -14,6 +14,8 @@ internal static class Program
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
+        if (args is ["--ssh-only"])
+        { SshTerminalChecks.Run(); Console.WriteLine("PASS SSH terminal argv, fallback and preference persistence"); return 0; }
         if (args is ["--installation-only"])
         { InstallationServiceChecks.Run(); Console.WriteLine("PASS installation identity, repair, ownership, data retention, failure rollback and notification cleanup"); return 0; }
         if (args.Contains("--hold")) { await Task.Delay(Timeout.Infinite); return 0; }
@@ -70,6 +72,7 @@ internal static class Program
         });
 
         await Test("provider-pinned conversation links, matched cloud fallback and existing host plans", ConversationApplicationChecks.Run);
+        await Test("SSH terminal argv, console fallback and shared preference key", () => { SshTerminalChecks.Run(); return Task.CompletedTask; });
         await Test("real engine: Claude/Codex/DeepSeek discovery, reads and write notifications beyond MAX_PATH", () => LongPathChecks.Run(engine));
 
         await Test("real Claude file notification: first reply after large Desktop metadata", async () =>
