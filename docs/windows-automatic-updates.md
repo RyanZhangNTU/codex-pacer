@@ -2,7 +2,7 @@
 
 Windows uses WinSparkle 0.9.4 for its update window, download confirmation and package-signature check. The host verifies the feed before WinSparkle receives it and owns scheduling, proxy lifetime and installation handoff. The [WinSparkle C API](https://winsparkle.org/c-api/setup-lifecycle/) provides callbacks and a file-backed configuration interface; its [installer callback](https://winsparkle.org/c-api/callbacks/) lets Pacer finish normal shutdown before an installer starts.
 
-Production Windows hosting, the Ed25519 public key and the Authenticode signer pin are unconfigured. The preview shows that status and makes no production request. Provisioning them needs a separate authorized change. Mac's feed, trust keys, Sparkle parameters, version source and update implementation are untouched.
+Production Windows hosting and the Ed25519 public key are unconfigured. The preview shows that status and makes no production request. Provisioning them needs a separate authorized change. The optional Authenticode signer pin depends on the signing scheme selected later. Mac's feed, trust keys, Sparkle parameters, version source and update implementation are untouched.
 
 ## Scheduling and UI
 
@@ -28,13 +28,15 @@ Download, TLS and signature failures return HTTP 502 with a fixed error body and
 
 All three WinSparkle configuration callbacks use a checked, bounded versioned file; none falls back to HKCU. Update files reject reparse points and hard links. Ownership must match the current user, or Administrators when the current token is elevated with that group enabled. Future state versions are preserved.
 
-The host copies a verified package and the self-contained maintenance executable into its owned update directory. Production additionally requires cached Windows Authenticode trust and an exact SHA-256 signer-certificate pin. The installer product name, QA identity and file build must match the signed offer. The unsigned exception is limited to an explicitly scoped, installed demo QA application using a loopback HTTPS feed and its isolated test key.
+The host copies a verified package and the self-contained maintenance executable into its owned update directory. **签名者校验随签名方案开启。** When the channel configures `SignerSHA256`, both sides of the handoff additionally require cached Windows Authenticode trust and that exact signer-certificate SHA-256. An absent pin permits an unsigned preview installer. Empty or malformed pins are rejected; they cannot select unsigned mode. Ed25519 and SHA-256 remain mandatory at both handoff boundaries in either mode.
+
+The installer product name, QA identity and file build must still match the signed offer. Test-only TLS trust and build overrides remain limited to an explicitly scoped, installed demo QA application using a loopback HTTPS feed and its isolated test key. A test channel can also provide `signerSHA256` to exercise the additional signer requirement.
 
 The helper waits for the original process identity to exit before re-verifying and starting the installer. Normal app shutdown stops collectors, browsers and owned processes and releases the instance lock first. Installer argv are separate arguments and preserve spaces and Chinese paths. Cancellation, failed verification or installer failure relaunches the existing application and reports failure. Failure to save the result cannot prevent relaunch. A still-running installer is never killed or overlapped with a relaunch. If damaged application files prevent relaunch, repair is required.
 
 ## Development checks and integration acceptance
 
-`WindowsUpdateChecks` covers signed/tampered feeds and packages, architecture/OS/build selection, TLS certificate pins, rejection of redirects, operation tokens, idle closure, stale callbacks, daily/manual scheduling, asynchronous timeout, preference rollback, shutdown/install ordering, cancellation recovery and once-only notes. Its HTTPS fixture creates only a temporary test key; no certificate is installed in a trust store. The native smoke check loads the pinned DLL and validates isolated public keys without starting update UI.
+`WindowsUpdateChecks` covers signed/tampered feeds and packages, both optional-signer modes, architecture/OS/build selection, TLS certificate pins, rejection of redirects, operation tokens, idle closure, stale callbacks, daily/manual scheduling, asynchronous timeout, preference rollback, shutdown/install ordering, cancellation recovery and once-only notes. Both signer modes reject a wrong content hash, Ed25519 signature or key. Its HTTPS fixture creates only a temporary test key; no certificate is installed in a trust store. The native smoke check loads the pinned DLL and validates isolated public keys without starting update UI.
 
 Run the targeted checks after a Debug build:
 

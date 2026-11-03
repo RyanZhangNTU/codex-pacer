@@ -96,7 +96,7 @@ internal static class WindowsUpdateChecks
             Reject(() => UpdateCatalog.Parse(feed, channel with { PublicKey = new SigningFixture().Public }, "x64", Current, Windows, "en"), "A different isolated key must fail");
             Reject(() => UpdateCatalog.Parse(Encoding.UTF8.GetBytes("<rss/>"), channel, "x64", Current, Windows, "en"), "Unsigned feeds must fail");
             Reject(() => UpdateCatalog.Parse(key.Feed(Item(key, download: "https://not-loopback.example/setup.exe")), channel, "x64", Current, Windows, "en"), "QA cannot contact an external host");
-            Reject(() => (channel with { TestScope = null }).Validate(), "Production requires HTTPS and a separate signer pin");
+            Reject(() => (channel with { TestScope = null }).Validate(), "Production cannot inherit a QA-only TLS certificate pin");
             Reject(() => UpdateCatalog.Parse(new byte[UpdateCatalog.FeedLimit + 1], channel, "x64", Current, Windows, "en"), "Feeds are bounded before parsing");
             var duplicate = Item(key); duplicate.Add(new XElement(UpdateCatalog.Sparkle + "version", "1.2.3.7"));
             Reject(() => UpdateCatalog.Parse(key.Feed(duplicate), channel, "x64", Current, Windows, "en"), "Duplicate version metadata must fail");
@@ -133,6 +133,7 @@ internal static class WindowsUpdateChecks
             await LifetimeChecks(channel, feed, root);
             await HttpsChecks(key, channel);
             await HandoffChecks();
+            SignerPolicyChecks(key, channel, root);
             StateChecks(root);
             string unsigned = Path.Combine(root, "unsigned.exe"); File.WriteAllBytes(unsigned, Payload);
             Check(!UpdateAuthenticode.Verify(unsigned, new string('0', 64)), "Production rejects unsigned installers without installing test trust");
@@ -145,6 +146,49 @@ internal static class WindowsUpdateChecks
             Console.WriteLine("PASS Windows updates: isolated signed feed/package, architecture/OS filtering, private loopback, async deadlines, rollback, shutdown ordering, recovery and once-only notes");
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+    private static void SignerPolicyChecks(SigningFixture key, WindowsUpdateChannel local, string root)
+    {
+        var preview = new WindowsUpdateChannel(new Uri("https://updates.example.invalid/appcast.xml"), key.Public, null);
+        preview.Validate();
+        const string pin = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        (preview with { SignerSHA256 = pin }).Validate();
+        Reject(() => (preview with { SignerSHA256 = "" }).Validate(), "An explicitly invalid signer pin cannot downgrade to unsigned mode");
+        Reject(() => (preview with { SignerSHA256 = new string('g', 64) }).Validate(), "A signer pin must remain a valid SHA-256 value");
+        string file = Path.Combine(root, "optional-signer.exe"); File.WriteAllBytes(file, Payload);
+        string digest = Convert.ToHexStringLower(SHA256.HashData(Payload)), signature = key.Sign(Payload);
+        int checks = 0;
+        bool Trusted(string path, string value) { checks++; Check(path == file && value == pin, "The configured signer and installer must reach the verifier unchanged"); return true; }
+        UpdateHandoff.VerifyPackage(file, Payload, digest, signature, key.Public, null, (_, _) => throw new InvalidOperationException("Unsigned mode must not invoke Authenticode"));
+        Check(checks == 0, "A channel without a signer pin relies on mandatory Ed25519 and SHA-256");
+        UpdateHandoff.VerifyPackage(file, Payload, digest, signature, key.Public, pin, Trusted);
+        Check(checks == 1, "A configured signer pin adds mandatory Authenticode validation");
+        Reject(() => UpdateHandoff.VerifyPackage(file, Payload, digest, signature, key.Public, pin, (_, _) => false), "A wrong or untrusted signer must fail");
+        Reject(() => UpdateHandoff.VerifyPackage(file, Payload, digest, signature, key.Public, pin), "An actual unsigned installer is rejected by a pinned channel");
+        foreach (string? signer in new string?[] { null, pin })
+        {
+            Reject(() => UpdateHandoff.VerifyPackage(file, Payload, new string('0', 64), signature, key.Public, signer, Trusted), "A SHA-256 mismatch must fail in both signing modes");
+            Reject(() => UpdateHandoff.VerifyPackage(file, Payload, digest, key.Sign([1, 2, 3]), key.Public, signer, Trusted), "A bad Ed25519 signature must fail in both signing modes");
+            Reject(() => UpdateHandoff.VerifyPackage(file, Payload, digest, signature, new SigningFixture().Public, signer, Trusted), "A different Ed25519 key must fail in both signing modes");
+            var channel = local with { SignerSHA256 = signer };
+            var configuration = new Dictionary<string, object?>
+            {
+                ["schemaVersion"] = 1, ["testScope"] = local.TestScope, ["feed"] = local.Feed.AbsoluteUri,
+                ["publicKey"] = key.Public, ["testCertificateSHA256"] = local.TestCertificateSHA256
+            };
+            if (signer != null) configuration["signerSHA256"] = signer;
+            string configPath = Path.Combine(root, "signer-channel.json");
+            UpdateFiles.Write(configPath, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(configuration));
+            Check(WindowsUpdateChannel.ReadTest(configPath, local.TestScope!.Value).SignerSHA256 == signer,
+                "Loading channel configuration must preserve an absent or configured signer pin");
+            byte[] broken = key.Feed(Item(key)); broken[^5] ^= 1;
+            Reject(() => UpdateCatalog.Parse(broken, channel, "x64", Current, Windows, "en"), "Feed signature checking is independent of the Authenticode policy");
+            var plan = new UpdateInstallPlan(1, 1, 1, key.Public, signer, null,
+                new("1.2.3", new(1, 2, 3, 5), "x64", Windows, new Uri("https://updates.example.invalid/setup.exe"), Payload.Length, signature, ""), digest);
+            var restored = System.Text.Json.JsonSerializer.Deserialize<UpdateInstallPlan>(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(plan))!;
+            Check(restored.SignerSHA256 == signer, "The optional signer policy survives the maintenance handoff unchanged");
+            UpdateHandoff.VerifyPackage(file, Payload, restored.SHA256, restored.Package.Signature, restored.PublicKey, restored.SignerSHA256, Trusted);
+        }
     }
     internal static async Task Serve(string directory, string qaScope, string installer, string architecture)
     {

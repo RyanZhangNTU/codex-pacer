@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -44,18 +45,19 @@ internal static class UpdateHandoff
     {
         byte[] bytes = UpdateFiles.Read(downloaded, UpdateCatalog.PackageLimit);
         var item = proxy.ValidateDownloaded(bytes);
+        string digest = Convert.ToHexStringLower(SHA256.HashData(bytes));
         if (channel.TestScope != identity.QaScope)
             throw new InvalidDataException("The installer publisher is not trusted.");
         string directory = Path.Combine(identity.DataRoot, "Updates", Guid.NewGuid().ToString("N"));
         UpdateFiles.Check(directory); Directory.CreateDirectory(directory); UpdateFiles.Check(directory);
         UpdateFiles.Write(Path.Combine(directory, "setup.exe"), bytes);
         CheckInstallerIdentity(Path.Combine(directory, "setup.exe"), identity, item.Build);
-        if (channel.TestScope == null && !UpdateAuthenticode.Verify(Path.Combine(directory, "setup.exe"), channel.SignerSHA256!))
-            throw new InvalidDataException("The installer publisher is not trusted.");
+        string copied = Path.Combine(directory, "setup.exe");
+        VerifyPackage(copied, UpdateFiles.Read(copied, UpdateCatalog.PackageLimit), digest, item.Signature, channel.PublicKey, channel.SignerSHA256);
         UpdateFiles.Write(Path.Combine(directory, "PacerUpdate.exe"), UpdateFiles.Read(maintenance, 128 * 1024 * 1024));
         using var parent = Process.GetCurrentProcess();
         var plan = new UpdateInstallPlan(1, parent.Id, parent.StartTime.ToUniversalTime().Ticks, channel.PublicKey, channel.SignerSHA256,
-            channel.TestScope, item, Convert.ToHexStringLower(SHA256.HashData(bytes)));
+            channel.TestScope, item, digest);
         string path = Path.Combine(directory, "plan.json"); UpdateFiles.Write(path, JsonSerializer.SerializeToUtf8Bytes(plan));
         return new(Path.Combine(directory, "PacerUpdate.exe"), path, identity);
     }
@@ -99,8 +101,7 @@ internal static class UpdateHandoff
                 locked = new FileStream(package, FileMode.Open, FileAccess.Read, FileShare.Read);
                 if (locked.Length != plan.Package.Length || locked.Length > UpdateCatalog.PackageLimit) throw new InvalidDataException();
                 byte[] bytes = new byte[checked((int)locked.Length)]; locked.ReadExactly(bytes);
-                if (Convert.ToHexStringLower(SHA256.HashData(bytes)) != plan.SHA256 || !UpdateCatalog.Verify(bytes, plan.Package.Signature, plan.PublicKey) ||
-                    qa == null && !UpdateAuthenticode.Verify(package, plan.SignerSHA256 ?? "")) throw new InvalidDataException("The installer failed verification.");
+                VerifyPackage(package, bytes, plan.SHA256, plan.Package.Signature, plan.PublicKey, plan.SignerSHA256);
                 CheckInstallerIdentity(package, identity, plan.Package.Build);
                 return Task.CompletedTask;
             }, async () =>
@@ -129,6 +130,17 @@ internal static class UpdateHandoff
             return success ? 0 : 1;
         }
         finally { locked?.Dispose(); }
+    }
+    // Both handoff boundaries always verify content. A publisher certificate
+    // is an additional requirement only when the channel explicitly pins one.
+    internal static void VerifyPackage(string path, byte[] bytes, string digest, string signature, string key, string? signer,
+        Func<string, string, bool>? authenticode = null)
+    {
+        if (bytes.Length > UpdateCatalog.PackageLimit || digest.Length != 64 ||
+            !string.Equals(Convert.ToHexStringLower(SHA256.HashData(bytes)), digest, StringComparison.OrdinalIgnoreCase) ||
+            !UpdateCatalog.Verify(bytes, signature, key)) throw new InvalidDataException("The installer failed content verification.");
+        if (signer != null && (signer.Length != 64 || !signer.All(Uri.IsHexDigit) ||
+            !(authenticode ?? UpdateAuthenticode.Verify)(path, signer))) throw new InvalidDataException("The installer publisher is not trusted.");
     }
     internal static void CheckInstallerIdentity(string path, WindowsInstallationIdentity identity, Version build)
     {

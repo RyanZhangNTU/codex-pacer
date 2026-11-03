@@ -26,7 +26,8 @@ internal sealed record WindowsUpdateChannel(Uri Feed, string PublicKey, string? 
     internal void Validate()
     {
         if (!Allows(Feed) || Convert.FromBase64String(PublicKey).Length != 32 ||
-            TestScope == null && (SignerSHA256?.Length != 64 || !SignerSHA256.All(Uri.IsHexDigit) || TestCurrentBuild != null) ||
+            SignerSHA256 != null && (SignerSHA256.Length != 64 || !SignerSHA256.All(Uri.IsHexDigit)) ||
+            TestScope == null && (TestCurrentBuild != null || TestCertificateSHA256 != null) ||
             TestScope != null && (TestCertificateSHA256?.Length != 64 || !TestCertificateSHA256.All(Uri.IsHexDigit)))
             throw new InvalidDataException("The Windows update channel is invalid.");
     }
@@ -40,7 +41,9 @@ internal sealed record WindowsUpdateChannel(Uri Feed, string PublicKey, string? 
         if (root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("testScope").GetGuid() != scope)
             throw new InvalidDataException("The test channel must match its isolated application scope.");
         var result = new WindowsUpdateChannel(new Uri(root.GetProperty("feed").GetString()!, UriKind.Absolute),
-            root.GetProperty("publicKey").GetString()!, null, scope, root.GetProperty("testCertificateSHA256").GetString()!,
+            root.GetProperty("publicKey").GetString()!,
+            root.TryGetProperty("signerSHA256", out var signer) && signer.ValueKind != JsonValueKind.Null ? signer.GetString() : null,
+            scope, root.GetProperty("testCertificateSHA256").GetString()!,
             root.TryGetProperty("testCurrentBuild", out var build) ? Version.Parse(build.GetString()!) : null);
         result.Validate(); return result;
     }
