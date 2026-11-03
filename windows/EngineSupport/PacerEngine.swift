@@ -184,7 +184,10 @@ actor EngineRuntime {
     private var initialized = false
     private let claudeHookServices: EngineClaudeHookServices?
     private var claudeHookSetup: EngineClaudeHookSetup?
-    private var claudeHookTask: Task<Void, Never>?
+    private var claudeHookTask: Task<Void, Never>? {
+        get { ownedWork.task(.init(.setup, provider: .claude, identifier: "hooks")) }
+        set { setOwnedTask(newValue, key: .init(.setup, provider: .claude, identifier: "hooks")) }
+    }
     private var claudeHookHome: URL?, claudeHookRequest: UUID?
     private var claudeHooksEnabled = false
     private var expanded = false
@@ -1564,6 +1567,7 @@ actor EngineRuntime {
     func resumeAfterSleep() async {
         guard lifecycle.isSleeping else { return }
         let plan = lifecycle.resume()
+        if !demo { scheduleClaudeHooks() }
         quotaMonitor = quotaServices.map { services in
             CodexQuotaMonitor(services: services, seed: codexQuotaState, now: now) { [weak self] state in await self?.receiveQuota(state) }
         }
