@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Automation;
@@ -26,7 +28,10 @@ public sealed class AlternatingQuotaText : Grid
     private double lastSize, lastMaximum;
     private string? lastFamily;
     private long wakeups;
+    private readonly QuotaCycleCompletion completedCycle = new();
     internal (bool Scheduled, int Clocks, long Wakes) Scheduling => (wake.IsEnabled, fades.Count, wakeups);
+    internal Task WaitForNextCycleAsync(TimeSpan timeout, CancellationToken cancellation = default)
+        => completedCycle.AfterAsync(wakeups, timeout, cancellation);
     public double FontSize { get; set; } = 12;
     public FontFamily FontFamily { get; set; } = PacerFonts.Interface;
     internal double MaximumDisplayWidth { get; set; } = double.PositiveInfinity;
@@ -107,7 +112,8 @@ public sealed class AlternatingQuotaText : Grid
         if (frame.FadeRemaining <= 0)
         {
             for (int index = 0; index < layers.Count; index++) layers[index].Opacity = index == frame.Current ? 1 : 0;
-            wake.Interval = TimeSpan.FromSeconds(Math.Max(.001, frame.NextFade - elapsed)); wake.Start(); return;
+            wake.Interval = TimeSpan.FromSeconds(Math.Max(.001, frame.NextFade - elapsed)); wake.Start();
+            completedCycle.Notify(wakeups); return;
         }
         for (int index = 0; index < layers.Count; index++)
         {

@@ -28,7 +28,16 @@ internal static class Program
         if (fixture >= 0) return SlowEngineChecks.Fixture(args[fixture + 1]);
         if (args is ["--unit-only"])
         {
-            try { SystemAppearanceUnitChecks.Run(); return 0; }
+            try { SystemAppearanceUnitChecks.Run(); QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult(); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
+        if (args is ["--quota-cycle-units"])
+        {
+            try
+            {
+                for (int iteration = 0; iteration < 10; iteration++) QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult();
+                Console.WriteLine("PASS quota-cycle completion: ten headless runs, unchanged deadline, stale/duplicate events, cancellation and cleanup"); return 0;
+            }
             catch (Exception error) { Console.Error.WriteLine(error); return 1; }
         }
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
@@ -53,7 +62,7 @@ internal static class Program
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 if (group is "all" or "recovery" or "persistence") await StorageRecoveryChecks.Run();
-                SystemAppearanceUnitChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
+                SystemAppearanceUnitChecks.Run(); await QuotaCycleCompletionChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
                 if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
                 if (group == "persistence") await PreferencesResponsivenessChecks.Run();
                 bool All(string name) => group == "all" || group == name;

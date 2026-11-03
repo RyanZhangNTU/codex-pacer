@@ -56,9 +56,9 @@ internal static class IdleSchedulingChecks
                     "An unchanged hold has no WPF render callbacks or timer wakeups, without forcing GC");
             }
             long beforeSnapshots = Interlocked.Read(ref snapshots), beforeFrames = frames;
-            await Task.Delay(3400);
+            await quota.WaitForNextCycleAsync(TimeSpan.FromMilliseconds(3400));
             Check(quota.Scheduling.Wakes == 1 && quota.Scheduling.Clocks == 0 && quota.Scheduling.Scheduled,
-                "The four-second switch releases both fade clocks and schedules only its next deadline");
+                "The four-second switch releases both fade clocks and schedules only its next deadline; actual=" + quota.Scheduling);
             Check(Interlocked.Read(ref snapshots) == beforeSnapshots && frames == beforeFrames, "The frozen unchanged engine emits no snapshots or native window frames");
             await Task.Delay(250); long settled = Interlocked.Read(ref renders); await Task.Delay(350);
             Check(Interlocked.Read(ref renders) == settled, "Fade completion leaves no orphan root clock in the render manager");
