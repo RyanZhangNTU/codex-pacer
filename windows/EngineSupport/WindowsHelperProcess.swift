@@ -30,6 +30,8 @@ final class WindowsHelperProcess: ChildProcessConnection, @unchecked Sendable {
     var ioClosed: ShutdownSignal { process.ioClosed }
     func errorMessage() -> String { privateErrors ? "SSH connection unavailable" : process.errorMessage }
     func write(_ data: Data) throws { if !process.write(data) { throw CodexClientError.disconnected } }
+    /// One-shot commands finish stdin without the streaming helper's close deadline.
+    func finishInput() { process.finishInput() }
     func close() {
         lock.lock(); guard !closed else { lock.unlock(); return }; closed = true; lock.unlock()
         process.finishInput()

@@ -13,7 +13,9 @@ internal sealed record EngineSnapshot(
     IReadOnlyList<EngineModule>? Modules = null, EngineQuotaDashboard? QuotaDashboard = null, IReadOnlyList<CompactWarningItem>? CompactWarnings = null,
     JsonElement? CompactContext = null, DeepSeekConnection? DeepseekConnection = null, ClaudeConnection? ClaudeConnection = null,
     ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
-    EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null);
+    EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
+    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null);
+internal sealed record ClaudeRemoteSetup(string SourceID, string Context, bool Configured, bool InFlight, bool CanRetry, string? Message, double? RetryAt);
 internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
 internal sealed record EngineNavigationFailure(string Id, string Message);
 internal sealed record EngineActivityLink(string ActivityID, string Provider, string Context);
