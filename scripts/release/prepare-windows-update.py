@@ -174,6 +174,9 @@ def download(commit, directory):
 def installer(directory, version, build, commit, architecture):
     name = f"CodexPacer-{version}-windows-{architecture}-setup-{commit[:7]}.exe"
     path = directory / architecture / name
+    if not path.exists():
+        found = ", ".join(sorted(item.name for item in (directory / architecture).glob("*.exe"))) or "none"
+        raise ValueError(f"The {architecture} artifact has no clean installer for {commit[:7]} (found: {found}).")
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     if (directory / architecture / (name + ".sha256")).read_text(encoding="utf-8") != f"{digest}  {name}\n":

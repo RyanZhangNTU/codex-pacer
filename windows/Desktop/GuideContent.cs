@@ -492,10 +492,9 @@ internal sealed class GuideContent : StackPanel
         content.Children.Add(glyph); content.Children.Add(label); button.ContentTemplate = null; button.Content = content;
     }
     /// The page's one invitation is the prominent button, as on the Mac pane.
-    private static void Prominent(Button button, string symbol)
+    private void Prominent(Button button, string symbol)
     {
-        string title = AutomationProperties.GetName(button);
-        button.SetResourceReference(Control.BackgroundProperty, "SettingsAccent"); button.Foreground = Brushes.White; WithGlyph(button, symbol, title);
+        button.Style = (Style)FindResource("SettingsProminentButton"); WithGlyph(button, symbol, AutomationProperties.GetName(button));
     }
     private async Task Copy(Button button)
     {

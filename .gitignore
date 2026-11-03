@@ -2,8 +2,9 @@
 output/
 .build/
 .swiftpm/
-windows/Tests/Fixtures/**/obj/
-windows/Tests/Fixtures/**/bin/
+# .NET outputs; packaging marks artifacts built from an unclean worktree.
+windows/**/obj/
+windows/**/bin/
 native/.build/
 native/.swiftpm/
 *.log
