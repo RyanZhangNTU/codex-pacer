@@ -6,7 +6,7 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
     func testEveryWebRequestFollowsTheMatchingSourceSnapshotAcrossRepeatedSwitches() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000), capture = Capture()
         let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
-            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, detect: { _, _ in .account })
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil }, detect: { _, _ in .account })
         let runtime = EngineRuntime(demo: true, now: { now }, balanceServices: services, output: { capture.append($0) })
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
@@ -26,7 +26,8 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
             XCTAssertEqual(capture.uncorrelatedWebRequests(), 0,
                 "The host must see the current source before any browser work is requested")
             _ = await runtime.receive(try command("completeDeepSeekWebRead", ["webRequestID": request.id,
-                "balanceContext": request.context, "webReply": ["state": "ok", "normal": ["35.60"], "bonus": ["6.40"]]]))
+                "balanceContext": request.context, "webReply": ["state": "ok", "normal": ["35.60"], "bonus": ["6.40"],
+                    "sessionFingerprint": String(repeating: "7", count: 64)]]))
             try await wait { capture.last()?.wallet?.balance == 42 }
             _ = await runtime.receive(try command("configure", ["deepseekSettings": settings("apiKey")]))
             XCTAssertNil(capture.last()?.wallet?.balance)

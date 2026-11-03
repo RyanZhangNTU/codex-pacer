@@ -75,8 +75,8 @@ final class SharedQuotaCoordinationTests: XCTestCase {
     func testBalanceReadCannotOvertakeItsPendingPublication() async throws {
         let recorder = BalancePublicationRecorder(), reads = CoordinationCounts(), date = Date(timeIntervalSince1970: 1_800_000_000)
         let coordinator = DeepSeekBalanceCoordinator(services: .init(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
-            readAPI: { _ in throw DeepSeekBalanceError.missingKey },
-            readWeb: { _ in await reads.add("read"); return .init(total: 42, capturedAt: date, source: .web) }, detect: { _, _ in .account }),
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil },
+            readWeb: { _ in await reads.add("read"); return .init(total: 42, capturedAt: date, source: .web, sessionFingerprint: String(repeating: "7", count: 64)) }, detect: { _, _ in .account }),
             now: { date }, output: { await recorder.publish($0) })
         await coordinator.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
         let starting = Task { await coordinator.refreshIfDue(active: true) }
@@ -105,8 +105,8 @@ final class SharedQuotaCoordinationTests: XCTestCase {
         for stop in [false, true] {
             let recorder = BalancePublicationRecorder(), reads = CoordinationCounts(), date = Date(timeIntervalSince1970: 1_800_000_000)
             let coordinator = DeepSeekBalanceCoordinator(services: .init(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
-                readAPI: { _ in throw DeepSeekBalanceError.missingKey },
-                readWeb: { _ in await reads.add("read"); return .init(total: 42, capturedAt: date, source: .web) }, detect: { _, _ in .account }),
+                readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil },
+                readWeb: { _ in await reads.add("read"); return .init(total: 42, capturedAt: date, source: .web, sessionFingerprint: String(repeating: "7", count: 64)) }, detect: { _, _ in .account }),
                 now: { date }, output: { await recorder.publish($0) })
             await coordinator.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
             let starting = Task { await coordinator.refreshIfDue(active: true) }
@@ -268,9 +268,11 @@ final class SharedQuotaCoordinationTests: XCTestCase {
     }
     func testBalanceReplacementRetainsTheSeededNumericHistoryAcrossSleep() async {
         let date = Date(timeIntervalSince1970: 1_800_000_000)
+        let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
         let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
             readAPI: { _ in throw DeepSeekBalanceError.connectionFailed },
-            readWeb: { _ in .init(total: 42, capturedAt: date, source: .web) }, detect: { _, _ in .account })
+            fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) },
+            readWeb: { _ in .init(total: 42, capturedAt: date, source: .web, sessionFingerprint: String(repeating: "7", count: 64)) }, detect: { _, _ in .account })
         let first = DeepSeekBalanceCoordinator(services: services, now: { date }, output: { _ in })
         await first.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
         _ = await first.refreshIfDue(active: true, force: true)
