@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "eff3704a763041b1d8ee3e243bca8a086573a26685059afaed9ec2b65e2e2da3"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "ddef2050ca9ccc2eb9ab899370d7177b9862094d572b034eeb6807cffb20ddae"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -888,7 +888,11 @@
     "whats_new.version": "\u7248\u672c %@",
     "whats_new.window_title": "\u66f4\u65b0\u5185\u5bb9",
     "windows.app.open_failed": "Windows \u672a\u80fd\u6253\u5f00\u684c\u9762\u5e94\u7528\uff0c\u8bf7\u786e\u8ba4\u5e94\u7528\u4ecd\u5df2\u5b89\u88c5\u3002",
+    "windows.appearance.display_disconnected": "\u5df2\u65ad\u5f00",
+    "windows.appearance.display_fallback": "\u9009\u4e2d\u7684\u663e\u793a\u5668\u5df2\u65ad\u5f00\uff0c\u6682\u65f6\u4f7f\u7528\u4e3b\u663e\u793a\u5668\uff1b\u91cd\u65b0\u8fde\u63a5\u540e\u4f1a\u6062\u590d\u3002",
     "windows.appearance.display_pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u9009\u62e9\u663e\u793a\u5668\u3002",
+    "windows.appearance.display_unavailable": "Windows \u65e0\u6cd5\u8bfb\u53d6\u663e\u793a\u5668\u4fe1\u606f\uff0c\u5c9b\u6682\u65f6\u7559\u5728\u5f53\u524d\u5c4f\u5e55\u3002",
+    "windows.appearance.fullscreen": "\u5728\u5168\u5c4f\u5e94\u7528\u4e0a\u65b9\u663e\u793a",
     "windows.appearance.fullscreen_pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u8bbe\u7f6e\u5168\u5c4f\u65f6\u7684\u663e\u793a\u884c\u4e3a\u3002",
     "windows.appearance.glass_pending": "Windows \u9884\u89c8\u7248\u5c1a\u672a\u63d0\u4f9b Liquid Glass \u6e32\u67d3\u3002",
     "windows.appearance.position_center_note": "\u80f6\u56ca\u4f4d\u4e8e\u5c4f\u5e55\u9876\u90e8\u4e2d\u592e\u9644\u8fd1\u3002",

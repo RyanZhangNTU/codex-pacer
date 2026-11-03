@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$ConversationNavigationOnly, [ValidateSet('all','island','settings','collapsed','quota','web','connection','host','harness','conversation','responsive','idle','clocks','recovery','persistence','deepseek')][string]$Group = 'all')
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$ConversationNavigationOnly, [ValidateSet('all','island','settings','collapsed','quota','web','connection','host','harness','conversation','responsive','idle','clocks','recovery','persistence','deepseek','display','displaySettings')][string]$Group = 'all')
 . (Join-Path $PSScriptRoot 'environment.ps1')
 . (Join-Path $PSScriptRoot 'version.ps1')
 . (Join-Path $PSScriptRoot 'harness-fixture.ps1')

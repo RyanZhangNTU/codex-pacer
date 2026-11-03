@@ -10,7 +10,7 @@ namespace CodexPacer.Windows;
 internal static class IslandScreen
 {
     internal readonly record struct Context(IntPtr Monitor, MotionBounds Screen, MotionBounds Work, double Scale);
-    internal static Context Read(Window window)
+    internal static Context Read(Window window, DisplayMonitor? preferred = null)
     {
         var hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero)
@@ -19,6 +19,12 @@ internal static class IslandScreen
             return new(IntPtr.Zero, new(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight),
                 new(work.X, work.Y, work.Width, work.Height), 1);
         }
+        double scale = VisualTreeHelper.GetDpi(window).DpiScaleX;
+        if (preferred != null)
+        {
+            var frame = preferred.AtScale(scale);
+            return new(preferred.Handle, frame.Screen, frame.WorkArea, scale);
+        }
         var monitor = MonitorFromWindow(hwnd, 2); var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
         if (!GetMonitorInfo(monitor, ref info))
         {
@@ -26,7 +32,6 @@ internal static class IslandScreen
             return new(IntPtr.Zero, new(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight),
                 new(work.X, work.Y, work.Width, work.Height), VisualTreeHelper.GetDpi(window).DpiScaleX);
         }
-        double scale = VisualTreeHelper.GetDpi(window).DpiScaleX;
         MotionBounds Convert(Rectangle rect) => new(rect.Left / scale, rect.Top / scale, (rect.Right - rect.Left) / scale, (rect.Bottom - rect.Top) / scale);
         return new(monitor, Convert(info.Screen), Convert(info.Work), scale);
     }
@@ -39,32 +44,50 @@ internal static class IslandScreen
 
 public partial class IslandWindow
 {
+    private readonly IDisplayTopologySource displays;
+    internal IDisplayTopologySource DisplayTopology => displays;
+    internal DisplayResolution SelectedDisplay => DisplaySelection.Resolve(displays.Current, compactPreferences);
     private IslandScreen.Context? currentDisplay;
-    private bool displayRefreshPending;
+    private bool displayRefreshPending, displayRefreshAgain, displayForce;
+    private void DisplayTopologyChanged() => QueueDisplayRefresh(force: true);
     private void RememberDisplay() { if (screenGeometry == null) currentDisplay = IslandScreen.Read(this); }
-    private void QueueDisplayRefresh()
+    private void QueueDisplayRefresh(bool force = false)
     {
-        if (presentationStopped || displayRefreshPending || screenGeometry != null) return;
+        if (presentationStopped || screenGeometry != null) return;
+        displayForce |= force;
+        if (displayRefreshPending) { displayRefreshAgain = true; return; }
         displayRefreshPending = true;
         Dispatcher.BeginInvoke(() =>
         {
-            displayRefreshPending = false;
-            if (presentationStopped || !IsVisible || !Shell.IsLoaded) return;
-            var current = IslandScreen.Read(this);
-            if (currentDisplay != current)
+            try
             {
-                currentDisplay = current;
-                // A DPI change reflows once in the new coordinate system.
-                // Do not animate a spring whose previous values used another DPI.
-                var pixels = VisibleScreenBounds;
-                var initial = new MotionBounds(pixels.X / current.Scale, pixels.Y / current.Scale, pixels.Width / current.Scale, pixels.Height / current.Scale);
-                StopRendering(); motion.Dispose();
-                motion = new NativeMotion(System.IO.Path.Combine(AppContext.BaseDirectory, "Engine"), initial, expanded,
-                    layout.Attached && islandAppearance == "liquidGlass", layout.Position);
-                surfaceBounds = initial; destinationExpanded = !expanded;
-                NativeWindowBounds.Apply(this, initial); Relayout(); StopRendering(); ApplyMotion(motion.SettledAt(transitionStarted));
+                if (presentationStopped || !Shell.IsLoaded) return;
+                bool requested = displayForce; displayForce = false;
+                var selected = SelectedDisplay.Display;
+                var actual = IslandScreen.Read(this);
+                if (selected != null && selected.Handle != actual.Monitor) NativeWindowBounds.MoveToDisplay(this, selected.Bounds);
+                var current = IslandScreen.Read(this, selected);
+                if (currentDisplay != current || requested)
+                {
+                    currentDisplay = current;
+                    // Do not allocate a spring canvas spanning two monitors.
+                    // Snap in the new DPI system, including while policy-hidden.
+                    Relayout(snap: true);
+                }
+                SyncBackdrop(); occlusion?.Request(); ApplyFullscreenVisibility();
             }
-            SyncBackdrop();
+            finally
+            {
+                displayRefreshPending = false;
+                if (displayRefreshAgain) { displayRefreshAgain = false; QueueDisplayRefresh(); }
+            }
         }, DispatcherPriority.ContextIdle);
+    }
+    private ScreenRectangle TargetMonitorBounds()
+    {
+        if (SelectedDisplay.Display is { } selected) return selected.Bounds;
+        var current = IslandScreen.Read(this);
+        return new((int)Math.Round(current.Screen.X * current.Scale), (int)Math.Round(current.Screen.Y * current.Scale),
+            (int)Math.Round((current.Screen.X + current.Screen.Width) * current.Scale), (int)Math.Round((current.Screen.Y + current.Screen.Height) * current.Scale));
     }
 }

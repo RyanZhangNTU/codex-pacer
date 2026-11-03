@@ -30,7 +30,8 @@ internal static class PreferencesPersistenceChecks
                 ShowAppButtons = false, ShowEmbeddedCodexSessions = false, ShowClaudeCloudProjects = false, RetentionMinutes = 240,
                 CodexExecutable = @"C:\合成 path\codex.exe", CodexHome = @"C:\合成 path\.codex", ClaudeHome = @"C:\合成 path\.claude",
                 ClaudeOrganization = "11111111-1111-4111-8111-111111111111", DeepseekHome = @"C:\合成 path\.dsh",
-                ProviderModes = new() { ["codex"] = "enabled", ["claude"] = "disabled", ["deepseek"] = "automatic" }
+                ProviderModes = new() { ["codex"] = "enabled", ["claude"] = "disabled", ["deepseek"] = "automatic" },
+                DisplaySelection = "specified", DisplayID = @"\\?\DISPLAY#SYNTHETIC", DisplayName = "QA Display", DisplayX = -1920, DisplayY = -120, ShowInFullscreen = true
             };
             var properties = typeof(DesktopPreferences).GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.Name != "SchemaVersion").ToArray();
             int acknowledged = 0;
@@ -46,6 +47,7 @@ internal static class PreferencesPersistenceChecks
                 {
                     var next = value with { }; property.SetValue(next, property.GetValue(alternate));
                     if (property.Name == "CompactLayout") next = next with { WarningKinds = alternate.WarningKinds };
+                    if (property.Name is "DisplaySelection" or "DisplayID") next = next with { DisplaySelection = alternate.DisplaySelection, DisplayID = alternate.DisplayID };
                     return next;
                 }) == PreferencesApplyResult.Applied, property.Name + " must acknowledge and commit");
                 var restart = new PreferencesStore(file).Load();

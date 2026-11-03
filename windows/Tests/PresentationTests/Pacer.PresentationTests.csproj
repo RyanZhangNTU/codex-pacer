@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>Pacer.PresentationTests</AssemblyName>
+    <ApplicationManifest>../../Desktop/app.manifest</ApplicationManifest>
     <!-- The referenced app assembly owns SDK initialization. Avoid adding a
          second copy of its internal initializer to this friend test assembly. -->
     <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
