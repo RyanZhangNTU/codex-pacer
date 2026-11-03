@@ -292,6 +292,7 @@ public partial class App : Application
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
             if (demo && !e.Args.Contains("--collapsed")) island.Reveal();
+            if (capture < 0 && !preferencesUnavailable) await BeginGuidesAsync(e.Args);
             if (capture >= 0)
             {
                 if (activationQa != null)
@@ -330,6 +331,7 @@ public partial class App : Application
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
                 webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
+            settings.WelcomeRequested += () => _ = ShowGuideAsync(true);
             settings.Closed += (_, _) => settings = null;
         }
         settings.Show(); settings.Activate();
@@ -382,6 +384,7 @@ public partial class App : Application
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         instanceActivation?.Dispose();
         notificationLifetime.Cancel();
+        guideWindow?.Close();
         if (settingsSession != null) await settingsSession.WaitForChangesAsync();
         if (settings != null) { settings.AllowClose = true; settings.Close(); }
         if (webConnection != null) await webConnection.DisposeAsync();

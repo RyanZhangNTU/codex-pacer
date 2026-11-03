@@ -943,6 +943,8 @@
     "windows.open.claude": "打开 Claude",
     "windows.open.codex": "打开 Codex",
     "windows.open.deepseek": "打开 DeepSeek Harness",
+    "windows.pages.copy_failed": "Windows 无法复制链接，请重试。",
+    "windows.pages.open_failed": "Windows 无法打开链接，请在浏览器中重试。",
     "windows.provider.detected": "已在此电脑上检测到",
     "windows.provider.local": "此电脑",
     "windows.provider.not_detected": "未在此电脑上检测到",

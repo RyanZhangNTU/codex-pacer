@@ -80,6 +80,7 @@ internal static class Program
                         }
                         if (group == "deepseek") { await DeepSeekSettingsChecks.Run(language, dark, output); await ReminderSettingsChecks.Run(language, dark, output); }
                         if (All("display") || group == "displaySettings") await DisplaySettingsChecks.Run(language, dark);
+                        if (All("pages")) await GuidePageChecks.Run(language, dark, output);
                         if (All("settings"))
                         {
                             await PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks."));

@@ -943,6 +943,8 @@
     "windows.open.claude": "Open Claude",
     "windows.open.codex": "Open Codex",
     "windows.open.deepseek": "Open DeepSeek Harness",
+    "windows.pages.copy_failed": "Windows couldn't copy the link. Try again.",
+    "windows.pages.open_failed": "Windows couldn't open the link. Try again in your browser.",
     "windows.provider.detected": "Detected on this PC",
     "windows.provider.local": "This PC",
     "windows.provider.not_detected": "Not detected on this PC",

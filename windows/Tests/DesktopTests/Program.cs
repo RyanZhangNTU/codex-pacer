@@ -19,6 +19,9 @@ internal static class Program
             await DisplaySelectionChecks.Run(Path.GetDirectoryName(Path.GetFullPath(displayEngine))!);
             FullscreenDisplayChecks.Run(); Console.WriteLine("PASS display selection, preference restart and fullscreen policy"); return 0;
         }
+        if (args is ["--guide-preferences-read", var guideFile, var guideVersion, var guideMajor]) return GuideSessionChecks.ReadAfterRestart(guideFile, guideVersion, guideMajor);
+        if (args is ["--pages-only", var pagesEngine])
+        { PreferencesChecks.Run(); await PreferencesSessionChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--installation-only"])
@@ -40,6 +43,7 @@ internal static class Program
         }
 
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
+        await Test("guide pages preserve version records, quiet launches and browser actions", () => GuideSessionChecks.Run(engine));
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
         await Test("display selection, reconnect, DPI anchors and preferences", () => DisplaySelectionChecks.Run(Path.GetDirectoryName(engine)!));

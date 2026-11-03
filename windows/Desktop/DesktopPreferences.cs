@@ -10,6 +10,8 @@ namespace CodexPacer.Windows;
 internal sealed record DesktopPreferences
 {
     public int SchemaVersion { get; init; } = 1;
+    public int WelcomeGuideVersion { get; init; }
+    public string? WhatsNewVersion { get; init; }
     public string Language { get; init; } = "system";
     public string Position { get; init; } = "center";
     public string DisplayMode { get; init; } = "automatic";
@@ -55,7 +57,8 @@ internal sealed record DesktopPreferences
     public Dictionary<string, string> ProviderModes { get; init; } = new()
         { ["codex"] = "automatic", ["claude"] = "automatic", ["deepseek"] = "automatic" };
 
-    internal bool IsValid => SchemaVersion == 1 && Language is "system" or "en" or "zh-Hans"
+    internal bool IsValid => SchemaVersion == 1 && WelcomeGuideVersion >= 0 && (WhatsNewVersion == null || WhatsNewVersion.Length <= 64)
+        && Language is "system" or "en" or "zh-Hans"
         && Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight"
         && DisplayMode is "automatic" or "notch" or "floating"
         && DisplaySelection is "automatic" or "primary" or "specified"

@@ -57,6 +57,8 @@ The earlier cold `0x80040154` was a test-environment issue: a Codex child saw on
 
 ## Local acceptance
 
+Welcome, What's New, Help and Support behavior and validation are described in [Windows guide pages](windows-guide-pages.md). Use `--welcome` or `--whats-new` with a demo instance for synthetic checks; demo runs never record either page as seen.
+
 Use demo data for screenshots and interaction checks:
 
 ```powershell

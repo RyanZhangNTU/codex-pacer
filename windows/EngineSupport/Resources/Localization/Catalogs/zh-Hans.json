@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "ddef2050ca9ccc2eb9ab899370d7177b9862094d572b034eeb6807cffb20ddae"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8f687d1281774fd43c0f7e3c156851cf469d7cd12bcb21d7002b074fbe478e27"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -947,6 +947,8 @@
     "windows.open.claude": "\u6253\u5f00 Claude",
     "windows.open.codex": "\u6253\u5f00 Codex",
     "windows.open.deepseek": "\u6253\u5f00 DeepSeek Harness",
+    "windows.pages.copy_failed": "Windows \u65e0\u6cd5\u590d\u5236\u94fe\u63a5\uff0c\u8bf7\u91cd\u8bd5\u3002",
+    "windows.pages.open_failed": "Windows \u65e0\u6cd5\u6253\u5f00\u94fe\u63a5\uff0c\u8bf7\u5728\u6d4f\u89c8\u5668\u4e2d\u91cd\u8bd5\u3002",
     "windows.provider.detected": "\u5df2\u5728\u6b64\u7535\u8111\u4e0a\u68c0\u6d4b\u5230",
     "windows.provider.local": "\u6b64\u7535\u8111",
     "windows.provider.not_detected": "\u672a\u5728\u6b64\u7535\u8111\u4e0a\u68c0\u6d4b\u5230",

@@ -610,15 +610,20 @@
     {
       "id": "onboarding",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
       "priority": "P3",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "首次或跨主版本的两步说明、组件标注/徽章/悬停示范",
         "三家模块检测/开关/登录；布局、通知、开机启动快捷入口",
         "关闭后记已看版本、Help 可重开、更新版本转 Whats New；演示无生产副作用"
       ],
-      "previewNote": "Welcome, What's New, help and support windows remain.",
+      "previewNote": "两步窗口、中英文/浅深色、真实组件、三家显式模块选择、状态/动作、通知/登录启动注入服务、键盘/UIA 和新进程版本读回通过。真实账户连接、OS 开关、跨屏验收及 #151 后的 schema 2 接线待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -951,7 +956,7 @@
     {
       "id": "whats-new",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "同版本一次展示、版本持久化，历史自 3.1 起新到旧",
@@ -961,8 +966,13 @@
         "native/Sources/PacerIsland/SettingsWhatsNewPane.swift",
         "native/Sources/PacerIsland/WhatsNewView.swift"
       ],
-      "evidence": [],
-      "previewNote": "更新说明历史、一次弹窗和内联选项。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "复用 WhatsNew.releases；条件、定向基线、不回退、历史、保存失败、固定页头/页脚、640 点高度与滚动、链接和键盘/UIA 通过。内嵌会话合并开关因 Claude Windows 能力未完成而禁用；schema 2 接线待 #151。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -970,7 +980,7 @@
     {
       "id": "help",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "共用组件/徽章/任务/配速/提醒图例、Codex/Claude/DeepSeek 详情切换",
@@ -979,8 +989,13 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsHelpPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "帮助页与两步引导的重开入口。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "通用图例、三家详情切换、真实组件、重开引导、手册/issues 动作、Esc/UIA 和不保存偏好通过；真实浏览器与多屏用户验收待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []
@@ -988,7 +1003,7 @@
     {
       "id": "support",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P3",
       "requirements": [
         "感谢、star、feature-request/bug-report 表单，外部浏览器打开",
@@ -998,8 +1013,13 @@
       "sourceRefs": [
         "native/Sources/PacerIsland/SettingsSupportPane.swift"
       ],
-      "evidence": [],
-      "previewNote": "Support 的全部按钮和弹层保留。",
+      "evidence": [
+        "docs/windows-guide-pages.md",
+        "windows/Tests/EngineTests/EngineGuidePagesTests.swift",
+        "windows/Tests/DesktopTests/GuideSessionChecks.cs",
+        "windows/Tests/PresentationTests/GuidePageChecks.cs"
+      ],
+      "previewNote": "Star、feature/bug、捐赠链接分派、二维码开关和键盘/UIA、只读偏好通过；复制有两秒反馈，测试替身不读写用户剪贴板。实际浏览器、手机扫码和 Windows 分享面板待验收或接入。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": []

@@ -33,6 +33,8 @@ internal sealed partial class SettingsWindow : Window
     private readonly IslandWindow? surfaceWindow;
     private readonly IDisplayTopologySource appearanceDisplays;
     private readonly bool ownsAppearanceDisplays;
+    private readonly Func<Uri, bool>? guideLinkLauncher;
+    private readonly Action<string>? guideCopyLink;
     private readonly Grid client = new() { Width = 780, Height = 600 };
     private readonly StackPanel form = new() { Margin = new Thickness(20, 20, 20, 16) };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
@@ -55,7 +57,7 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
@@ -67,6 +69,8 @@ internal sealed partial class SettingsWindow : Window
         this.surfaceWindow = surfaceWindow;
         appearanceDisplays = displayTopology ?? surfaceWindow?.DisplayTopology ?? new WindowsDisplayTopology(action => Dispatcher.BeginInvoke(action));
         ownsAppearanceDisplays = displayTopology == null && surfaceWindow == null;
+        this.guideLinkLauncher = guideLinkLauncher;
+        this.guideCopyLink = guideCopyLink;
         this.openNotificationSettings = openNotificationSettings ?? (() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }));
         this.sourceReady = sourceReady ?? Task.CompletedTask;
         Title = ui.Text("menu.settings_title"); WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -148,9 +152,9 @@ internal sealed partial class SettingsWindow : Window
         names.Children.Add(Label("Codex Pacer", 13, FontWeights.SemiBold)); names.Children.Add(Detail(Version)); brand.Children.Add(names);
         DockPanel.SetDock(brand, Dock.Top); stack.Children.Add(brand);
         var bottom = new StackPanel(); DockPanel.SetDock(bottom, Dock.Bottom); stack.Children.Add(bottom);
-        bottom.Children.Add(Navigation("whatsNew", "whats_new.window_title", "sparkle", Color.FromRgb(237, 74, 153)));
-        bottom.Children.Add(Navigation("help", "settings.pane.help", "questionmark", Color.FromRgb(133, 133, 133)));
-        bottom.Children.Add(Navigation("support", "settings.pane.support", "heart", Color.FromRgb(245, 92, 107)));
+        bottom.Children.Add(Navigation("whatsNew", "whats_new.window_title", "sparkle", Color.FromRgb(237, 74, 153), enabled: true));
+        bottom.Children.Add(Navigation("help", "settings.pane.help", "questionmark", Color.FromRgb(133, 133, 133), enabled: true));
+        bottom.Children.Add(Navigation("support", "settings.pane.support", "heart", Color.FromRgb(245, 92, 107), enabled: true));
         var quit = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Height = 26, Margin = new Thickness(0, 0, 0, 10) };
         var quitLabel = new StackPanel { Orientation = Orientation.Horizontal };
         var power = new IconGlyph { Symbol = "power", Width = 14, Height = 14, Margin = new Thickness(0, 0, 8, 0) };
@@ -181,7 +185,7 @@ internal sealed partial class SettingsWindow : Window
         var label = Label(name); label.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = button }); row.Children.Add(label); button.Content = row;
         Identify(button, "settings.pane." + id, name);
         if (!enabled) { button.ToolTip = ui.Text("windows.settings.pane_pending"); ToolTipService.SetShowOnDisabled(button, true); }
-        button.Checked += async (_, _) => { if (!synchronizing && button.IsChecked == true) await Change(p => p with { LastSettingsPane = id }); };
+        button.Checked += async (_, _) => { if (!synchronizing && button.IsChecked == true) await NavigateAsync(id); };
         navigation[id] = button; return button;
     }
     private Border Card(params UIElement[] rows)
@@ -333,13 +337,21 @@ internal sealed partial class SettingsWindow : Window
     {
         foreach (var editor in editors) editor.IsEnabled = enabled;
         codexHistory?.SetInteractionEnabled(enabled);
-        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" || (item.Key is "codex" or "claude" or "deepseek" or "reminders") && engine != null);
+        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" or "whatsNew" or "help" or "support" || (item.Key is "codex" or "claude" or "deepseek" or "reminders") && engine != null);
     }
     private void OnPreferencesChanged(DesktopPreferences value)
-    { if (ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
-    private string ResolvePane(string value) => value is "appearance" or "collapsed" || (value is "codex" or "claude" or "deepseek" or "reminders") && engine != null ? value : "general";
+    { if (!ReadOnlyGuidePane(activePane) && ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
+    private string ResolvePane(string value) => value is "appearance" or "collapsed" or "whatsNew" or "help" or "support" || (value is "codex" or "claude" or "deepseek" or "reminders") && engine != null ? value : "general";
     internal async System.Threading.Tasks.Task NavigateAsync(string pane)
-    { if (!sourceClosed && ResolvePane(pane) == pane) await Change(p => p with { LastSettingsPane = pane }); }
+    {
+        if (sourceClosed || ResolvePane(pane) != pane) return;
+        if (ReadOnlyGuidePane(pane)) RebuildPane(pane);
+        else
+        {
+            bool wasReadOnly = ReadOnlyGuidePane(activePane); if (wasReadOnly) RebuildPane(pane);
+            if (await Change(p => p with { LastSettingsPane = pane }) != PreferencesApplyResult.Applied && wasReadOnly) RebuildPane(session.Current.LastSettingsPane);
+        }
+    }
     private void RebuildPane(string value)
     {
         synchronizing = true;
@@ -355,8 +367,10 @@ internal sealed partial class SettingsWindow : Window
             ClearDeepSeek();
             ClearReminders();
             ClearCollapsed();
-            paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : "settings.pane." + activePane);
-            if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else BuildDeepSeek();
+            ClearGuidePages();
+            paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : activePane == "whatsNew" ? "whats_new.window_title" : "settings.pane." + activePane);
+            if (activePane is "help" or "support" or "whatsNew") BuildGuidePage();
+            else if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else BuildDeepSeek();
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
             paneScroller.ScrollToTop(); SetEditors(!busy && !session.RequiresRestart);
         }
