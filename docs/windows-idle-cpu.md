@@ -64,6 +64,7 @@ Mac 的 `showInFullscreen` 开启时使用全屏辅助窗口，关闭时不加�
 - `IdleSchedulingChecks` 在实际 WPF 窗口上检查静止段零 Render 回调、周期结束释放时钟、隐藏后停止计时、相同值不上传外环纹理，以及设备失败后的回退和通知恢复。检查不依赖 GC。
 - `OcclusionPolicyChecks` 与 `OcclusionSchedulingChecks` 检查保守遮挡条件、实际暂停与恢复、零空闲 Render/计时唤醒，以及逻辑展开状态和引擎序号保持不变。
 - `EngineSnapshotEmissionTests` 覆盖 100 次不变状态、投影变化、通知重复事件、动作序号、显式重试确认和重复初始化。原有回归断言保留。
+- 首轮完整 CI 的收起透明度检查在固定等待 30 ms 后失败。去掉永久时钟后，这段等待不能保证新的时钟已经产生有效进度。检查保留原来的调度等待和透明度断言，随后在原有五秒期限内等待实际进度；新增可控时钟检查首个样本、119 个中间样本、反向连续性、结束值与释放，不依赖机器帧率。WPF 时钟交互与事件的异步规则见 [Timing events overview](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/graphics-multimedia/timing-events-overview)。
 - 更新到 `af196e1` 后，Release 构建无编译警告；完整 Windows 引擎/portable 回归 679 项通过，Desktop 集成 23 项通过，139 个 Core 文件独立编译通过。合同检查六项、Python 语法及 `git diff --check` 通过。SwiftPM 仍有现有的 native build-system 弃用和便利符号链接提示，不属于编译器诊断。
 - 原有轮廓像素检查的 21 个合成场景均无轮廓外像素变化。
 

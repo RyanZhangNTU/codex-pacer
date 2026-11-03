@@ -86,7 +86,11 @@ internal static class CollapsedLayoutChecks
             PressKey(island, island, Key.Escape);
             if (animations)
             {
+                // With idle clocks removed, the first timing tick may still
+                // sample the starting value. Wait for actual clock progress,
+                // rather than assuming a 30 ms dispatcher delay advanced it.
                 await Pump();
+                await Until(() => header.Where(value => value.Tag is true).All(value => value.Opacity > .3 && value.Opacity <= 1));
                 Check(header.Where(value => value.Tag is true).All(value => value.Opacity > .3 && value.Opacity <= 1), "Collapsed values must ease from their displayed opacity");
                 island.Reveal(); await island.WaitForPresentationAsync();
                 Check(header.All(value => Math.Abs(value.Opacity - (value.Tag is true ? .3 : 1)) < .001), "A reversed dim must settle without changing other components");
