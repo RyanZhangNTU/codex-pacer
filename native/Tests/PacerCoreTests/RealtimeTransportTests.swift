@@ -92,9 +92,11 @@ final class RealtimeTransportTests: XCTestCase {
         // pending event only after the helper has applied collapsed settings.
         prefix = "import threading\nfixture_pending_gate=threading.Event()\n" + prefix
         let clock = """
-        fixture_clock=0.0
+        fixture_clock=None
+        fixture_base=None
         fixture_check_after_loop=False
-        time.monotonic=lambda:fixture_clock
+        fixture_real_monotonic=time.monotonic
+        time.monotonic=lambda:fixture_real_monotonic() if fixture_clock is None else fixture_clock
         fixture_receive=Session.receive
         def fixture_received(self,value):
             result=fixture_receive(self,value)
@@ -105,14 +107,17 @@ final class RealtimeTransportTests: XCTestCase {
         """
         var main = String(RealtimeProbe.script.dropFirst(RealtimeProbe.library.count))
         let globals = "global hint_buffer,batch_interval,flush_at"
+        let interval = "batch_interval=interval;now=time.monotonic()"
         let settings = "if isinstance(value,dict) and value.get('kind')=='settings':"
         let reschedule = "if request_logs:request_logs.reschedule(now,interval,flush)"
         let stamp = "stamp=(bool(session and session.ready),len(session.attached) if session else 0)"
-        for marker in [globals, settings, reschedule, stamp] { XCTAssertTrue(main.contains(marker)) }
-        main = main.replacingOccurrences(of: globals, with: globals + ",fixture_clock,fixture_check_after_loop,now")
+        for marker in [globals, interval, settings, reschedule, stamp] { XCTAssertTrue(main.contains(marker)) }
+        main = main.replacingOccurrences(of: globals, with: globals + ",fixture_clock,fixture_base,fixture_check_after_loop,now")
+        main = main.replacingOccurrences(of: interval, with:
+            "if interval==5 and fixture_clock is None:fixture_clock=fixture_base=last_flush\n                " + interval)
         main = main.replacingOccurrences(of: settings, with:
             "if isinstance(value,dict) and value.get('kind')=='testClock':\n" +
-            "            fixture_clock=value['at'];now=fixture_clock;fixture_check_after_loop=True;continue\n        " + settings)
+            "            fixture_clock=fixture_base+value['at'];now=fixture_clock;fixture_check_after_loop=True;continue\n        " + settings)
         main = main.replacingOccurrences(of: reschedule, with: reschedule +
             "\n                if interval==5:fixture_pending_gate.set()")
         main = main.replacingOccurrences(of: stamp, with:
