@@ -21,7 +21,7 @@ internal static class ReminderSettingsChecks
     {
         var oldCulture = CultureInfo.CurrentCulture; CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(language);
         await using var engine = new EngineClient(); int configurations = 0, systemSettingsOpened = 0; bool reject = false;
-        var preferences = new DesktopPreferences { LastSettingsPane = "reminders" };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "reminders" };
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { if (reject) { reject = false; return false; } return true; });
         var system = new Notifications();
         using var notifications = new NotificationSession(session, system, value => Application.Current.Dispatcher.InvokeAsync(value), _ => { }, true);

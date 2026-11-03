@@ -26,7 +26,7 @@ internal static class DeepSeekWebConnectionChecks
         var browser = new DeepSeekWebSession(ui, directory, site.Install, dark);
         var session = new Faults(browser);
         await using var connection = new DeepSeekConnectionCoordinator(engine, session, Application.Current.Dispatcher);
-        var preferences = new DesktopPreferences { LastSettingsPane = "deepseek",
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "deepseek",
             ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "enabled" } };
         var settings = new PreferencesSession(preferences, value => engine.SendAsync("configure", value), _ => true);
         var window = new SettingsWindow(ui, settings, new Startup(), true, dark, engine, webConnection: connection)

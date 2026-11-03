@@ -2,6 +2,8 @@
 
 The per-user installer, startup state, maintenance helpers and lifecycle checks are described in [Windows installation](windows-installation.md). The portable ZIP remains available.
 
+The island's Classic/Liquid Glass preference uses the native Composition material described in [Windows Composition glass](windows-composition-backdrop.md), including fallback, DPI, acceptance captures and performance checks. Its C++ bridge builds with the configured Visual C++ x64 tools and Windows SDK C++/WinRT headers; the DLL is copied and published with the desktop app.
+
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 
 ```powershell

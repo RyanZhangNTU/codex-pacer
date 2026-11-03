@@ -83,6 +83,13 @@ internal sealed class NativeMotion : IDisposable
         return new(new(buffer[0], buffer[1], buffer[2], buffer[3]), new(buffer[13], buffer[14], buffer[15], buffer[16]),
             buffer[4], buffer[5], buffer[6], buffer[7] != 0, buffer[8], buffer[9], buffer[12]);
     }
+    internal MotionFrame SettledAt(double time)
+    {
+        // Closing glass starts the backing fade only after the shell folds.
+        // Reduced motion must finish that second phase without displaying it.
+        _ = At(time + 2);
+        return At(time + 3);
+    }
 
     public void Dispose() => handle.Dispose();
     internal MotionBounds CanvasAt(double time)

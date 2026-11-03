@@ -21,7 +21,7 @@ internal static class DeepSeekSettingsChecks
     {
         CultureInfo previous = CultureInfo.CurrentUICulture; CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
         await using var engine = new EngineClient(); bool reject = false; int configurations = 0;
-        var preferences = new DesktopPreferences { LastSettingsPane = "deepseek", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "enabled" } };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "deepseek", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "enabled" } };
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { if (reject) { reject = false; return false; } return true; });
         var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false) { IsHitTestVisible = false, ShowActivated = false };
         session.Changed += island.ApplyPreferences;

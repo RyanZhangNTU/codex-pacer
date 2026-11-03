@@ -25,7 +25,7 @@ internal static class ProviderHomeSettingsChecks
         foreach (string directory in new[] { first, second, third }) Directory.CreateDirectory(directory);
         File.WriteAllText(file, "synthetic fixture");
         await using var engine = new EngineClient(); bool rejectSave = false; int configurations = 0;
-        var preferences = new DesktopPreferences { LastSettingsPane = provider,
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = provider,
             ProviderModes = new() { ["codex"] = "disabled", ["claude"] = provider == "claude" ? "enabled" : "disabled", ["deepseek"] = provider == "deepseek" ? "enabled" : "disabled" } };
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { if (!rejectSave) return true; rejectSave = false; return false; });
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -23,6 +23,9 @@ internal static class PreferencesSessionChecks
             "Queued edits must read the latest state without reconfiguring collectors for UI-only choices");
         Check(session.Current.CompactSingleTask == "count" && session.Current.CompactMetric == "pace" && session.Current.QuotaRingOuter == "claude" && session.Current.CodexQuotaWindow == "5h",
             "Compact layout and readout choices must share the same presentation-only transaction");
+        Check(await session.ChangeAsync(p => p with { IslandAppearance = "classic" }) == PreferencesApplyResult.Applied
+            && session.Current.IslandAppearance == "classic" && commands == 1 && changes == 3,
+            "Appearance selection is saved without reconfiguring or restarting collectors");
 
         var configured = new List<bool>();
         var rejectedSave = new PreferencesSession(new(), value =>
