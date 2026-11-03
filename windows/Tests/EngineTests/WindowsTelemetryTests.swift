@@ -9,7 +9,7 @@ final class WindowsTelemetryTests: XCTestCase {
         func append(_ data: Data) { lock.lock(); bytes.append(data); lock.unlock() }
         var all: [Data] { lock.lock(); defer { lock.unlock() }; return bytes }
     }
-    private var python: URL { get throws { URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_TEST_PYTHON"])) } }
+    private var python: URL { get throws { URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_CLAUDE_PYTHON_PACKAGE"])).appendingPathComponent("python.exe") } }
     func testLoopbackFragmentedIdentityGzipPortConflictAndImmediateRebind() async throws {
         let frames = Frames(), receiver = ClaudeActivityTelemetry(port: 0) { frames.append($0) }
         try receiver.start(); defer { receiver.stop() }
@@ -32,7 +32,9 @@ final class WindowsTelemetryTests: XCTestCase {
             "endTimeUnixNano": "1790000002000000000", "attributes": attributes]
         try JSONSerialization.data(withJSONObject: ["resourceSpans": [["scopeSpans": [["spans": [span]]]]]]).write(to: file)
         let script = #"""
-        import gzip,json,socket,sys
+        import gzip,json,socket,sys,os,shutil
+        os.environ['PATH']=os.path.join(os.environ['SystemRoot'],'System32')
+        assert all(shutil.which(name) is None for name in ('python','python3','py'))
         data=open(sys.argv[2],'rb').read();statuses=[]
         for body,encoding in [(data,'identity'),(gzip.compress(data,mtime=0),'gzip')]:
             with socket.create_connection(('127.0.0.1',int(sys.argv[1])),2) as client:

@@ -104,30 +104,22 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             return UninstallFailure.Registrations;
         var failures = UninstallFailure.None;
         string hooks = Path.Combine(identity.Root, "Engine", "PacerInstallerHooks.exe");
-        var checkedHomes = new List<string>();
+        IReadOnlyList<string>? homes = null;
+        string runtime = Path.Combine(identity.DataRoot, "ClaudeRuntime");
+        static string[] HookArguments(string operation, string runtime, IReadOnlyList<string> homes) =>
+            new[] { operation, runtime }.Concat(homes).ToArray();
         try
         {
-            foreach (string home in ClaudeHomes())
-            {
-                try
-                {
-                    WindowsInstallationIdentity.RequireNoReparse(home);
-                    string manifest = Path.Combine(home, "pacer", "installation.json");
-                    WindowsInstallationIdentity.RequireNoReparse(manifest);
-                    if (!File.Exists(manifest)) continue;
-                    await RunAsync(hooks, ["--check-uninstall", home], TimeSpan.FromSeconds(10), cancellation);
-                    checkedHomes.Add(home);
-                }
-                catch { failures |= UninstallFailure.ClaudeConfiguration; }
-            }
+            homes = ClaudeHomes();
+            await RunAsync(hooks, HookArguments("--check-uninstall-all", runtime, homes), TimeSpan.FromSeconds(10), cancellation);
         }
         catch { failures |= UninstallFailure.ClaudeConfiguration; }
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
         try { await WindowsMaintenanceSignal.StopAsync(identity.Executable, cancellation); }
         catch { return failures | UninstallFailure.Registrations; }
-        foreach (string home in checkedHomes)
+        if (homes != null)
         {
-            try { await RunAsync(hooks, ["--uninstall", home], TimeSpan.FromSeconds(10), cancellation); }
+            try { await RunAsync(hooks, HookArguments(continueAfterFailure ? "--uninstall-all-continue" : "--uninstall-all", runtime, homes), TimeSpan.FromSeconds(10), cancellation); }
             catch { failures |= UninstallFailure.ClaudeConfiguration; }
         }
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/Localization/en.json": "368c674c31909ede7c7a7a18b207b0e4fc160104f9ddbaa2c70c2670e2bf0039"
+    "windows/Localization/en.json": "8348abca1531bdedaa2ad9ec1d37181b51ddefe6245faf68216e8e830ccbf1a8"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -906,10 +906,17 @@
     "windows.claude.demo_web_help": "Claude web sign-in is unavailable in the offline demo.",
     "windows.claude.disconnect_failed": "Couldn\u2019t clear Claude\u2019s sign-in data. Quota updates are paused. Try signing out again.",
     "windows.claude.embedded_pending": "Filtering Claude sessions from other apps is not available on Windows yet.",
-    "windows.claude.local_help": "Reads local Claude task logs. Live tool events and approval requests are not available on Windows yet.",
+    "windows.claude.local_help": "Tracks local Claude activity, tool events and requests for input.",
     "windows.claude.local_logs": "Local task logs",
     "windows.claude.login.instructions": "Sign in below, then choose Continue or press Ctrl+Enter.",
+    "windows.claude.retry_setup": "Retry setup",
     "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
+    "windows.claude.setup_conflict": "Activity tracking is ready. Existing telemetry settings were kept; some rate readings may be unavailable.",
+    "windows.claude.setup_disabled": "Claude activity is off.",
+    "windows.claude.setup_failed": "Claude activity setup failed. Retry setup or repair the app.",
+    "windows.claude.setup_missing": "Choose an existing Claude folder to enable activity tracking.",
+    "windows.claude.setup_ready": "Claude activity is ready.",
+    "windows.claude.setup_working": "Setting up Claude activity\u2026",
     "windows.claude.sign_out": "Sign Out",
     "windows.cli.not_found": "No runnable Codex CLI was found. Choose codex.exe or its installation folder in Settings.",
     "windows.cli.not_runnable": "No Windows Codex executable was found at: %1$@\nChoose codex.exe or its installation folder.",

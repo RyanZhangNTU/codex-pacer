@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/Localization/zh-Hans.json": "0f8e555ede763068e2a55c213c297ca805d6362bc18f0803e592bfa455b731aa"
+    "windows/Localization/zh-Hans.json": "672571e8a586b46b4cdda984cc7f57683f8d9b5d562779052ac37b466eab11ab"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -906,10 +906,17 @@
     "windows.claude.demo_web_help": "\u79bb\u7ebf\u6f14\u793a\u4e2d\u65e0\u6cd5\u767b\u5f55 Claude \u7f51\u9875\u8d26\u6237\u3002",
     "windows.claude.disconnect_failed": "\u672a\u80fd\u6e05\u9664 Claude \u767b\u5f55\u6570\u636e\u3002\u989d\u5ea6\u66f4\u65b0\u5df2\u6682\u505c\uff0c\u8bf7\u518d\u6b21\u9000\u51fa\u767b\u5f55\u3002",
     "windows.claude.embedded_pending": "Windows \u6682\u4e0d\u652f\u6301\u7b5b\u9009\u5176\u4ed6\u5e94\u7528\u4e2d\u7684 Claude \u4f1a\u8bdd\u3002",
-    "windows.claude.local_help": "\u8bfb\u53d6\u672c\u5730 Claude \u4efb\u52a1\u65e5\u5fd7\u3002Windows \u6682\u4e0d\u652f\u6301\u5b9e\u65f6\u5de5\u5177\u4e8b\u4ef6\u548c\u5ba1\u6279\u8bf7\u6c42\u3002",
+    "windows.claude.local_help": "\u8bfb\u53d6 Claude \u672c\u673a\u6d3b\u52a8\u3001\u5de5\u5177\u4e8b\u4ef6\u548c\u5f85\u56de\u590d\u8bf7\u6c42\u3002",
     "windows.claude.local_logs": "\u672c\u5730\u4efb\u52a1\u65e5\u5fd7",
     "windows.claude.login.instructions": "\u5728\u4e0b\u65b9\u767b\u5f55\uff0c\u7136\u540e\u70b9\u51fb\u201c\u7ee7\u7eed\u201d\u6216\u6309 Ctrl+Enter\u3002",
+    "windows.claude.retry_setup": "\u91cd\u8bd5\u8bbe\u7f6e",
     "windows.claude.runtime_required": "\u7f51\u9875\u767b\u5f55\u9700\u8981 Microsoft Edge WebView2 \u8fd0\u884c\u65f6\u3002",
+    "windows.claude.setup_conflict": "\u6d3b\u52a8\u8bb0\u5f55\u5df2\u5c31\u7eea\u3002\u73b0\u6709\u9065\u6d4b\u8bbe\u7f6e\u5df2\u4fdd\u7559\uff0c\u90e8\u5206\u901f\u7387\u8bfb\u6570\u53ef\u80fd\u4e0d\u53ef\u7528\u3002",
+    "windows.claude.setup_disabled": "Claude \u6d3b\u52a8\u8bb0\u5f55\u5df2\u5173\u95ed\u3002",
+    "windows.claude.setup_failed": "Claude \u6d3b\u52a8\u8bb0\u5f55\u8bbe\u7f6e\u5931\u8d25\u3002\u8bf7\u91cd\u8bd5\u8bbe\u7f6e\u6216\u4fee\u590d\u5e94\u7528\u3002",
+    "windows.claude.setup_missing": "\u8bf7\u9009\u62e9\u5df2\u6709\u7684 Claude \u6587\u4ef6\u5939\u4ee5\u542f\u7528\u6d3b\u52a8\u8bb0\u5f55\u3002",
+    "windows.claude.setup_ready": "Claude \u6d3b\u52a8\u8bb0\u5f55\u5df2\u5c31\u7eea\u3002",
+    "windows.claude.setup_working": "\u6b63\u5728\u8bbe\u7f6e Claude \u6d3b\u52a8\u8bb0\u5f55\u2026",
     "windows.claude.sign_out": "\u9000\u51fa\u767b\u5f55",
     "windows.cli.not_found": "\u672a\u627e\u5230\u53ef\u8fd0\u884c\u7684 Codex CLI\uff0c\u8bf7\u5728\u8bbe\u7f6e\u4e2d\u9009\u62e9 codex.exe \u6216\u5176\u5b89\u88c5\u6587\u4ef6\u5939\u3002",
     "windows.cli.not_runnable": "\u6b64\u5904\u672a\u627e\u5230\u53ef\u8fd0\u884c\u7684 Windows Codex\uff1a%1$@\n\u8bf7\u9009\u62e9 codex.exe \u6216\u5176\u5b89\u88c5\u6587\u4ef6\u5939\u3002",

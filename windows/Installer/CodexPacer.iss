@@ -102,7 +102,8 @@ begin
       'Manual cleanup: in settings.json, remove only Pacer command entries under hooks that launch pacer/hook.py. If statusLine.command launches that Pacer wrapper, restore previousStatusLine from pacer\installation.json (or remove statusLine when the saved value is null). Remove an env value only when it still equals the value recorded in addedEnvironment. Preserve all user and other application entries. Then remove pacer\installation.json.'#13#10#13#10;
   if (Code <> 21) then
     Result := Result + 'Some Windows registrations could not be cleaned. Retained items may include this installation''s current-user Run/StartupApproved entry, Start menu shortcut, Software\CodexPacer\Installations marker, or notification activation registration. Remove only entries that still point to this installation; leave other entries unchanged.'#13#10#13#10;
-  Result := Result + 'Continuing removes the application but preserves anything that could not be cleaned. Retained Pacer hooks may call a deleted program and cause Claude Code errors until you remove those Pacer entries manually. Preferences and read state are retained.';
+  Result := Result + 'The shared Python runtime is under %LOCALAPPDATA%\CodexPacer\ClaudeRuntime. Keep versions still referenced by any hook, and preserve unknown or modified files.'#13#10#13#10 +
+    'Continuing removes the application but preserves anything that could not be cleaned. Retained Pacer hooks may call a deleted program and cause Claude Code errors until you remove those Pacer entries manually. Preferences and read state are retained.';
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

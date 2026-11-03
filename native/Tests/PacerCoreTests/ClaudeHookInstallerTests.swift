@@ -34,6 +34,32 @@ final class ClaudeHookInstallerTests: XCTestCase {
         return try XCTUnwrap(entries.first { ($0["command"] as? String)?.contains("/pacer/hook.py'") == true }?["command"] as? String)
     }
 
+    func testMacDefaultCommandBytesAndOwnershipRemainUnchanged() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let home = fixture.root.appendingPathComponent("Claude O'Neil $literal", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        _ = try ClaudeHookInstaller.install(home: home)
+        func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let hook = "python3 -S " + quote(home.appendingPathComponent("pacer/hook.py").path) + " hook " + quote(home.path)
+        let line = "python3 -S " + quote(home.appendingPathComponent("pacer/hook.py").path) + " statusline " + quote(home.path)
+        var settings = try read(home.appendingPathComponent("settings.json"))
+        for event in eventNames {
+            let entries = commandEntries(settings, event: event, command: hook)
+            XCTAssertEqual(entries.count, 1)
+            XCTAssertEqual(entries.first?["timeout"] as? Int, 5)
+            XCTAssertNil(entries.first?["async"])
+        }
+        XCTAssertEqual((settings["statusLine"] as? [String: Any])?["command"] as? String, line)
+        let packaged = try XCTUnwrap(L10n.sharedResourceBundle.url(forResource: "claude_hook", withExtension: "py"))
+        XCTAssertEqual(try Data(contentsOf: home.appendingPathComponent("pacer/hook.py")), try Data(contentsOf: packaged))
+        let windows = "cmd.exe /D/C call \"C:/synthetic/ClaudeRuntime/3.14.10-90905e64a840/python.exe\" \"-S\" \"" + home.appendingPathComponent("pacer/hook.py").path + "\" \"hook\" \"" + home.path + "\""
+        var hooks = try XCTUnwrap(settings["hooks"] as? [String: [[String: Any]]])
+        hooks["Stop", default: []].append(["hooks": [["type": "command", "command": windows]]])
+        settings["hooks"] = hooks; try write(settings, to: home.appendingPathComponent("settings.json"))
+        try ClaudeHookInstaller.uninstall(home: home)
+        XCTAssertEqual(commandEntries(try read(home.appendingPathComponent("settings.json")), event: "Stop", command: windows).count, 1,
+            "Windows ownership is opt-in; the unchanged Mac policy preserves this foreign command")
+    }
     func testInstallUninstallPreservesUnrelatedHooksEnvironmentAndStatusLineOptions() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let file = fixture.home.appendingPathComponent("settings.json")

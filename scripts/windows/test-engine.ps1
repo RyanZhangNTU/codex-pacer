@@ -8,12 +8,14 @@ $env:PACER_HARNESS_DESKTOP_FIXTURE = Get-HarnessMetadataFixture
 Push-Location $taskRoot
 $taskPreviousCatalogReference = $env:PACER_UI_CATALOG_REFERENCE
 $taskPreviousTestPython = $env:PACER_TEST_PYTHON
+$taskPreviousClaudePython = $env:PACER_CLAUDE_PYTHON_PACKAGE
 try {
     $env:PACER_DESKTOP_PIPE_FIXTURE = Get-DesktopPipeFixture
     python -S scripts/windows/build-localization.py --check
     if ($LASTEXITCODE -ne 0) { throw 'The Windows UI catalogs must match their shared sources.' }
     $env:PACER_UI_CATALOG_REFERENCE = Join-Path $taskRoot 'windows/Localization/Catalogs'
     $env:PACER_TEST_PYTHON = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $env:PACER_CLAUDE_PYTHON_PACKAGE = & (Join-Path $PSScriptRoot 'setup-claude-python.ps1')
     $taskStage = & python -S scripts/windows/stage-engine.py
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the Windows source snapshot.' }
     $taskTests = @()
@@ -23,4 +25,4 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Windows engine tests failed.' }
     python -S scripts/windows/check-shared-compilation.py --scratch-path $taskScratchPath
     if ($LASTEXITCODE -ne 0) { throw 'Shared Core depends on host module members.' }
-} finally { $env:PACER_UI_CATALOG_REFERENCE = $taskPreviousCatalogReference; $env:PACER_TEST_PYTHON = $taskPreviousTestPython; $env:PACER_HARNESS_DESKTOP_FIXTURE = $taskPreviousHarnessFixture; $env:PACER_DESKTOP_PIPE_FIXTURE = $taskPreviousPipeFixture; Pop-Location }
+} finally { $env:PACER_UI_CATALOG_REFERENCE = $taskPreviousCatalogReference; $env:PACER_TEST_PYTHON = $taskPreviousTestPython; $env:PACER_CLAUDE_PYTHON_PACKAGE = $taskPreviousClaudePython; $env:PACER_HARNESS_DESKTOP_FIXTURE = $taskPreviousHarnessFixture; $env:PACER_DESKTOP_PIPE_FIXTURE = $taskPreviousPipeFixture; Pop-Location }

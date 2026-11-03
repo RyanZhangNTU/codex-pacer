@@ -15,11 +15,17 @@ public protocol ClaudeHookStorage: Sendable {
 }
 
 public struct ClaudeHookInstaller {
+    public enum CommandKind: Equatable, Sendable { case hook, statusLine }
     private let storage: any ClaudeHookStorage
     private let python: String
     private let serialize: @Sendable ([String]) -> String
-    public init(storage: any ClaudeHookStorage, python: String, serialize: @escaping @Sendable ([String]) -> String) {
+    private let helperScript: Data?
+    private let additionalOwnedCommand: @Sendable (String, URL, CommandKind) -> Bool
+    public init(storage: any ClaudeHookStorage, python: String, serialize: @escaping @Sendable ([String]) -> String,
+                helperScript: Data? = nil,
+                additionalOwnedCommand: @escaping @Sendable (String, URL, CommandKind) -> Bool = { _, _, _ in false }) {
         self.storage = storage; self.python = python; self.serialize = serialize
+        self.helperScript = helperScript; self.additionalOwnedCommand = additionalOwnedCommand
     }
     public enum EnsureResult: Equatable, Sendable { case current, installed, missingHome, failed }
     public struct Status: Equatable, Sendable {
@@ -72,7 +78,7 @@ public struct ClaudeHookInstaller {
             telemetryConflict(env)
         let lineCommand = (value["statusLine"] as? [String: Any])?["command"] as? String
         var status = Status(hooksConfigured: configured, telemetryConfigured: telemetry,
-            statusLineConfigured: lineCommand == statusLineCommand(home: home) || lineCommand == legacyStatusLineCommand(home: home),
+            statusLineConfigured: ownsStatusLine(lineCommand, home: home),
             telemetryConflict: conflict)
         status.updateAvailable = configured && (migrated(value, home: home) != nil || installedScriptOutdated(home: home))
         return status
@@ -99,7 +105,7 @@ public struct ClaudeHookInstaller {
         let previousLine = value["statusLine"]
         if let previousLine, !(previousLine is [String: Any]) { throw Failure.invalidSettings }
         let previousCommand = (previousLine as? [String: Any])?["command"] as? String
-        if previousCommand == legacyStatusLineCommand(home: home) {
+        if previousCommand != statusLineCommand(home: home) && ownsStatusLine(previousCommand, home: home) {
             var line = previousLine as? [String: Any] ?? [:]; line["command"] = statusLineCommand(home: home); value["statusLine"] = line
         } else if previousCommand != statusLineCommand(home: home) {
             manifest["previousStatusLine"] = previousLine ?? NSNull()
@@ -150,7 +156,7 @@ public struct ClaudeHookInstaller {
         for (key, setting) in manifest["addedEnvironment"] as? [String: String] ?? [:] where env[key] == setting { env.removeValue(forKey: key) }
         if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env }
         let lineCommand = (value["statusLine"] as? [String: Any])?["command"] as? String
-        if lineCommand == statusLineCommand(home: home) || lineCommand == legacyStatusLineCommand(home: home) {
+        if ownsStatusLine(lineCommand, home: home) {
             if let previous = manifest["previousStatusLine"], !(previous is NSNull) { value["statusLine"] = previous } else { value.removeValue(forKey: "statusLine") }
         }
         guard try settings(home: home).bytes == existing.bytes else { throw Failure.changedSettings }
@@ -173,7 +179,8 @@ public struct ClaudeHookInstaller {
             setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value }, home: home)
         }
         result["hooks"] = hooks
-        if var line = value["statusLine"] as? [String: Any], line["command"] as? String == legacyStatusLineCommand(home: home) {
+        if var line = value["statusLine"] as? [String: Any], line["command"] as? String != statusLineCommand(home: home),
+           ownsStatusLine(line["command"] as? String, home: home) {
             line["command"] = statusLineCommand(home: home); result["statusLine"] = line
         }
         return NSDictionary(dictionary: result).isEqual(to: value) ? nil : result
@@ -185,7 +192,11 @@ public struct ClaudeHookInstaller {
     }
     private func owned(_ entry: [String: Any], home: URL) -> Bool {
         guard entry["type"] as? String == "command", let command = entry["command"] as? String else { return false }
-        return command == hookCommand(home: home) || command == legacyHookCommand(home: home)
+        return command == hookCommand(home: home) || command == legacyHookCommand(home: home) || additionalOwnedCommand(command, home, .hook)
+    }
+    private func ownsStatusLine(_ command: String?, home: URL) -> Bool {
+        guard let command else { return false }
+        return command == statusLineCommand(home: home) || command == legacyStatusLineCommand(home: home) || additionalOwnedCommand(command, home, .statusLine)
     }
     private func containsOwned(_ group: [String: Any], home: URL) -> Bool {
         (group["hooks"] as? [[String: Any]])?.contains { owned($0, home: home) } == true
@@ -220,12 +231,21 @@ public struct ClaudeHookInstaller {
         if updated.isEmpty { hooks.removeValue(forKey: displayEvent) } else { hooks[displayEvent] = updated }
     }
     private func writeScript(home: URL) throws {
+        if let helperScript {
+            let script = home.appendingPathComponent("pacer/hook.py"); try safe(script)
+            try storage.replace(script, with: helperScript, permissions: 0o700)
+            return
+        }
         guard let resource = Bundle.module.url(forResource: "claude_hook", withExtension: "py") else { throw Failure.invalidSettings }
         let script = home.appendingPathComponent("pacer/hook.py"); try safe(script)
         let scriptData = try Data(contentsOf: resource); try storage.replace(script, with: scriptData, permissions: 0o700)
     }
     private func installedScriptOutdated(home: URL) -> Bool {
         let script = home.appendingPathComponent("pacer/hook.py")
+        if let helperScript {
+            guard (try? safe(script)) != nil, let installed = try? storage.read(script) else { return false }
+            return helperScript != installed
+        }
         guard let resource = Bundle.module.url(forResource: "claude_hook", withExtension: "py"),
               (try? safe(script)) != nil, let installed = try? storage.read(script) else { return false }
         return (try? Data(contentsOf: resource)) != installed

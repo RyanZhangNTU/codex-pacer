@@ -23,6 +23,10 @@ try {
     foreach ($taskFile in @('PacerEngine.exe','PacerWindowsBridge.dll','PacerInstallerHooks.exe')) {
         Copy-Item -LiteralPath (Join-Path $taskBinary $taskFile) -Destination $taskDestination -Force
     }
+    $taskPython = & (Join-Path $PSScriptRoot 'setup-claude-python.ps1')
+    $taskPythonTarget = Join-Path $taskDestination 'Python'
+    New-Item -ItemType Directory -Path $taskPythonTarget -Force | Out-Null
+    Get-ChildItem -LiteralPath $taskPython -File | Copy-Item -Destination $taskPythonTarget -Force
     foreach ($taskBundle in Get-ChildItem -LiteralPath $taskBinary -Directory -Filter '*.resources') {
         foreach ($taskParent in @($taskDestination, $taskDesktop)) {
             $taskTarget = Join-Path $taskParent $taskBundle.Name

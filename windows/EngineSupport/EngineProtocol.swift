@@ -255,6 +255,7 @@ struct EngineSnapshot: Codable, Equatable {
     let claudeConnection: EngineClaudeConnection?
     let claudeCloudConnection: EngineClaudeCloudConnection?
     let activityLinks: [EngineActivityLink]?
+    let claudeSetup: EngineClaudeHookSetup?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
@@ -263,7 +264,7 @@ struct EngineSnapshot: Codable, Equatable {
          taskPresentation: ActivityTaskPresentation? = nil,
          deepseekConnection: EngineDeepSeekConnection? = nil, claudeConnection: EngineClaudeConnection? = nil,
          claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil,
-         notificationProjections: [EngineNotice]? = nil) {
+         notificationProjections: [EngineNotice]? = nil, claudeSetup: EngineClaudeHookSetup? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
         self.demo = demo; capturedAt = now.timeIntervalSince1970
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
@@ -282,5 +283,6 @@ struct EngineSnapshot: Codable, Equatable {
         self.claudeConnection = claudeConnection
         self.claudeCloudConnection = claudeCloudConnection
         self.activityLinks = activityLinks
+        self.claudeSetup = claudeSetup
     }
 }

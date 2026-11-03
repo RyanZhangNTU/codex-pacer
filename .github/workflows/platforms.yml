@@ -96,6 +96,8 @@ jobs:
         run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
       - name: Desktop integration tests
         run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
+      - name: Claude runtime without user Python
+        run: ./scripts/windows/test-claude-runtime.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-claude-runtime.log"
       - name: Functional presentation tests
         run: ./scripts/windows/test-presentation.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
       - name: Package unsigned Windows application
@@ -144,6 +146,8 @@ jobs:
             ${{ runner.temp }}/pacer-windows-idle.json
             ${{ runner.temp }}/pacer-desktop-build.log
             ${{ runner.temp }}/pacer-desktop-tests.log
+            ${{ runner.temp }}/pacer-claude-runtime.log
+            output/windows/claude-runtime-tests.json
             ${{ runner.temp }}/pacer-presentation-tests.log
             ${{ runner.temp }}/pacer-windows-package.log
             ${{ runner.temp }}/pacer-installer-tests.log

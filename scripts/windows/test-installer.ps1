@@ -30,13 +30,14 @@ function Assert-Pacer([bool]$Value, [string]$Message) {
     if (!$Value) { throw $Message }
 }
 function Record-Pacer([string]$Name) { $taskPasses.Add($Name); Write-Output ('PASS ' + $Name) }
-function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Expected = @(0), [switch]$Offline) {
+function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Expected = @(0), [switch]$Offline, [string]$StdinJson = $null) {
     $taskStart = [Diagnostics.ProcessStartInfo]::new($File)
     $taskStart.UseShellExecute = $false
     $taskStart.CreateNoWindow = $true
     $taskStart.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
     $taskStart.RedirectStandardOutput = $true
     $taskStart.RedirectStandardError = $true
+    $taskStart.RedirectStandardInput = ![string]::IsNullOrEmpty($StdinJson)
     foreach ($taskArgument in $Arguments) { $taskStart.ArgumentList.Add($taskArgument) }
     if ($Offline) {
         $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
@@ -46,6 +47,7 @@ function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Ex
     }
     $taskProcess = [Diagnostics.Process]::Start($taskStart)
     try {
+        if ($taskStart.RedirectStandardInput) { $taskProcess.StandardInput.WriteLine($StdinJson); $taskProcess.StandardInput.Close() }
         $taskOut = $taskProcess.StandardOutput.ReadToEndAsync()
         $taskErr = $taskProcess.StandardError.ReadToEndAsync()
         $taskFinished = $false
@@ -303,6 +305,40 @@ try {
     Assert-PacerSnapshot $taskRunKey $taskBeforeRun
     Assert-PacerSnapshot $taskApprovalKey $taskBeforeApproval
     Record-Pacer 'invalid Claude JSON: explicit interactive Continue removes the app and owned registrations, preserves invalid bytes and records manual cleanup'
+
+    # Exercise the installed runtime and actual application uninstaller, rather
+    # than only invoking the hook helper's uninstall entry in isolation.
+    $taskUninstalled = $false
+    $null = Invoke-PacerTestProcess $taskSetup $taskFlags
+    [IO.File]::WriteAllText($taskClaudeSettings, $taskOriginal, [Text.UTF8Encoding]::new($false))
+    Remove-Item -LiteralPath $taskManifest -Force
+    $taskOtherHome = Join-Path $taskData 'Claude 第二个 home'
+    New-Item -ItemType Directory -Path $taskOtherHome -Force | Out-Null
+    $taskOtherSettings = Join-Path $taskOtherHome 'settings.json'
+    [IO.File]::WriteAllText($taskOtherSettings, $taskOriginal, [Text.UTF8Encoding]::new($false))
+    $taskRuntime = Join-Path $taskData 'ClaudeRuntime'
+    $taskRuntimeHelper = Join-Path $taskApp 'Engine/PacerInstallerHooks.exe'
+    foreach ($taskHome in @((Split-Path $taskClaudeSettings -Parent), $taskOtherHome)) {
+        $taskSetupResult = Invoke-PacerTestProcess $taskRuntimeHelper @('--ensure',$taskHome,$taskRuntime) -Offline | ConvertFrom-Json
+        Assert-Pacer ($taskSetupResult.state -eq 'ready' -and $taskSetupResult.hooksConfigured) 'The installed runtime did not configure its isolated Claude home.'
+        Assert-Pacer (!(Test-Path -LiteralPath (Join-Path $taskHome 'pacer/runtime'))) 'A Claude home contains a duplicate runtime.'
+    }
+    Assert-Pacer (@(Get-ChildItem -LiteralPath $taskRuntime -Directory).Count -eq 1) 'The two homes must share one runtime version.'
+    $taskRuntimePython = Join-Path (Get-ChildItem -LiteralPath $taskRuntime -Directory | Select-Object -First 1).FullName 'python.exe'
+    $taskPrimaryHome = Split-Path $taskClaudeSettings -Parent
+    $null = Invoke-PacerTestProcess $taskRuntimePython @('-S',(Join-Path $taskPrimaryHome 'pacer/hook.py'),'hook',$taskPrimaryHome) -Offline -StdinJson '{"session_id":"fixture-installer","hook_event_name":"UserPromptSubmit","prompt_id":"fixture-prompt","prompt":"SYNTHETIC_PRIVATE_BODY"}'
+    $taskSpool = [IO.File]::ReadAllText((Join-Path $taskPrimaryHome 'pacer/events.jsonl'))
+    Assert-Pacer (($taskSpool -split "`n" | Where-Object { $_ } | ConvertFrom-Json | Where-Object { $_.kind -eq 'prompt' -and $_.sessionId -eq 'fixture-installer' }).Count -eq 1 -and
+        !$taskSpool.Contains('SYNTHETIC_PRIVATE_BODY')) 'The installed offline hook must record its synthetic prompt ownership without its body.'
+    $null = Invoke-PacerTestProcess $taskUninstaller $taskSilent
+    $taskUninstalled = $true
+    Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskRuntime)) 'Actual uninstall left its application or owned shared runtime.'
+    foreach ($taskSettingsFile in @($taskClaudeSettings, $taskOtherSettings)) {
+        Assert-Pacer ([Text.Json.Nodes.JsonNode]::DeepEquals([Text.Json.Nodes.JsonNode]::Parse($taskOriginal),
+            [Text.Json.Nodes.JsonNode]::Parse([IO.File]::ReadAllText($taskSettingsFile)))) 'Actual uninstall must leave exactly the user settings in every indexed home.'
+    }
+    Assert-Pacer ((Get-FileHash -LiteralPath $taskPreferences).Hash -eq $taskPreferenceHash -and (Get-FileHash -LiteralPath $taskReadState).Hash -eq $taskReadHash) 'Runtime cleanup changed retained preferences or read state.'
+    Record-Pacer 'installed Python works offline without user Python; actual uninstall restores both indexed Claude homes and deletes the single owned runtime'
     $taskReport = @{ schemaVersion=1; syntheticOnly=$true; elevated=$taskElevated; restarted=$false; checks=@($taskPasses);
         nativeNotificationCleanup=if ($taskElevated) { 'not exercised: elevated CI token' } else { 'passed' }; protectedPreviewUntouched=($null -ne $taskProtectedStart) }
     [IO.File]::WriteAllText((Join-Path $taskRoot 'output/windows/installer-tests.json'), ($taskReport|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
