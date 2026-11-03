@@ -8,7 +8,12 @@ public struct WindowsPythonPin: Decodable, Sendable {
     public let version: String, architecture: String, url: String, sha256: String, signer: String
     public var identifier: String { version + "-" + sha256.prefix(12) }
     public static func load() throws -> Self {
-        guard let url = Bundle.module.url(forResource: "python-runtime-lock", withExtension: "json") else { throw ClaudeHookInstaller.Failure.invalidSettings }
+        #if arch(arm64)
+        let resource = "python-runtime-lock-arm64"
+        #else
+        let resource = "python-runtime-lock"
+        #endif
+        guard let url = Bundle.module.url(forResource: resource, withExtension: "json") else { throw ClaudeHookInstaller.Failure.invalidSettings }
         return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url))
     }
 }

@@ -3,6 +3,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <OutputPath>bin/$(Configuration)/net10.0-windows/</OutputPath>
+    <OutputPath Condition="'$(PacerArchitecture)' == 'arm64'">bin/$(Configuration)/net10.0-windows/arm64/</OutputPath>
+    <IntermediateOutputPath>obj/$(Configuration)/$(TargetFramework)/$(PacerArchitecture)/</IntermediateOutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <UseWPF>true</UseWPF>
@@ -28,7 +30,7 @@
     <Content Include="../ThirdParty/WebView2/*.txt" Link="Licenses/WebView2/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>
   <PropertyGroup>
-    <PacerCompositionOutput>$(MSBuildProjectDirectory)/obj/composition/$(Configuration)</PacerCompositionOutput>
+    <PacerCompositionOutput>$(MSBuildProjectDirectory)/obj/composition/$(Configuration)/$(PacerArchitecture)</PacerCompositionOutput>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="$(PacerCompositionOutput)/PacerCompositionBackdrop.dll" Link="PacerCompositionBackdrop.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
@@ -36,6 +38,6 @@
   <Target Name="BuildCompositionBackdrop" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'"
           Inputs="../Native/CompositionBackdrop/Backdrop.cpp;../Native/CompositionBackdrop/build.ps1"
           Outputs="$(PacerCompositionOutput)/PacerCompositionBackdrop.dll">
-    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../Native/CompositionBackdrop/build.ps1&quot; -OutputDirectory &quot;$(PacerCompositionOutput)&quot;"/>
+    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../Native/CompositionBackdrop/build.ps1&quot; -Architecture $(PacerArchitecture) -OutputDirectory &quot;$(PacerCompositionOutput)&quot;"/>
   </Target>
 </Project>

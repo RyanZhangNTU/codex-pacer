@@ -1,7 +1,9 @@
 param(
     [Parameter(Mandatory=$true)][string]$Archive,
-    [string]$QaScope = ''
+    [string]$QaScope = '',
+    [ValidateSet('x64','arm64')][string]$Architecture = $(if ($env:PACER_ARCHITECTURE) { $env:PACER_ARCHITECTURE } else { 'x64' })
 )
+$env:PACER_ARCHITECTURE = $Architecture
 . (Join-Path $PSScriptRoot 'environment.ps1')
 . (Join-Path $PSScriptRoot 'version.ps1')
 . (Join-Path $PSScriptRoot 'setup-installer.ps1')
@@ -17,8 +19,8 @@ New-Item -ItemType Directory -Path $taskPayload -Force | Out-Null
 [IO.Compression.ZipFile]::ExtractToDirectory([IO.Path]::GetFullPath($Archive), $taskPayload)
 $taskInfoFile = Join-Path $taskPayload 'build-info.json'
 $taskInfo = Get-Content -LiteralPath $taskInfoFile -Raw | ConvertFrom-Json
-if ($taskInfo.schemaVersion -ne 1 -or $taskInfo.architecture -ne 'x64' -or $taskInfo.signed -ne $false) {
-    throw 'The installer requires the unsigned x64 application payload.'
+if ($taskInfo.schemaVersion -ne 1 -or $taskInfo.architecture -ne $Architecture -or $taskInfo.signed -ne $false -or $taskInfo.minimumWindowsBuild -ne 19041) {
+    throw 'The installer requires an unsigned application payload matching its target architecture and minimum Windows build.'
 }
 foreach ($taskFile in $taskInfo.files) {
     $taskCandidate = [IO.Path]::GetFullPath((Join-Path $taskPayload $taskFile.path))
@@ -33,7 +35,7 @@ $taskInfo.files = @(Get-ChildItem -LiteralPath $taskPayload -File -Recurse | Whe
     @{ path=[IO.Path]::GetRelativePath($taskPayload, $_.FullName).Replace([char]92,[char]47); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 })
 [IO.File]::WriteAllText($taskInfoFile, ($taskInfo | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
-$taskName = 'CodexPacer-' + $taskVersion.version + '-windows-x64-setup-' + $taskInfo.sourceCommit.Substring(0,7)
+$taskName = 'CodexPacer-' + $taskVersion.version + '-windows-' + $Architecture + '-setup-' + $taskInfo.sourceCommit.Substring(0,7)
 if ($taskInfo.sourceDirty) { $taskName += '-worktree' }
 $taskAppId = 'CodexPacer.Windows'; $taskAppName = 'Codex Pacer'
 if ($taskScope -ne 'default') {
@@ -51,7 +53,7 @@ foreach ($taskArgument in @(
     ('/DSourceDir=' + $taskPayload), ('/DArtifactDir=' + $taskArtifacts),
     ('/DPacerVersion=' + $taskVersion.version), ('/DPacerFileVersion=' + $taskVersion.version + '.' + $taskVersion.build),
     ('/DPacerScope=' + $taskScope), ('/DPacerAppId=' + $taskAppId), ('/DPacerAppName=' + $taskAppName),
-    ('/DArtifactName=' + $taskName), (Join-Path $taskRoot 'windows/Installer/CodexPacer.iss')
+    ('/DArtifactName=' + $taskName), ('/DPacerArchitecture=' + $Architecture), (Join-Path $taskRoot 'windows/Installer/CodexPacer.iss')
 )) { $taskStart.ArgumentList.Add($taskArgument) }
 $taskCompiler = [Diagnostics.Process]::Start($taskStart)
 try {

@@ -1202,7 +1202,7 @@
     {
       "id": "platform-matrix",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P1",
       "requirements": [
         "Mac arm64/Intel 完整 make test 和 make build；Windows x64/ARM64 原生依赖与宿主",
@@ -1214,10 +1214,16 @@
         "windows/toolchain-lock.json"
       ],
       "evidence": [],
-      "previewNote": "支持范围与实际验证范围分别记录。",
+      "previewNote": "Support target: Windows 10 build 19041+ and Windows 11, x64 and ARM64. Build coverage: architecture-aware engine, desktop, Swift/Composition native libraries, Python, maintenance and installer paths; native ARM64 CI builds/packages only with symmetric artifacts and PE validation. The new CI has not run during batch development. Actual validation: Windows 11 x64 Debug zero-warning compilation and targeted tests for version/API failure, schema/dependency selection and synthetic PE images. ARM64 and Windows 10 are build-path covered, physical runtime acceptance pending; no claim of a complete platform matrix. WinSparkle ARM64 binaries are supplied by lane B through PacerArchitecture.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
-      "deferredEvidence": []
+      "deferredEvidence": [
+        "docs/windows-platform-matrix.md",
+        "scripts/windows/architecture.ps1",
+        "scripts/windows/check-architecture.py",
+        "windows/Tests/DesktopTests/WindowsPlatformChecks.cs",
+        "windows/Tests/EngineTests/WindowsPlatformCompatibilityTests.swift"
+      ]
     },
     {
       "id": "cross-platform-delivery",

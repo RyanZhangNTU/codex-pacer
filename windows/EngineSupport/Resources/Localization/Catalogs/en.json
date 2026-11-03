@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "d26943def30ed648d9515561a70b794417b0c581933dd666d9d39733ca45441f"
+    "windows/EngineSupport/Resources/Localization/en.json": "5348fcc508b5098fc2c1228f95efc0fe12109b5f52eec6a3b9c0c779f033081c"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -955,6 +955,7 @@
     "windows.open.deepseek": "Open DeepSeek Harness",
     "windows.pages.copy_failed": "Windows couldn't copy the link. Try again.",
     "windows.pages.open_failed": "Windows couldn't open the link. Try again in your browser.",
+    "windows.platform.unsupported": "Codex Pacer requires Windows 10 build 19041 or later.",
     "windows.provider.detected": "Detected on this PC",
     "windows.provider.local": "This PC",
     "windows.provider.not_detected": "Not detected on this PC",

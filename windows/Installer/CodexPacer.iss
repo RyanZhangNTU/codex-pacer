@@ -22,6 +22,9 @@
 #ifndef ArtifactName
   #define ArtifactName "CodexPacer-setup"
 #endif
+#ifndef PacerArchitecture
+  #define PacerArchitecture "x64"
+#endif
 
 [Setup]
 AppId={#PacerAppId}
@@ -33,8 +36,15 @@ AppPublisherURL=https://github.com/RyanZhangNTU/codex-pacer
 DefaultDirName={localappdata}\Programs\{#PacerAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+#if PacerArchitecture == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#elif PacerArchitecture == "x64"
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#else
+  #error PacerArchitecture must be x64 or arm64
+#endif
 MinVersion=10.0.19041
 OutputDir={#ArtifactDir}
 OutputBaseFilename={#ArtifactName}

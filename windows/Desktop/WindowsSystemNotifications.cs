@@ -30,7 +30,7 @@ internal sealed class WindowsSystemNotifications(string iconPath, string display
         if (disposed) return Task.FromResult(NotificationAvailability.Failed);
         try
         {
-            if (!AppNotificationManager.IsSupported()) return Task.FromResult(NotificationAvailability.Unsupported);
+            if (!WindowsPlatformPolicy.NotificationsSupported(Environment.OSVersion.Version.Build, () => AppNotificationManager.IsSupported())) return Task.FromResult(NotificationAvailability.Unsupported);
             if (manager == null)
             {
                 var candidate = AppNotificationManager.Default;

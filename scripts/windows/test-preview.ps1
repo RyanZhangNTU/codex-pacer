@@ -13,7 +13,8 @@ $taskChecks = @()
 try {
     [IO.Compression.ZipFile]::ExtractToDirectory($taskArchive, $taskApp)
     $taskManifest = Get-Content -LiteralPath (Join-Path $taskApp 'build-info.json') -Raw | ConvertFrom-Json
-    if ($taskManifest.schemaVersion -ne 1 -or $taskManifest.architecture -ne 'x64') { throw 'Unexpected preview manifest.' }
+    if ($taskManifest.schemaVersion -ne 1 -or $taskManifest.architecture -notin @('x64','arm64')) { throw 'Unexpected preview manifest.' }
+    if ($taskManifest.architecture -eq 'arm64' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'Arm64') { throw 'Runtime preview acceptance requires an ARM64 Windows host for this payload.' }
     $taskPrefix = $taskApp.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     foreach ($taskFile in $taskManifest.files) {
         $taskPath = [IO.Path]::GetFullPath((Join-Path $taskApp $taskFile.path))

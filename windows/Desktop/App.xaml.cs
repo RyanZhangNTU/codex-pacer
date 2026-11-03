@@ -41,6 +41,11 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (!WindowsPlatformPolicy.Supports(Environment.OSVersion.Version.Major, Environment.OSVersion.Version.Build))
+        {
+            MessageBox.Show(UiText.For(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh").Text("windows.platform.unsupported"), "Codex Pacer");
+            Shutdown(1); return;
+        }
         if (e.Args is ["--uninstall-notifications"])
         {
             try { _ = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory); Shutdown(await WindowsNotificationCleanup.UninstallAsync() ? 0 : 1); }

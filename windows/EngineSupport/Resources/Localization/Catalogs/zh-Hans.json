@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "b3ae0000c94b828b82785f9316053c22552dcb8d275d9a5b51308e3aabc27e55"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "fc221458a3c2d791e180de898402c7ce7e7db83d05dd242329606de0eff6070f"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -955,6 +955,7 @@
     "windows.open.deepseek": "\u6253\u5f00 DeepSeek Harness",
     "windows.pages.copy_failed": "Windows \u65e0\u6cd5\u590d\u5236\u94fe\u63a5\uff0c\u8bf7\u91cd\u8bd5\u3002",
     "windows.pages.open_failed": "Windows \u65e0\u6cd5\u6253\u5f00\u94fe\u63a5\uff0c\u8bf7\u5728\u6d4f\u89c8\u5668\u4e2d\u91cd\u8bd5\u3002",
+    "windows.platform.unsupported": "Codex Pacer \u9700\u8981 Windows 10 \u5185\u90e8\u7248\u672c 19041 \u6216\u66f4\u9ad8\u7248\u672c\u3002",
     "windows.provider.detected": "\u5df2\u5728\u6b64\u7535\u8111\u4e0a\u68c0\u6d4b\u5230",
     "windows.provider.local": "\u6b64\u7535\u8111",
     "windows.provider.not_detected": "\u672a\u5728\u6b64\u7535\u8111\u4e0a\u68c0\u6d4b\u5230",

@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import struct
 import unittest
 import tempfile
 
@@ -125,6 +126,75 @@ class CoreBoundaryTests(unittest.TestCase):
             contract.workflow_boundary(workflow.replace("python3 scripts/windows/check-contract.py", "true", 1))
         with self.assertRaises(ValueError):
             contract.workflow_boundary(workflow.replace("python scripts/windows/check-contract.py", "Write-Output skipped", 1))
+
+
+class WindowsArchitectureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        source = importlib.util.spec_from_file_location("architecture", Path(__file__).with_name("check-architecture.py"))
+        cls.architecture = importlib.util.module_from_spec(source)
+        source.loader.exec_module(cls.architecture)
+
+    def image(self, machine, flags=None):
+        data = bytearray(1024); data[:2] = b"MZ"; struct.pack_into("<I", data, 60, 128)
+        data[128:132] = b"PE\0\0"; struct.pack_into("<HH", data, 132, machine, 1)
+        optional = 152; size = 224 if machine == 0x14C else 240
+        struct.pack_into("<H", data, 148, size); struct.pack_into("<H", data, optional, 0x10B if machine == 0x14C else 0x20B)
+        struct.pack_into("<IIII", data, optional + size + 8, 512, 0x2000, 512, 512)
+        if flags is not None:
+            directory = optional + (96 if machine == 0x14C else 112)
+            struct.pack_into("<II", data, directory + 14 * 8, 0x2000, 72)
+            struct.pack_into("<I", data, 512 + 16, flags)
+        return bytes(data)
+
+    def test_native_machine_and_neutral_managed_images(self):
+        for name, machine in self.architecture.MACHINES.items():
+            with tempfile.TemporaryDirectory() as directory:
+                image = Path(directory) / "synthetic.dll"; image.write_bytes(self.image(machine))
+                self.architecture.verify(image, name, required_native=True)
+                other = "arm64" if name == "x64" else "x64"
+                with self.assertRaises(ValueError): self.architecture.verify(image, other)
+                image.write_bytes(self.image(0x14C, 1)); self.architecture.verify(image, name)
+                with self.assertRaises(ValueError): self.architecture.verify(image, name, required_native=True)
+                for flags in (3, 0x11, 0):
+                    image.write_bytes(self.image(0x14C, flags))
+                    with self.subTest(flags=flags), self.assertRaises(ValueError): self.architecture.verify(image, name)
+
+    def test_malformed_pe_headers_are_rejected_without_execution(self):
+        data = self.image(0x8664)
+        for broken in (b"", b"MZ", data[:100], data[:200], b"no" + data[2:]):
+            with self.subTest(size=len(broken)), self.assertRaises(ValueError): self.architecture.inspect(broken)
+
+    def test_complete_payload_rejects_one_wrong_native_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ["CodexPacer.exe", "PacerCompositionBackdrop.dll", "Engine/PacerEngine.exe", "Engine/PacerWindowsBridge.dll",
+                         "Engine/PacerInstallerHooks.exe", "Maintenance/PacerMaintenance.exe", "Engine/Python/python.exe", "Engine/Python/python3.dll", "Engine/Python/python314.dll"]:
+                target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(self.image(0xAA64))
+            self.architecture.check(root, "arm64")
+            (root / "WinSparkle.dll").write_bytes(self.image(0x8664))
+            with self.assertRaises(ValueError): self.architecture.check(root, "arm64")
+
+    def test_architecture_pins_and_minimum_build_declarations(self):
+        lock = json.loads((contract.ROOT / "windows/toolchain-lock.json").read_text())
+        self.assertEqual(set(lock["architectures"]), {"x64", "arm64"}); self.assertEqual(lock["minimumWindowsBuild"], 19041)
+        self.assertRegex(lock["swiftArm64InstallerSHA256"], r"^[0-9a-f]{64}$")
+        for suffix, arch in [("", "x64"), ("-arm64", "arm64")]:
+            pin = json.loads((contract.ROOT / f"windows/InstallerSupport/Resources/python-runtime-lock{suffix}.json").read_text())
+            self.assertEqual(pin["architecture"], arch); self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue(pin["url"].startswith("https://www.python.org/ftp/python/"))
+        props = (contract.ROOT / "windows/desktop-platform.props").read_text()
+        self.assertIn("win-$(PacerArchitecture)", props); self.assertIn("10.0.19041.0</SupportedOSPlatformVersion>", props)
+        self.assertIn("MinVersion=10.0.19041", (contract.ROOT / "windows/Installer/CodexPacer.iss").read_text())
+
+    def test_arm64_ci_only_builds_and_packages(self):
+        workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text()
+        job = re.search(r"(?ms)^  windows-arm64:\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow).group(1)
+        self.assertIn("runs-on: windows-11-arm", job)
+        self.assertIn("-Architecture arm64 -BuildOnly", job)
+        for artifact in ("windows-app-arm64-unsigned", "windows-installer-arm64-unsigned"):
+            self.assertIn(artifact, job)
+        self.assertNotRegex(job, r"scripts/windows/test-(engine|desktop|presentation|preview|installer)\.ps1")
 
 
 class WindowsLocalizationTests(unittest.TestCase):

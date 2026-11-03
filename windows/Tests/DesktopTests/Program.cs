@@ -22,6 +22,8 @@ internal static class Program
         if (args is ["--guide-preferences-read", var guideFile, var guideVersion, var guideMajor]) return GuideSessionChecks.ReadAfterRestart(guideFile, guideVersion, guideMajor);
         if (args is ["--guide-controls-only"])
         { await GuideControlChecks.Run(); Console.WriteLine("PASS combined embedded-session flags, schema 2 reopen and save rollback"); return 0; }
+        if (args is ["--platform-only"])
+        { WindowsPlatformChecks.Run(); Console.WriteLine("PASS Windows 10 minimum, notification capability failures and glass fallback"); return 0; }
         if (args is ["--pages-only", var pagesEngine])
         { PreferencesChecks.Run(); await PreferencesSessionChecks.Run(); await GuideControlChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
         if (args is ["--startup-only"])
@@ -47,6 +49,7 @@ internal static class Program
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });
         await Test("guide pages preserve version records, quiet launches and browser actions", () => GuideSessionChecks.Run(engine));
         await Test("legacy guide controls coordinate independent embedded-session preferences", GuideControlChecks.Run);
+        await Test("Windows platform capabilities fail closed", () => { WindowsPlatformChecks.Run(); return Task.CompletedTask; });
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
         await Test("display selection, reconnect, DPI anchors and preferences", () => DisplaySelectionChecks.Run(Path.GetDirectoryName(engine)!));

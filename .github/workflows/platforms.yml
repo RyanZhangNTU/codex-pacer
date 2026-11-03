@@ -62,6 +62,64 @@ jobs:
             ${{ runner.temp }}/pacer-build.log
           retention-days: 7
 
+  windows-arm64:
+    name: Windows (arm64 build)
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    env:
+      PACER_ARCHITECTURE: arm64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - name: Pinned native ARM64 Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1 -Architecture arm64
+      - name: Build ARM64 engine
+        run: |
+          ./scripts/windows/build-engine.ps1 -Configuration release -Architecture arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-engine.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-engine.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 engine compiler warning.' }
+      - name: Build ARM64 desktop and native dependencies
+        run: |
+          ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
+      - name: Package unsigned ARM64 application without runtime tests
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 -BuildOnly
+      - name: Upload unsigned ARM64 application
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-app-arm64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/*-windows-arm64-preview-*.zip
+            output/windows/*-windows-arm64-preview-*.zip.sha256
+          retention-days: 7
+      - name: Package unsigned ARM64 installer without installing
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/package-installer.ps1 -Archive $taskArchive -Architecture arm64
+      - name: Upload unsigned ARM64 installer
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-installer-arm64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/installer-artifact/*-windows-arm64-setup-*.exe
+            output/windows/installer-artifact/*-windows-arm64-setup-*.exe.sha256
+          retention-days: 7
+      - name: Upload ARM64 build logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-arm64-build-validation
+          path: |
+            ${{ runner.temp }}/pacer-arm64-engine.log
+            ${{ runner.temp }}/pacer-arm64-desktop.log
+          retention-days: 7
+
   windows:
     name: Windows (x86_64)
     runs-on: windows-2025

@@ -1,10 +1,13 @@
+param([ValidateSet('x64','arm64')][string]$Architecture = $(if ($env:PACER_ARCHITECTURE) { $env:PACER_ARCHITECTURE } else { 'x64' }))
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$taskPin = Get-Content -LiteralPath (Join-Path $taskRoot 'windows/InstallerSupport/Resources/python-runtime-lock.json') -Raw | ConvertFrom-Json
+$taskPinName = if ($Architecture -eq 'arm64') { 'python-runtime-lock-arm64.json' } else { 'python-runtime-lock.json' }
+$taskPin = Get-Content -LiteralPath (Join-Path $taskRoot ('windows/InstallerSupport/Resources/' + $taskPinName)) -Raw | ConvertFrom-Json
+if ($taskPin.architecture -ne $Architecture) { throw 'The Python dependency architecture differs from the requested target.' }
 $taskId = $taskPin.version + '-' + $taskPin.sha256.Substring(0,12)
 $taskCache = Join-Path $taskRoot 'output/toolchains/claude-python'
 $taskRuntime = Join-Path $taskCache $taskId
-$taskArchive = Join-Path $taskCache ('python-' + $taskPin.version + '-embed-amd64.zip')
+$taskArchive = Join-Path $taskCache ([IO.Path]::GetFileName(([Uri]$taskPin.url).AbsolutePath))
 New-Item -ItemType Directory -Path $taskCache -Force | Out-Null
 if (!(Test-Path -LiteralPath $taskArchive)) {
     Invoke-WebRequest -Uri $taskPin.url -OutFile $taskArchive -MaximumRedirection 3
