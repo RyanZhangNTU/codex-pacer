@@ -21,7 +21,7 @@ internal static class PreferencesPersistenceChecks
             }
             var alternate = new DesktopPreferences
             {
-                Language = "zh-Hans", Position = "bottomRight", PositionChosen = true, DisplayMode = "floating", IslandAppearance = "classic",
+                Language = "zh-Hans", WelcomeGuideVersion = 4, WhatsNewVersion = "4.2.0", Position = "bottomRight", PositionChosen = true, DisplayMode = "floating", IslandAppearance = "classic",
                 ExpandedQuotaStyle = "classic", CompactLayout = "{\"version\":9,\"leading\":[],\"trailing\":[],\"warnings\":[\"ssh\"]}",
                 CompactSingleTask = "count", CompactMetric = "pace", CodexQuotaWindow = "7d", ClaudeQuotaWindow = "5h", QuotaRingOuter = "none", QuotaRingInner = "deepseek",
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekBalanceSource = "apiKey", DeepSeekDailyBudget = 25, DeepSeekWeeklyBudget = 120,

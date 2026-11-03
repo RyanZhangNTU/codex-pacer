@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import PacerEngineSupport
 @testable import PacerCore
 
 final class EngineGuidePagesTests: XCTestCase {
@@ -17,14 +18,14 @@ final class EngineGuidePagesTests: XCTestCase {
         XCTAssertNil(try plan(seen: "4.2.0").page)
         XCTAssertNil(try plan(seen: "5.0.0", welcomed: 5).page)
     }
-    func testDemoAndSettingsAreQuietAndForcedPagesNeverRecord() throws {
-        for pair in [(true, false), (false, true)] {
+    func testDemoAndSettingsAreQuietAndOnlyDemoSuppressesForcedPageRecords() throws {
+        for pair in [(true, false), (false, true), (true, true)] {
             let quiet = try plan(welcomed: 0, demo: pair.0, settings: pair.1)
-            XCTAssertNil(quiet.page); XCTAssertFalse(quiet.recordLaunch); XCTAssertFalse(quiet.recordClose)
+            XCTAssertNil(quiet.page); XCTAssertFalse(quiet.recordLaunch); XCTAssertEqual(quiet.recordClose, !pair.0)
             let guide = try plan(welcomed: 0, demo: pair.0, settings: pair.1, welcome: true)
-            XCTAssertEqual(guide.page, "welcome"); XCTAssertFalse(guide.recordLaunch); XCTAssertFalse(guide.recordClose)
+            XCTAssertEqual(guide.page, "welcome"); XCTAssertEqual(guide.recordLaunch, !pair.0); XCTAssertEqual(guide.recordClose, !pair.0)
             let note = try plan(demo: pair.0, settings: pair.1, note: true)
-            XCTAssertEqual(note.page, "whatsNew"); XCTAssertFalse(note.recordLaunch); XCTAssertFalse(note.recordClose)
+            XCTAssertEqual(note.page, "whatsNew"); XCTAssertFalse(note.recordLaunch); XCTAssertEqual(note.recordClose, !pair.0)
         }
     }
     func testCumulativeNotesTargetedBaselineAndSilentVersionsReuseMacSelection() throws {

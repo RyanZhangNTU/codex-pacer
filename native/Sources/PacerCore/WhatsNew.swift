@@ -105,7 +105,7 @@ public enum WhatsNew {
         defaults.set(version, forKey: defaultsKey)
     }
 
-    static func newer(_ version: String, than other: String) -> Bool {
+    package static func newer(_ version: String, than other: String) -> Bool {
         version.compare(other, options: .numeric) == .orderedDescending
     }
 }

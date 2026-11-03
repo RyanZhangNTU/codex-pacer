@@ -1,4 +1,5 @@
 import Foundation
+import PacerCore
 
 /// Only immutable release metadata and public project links cross this query.
 enum EngineGuidePages {
@@ -57,7 +58,7 @@ enum EngineGuidePages {
         let nextSeen = input.seen.flatMap { WhatsNew.newer(input.current, than: $0) ? nil : $0 } ?? input.current
         let repository = ProjectSupport.repository.absoluteString
         return Value(page: welcome ? "welcome" : note ? "whatsNew" : nil, major: WelcomeGuide.currentMajor,
-            nextSeen: nextSeen, recordLaunch: !quiet && (welcome || !note), recordClose: !quiet,
+            nextSeen: nextSeen, recordLaunch: !input.demo && (welcome || (!input.settings && !note)), recordClose: !input.demo,
             versionTitle: L10n.text("whats_new.version", input.current, language: language),
             steps: (1...2).map { L10n.text("welcome.step_of", $0, 2, language: language) },
             moduleOff: Dictionary(uniqueKeysWithValues: AgentProvider.allCases.map { ($0.rawValue, L10n.text("welcome.module.off", $0.displayName, language: language)) }),

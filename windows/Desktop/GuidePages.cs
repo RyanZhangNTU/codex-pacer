@@ -36,7 +36,7 @@ internal sealed class GuideSession(PreferencesSession preferences, Func<GuideReq
     }
     internal async Task<PreferencesApplyResult> RecordAsync(bool welcomeClosed)
     {
-        if (demo || settings) return PreferencesApplyResult.Applied;
+        if (demo) return PreferencesApplyResult.Applied;
         return await preferences.ChangeAsync(async value =>
         {
             var plan = confirmed != null && (value.WhatsNewVersion == confirmedSeen || value.WhatsNewVersion == confirmed.NextSeen) ? confirmed : await Query(value);

@@ -4,16 +4,16 @@ Windows 外壳提供两步欢迎窗口、What's New 窗口，以及 Settings 中
 
 ## 何时显示与记录
 
-`guidePages` 是本地引擎的只读查询，返回页面选择、更新条目、格式化标题、公共链接和单调递增的版本记录。`WhatsNew.pending(current:seen:)` 复用原有筛选规则；Mac 的 UserDefaults 入口转调这个重载，参数与结果不变。
+`guidePages` 是本地引擎的只读查询，返回页面选择、更新条目、格式化标题、公共链接和单调递增的版本记录。`WhatsNew.pending(current:seen:)` 复用原有筛选规则；Mac 的 UserDefaults 入口转调这个重载，参数与结果不变。独立的 EngineSupport 通过 package 权限复用现有 `WhatsNew.newer` 比较器，算法不变。
 
 - 首次启动或进入新主版本时显示欢迎窗口。打开时记录当前更新版本，关闭时记录 `welcomeGuideVersion`。当前主版本直接使用 `WelcomeGuide.currentMajor`。
 - 同一主版本内只展示尚未确认的更新条目，关闭时写 `whatsNewVersion`。没有条目的版本安静记录；运行旧版本不会降低记录。
-- demo 和 `--settings` 启动不自动弹出，也不记录。`--welcome`、`--whats-new` 可强制展示，仍遵守不记录规则。预览导出不会额外弹出窗口。
+- demo 和 `--settings` 启动不自动弹出。`--welcome`、`--whats-new` 可强制展示；只有 demo 不记录。非 demo 的 `--settings --welcome` 打开时记录更新版本、关闭时记录欢迎主版本；`--settings --whats-new` 关闭时记录更新版本。预览导出不会额外弹出窗口。
 - Settings 的历史包含运行版本之前的全部 `WhatsNew.history(upTo:)`，不受已读版本或定向介绍条件限制，也不写已读版本。
 
 记录使用既有偏好提交与原子保存。保存失败保留此前记录；读取失败的生产偏好不会被欢迎流程覆盖。关闭窗口直接使用引擎已确认的版本结果，无需再发一次查询；若偏好中的版本已变更，则重新确认，避免旧结果覆盖新记录。
 
-当前分支以 schema 1 为基线，字段名已经是 Mac 的 `welcomeGuideVersion` 和 `whatsNewVersion`。#151 合并后，同一 PR 还需接入 schema 2，并在 `docs/windows-preferences.md` 补充对应关系与重启回归。这部分完成前不合并。
+记录使用 schema 2，键名为 Mac 的 `welcomeGuideVersion` 和 `whatsNewVersion`，默认值分别是 0 和未设置。读入 schema 1 不改写文件，成功编辑时沿用统一迁移；详细映射见 [Windows 偏好](windows-preferences.md)。两种强制 Settings 组合都用新进程验证关闭后的记录。
 
 ## 欢迎窗口
 
@@ -41,7 +41,7 @@ Support 提供 Star、feature/bug 表单、捐赠链接、复制项目链接及�
 
 本机只跑相关测试、完整引擎/共享测试、Release 构建和相关展示组，不重复完整展示矩阵、打包、安装或 CPU 采样。coverage 的四项 previewStatus 只记为 partial。
 
-在 `5c9b5af` 基线验证：737 项完整引擎/共享测试、147 文件独立 Core 编译、偏好与引导定向检查，以及四组相关页面展示检查通过。Release 编译警告为 0。28 张合成 PNG（含原生 DPI 副本）留在本机忽略目录，测试窗口与进程已关闭。
+schema 2 接入基于包含 #155 的 #152 提交 `114c30f`，沿用独立的 Core/EngineSupport 目标和测试分组。本地化条目位于 `windows/EngineSupport/Resources/Localization`，摘要由现有脚本生成。叠加后 947 项完整引擎/共享测试、147 文件独立 Core 编译、偏好与引导定向检查通过，Release 编译警告为 0。四组相关页面展示检查已在前一基线通过；按新的统一集成流程，机械重放后不再重复展示检查。28 张合成 PNG（含原生 DPI 副本）留在本机忽略目录，测试窗口与进程已关闭。
 
 待用户 Windows 实机验收：生产首次启动/升级的窗口顺序、真实提供商登录与工作区流程、实际默认浏览器、OS 通知/登录启动状态、不同屏幕和缩放下的窗口位置，以及手机扫描二维码。Windows 分享面板尚未接入，当前可复制公共链接。
 

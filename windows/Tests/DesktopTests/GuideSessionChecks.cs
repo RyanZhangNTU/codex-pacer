@@ -23,7 +23,8 @@ internal static class GuideSessionChecks
             Check(queries == 1, "Closing a guide records the engine-confirmed version without another IPC request");
             await ColdRead(file, "4.2.0", 4);
             using (var json = JsonDocument.Parse(File.ReadAllText(file)))
-                Check(json.RootElement.GetProperty("welcomeGuideVersion").GetInt32() == 4 && json.RootElement.GetProperty("whatsNewVersion").GetString() == "4.2.0", "The exact Mac preference keys are persisted");
+                Check(json.RootElement.GetProperty("schemaVersion").GetInt32() == 2
+                    && json.RootElement.GetProperty("welcomeGuideVersion").GetInt32() == 4 && json.RootElement.GetProperty("whatsNewVersion").GetString() == "4.2.0", "Schema 2 persists the exact Mac preference keys");
             var reopened = new PreferencesSession(new PreferencesStore(file).Load().Value, _ => throw new Exception("Unexpected collector change"), value => store.Save(value));
             Check((await new GuideSession(reopened, Query, "4.2.0", "en", false, false).LoadAsync()).Page == null, "Restarting the same version opens neither window");
             var update = new GuideSession(reopened, Query, "4.3.0", "en", false, false);
@@ -33,12 +34,14 @@ internal static class GuideSessionChecks
             Check(await new GuideSession(reopened, Query, "4.2.0", "en", false, false).RecordAsync(true) == PreferencesApplyResult.Applied
                 && reopened.Current.WhatsNewVersion == "4.3.0", "An older copy cannot roll the recorded note backwards");
             int beforeQuiet = saved;
-            foreach (var flags in new[] { (Demo: true, Settings: false), (Demo: false, Settings: true) })
+            foreach (var flags in new[] { (Demo: true, Settings: false), (Demo: true, Settings: true) })
             {
                 var quiet = new GuideSession(session, _ => throw new Exception("Quiet recording queried the engine"), "4.2.0", "en", flags.Demo, flags.Settings);
                 Check(await quiet.RecordAsync(false) == PreferencesApplyResult.Applied && await quiet.RecordAsync(true) == PreferencesApplyResult.Applied && saved == beforeQuiet,
-                    "Demo and Settings relaunches never write guide records");
+                    "Demo never queries or writes guide records, including when Settings is open");
             }
+            foreach (bool forceWelcome in new[] { true, false })
+                await CheckForcedSettings(Query, file + ".settings-" + forceWelcome, forceWelcome);
             var rejected = new PreferencesSession(new(), _ => throw new Exception("Presentation record configured the engine"), _ => false);
             Check(await new GuideSession(rejected, Query, "4.2.0", "en", false, false).RecordAsync(true) == PreferencesApplyResult.SaveFailed
                 && rejected.Current.WelcomeGuideVersion == 0 && rejected.Current.WhatsNewVersion == null, "A failed save does not mark either page as seen");
@@ -56,6 +59,30 @@ internal static class GuideSessionChecks
                 && GuideSession.MaximumNoteHeight(20, 28) == 0 && GuideSession.MaximumNoteHeight(double.NaN, 28) == 0, "Note height preserves Mac's content, title-bar and margin cap");
             byte[] unchanged = File.ReadAllBytes(file); _ = await update.LoadAsync();
             Check(File.ReadAllBytes(file).SequenceEqual(unchanged), "Reading page metadata never saves preferences");
+        }
+        finally { File.Delete(file); }
+    }
+    private static async Task CheckForcedSettings(Func<GuideRequest, Task<GuideCatalog>> query, string file, bool welcome)
+    {
+        try
+        {
+            var store = new PreferencesStore(file); _ = store.Load();
+            int configured = 0;
+            var session = new PreferencesSession(new() { HideProjects = true }, _ => { configured++; return Task.CompletedTask; }, store.Save);
+            var guide = new GuideSession(session, query, "4.2.0", "en", false, true);
+            var quiet = await guide.LoadAsync();
+            Check(quiet.Page == null && !quiet.RecordLaunch && !File.Exists(file), "Settings alone neither opens pages nor records a silent update");
+            var forced = await guide.LoadAsync(forceWelcome: welcome, forceWhatsNew: !welcome);
+            Check(forced.Page == (welcome ? "welcome" : "whatsNew") && forced.RecordLaunch == welcome && forced.RecordClose,
+                "Forced non-demo Settings pages use Mac's launch and close record conditions");
+            if (forced.RecordLaunch) Check(await guide.RecordAsync(false) == PreferencesApplyResult.Applied, "A forced welcome records the note at launch");
+            Check(session.Current.WelcomeGuideVersion == 0 && session.Current.WhatsNewVersion == (welcome ? "4.2.0" : null),
+                "Welcome completion waits for close, and forced release notes stay unseen until close");
+            Check(await guide.RecordAsync(welcome) == PreferencesApplyResult.Applied && configured == 0,
+                "Closing either forced Settings page persists records without reconfiguring collectors");
+            await ColdRead(file, "4.2.0", welcome ? 4 : 0);
+            using var json = JsonDocument.Parse(File.ReadAllBytes(file));
+            Check(json.RootElement.GetProperty("schemaVersion").GetInt32() == 2, "Forced Settings records use storage schema 2");
         }
         finally { File.Delete(file); }
     }
