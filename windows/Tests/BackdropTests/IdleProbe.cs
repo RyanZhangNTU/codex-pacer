@@ -32,13 +32,14 @@ internal static class IdleProbe
         } : null;
         var window = new IslandWindow(display, true, false, animationOverride: true, screenGeometry: viewport) { IsHitTestVisible = false, ShowActivated = false };
         Window? cover = null; string state = "collapsed", ablation = "none", appearance = "classic";
+        EngineSnapshot? fixedSnapshot = null;
         long frames = 0, renders = 0, snapshots = 0;
         window.FrameApplied += _ => frames++;
         DispatcherHookEventHandler posted = (_, e) => { if (e.Operation.Priority == DispatcherPriority.Render) Interlocked.Increment(ref renders); };
         Application.Current.Dispatcher.Hooks.OperationPosted += posted;
         void Ablate()
         {
-            if (engine.LatestSnapshot?.Presentation?.Header is not EngineHeader header) return;
+            if (fixedSnapshot?.Presentation?.Header is not EngineHeader header) return;
             if (ablation is "badge" or "all" or "collected")
                 foreach (string name in new[] { "Badge", "StripBadge" }) ((ActivityBadge)window.FindName(name)).Update(header, false);
             if (ablation is "quota" or "all" or "collected")
@@ -64,7 +65,16 @@ internal static class IdleProbe
         {
             window.ApplyPreferences(new() { IslandAppearance = "classic", DisplayMode = "notch" }); window.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
-            window.ReceiveSnapshot(engine.LatestSnapshot!);
+            fixedSnapshot = engine.LatestSnapshot!;
+            if (Environment.GetEnvironmentVariable("PACER_IDLE_SNAPSHOT") is string snapshotFile)
+            {
+                byte[] bytes = File.ReadAllBytes(snapshotFile);
+                if (bytes.Length > 1024 * 1024) throw new InvalidDataException("Oversized immutable fixture.");
+                fixedSnapshot = JsonSerializer.Deserialize<EngineSnapshot>(bytes, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new InvalidDataException("Invalid immutable fixture.");
+                if (!fixedSnapshot.Demo || fixedSnapshot.CapturedAt != 1_800_000_000) throw new InvalidDataException("Only the synthetic reference snapshot is accepted.");
+            }
+            window.ReceiveSnapshot(fixedSnapshot);
             window.CollapseForAutomation(); await window.WaitForPresentationAsync();
             var ready = new { type = "ready", pid = Environment.ProcessId, enginePid = engine.ProcessId, processors = Environment.ProcessorCount };
             File.WriteAllText(Path.Combine(output, "ready.json"), JsonSerializer.Serialize(ready)); Reply(ready);
@@ -129,7 +139,7 @@ internal static class IdleProbe
                 {
                     ablation = data.RootElement.GetProperty("value").GetString()!;
                     if (ablation is not ("none" or "badge" or "quota" or "all" or "collected")) throw new InvalidDataException("Unknown ablation.");
-                    if (engine.LatestSnapshot is { } latest) window.ReceiveSnapshot(latest);
+                    if (fixedSnapshot is { } latest) window.ReceiveSnapshot(latest);
                     await window.WaitForPresentationAsync(); Ablate(); Reply(new { type = "ablation", ablation }); continue;
                 }
                 if (command == "sample")

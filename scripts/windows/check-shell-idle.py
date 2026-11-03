@@ -16,6 +16,8 @@ def run(args):
     environment = dict(os.environ)
     if args.side:
         environment["PACER_IDLE_SIDE"] = args.side
+    if args.snapshot:
+        environment["PACER_IDLE_SNAPSHOT"] = str(args.snapshot.resolve(strict=True))
     process = subprocess.Popen([str(args.probe), "idle", str(args.output)], stdin=subprocess.PIPE, env=environment,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW,
                                text=True, encoding="utf-8")
@@ -97,4 +99,5 @@ if __name__ == "__main__":
     parser.add_argument("--trace", type=Path)
     parser.add_argument("--appearance", choices=["classic", "liquidGlass"], default="classic")
     parser.add_argument("--side", choices=["left", "center", "right"], help="Place simultaneous probes at the quarter, center, or three-quarter monitor position")
+    parser.add_argument("--snapshot", type=Path, help="Reuse one synthetic reference snapshot across binaries")
     run(parser.parse_args())
