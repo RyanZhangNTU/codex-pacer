@@ -2,6 +2,15 @@ import XCTest
 @testable import PacerCore
 
 final class ClaudeActivityTests: XCTestCase {
+    private var fixtureHomeRoot: URL {
+        #if canImport(PacerMacSupport)
+        // Keep the original Mac fixture spelling. Foundation directory
+        // enumeration resolves /var aliases; production discovery is unchanged.
+        return URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+        #else
+        return FileManager.default.temporaryDirectory
+        #endif
+    }
     private let session = "a5a9fbea-c065-46d8-885c-d87413816c90"
     private let turn = "dc0520e2-1720-42a8-a1d1-d2031bf2b145"
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -299,7 +308,7 @@ final class ClaudeActivityTests: XCTestCase {
         }
     }
     func testNativeReaderKeepsInitialHistoricalProvenanceAcrossTailChunks() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-reader-" + UUID().uuidString)
+        let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-reader-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic"); try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = dir.appendingPathComponent(session + ".jsonl")
@@ -317,7 +326,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertTrue(live.records.contains { (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["kind"] as? String == "prompt" })
     }
     func testVerifiedMirrorsSpendNoTranscriptReadCursorOrWatchBudgetAndCannotStarveLocalFile() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-mirror-budget-" + UUID().uuidString)
+        let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-mirror-budget-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -351,7 +360,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertEqual(reader.fileReads, 1); XCTAssertEqual(reader.scans, 1, "An unchanged exclusion cache does not require discovery")
     }
     func testExclusionPurgesAttachedCursorAndReplacementReattachesAsQuietHistoryBeforeNextLiveTurn() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-mirror-reattach-" + UUID().uuidString)
+        let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-mirror-reattach-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -393,7 +402,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertEqual(inbox.unreadActivities.count, 1); XCTAssertEqual(policy.activityNotices(state.activities, at: now.addingTimeInterval(23)).count, 1)
     }
     func testIdleCursorSkipsFileReadsButFirstAppendAndAtomicReplacementStayObservable() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-idle-reader-" + UUID().uuidString)
+        let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-idle-reader-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -426,7 +435,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertTrue(removed.records.contains { (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["kind"] as? String == "unavailable" })
     }
     func testInitialPartialRecordAndNewAppendKeepSeparateHistoricalProvenance() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-mixed-tail-" + UUID().uuidString)
+        let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-mixed-tail-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic"); try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = dir.appendingPathComponent(session + ".jsonl")
@@ -441,7 +450,7 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertTrue(values.contains { $0["kind"] as? String == "prompt" && $0["promptId"] as? String == "new-prompt" && $0["attaching"] == nil })
     }
     func testNativeAndSshDrainLargeAttachmentAppendsWithoutLosingPromptOwnership() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-burst-" + UUID().uuidString)
+        let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-burst-" + UUID().uuidString)
         let dir = home.appendingPathComponent("projects/synthetic")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -494,7 +503,7 @@ final class ClaudeActivityTests: XCTestCase {
         // One size finishes just above the record limit; the other crosses the
         // fragment limit before its newline arrives. Both lose real bytes.
         for length in [1_050_000, 1_400_000] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-claude-oversize-" + UUID().uuidString)
+            let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-oversize-" + UUID().uuidString)
             let dir = home.appendingPathComponent("projects/synthetic")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: home) }
