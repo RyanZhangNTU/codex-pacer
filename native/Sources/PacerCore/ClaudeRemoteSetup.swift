@@ -78,14 +78,20 @@ public actor ClaudeRemoteSetup {
     public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false,
                                  validDestination: (String) -> Bool) throws -> [String] {
         guard let arguments = target.sshArguments(validDestination: validDestination) else { throw Failure.invalidTarget }
+        return arguments + [try command(requireHome: requireHome)]
+    }
+    /// Hosts with another transport can use the same additive installer. The
+    /// default keeps SSH's original home and serialized command unchanged.
+    public static func command(home: String = "~/.claude", requireHome: Bool = false) throws -> String {
+        guard !home.isEmpty, home.utf8.count <= 4096, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidTarget }
         let (installer, hook) = try resources()
-        // Remote collectors use the default Claude home. Never reuse a Codex
-        // target's home field or put a local/remote private path into this command.
-        var request: [String: Any] = ["home": "~/.claude", "hook": hook.base64EncodedString()]
+        // SSH keeps its original default. Other transports must select their
+        // bound Claude root; a Codex target is never a Claude home.
+        var request: [String: Any] = ["home": home, "hook": hook.base64EncodedString()]
         if requireHome { request["requireHome"] = true }
         let payload = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
         let command = "python3 -u -c 'import base64;exec(base64.b64decode(\"\(installer.base64EncodedString())\").decode())' \(payload.base64EncodedString())"
-        return arguments + [command]
+        return command
     }
 
     /// Identifies the shipped installer and hook. A host configured with an

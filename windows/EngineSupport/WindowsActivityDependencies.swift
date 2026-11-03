@@ -2,15 +2,18 @@ import Foundation
 import PacerCore
 
 extension ClaudeActivityMonitor {
-    init(clock: @escaping @Sendable () -> Date = { Date() }) {
-        self.init(sshExecutable: WindowsExecutables.ssh, processes: WindowsHelperProcessLauncher(),
+    init(clock: @escaping @Sendable () -> Date = { Date() }, wsl: WindowsWSLServices? = nil) {
+        self.init(sshExecutable: WindowsExecutables.ssh, processes: wsl?.launcher() ?? WindowsHelperProcessLauncher(),
             fileEvents: WindowsActivityLogWatcher(), telemetryTransport: WindowsTelemetryTransport(),
             remoteMirrorSessionIDs: { home in
                 ClaudeDesktopRecords.remoteMirrorSessionIDs(claudeHome: home,
                     defaultClaudeHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude"),
                     directories: WindowsClaudeAccountBinding.locations(environment: ProcessInfo.processInfo.environment).map { $0.deletingLastPathComponent() },
                     files: WindowsFileSystem())
-            }, files: WindowsFileSystem(), clock: clock, sshArguments: { $0.sshArguments() })
+            }, files: WindowsFileSystem(), clock: clock, sshArguments: { target in
+                if target.id.hasPrefix(ConnectionSource.wslPrefix) { return wsl?.registry.arguments(target) }
+                return target.sshArguments()
+            }, remoteHome: { $0.id.hasPrefix(ConnectionSource.wslPrefix) ? $0.home : "~/.claude" })
     }
 }
 

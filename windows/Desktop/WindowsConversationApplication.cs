@@ -30,6 +30,8 @@ internal sealed class WindowsConversationApplication
         if (!Guid.TryParse(plan.Context, out _) || plan.Provider is not ("claude" or "codex")) return false;
         try
         {
+            if (plan.Kind == "wslTerminal") return await WindowsWslTerminal.OpenAsync(plan);
+            if (plan.Terminal != null) return false;
             if (plan.Kind == "host") return plan.Url == null && plan.WebUrl == null && plan.Pid is > 0 && plan.Started is > 0 && host(plan.Pid.Value, plan.Started.Value);
             if (plan.Kind != "application" || plan.Pid != null || plan.Started != null || !TryDestination(plan.Provider, plan.Url, plan.WebUrl, out Uri? uri, out Uri? fallback)) return false;
             var app = WindowsDesktopApplications.KnownApplication(plan.Provider);

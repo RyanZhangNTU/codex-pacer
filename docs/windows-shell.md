@@ -74,3 +74,15 @@ The catalog keeps bearer credentials inside the read-only RPC/HTTP operation. It
 Only a currently verified account and exact device ID can open a Remote Control thread. Account and enrollment changes revoke old pipe proofs and navigation. A hashed account scope separates completion acknowledgments even when two accounts use the same device/thread/turn IDs. A token refresh for the same verified account retains its scope. EOF retains unread endings; failed opens retain unread state and report an error. Retry bypasses transport backoff without replacing a healthy channel.
 
 Development checks use synthetic catalogs, RPC replies and a private named-pipe fixture. They do not send prompts, activate a real provider, or modify real accounts. The Remote Control switch and source rows still need the integration presentation pass and installed-host acceptance.
+
+## WSL sources
+
+Windows discovers installed and running distributions with the documented [WSL list commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands). Automatic probes run only inside distributions already running, as their default Linux user. They read directory metadata; they do not install WSL, Python, a provider, or change a distribution's state or settings. The feature needs an existing `/usr/bin/python3`.
+
+A source binds the distribution, Linux user and UID, canonical home and directory identity. Codex and Claude retain separate roots. Helpers verify that identity before starting, then run the shared Core protocol and parsers. Their program travels through bounded stdin, following the reviewed #157 SSH adapter pattern; Windows command lines stay below the platform limit. Windows credential/environment overrides are removed. A Windows drive or another distribution's UNC path cannot become this source's Linux profile.
+
+Discovery, active helpers and quota reads have owned work slots. Sleep, source changes and switches cancel them; a late scan cannot claim a newer slot. Offline sources keep their identity for unread retention, while directory replacement revokes old navigation and acknowledgments. Each provider has at most eight WSL targets. Integration must combine this target list with #157's SSH list in the shared monitor and preserve a bounded total.
+
+The source's quota action uses read-only Codex RPC or the shared Claude quota client with a bounded, owner-checked Linux file snapshot. It never borrows Windows credentials or writes a credential cache. Credential stamps are checked again before publishing; only formatted quota windows reach the desktop. These on-demand readings stay separate from the selected Windows account's history. Source navigation uses a dedicated console mode and validates the same distribution/user/root before opening the captured session; failure keeps the ending unread.
+
+Development tests use synthetic profiles, private helpers and intercepted transport. Real WSL lifecycle, actual terminal activation and the complete presentation pass belong to integration and preview acceptance.

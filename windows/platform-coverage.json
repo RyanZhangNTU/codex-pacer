@@ -821,7 +821,7 @@
     {
       "id": "wsl-sources",
       "status": "pending",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "priority": "P2",
       "requirements": [
         "distro/用户/路径/主机隔离、来源发现/失联/重连/关闭生命周期",
@@ -832,8 +832,11 @@
         "native/Sources/PacerCore/ClaudeApplicationResolver.swift",
         "docs/windows-port.md"
       ],
-      "evidence": [],
-      "previewNote": "WSL 作为 Windows 来源适配，与同服务其他来源保持相同任务语义。",
+      "evidence": [
+        "windows/Tests/EngineTests/WindowsWSLTests.swift",
+        "windows/Tests/DesktopTests/WslTerminalChecks.cs"
+      ],
+      "previewNote": "Synthetic discovery, distro/user/directory identities, strict UNC conversion, bounded stdin bootstrap, shared Codex/Claude monitor routes, EOF/unread, source revocation, engine toggles/sleep, selected-source quota and terminal launch rejection pass. No real distro/account was accessed. Installed WSL, real TTY, presentation and combined SSH acceptance remain for integration.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []

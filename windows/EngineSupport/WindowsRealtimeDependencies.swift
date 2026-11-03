@@ -38,17 +38,21 @@ struct CodexDesktopServices: Sendable {
         return nil
         #endif
     }
-    func makeMonitor(retryInterval: TimeInterval = 30) -> RealtimeActivityMonitor {
+    func makeMonitor(retryInterval: TimeInterval = 30, wsl: WindowsWSLServices? = nil,
+                     targets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil) -> RealtimeActivityMonitor {
         let catalog = catalog ?? RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse },
             files: WindowsFileSystem(), makeClient: { _ in nil })
         let authorization: (@Sendable (URL) -> RemoteControlAuthorizationSnapshot)?
         if self.catalog != nil { authorization = { catalog.authorization.snapshot(home: $0) } } else { authorization = nil }
+        let arguments: (@Sendable (RemoteActivityTarget) -> [String]?)?
+        if let wsl { arguments = { wsl.registry.arguments($0) } } else { arguments = nil }
         return RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
             desktopAvailable: { _ in true }, controlAvailable: { _ in false },
             makeDesktop: { home, hosts, local, interval, frame, closed in
                 if let routed { return routed(home, hosts, local, interval, frame, closed) }
                 return makeConnection(home, interval, frame, closed)
-            }, processes: WindowsHelperProcessLauncher(), python: WindowsExecutables.python, ssh: WindowsExecutables.ssh,
+            }, processes: wsl?.launcher() ?? WindowsHelperProcessLauncher(), python: WindowsExecutables.python, ssh: WindowsExecutables.ssh,
+            sshTargets: targets, sshArguments: arguments,
             remoteControlAuthorization: authorization),
             retryInterval: retryInterval)
     }

@@ -30,7 +30,8 @@ enum WindowsIP {
 }
 
 enum WindowsSubprocess {
-    static func capture(executable: URL, arguments: [String], timeout: TimeInterval, limit: Int) async -> Data? {
+    static func capture(executable: URL, arguments: [String], timeout: TimeInterval, limit: Int,
+                        environment: [String: String]? = nil) async -> Data? {
         guard executable.isFileURL, limit > 0, limit <= 1024 * 1024, timeout > 0 else { return nil }
         return await withTaskGroup(of: Data?.self) { group in
             group.addTask {
@@ -39,8 +40,11 @@ enum WindowsSubprocess {
                 options.windowStyle = .hidden
                 do {
                     let path = executable.withUnsafeFileSystemRepresentation { String(cString: $0!) }
+                    let variables: Environment = environment.map { values in
+                        .custom(values.reduce(into: [Environment.Key: String]()) { $0[Environment.Key(stringLiteral: $1.key)] = $1.value })
+                    } ?? .inherit
                     let result = try await Subprocess.run(.path(.init(path)), arguments: Arguments(arguments),
-                        platformOptions: options, output: .data(limit: limit), error: .discarded)
+                        environment: variables, platformOptions: options, output: .data(limit: limit), error: .discarded)
                     guard result.terminationStatus.isSuccess else { return nil }
                     return result.standardOutput
                 } catch { return nil }

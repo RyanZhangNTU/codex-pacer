@@ -32,6 +32,8 @@ struct EngineCommand: Decodable {
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
         var monitorRemoteControl: Bool?
+        var monitorWSL: Bool?
+        var sourceID: String?
         var showClaudeCloudProjects: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
@@ -164,6 +166,9 @@ struct EngineSource: Codable, Equatable {
     var state: String? = nil
     var stateLabel: String? = nil
     var sessions: Int? = nil
+    var quotaWindows: [EngineQuota.Window]? = nil
+    var quotaRefreshing = false
+    var quotaError: String? = nil
 }
 
 struct EngineModule: Codable, Equatable {

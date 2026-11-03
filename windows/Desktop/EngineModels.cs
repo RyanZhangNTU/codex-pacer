@@ -17,7 +17,7 @@ internal sealed record EngineSnapshot(
 internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
 internal sealed record EngineNavigationFailure(string Id, string Message);
 internal sealed record EngineActivityLink(string ActivityID, string Provider, string Context);
-internal sealed record EngineNavigationPlan(string Context, string Provider, string Kind, string? Url, string? WebUrl, uint? Pid, ulong? Started);
+internal sealed record EngineNavigationPlan(string Context, string Provider, string Kind, string? Url, string? WebUrl, uint? Pid, ulong? Started, string? Terminal = null);
 internal sealed record ClaudeConnection(string Context, bool WebAvailable, bool Refreshing, bool Paused, bool CanChooseOrganization, string State, string? Message);
 internal sealed record ClaudeCloudConnection(string Context, bool Enabled, bool WebAvailable);
 internal sealed record ClaudeAccountReport(string Context, string SelectedOrganization, IReadOnlyList<ClaudeOrganization> Organizations);
@@ -38,7 +38,8 @@ internal sealed record EngineTask(
 
 internal sealed record EngineRequest(string Id, string Provider, string ActivityId, string Kind, string Label, double DetectedAt);
 internal sealed record EngineSource(string Id, string Provider, bool Available, string Transport, string? Reason, ConnectionFailure? Failure = null,
-    string? SourceName = null, string? State = null, string? StateLabel = null, int? Sessions = null);
+    string? SourceName = null, string? State = null, string? StateLabel = null, int? Sessions = null,
+    IReadOnlyList<QuotaWindow>? QuotaWindows = null, bool QuotaRefreshing = false, string? QuotaError = null);
 internal sealed record ConnectionFailure(string Kind, string? Method, int? Code);
 internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled);
 internal sealed record CodexSourceCandidate(string Path, string Source, string Label);

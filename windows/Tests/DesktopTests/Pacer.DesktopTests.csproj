@@ -28,6 +28,7 @@
     <Compile Include="../../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
     <Compile Include="../../Desktop/WindowsNotificationRegistration.cs" Link="WindowsNotificationRegistration.cs"/>
     <Compile Include="../../Desktop/WindowsConversationApplication.cs" Link="WindowsConversationApplication.cs"/>
+    <Compile Include="../../Desktop/WindowsWslTerminal.cs" Link="WindowsWslTerminal.cs"/>
     <Compile Include="../../Desktop/WindowsHarnessApplication.cs" Link="WindowsHarnessApplication.cs"/>
     <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
     <Compile Include="../../Desktop/NativeMotion.cs" Link="NativeMotion.cs"/>

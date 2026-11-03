@@ -40,6 +40,7 @@ internal sealed record DesktopPreferences
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
     public bool MonitorRemoteControl { get; init; } = true;
+    public bool MonitorWSL { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
     public string CodexExecutable { get; init; } = "";
@@ -89,6 +90,7 @@ internal sealed record DesktopPreferences
             providerModes = ProviderModes, hideProjects = HideProjects, retentionMinutes = RetentionMinutes,
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
             monitorRemoteControl = MonitorRemoteControl,
+            monitorWSL = MonitorWSL,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },

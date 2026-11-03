@@ -17,6 +17,7 @@ public struct ConnectionSource: Equatable, Identifiable {
     public var id: String { provider.rawValue + ":" + key }
 
     public static let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
+    public static let wslPrefix = "wsl:"
 
     /// Connected sources report their subscribed sessions; a reachable host
     /// without the provider is paused rather than failed. Codex SSH hosts that
@@ -27,7 +28,7 @@ public struct ConnectionSource: Equatable, Identifiable {
         for (provider, byKey) in statuses {
             for (key, status) in byKey {
                 let state: State = status.connected ? .connected :
-                    key.hasPrefix(controlPrefix) && status.remoteHostOnline == false ? .offline :
+                    (key.hasPrefix(controlPrefix) || key.hasPrefix(wslPrefix)) && status.remoteHostOnline == false ? .offline :
                     key.hasPrefix(controlPrefix) && status.waitingForSession ? .idle :
                     status.sourceAvailable == false ? .paused : .retrying
                 let name: String, kind: String
@@ -40,6 +41,8 @@ public struct ConnectionSource: Equatable, Identifiable {
                 } else if key.hasPrefix(controlPrefix) {
                     name = status.sourceName ?? names[key] ?? L10n.text("connections.kind.remote_control") + " (" + String(key.suffix(8)) + ")"
                     kind = L10n.text("connections.kind.remote_control")
+                } else if key.hasPrefix(wslPrefix) {
+                    name = status.sourceName ?? names[key] ?? "WSL"; kind = "WSL"
                 } else {
                     name = names[key] ?? key; kind = provider.displayName
                 }
