@@ -40,7 +40,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly Action<string>? guideCopyLink;
     private readonly Func<Uri, bool>? systemSettingsLauncher;
     private readonly Grid client = new() { Width = 780, Height = 600 };
-    private readonly StackPanel form = new() { Margin = new Thickness(20, 20, 20, 16) };
+    private readonly StackPanel form = new() { Margin = new Thickness(20, 9, 20, 16) };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
     private readonly Button recoveryRestart = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(10, 0, 10, 10) };
     private readonly List<FrameworkElement> editors = [];
@@ -102,9 +102,13 @@ internal sealed partial class SettingsWindow : Window
         Grid.SetColumn(divider, 1); client.Children.Add(divider);
         var pane = new DockPanel(); Grid.SetColumn(pane, 2); client.Children.Add(pane);
         paneTitle = Label(ui.Text("settings.pane.general"), 20, FontWeights.SemiBold); paneTitle.Margin = new Thickness(28, 20, 28, 0);
-        DockPanel.SetDock(paneTitle, Dock.Top); pane.Children.Add(paneTitle);
+        var paneHeader = new Border { Child = paneTitle, Padding = new Thickness(0, 0, 0, 10), BorderThickness = new Thickness(0, 0, 0, 1), BorderBrush = Brushes.Transparent };
+        DockPanel.SetDock(paneHeader, Dock.Top); pane.Children.Add(paneHeader);
         InitializeStorageRecovery(pane, preferencesStore);
         paneScroller = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = form };
+        // A hairline appears under the title once content scrolls beneath it, as under the Mac toolbar.
+        paneScroller.ScrollChanged += (_, _) =>
+        { if (paneScroller.VerticalOffset > 0) paneHeader.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator"); else paneHeader.BorderBrush = Brushes.Transparent; };
         Identify(paneScroller, "settings.content", ui.Text("common.settings"));
         pane.Children.Add(paneScroller); RebuildPane(session.Current.LastSettingsPane);
         RefreshValues(); RefreshTheme();

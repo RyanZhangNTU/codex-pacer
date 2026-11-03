@@ -17,7 +17,7 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private CheckBox? codexRemoteControl;
-    private StackPanel? codexRemoteSources;
+    private StackPanel? codexRemoteSources, codexRemoteStatus;
     private Button? codexRemoteRetry;
     private CheckBox? codexEnabled, codexEmbedded;
     private TextBlock? codexDetection, cliState, cliIssue, executableIssue, homeIssue, historyTitle;
@@ -89,12 +89,16 @@ internal sealed partial class SettingsWindow
         var remote = Toggle("settings.monitor_remote_control", "settings.remote_control_help", "settings.codex.remote_control", out var remoteSwitch);
         codexRemoteControl = remoteSwitch; editors.Add(remoteSwitch);
         BindToggle(remoteSwitch, (p, value) => p with { MonitorRemoteControl = value });
-        codexRemoteRetry = new Button { Content = ui.Text("connections.retry"), HorizontalAlignment = HorizontalAlignment.Right };
+        codexRemoteRetry = new Button { Content = ui.Text("connections.retry"), VerticalAlignment = VerticalAlignment.Center };
         Identify(codexRemoteRetry, "settings.codex.remote_retry", ui.Text("connections.retry")); editors.Add(codexRemoteRetry);
         codexRemoteRetry.Click += async (_, _) =>
         { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("refreshRemoteControl"); };
-        codexRemoteSources = new StackPanel(); Identify(codexRemoteSources, "settings.codex.remote_sources", ui.Text("connections.kind.remote_control"));
-        codexSections.Children.Add(Card(remote, codexRemoteSources, codexRemoteRetry));
+        codexRemoteSources = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; Identify(codexRemoteSources, "settings.codex.remote_sources", ui.Text("connections.kind.remote_control"));
+        // The sources read as one status row whose trailing action retries them; it shows only while monitoring.
+        var hairline = new Border { Height = 1, Margin = new Thickness(10, 0, 10, 0) }; hairline.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
+        codexRemoteStatus = new StackPanel(); codexRemoteStatus.Children.Add(hairline); codexRemoteStatus.Children.Add(Row(codexRemoteSources, codexRemoteRetry));
+        var remoteBlock = new StackPanel(); remoteBlock.Children.Add(remote); remoteBlock.Children.Add(codexRemoteStatus);
+        codexSections.Children.Add(Card(remoteBlock));
         historyTitle = Label("", 13, FontWeights.SemiBold);
         historyTitle.Margin = new Thickness(10, 20, 0, 8); codexSections.Children.Add(historyTitle);
         codexHistory = new QuotaHistoryView(ui, PacerPalette.Codex, async () =>
@@ -173,16 +177,18 @@ internal sealed partial class SettingsWindow
         if (codexRemoteSources != null)
         {
             codexRemoteSources.Children.Clear();
+            codexRemoteStatus!.Visibility = session.Current.MonitorRemoteControl ? Visibility.Visible : Visibility.Collapsed;
             if (session.Current.MonitorRemoteControl)
             {
                 var remoteSources = engine.LatestSnapshot?.Sources.Where(value => value.Provider == "codex" && value.Transport == "remote-control").ToArray() ?? [];
                 foreach (var source in remoteSources)
                 {
-                    var name = Label(source.SourceName ?? ui.Text("connections.kind.remote_control"));
-                    var state = Detail(source.StateLabel ?? "");
-                    codexRemoteSources.Children.Add(Row(name, state));
+                    var line = new DockPanel { Margin = new Thickness(0, 1, 0, 1) };
+                    var state = Detail(source.StateLabel ?? ""); state.Margin = new Thickness(8, 0, 0, 0); DockPanel.SetDock(state, Dock.Right);
+                    line.Children.Add(state); line.Children.Add(Label(source.SourceName ?? ui.Text("connections.kind.remote_control")));
+                    codexRemoteSources.Children.Add(line);
                 }
-                if (remoteSources.Length == 0) codexRemoteSources.Children.Add(Detail(ui.Text("connections.summary.checking")));
+                if (remoteSources.Length == 0) { var checking = Detail(ui.Text("connections.summary.checking")); checking.Margin = new Thickness(0); codexRemoteSources.Children.Add(checking); }
             }
         }
         codexDetection.Text = ui.Text(module?.Installed == false ? "windows.provider.not_detected" : module?.Installed == true ? "windows.provider.detected" : "provider.state.searching")

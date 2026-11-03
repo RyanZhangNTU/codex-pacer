@@ -168,6 +168,13 @@ internal static class SettingsPresentationChecks
                 "A failed position write must restore the last selected radio item");
             Check(session.Current.Position == "bottomRight" && configureCalls == 3,
                 "Appearance choices and navigation cannot restart data collectors");
+            Select(Find<RadioButton>(window, "settings.pane.connections"));
+            await Until(() => session.Current.LastSettingsPane == "connections" && Descendants(window).OfType<FrameworkElement>().Any(value =>
+                AutomationProperties.GetAutomationId(value) == "settings.connections.summary"), "Connections opens with its live summary");
+            string connectionsImage = Path.Combine(output, "settings-" + scenario + "-connections.png");
+            window.CapturePreview(connectionsImage); CheckOpaque(connectionsImage, window);
+            Select(Find<RadioButton>(window, "settings.pane.appearance"));
+            await Until(() => session.Current.LastSettingsPane == "appearance", "Appearance can be reopened after Connections");
             Invoke(Find<Button>(window, "settings.quit")); await Until(() => quitRequests == 1, "Quit must use the application lifecycle callback");
             Escape(window); Check(!window.IsVisible, "Escape must close a settled settings window");
             var reopened = new SettingsWindow(ui, session, startup, true, dark) { ShowActivated = false, IsHitTestVisible = false };
