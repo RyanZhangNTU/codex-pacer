@@ -53,6 +53,7 @@ def owner(handle):
         try:
             facts['ownerMatchesUser']=bool(module.equal_sid(sid,module.owners[0][1]))
             facts['ownerMatchesTokenOwner']=bool(module.equal_sid(sid,module.owners[1][1]))
+            facts['ownerMatchesAdministrators']=bool(module.equal_sid(sid,module.administrator_sid))
             facts['tokenOwnerIsUser']=bool(module.equal_sid(module.owners[0][1],module.owners[1][1]))
             facts['tokenElevated']=module.elevated
             facts['administratorsEnabled']=module.administrators_enabled

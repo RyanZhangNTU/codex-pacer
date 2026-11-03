@@ -4,7 +4,7 @@ Windows 包附带官方 CPython 3.14.10 x64 embeddable runtime。Claude hook 和
 
 采用嵌入式 Python，是为了复用原有共享 helper 的事件、归属、额度和隐私规则。共享 claude_hook.py 的内容保持不变；Windows 适配层处理文件安全检查、锁和原 status-line renderer 的执行器。文件按句柄检查所有者、重解析点和硬链接，检查通过后才能截断；锁使用最多等待 2 秒的 Windows 内核 mutex，不轮询。
 
-文件所有者必须是当前用户 SID；只有当前令牌已提升、且 Administrators 组已启用时，才额外接受 BUILTIN\Administrators。任意其他所有者均被拒绝，不按 TokenOwner 接受其他默认组。Git Bash 可能降低提升令牌，所以跨 shell 的用户级测试从 Bash 创建整套夹具；提升身份和禁用组的边界另由 Windows 测试覆盖。
+文件所有者必须是当前用户 SID；只有当前令牌已提升、且 Administrators 组已启用时，才额外接受 BUILTIN\Administrators。任意其他所有者均被拒绝，不按 TokenOwner 接受其他默认组。CI 中 Git Bash 保留了提升状态，但默认所有者变成用户 SID。编译前的检查分别由 PowerShell 和 Bash 创建夹具，验证两种实际文件归属；Windows 测试另覆盖非提升、禁用组与他人所有的拒绝边界。
 
 ## 路径与升级
 

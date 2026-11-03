@@ -79,11 +79,15 @@ jobs:
           python scripts/windows/build-localization.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Shared localization differs.' }
       - name: Claude shell contract before compilation
-        # Git Bash drops the hosted runner's elevated token. Create the fixture
-        # there too, matching a per-user Claude process instead of mixing owners.
-        shell: bash
         run: |
           python -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'The parent-created Claude fixture failed.' }
+          # Git Bash can change TokenOwner while keeping elevation. Exercise
+          # both inherited administrator-owned and Bash-created user-owned files.
+          $taskPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source.Replace('\','/')
+          $taskBash = Join-Path $env:ProgramFiles 'Git/bin/bash.exe'
+          & $taskBash --noprofile --norc -c 'exec "$@"' pacer $taskPython -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'The Bash-created Claude fixture failed.' }
       - name: Pinned Swift toolchain
         run: ./scripts/windows/setup-swift.ps1
       - name: Shared source compilation and engine tests
