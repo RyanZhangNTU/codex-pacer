@@ -8,7 +8,7 @@ Windows 的 `displayID` 保存显示器设备接口路径，另存名称和选�
 
 选中的屏幕断开后，岛暂时移到主屏，Settings 保留断开的选择并说明回退；重连后恢复。主屏变化影响“主显示器”选项，指定设备保持原选择。系统暂时无法枚举时使用当前 HWND 的屏幕信息，保留偏好，等待显示事件或再次打开选择器刷新。
 
-这些字段追加到现有 Windows preferences-v1.json，schema 仍为 1。`showInFullscreen` 是布尔值；`displaySelection` 的旧值 automatic 和 primary 都显示为“主显示器”，specified 表示具体设备。读取、打开设置和刷新显示器列表均不改写旧值。设备路径、名称和位置只用于窗口选择，不进入引擎配置，不触发采集器重启。Mac 的偏好键、保存格式与运行路径不变。
+这些字段通过现有 Windows preferences-v1.json 的 schema 2 保存。`showInFullscreen` 使用 Mac 布尔键；`displayID` 缺省、null、空字符串或数字/字符串 0 都表示“主显示器”，具体设备使用 Windows 设备路径字符串。旧 `displaySelection` 的 automatic 和 primary 都显示为“主显示器”；读取、打开设置和刷新显示器列表不改写旧值。schema 1 只在成功编辑后迁移。名称和物理位置另存作后备，设备选择不进入引擎配置，不触发采集器重启。详见[偏好对应关系](windows-preferences.md)。Mac 的偏好键、保存格式与运行路径不变。
 
 ## DPI 与窗口定位
 
@@ -34,7 +34,7 @@ Windows 的 `displayID` 保存显示器设备接口路径，另存名称和选�
 
 审查后的定向复验通过：显示器与全屏逻辑、新进程读回、中英文 × 浅深色四组显示器设置检查。Release 编译警告为 0，测试窗口已关闭。
 
-2026-11-03 本机仅一块屏幕、150% 缩放。上述相关展示组跑一轮通过，Classic/Liquid Glass 两种外观偏好下均通过全屏隐藏、恢复、全部表面层级、非激活和岛外命中；全部测试窗口与子进程已关闭。27 项 Desktop 定向测试、693 项完整引擎/共享测试及 Release 构建通过，编译警告为 0。结果见[数值记录](performance/windows-display-fullscreen.json)，不把注入拓扑当作真实多屏验收。原有遮挡、动画、输入与设置断言保留；原先 display/fullscreen 控件禁用的预期改为新功能可用。按提速规则，没有在本机重跑完整展示矩阵、打包、安装或 CPU 采样。
+2026-11-03 本机仅一块屏幕、150% 缩放。基于 `03c98cb` 接入 schema 2 后，相关展示组跑一轮通过，Classic/Liquid Glass 两种外观偏好下均通过全屏隐藏、恢复、全部表面层级、非激活和岛外命中；全部测试窗口与子进程已关闭。显示器与偏好持久化定向检查、940 项完整引擎/共享测试及 Release 构建通过，编译警告为 0。147 个 Core 文件与 EngineSupport 独立编译通过，Core 对 Windows 宿主类型的反向引用被拒绝。窗口结果见[数值记录](performance/windows-display-fullscreen.json)，不把注入拓扑当作真实多屏验收。原有遮挡、动画、输入与设置断言保留；原先 display/fullscreen 控件禁用的预期改为新功能可用。按提速规则，没有在本机重跑完整展示矩阵、打包、安装或 CPU 采样。
 
 ## 待用户 Windows 实机验收
 

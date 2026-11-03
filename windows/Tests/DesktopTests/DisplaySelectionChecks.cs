@@ -70,14 +70,16 @@ internal static class DisplaySelectionChecks
         {
             var store = new PreferencesStore(file); Check(store.Save(preference), "Display preferences save through the existing store");
             var loaded = store.Load();
-            Check(!loaded.Unavailable && loaded.Value.DisplayID == preference.DisplayID && loaded.Value.ShowInFullscreen && loaded.Value.SchemaVersion == 1, "Identity and fullscreen round-trip without a schema change");
+            Check(!loaded.Unavailable && loaded.Value.DisplayID == preference.DisplayID && loaded.Value.ShowInFullscreen && loaded.Value.SchemaVersion == 1, "Identity and fullscreen round-trip through the unchanged in-memory preference model");
             using (var json = JsonDocument.Parse(File.ReadAllText(file)))
-                Check(json.RootElement.GetProperty("displayID").GetString() == preference.DisplayID && json.RootElement.GetProperty("showInFullscreen").GetBoolean(), "Stored keys retain displayID and showInFullscreen semantics");
+                Check(json.RootElement.GetProperty("schemaVersion").GetInt32() == 2 && !json.RootElement.TryGetProperty("displaySelection", out _)
+                    && json.RootElement.GetProperty("displayID").GetString() == preference.DisplayID && json.RootElement.GetProperty("showInFullscreen").GetBoolean(), "Schema 2 stores the Mac keys without a new selection key");
             await RestartAndRead(file, preference);
             foreach (string alias in new[] { "automatic", "primary" })
             {
                 var legacy = preference with { DisplaySelection = alias };
-                Check(store.Save(legacy), "Either legacy Main Display alias can be saved");
+                File.WriteAllText(file, JsonSerializer.Serialize(legacy, PreferencesCodec.Json));
+                var legacyStore = new PreferencesStore(file); Check(!legacyStore.Load().Unavailable, "The original schema 1 profile remains readable");
                 byte[] beforeRead = File.ReadAllBytes(file);
                 await RestartAndRead(file, legacy);
                 var restarted = new PreferencesStore(file).Load();
@@ -85,6 +87,45 @@ internal static class DisplaySelectionChecks
                     && DisplaySelection.Resolve(topology, restarted.Value).Display == main,
                     "Both stored aliases resolve to Main Display and retain their original value after restart");
                 Check(File.ReadAllBytes(file).SequenceEqual(beforeRead), "Restart and read never rewrite a legacy alias or its other fields");
+                Check(legacyStore.Save(legacy), "Either legacy Main Display alias can migrate on a successful edit");
+                var migrated = new PreferencesStore(file).Load();
+                Check(!migrated.Unavailable && migrated.Value.DisplaySelection == alias && DisplaySelection.Resolve(topology, migrated.Value).Display == main,
+                    "Migration retains Main Display semantics for both old aliases");
+                await RestartAndRead(file, legacy with { DisplayID = alias == "primary" ? "0" : "" });
+            }
+            foreach (string? raw in new string?[] { null, "null", "\"\"", "0", "\"0\"" })
+            {
+                string identifier = raw == null ? "" : ",\"displayID\":" + raw;
+                File.WriteAllText(file, "{\"schemaVersion\":2,\"futureField\":\"synthetic\"" + identifier + "}");
+                var mainStore = new PreferencesStore(file); var mainValue = mainStore.Load(); byte[] original = File.ReadAllBytes(file);
+                Check(!mainValue.Unavailable && DisplaySelection.Resolve(topology, mainValue.Value).Display == main && !mainValue.Value.ShowInFullscreen,
+                    "Absent, null, empty and numeric/string zero all mean Main Display with fullscreen off");
+                await RestartAndRead(file, mainValue.Value);
+                Check(File.ReadAllBytes(file).SequenceEqual(original), "Reading a schema 2 Main Display never rewrites its representation");
+                Check(mainStore.Save(mainValue.Value with { ShowInFullscreen = true }), "A fullscreen edit uses the schema 2 transaction");
+                using var before = JsonDocument.Parse(original); using var after = JsonDocument.Parse(File.ReadAllBytes(file));
+                bool hadID = before.RootElement.TryGetProperty("displayID", out var oldID), hasID = after.RootElement.TryGetProperty("displayID", out var newID);
+                Check(hadID == hasID && (!hadID || oldID.GetRawText() == newID.GetRawText()) && after.RootElement.GetProperty("futureField").GetString() == "synthetic",
+                    "Unrelated edits preserve the existing Main Display representation and unknown keys");
+                await RestartAndRead(file, mainValue.Value with { ShowInFullscreen = true });
+            }
+            foreach (string alias in new[] { "automatic", "primary" })
+            {
+                File.WriteAllText(file, "{\"schemaVersion\":2,\"displayID\":0,\"displaySelection\":\"" + alias + "\"}");
+                var aliasStore = new PreferencesStore(file); var aliasValue = aliasStore.Load(); byte[] before = File.ReadAllBytes(file);
+                Check(!aliasValue.Unavailable && aliasValue.Value.DisplaySelection == alias && DisplaySelection.Resolve(topology, aliasValue.Value).Display == main,
+                    "An existing schema 2 legacy alias retains its value and Main Display meaning");
+                await RestartAndRead(file, aliasValue.Value);
+                Check(File.ReadAllBytes(file).SequenceEqual(before), "A legacy selector in schema 2 is never rewritten by reading");
+                Check(aliasStore.Save(aliasValue.Value with { ShowInFullscreen = true }), "The fullscreen edit remains independent of the legacy alias");
+                using var json = JsonDocument.Parse(File.ReadAllBytes(file));
+                Check(json.RootElement.GetProperty("displaySelection").GetString() == alias && json.RootElement.GetProperty("displayID").GetInt32() == 0,
+                    "A fullscreen edit preserves both the old alias and its main-display identifier");
+            }
+            foreach (string raw in new[] { "1", "true", "[]", "{}" })
+            {
+                File.WriteAllText(file, "{\"schemaVersion\":2,\"displayID\":" + raw + "}");
+                Check(new PreferencesStore(file, recoverDamagedFiles: false).Load().Unavailable, "Unsupported display identifiers cannot become a fabricated device path");
             }
             File.WriteAllText(file, "{\"schemaVersion\":1}"); loaded = store.Load();
             Check(!loaded.Unavailable && loaded.Value.DisplaySelection == "automatic" && !loaded.Value.ShowInFullscreen, "Missing keys retain Main Display and fullscreen-off defaults");
