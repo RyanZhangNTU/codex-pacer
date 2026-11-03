@@ -117,7 +117,7 @@ final class DeepSeekIslandTests: XCTestCase {
         }
         model.deepseekBalanceReads.web = {
             webReads += 1
-            return DeepSeekBalance(total: 120, alertBound: 150, capturedAt: Date(), source: .web)
+            return DeepSeekBalance(total: 120, alertBound: 150, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))
         }
         func settle() async {
             for _ in 0..<200 where model.deepseekRefreshing { try? await Task.sleep(nanoseconds: 5_000_000) }
@@ -159,7 +159,7 @@ final class DeepSeekIslandTests: XCTestCase {
     func testBalanceNoticesFireOnceEachTimeTheLineIsCrossed() {
         let now = Date()
         func wallet(_ total: Double) -> DeepSeekWallet {
-            DeepSeekWallet(balance: DeepSeekBalance(total: total, capturedAt: now, source: .web), connected: true,
+            DeepSeekWallet(balance: DeepSeekBalance(total: total, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)), connected: true,
                 ledger: DeepSeekSpendLedger(), now: now)
         }
         var attention = DeepSeekNoticePolicy()
@@ -181,7 +181,7 @@ final class DeepSeekIslandTests: XCTestCase {
             ledger = DeepSeekSpendLedger()
             ledger.record(id: "early", at: Calendar.current.startOfDay(for: now).addingTimeInterval(1), cost: spent)
             if recent { ledger.record(id: "recent", at: now.addingTimeInterval(-60), cost: 6) }
-            return DeepSeekWallet(balance: DeepSeekBalance(total: 80, capturedAt: now, source: .web), connected: true,
+            return DeepSeekWallet(balance: DeepSeekBalance(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)), connected: true,
                 ledger: ledger, now: now, budgets: DeepSeekBudgets(daily: 10), spikeLimit: 5)
         }
         var attention = DeepSeekNoticePolicy()
@@ -240,7 +240,7 @@ final class DeepSeekIslandTests: XCTestCase {
         let now = Date()
         var ledger = DeepSeekSpendLedger(), attention = DeepSeekNoticePolicy()
         func wallet() -> DeepSeekWallet {
-            DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web), connected: true,
+            DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)), connected: true,
                 ledger: ledger, now: now, budgets: .init(daily: 5, weekly: 5), spikeLimit: 5)
         }
         XCTAssertTrue(attention.spendNotices(wallet(), spike: true, budget: true, snoozedUntil: .distantPast, now: now).isEmpty)
@@ -369,7 +369,7 @@ final class DeepSeekIslandTests: XCTestCase {
                 await waitUntil { api != nil }
                 let replacement = try XCTUnwrap(model.deepseekBalanceTask)
                 let stale: Result<DeepSeekBalance, DeepSeekBalanceError> = staleSucceeds
-                    ? .success(.init(total: 1, capturedAt: Date(), source: .web)) : .failure(.signedOut)
+                    ? .success(.init(total: 1, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))) : .failure(.signedOut)
                 let fresh = DeepSeekBalance(total: 80, capturedAt: Date(), source: .apiKey)
                 if staleReturnsFirst {
                     try XCTUnwrap(web).resume(returning: stale); await obsolete.value
@@ -427,8 +427,8 @@ final class DeepSeekIslandTests: XCTestCase {
                     await waitUntil { newRead != nil }
                     let replacement = try XCTUnwrap(model.deepseekBalanceTask)
                     let stale: Result<DeepSeekBalance, DeepSeekBalanceError> = staleSucceeds
-                        ? .success(.init(total: 1, capturedAt: now.addingTimeInterval(10), source: .web)) : .failure(.challenge)
-                    let fresh = DeepSeekBalance(total: 80, capturedAt: now, source: .web)
+                        ? .success(.init(total: 1, capturedAt: now.addingTimeInterval(10), source: .web, sessionFingerprint: String(repeating: "1", count: 64))) : .failure(.challenge)
+                    let fresh = DeepSeekBalance(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64))
                     if staleReturnsFirst {
                         let pending = try XCTUnwrap(oldRead); oldRead = nil
                         pending.resume(returning: stale); await obsolete.value
@@ -444,7 +444,8 @@ final class DeepSeekIslandTests: XCTestCase {
                         let pending = try XCTUnwrap(oldRead); oldRead = nil
                         pending.resume(returning: stale); await obsolete.value
                     }
-                    expectedHistory.record(total: fresh.total, at: fresh.capturedAt, source: "web")
+                    expectedHistory.record(total: fresh.total, at: fresh.capturedAt, source: "web",
+                        credentialFingerprint: DeepSeekHistoryCredential(defaults: defaults).fingerprint(source: .web, identity: String(repeating: "1", count: 64)))
                     XCTAssertEqual(reads, 2)
                     XCTAssertEqual(model.deepseekBalance, fresh)
                     XCTAssertNil(model.deepseekBalanceError)
@@ -466,7 +467,7 @@ final class DeepSeekIslandTests: XCTestCase {
             model.deepseekBalanceReads.web = {
                 webReads += 1
                 if startsWithAccount { throw DeepSeekBalanceError.signedOut }
-                return .init(total: 120, capturedAt: Date(), source: .web)
+                return .init(total: 120, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))
             }
             model.deepseekBalanceReads.api = { _ in
                 apiReads += 1
@@ -507,7 +508,7 @@ final class DeepSeekIslandTests: XCTestCase {
         await waitUntil { web != nil }
         let obsolete = try XCTUnwrap(model.deepseekBalanceTask)
         try "provider: deepseek-official\n".write(to: profile, atomically: true, encoding: .utf8)
-        try XCTUnwrap(web).resume(returning: .init(total: 1, capturedAt: Date(), source: .web))
+        try XCTUnwrap(web).resume(returning: .init(total: 1, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64)))
         await obsolete.value
         await waitUntil { model.deepseekBalance?.source == .apiKey }
         XCTAssertEqual(apiReads, 1)

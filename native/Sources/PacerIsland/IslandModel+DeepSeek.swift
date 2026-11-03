@@ -301,10 +301,12 @@ extension IslandModel {
         if deepseekBalanceCoordinator == nil {
             let credentials = MacDeepSeekCredentialInput(key); deepseekCredentialInput = credentials
             let reads = deepseekBalanceReads, initialHistory = deepseekHistory
+            let fingerprints = DeepSeekHistoryCredential(defaults: defaults)
             let services = DeepSeekBalanceServices(readKey: { credentials.read() },
                 saveKey: { let saved = DeepSeekAPIKeyStore.save($0); if saved { credentials.update($0) }; return saved },
                 removeKey: { DeepSeekAPIKeyStore.remove(); credentials.update(nil); return !DeepSeekAPIKeyStore.exists },
-                readAPI: { @MainActor key in try await reads.api(key) }, readWeb: { @MainActor _ in try await reads.web() },
+                readAPI: { @MainActor key in try await reads.api(key) },
+                fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) }, readWeb: { @MainActor _ in try await reads.web() },
                 loadHistory: { initialHistory }, saveHistory: { @MainActor [weak self] history, _ in
                     guard let self, self.deepseekBalanceCoordinatorID == owner, self.deepseekGeneration == generation, !self.stopped else { return }
                     if history.samples.isEmpty { self.defaults.removeObject(forKey: DeepSeekBalanceHistory.defaultsKey) }

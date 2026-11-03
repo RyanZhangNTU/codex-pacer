@@ -7,14 +7,15 @@ using System.Text.Json.Serialization;
 
 namespace CodexPacer.Windows;
 
-/// Only these reduced values can cross the browser/engine boundary.
+/// Wallet values and a bounded transient session digest may cross this boundary.
 internal sealed record DeepSeekWebReply([property: JsonPropertyName("state")] string State,
     [property: JsonPropertyName("normal")] IReadOnlyList<string>? Normal = null,
     [property: JsonPropertyName("bonus")] IReadOnlyList<string>? Bonus = null,
     [property: JsonPropertyName("otherCurrency")] bool OtherCurrency = false,
     [property: JsonPropertyName("estimation")] string? Estimation = null,
     [property: JsonPropertyName("alertEnabled")] bool AlertEnabled = false,
-    [property: JsonPropertyName("alertBound")] string? AlertBound = null)
+    [property: JsonPropertyName("alertBound")] string? AlertBound = null,
+    [property: JsonPropertyName("sessionFingerprint")] string? SessionFingerprint = null)
 {
     internal static DeepSeekWebReply FromPage(JsonElement value)
     {
@@ -23,8 +24,19 @@ internal sealed record DeepSeekWebReply([property: JsonPropertyName("state")] st
         string? name = state.GetString();
         if (name is "signedOut" or "challenge" or "offline" or "invalid") return new(name);
         if (name != "ok" || !MoneyList(value, "normal", out var normal) || !MoneyList(value, "bonus", out var bonus)) return new("invalid");
+        if (!Fingerprint(value, out var fingerprint)) return new("invalid");
         return new("ok", normal, bonus, Flag(value, "otherCurrency"), Money(value, "estimation"),
-            Flag(value, "alertEnabled"), Money(value, "alertBound"));
+            Flag(value, "alertEnabled"), Money(value, "alertBound"), fingerprint);
+    }
+    private static bool Fingerprint(JsonElement value, out string? result)
+    {
+        result = null;
+        if (!value.TryGetProperty("sessionFingerprint", out var field)) return true;
+        if (field.ValueKind != JsonValueKind.String || field.GetString() is not string text || text.Length != 64) return false;
+        foreach (char character in text)
+            if (!(character is >= '0' and <= '9' or >= 'a' and <= 'f')) return false;
+        result = text;
+        return true;
     }
     private static bool Flag(JsonElement value, string key) => value.TryGetProperty(key, out var field) && field.ValueKind == JsonValueKind.True;
     private static string? Money(JsonElement value, string key) => value.TryGetProperty(key, out var field) ? Money(field) : null;

@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
+    <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
     <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
     <Compile Include="../../Desktop/PreferencesSession.cs" Link="PreferencesSession.cs"/>
     <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>

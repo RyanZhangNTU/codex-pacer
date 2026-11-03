@@ -5,8 +5,9 @@ import XCTest
 final class EngineDeepSeekConnectionTests: XCTestCase {
     func testRealProtocolKeyEditsKeepSecretsOutOfSnapshotsAndLegacySettingsRetainTheSource() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000), memory = KeyMemory(), capture = Capture()
+        let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
         let services = DeepSeekBalanceServices(readKey: { memory.read() }, saveKey: { memory.save($0) }, removeKey: { memory.remove() },
-            readAPI: { _ in .init(total: 86.4, capturedAt: now, source: .apiKey) }, detect: { _, _ in .account })
+            readAPI: { _ in .init(total: 86.4, capturedAt: now, source: .apiKey) }, fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) }, detect: { _, _ in .account })
         let runtime = EngineRuntime(demo: true, now: { now }, balanceServices: services, output: { capture.append($0) })
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
@@ -68,7 +69,7 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
         try log.write(to: directory.appendingPathComponent("rollout-" + id + ".jsonl"))
         let capture = Capture(), mode = DetectedMode(), history = HistoryGate()
         let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
-            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, detect: { _, _ in mode.read() },
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil }, detect: { _, _ in mode.read() },
             saveHistory: { _, _ in await history.save() })
         let runtime = EngineRuntime(demo: false, now: { now }, dismissalStore: nil, balanceServices: services, output: { capture.append($0) })
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
@@ -90,6 +91,26 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
         XCTAssertFalse(after.isEmpty)
         XCTAssertTrue(after.allSatisfy { !$0.tasks.contains { $0.sessionID == id } },
             "A collect suspended in balance binding cannot republish tasks from the replaced log home")
+        await runtime.stop()
+    }
+    func testWebSessionIdentityNeverAppearsInPublishedEngineSnapshots() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000), capture = Capture(), identity = String(repeating: "7", count: 64)
+        let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
+        let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) },
+            readWeb: { _ in .init(total: 86.4, capturedAt: now, source: .web, sessionFingerprint: identity) }, detect: { _, _ in .account })
+        let runtime = EngineRuntime(demo: true, now: { now }, balanceServices: services, output: { capture.append($0) })
+        let group: [String: Any] = ["mode": "budget", "daily": 20, "weekly": NSNull(), "ringPeriod": "day",
+            "speedSource": "local", "showsTurnCost": true, "balanceSource": "web"]
+        let command = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": "initialize",
+            "params": ["enabledProviders": ["deepseek"], "deepseekSettings": group]])
+        _ = await runtime.receive(command)
+        try await wait { capture.last()?.wallet?.balance == 86.4 }
+        let snapshot = try XCTUnwrap(capture.last())
+        let text = String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)
+        XCTAssertFalse(text.contains(identity), "The page-token digest is transient and cannot become presentation data")
+        XCTAssertFalse(text.contains("sessionFingerprint"))
+        XCTAssertEqual(snapshot.deepseekConnection?.mode, "account")
         await runtime.stop()
     }
     private func wait(_ condition: @Sendable () -> Bool) async throws {

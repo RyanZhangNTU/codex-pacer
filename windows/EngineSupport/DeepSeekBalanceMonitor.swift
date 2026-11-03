@@ -10,6 +10,7 @@ extension DeepSeekBalanceServices {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacer/DeepSeekBalance", isDirectory: true)
         let history = DeepSeekBalanceHistoryStore(file: directory.appendingPathComponent("history-v1.json"))
+        let fingerprints = DeepSeekHistoryCredential(saltFile: directory.appendingPathComponent("history-salt-v1.bin"), files: WindowsFileSystem())
         return .init(readKey: { DeepSeekAPIKeyStore.read() }, saveKey: { DeepSeekAPIKeyStore.save($0) },
             removeKey: {
                 #if os(Windows)
@@ -23,13 +24,19 @@ extension DeepSeekBalanceServices {
                 let session = URLSession(configuration: configuration, delegate: BalanceRedirectPolicy(), delegateQueue: nil)
                 defer { session.invalidateAndCancel() }
                 return try await DeepSeekAPIBalanceClient.read(key: key, session: session)
-            }, loadHistory: { await history.load(now: Date()) }, saveHistory: { await history.save($0, revision: $1) })
+            }, fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) }, loadHistory: { await history.load(now: Date()) }, saveHistory: { await history.save($0, revision: $1) })
     }
     static func demo(now: @escaping @Sendable () -> Date) -> Self {
         let memory = DemoKey()
+        let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 0xa5, count: 32) }, saveSalt: { _ in })
         return .init(readKey: { memory.read() }, saveKey: { memory.save($0) }, removeKey: { memory.remove() },
             readAPI: { _ in .init(total: 86.4, granted: 6.4, capturedAt: now(), source: .apiKey) },
-            readWeb: { _ in guard memory.isSignedIn() else { throw DeepSeekBalanceError.signedOut }; return EngineWalletSource.demo(at: now()).balance! },
+            fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) },
+            readWeb: { _ in
+                guard memory.isSignedIn(), let value = EngineWalletSource.demo(at: now()).balance else { throw DeepSeekBalanceError.signedOut }
+                return .init(total: value.total, granted: value.granted, available: value.available, tokenEstimation: value.tokenEstimation,
+                    alertBound: value.alertBound, capturedAt: value.capturedAt, source: value.source, sessionFingerprint: String(repeating: "0", count: 64))
+            },
             webSessionChanged: { memory.setSignedIn($0) }, detect: { _, _ in .account },
             loadHistory: { EngineWalletSource.demo(at: now()).history })
     }

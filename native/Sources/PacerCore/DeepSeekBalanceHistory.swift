@@ -2,8 +2,8 @@ import Foundation
 
 /// What the account was charged, from successive balance readings. A drop
 /// between two readings is spend wherever it happened (this Mac, another
-/// device, server-side tools); a rise is a top-up and is ignored. Only
-/// amounts and times are kept, for eight local days, and never the account.
+/// device, server-side tools); a rise is a top-up and is ignored. Amounts, times and a locally salted
+/// credential tag are kept for eight local days; no credential or account identity is stored.
 public struct DeepSeekBalanceHistory: Codable, Equatable, Sendable {
     public struct Sample: Codable, Equatable, Sendable {
         public let at: Date
@@ -20,13 +20,31 @@ public struct DeepSeekBalanceHistory: Codable, Equatable, Sendable {
     public private(set) var since: Date?
     /// The balance source; readings from another source may be another account.
     public private(set) var source: String?
+    /// A locally salted credential tag; the credential itself is never stored.
+    public private(set) var credentialFingerprint: String?
+    private enum CodingKeys: String, CodingKey { case samples, charged, since, source, credentialFingerprint }
     public init() {}
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        samples = try container.decode([Sample].self, forKey: .samples)
+        charged = try container.decode([Date: Double].self, forKey: .charged)
+        since = try container.decodeIfPresent(Date.self, forKey: .since)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        credentialFingerprint = try container.decodeIfPresent(String.self, forKey: .credentialFingerprint)
+        if let credentialFingerprint, !DeepSeekHistoryCredential.isValid(credentialFingerprint) {
+            throw DecodingError.dataCorruptedError(forKey: .credentialFingerprint, in: container,
+                debugDescription: "Invalid balance history credential fingerprint")
+        }
+    }
 
     public var last: Sample? { samples.last }
 
-    public mutating func record(total: Double, at date: Date, source: String? = nil, calendar: Calendar = .current) {
+    public mutating func record(total: Double, at date: Date, source: String? = nil, credentialFingerprint: String? = nil, calendar: Calendar = .current) {
         guard total.isFinite, total >= 0 else { return }
-        if self.source != source { self = Self(); self.source = source }
+        if let credentialFingerprint, !DeepSeekHistoryCredential.isValid(credentialFingerprint) { return }
+        let changedCredential = self.credentialFingerprint != nil && credentialFingerprint != nil && self.credentialFingerprint != credentialFingerprint
+        if self.source != source || changedCredential { self = Self(); self.source = source }
+        if let credentialFingerprint { self.credentialFingerprint = credentialFingerprint }
         if let last, date <= last.at { return }
         if let last {
             let drop = last.total - total

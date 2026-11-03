@@ -179,7 +179,7 @@ final class SharedQuotaCoordinationTests: XCTestCase {
             saved.record(total: 100, at: Date(timeIntervalSince1970: 1_800_000_000), source: "web")
             let history = saved, counts = CoordinationCounts()
             let coordinator = DeepSeekBalanceCoordinator(services: .init(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
-                readAPI: { _ in throw DeepSeekBalanceError.connectionFailed }, readWeb: { _ in throw DeepSeekBalanceError.challenge },
+                readAPI: { _ in throw DeepSeekBalanceError.connectionFailed }, fingerprint: { _, _ in nil }, readWeb: { _ in throw DeepSeekBalanceError.challenge },
                 detect: { _, _ in .account }, loadHistory: { history }, saveHistory: { _, _ in await counts.add("write") }), output: { _ in })
             await coordinator.configure(home: home, source: .web, enabled: true, recentProvider: nil, context: 1)
             let before = await coordinator.currentState()

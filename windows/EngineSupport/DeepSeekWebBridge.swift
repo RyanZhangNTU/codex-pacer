@@ -4,6 +4,7 @@ struct DeepSeekWebReply: Codable, Sendable {
     let state: String
     var normal: [String]?, bonus: [String]?
     var otherCurrency: Bool?, estimation: String?, alertEnabled: Bool?, alertBound: String?
+    var sessionFingerprint: String?
     func balance(at date: Date) throws -> DeepSeekBalance {
         guard ["ok", "signedOut", "challenge", "offline", "invalid"].contains(state),
               [normal, bonus].compactMap({ $0 }).allSatisfy({ $0.count <= 64 && $0.allSatisfy { $0.utf8.count <= 64 && DeepSeekBalance.amount($0) != nil } }),
@@ -11,9 +12,11 @@ struct DeepSeekWebReply: Codable, Sendable {
             throw DeepSeekBalanceError.invalidReply
         }
         if state == "offline" { throw DeepSeekBalanceError.connectionFailed }
-        return try DeepSeekBalance.web(["state": state, "normal": normal ?? [], "bonus": bonus ?? [],
+        var reply: [String: Any] = ["state": state, "normal": normal ?? [], "bonus": bonus ?? [],
             "otherCurrency": otherCurrency ?? false, "estimation": estimation as Any, "alertEnabled": alertEnabled ?? false,
-            "alertBound": alertBound as Any], at: date)
+            "alertBound": alertBound as Any]
+        if let sessionFingerprint { reply["sessionFingerprint"] = sessionFingerprint }
+        return try DeepSeekBalance.web(reply, at: date)
     }
 }
 

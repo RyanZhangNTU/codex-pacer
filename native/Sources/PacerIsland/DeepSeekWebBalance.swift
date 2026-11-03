@@ -4,7 +4,7 @@ import SwiftUI
 import WebKit
 
 /// Pacer's own WebKit profile for platform.deepseek.com. The sign-in token
-/// stays in the page's storage; Swift receives only the wallet numbers.
+/// stays in page storage; Swift receives wallet numbers and a transient session digest.
 @MainActor
 enum DeepSeekWebSessionStore {
     static let profileIdentifier = UUID(uuidString: "5B0E7A43-3C1D-4E0A-9D5B-2F0C6B8E4D71")!

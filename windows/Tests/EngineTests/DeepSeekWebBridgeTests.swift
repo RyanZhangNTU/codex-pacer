@@ -13,13 +13,14 @@ final class DeepSeekWebBridgeTests: XCTestCase {
         let task = Task { try await bridge.read(context: context) }
         let received = await capture.request(), request = try XCTUnwrap(received)
         XCTAssertEqual(request.context, context); XCTAssertEqual(request.operation, "deepseek.balance")
-        let reply = DeepSeekWebReply(state: "ok", normal: ["80"], bonus: ["6.4"], estimation: "21600000", alertEnabled: true, alertBound: "20")
+        let reply = DeepSeekWebReply(state: "ok", normal: ["80"], bonus: ["6.4"], estimation: "21600000", alertEnabled: true, alertBound: "20", sessionFingerprint: String(repeating: "1", count: 64))
         var accepted = await bridge.complete(id: request.requestID, context: UUID().uuidString, reply: reply); XCTAssertFalse(accepted)
         accepted = await bridge.complete(id: UUID().uuidString, context: context, reply: reply); XCTAssertFalse(accepted)
         accepted = await bridge.complete(id: request.requestID, context: context, reply: reply); XCTAssertTrue(accepted)
         let balance = try await task.value
         XCTAssertEqual(balance.total, 86.4); XCTAssertEqual(balance.source, .web); XCTAssertEqual(balance.capturedAt, at)
         XCTAssertEqual(balance.alertBound, 20); XCTAssertEqual(balance.tokenEstimation, 21600000)
+        XCTAssertEqual(balance.sessionFingerprint, String(repeating: "1", count: 64))
         accepted = await bridge.complete(id: request.requestID, context: context, reply: reply); XCTAssertFalse(accepted)
         let frame = try JSONEncoder().encode(request)
         XCTAssertFalse(String(decoding: frame, as: UTF8.self).contains("userToken"))
