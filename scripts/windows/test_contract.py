@@ -134,6 +134,58 @@ class WindowsArchitectureTests(unittest.TestCase):
         source = importlib.util.spec_from_file_location("architecture", Path(__file__).with_name("check-architecture.py"))
         cls.architecture = importlib.util.module_from_spec(source)
         source.loader.exec_module(cls.architecture)
+        source = importlib.util.spec_from_file_location("arm_runtime", Path(__file__).with_name("prune-arm64-runtime.py"))
+        cls.arm_runtime = importlib.util.module_from_spec(source)
+        source.loader.exec_module(cls.arm_runtime)
+
+    def runtime_fixture(self, root, architecture="arm64"):
+        import hashlib
+        native = root / "python.exe"; native.write_bytes(self.image(self.architecture.MACHINES[architecture]))
+        crt = root / self.arm_runtime.CRT; crt.write_bytes(self.image(0x8664))
+        license = root / "LICENSE.txt"; license.write_text("Synthetic license")
+        manifest = {"schemaVersion": 1, "architecture": architecture, "archiveSHA256": "a" * 64,
+                    "files": [{"name": path.name, "bytes": path.stat().st_size,
+                               "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in (native, crt, license)]}
+        (root / "pacer-runtime.json").write_text(json.dumps(manifest))
+        return crt, native, manifest
+
+    def test_arm64_excludes_only_unreferenced_x64_crt_and_updates_its_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); crt, native, before = self.runtime_fixture(root)
+            foreign = root / "WinSparkle.dll"; foreign.write_bytes(self.image(0x8664))
+            self.assertEqual(self.arm_runtime.prune(root, "arm64"), [crt.name])
+            self.assertFalse(crt.exists()); self.assertTrue(native.exists()); self.assertTrue(foreign.exists())
+            after = json.loads((root / "pacer-runtime.json").read_text())
+            self.assertEqual(after, {**before, "files": [item for item in before["files"] if item["name"] != crt.name]})
+            self.architecture.verify(native, "arm64", required_native=True)
+            with self.assertRaises(ValueError): self.architecture.verify(foreign, "arm64")
+            self.assertEqual(self.arm_runtime.prune(root, "arm64"), [])
+
+    def test_referenced_crt_rejects_removal_without_mutating_payload(self):
+        for encoding in ("ascii", "utf-16-le"):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); crt, native, _ = self.runtime_fixture(root)
+                native.write_bytes(native.read_bytes() + "VCRUNTIME140_1.DLL".encode(encoding))
+                original = (root / "pacer-runtime.json").read_bytes()
+                with self.assertRaises(ValueError): self.arm_runtime.prune(root, "arm64")
+                self.assertTrue(crt.exists()); self.assertEqual((root / "pacer-runtime.json").read_bytes(), original)
+
+    def test_runtime_selection_leaves_x64_and_native_arm64_crt_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); crt, _, _ = self.runtime_fixture(root, "x64")
+            original = (root / "pacer-runtime.json").read_bytes()
+            self.assertEqual(self.arm_runtime.prune(root, "x64"), []); self.assertTrue(crt.exists())
+            self.assertEqual((root / "pacer-runtime.json").read_bytes(), original)
+            crt.write_bytes(self.image(0xAA64))
+            self.assertEqual(self.arm_runtime.prune(root, "arm64"), []); self.assertTrue(crt.exists())
+
+    def test_runtime_manifest_mismatch_aborts_before_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); crt, _, before = self.runtime_fixture(root)
+            before["files"][1]["sha256"] = "0" * 64
+            manifest = root / "pacer-runtime.json"; manifest.write_text(json.dumps(before)); original = manifest.read_bytes()
+            with self.assertRaises(ValueError): self.arm_runtime.prune(root, "arm64")
+            self.assertTrue(crt.exists()); self.assertEqual(manifest.read_bytes(), original)
 
     def image(self, machine, flags=None):
         data = bytearray(1024); data[:2] = b"MZ"; struct.pack_into("<I", data, 60, 128)

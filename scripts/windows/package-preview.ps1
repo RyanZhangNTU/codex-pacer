@@ -53,6 +53,10 @@ try {
         if ($taskNotices.Count -eq 0) { throw ('Runtime notices are missing: ' + $taskPackage) }
         foreach ($taskNotice in $taskNotices) { Copy-Item -LiteralPath $taskNotice.FullName -Destination $taskLicenseTarget }
     }
+    if ($Architecture -eq 'arm64') {
+        python -S scripts/windows/prune-arm64-runtime.py --root $taskApplication --architecture $Architecture
+        if ($LASTEXITCODE -ne 0) { throw 'The ARM64 runtime dependency selection failed.' }
+    }
     $taskEngine = Get-Content -LiteralPath (Join-Path $taskRoot ('output/windows/' + $taskArchitecture.Receipt)) -Raw | ConvertFrom-Json
     [IO.File]::WriteAllText((Join-Path $taskApplication 'installation-identity.json'), '{"schemaVersion":1,"qaScope":null}', [Text.UTF8Encoding]::new($false))
     $taskFiles = @(Get-ChildItem -LiteralPath $taskApplication -File -Recurse | Sort-Object FullName | ForEach-Object {

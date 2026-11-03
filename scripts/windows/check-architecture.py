@@ -43,7 +43,7 @@ def verify(path, architecture, required_native=False):
         # All headers, including the CLR header, must fit this bounded read.
         machine, neutral = inspect(stream.read(4 * 1024 * 1024))
     if machine != MACHINES[architecture] and not (neutral and not required_native):
-        raise ValueError("Wrong native architecture: " + path.name)
+        raise ValueError(f"Wrong native architecture: {path.name} (machine=0x{machine:04X}, expected=0x{MACHINES[architecture]:04X})")
 
 
 def check(root, architecture):
