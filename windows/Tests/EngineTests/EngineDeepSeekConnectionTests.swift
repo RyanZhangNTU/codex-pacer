@@ -19,14 +19,17 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
         }
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["deepseek"], "deepseekSettings": ["mode": "balance", "ringPeriod": "day", "speedSource": "local", "showsTurnCost": true, "balanceSource": "web"]]))
-        try await wait { capture.last()?.wallet?.balance == 80 }
+        try await wait { capture.last()?.wallet?.balance == 80 && history.read().samples.last?.total == 80 }
         let before = history.read().samples.count; XCTAssertGreaterThanOrEqual(before, 3)
         var context = try XCTUnwrap(capture.last()?.deepseekConnection?.context)
         _ = await runtime.receive(try command("beginDeepSeekWebSignIn", ["balanceContext": context]))
         _ = await runtime.receive(try command("deepSeekWebSessionChanged", ["balanceContext": context, "webNewSession": false]))
+        try await wait { capture.last()?.deepseekConnection?.refreshing == false }
         XCTAssertGreaterThanOrEqual(history.read().samples.count, before, "Same-token challenge verification keeps history")
         context = try XCTUnwrap(capture.last()?.deepseekConnection?.context)
         _ = await runtime.receive(try command("deepSeekWebSessionChanged", ["balanceContext": context, "webNewSession": true]))
+        // The command acknowledges the reset before its forced refresh persists the new sample.
+        try await wait { history.read().samples.last?.total == 80 && capture.last()?.deepseekConnection?.refreshing == false }
         XCTAssertEqual(history.read().samples.count, 1, "A new login starts with its own current balance")
         XCTAssertNil(capture.lastError()); XCTAssertFalse(capture.text().contains("sessionFingerprint"))
         await runtime.stop()
