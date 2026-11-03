@@ -56,13 +56,7 @@ internal static class IdleSchedulingChecks
                     "An unchanged hold has no WPF render callbacks or timer wakeups, without forcing GC");
             }
             long beforeSnapshots = Interlocked.Read(ref snapshots), beforeFrames = frames;
-            // Keep the real hold deadline and both actual WPF clocks. Advance
-            // the finite fade explicitly, so a delayed WPF timing tick cannot
-            // turn the unchanged 3400 ms bound into a wall-clock race.
-            quota.FadeStartedForAutomation += quota.SeekFadeForAutomation;
-            try { await quota.WaitForNextCycleAsync(TimeSpan.FromMilliseconds(3400)); }
-            catch (TimeoutException error) { throw new InvalidOperationException("The quota cycle exceeded its original deadline; " + quota.CycleDiagnostics + ", quota=" + quota.Scheduling, error); }
-            finally { quota.FadeStartedForAutomation -= quota.SeekFadeForAutomation; }
+            await quota.WaitForNextCycleAsync(TimeSpan.FromMilliseconds(3400));
             Check(quota.Scheduling.Wakes == 1 && quota.Scheduling.Clocks == 0 && quota.Scheduling.Scheduled,
                 "The four-second switch releases both fade clocks and schedules only its next deadline; actual=" + quota.Scheduling);
             Check(Interlocked.Read(ref snapshots) == beforeSnapshots && frames == beforeFrames, "The frozen unchanged engine emits no snapshots or native window frames");
@@ -74,8 +68,7 @@ internal static class IdleSchedulingChecks
             await Task.Delay(550);
             Check(!hidden.Scheduled && hidden.Clocks == 0 && quota.Scheduling.Wakes == hidden.Wakes && Interlocked.Read(ref renders) == settled,
                 "Hidden quotas have no clocks, timers, or continuing render work");
-            window.Show(); await Task.Delay(250); Check(quota.Scheduling.Scheduled, "Showing the island restores the original alternating values; quota="
-                + quota.Scheduling + ", visible=" + window.IsVisible + ", occluded=" + window.DecorationsOccluded);
+            window.Show(); await Task.Delay(250); Check(quota.Scheduling.Scheduled, "Showing the island restores the original alternating values");
             if (composed)
             {
                 badge.Update(header, true); await Task.Delay(150);

@@ -21,14 +21,6 @@ internal static class QuotaScheduleChecks
                 Check(Near(late.NextOpacity, .5) && Near(late.FadeRemaining, .175), "Late wakes resume the phase instead of extending the cadence");
                 var end = QuotaAlternationSchedule.At(start + 4, count);
                 Check(end.Current == (slot + 1) % count && end.NextOpacity == 0 && end.FadeRemaining == 0, "Exact slot end settles on the new provider");
-                var early = QuotaAlternationSchedule.AtDeadline(start + 3.64, count, start + 3.65);
-                Check(early.Slot == slot && Near(early.WaitBeforeFade, .01) && Near(early.Frame.FadeRemaining, .35)
-                    && Near(early.EndsAt, start + 4), "An early timer arms one delayed fade at the original boundary without settling the slot");
-                var finished = QuotaAlternationSchedule.AtDeadline(start + 3.99, count, start + 4);
-                Check(finished.Slot == slot + 1 && finished.Frame == end && finished.WaitBeforeFade == 0
-                    && Near(finished.NextWakeAfter, 3.66), "Animation completion settles its known slot even when Stopwatch trails, without another fade or wake");
-                var delayed = QuotaAlternationSchedule.AtDeadline(start + 3.825, count, start + 3.65);
-                Check(delayed.Frame == late && delayed.WaitBeforeFade == 0, "A late timer retains the original remaining fade and cadence");
             }
             var skipped = QuotaAlternationSchedule.At(4 * (count * 100 + 1) + 1, count);
             Check(skipped.Current == 1 && skipped.FadeRemaining == 0, "A suspended dispatcher skips elapsed slots without catch-up callbacks");

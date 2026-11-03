@@ -28,23 +28,17 @@ public sealed class AlternatingQuotaText : Grid
     private double lastSize, lastMaximum;
     private string? lastFamily;
     private long wakeups;
-    private long completedCycles, settledSlot;
-    private double nextFade;
     private readonly QuotaCycleCompletion completedCycle = new();
     internal (bool Scheduled, int Clocks, long Wakes) Scheduling => (wake.IsEnabled, fades.Count, wakeups);
-    internal string CycleDiagnostics => $"visible={IsVisible}, animate={animates}, entries={layers.Count}, elapsed={cycle?.Elapsed.TotalSeconds:0.000}, completed={completedCycles}, slot={settledSlot}, deadline={nextFade:0.000}";
     internal Task WaitForNextCycleAsync(TimeSpan timeout, CancellationToken cancellation = default)
-        => completedCycle.AfterAsync(completedCycles, timeout, cancellation);
-    internal event Action<TimeSpan>? FadeStartedForAutomation;
-    internal void SeekFadeForAutomation(TimeSpan position)
-    { foreach (var fade in fades.ToArray()) fade.Seek(position); }
+        => completedCycle.AfterAsync(wakeups, timeout, cancellation);
     public double FontSize { get; set; } = 12;
     public FontFamily FontFamily { get; set; } = PacerFonts.Interface;
     internal double MaximumDisplayWidth { get; set; } = double.PositiveInfinity;
     public AlternatingQuotaText()
     {
         IsHitTestVisible = false;
-        wake.Tick += (_, _) => { wake.Stop(); wakeups++; Step(nextFade); };
+        wake.Tick += (_, _) => { wake.Stop(); wakeups++; Step(); };
         IsVisibleChanged += (_, _) => Refresh();
         Unloaded += (_, _) => Stop();
     }
@@ -92,7 +86,7 @@ public sealed class AlternatingQuotaText : Grid
     }
     internal void Stop()
     {
-        wake.Stop(); cycle = null; settledSlot = 0; ClearFades();
+        wake.Stop(); cycle = null; ClearFades();
         for (int index = 0; index < layers.Count; index++)
         {
             layers[index].BeginAnimation(OpacityProperty, null);
@@ -109,39 +103,29 @@ public sealed class AlternatingQuotaText : Grid
     {
         foreach (var fade in fades.ToArray()) fade.Dispose(); fades.Clear();
     }
-    private void Step(double reached = 0)
+    private void Step()
     {
         if (cycle == null || !IsVisible || !animates || layers.Count < 2) { Stop(); return; }
         ClearFades();
         double elapsed = cycle.Elapsed.TotalSeconds;
-        var plan = QuotaAlternationSchedule.AtDeadline(elapsed, layers.Count, reached);
-        var frame = plan.Frame;
+        var frame = QuotaAlternationSchedule.At(elapsed, layers.Count);
         if (frame.FadeRemaining <= 0)
         {
             for (int index = 0; index < layers.Count; index++) layers[index].Opacity = index == frame.Current ? 1 : 0;
-            nextFade = frame.NextFade;
-            wake.Interval = TimeSpan.FromSeconds(plan.NextWakeAfter); wake.Start();
-            if (plan.Slot > settledSlot)
-            {
-                settledSlot = plan.Slot;
-                completedCycle.Notify(++completedCycles);
-            }
-            return;
+            wake.Interval = TimeSpan.FromSeconds(Math.Max(.001, frame.NextFade - elapsed)); wake.Start();
+            completedCycle.Notify(wakeups); return;
         }
         for (int index = 0; index < layers.Count; index++)
         {
             var text = layers[index];
             bool incoming = index == frame.Next, outgoing = index == frame.Current;
             double from = incoming ? frame.NextOpacity : outgoing ? 1 - frame.NextOpacity : 0;
-            double target = incoming ? 1 : 0;
-            text.Opacity = from;
+            text.Opacity = incoming ? 1 : 0;
             if (!incoming && !outgoing) continue;
-            var animation = new DoubleAnimation(from, target, TimeSpan.FromSeconds(frame.FadeRemaining))
-                { BeginTime = TimeSpan.FromSeconds(plan.WaitBeforeFade), FillBehavior = FillBehavior.Stop };
+            var animation = new DoubleAnimation(from, text.Opacity, TimeSpan.FromSeconds(frame.FadeRemaining)) { FillBehavior = FillBehavior.Stop };
             Timeline.SetDesiredFrameRate(animation, 30);
-            fades.Add(new(animation, clock => text.ApplyAnimationClock(OpacityProperty, clock), incoming ? () => Step(plan.EndsAt) : null));
+            fades.Add(new(animation, clock => text.ApplyAnimationClock(OpacityProperty, clock), incoming ? Step : null));
         }
-        FadeStartedForAutomation?.Invoke(TimeSpan.FromSeconds(plan.WaitBeforeFade + frame.FadeRemaining));
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new ValuePeer(this);
     private sealed class ValuePeer(AlternatingQuotaText owner) : FrameworkElementAutomationPeer(owner)

@@ -9,8 +9,6 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
-        if (args is ["--quota-schedule-only"])
-        { QuotaScheduleChecks.Run(); Console.WriteLine("PASS quota hold, early/late wake, completed slot and clock-boundary scheduling"); return 0; }
         if (args is ["--serve-update-feed", var updateDirectory, var updateScope, var updateInstaller, var updateArchitecture])
         { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
         if (args is ["--updates-only"] or ["--updates-only", _])
