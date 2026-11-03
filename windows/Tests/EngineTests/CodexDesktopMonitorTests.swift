@@ -57,9 +57,12 @@ final class CodexDesktopMonitorTests: XCTestCase {
     func testEngineRetainsUnreadEndingAcrossReleaseEofAndOlderLogReplay() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-desktop-engine-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let day = root.appendingPathComponent("sessions/2026/11/01")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
+        let day = root.appendingPathComponent("sessions/" + formatter.string(from: now.addingTimeInterval(5)))
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
-        let now = Date(), timestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-10))
+        let timestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-10))
         let rows: [[String: Any]] = [
             ["type": "session_meta", "timestamp": timestamp, "payload": ["id": thread, "source": "cli", "originator": "Codex Desktop", "cwd": "/synthetic"]],
             ["type": "event_msg", "timestamp": timestamp, "payload": ["type": "task_started", "turn_id": "current"]]
