@@ -22,7 +22,7 @@
     "scripts/release/notarize.py": "eec8af5b27f0cb06e76bcb8d3ef695c38fa92359a1940d6eba0c180e3fb587fd",
     "scripts/release/package-dmg.py": "e103a5d0825a4faca5b1ffbcb540f5d4789a93acaf6eee57dd58fab2e561cf6c",
     "scripts/release/prepare-update.py": "42acda3581238084a922280d8a3cbadffa9fcf5b0c0656d7b42c477e6117cadf",
-    "scripts/release/prepare-windows-update.py": "b06efcab907c7aa40dd8ef8bfa3e80365b0ec2c684e401926b2b5ba60f35699b",
+    "scripts/release/prepare-windows-update.py": "c2e0ab2b2a5dd772025ff760498d526f973e2f5bf907d8a096620ddb8b3d892a",
     "scripts/release/publish-github-release.sh": "37e578af90cfabc519b20c9ac8ba0df8b802259c6c202640d073bd57a9ae52e6"
   },
   "nativePackageInvariants": [
