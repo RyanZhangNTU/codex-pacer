@@ -78,6 +78,7 @@ internal static class WindowsUpdateChecks
     }
     internal static async Task Run(string? nativeDirectory = null)
     {
+        InstallerIdentityChecks();
         string root = Path.Combine(Path.GetTempPath(), "Pacer update 中文 " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -158,6 +159,41 @@ internal static class WindowsUpdateChecks
             Console.WriteLine("PASS Windows updates: isolated signed feed/package, architecture/OS filtering, private loopback, async deadlines, rollback, shutdown ordering, recovery and once-only notes");
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+    private static void InstallerIdentityChecks()
+    {
+        var build = new Version(1, 2, 3, 45);
+        foreach (Guid? scope in new Guid?[] { null, Guid.Parse("c2b87586-64b3-4f41-9614-52a6030a8153") })
+        {
+            var identity = new WindowsInstallationIdentity("C:/Synthetic", scope);
+            string product = identity.DisplayName, description = product + " Setup", version = build.ToString();
+            foreach (string suffix in new[] { "", "   ", "\0", " \0  \0 " })
+            {
+                UpdateHandoff.CheckInstallerIdentity(product + suffix, description, version, identity, build);
+                UpdateHandoff.CheckInstallerIdentity(product, description + suffix, version, identity, build);
+                UpdateHandoff.CheckInstallerIdentity(product, description, version + suffix, identity, build);
+                UpdateHandoff.CheckInstallerIdentity(product + suffix, description + suffix, version + suffix, identity, build);
+            }
+            foreach (string changed in new[] { "Other Pacer", " " + product, "\0" + product, product.Replace("Codex", "CodeX"),
+                product.Replace("Codex", "Co dex"), product.Replace("Codex", "Co\0dex"), product + "\t", product + "\u00a0", "" })
+                Reject(() => UpdateHandoff.CheckInstallerIdentity(changed, description, version, identity, build),
+                    "Only trailing ASCII space/NUL padding can change; product names remain exact");
+            foreach (string changed in new[] { "Other Pacer Setup", " " + description, "\0" + description,
+                description.Replace("Setup", "Set up"), description.Replace("Setup", "Set\0up"), description + "\t", description + "\u00a0", "" })
+                Reject(() => UpdateHandoff.CheckInstallerIdentity(product, changed, version, identity, build),
+                    "Descriptions must retain their exact leading and interior characters");
+            Reject(() => UpdateHandoff.CheckInstallerIdentity(null, description, version, identity, build), "A missing product name is rejected");
+            Reject(() => UpdateHandoff.CheckInstallerIdentity(product, null, version, identity, build), "A missing description is rejected");
+            Reject(() => UpdateHandoff.CheckInstallerIdentity(product, description, null, identity, build), "A missing build is rejected");
+            Reject(() => UpdateHandoff.CheckInstallerIdentity(product, description, "1.2.3.46 \0", identity, build), "Padding cannot hide a different build");
+            Reject(() => UpdateHandoff.CheckInstallerIdentity(product, description, "1.2.3.4 5", identity, build), "Interior build characters are not normalized");
+        }
+    }
+    internal static void CheckInstallerFile(string installer, string qaScope, string expectedBuild)
+    {
+        var identity = new WindowsInstallationIdentity("C:/Synthetic", Guid.ParseExact(qaScope, "N"));
+        UpdateHandoff.CheckInstallerIdentity(installer, identity, Version.Parse(expectedBuild));
+        Console.WriteLine("PASS actual installer identity and expected build; read-only, no installation or registration");
     }
     private static void SignerPolicyChecks(SigningFixture key, WindowsUpdateChannel local, string root)
     {
