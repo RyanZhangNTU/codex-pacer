@@ -7,7 +7,8 @@ internal static class PreferencesChecks
     {
         string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "pacer-prefs-" + Guid.NewGuid().ToString("N")));
         string file = Path.Combine(root, "preferences.json");
-        var store = new PreferencesStore(file);
+        // Maintenance's inspection mode must remain read-only, including on damage.
+        var store = new PreferencesStore(file, recoverDamagedFiles: false);
         try
         {
             var missing = store.Load();

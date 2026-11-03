@@ -46,6 +46,7 @@ internal static class Program
             {
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
+                if (group is "all" or "recovery") await StorageRecoveryChecks.Run();
                 TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
                 if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
                 bool All(string name) => group == "all" || group == name;

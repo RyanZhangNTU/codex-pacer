@@ -971,6 +971,10 @@
     "windows.settings.startup_settings_failed": "无法打开 Windows 设置。请前往“设置 > 应用 > 启动”。",
     "windows.settings.startup_unknown": "无法确认 Windows 启动状态。请检查“启动应用”。",
     "windows.show_island": "展开",
+    "windows.storage.failed": "未能完成恢复，原文件或备份已保留。请重试。",
+    "windows.storage.future": "设置或历史文件由更新版本写入，当前版本不会修改它。你可以先备份，再使用默认设置。",
+    "windows.storage.restored": "设置文件已损坏，已恢复默认设置。备份：{0}",
+    "windows.storage.use_defaults": "备份并使用默认设置",
     "windows.updates.pending": "Windows 预览版暂不支持自动更新。"
   }
 }

@@ -15,6 +15,6 @@ extension CodexQuotaServices {
                 throw CodexClientError.executableNotFound(report.issue ?? L10n.text("cli.missing_short"))
             }
             return CodexClient(executable: selected.url, home: home)
-        }, history: QuotaHistoryStore(directory: directory, files: WindowsFileSystem()))
+        }, history: QuotaHistoryStore(directory: directory, files: WindowsRecoveringHistoryFiles(kind: .quota)))
     }
 }

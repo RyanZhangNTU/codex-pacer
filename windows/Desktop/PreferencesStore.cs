@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Text.Json;
 
 namespace CodexPacer.Windows;
 
@@ -14,21 +15,21 @@ internal sealed class PreferencesStore
     private readonly object gate = new();
     private byte[]? basis;
     private bool loaded;
+    private readonly bool recoverDamagedFiles;
+    private string? recoveryFileName;
+    internal bool HasFutureVersion { get; private set; }
+    internal string? TakeRecoveryFileName() { lock (gate) { string? name = recoveryFileName; recoveryFileName = null; return name; } }
     private static (DesktopPreferences Value, bool Unavailable) Unavailable() => (new() { HideProjects = true }, true);
     internal static string DefaultFile => Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPacer", "preferences-v1.json"));
-    internal PreferencesStore(string? file = null)
+    internal PreferencesStore(string? file = null, bool recoverDamagedFiles = true)
     {
+        this.recoverDamagedFiles = recoverDamagedFiles;
         this.file = Path.GetFullPath(file ?? DefaultFile);
         mutexName = "Local\\CodexPacer.Preferences." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(this.file.ToUpperInvariant())));
     }
     private void CheckPath()
     {
-        for (string? path = file; path != null; path = Path.GetDirectoryName(path))
-        {
-            try { if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("A settings path is redirected."); }
-            catch (FileNotFoundException) { }
-            catch (DirectoryNotFoundException) { }
-        }
+        FileQuarantine.CheckPath(file);
     }
     private byte[]? Read()
     {
@@ -44,7 +45,6 @@ internal sealed class PreferencesStore
                 if (read == 0) break;
                 count += read;
             }
-            if (count > MaximumBytes) throw new IOException("Settings exceed the storage limit.");
             return bytes[..count];
         }
         catch (FileNotFoundException) { return null; }
@@ -56,13 +56,30 @@ internal sealed class PreferencesStore
         {
             try
             {
-                basis = Read(); loaded = true;
-                return basis == null ? (new(), false) : (PreferencesCodec.Decode(basis), false);
+                using var mutex = new Mutex(false, mutexName);
+                bool acquired;
+                try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(1)); } catch (AbandonedMutexException) { acquired = true; }
+                if (!acquired) return Unavailable();
+                try
+                {
+                    basis = Read(); loaded = true; HasFutureVersion = Future(basis);
+                    if (basis == null) return (new(), false);
+                    if (HasFutureVersion) return Unavailable();
+                    try { return (Decode(basis), false); }
+                    catch (Exception error) when (Recoverable(error) && recoverDamagedFiles)
+                    {
+                        recoveryFileName = FileQuarantine.Move(file); basis = null;
+                        return (new(), false);
+                    }
+                }
+                finally { mutex.ReleaseMutex(); }
             }
             catch (Exception error) when (Recoverable(error)) { loaded = true; return Unavailable(); }
         }
     }
-    internal bool Save(DesktopPreferences settings)
+    internal bool Save(DesktopPreferences settings) => Save(settings, confirmFuture: false);
+    internal bool BackupAndUseDefaults(DesktopPreferences settings) => Save(settings, confirmFuture: true);
+    private bool Save(DesktopPreferences settings, bool confirmFuture)
     {
         if (!settings.IsValid) return false;
         lock (gate)
@@ -76,10 +93,26 @@ internal sealed class PreferencesStore
                 try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(1)); } catch (AbandonedMutexException) { acquired = true; }
                 if (!acquired) return false;
                 byte[]? current = Read();
+                HasFutureVersion = Future(current);
+                if (HasFutureVersion && !confirmFuture) return false;
                 if (!loaded && current != null) return false;
+                bool damaged = false;
+                if (current != null)
+                {
+                    try { _ = Decode(current); }
+                    catch (Exception error) when (Recoverable(error)) { damaged = true; }
+                }
                 // Another process changed the profile after this session read it.
-                if (loaded && !(basis == null ? current == null : current != null && basis.AsSpan().SequenceEqual(current))) return false;
-                if (current != null) _ = PreferencesCodec.Decode(current);
+                if (!(damaged && recoverDamagedFiles && !HasFutureVersion) && loaded &&
+                    !(basis == null ? current == null : current != null && basis.AsSpan().SequenceEqual(current))) return false;
+                if (current != null)
+                {
+                    if (HasFutureVersion && confirmFuture || damaged && recoverDamagedFiles && !HasFutureVersion)
+                    {
+                        recoveryFileName = FileQuarantine.Move(file); basis = current = null; HasFutureVersion = false;
+                    }
+                    else if (damaged) return false;
+                }
                 byte[] bytes = PreferencesCodec.Encode(settings, current ?? []);
                 Directory.CreateDirectory(Path.GetDirectoryName(file)!); CheckPath();
                 using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -96,6 +129,21 @@ internal sealed class PreferencesStore
                 try { File.Delete(temporary); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
             }
         }
+    }
+    private static DesktopPreferences Decode(byte[] bytes) => bytes.Length <= MaximumBytes ? PreferencesCodec.Decode(bytes) : throw new JsonException();
+    private static bool Future(byte[]? bytes)
+    {
+        if (bytes == null) return false;
+        // A valid future envelope remains protected even if it exceeds today's size limit.
+        try
+        {
+            var reader = new Utf8JsonReader(bytes, isFinalBlock: false, state: default);
+            while (reader.Read())
+                if (reader.TokenType == JsonTokenType.PropertyName && reader.CurrentDepth == 1 && reader.ValueTextEquals("schemaVersion"))
+                    return reader.Read() && reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int version) && version > PreferencesCodec.Version;
+            return false;
+        }
+        catch (JsonException) { return false; }
     }
     private static bool Recoverable(Exception error) => error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException
         or ArgumentException or InvalidOperationException or FormatException or System.Security.SecurityException;

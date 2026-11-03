@@ -54,6 +54,6 @@ extension ClaudeQuotaServices {
             .appendingPathComponent("CodexPacerIsland/ClaudeCurrentCycle", isDirectory: true)
         return .init(makeClient: { home, organization, context in
             BridgedClaudeQuotaClient(bridge: bridge, home: home, organization: organization, context: context)
-        }, history: QuotaHistoryStore(directory: directory, files: WindowsFileSystem()))
+        }, history: QuotaHistoryStore(directory: directory, files: WindowsRecoveringHistoryFiles(kind: .quota)))
     }
 }

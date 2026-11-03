@@ -9,6 +9,8 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["--preferences-only", var preferencesEngine])
+        { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--installation-only"])

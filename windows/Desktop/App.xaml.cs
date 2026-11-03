@@ -327,7 +327,7 @@ public partial class App : Application
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.Closed += (_, _) => settings = null;
         }

@@ -102,7 +102,7 @@ public enum PacerEngine {
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
-            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices)
+            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices, allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -335,6 +335,7 @@ actor EngineRuntime {
     }
     #endif
     private let output: @Sendable (Data) -> Void
+    private let allowsStorageRecovery: Bool
 
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
@@ -351,12 +352,14 @@ actor EngineRuntime {
          allowsLiveClaudeWeb: Bool = false,
          claudeWebReference: Bool = false,
          claudeHookServices: EngineClaudeHookServices? = nil,
+         allowsStorageRecovery: Bool = true,
          sourceSettings: CodexSourceSettingsServices = .live,
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
              await Task.detached(priority: .utility) { ProviderInstallationDetection.detect() }.value
          },
          output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }) {
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
+        self.allowsStorageRecovery = allowsStorageRecovery
         self.sourceSettings = sourceSettings
         self.balanceServices = balanceServices
         self.claudeServices = claudeServices; self.allowsLiveClaudeWeb = allowsLiveClaudeWeb
@@ -434,6 +437,16 @@ actor EngineRuntime {
             return true
         }
         switch command.method {
+        case "storageRecoveryStatus", "recoverFutureStorage":
+            // Demo and read-only diagnostics never mutate real application stores.
+            let recovery = WindowsStorageRecovery.shared
+            if command.method == "recoverFutureStorage", !demo {
+                guard allowsStorageRecovery else { failure(id: command.id, code: "readOnly"); return true }
+                guard recovery.recoverFutureFiles() else { failure(id: command.id, code: "storageRecoveryFailed"); return true }
+            }
+            let status: [String: Any] = demo ? ["futureFiles": [String]()] : recovery.status()
+            send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "value": status])
+            return true
         case "activateNotification":
             guard projectionReady, let reference = command.params?.context, let kind = command.params?.notificationAction,
                   let saved = notificationRegistry.record(reference, at: now()), saved.kind == kind else {

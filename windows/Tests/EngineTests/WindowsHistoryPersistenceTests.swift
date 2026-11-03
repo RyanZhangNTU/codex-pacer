@@ -104,7 +104,7 @@ final class WindowsHistoryPersistenceTests: XCTestCase {
         var future = object; future["version"] = 2
         for damaged in [Data("broken".utf8), try JSONSerialization.data(withJSONObject: future), Data(repeating: 32, count: 65537)] {
             try damaged.write(to: file)
-            let fresh = DeepSeekBalanceHistoryStore(file: file)
+            let fresh = DeepSeekBalanceHistoryStore(file: file, recovery: nil)
             let fallback = await fresh.load(now: now); XCTAssertTrue(fallback.samples.isEmpty)
             await fresh.save(loaded)
             XCTAssertEqual(try Data(contentsOf: file), damaged)
@@ -114,7 +114,7 @@ final class WindowsHistoryPersistenceTests: XCTestCase {
     }
     func testWindowsAcknowledgmentStorePreservesDamagedBytesAfterReadAndMark() throws {
         let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("dismissals.json"), store = CompletionDismissalStore(fileURL: file)
+        let file = root.appendingPathComponent("dismissals.json"), store = CompletionDismissalStore(fileURL: file, files: WindowsFileSystem(), preservesDamagedFile: true)
         let digest = CompletionDismissalStore.digest(["synthetic-ending"])
         XCTAssertTrue(store.saveDigests([digest])); XCTAssertEqual(store.loadDigests(), [digest])
         for data in [Data("broken".utf8), Data("{\"version\":999,\"digests\":[]}".utf8), Data(repeating: 32, count: 65537)] {

@@ -971,6 +971,10 @@
     "windows.settings.startup_settings_failed": "Windows Settings couldn't open. Go to Settings > Apps > Startup.",
     "windows.settings.startup_unknown": "The Windows startup status is unavailable. Check Startup apps.",
     "windows.show_island": "Show",
+    "windows.storage.failed": "Recovery could not be completed. The original file or its backup has been kept. Try again.",
+    "windows.storage.future": "A settings or history file was written by a newer version. This version will not modify it. You can back it up and start with defaults.",
+    "windows.storage.restored": "Settings were damaged, so defaults have been restored. Backup: {0}",
+    "windows.storage.use_defaults": "Back Up and Use Defaults",
     "windows.updates.pending": "Automatic updates are not available in the Windows preview yet."
   }
 }

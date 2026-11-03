@@ -23,7 +23,8 @@ internal static class PersistentSettingsChecks
         string scenario = language + (dark ? "-dark" : "-light");
         string root = Path.Combine(Path.GetTempPath(), "pacer-preferences-中文 space-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         string file = Path.Combine(root, "preferences.json"), capture = Path.Combine(output, "persisted-restart-" + scenario + ".png");
-        var store = new PreferencesStore(file); _ = store.Load();
+        // Keep the original failed-write/rollback assertions through maintenance's protected mode.
+        var store = new PreferencesStore(file, recoverDamagedFiles: false); _ = store.Load();
         var initial = new DesktopPreferences { IslandAppearance = "classic" };
         Check(store.Save(initial), "An isolated synthetic profile initializes");
         await using var engine = new EngineClient();

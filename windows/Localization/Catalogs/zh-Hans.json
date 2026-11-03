@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/Localization/zh-Hans.json": "6af0d100cf6f2ac33c20db8862dda989271f123df968591a45cbf474452041b7"
+    "windows/Localization/zh-Hans.json": "33cc7d396af5c9532cf47367459be5a6efd08d48a13621e5a7398a1b7c0d0b07"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -975,6 +975,10 @@
     "windows.settings.startup_settings_failed": "\u65e0\u6cd5\u6253\u5f00 Windows \u8bbe\u7f6e\u3002\u8bf7\u524d\u5f80\u201c\u8bbe\u7f6e > \u5e94\u7528 > \u542f\u52a8\u201d\u3002",
     "windows.settings.startup_unknown": "\u65e0\u6cd5\u786e\u8ba4 Windows \u542f\u52a8\u72b6\u6001\u3002\u8bf7\u68c0\u67e5\u201c\u542f\u52a8\u5e94\u7528\u201d\u3002",
     "windows.show_island": "\u5c55\u5f00",
+    "windows.storage.failed": "\u672a\u80fd\u5b8c\u6210\u6062\u590d\uff0c\u539f\u6587\u4ef6\u6216\u5907\u4efd\u5df2\u4fdd\u7559\u3002\u8bf7\u91cd\u8bd5\u3002",
+    "windows.storage.future": "\u8bbe\u7f6e\u6216\u5386\u53f2\u6587\u4ef6\u7531\u66f4\u65b0\u7248\u672c\u5199\u5165\uff0c\u5f53\u524d\u7248\u672c\u4e0d\u4f1a\u4fee\u6539\u5b83\u3002\u4f60\u53ef\u4ee5\u5148\u5907\u4efd\uff0c\u518d\u4f7f\u7528\u9ed8\u8ba4\u8bbe\u7f6e\u3002",
+    "windows.storage.restored": "\u8bbe\u7f6e\u6587\u4ef6\u5df2\u635f\u574f\uff0c\u5df2\u6062\u590d\u9ed8\u8ba4\u8bbe\u7f6e\u3002\u5907\u4efd\uff1a{0}",
+    "windows.storage.use_defaults": "\u5907\u4efd\u5e76\u4f7f\u7528\u9ed8\u8ba4\u8bbe\u7f6e",
     "windows.updates.pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u81ea\u52a8\u66f4\u65b0\u3002"
   }
 }

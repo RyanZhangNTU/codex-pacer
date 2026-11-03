@@ -6,9 +6,14 @@ actor DeepSeekBalanceHistoryStore {
     private struct Envelope: Codable { let version: Int; let history: DeepSeekBalanceHistory }
     private let file: URL
     private let files: any PlatformFileSystem
+    private let recovery: WindowsStorageRecovery?
     private var latestRevision: UInt64 = 0
-    init(file: URL, files: any PlatformFileSystem = WindowsFileSystem()) { self.file = file; self.files = files }
+    init(file: URL, files: any PlatformFileSystem = WindowsFileSystem(), recovery: WindowsStorageRecovery? = .shared) {
+        self.file = file; self.files = files; self.recovery = recovery
+    }
+    private func prepare() { recovery?.prepare(file, kind: .deepseek, maximumBytes: 65536) { decode($0, now: .distantFuture) != nil } }
     func load(now: Date) -> DeepSeekBalanceHistory {
+        prepare()
         guard let data = read(), let value = decode(data, now: now) else { return .init() }
         return value
     }
@@ -39,6 +44,7 @@ actor DeepSeekBalanceHistoryStore {
         guard revision >= latestRevision else { return }
         latestRevision = revision
         guard let data = try? JSONEncoder().encode(Envelope(version: 1, history: history)), data.count <= 65536 else { return }
+        prepare()
         if files.metadata(file) != nil || FileManager.default.fileExists(atPath: file.path) {
             guard let existing = read(), decode(existing, now: .distantFuture) != nil else { return }
         }

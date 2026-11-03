@@ -27,7 +27,9 @@ internal sealed class PreferencesSession
 
     internal Task<PreferencesApplyResult> ChangeAsync(Func<DesktopPreferences, DesktopPreferences> edit)
         => ChangeAsync(value => Task.FromResult(edit(value)));
-    internal async Task<PreferencesApplyResult> ChangeAsync(Func<DesktopPreferences, Task<DesktopPreferences>> edit)
+    internal Task<PreferencesApplyResult> RecoverDefaultsAsync(Func<DesktopPreferences, bool> confirmedSave)
+        => ChangeAsync(_ => Task.FromResult(new DesktopPreferences()), confirmedSave);
+    internal async Task<PreferencesApplyResult> ChangeAsync(Func<DesktopPreferences, Task<DesktopPreferences>> edit, Func<DesktopPreferences, bool>? confirmedSave = null)
     {
         await changes.WaitAsync();
         try
@@ -57,7 +59,7 @@ internal sealed class PreferencesSession
                     return PreferencesApplyResult.EngineFailed;
                 }
             }
-            if (!await Task.Run(() => save(next)))
+            if (!await Task.Run(() => (confirmedSave ?? save)(next)))
             {
                 if (engineChanged)
                 {

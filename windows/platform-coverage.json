@@ -1123,7 +1123,7 @@
         "docs/guide.md"
       ],
       "evidence": [],
-      "previewNote": "2026-11-03 Windows 11 x64（26200）程序化实机：中英文 × 浅深色设置控件、双窗口编辑、真实磁盘失败回滚、完整应用进程重启与隔离偏好恢复均通过；37 个偏好字段另有真实离线引擎确认、落盘与重新读取测试。旧 schema、缺键/未知枚举、自动/显式空环、故意空布局和损坏原文件保留已验证。开机启动沿用 OS 注册服务；其他设备与真实用户配置的日用验收仍待完成。",
+      "previewNote": "2026-11-03 Windows 11 x64（26200）程序化实机：中英文 × 浅深色设置控件、双窗口编辑、真实磁盘失败回滚、完整应用进程重启与隔离偏好恢复均通过；37 个偏好字段另有真实离线引擎确认、落盘与重新读取测试。旧 schema、缺键/未知枚举、自动/显式空环、故意空布局已验证。审查修复另验证损坏原字节改名备份、每类最多三份、未来 schema 拒绝普通保存及确认后恢复；中英文设置页的一次提示、备份文件名和异步恢复按钮通过定向实机测试。开机启动沿用 OS 注册服务；其他设备与真实用户配置的日用验收仍待完成。",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P1",
       "deferredEvidence": []

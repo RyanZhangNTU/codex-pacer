@@ -52,6 +52,7 @@ internal static class PreferencesPersistenceChecks
             await CheckAcknowledgement();
             CheckTransactions(root);
             CheckCanonicalKeys(root);
+            await PreferencesRecoveryChecks.Run(root);
         }
         finally { foreach (string file in Directory.EnumerateFiles(root)) File.Delete(file); Directory.Delete(root); }
     }
@@ -85,7 +86,7 @@ internal static class PreferencesPersistenceChecks
             "A refreshed writer preserves the first edit");
         foreach (string damaged in new[] { "not JSON", "{\"schemaVersion\":3}", "{\"schemaVersion\":2,\"compactIslandLayout\":\"%%%\"}", new string('x', PreferencesStore.MaximumBytes + 1) })
         {
-            File.WriteAllText(file, damaged); var store = new PreferencesStore(file);
+            File.WriteAllText(file, damaged); var store = new PreferencesStore(file, recoverDamagedFiles: false);
             Check(store.Load().Unavailable, "A damaged profile is reported");
             Check(!store.Save(new()) && File.ReadAllText(file) == damaged, "Saving after a failed read must preserve the original bytes");
         }
