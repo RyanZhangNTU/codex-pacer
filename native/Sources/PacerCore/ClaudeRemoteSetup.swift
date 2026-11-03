@@ -30,21 +30,24 @@ public actor ClaudeRemoteSetup {
     private let executable: URL
     private let timeout: TimeInterval
     private let validDestination: @Sendable (String) -> Bool
+    private let validIdentityFile: (@Sendable (String) -> Bool)?
     private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
     private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
     public init(executable: URL, timeout: TimeInterval = 15,
                 makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation,
-                validDestination: @escaping @Sendable (String) -> Bool) {
+                validDestination: @escaping @Sendable (String) -> Bool,
+                validIdentityFile: (@Sendable (String) -> Bool)? = nil) {
         self.executable = executable
         self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
         self.makeOperation = makeOperation
         self.validDestination = validDestination
+        self.validIdentityFile = validIdentityFile
     }
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false) async throws -> ClaudeHookInstaller.Status {
-        let arguments = try Self.arguments(target: target, requireHome: requireHome, validDestination: validDestination)
+        let arguments = try Self.arguments(target: target, requireHome: requireHome, validDestination: validDestination, validIdentityFile: validIdentityFile)
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
@@ -76,8 +79,8 @@ public actor ClaudeRemoteSetup {
     }
 
     public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false,
-                                 validDestination: (String) -> Bool) throws -> [String] {
-        guard let arguments = target.sshArguments(validDestination: validDestination) else { throw Failure.invalidTarget }
+                                 validDestination: (String) -> Bool, validIdentityFile: ((String) -> Bool)? = nil) throws -> [String] {
+        guard let arguments = target.sshArguments(validDestination: validDestination, validIdentityFile: validIdentityFile) else { throw Failure.invalidTarget }
         return arguments + [try command(requireHome: requireHome)]
     }
     /// Hosts with another transport can use the same additive installer. The

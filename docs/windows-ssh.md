@@ -14,4 +14,16 @@ Opening a task passes a structured base64 plan to a separate console mode of `Pa
 
 `WindowsSSHTests` uses a synthetic SSH executable with disposable local directories. It covers discovery and deduplication, route caching, Windows identity paths, unchanged SSH files, long commands, split output, ordered stdin/EOF, approval/reply/ending projection, reconnect, disable/reopen and shutdown. The fixture's POSIX compatibility shims are test code only. Desktop tests check terminal argv, console fallback and preference persistence. The `ssh` presentation group checks the setting in English/Chinese and light/dark appearances.
 
-No real remote is modified by these tests. A user must still verify an existing noninteractive target, real Windows Terminal/console TTY resume and remote sleep/reconnect. Preview coverage stays partial. Claude remote hook installation, its version checks, automatic retry and manual retry belong to the following Claude remote PR; this step reads existing remote instrumentation only. WSL and Remote Control are separate work.
+No real remote is modified by these tests. A user must still verify an existing noninteractive target, real Windows Terminal/console TTY resume and remote sleep/reconnect. Preview coverage stays partial. WSL and Remote Control are separate work.
+
+## Claude remote hooks
+
+Reachable Claude sources use Core's `ClaudeRemoteAutoSetup` and `ClaudeRemoteSetup`. Automatic setup requires an existing remote Claude home. It preserves user hooks, wraps the previous status-line renderer with the shared ownership manifest, and respects telemetry conflicts. The shipped adapter digest controls upgrades; a failed attempt waits 30 minutes before the next automatic retry. A single sleeping timer handles that deadline. No idle polling loop is added.
+
+Windows sends the shared installer through the same bounded stdin frame as collectors, then sends EOF without applying the streaming helper's 500 ms close escalation. Core still limits setup to 15 seconds. Disablement, source replacement, sleep and quit revoke ownership and cancel setup; late results cannot update the cache or restart a discarded source. Successful setup refreshes that source's collector. Read-only diagnostics and demo mode do not install hooks.
+
+The bounded version-1 cache contains only validated SSH aliases and adapter digests. It uses the existing `claudeRemoteSetupDigests` contract. Unknown versions and unsafe paths are preserved. Cache loss only causes the idempotent installer to check the remote setup again.
+
+For the connection-page host, snapshots add `claudeRemoteSetups`: each row has `sourceID`, an opaque `context`, `configured`, `inFlight`, `canRetry`, an optional localized `message`, and optional Unix `retryAt`. Send `retryClaudeRemoteSetup` with the current row's `sourceID` and `context`. The engine resolves its owned target; the caller cannot supply a host or a command. The reply acknowledges scheduling, and later snapshots report the result. The UI must keep its normal asynchronous request timeout.
+
+`WindowsClaudeRemoteTests` executes the unchanged shared installer only in disposable synthetic remotes. It checks existing user entries and renderer metadata, byte-identical repeat installation, malformed settings, missing Claude homes, telemetry conflicts, EOF/timeout, digest upgrades, retry boundaries, manual retry, revocation and private output. Remote hook installation on a real host remains part of user acceptance.

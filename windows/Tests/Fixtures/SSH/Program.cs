@@ -44,7 +44,16 @@ string code = Encoding.UTF8.GetString(Convert.FromBase64String(match.Groups[1].V
 string[] tail = match.Groups[2].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 if (tail.Length == 0 || tail.Any(value => !Regex.IsMatch(value, @"\A[A-Za-z0-9+/=._-]+\z"))) return 2;
 string remoteHome = Encoding.UTF8.GetString(Convert.FromBase64String(tail[0]));
-if (!Path.GetFullPath(remoteHome).StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return 2;
+bool setup = remoteHome.StartsWith('{');
+if (setup)
+{
+    using var request = JsonDocument.Parse(remoteHome);
+    if (request.RootElement.GetProperty("home").GetString() != "~/.claude" || !request.RootElement.TryGetProperty("hook", out _)) return 2;
+    string mode = Path.Combine(root, "setup-mode");
+    if (File.Exists(mode) && File.ReadAllText(mode) == "hang")
+    { await input.CopyToAsync(Stream.Null); File.WriteAllText(Path.Combine(root, "eof"), "true"); await Task.Delay(30000); return 0; }
+}
+else if (!Path.GetFullPath(remoteHome).StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return 2;
 string source = Path.Combine(root, "command-" + Guid.NewGuid().ToString("N") + ".py");
 // Supply POSIX resource/pipe readiness facts to the unchanged shared helper.
 // These shims exist only in this synthetic executable, never in the app.
@@ -52,6 +61,9 @@ string shim = """
 import os,sys,time,types,select,ctypes
 sys.stdout.reconfigure(newline='\n')
 os.getuid=lambda:0
+os.O_NOFOLLOW=getattr(os,'O_NOFOLLOW',0)
+os.O_CLOEXEC=getattr(os,'O_CLOEXEC',0)
+os.fchmod=getattr(os,'fchmod',lambda fd,mode:None)
 sys.modules['resource']=types.SimpleNamespace(RUSAGE_SELF=0,getrusage=lambda _:types.SimpleNamespace(ru_utime=0,ru_stime=0))
 original_select=select.select
 def fixture_select(readers,writers,errors,timeout=None):
@@ -74,6 +86,11 @@ try
 {
     var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("PACER_TEST_PYTHON")!)
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+    if (setup)
+    {
+        start.Environment["USERPROFILE"] = root; start.Environment["HOME"] = root;
+        foreach (string key in start.Environment.Keys.Where(key => key.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("CLAUDE_", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
+    }
     foreach (string argument in new[] { "-S", "-u", source }.Concat(tail)) start.ArgumentList.Add(argument);
     using var process = Process.Start(start)!;
     _ = Task.Run(async () => { try { await input.CopyToAsync(process.StandardInput.BaseStream); process.StandardInput.Close(); } catch (IOException) { } });

@@ -149,15 +149,15 @@
     {
       "id": "claude-remote",
       "status": "pending",
-      "evidence": [],
+      "evidence": ["windows/Tests/EngineTests/WindowsClaudeRemoteTests.swift", "windows/Tests/EngineTests/WindowsSSHTests.swift", "docs/windows-ssh.md"],
       "priority": "P2",
-      "previewStatus": "pending",
+      "previewStatus": "partial",
       "requirements": [
         "Claude SSH 发现和 Desktop 保存路由，host/user/port/identity 同一身份",
         "远端 hooks 自动设置、版本/幂等、失败状态、30 分钟重试和手动 retry",
         "持续生命周期、断线/重连、helper 退出和真实 TTY resume；不发送 prompt"
       ],
-      "previewNote": "SSH/WSL discovery, isolated remote setup, resume and owned helper shutdown need Windows coverage.",
+      "previewNote": "Synthetic Windows SSH checks cover shared hook installation, preserved user entries and renderer metadata, version/idempotence, failures, 30-minute retry/manual retry, EOF/timeout and source revocation. No real remote was modified. Real SSH/TTY lifecycle and connection-page acceptance remain pending; WSL belongs to its own feature.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P2",
       "deferredEvidence": []
