@@ -124,6 +124,7 @@ internal static class AccessibilityChecks
             window.Show(); await window.WaitForPresentationAsync(); Check(main.IsEnabled, "Showing the island restores its primary action");
             await Audit(window);
             await AccessibilitySettingsChecks.Run(language, appearance, engine, window);
+            await AccessibilityGuideChecks.Run(language, appearance, engine);
         }
         finally { window.AllowClose = true; window.Close(); }
         Check(appearance.Subscribers == 0 && !appearance.Disposed && surfaces.All(value => value.Disposed), "Closing releases borrowed subscriptions and every material without disposing the shared source");

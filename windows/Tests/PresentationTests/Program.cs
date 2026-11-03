@@ -26,6 +26,11 @@ internal static class Program
         if (args is ["--fullscreen-fixture"]) return FullscreenFixture.Run();
         int fixture = Array.IndexOf(args, "--language");
         if (fixture >= 0) return SlowEngineChecks.Fixture(args[fixture + 1]);
+        if (args is ["--unit-only"])
+        {
+            try { SystemAppearanceUnitChecks.Run(); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
         string group = args.Length > 1 ? args[1] : "all";
         string? desktop = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
@@ -48,7 +53,7 @@ internal static class Program
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 if (group is "all" or "recovery" or "persistence") await StorageRecoveryChecks.Run();
-                TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
+                SystemAppearanceUnitChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await QuotaChartBridgeChecks.Run();
                 if (group is "all" or "responsive") { await SlowEngineChecks.Run(); await PreferencesResponsivenessChecks.Run(); }
                 if (group == "persistence") await PreferencesResponsivenessChecks.Run();
                 bool All(string name) => group == "all" || group == name;

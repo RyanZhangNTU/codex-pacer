@@ -1177,7 +1177,7 @@
         "native/Sources/PacerIsland/TaskRowView.swift"
       ],
       "evidence": [],
-      "previewNote": "Synthetic EN/ZH checks use actual HWND UIA names, roles and action patterns for the island and seven current settings panes, plus the language popup. Keyboard checks cover Space, Alt arrows through WPF SystemKey, focus order, component sorting and Escape. Hidden and retired pages reject cached actions. Injected immutable snapshots cover light/dark, high contrast, reduced motion and transparency changes, semantic selection colors, binding/focus preservation and Glass restoration. Full numeric values fit measured 100/125/150/200 percent DPI budgets; the physical host remains one 150 percent display. Guide-window subscription awaits P3b integration; Narrator and other physical displays still need user acceptance.",
+      "previewNote": "Synthetic EN/ZH checks use actual HWND UIA names, roles and action patterns for the island and seven current settings panes, plus the language popup. Keyboard checks cover Space, Alt arrows through WPF SystemKey, focus order, component sorting and Escape. Hidden and retired pages reject cached actions. Injected immutable snapshots cover light/dark, high contrast, reduced motion and transparency changes, semantic selection colors, binding/focus preservation and Glass restoration. Full numeric values fit measured 100/125/150/200 percent DPI budgets; the physical host remains one 150 percent display. Guide-window subscription and ten-pane/guide UIA cases are implemented; these new display cases await the unified integration run. Headless unit checks cover key routing, borrowed snapshot ownership, semantic binding restoration, retirement and finite-clock disposal. Narrator and other physical displays still need user acceptance.",
       "note": "C1 imports the engine and platform adapters; synthetic checks are recorded in this PR. Host UI and full parity acceptance remain pending.",
       "cleanupOwner": "P3",
       "deferredEvidence": [
@@ -1186,7 +1186,10 @@
         "windows/Tests/PresentationTests/AccessibleNumberChecks.cs",
         "windows/Desktop/SystemAppearanceSource.cs",
         "windows/Desktop/HighContrastScope.cs",
-        "docs/windows-accessibility-motion.md"
+        "docs/windows-accessibility-motion.md",
+        "windows/Tests/PresentationTests/AccessibilityGuideChecks.cs",
+        "windows/Tests/PresentationTests/SystemAppearanceUnitChecks.cs",
+        "windows/Desktop/GuideWindow.cs"
       ]
     },
     {

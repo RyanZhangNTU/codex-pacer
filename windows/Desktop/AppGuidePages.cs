@@ -58,7 +58,7 @@ public partial class App
                 { island?.SetStatus(ui.Text("windows.settings.apply_failed")); }
             }
             var content = new GuideContent(ui, settingsSession, startupRegistration, catalog, Settings, () => _ = ShowGuideAsync(true), engine, notifications);
-            window = new GuideWindow(ui, content, catalog, demoDark); guideWindow = window;
+            window = new GuideWindow(ui, content, catalog, demoDark, island?.AppearanceSource); guideWindow = window;
             window.Closed += async (_, _) =>
             {
                 if (ReferenceEquals(guideWindow, window)) guideWindow = null;

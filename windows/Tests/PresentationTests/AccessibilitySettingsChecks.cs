@@ -61,9 +61,11 @@ internal static class AccessibilitySettingsChecks
             CheckFocusOrder(window, privacy); privacy.Focus();
             PostKey(window, Key.Space); await PresentationWait.UntilAsync(() => session.Current.HideProjects, "Space toggles a focused settings choice");
             await session.WaitForChangesAsync();
-            foreach (string pane in new[] { "appearance", "collapsed", "reminders", "codex", "claude", "deepseek", "general" })
+            foreach (string pane in new[] { "appearance", "collapsed", "reminders", "codex", "claude", "deepseek", "whatsNew", "help", "support", "general" })
             {
                 await window.NavigateAsync(pane); await ShellProjection.WhenIdleAsync(); await Drain(); window.UpdateLayout();
+                if (pane is "whatsNew" or "help" or "support")
+                    await PresentationWait.UntilAsync(() => Descendants(window).OfType<GuideContent>().Any(value => value.Children.Count > 1), "The guide pane publishes its local catalog");
                 Check(Find<RadioButton>(window, "settings.pane." + pane).IsChecked == true, "Keyboard-accessible navigation selects " + pane);
                 await Audit(window, "settings." + pane);
                 var choice = Find<RadioButton>(window, "settings.pane." + pane); window.Activate(); choice.Focus();

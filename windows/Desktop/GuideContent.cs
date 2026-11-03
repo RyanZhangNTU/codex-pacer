@@ -55,7 +55,12 @@ internal sealed class GuideContent : StackPanel
         try { foreach (var editor in editors) editor.IsEnabled = !changing && !session.RequiresRestart; foreach (var action in refresh) action(); }
         finally { syncing = false; }
     }
-    private void Reset() { if (code != null) code.IsOpen = false; Children.Clear(); refresh.Clear(); editors.Clear(); Children.Add(issue); issue.Text = ""; }
+    private void Reset()
+    {
+        if (code != null) code.IsOpen = false;
+        foreach (UIElement child in Children) if (child != issue) PageAccessibility.Retire(child);
+        Children.Clear(); refresh.Clear(); editors.Clear(); Children.Add(issue); issue.Text = "";
+    }
     internal static void Identify(DependencyObject value, string id, string name)
     { AutomationProperties.SetAutomationId(value, id); AutomationProperties.SetName(value, name); }
     private TextBlock Text(string text, double size = 13, bool bold = false)

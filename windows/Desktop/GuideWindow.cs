@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -16,18 +17,26 @@ internal sealed class GuideWindow : Window
     private readonly StackPanel footer = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(20, 10, 20, 10) };
     private readonly ScrollViewer scroller;
     private readonly bool welcome;
+    private readonly bool? darkOverride;
+    private readonly ISystemAppearanceSource appearance;
+    private readonly bool ownsAppearance;
+    private readonly HighContrastScope semanticPaint;
+    private bool closed;
     private int step;
     internal FrameworkElement ClientContent => root;
     internal bool IsWelcome => welcome;
-    internal GuideWindow(UiText ui, GuideContent body, GuideCatalog catalog, bool? darkOverride = null)
+    internal GuideWindow(UiText ui, GuideContent body, GuideCatalog catalog, bool? darkOverride = null, ISystemAppearanceSource? appearanceSource = null)
     {
         this.ui = ui; this.body = body; this.catalog = catalog; welcome = catalog.Page == "welcome";
+        this.darkOverride = darkOverride;
+        appearance = appearanceSource ?? new SystemAppearanceSource(action => Dispatcher.BeginInvoke(action)); ownsAppearance = appearanceSource == null;
+        semanticPaint = new(this);
         WindowRendering.Prepare(this); FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
         Title = ui.Text(welcome ? "welcome.window_title" : "whats_new.window_title");
         WindowStartupLocation = WindowStartupLocation.CenterScreen; ResizeMode = ResizeMode.NoResize;
         Width = (welcome ? 560 : 460) + 2 * SystemParameters.FixedFrameVerticalBorderWidth; SizeToContent = SizeToContent.Height;
         Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) });
-        SettingsPalette.Apply(Resources, darkOverride ?? SettingsWindow.IsSystemDark(), true); SetResourceReference(BackgroundProperty, "SettingsBackground");
+        ApplyAppearance(); SetResourceReference(BackgroundProperty, "SettingsBackground");
         root.SetResourceReference(Panel.BackgroundProperty, "SettingsBackground");
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); root.RowDefinitions.Add(new RowDefinition()); root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var header = new StackPanel { Margin = new Thickness(24, 18, 24, 10) };
@@ -42,6 +51,21 @@ internal sealed class GuideWindow : Window
         Loaded += (_, _) => { Fit(); FocusDefault(); };
         DpiChanged += (_, _) => Fit(); LocationChanged += (_, _) => { if (IsLoaded) Fit(); };
         KeyDown += (_, args) => { if (args.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None) { Close(); args.Handled = true; } };
+        appearance.Changed += AppearanceChanged;
+        IsVisibleChanged += (_, _) => { body.IsEnabled = footer.IsEnabled = IsVisible && !closed; };
+        Loaded += (_, _) => ApplyAppearance();
+        Closed += (_, _) =>
+        {
+            closed = true; IsEnabled = false; appearance.Changed -= AppearanceChanged;
+            semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose();
+        };
+    }
+    private void AppearanceChanged() => Dispatcher.InvokeAsync(() => { if (!closed) ApplyAppearance(); });
+    protected override AutomationPeer OnCreateAutomationPeer() => new VisibleWindowAutomationPeer(this);
+    private void ApplyAppearance()
+    {
+        var state = appearance.Current; DesktopAppearance.Apply(this, state);
+        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state); semanticPaint.Apply(state);
     }
     private void AddButton(string key, string id, Action action, bool primary = false)
     {
@@ -50,6 +74,7 @@ internal sealed class GuideWindow : Window
     }
     private void ShowStep()
     {
+        foreach (UIElement child in footer.Children) PageAccessibility.Retire(child);
         body.WelcomeStep(step); footer.Children.Clear();
         var progress = new TextBlock { Text = catalog.Steps[step], VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
         progress.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); GuideContent.Identify(progress, "welcome.progress", progress.Text); footer.Children.Add(progress);
