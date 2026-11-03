@@ -43,6 +43,9 @@ internal static class ReminderSettingsChecks
             low.Text = "90"; Enter(window, low); await Until(() => session.Current.DeepSeekLowBalanceLine == 90 && low.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert?.Kind == "lowBalance", "The saved threshold changes the real wallet state");
             var warnings = (CompactWarningsView)island.FindName("WarningGlyphs");
+            await island.WaitForPresentationAsync();
+            await Until(() => warnings.Visibility == Visibility.Visible && warnings.Children.OfType<Border>().Any()
+                && warnings.IsMeasureValid && warnings.IsArrangeValid);
             Check(warnings.Visibility == Visibility.Visible && warnings.Children.OfType<Border>().All(value => value.ActualHeight == 13), "The live capsule retains its 13-point height");
             var peer = UIElementAutomationPeer.CreatePeerForElement(warnings);
             Check(peer?.GetAutomationControlType() == AutomationControlType.Group && peer.GetChildren() is not { Count: > 0 } && peer.GetName().Contains("DeepSeek"), "The warning slot exposes one summary without duplicate glyph names");
