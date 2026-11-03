@@ -64,4 +64,24 @@ final class ConnectionPagePresentationTests: XCTestCase {
             XCTAssertFalse(L10n.text("connections.sessions_one", 1, language: language).contains("%ld"))
         }
     }
+    func testDefaultKeepsSetupFailureLabelForADisconnectedSource() {
+        let source = ConnectionSource.wslPrefix + "fixture"
+        let page = ConnectionPagePresentation(enabledProviders: [.claude], statuses: [
+            .claude: ["local": status(), source: status(false, sessions: 4, name: "Linux")]],
+            setup: [source: .failed], canRetrySetup: true)
+        let module = page.hosts.first?.modules.first
+        XCTAssertEqual(module?.state, "setupFailed"); XCTAssertEqual(module?.label, L10n.text("connections.host.setup_failed"))
+        XCTAssertTrue(module?.retrySetup == true); XCTAssertEqual(module?.sessions, 0)
+        XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 2)
+    }
+    func testTransportProblemsFirstShowsDisconnectionBeforeSetupFailure() {
+        let source = ConnectionSource.wslPrefix + "fixture"
+        let page = ConnectionPagePresentation(enabledProviders: [.claude], statuses: [
+            .claude: ["local": status(), source: status(false, sessions: 4, name: "Linux")]],
+            setup: [source: .failed], canRetrySetup: true, transportProblemsFirst: true)
+        let module = page.hosts.first?.modules.first
+        XCTAssertEqual(module?.state, "retrying"); XCTAssertEqual(module?.label, L10n.text("connections.state.retrying"))
+        XCTAssertFalse(module?.retrySetup == true); XCTAssertEqual(module?.sessions, 0)
+        XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 2)
+    }
 }

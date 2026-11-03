@@ -22,6 +22,6 @@ enum EngineConnectionProjection {
         return .init(enabledProviders: AgentProvider.allCases.filter { enabled.contains($0) }, statuses: statuses,
             claudeAliases: ssh.map(\.alias), configured: configured, configuring: configuring, failed: failed,
             names: Dictionary(ssh.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
-            setup: wslSetup, canRetrySetup: canRetrySetup, quotaSources: quotas)
+            setup: wslSetup, canRetrySetup: canRetrySetup, quotaSources: quotas, transportProblemsFirst: true)
     }
 }

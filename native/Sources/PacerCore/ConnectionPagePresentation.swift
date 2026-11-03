@@ -27,7 +27,8 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
     public init(enabledProviders: [AgentProvider], statuses: [AgentProvider: [String: RuntimeStreamStatus]],
                 unavailableSSH: [String] = [], claudeAliases: [String] = [], configured: Set<String> = [],
                 configuring: Set<String> = [], failed: Set<String> = [], names: [String: String] = [:],
-                setup: [String: Setup] = [:], canRetrySetup: Bool = false, quotaSources: Set<String> = []) {
+                setup: [String: Setup] = [:], canRetrySetup: Bool = false, quotaSources: Set<String> = [],
+                transportProblemsFirst: Bool = false) {
         let enabled = Set(enabledProviders)
         let streams = statuses.filter { enabled.contains($0.key) }
         let sourceValues = ConnectionSource.sources(statuses: streams, unavailableSSH: unavailableSSH, names: names)
@@ -37,7 +38,7 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
             configured: configured, configuring: configuring, failed: failed, names: names)
         var overrides: [String: SSHHost.State] = [:]
         for source in sourceValues where source.provider == .claude && source.key.hasPrefix(ConnectionSource.wslPrefix) && source.state != .paused {
-            if setup[source.key] == .failed && source.state == .connected { overrides[source.id] = .setupFailed }
+            if setup[source.key] == .failed && (!transportProblemsFirst || source.state == .connected) { overrides[source.id] = .setupFailed }
             else if setup[source.key] == .configuring { overrides[source.id] = .configuring }
         }
         let summary = ConnectionSummary(enabledProviders: enabledProviders, sources: sourceValues, hosts: ssh, overrides: overrides)
