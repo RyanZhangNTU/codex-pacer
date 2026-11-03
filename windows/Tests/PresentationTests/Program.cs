@@ -154,7 +154,7 @@ internal static class Program
                 "Vector dials must expose their actual quota and wallet values to accessibility clients");
             for (int stage = 0; stage <= 3; stage++)
             {
-                await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = stage });
+                await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = stage }, waitForSnapshot: stage != 0);
                 await window.WaitForPresentationAsync();
                 await Until(() => ((Grid)window.FindName("TaskPages")).Children.Count == 1,
                     "The stage change must retire its outgoing task page");

@@ -36,16 +36,24 @@ private actor LifecycleClients {
     func make() -> LifecycleQuota { count += 1; return count == 1 ? first : second }
 }
 
+private final class LifecycleClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+    init(_ value: Date) { self.value = value }
+    func now() -> Date { lock.lock(); defer { lock.unlock() }; return value }
+    func advance() { lock.lock(); value.addTimeInterval(1); lock.unlock() }
+}
+
 final class EngineLifecycleTests: XCTestCase {
     private func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
     }
     func testSleepReleasesAStuckQuotaReadAndWakePublishesOnlyTheReplacement() async throws {
         let date = Date(timeIntervalSince1970: 1_800_000_000)
-        let clients = LifecycleClients(date: date), frames = LifecycleFrames()
+        let clients = LifecycleClients(date: date), frames = LifecycleFrames(), clock = LifecycleClock(date)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-lifecycle-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil,
+        let runtime = EngineRuntime(demo: false, now: { clock.now() }, dismissalStore: nil,
             quotaServices: .init(makeClient: { _, _ in await clients.make() }, history: nil), output: { frames.append($0) })
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
         let first = clients.first, second = clients.second
@@ -59,9 +67,14 @@ final class EngineLifecycleTests: XCTestCase {
         XCTAssertTrue(second.entered.isFinished)
         XCTAssertEqual(frames.snapshot?.quota.first?.capturedAt, date.timeIntervalSince1970)
         let sequence = frames.snapshot?.sequence
+        let remaining = try XCTUnwrap(frames.snapshot?.quota.first?.windows.first?.remainingTimePercent)
         await first.release()
+        // Change a projected business value through a controlled display tick;
+        // an unchanged refresh is intentionally suppressed by snapshot dedup.
+        clock.advance()
         await runtime.refresh(discover: false)
         XCTAssertEqual(frames.snapshot?.quota.first?.capturedAt, date.timeIntervalSince1970, "A late pre-sleep sample cannot replace the wake result")
+        XCTAssertLessThan(frames.snapshot?.quota.first?.windows.first?.remainingTimePercent ?? .infinity, remaining)
         XCTAssertGreaterThan(frames.snapshot?.sequence ?? 0, sequence ?? 0)
         await runtime.stop()
         XCTAssertTrue(second.closing.isFinished)

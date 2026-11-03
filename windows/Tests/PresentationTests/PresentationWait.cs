@@ -16,10 +16,17 @@ internal static class PresentationWait
         await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     }
 
-    internal static async Task CommandSnapshotAsync(EngineClient engine, string method, object parameters)
+    internal static async Task CommandSnapshotAsync(EngineClient engine, string method, object parameters, bool waitForSnapshot = true)
     {
         ulong before = engine.LatestSnapshot?.Sequence ?? 0;
         await engine.SendAsync(method, parameters);
+        if (!waitForSnapshot)
+        {
+            // Known unchanged demo/configuration inputs acknowledge normally
+            // while the engine suppresses their duplicate wire projection.
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            return;
+        }
         await UntilAsync(() => engine.LatestSnapshot?.Sequence > before,
             "The engine command must publish its snapshot: " + method);
     }

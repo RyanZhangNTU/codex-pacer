@@ -146,7 +146,7 @@ internal static class DeepSeekWebConnectionChecks
         {
             foreach (string layout in new[] { "solo", "split", "classic", "three", "classic-three" })
             {
-                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = layout.Contains("three", StringComparison.Ordinal) ? "enabled" : "disabled", deepseek = "enabled" } });
+                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = layout.Contains("three", StringComparison.Ordinal) ? "enabled" : "disabled", deepseek = "enabled" } }, waitForSnapshot: !layout.StartsWith("classic", StringComparison.Ordinal));
                 island.ApplyPreferences(preferences with { ExpandedQuotaStyle = layout.StartsWith("classic", StringComparison.Ordinal) ? "classic" : "split" });
                 site.Status = 503;
                 await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot!.DeepseekConnection!.Context });

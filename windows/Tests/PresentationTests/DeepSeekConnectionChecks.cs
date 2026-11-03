@@ -48,7 +48,7 @@ internal static class DeepSeekConnectionChecks
             foreach (string layout in new[] { "solo", "classic", "split" })
             {
                 island.ApplyPreferences(session.Current with { ExpandedQuotaStyle = layout == "classic" ? "classic" : "split" });
-                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = "disabled", deepseek = "enabled" } });
+                await PresentationWait.CommandSnapshotAsync(engine, "configure", new { providerModes = new { codex = layout == "solo" ? "disabled" : "enabled", claude = "disabled", deepseek = "enabled" } }, waitForSnapshot: layout != "split");
                 island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
                 var connect = Find<Button>(island, "deepseek.balance.connect");
                 Check(connect.IsEnabled && (string)connect.Content == ui.Text("deepseek.paste_key_short"),

@@ -41,8 +41,10 @@ internal static class ConversationNavigationChecks
             dispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Invoke(completed); await Until(() => opened.Count == 2, "The next explicit click must prepare another scoped open");
             Check(opened[^1].Provider == provider && opened[^1].Kind == "demo", "An offline engine may only return a labeled demo destination");
-            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
-            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
+            // Explicit demo quota retries emit events even for unchanged data.
+            // Exercise two real unrelated snapshots with dedup still enabled.
+            await PresentationWait.CommandSnapshotAsync(engine, "retryQuota", new { provider });
+            await PresentationWait.CommandSnapshotAsync(engine, "retryQuota", new { provider });
             Check(Unread(engine, id), "Unrelated snapshots cannot acknowledge a pending launch");
             dispatch.SetResult(true);
             await Until(() => !Unread(engine, id) && island.LogicalTarget.Height == 38, "A successful open must acknowledge despite unrelated snapshot sequences");
@@ -82,7 +84,7 @@ internal static class ConversationNavigationChecks
             await island.WaitForPresentationAsync();
             Check(Unread(engine, id), "The new ending must be unread before the old launch returns");
             dispatch.SetResult(true); await Pump();
-            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
+            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { }, waitForSnapshot: false);
             await Until(() => engine.LatestSnapshot?.OpeningActivityIDs?.Contains(id) != true,
                 "The superseded running-task open must release its captured navigation operation");
             await island.WaitForPresentationAsync();
@@ -92,7 +94,7 @@ internal static class ConversationNavigationChecks
             Invoke(current); await Until(() => opened == 2, "A fresh ending must expose its new navigation token");
             await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = Array.Empty<string>() });
             dispatch.SetResult(true); await Pump();
-            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { });
+            await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { }, waitForSnapshot: false);
             await island.WaitForPresentationAsync();
             Check(engine.LatestSnapshot!.Tasks.Count == 0 && island.LogicalTarget.Height > 38, "A disabled source must revoke old launch callbacks");
         }
