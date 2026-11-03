@@ -33,6 +33,7 @@ using namespace winrt::Windows::UI::Composition::Desktop;
 
 namespace {
 constexpr UINT RemovedMessage = WM_APP + 417;
+constexpr UINT RestoreMessage = WM_APP + 418;
 constexpr wchar_t WindowClass[] = L"CodexPacer.CompositionSurface.v1";
 // HostBackdropBrush has no dark-material wash of its own. Keep the lightest
 // wallpaper dark enough for Pacer's existing secondary text.
@@ -358,6 +359,18 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     if (message == RemovedMessage && self) {
         try { self->Solid(); } catch (...) {}
         PostMessageW(self->content, self->notification, reinterpret_cast<WPARAM>(window), 0); return 0;
+    }
+    // Show Desktop and similar shell commands can minimize this unowned popup and
+    // leave the island without its backdrop. Restore it in place, without
+    // activation, back in its slot beside the content window.
+    if (message == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_MINIMIZE) return 0;
+    if (message == WM_SIZE && wparam == SIZE_MINIMIZED) { PostMessageW(window, RestoreMessage, 0, 0); return 0; }
+    if (message == RestoreMessage && self) {
+        if (IsIconic(window)) ShowWindow(window, SW_SHOWNOACTIVATE);
+        HWND above = self->orbitMode ? GetWindow(self->content, GW_HWNDPREV) : self->content;
+        if (above == window) above = nullptr;
+        SetWindowPos(window, above ? above : HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        return 0;
     }
     return DefWindowProcW(window, message, wparam, lparam);
 }

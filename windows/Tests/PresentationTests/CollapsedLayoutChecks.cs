@@ -36,6 +36,20 @@ internal static class CollapsedLayoutChecks
             Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && editor.ActualWidth <= 510,
                 "The inline editor must fit the existing Settings canvas");
             Check(engine.LatestSnapshot!.CompactContext != null, "The engine must provide a sanitized compact context");
+            string[] everyProvider = ["codex", "claude", "deepseek"];
+            var context = engine.LatestSnapshot!.CompactContext!.Value;
+            await Until(() => NativeCompactBar.Shared.Read(session.Current, language, everyProvider, context).Components.Length > 0);
+            var faster = System.Text.Json.Nodes.JsonNode.Parse(context.GetRawText())!.AsObject();
+            faster["rate"] = (faster["rate"] is { } rate ? rate.GetValue<double>() : 0) + 17.5;
+            var pending = NativeCompactBar.Shared.Read(session.Current, language, everyProvider, System.Text.Json.JsonSerializer.SerializeToElement(faster));
+            Check(pending.Components.Length == 0 && NativeCompactBar.Shared.LastPending, "A new rate reports a pending projection, so the island can keep its displayed bar");
+            var leading = (StackPanel)island.FindName("HeaderLeading"); var watch = Stopwatch.StartNew();
+            while (watch.Elapsed < TimeSpan.FromSeconds(1.5))
+            {
+                Check(leading.Children.Count > 0 && leading.Children.Cast<FrameworkElement>().All(value => value.Name != "enginePlaceholder"),
+                    "Live source updates never blank the collapsed bar between projections");
+                await Task.Delay(20);
+            }
             window.CapturePreview(Path.Combine(output, "settings-collapsed-" + name + "-initial.png"));
             var tps = Find<FrameworkElement>(window, "compact.chip.tps");
             Point start = Centre(tps, editor); string? unchanged = session.Current.CompactLayout;

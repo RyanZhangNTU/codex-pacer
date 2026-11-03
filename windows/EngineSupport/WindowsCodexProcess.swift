@@ -61,7 +61,7 @@ final class WindowsCodexProcess: @unchecked Sendable {
                 return
             }
             var options = PlatformOptions()
-            options.consoleBehavior = .detach; options.windowStyle = .hidden
+            WindowsConsole.hide(&options)
             options.teardownSequence = [.gracefulShutDown(toProcessGroup: true, allowedDurationToNextStep: .milliseconds(500))]
             do {
                 let executablePath = WindowsCodexExecutableDiscovery.path(executable)

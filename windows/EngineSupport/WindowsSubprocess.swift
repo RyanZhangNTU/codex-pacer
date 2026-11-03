@@ -3,6 +3,18 @@ import Foundation
 import PacerCore
 import Subprocess
 import CWindowsSupport
+import WinSDK
+
+enum WindowsConsole {
+    /// Console tools such as wsl.exe relaunch themselves. Under DETACHED_PROCESS
+    /// that grandchild opened its own visible console, so children instead get a
+    /// windowless console that their descendants inherit.
+    static func hide(_ options: inout PlatformOptions) {
+        options.consoleBehavior = .inherit
+        options.windowStyle = .hidden
+        options.preSpawnProcessConfigurator = { flags, _ in flags |= DWORD(CREATE_NO_WINDOW) }
+    }
+}
 
 enum WindowsExecutables {
     // A local Python runtime is only used when the host enables helper features.
@@ -47,8 +59,7 @@ enum WindowsSubprocess {
         return await withTaskGroup(of: Data?.self) { group in
             group.addTask {
                 var options = PlatformOptions()
-                options.consoleBehavior = .detach
-                options.windowStyle = .hidden
+                WindowsConsole.hide(&options)
                 do {
                     let path = executable.withUnsafeFileSystemRepresentation { String(cString: $0!) }
                     let variables = environment.reduce(into: [Environment.Key: String]()) { $0[Environment.Key(stringLiteral: $1.key)] = $1.value }

@@ -55,4 +55,88 @@
     </ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
+  <!-- The text style above applies inside popups too: tooltips and menus need
+       the same dark surface, not the light system chrome. -->
+  <Style TargetType="ToolTip">
+   <Style.Resources>
+    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+     <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToolTip}}"/>
+     <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+   </Style.Resources>
+   <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/><Setter Property="FontSize" Value="12"/>
+   <Setter Property="Foreground" Value="#F5F5F5"/><Setter Property="Background" Value="#1E1E22"/><Setter Property="BorderBrush" Value="#3A3A42"/>
+   <Setter Property="HasDropShadow" Value="False"/><Setter Property="MaxWidth" Value="320"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip">
+    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="8,5">
+     <ContentPresenter/>
+    </Border>
+   </ControlTemplate></Setter.Value></Setter>
+   <Style.Triggers>
+    <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+     <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.InfoTextBrushKey}}"/>
+     <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.InfoBrushKey}}"/>
+     <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.WindowFrameBrushKey}}"/>
+    </DataTrigger>
+   </Style.Triggers>
+  </Style>
+  <Style TargetType="ContextMenu">
+   <Style.Resources>
+    <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+     <Setter Property="Margin" Value="8,4"/>
+     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator">
+      <Border Height="1" Background="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+     </ControlTemplate></Setter.Value></Setter>
+    </Style>
+   </Style.Resources>
+   <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/><Setter Property="FontSize" Value="13"/>
+   <Setter Property="Foreground" Value="#F5F5F5"/><Setter Property="Background" Value="#1E1E22"/><Setter Property="BorderBrush" Value="#3A3A42"/>
+   <Setter Property="HasDropShadow" Value="False"/><Setter Property="MinWidth" Value="140"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu">
+    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="4">
+     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+    </Border>
+   </ControlTemplate></Setter.Value></Setter>
+   <Style.Triggers>
+    <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+     <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}"/>
+     <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.MenuBrushKey}}"/>
+     <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.WindowFrameBrushKey}}"/>
+    </DataTrigger>
+   </Style.Triggers>
+  </Style>
+  <Style TargetType="MenuItem">
+   <Style.Resources>
+    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+     <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=MenuItem}}"/>
+    </Style>
+   </Style.Resources>
+   <!-- Background is the highlight; the theme's own MenuItem foreground would win over inheritance. -->
+   <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+   <Setter Property="Background" Value="#3A3A44"/><Setter Property="Padding" Value="6,4,12,4"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem">
+    <Border x:Name="Surface" CornerRadius="4" Background="Transparent" Padding="{TemplateBinding Padding}">
+     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Path x:Name="Check" Stroke="{TemplateBinding Foreground}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,6 L5,9 L11,2" Width="13" Height="12" Visibility="Hidden"/>
+      <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+     </Grid>
+    </Border><ControlTemplate.Triggers>
+     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Visibility" Value="Visible"/></Trigger>
+     <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Surface" Property="Background" Value="{Binding Background, RelativeSource={RelativeSource TemplatedParent}}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+   <Style.Triggers>
+    <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+     <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+    </DataTrigger>
+    <MultiDataTrigger>
+     <MultiDataTrigger.Conditions>
+      <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True"/>
+      <Condition Binding="{Binding IsHighlighted, RelativeSource={RelativeSource Self}}" Value="True"/>
+     </MultiDataTrigger.Conditions>
+     <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}"/>
+    </MultiDataTrigger>
+   </Style.Triggers>
+  </Style>
 </ResourceDictionary>

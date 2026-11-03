@@ -54,7 +54,7 @@ public partial class IslandWindow
     {
         Shell.Background = appearance.Current.HighContrast ? DesktopAppearance.Ink(appearance.Current.Colors.Window) : GlassVisible ? SurfaceInput : SurfaceBlack;
         double black = GlassVisible && layout.Attached ? Math.Clamp(lastFrame.BlackOpacity, 0, 1) : 0;
-        Header.Background = black > 0 ? PacerPalette.Ink(11, 12, 14, (byte)Math.Round(255 * black)) : Brushes.Transparent;
+        HeaderBand.Background = black > 0 ? PacerPalette.Ink(11, 12, 14, (byte)Math.Round(255 * black)) : Brushes.Transparent;
         var decision = SurfaceDecision;
         if (announcedSurface != decision || announcedGlass != GlassVisible)
         { announcedSurface = decision; announcedGlass = GlassVisible; SurfaceChanged?.Invoke(); }

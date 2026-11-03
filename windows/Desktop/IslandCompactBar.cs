@@ -77,7 +77,12 @@ public partial class IslandWindow
         var providers = NativeCompactBar.Providers(compactPreferences, latest);
         bool attached = displayMode == 1;
         var horizontal = NativeCompactBar.Shared.Read(compactPreferences, ui.Language, providers, latest?.CompactContext, attached: attached);
+        bool horizontalPending = NativeCompactBar.Shared.LastPending;
         var vertical = NativeCompactBar.Shared.Read(compactPreferences, ui.Language, providers, latest?.CompactContext, strip: true);
+        // Source values change with every rate update. Until their projection
+        // arrives, keep the bar as displayed: clearing it removed the badge,
+        // restarting its rotation and retargeting the collapse motion.
+        if ((horizontalPending || NativeCompactBar.Shared.LastPending) && compactData is { Components.Length: > 0 }) return;
         compactData = horizontal;
         if (latest?.Presentation?.Header is EngineHeader header)
         {
@@ -172,6 +177,9 @@ public partial class IslandWindow
         double rateWidth = NativeTypography.CompactWidth(RateLabel.Text ?? "", 12) ?? 0;
         RateLabel.Width = double.NaN; RateLabel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         RateLabel.Width = Math.Max(rateWidth, RateLabel.DesiredSize.Width);
+        // Updated values keep the same slots. A panel measured again with the
+        // same constraint returns its cached size until the next layout pass.
+        foreach (var lane in new[] { HeaderLeading, HeaderTrailing, StripLeading, StripTrailing }) InvalidateLayoutTree(lane);
         HeaderLeading.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); HeaderTrailing.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         StripLeading.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); StripTrailing.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         bool divided = StripLeading.Children.Count > 0 && StripTrailing.Children.Count > 0;
@@ -180,6 +188,11 @@ public partial class IslandWindow
         measuredStripHeight = 24 + StripLeading.DesiredSize.Height + StripTrailing.DesiredSize.Height + (divided ? 13 : 0);
         double left = HeaderLeading.DesiredSize.Width, right = HeaderTrailing.DesiredSize.Width;
         return (left + right + (left > 0 && right > 0 ? 10 : 0) + 30, measuredStripHeight);
+    }
+    private static void InvalidateLayoutTree(DependencyObject element)
+    {
+        if (element is UIElement value) value.InvalidateMeasure();
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++) InvalidateLayoutTree(VisualTreeHelper.GetChild(element, index));
     }
     private void SetCompactDimState(bool value, bool animate)
     {

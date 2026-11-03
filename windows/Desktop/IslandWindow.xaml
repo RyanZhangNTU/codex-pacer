@@ -50,6 +50,8 @@
  <Border x:Name="Shell" Background="#0B0C0E" CornerRadius="19" HorizontalAlignment="Left" VerticalAlignment="Top" MouseEnter="OnMouseEnter" MouseLeave="OnMouseLeave">
   <Border.RenderTransform><TranslateTransform x:Name="ShellOffset"/></Border.RenderTransform>
   <Grid>
+   <!-- The attached glass header turns black edge to edge, behind the header's inset content. -->
+   <Border x:Name="HeaderBand" Height="{Binding ActualHeight, ElementName=Header}" VerticalAlignment="Top" IsHitTestVisible="False"/>
    <Grid x:Name="Header" Height="38" Margin="15,0" VerticalAlignment="Top" Cursor="Hand" MouseLeftButtonUp="OnHeaderClick">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Button x:Name="HeaderAction" Grid.ColumnSpan="3" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>

@@ -461,7 +461,7 @@ internal sealed class GuideContent : StackPanel
                 code = new Popup { PlacementTarget = button, Placement = PlacementMode.Bottom, StaysOpen = false,
                     Child = new Border { Background = Brushes.White, BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = content } };
                 content.PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape) { code.IsOpen = false; button.Focus(); args.Handled = true; } };
-                code.Opened += (_, _) => close.Focus();
+                WindowRendering.Prepare(code); code.Opened += (_, _) => close.Focus();
             }
         }
         Children.Add(Group(50,

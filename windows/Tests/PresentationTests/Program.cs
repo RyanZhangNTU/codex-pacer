@@ -73,7 +73,7 @@ internal static class Program
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 if (group is "all" or "recovery" or "persistence") await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
-                SystemAppearanceUnitChecks.Run(); await Attempt(nameof(QuotaCycleCompletionChecks), () => QuotaCycleCompletionChecks.Run()); SettingsPageUnitChecks.Run(); TypographyChecks.Run(); TimingBindingChecks.Run(); await Attempt(nameof(QuotaChartBridgeChecks), () => QuotaChartBridgeChecks.Run());
+                SystemAppearanceUnitChecks.Run(); await Attempt(nameof(QuotaCycleCompletionChecks), () => QuotaCycleCompletionChecks.Run()); SettingsPageUnitChecks.Run(); TypographyChecks.Run(); PopupThemeChecks.Run(); TimingBindingChecks.Run(); await Attempt(nameof(QuotaChartBridgeChecks), () => QuotaChartBridgeChecks.Run());
                 if (group is "all" or "responsive") { await Attempt(nameof(SlowEngineChecks), () => SlowEngineChecks.Run()); await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run()); }
                 if (group == "persistence") await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run());
                 bool All(string name) => group == "all" || group == name;
@@ -310,6 +310,16 @@ internal static class Program
             await window.WaitForPresentationAsync();
             Check(window.LogicalTarget.Height == 38 && window.VisibleSizeMatches(window.LogicalTarget.Width, 38) && peer.GetChildren()?.Count is null or 0, "Hover exit must settle and remove expanded accessibility");
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed, "Hover exit must publish the collapsed UIA state");
+            window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
+            await window.WaitForPresentationAsync();
+            var moreMenu = ((Button)window.FindName("MoreButton")).ContextMenu;
+            moreMenu.IsOpen = true; await Pump();
+            window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseLeaveEvent });
+            await Task.Delay(600); await Pump();
+            Check(window.LogicalTarget.Height == 440, "An open menu must keep the panel open after the pointer leaves");
+            moreMenu.IsOpen = false;
+            await Until(() => window.LogicalTarget.Height == 38, "Closing the menu away from the panel must start the delayed close");
+            await window.WaitForPresentationAsync();
             expansion.Expand(); await window.WaitForPresentationAsync();
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Expanded && window.LogicalTarget.Height == 440, "The UIA Expand action must reveal the panel");
             expansion.Collapse(); await window.WaitForPresentationAsync();

@@ -25,6 +25,8 @@ internal sealed class NativeCompactBar
     private static readonly Lazy<NativeCompactBar> SharedValue = new(() => new(""));
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private readonly System.Collections.Generic.Dictionary<string, CompactProjection> previous = new();
+    /// The last read returned Empty only because its projection has not arrived yet.
+    internal bool LastPending { get; private set; }
     private EngineClient? previousClient;
     internal static NativeCompactBar Shared => SharedValue.Value;
     internal NativeCompactBar(string directory) { }
@@ -50,11 +52,13 @@ internal sealed class NativeCompactBar
         if (node["compact"]?["context"] is System.Text.Json.Nodes.JsonObject clock) clock.Remove("now");
         string key = node.ToJsonString();
         if (!ReferenceEquals(previousClient, ShellProjection.Client)) { previous.Clear(); previousClient = ShellProjection.Client; }
+        LastPending = false;
         if (state.Value is { } value)
         {
             if (previous.Count >= 32) previous.Clear(); previous[key] = value; return value;
         }
-        return state.Pending && previous.TryGetValue(key, out var known) ? known : Empty;
+        if (state.Pending && previous.TryGetValue(key, out var known)) return known;
+        LastPending = state.Pending; return Empty;
     }
     internal Task<CompactProjection> ReadAsync(DesktopPreferences preferences, string language, string[] providers,
         JsonElement? context = null, bool attached = false, bool strip = false, CompactEdit? action = null)

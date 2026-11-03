@@ -124,6 +124,9 @@ public partial class IslandWindow : Window
         InitializeCompactBar();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         collapse.Tick += (_, _) => { collapse.Stop(); if (!pinned) SetExpanded(false); };
+        // The open menu holds the pointer, so leaving the island meanwhile raised no leave event.
+        MoreButton.ContextMenu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
+        { if (!presentationStopped && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
         engine.Snapshot += value => Dispatcher.InvokeAsync(() => Render(value));
         engine.Status += value => Dispatcher.InvokeAsync(() => SetStatus(ui.Text(value == "engineStopped" ? "windows.connection.closed" : "windows.connection.refresh_failed")));
         ShellProjection.Changed += OnShellProjectionChanged;
@@ -142,7 +145,7 @@ public partial class IslandWindow : Window
             SyncBackdrop();
         };
         ApplyPresentationLayout();
-        InitializeBackdrop();
+        InitializeBackdrop(); WindowRendering.KeepUnminimized(this);
         InitializeOcclusion();
         Loaded += (_, _) => QueueDisplayRefresh();
     }

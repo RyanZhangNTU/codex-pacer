@@ -38,7 +38,9 @@ internal static class BackdropPresentationChecks
                 };
                 pattern.Collapse(); await window.WaitForPresentationAsync();
                 Check(pattern.ExpandCollapseState == ExpandCollapseState.Collapsed && frames > 0, "Accessible collapse drives the same glass transition");
-                Check(((SolidColorBrush)((Grid)window.FindName("Header")).Background).Color.A == 255, "Notch mode keeps the collapsed header Black");
+                var band = (Border)window.FindName("HeaderBand");
+                Check(((SolidColorBrush)band.Background).Color.A == 255 && Math.Abs(band.ActualWidth - shell.ActualWidth) < 0.5,
+                    "Notch mode keeps the collapsed header Black edge to edge, not only behind the inset content");
                 pattern.Expand(); await window.WaitForPresentationAsync();
                 Check(pattern.ExpandCollapseState == ExpandCollapseState.Expanded && window.GlassVisible, "Accessible expansion restores the glass panel");
                 system.Set(new(26200, false, false)); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);

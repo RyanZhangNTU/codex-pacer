@@ -78,8 +78,8 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             StartupMeasured?.Invoke(stage, clock.Elapsed);
             stage = "controller"; clock.Restart();
             var window = new Window { Width = 320, Height = 240, Left = -32000, Top = -32000, Opacity = 0,
-                ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None };
-            page = new(window, provider); window.Content = page.View; WindowRendering.Prepare(window); window.Show();
+                ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize };
+            page = new(window, provider); window.Content = page.View; WindowRendering.Prepare(window); WindowRendering.KeepUnminimized(window); window.Show();
             await page.Initialize(runtime, startup.Token);
             StartupMeasured?.Invoke(stage, clock.Elapsed);
             return page;
@@ -178,8 +178,8 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             await operation.WaitAsync(cancellation); entered = true;
             if (!Directory.Exists(directory)) return;
             var runtime = await EnvironmentAsync().WaitAsync(cancellation);
-            var window = new Window { Width = 1, Height = 1, Left = -32000, Top = -32000, Opacity = 0, ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None };
-            page = new(window, provider); window.Content = page.View; WindowRendering.Prepare(window); window.Show();
+            var window = new Window { Width = 1, Height = 1, Left = -32000, Top = -32000, Opacity = 0, ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize };
+            page = new(window, provider); window.Content = page.View; WindowRendering.Prepare(window); WindowRendering.KeepUnminimized(window); window.Show();
             await page.Initialize(runtime, cancellation);
             await page.Core.Profile.ClearBrowsingDataAsync().WaitAsync(cancellation);
         }
