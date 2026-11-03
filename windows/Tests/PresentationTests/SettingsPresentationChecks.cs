@@ -179,6 +179,9 @@ internal static class SettingsPresentationChecks
                     "Reopening settings must restore the last pane and position");
                 Select(Find<RadioButton>(reopened, "settings.pane.general"));
                 await Until(() => Find<RadioButton>(reopened, "settings.pane.general").IsChecked == true, "General must open before editing SSH");
+                await Until(() => Descendants(reopened).OfType<CheckBox>().Any(value =>
+                    AutomationProperties.GetAutomationId(value) == "settings.monitor_ssh" && value.IsEnabled),
+                    "The General pane must finish its asynchronous preference edit before the SSH toggle is used");
                 var reopenedSSH = Find<CheckBox>(reopened, "settings.monitor_ssh");
                 Toggle(reopenedSSH); await Until(() => !session.Current.MonitorSSH && reopenedSSH.IsEnabled, "The SSH switch awaits engine acknowledgement");
                 Toggle(reopenedSSH); await Until(() => session.Current.MonitorSSH && reopenedSSH.IsEnabled, "SSH monitoring can be enabled again");
