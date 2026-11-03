@@ -72,6 +72,9 @@ actor DeepSeekWebBridge {
         available = value
         if !value { for id in Array(pending.keys) { await cancel(id, failure: DeepSeekBalanceError.connectionFailed) } }
     }
+    func revoke(context: String) async {
+        for id in pending.filter({ $0.value.context == context }).map(\.key) { await cancel(id, failure: CancellationError()) }
+    }
     func read(context: String) async throws -> DeepSeekBalance {
         guard available, pending.count < Self.maximumPendingRequests else { throw DeepSeekBalanceError.connectionFailed }
         try Task.checkCancellation()

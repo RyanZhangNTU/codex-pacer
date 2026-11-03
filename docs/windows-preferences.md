@@ -26,6 +26,8 @@ Open at Login remains an OS registration managed by the startup service, as on M
 
 ## Applying edits
 
+DeepSeek's Balance/Budget switch retains saved daily and weekly amounts in balance mode. Switching to an empty budget uses Core's suggestion; clearing a field or entering zero disables that amount. The day/week selector, account/local speed source, Simple/Detailed panel and turn-cost choice use the same saved keys as Mac. Ring hints use Core's actual drawable rings and link to the collapsed-bar editor. Low-balance and spending-spike thresholds remain in Reminders, with automatic defaults when unset. WPF does not recalculate budgets, billing, thresholds or local day/week boundaries.
+
 Every persisted field waits asynchronously for `validatePreferences`. The engine validates the shared compact presentation input and returns a SHA-256 acknowledgement of the complete preference payload. This read-only query has a three-second deadline and returns no source paths or organization identifiers. Collector changes also wait for the existing `configure` acknowledgement, with its fifteen-second deadline. Host-only edits do not reconfigure collectors.
 
 The session serializes edits from all settings windows. Disk writes run off the UI thread, use a one-second named-mutex deadline, and compare the file with the version the session loaded. A stale writer fails instead of overwriting another writer. Reload or restart before editing a profile changed by another process.

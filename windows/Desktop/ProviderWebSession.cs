@@ -31,6 +31,8 @@ internal abstract class ProviderWebSession : IAsyncDisposable
     protected ProviderWebSession(UiText ui, ProviderWebDefinition provider, string directory, Action<CoreWebView2>? fixture, bool? darkOverride)
     { this.ui = ui; this.provider = provider; this.directory = Path.GetFullPath(directory); this.fixture = fixture; this.darkOverride = darkOverride; }
     protected abstract ProviderLoginWindow CreateLogin(Task<CoreWebView2Environment> environment, CancellationToken lifetime);
+    protected abstract Task<string?> ReadFingerprintAsync(CancellationToken cancellation);
+    public bool SignInWasNew { get; private set; }
     protected virtual bool KeepBrowserAlive => false;
     protected virtual bool ReuseReader => false;
     private void RetainBrowser(ref ProviderBrowserPage? page)
@@ -152,17 +154,23 @@ internal abstract class ProviderWebSession : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (clearing) return false;
-        if (login != null) { login.Activate(); return await login.Completion; }
+        if (login is { } existing) { if (existing.IsVisible) existing.Activate(); bool result = await existing.Completion; SignInWasNew = result && existing.NewSession; return result; }
+        revision++; activeRead?.Cancel(); SignInWasNew = false;
         var window = CreateLogin(EnvironmentAsync(), lifetime.Token);
         login = window;
-        try { window.Show(); await window.StartAsync(); return await window.Completion; }
-        finally { if (ReferenceEquals(login, window)) login = null; window.Close(); }
+        try
+        {
+            string? baseline = await ReadFingerprintAsync(lifetime.Token);
+            if (!window.Completion.IsCompleted) { window.Show(); await window.StartAsync(baseline, ReadFingerprintAsync); }
+            bool result = await window.Completion; SignInWasNew = result && window.NewSession; return result;
+        }
+        finally { if (ReferenceEquals(login, window)) login = null; window.Abort(); }
     }
     public async Task ClearAsync(CancellationToken cancellation)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (clearing) throw new IOException("The profile is already changing.");
-        revision++; clearing = true; activeRead?.Cancel(); login?.Close();
+        revision++; clearing = true; activeRead?.Cancel(); login?.Abort();
         bool entered = false;
         ProviderBrowserPage? page = null;
         try
@@ -183,7 +191,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
-        if (disposed) return; disposed = true; revision++; lifetime.Cancel(); activeRead?.Cancel(); login?.Close();
+        if (disposed) return; disposed = true; revision++; lifetime.Cancel(); activeRead?.Cancel(); login?.Abort();
         await operation.WaitAsync(); browserKeeper?.Dispose(); browserKeeper = null; operation.Release();
         lifetime.Dispose();
     }

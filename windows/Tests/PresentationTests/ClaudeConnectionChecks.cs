@@ -26,10 +26,12 @@ internal static class ClaudeConnectionChecks
         string root = Path.Combine(Path.GetTempPath(), "pacer-claude-connection-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         var site = new Site(); var web = new Web(new ClaudeWebSession(UiText.For(language == "zh-Hans"), Path.Combine(root, "profile"), site.Bind, dark));
         await using var engine = new EngineClient();
-        await using var coordinator = new ClaudeConnectionCoordinator(engine, web, Application.Current.Dispatcher);
         bool rejectSave = false;
         var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "claude", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "enabled", ["deepseek"] = "disabled" } };
         var session = new PreferencesSession(preferences, value => engine.SendAsync("configure", value), _ => { if (!rejectSave) return true; rejectSave = false; return false; });
+        int newSignIns = 0;
+        await using var coordinator = new ClaudeConnectionCoordinator(engine, web, Application.Current.Dispatcher, newSession: async () =>
+        { newSignIns++; return await session.ChangeAsync(value => value with { ClaudeOrganization = "" }) == PreferencesApplyResult.Applied; });
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine, ready.Task, claudeConnection: coordinator)
             { IsHitTestVisible = false, ShowActivated = false };
@@ -48,6 +50,7 @@ internal static class ClaudeConnectionChecks
             Put(site.Main!, "sessionKey", "fixture-claude-account-a");
             Invoke(Find<Button>(login, "claude.login.continue")); await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A successful login cannot silently choose the first workspace");
+            Check(newSignIns == 1, "A new Claude session must clear its persisted organization through the normal preference transaction");
             Invoke(signIn); var picker = await Picker();
             Check(!Find<Button>(picker, "claude.organization.continue").IsEnabled, "The native workspace dialog must require an explicit choice");
             SelectWorkspace(picker, 1);
@@ -74,6 +77,14 @@ internal static class ClaudeConnectionChecks
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().Weekly.RemainingPercent == 35, "Changing workspaces must display the new source's real reading");
             string context = engine.LatestSnapshot.ClaudeConnection!.Context; Invoke(oldRefresh); await Pump();
             Check(engine.LatestSnapshot.ClaudeConnection!.Context == context && session.Current.ClaudeOrganization == Second, "An old account menu cannot act on the new source");
+            int points = engine.LatestSnapshot.QuotaDashboard!.Providers.Single().History!.Chart!.Points.Count;
+            site.MainReady = false; var existing = coordinator.ConnectAsync(context);
+            await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
+            Application.Current.Windows.OfType<ClaudeLoginWindow>().Single().Close();
+            Check(await existing && newSignIns == 1 && session.Current.ClaudeOrganization == Second, "A same-session challenge retains the saved workspace");
+            await Until(() => engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
+            Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().History!.Chart!.Points.Count >= points, "A same-session challenge retains the verified quota history");
+            context = engine.LatestSnapshot.ClaudeConnection!.Context;
             site.MainReady = false;
             var switchAccount = await Menu(options, "settings.claude.switch_account"); Invoke(switchAccount);
             await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
@@ -81,6 +92,7 @@ internal static class ClaudeConnectionChecks
             Put(site.Main!, "sessionKey", "fixture-claude-account-b"); Invoke(Find<Button>(login, "claude.login.continue"));
             await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A different account cannot inherit the old workspace or quota");
+            Check(newSignIns == 2, "An account switch must clear the persisted organization exactly once");
             Check(engine.LatestSnapshot.Tasks.All(task => task.SourceId != "claude-cloud"), "Account switching must remove the previous cloud graph before selecting the new workspace");
             Invoke(signIn); picker = await Picker(); SelectWorkspace(picker, 1);
             await Until(() => session.Current.ClaudeOrganization == "33333333-3333-4333-8333-333333333333" && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
@@ -146,6 +158,7 @@ internal static class ClaudeConnectionChecks
         public async Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation)
         { var value = await inner.ReadAsync(cancellation); LastReadState = value == null ? "absent" : "present"; return value; }
         public Task<bool> SignInAsync() => inner.SignInAsync();
+        public bool SignInWasNew => inner.SignInWasNew;
         public Task ClearAsync(CancellationToken cancellation) { if (FailClear) { FailClear = false; throw new IOException("Synthetic clear failure"); } return inner.ClearAsync(cancellation); }
         public ValueTask DisposeAsync() => inner.DisposeAsync();
     }

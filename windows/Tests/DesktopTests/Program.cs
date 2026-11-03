@@ -11,6 +11,7 @@ internal static class Program
     {
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
+        if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--installation-only"])
@@ -131,6 +132,7 @@ internal static class Program
         });
         await Test("immediate settings edits serialize, recover and preserve acknowledged state", PreferencesSessionChecks.Run);
         await Test("all settings acknowledge, persist, restart and migrate without overwriting another writer", () => PreferencesPersistenceChecks.Run(engine));
+        await Test("DeepSeek options persist and restore through independent engine restarts", () => DeepSeekOptionPersistenceChecks.Run(engine));
         await Test("native notification lifecycle, privacy, action payloads and permission races", NotificationChecks.Run);
         await Test("notification actions wait for initialization and cancel on quit", NotificationActionChecks.Run);
         await Test("real engine: snoozing an old notice while DeepSeek is disabled", () => NotificationActionChecks.RunWithEngine(engine));

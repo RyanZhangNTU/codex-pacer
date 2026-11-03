@@ -4,6 +4,42 @@ import XCTest
 @testable import PacerCore
 
 final class EngineDeepSeekConnectionTests: XCTestCase {
+    func testProtocolKeepsSameSessionHistoryAndClearsItForANewLogin() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000), capture = Capture()
+        var saved = DeepSeekBalanceHistory(); saved.record(total: 100, at: now.addingTimeInterval(-120), source: "web")
+        saved.record(total: 90, at: now.addingTimeInterval(-60), source: "web")
+        let history = SessionHistory(saved)
+        let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey },
+            fingerprint: { _, _ in String(repeating: "a", count: 32) },
+            readWeb: { _ in .init(total: 80, capturedAt: now, source: .web, sessionFingerprint: String(repeating: "1", count: 64)) }, detect: { _, _ in .account },
+            loadHistory: { history.read() }, saveHistory: { value, _ in history.write(value) })
+        let runtime = EngineRuntime(demo: true, now: { now }, balanceServices: services, output: { capture.append($0) })
+        func command(_ method: String, _ params: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["deepseek"], "deepseekSettings": ["mode": "balance", "ringPeriod": "day", "speedSource": "local", "showsTurnCost": true, "balanceSource": "web"]]))
+        try await wait { capture.last()?.wallet?.balance == 80 && history.read().samples.last?.total == 80 }
+        let before = history.read().samples.count; XCTAssertGreaterThanOrEqual(before, 3)
+        var context = try XCTUnwrap(capture.last()?.deepseekConnection?.context)
+        _ = await runtime.receive(try command("beginDeepSeekWebSignIn", ["balanceContext": context]))
+        _ = await runtime.receive(try command("deepSeekWebSessionChanged", ["balanceContext": context, "webNewSession": false]))
+        try await wait { capture.last()?.deepseekConnection?.refreshing == false }
+        XCTAssertGreaterThanOrEqual(history.read().samples.count, before, "Same-token challenge verification keeps history")
+        context = try XCTUnwrap(capture.last()?.deepseekConnection?.context)
+        _ = await runtime.receive(try command("deepSeekWebSessionChanged", ["balanceContext": context, "webNewSession": true]))
+        // The command acknowledges the reset before its forced refresh persists the new sample.
+        try await wait { history.read().samples.last?.total == 80 && capture.last()?.deepseekConnection?.refreshing == false }
+        XCTAssertEqual(history.read().samples.count, 1, "A new login starts with its own current balance")
+        XCTAssertNil(capture.lastError()); XCTAssertFalse(capture.text().contains("sessionFingerprint"))
+        await runtime.stop()
+    }
+    private final class SessionHistory: @unchecked Sendable {
+        private let lock = NSLock(); private var value: DeepSeekBalanceHistory
+        init(_ value: DeepSeekBalanceHistory) { self.value = value }
+        func read() -> DeepSeekBalanceHistory { lock.lock(); defer { lock.unlock() }; return value }
+        func write(_ next: DeepSeekBalanceHistory) { lock.lock(); defer { lock.unlock() }; value = next }
+    }
     func testEveryWebRequestFollowsTheMatchingSourceSnapshotAcrossRepeatedSwitches() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000), capture = Capture()
         let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },

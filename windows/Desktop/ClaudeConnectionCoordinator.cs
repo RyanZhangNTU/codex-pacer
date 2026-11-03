@@ -15,6 +15,7 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
     private readonly IClaudeWebSession session;
     private readonly Dispatcher dispatcher;
     private readonly bool bridgeEnabled;
+    private readonly Func<Task<bool>> newSession;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Dictionary<string, CancellationTokenSource> reads = new();
     private readonly HashSet<string> cancelled = new();
@@ -26,9 +27,10 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
     internal string? LastFailure { get; private set; }
     internal bool IsOfflineDemo => !bridgeEnabled;
     internal bool Available => !disposed && started && (!bridgeEnabled || availability == true) && session.Available;
-    internal ClaudeConnectionCoordinator(EngineClient engine, IClaudeWebSession session, Dispatcher dispatcher, bool bridgeEnabled = true)
+    internal ClaudeConnectionCoordinator(EngineClient engine, IClaudeWebSession session, Dispatcher dispatcher, bool bridgeEnabled = true, Func<Task<bool>>? newSession = null)
     {
         this.engine = engine; this.session = session; this.dispatcher = dispatcher; this.bridgeEnabled = bridgeEnabled;
+        this.newSession = newSession ?? (() => Task.FromResult(true));
         engine.ClaudeHostRequest += Receive; engine.Status += EngineStatus;
     }
     internal async Task StartAsync()
@@ -122,15 +124,23 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
         LastFailure = null;
         try
         {
+            // Revoke quota/cloud reads before the profile can switch accounts.
+            await engine.SendAsync("pauseClaudeConnection", new { context });
+            context = engine.LatestSnapshot?.ClaudeConnection?.Context ?? "";
+            if (!Current(context)) return false;
             if (switchAccount)
             {
-                await engine.SendAsync("pauseClaudeConnection", new { context });
-                context = engine.LatestSnapshot?.ClaudeConnection?.Context ?? "";
-                if (!Current(context)) return false;
                 await session.ClearAsync(lifetime.Token);
             }
-            if (!await session.SignInAsync() || !Current(context)) return false;
-            await engine.SendAsync("resetClaudeConnection", new { context }); return true;
+            bool signedIn = await session.SignInAsync();
+            if (!Current(context)) return false;
+            if (signedIn && session.SignInWasNew)
+            {
+                if (!await newSession()) throw new IOException("The new session preferences could not be saved.");
+                context = engine.LatestSnapshot?.ClaudeConnection?.Context ?? "";
+                if (!Current(context)) return false;
+            }
+            await engine.SendAsync("resetClaudeConnection", new { context }); return signedIn;
         }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
         { LastFailure = "windows.claude.connection_failed"; return false; }
