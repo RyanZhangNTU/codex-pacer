@@ -5,10 +5,4 @@ Codex Pacer 4.2.3 comes to Windows with a better update experience, finishes Cla
 - Claude and DeepSeek sign-in now finishes on its own. The sign-in window shows a strip in the provider's color that says what signing in shows, with **Refresh** and **Later**; once you sign in on the page, the strip turns green and the window closes. Closing it any other way still completes while you are signed in.
 - A skill that runs in its own agent, such as `/code-review`, no longer leaves its task marked as running once it has finished. Such a skill reports its agent differently from the Agent tool, so Pacer never saw that agent end. It now ends when the skill returns; a skill started in the background ends when Claude reports it finished.
 
-### Install
-
-- **Mac, existing installation:** use **Check for Updates** to update in place. Your preferences are preserved.
-- **Mac, manual installation:** quit Codex Pacer, replace the copy in Applications with the new app, then open it again. Requires macOS 14 or later.
-- **Windows:** run the installer for your PC, listed below. It installs for the current user without administrator rights, and later versions update from **Settings → General**.
-
 See the [user guide](https://github.com/RyanZhangNTU/codex-pacer/blob/main/docs/guide.md) and the [full changelog](https://github.com/RyanZhangNTU/codex-pacer/blob/main/CHANGELOG.md).

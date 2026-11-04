@@ -23,7 +23,7 @@
     "scripts/release/package-dmg.py": "e103a5d0825a4faca5b1ffbcb540f5d4789a93acaf6eee57dd58fab2e561cf6c",
     "scripts/release/prepare-update.py": "42acda3581238084a922280d8a3cbadffa9fcf5b0c0656d7b42c477e6117cadf",
     "scripts/release/prepare-windows-update.py": "71ecf1dbafc479a483b69b6db5b43c76556dd55dae1c599464f455d8984391a2",
-    "scripts/release/publish-github-release.sh": "c9630eeaa65634cfa204698717c08c59193a6c1467218268049598d8b4d5ebe9"
+    "scripts/release/publish-github-release.sh": "9e9a17ec24586076a4dab3dad7b241eaea6f047bef6ece9b70de76fa902d6628"
   },
   "nativePackageInvariants": [
     "// swift-tools-version: 5.10",

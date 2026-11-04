@@ -64,24 +64,30 @@ else
 fi
 # Keep the current update feed live until both new assets are uploaded and checked.
 task_verify="$(mktemp -d /private/tmp/codex-pacer-published.XXXXXX)"
-python3 - "$task_notes_en" "$task_notes" "$task_verify/release-notes.md" "$task_version" "$task_mode" "$task_windows_enabled" <<'PY'
+python3 - "$task_notes_en" "$task_notes" "$task_verify/release-notes.md" "$task_version" "$task_mode" "$task_windows_enabled" "$task_name" <<'PY'
 from pathlib import Path
 import sys
 english, chinese, combined = map(Path, sys.argv[1:4])
-version, mode, windows = sys.argv[4:7]
-body = '## English\n\n' + english.read_text() + '\n## 简体中文\n\n' + chinese.read_text()
+version, mode, windows, dmg = sys.argv[4:8]
+# Lead with one file per platform; everything else on the Release feeds in-app updates.
+link = f'https://github.com/RyanZhangNTU/codex-pacer/releases/download/v{version}/'
+rows = [('macOS 14+ (Apple silicon / Intel)', dmg)]
+if windows != '0':
+    rows += [(f'Windows {arch}', f'Codex-Pacer-{version}-windows-{arch.lower()}-setup.exe') for arch in ('x64', 'ARM64')]
+body = ('## Download / 下载\n\n| Platform / 平台 | File / 文件 |\n| --- | --- |\n'
+    + ''.join(f'| {platform} | [{name}]({link}{name}) |\n' for platform, name in rows)
+    + '\nOther files are used by in-app updates. 其他文件供应用内更新使用，无需下载。\n')
+if windows != '0':
+    # Windows installers are not Authenticode signed, so SmartScreen asks once.
+    body += ('\nMost Windows PCs need x64; ARM64 is for Windows on Arm, such as Snapdragon PCs. '
+        + 'The installer is not code signed yet: if SmartScreen appears, choose **More info → Run anyway**.\n\n'
+        + '大多数 Windows 电脑选 x64，骁龙等 ARM 电脑选 ARM64。'
+        + '安装包暂未做代码签名：如果出现 SmartScreen 提示，点**更多信息 → 仍要运行**。\n')
+body += '\n## English\n\n' + english.read_text() + '\n## 简体中文\n\n' + chinese.read_text()
 if mode == 'unsigned':
     # Notarized builds open normally; only ad-hoc builds need the Open Anyway walkthrough.
     body += ('\n[First-launch help / 首次打开帮助 (Apple)](https://support.apple.com/102445)\n\n'
         + f'![Privacy & Security / 隐私与安全](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/v{version}/docs/assets/macos-open-anyway.png)\n')
-if windows != '0':
-    # Windows installers are not Authenticode signed, so SmartScreen asks once.
-    body += (f'\n## Windows\n\nRun `Codex-Pacer-{version}-windows-x64-setup.exe` (ARM64: `Codex-Pacer-{version}-windows-arm64-setup.exe`). '
-        + 'The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**. '
-        + 'The other Windows files are used by in-app updates; you do not need to download them.\n\n'
-        + f'运行 `Codex-Pacer-{version}-windows-x64-setup.exe`（ARM64 设备用 `Codex-Pacer-{version}-windows-arm64-setup.exe`）。'
-        + '安装包暂未做代码签名；如果 SmartScreen 提示"Windows 已保护你的电脑"，点**更多信息 → 仍要运行**。'
-        + '其他 Windows 文件供应用内更新使用，无需下载。\n')
 combined.write_text(body)
 PY
 gh release create "$task_tag" "$task_dmg" "$task_output/appcast.xml" ${task_windows[@]+"${task_windows[@]}"} --verify-tag --draft \
