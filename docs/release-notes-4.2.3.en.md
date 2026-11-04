@@ -1,0 +1,8 @@
+Codex Pacer 4.2.3 comes to Windows with a better update experience, finishes Claude and DeepSeek sign-in without a Continue click, and fixes Claude Code tasks that stayed marked as running after `/code-review` and similar skills had finished.
+
+- **Codex Pacer for Windows.** The same island, task list, quota rings, reminders and Settings as on the Mac, for Codex, Claude Code and DeepSeek Harness, including SSH hosts, WSL and Codex Remote Control. It needs Windows 10 2004 (build 19041) or later on x64 or ARM64; Windows 11 22H2 and later get the glass surface.
+- **Better Windows updates.** Updates open in Pacer's own window with readable release notes and real download progress, the installer follows your Windows language, and later updates download only the files that changed.
+- Claude and DeepSeek sign-in now finishes on its own. The sign-in window shows a strip in the provider's color that says what signing in shows, with **Refresh** and **Later**; once you sign in on the page, the strip turns green and the window closes. Closing it any other way still completes while you are signed in.
+- A skill that runs in its own agent, such as `/code-review`, no longer leaves its task marked as running once it has finished. Such a skill reports its agent differently from the Agent tool, so Pacer never saw that agent end. It now ends when the skill returns; a skill started in the background ends when Claude reports it finished.
+
+See the [user guide](https://github.com/RyanZhangNTU/codex-pacer/blob/main/docs/guide.md) and the [full changelog](https://github.com/RyanZhangNTU/codex-pacer/blob/main/CHANGELOG.md).

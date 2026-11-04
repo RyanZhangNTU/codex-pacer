@@ -73,7 +73,8 @@ internal static class UpdateFiles
     }
 }
 
-// All three WinSparkle config callbacks use this file. None falls back to HKCU.
+// The update service keeps its schedule, skipped build and presented notes
+// here, never in HKCU. Keys keep the names WinSparkle used before 4.2.3.
 internal sealed class WindowsUpdateState(string path)
 {
     private sealed record State(int SchemaVersion, Dictionary<string, string> Values);

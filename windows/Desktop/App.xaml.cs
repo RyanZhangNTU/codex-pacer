@@ -211,7 +211,7 @@ public partial class App : Application
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
             {
-                if (quitting || updates?.Status.Busy == true) return;
+                if (quitting || updates?.Status.Busy == true && FocusUpdateWindow()) return;
                 bool wasVisible = island.IsVisible, wasExpanded = island.LogicalTarget.Height > 38;
                 if (action == InstanceAction.Settings) OpenSettings();
                 else { island.Reveal(); island.Activate(); }
@@ -332,7 +332,7 @@ public partial class App : Application
 
     private void OpenSettings()
     {
-        if (quitting || updates?.Status.Busy == true || settingsSession == null || startupRegistration == null || ui == null) return;
+        if (quitting || updates?.Status.Busy == true && FocusUpdateWindow() || settingsSession == null || startupRegistration == null || ui == null) return;
         island?.DismissForSettings();
         if (settings == null)
         {

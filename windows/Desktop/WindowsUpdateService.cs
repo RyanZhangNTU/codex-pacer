@@ -8,99 +8,177 @@ namespace CodexPacer.Windows;
 
 internal sealed record WindowsUpdateStatus(bool Available, bool Busy, string MessageKey);
 
+/// The update window, kept separate so the service has no WPF dependency.
+internal interface IWindowsUpdatePresenter
+{
+    void Checking();
+    void Offer(WindowsUpdatePackage package, bool manual);
+    void UpToDate();
+    void Failed(bool manual);
+}
+
 internal sealed class WindowsUpdateService : IAsyncDisposable
 {
     internal static readonly TimeSpan AutomaticInterval = TimeSpan.FromDays(1);
-    private readonly IWindowsUpdateBackend? backend;
-    private readonly UpdateFeedProxy? proxy;
+    /// An offer older than this is verified again before its download starts.
+    internal static readonly TimeSpan OfferLifetime = TimeSpan.FromMinutes(30);
+    internal const string SkipKey = "SkipThisVersion", AutomaticKey = "PacerAutomaticChecks", LastCheckKey = "PacerLastCheckUtc",
+        PatchFailedKey = UpdateHandoff.PatchFailedKey;
+    private readonly UpdateFeedClient? client;
     private readonly WindowsUpdateState? state;
     private readonly Func<DateTimeOffset> now;
     private readonly Action<Action> post;
-    private readonly TimeSpan requestTimeout;
     private readonly SemaphoreSlim operations = new(1, 1);
-    private readonly CancellationTokenSource notesLifetime = new();
+    private readonly CancellationTokenSource lifetime = new();
     private CancellationTokenSource? autoWake;
-    private volatile bool disposed, installing, expired, operationActive;
-    private bool faulted, automatic, interactive;
-    private DateTimeOffset lastCheck = DateTimeOffset.MinValue;
-    private Uri? operationFeed;
-    private long generation;
+    private WindowsUpdateChannel? channel;
+    private WindowsInstallationIdentity? identity;
+    private string language = "en";
+    private Action? installStarted;
+    private volatile bool disposed, installing;
+    private bool automatic;
+    private DateTimeOffset lastCheck = DateTimeOffset.MinValue, offeredAt;
+    private WindowsUpdatePackage? offer;
+    private bool incremental;
     internal WindowsUpdateStatus Status { get; private set; } = new(false, false, "windows.updates.unconfigured");
     internal event Action<WindowsUpdateStatus>? Changed;
-    internal WindowsUpdateService(Action<Action> post, IWindowsUpdateBackend? backend = null, UpdateFeedProxy? proxy = null,
-        TimeSpan? requestTimeout = null, WindowsUpdateState? state = null, Func<DateTimeOffset>? now = null)
+    internal IWindowsUpdatePresenter? Presenter { get; set; }
+    /// What Install would download: the patch when it applies to this
+    /// installation, otherwise the full installer.
+    internal WindowsUpdatePackage? CurrentOffer => offer == null ? null : incremental ? offer.AsIncremental() : offer;
+    internal WindowsUpdateService(Action<Action> post, UpdateFeedClient? client = null, WindowsUpdateState? state = null, Func<DateTimeOffset>? now = null)
     {
-        this.post = post; this.backend = backend; this.proxy = proxy; this.state = state; this.now = now ?? (() => DateTimeOffset.UtcNow);
-        this.requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(3);
-        if (backend != null) backend.Changed += OnBackend;
-        if (proxy != null) { proxy.Expired += OnExpired; proxy.Failed += OnProxyFailed; }
+        this.post = post; this.client = client; this.state = state; this.now = now ?? (() => DateTimeOffset.UtcNow);
     }
-    private void Publish(WindowsUpdateStatus value) => post(() => { if (disposed) return; Status = value; Changed?.Invoke(value); });
-    internal async Task InitializeAsync(WindowsUpdateChannel channel, string version, string build, string language, bool automatic,
-        WindowsInstallationIdentity identity, Action installStarted)
+    private void Publish(WindowsUpdateStatus value) { if (disposed) return; Status = value; Changed?.Invoke(value); }
+    internal async Task InitializeAsync(WindowsUpdateChannel channel, WindowsInstallationIdentity identity, string language, bool automatic, Action installStarted)
     {
-        if (backend == null || proxy == null || disposed) return;
-        backend.Install = path =>
-        {
-            if (disposed || installing || !operationActive || expired) return false;
-            var prepared = UpdateHandoff.Prepare(path, proxy, channel, identity, Path.Combine(identity.Root, "Maintenance", "PacerMaintenance.exe"));
-            UpdateHandoff.Start(prepared); installing = true; operationActive = false;
-            _ = proxy.StopOperationAsync(operationFeed); post(installStarted); return true;
-        };
+        if (client == null || disposed) return;
+        this.channel = channel; this.identity = identity; this.language = language; this.installStarted = installStarted; this.automatic = automatic;
         try
         {
-            this.automatic = automatic;
             await Task.Run(() =>
             {
-                if (state?.Read("PacerLastCheckUtc") is string saved && long.TryParse(saved, NumberStyles.Integer, CultureInfo.InvariantCulture, out long seconds))
+                if (state?.Read(LastCheckKey) is string saved && long.TryParse(saved, NumberStyles.Integer, CultureInfo.InvariantCulture, out long seconds))
                     lastCheck = DateTimeOffset.FromUnixTimeSeconds(seconds);
-                backend.Initialize(proxy.Feed, channel.PublicKey, version, build, language, automatic);
+                state?.Write(AutomaticKey, automatic ? "1" : "0");
             }).WaitAsync(TimeSpan.FromSeconds(10));
             Publish(new(true, false, "updates.policy")); ArmAutomatic();
         }
-        catch (Exception error) when (Recoverable(error)) { faulted = true; Publish(new(false, false, "windows.updates.failed")); }
+        catch (Exception error) when (Recoverable(error)) { Publish(new(false, false, "windows.updates.failed")); }
     }
     internal async Task<string?> ReadReleaseNotesAsync()
     {
-        if (disposed || faulted || installing || proxy == null || !Status.Available || Status.Busy) return null;
-        string? notes = await proxy.ReadReleaseNotesAsync(notesLifetime.Token);
+        if (disposed || installing || client == null || !Status.Available || Status.Busy) return null;
+        string? notes = await client.ReadReleaseNotesAsync(lifetime.Token);
         return disposed ? null : notes;
     }
-    internal Task<bool> CheckAsync() => BeginOperation(interactive: true);
+    internal Task<bool> CheckAsync() => CheckCore(manual: true);
     internal Task<bool> CheckAutomaticIfDueAsync() => automatic && now() - lastCheck >= AutomaticInterval
-        ? BeginOperation(interactive: false) : Task.FromResult(false);
-    private async Task<bool> BeginOperation(bool interactive, bool restartExpired = false)
+        ? CheckCore(manual: false) : Task.FromResult(false);
+    private async Task<bool> CheckCore(bool manual)
     {
-        if (backend == null || proxy == null || disposed || installing || faulted || !Status.Available ||
-            !restartExpired && (Status.Busy || operationActive) || !await operations.WaitAsync(0)) return false;
+        if (client == null || disposed || installing || !Status.Available || Status.Busy || !await operations.WaitAsync(0)) return false;
         try
         {
-            this.interactive = interactive; expired = false; operationActive = true;
-            long context = Interlocked.Increment(ref generation);
-            operationFeed = null;
             autoWake?.Cancel(); lastCheck = now();
-            Publish(Status with { Busy = interactive, MessageKey = interactive ? "updates.checking" : "updates.policy" });
-            Uri feed = await proxy.StartOperationAsync().WaitAsync(requestTimeout);
-            operationFeed = feed;
-            await Task.Run(() =>
+            if (manual) { Publish(Status with { Busy = true, MessageKey = "updates.checking" }); Presenter?.Checking(); }
+            WindowsUpdatePackage? found;
+            try
             {
-                state?.Write("PacerLastCheckUtc", lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
-                backend.Check(feed, interactive, context);
-            }).WaitAsync(requestTimeout);
+                found = await client.ReadOfferAsync(lifetime.Token);
+                state?.Write(LastCheckKey, lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
+            }
+            catch (Exception error) when (Recoverable(error))
+            {
+                if (disposed) return false;
+                if (manual) { Publish(Status with { Busy = true, MessageKey = "windows.updates.failed" }); Presenter?.Failed(true); }
+                else Publish(Status with { MessageKey = "windows.updates.failed" });
+                return false;
+            }
+            if (disposed) return false;
+            // A skipped build stays quiet until a newer one appears; a manual check still offers it.
+            if (found != null && !manual && state?.Read(SkipKey) == found.Build.ToString()) found = null;
+            if (found == null)
+            {
+                if (manual) { Publish(Status with { Busy = true, MessageKey = "updates.no_update" }); Presenter?.UpToDate(); }
+                else Publish(Status with { MessageKey = "updates.no_update" });
+                return true;
+            }
+            offer = found; offeredAt = now(); incremental = await Task.Run(() => PatchApplies(found));
+            Publish(new(true, true, "windows.updates.available")); Presenter?.Offer(CurrentOffer!, manual);
             return true;
         }
-        catch (Exception error) when (Recoverable(error))
+        finally { operations.Release(); if (!Status.Busy) ArmAutomatic(); }
+    }
+    /// Downloads and verifies the current offer into a new session directory.
+    /// An offer older than OfferLifetime is verified again first; a different
+    /// result replaces it and fails this download.
+    internal async Task<VerifiedDownload> DownloadAsync(IProgress<UpdateProgress>? progress, CancellationToken cancellation)
+    {
+        if (client == null || identity == null || offer == null || disposed || installing) throw new InvalidOperationException("No update is offered.");
+        if (now() - offeredAt > OfferLifetime)
         {
-            faulted = error is TimeoutException; operationActive = false;
-            try { await proxy.StopOperationAsync(operationFeed).WaitAsync(requestTimeout); } catch (Exception failure) when (Recoverable(failure)) { }
-            Publish(new(!faulted, false, "windows.updates.failed")); ArmAutomatic(); return false;
+            var fresh = await client.ReadOfferAsync(cancellation);
+            if (fresh == null || fresh != offer)
+            {
+                offer = fresh; offeredAt = now(); incremental = fresh != null && await Task.Run(() => PatchApplies(fresh));
+                throw new InvalidDataException("The offered update changed.");
+            }
+            offeredAt = now();
         }
-        finally { operations.Release(); }
+        var item = CurrentOffer!;
+        string session = UpdateSessions.Create(identity);
+        Publish(Status with { MessageKey = "windows.updates.downloading" });
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
+        try { return await client.DownloadAsync(item, session, progress, linked.Token); }
+        catch { UpdateSessions.Clean(identity.DataRoot); throw; }
+    }
+    /// Hands a verified download to the helper; the app then quits.
+    internal bool Install(VerifiedDownload download)
+    {
+        if (disposed || installing || channel == null || identity == null || offer == null || download.Package != CurrentOffer) return false;
+        var prepared = UpdateHandoff.Prepare(download, channel, identity, Path.Combine(identity.Root, "Maintenance", "PacerMaintenance.exe"), language);
+        UpdateHandoff.Start(prepared); installing = true;
+        Publish(Status with { MessageKey = "windows.updates.installing" });
+        post(() => installStarted?.Invoke()); return true;
+    }
+    // A patch is used only for the exact installation it was built from, and
+    // not again for a build whose patch already failed to install here. The
+    // installer checks every file again before it replaces anything.
+    private bool PatchApplies(WindowsUpdatePackage package)
+    {
+        if (package.Patch is not { } patch || identity == null) return false;
+        try
+        {
+            return state?.Read(PatchFailedKey) != package.Build.ToString() &&
+                UpdateCatalog.InstalledManifest(identity.Root) == patch.BaseManifestSHA256;
+        }
+        catch (Exception error) when (Recoverable(error)) { return false; }
+    }
+    /// After a patch failed to install, offers the same update again, now as
+    /// the full installer, without waiting for the next daily check.
+    internal Task<bool> RetryAfterFailedPatchAsync() => CheckCore(manual: false);
+    /// Remembers the offered build so automatic checks stay quiet about it.
+    internal void Skip()
+    {
+        if (offer != null) try { state?.Write(SkipKey, offer.Build.ToString()); } catch (Exception error) when (Recoverable(error)) { }
+        Dismiss();
+    }
+    /// Closes the update window: any unfinished download is discarded.
+    internal void Dismiss()
+    {
+        if (disposed || installing) return;
+        bool offered = offer != null;
+        offer = null; incremental = false;
+        if (identity != null) try { UpdateSessions.Clean(identity.DataRoot); } catch (Exception error) when (Recoverable(error)) { }
+        Publish(Status with { Busy = false, MessageKey = offered || Status.MessageKey is "updates.checking" or "windows.updates.downloading" ? "updates.cancelled" : Status.MessageKey });
+        ArmAutomatic();
     }
     private void ArmAutomatic()
     {
         autoWake?.Cancel(); autoWake?.Dispose(); autoWake = null;
-        if (disposed || faulted || !automatic || state == null || operationActive || Status.Busy) return;
+        if (disposed || !automatic || state == null || !Status.Available || Status.Busy || installing) return;
         var wake = new CancellationTokenSource(); autoWake = wake;
         TimeSpan delay = AutomaticInterval - (now() - lastCheck);
         if (delay < TimeSpan.FromSeconds(1)) delay = TimeSpan.FromSeconds(1);
@@ -113,9 +191,9 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     }
     internal async Task<bool> SetAutomaticAsync(bool value)
     {
-        if (backend == null || disposed || !Status.Available || !await operations.WaitAsync(0)) return false;
-        try { await Task.Run(() => backend.SetAutomatic(value)).WaitAsync(requestTimeout); automatic = value; ArmAutomatic(); return true; }
-        catch (Exception error) when (Recoverable(error)) { faulted = error is TimeoutException; Publish(Status with { Available = !faulted, MessageKey = "windows.updates.failed" }); return false; }
+        if (client == null || disposed || !Status.Available || !await operations.WaitAsync(0)) return false;
+        try { await Task.Run(() => state?.Write(AutomaticKey, value ? "1" : "0")).WaitAsync(TimeSpan.FromSeconds(3)); automatic = value; ArmAutomatic(); return true; }
+        catch (Exception error) when (Recoverable(error)) { Publish(Status with { MessageKey = "windows.updates.failed" }); return false; }
         finally { operations.Release(); }
     }
     internal async Task<bool> ApplyAutomaticAsync(bool value, PreferencesSession preferences)
@@ -125,53 +203,14 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
         if (await preferences.ChangeAsync(current => current with { AutomaticUpdates = value }) == PreferencesApplyResult.Applied) return true;
         _ = await SetAutomaticAsync(previous); return false;
     }
-    private void OnExpired(Uri feed) => post(() =>
-    {
-        if (disposed || !operationActive || operationFeed != feed) return;
-        expired = true; operationActive = false;
-        Status = Status with { MessageKey = "windows.updates.expired" }; Changed?.Invoke(Status);
-        // The old WinSparkle window can still be waiting for confirmation. If
-        // Download is selected, its closed endpoint fails and triggers a fresh
-        // owned check, with a new port/token, rather than using stale metadata.
-    });
-    private void OnProxyFailed(Uri feed) => post(() =>
-    {
-        if (operationFeed == feed) OnBackend(UpdateBackendEvent.Failed, Interlocked.Read(ref generation));
-    });
-    private void OnBackend(UpdateBackendEvent value, long context) => post(() =>
-    {
-        if (disposed || installing || faulted || context != Interlocked.Read(ref generation)) return;
-        if (expired && value == UpdateBackendEvent.Failed) { _ = BeginOperation(interactive: true, restartExpired: true); return; }
-        if (value == UpdateBackendEvent.Found)
-        { if (operationActive && !expired) { Status = new(true, true, "windows.updates.available"); Changed?.Invoke(Status); } return; }
-        operationActive = false; expired = false;
-        if (proxy != null) _ = proxy.StopOperationAsync(operationFeed);
-        Status = value switch
-        {
-            UpdateBackendEvent.NoUpdate => Status with { Busy = interactive, MessageKey = "updates.no_update" },
-            UpdateBackendEvent.Failed => Status with { Busy = interactive, MessageKey = "windows.updates.failed" },
-            _ => Status with { Busy = false, MessageKey = Status.MessageKey is "updates.checking" or "windows.updates.available" or "windows.updates.expired" ? "updates.cancelled" : Status.MessageKey }
-        };
-        Changed?.Invoke(Status); ArmAutomatic();
-    });
     internal static bool Recoverable(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
         or ArgumentException or System.ComponentModel.Win32Exception or TimeoutException or OperationCanceledException or System.Text.Json.JsonException
-        or System.Security.Cryptography.CryptographicException or EntryPointNotFoundException or BadImageFormatException;
-    public async ValueTask DisposeAsync()
+        or System.Security.Cryptography.CryptographicException or System.Net.Http.HttpRequestException;
+    public ValueTask DisposeAsync()
     {
-        if (disposed) return; disposed = true; autoWake?.Cancel(); autoWake?.Dispose(); notesLifetime.Cancel();
-        if (proxy != null)
-        {
-            proxy.Expired -= OnExpired; proxy.Failed -= OnProxyFailed;
-            try { await proxy.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3)); }
-            catch (Exception error) when (Recoverable(error)) { }
-        }
-        if (backend != null)
-        {
-            backend.Changed -= OnBackend; backend.Install = null;
-            var cleanup = Task.Run(backend.Dispose);
-            try { await cleanup.WaitAsync(TimeSpan.FromSeconds(10)); }
-            catch (Exception error) when (Recoverable(error)) { }
-        }
+        if (disposed) return ValueTask.CompletedTask;
+        disposed = true; autoWake?.Cancel(); autoWake?.Dispose(); lifetime.Cancel();
+        client?.Dispose();
+        return ValueTask.CompletedTask;
     }
 }

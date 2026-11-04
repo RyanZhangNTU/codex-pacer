@@ -20,6 +20,12 @@ internal static class Program
             {
                 case "prepare" when args.Length == 4: await operations.PrepareAsync(args[3], deadline.Token); break;
                 case "register" when args.Length == 3: operations.Register(); break;
+                case "remove-stale" when args.Length == 4: operations.RemoveStale(args[3]); break;
+                case "prepare-patch" when args.Length == 4: await operations.PreparePatchAsync(args[3], deadline.Token); break;
+                case "verify" when args.Length == 3: operations.Verify(deadline.Token); break;
+                case "shortcut" when args.Length == 4:
+                    operations.AddShortcut(args[3] switch { "desktop" => InstallShortcut.Desktop, "start-menu" => InstallShortcut.StartMenu, _ => throw new ArgumentException("Unknown shortcut.") });
+                    break;
                 case "uninstall" when args.Length == 3:
                 case "uninstall-continue" when args.Length == 3:
                     var failure = await operations.UninstallAsync(deadline.Token, continueAfterFailure: args[0] == "uninstall-continue");
@@ -68,7 +74,7 @@ internal static class Program
                 {
                     writer.WriteLine("Pacer uninstall cleanup code " + (20 + (int)failure));
                     if (failure.HasFlag(UninstallFailure.ClaudeConfiguration)) writer.WriteLine("Claude configuration or owned runtime cleanup failed. Check settings.json and pacer/installation.json in the configured Claude homes. Remove only Pacer hook commands; restore previousStatusLine only if statusLine still uses Pacer, and remove only unchanged addedEnvironment values. Retained Pacer commands can cause Claude Code errors after application removal. Shared Python versions are under %LOCALAPPDATA%/CodexPacer/ClaudeRuntime: keep any version still referenced by a hook, and preserve unknown or modified files.");
-                    if (failure.HasFlag(UninstallFailure.Registrations)) writer.WriteLine("Windows registration cleanup failed. Check this installation's current-user Run/StartupApproved entry, Start menu shortcut, Pacer installation marker and notification activation registration. Remove only entries still owned by this installation.");
+                    if (failure.HasFlag(UninstallFailure.Registrations)) writer.WriteLine("Windows registration cleanup failed. Check this installation's current-user Run/StartupApproved entry, Start menu and desktop shortcuts, Pacer installation marker and notification activation registration. Remove only entries still owned by this installation.");
                     writer.WriteLine("Silent uninstall stops before application file removal. Interactive uninstall offers Retry, Continue uninstall or Cancel.");
                 }
                 WindowsInstallationIdentity.RequireNoReparse(path);

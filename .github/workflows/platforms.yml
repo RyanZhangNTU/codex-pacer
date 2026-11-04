@@ -100,7 +100,11 @@ jobs:
       - name: Package unsigned ARM64 installer without installing
         run: |
           $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          ./scripts/windows/package-installer.ps1 -Archive $taskArchive -Architecture arm64
+          # Also a patch from the latest release, when that release published its manifest.
+          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture arm64 -Output "$env:RUNNER_TEMP/pacer-update-base-arm64.json" | Select-Object -Last 1
+          $taskArguments = @{ Archive = $taskArchive; Architecture = 'arm64' }
+          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
+          ./scripts/windows/package-installer.ps1 @taskArguments
       - name: Upload unsigned ARM64 installer
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -109,6 +113,9 @@ jobs:
           path: |
             output/windows/installer-artifact/*-windows-arm64-setup-*.exe
             output/windows/installer-artifact/*-windows-arm64-setup-*.exe.sha256
+            output/windows/installer-artifact/*-windows-arm64-manifest-*.json
+            output/windows/installer-artifact/*-windows-arm64-manifest-*.json.sha256
+            output/windows/installer-artifact/*-windows-arm64-patch-*
           retention-days: 7
       - name: Upload ARM64 build logs
         if: always()
@@ -195,10 +202,18 @@ jobs:
         run: |
           $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
           ./scripts/windows/test-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-tests.log"
+      - name: Windows patch installer lifecycle
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-patch.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-patch-tests.log"
       - name: Package unsigned Windows installer
         run: |
           $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          ./scripts/windows/package-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
+          # Also a patch from the latest release, when that release published its manifest.
+          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture x64 -Output "$env:RUNNER_TEMP/pacer-update-base-x64.json" | Select-Object -Last 1
+          $taskArguments = @{ Archive = $taskArchive }
+          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
+          ./scripts/windows/package-installer.ps1 @taskArguments *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
       - name: Upload unsigned Windows installer
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -207,6 +222,8 @@ jobs:
           path: |
             output/windows/installer-artifact/*.exe
             output/windows/installer-artifact/*.exe.sha256
+            output/windows/installer-artifact/*.json
+            output/windows/installer-artifact/*.json.sha256
           retention-days: 7
       - name: Engine idle and shutdown protocol
         run: |
@@ -232,6 +249,8 @@ jobs:
             ${{ runner.temp }}/pacer-presentation-tests.log
             ${{ runner.temp }}/pacer-windows-package.log
             ${{ runner.temp }}/pacer-installer-tests.log
+            ${{ runner.temp }}/pacer-patch-tests.log
             ${{ runner.temp }}/pacer-installer-build.log
             output/windows/installer-tests.json
+            output/windows/patch-tests.json
           retention-days: 7

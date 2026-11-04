@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "innoSetupVersion": "6.7.4",
+  "normalization": "UTF-8, LF line endings before hashing",
+  "sources": [
+    {
+      "name": "ChineseSimplified.isl",
+      "url": "https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_4/Files/Languages/Unofficial/ChineseSimplified.isl",
+      "sha256": "7d544b9bb1d142cfa11f2e5d3cc8abe2e55f8e066c5124e3772675aa236e1278"
+    },
+    {
+      "name": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_4/license.txt",
+      "sha256": "3df23505b7ec00dc007a1e1e9ba32ee3895e7ce90043bcd1ac1b9b47155921a7"
+    }
+  ]
+}

@@ -18,6 +18,9 @@ internal sealed record WindowsInstallationIdentity(string Root, Guid? QaScope)
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPacer")
         : Path.Combine(Path.GetDirectoryName(Root)!, "CodexPacer-QA-" + Scope);
     internal string Shortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), DisplayName, "Codex Pacer.lnk");
+    // Tests point this at a fixture so they never touch the real desktop.
+    internal string? DesktopFolder { get; init; }
+    internal string DesktopShortcut => Path.Combine(DesktopFolder ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), DisplayName + ".lnk");
     internal WindowsStartupRegistration Startup() => new(Executable, name: StartupName);
     internal static WindowsInstallationIdentity Load(string root, Guid? expectedScope = null, bool requireContext = false)
     {

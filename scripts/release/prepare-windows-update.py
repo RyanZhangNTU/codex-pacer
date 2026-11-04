@@ -5,6 +5,11 @@ The Platforms workflow builds both Windows installers on the release commit. On 
 release Mac this script downloads them, checks their name, checksum and version
 resource, and signs them and appcast-windows.xml with the Sparkle Ed25519 key that
 already signs the Mac appcast. The installers are not Authenticode signed.
+
+Each release also publishes its file manifest. When CI built a patch installer
+from the latest published build, and that build is still the latest in the
+signed public feed, the patch is signed and listed inside <sparkle:deltas>,
+which Windows 4.2.2 and earlier never read. Otherwise the patch is dropped.
 """
 import argparse
 import base64
@@ -24,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "RyanZhangNTU/codex-pacer"
 KEY_ACCOUNT = "com.codexpacer.app"
 NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+PACER_NAMESPACE = "urn:codex-pacer:windows-update"
 XML_LANGUAGE = "{http://www.w3.org/XML/1998/namespace}lang"
 FEED = "appcast-windows.xml"
 SIGNATURE_PREFIX = b"<!-- pacer-feed-ed25519:"
@@ -31,6 +37,7 @@ ARCHITECTURES = ("x64", "arm64")
 # The Windows client selects notes by its own UI language names.
 LANGUAGES = (("en", "en"), ("zh-Hans", "zh-CN"))
 ET.register_namespace("sparkle", NAMESPACE)
+ET.register_namespace("pacer", PACER_NAMESPACE)
 
 
 def enabled():
@@ -40,6 +47,20 @@ def enabled():
 
 def asset_name(version, architecture):
     return f"Codex-Pacer-{version}-windows-{architecture}-setup.exe"
+
+
+def manifest_name(version, architecture):
+    return f"Codex-Pacer-{version}-windows-{architecture}-manifest.json"
+
+
+def patch_name(version, architecture, base_version):
+    return f"Codex-Pacer-{version}-windows-{architecture}-update-from-{base_version}.exe"
+
+
+def unpack(asset):
+    """(architecture, name, length, signature[, manifest SHA-256[, patch]]): older callers pass four fields."""
+    architecture, name, length, signature, *extra = asset
+    return architecture, name, length, signature, (extra[0] if extra else None), (extra[1] if len(extra) > 1 else None)
 
 
 def minimum_windows():
@@ -106,12 +127,14 @@ def verify(tools, path, signature):
 
 
 def build_feed(version, build, notes, assets, minimum):
-    """notes: (language, text) pairs; assets: (architecture, name, length, signature) tuples."""
+    """notes: (language, text) pairs; assets: see unpack(). A patch is a dict with name, length, signature,
+    from (the base build) and baseManifestSHA256."""
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = "Codex Pacer"
     prefix = f"https://github.com/{REPOSITORY}/releases/download/v{quote(version, safe='')}/"
-    for architecture, name, length, signature in assets:
+    for asset in assets:
+        architecture, name, length, signature, manifest, patch = unpack(asset)
         item = ET.SubElement(channel, "item")
         ET.SubElement(item, "title").text = version
         ET.SubElement(item, f"{{{NAMESPACE}}}version").text = f"{version}.{build}"
@@ -119,8 +142,18 @@ def build_feed(version, build, notes, assets, minimum):
         ET.SubElement(item, f"{{{NAMESPACE}}}minimumSystemVersion").text = minimum
         for language, text in notes:
             ET.SubElement(item, "description", {XML_LANGUAGE: language}).text = text
-        ET.SubElement(item, "enclosure", {"url": prefix + quote(name), "length": str(length), "type": "application/octet-stream",
-                                          f"{{{NAMESPACE}}}os": f"windows-{architecture}", f"{{{NAMESPACE}}}edSignature": signature})
+        full = {"url": prefix + quote(name), "length": str(length), "type": "application/octet-stream",
+                f"{{{NAMESPACE}}}os": f"windows-{architecture}", f"{{{NAMESPACE}}}edSignature": signature}
+        if manifest:
+            full[f"{{{PACER_NAMESPACE}}}manifestSHA256"] = manifest
+        ET.SubElement(item, "enclosure", full)
+        if patch:
+            # Nested, so 4.2.2 clients still see exactly one direct enclosure.
+            deltas = ET.SubElement(item, f"{{{NAMESPACE}}}deltas")
+            ET.SubElement(deltas, "enclosure", {"url": prefix + quote(patch["name"]), "length": str(patch["length"]), "type": "application/octet-stream",
+                                                f"{{{NAMESPACE}}}os": f"windows-{architecture}", f"{{{NAMESPACE}}}deltaFrom": patch["from"],
+                                                f"{{{NAMESPACE}}}edSignature": patch["signature"],
+                                                f"{{{PACER_NAMESPACE}}}baseManifestSHA256": patch["baseManifestSHA256"]})
     ET.indent(rss, space="    ")
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True) + b"\n"
 
@@ -141,12 +174,27 @@ def validate_feed(body, version, build, assets, minimum):
     items = ET.fromstring(body).findall("./channel/item")
     if len(items) != len(ARCHITECTURES):
         raise ValueError("The Windows feed must contain exactly one update per architecture.")
-    expected = {architecture: (name, length, signature) for architecture, name, length, signature in assets}
+    expected = {unpack(asset)[0]: unpack(asset)[1:] for asset in assets}
     prefix = f"https://github.com/{REPOSITORY}/releases/download/v{quote(version, safe='')}/"
     for item in items:
+        if len(item.findall("enclosure")) != 1:
+            raise ValueError("Each Windows feed item needs exactly one direct enclosure, as 4.2.2 clients require.")
         enclosure = item.find("enclosure")
         architecture = enclosure.get(f"{{{NAMESPACE}}}os", "").removeprefix("windows-")
-        name, length, signature = expected.pop(architecture)
+        name, length, signature, manifest, patch = expected.pop(architecture)
+        if enclosure.get(f"{{{PACER_NAMESPACE}}}manifestSHA256") != manifest:
+            raise ValueError("Windows feed manifest does not match this release.")
+        deltas = item.findall(f"{{{NAMESPACE}}}deltas")
+        if patch is None:
+            if deltas:
+                raise ValueError("The Windows feed lists a patch this release does not carry.")
+        else:
+            entries = deltas[0].findall("enclosure") if len(deltas) == 1 else []
+            if len(entries) != 1 or entries[0].attrib != {
+                    "url": prefix + quote(patch["name"]), "length": str(patch["length"]), "type": "application/octet-stream",
+                    f"{{{NAMESPACE}}}os": f"windows-{architecture}", f"{{{NAMESPACE}}}deltaFrom": patch["from"],
+                    f"{{{NAMESPACE}}}edSignature": patch["signature"], f"{{{PACER_NAMESPACE}}}baseManifestSHA256": patch["baseManifestSHA256"]}:
+                raise ValueError("Windows feed patch does not match its signed installer.")
         if (item.findtext(f"{{{NAMESPACE}}}version") != f"{version}.{build}" or item.findtext(f"{{{NAMESPACE}}}shortVersionString") != version
                 or item.findtext(f"{{{NAMESPACE}}}minimumSystemVersion") != minimum or item.find(f"{{{NAMESPACE}}}releaseNotesLink") is not None):
             raise ValueError("Windows feed metadata does not match this release.")
@@ -169,6 +217,63 @@ def download(commit, directory):
         subprocess.run(["gh", "run", "download", str(run), "--repo", REPOSITORY, "--name", f"windows-installer-{architecture}-unsigned",
                         "--dir", str(directory / architecture)], check=True)
     return run
+
+
+def checked(directory, architecture, name):
+    """An artifact file whose bytes match the checksum CI wrote beside it."""
+    path = directory / architecture / name
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if (directory / architecture / (name + ".sha256")).read_text(encoding="utf-8") != f"{digest}  {name}\n":
+        raise ValueError(f"The {architecture} {name} does not match its CI checksum.")
+    return path, data, digest
+
+
+def manifest(directory, version, build, commit, architecture):
+    name = f"CodexPacer-{version}-windows-{architecture}-manifest-{commit[:7]}.json"
+    if not (directory / architecture / name).exists():
+        raise ValueError(f"The {architecture} artifact has no manifest for {commit[:7]}.")
+    path, data, digest = checked(directory, architecture, name)
+    info = json.loads(data)
+    if (info.get("version"), str(info.get("build")), info.get("architecture"), info.get("sourceCommit")) != (version, build, architecture, commit):
+        raise ValueError(f"The {architecture} manifest describes another build.")
+    return path, digest
+
+
+def published_bases(tools):
+    """Build and manifest SHA-256 of each architecture in the latest public signed Windows feed."""
+    latest = latest_feed()
+    if latest is None:
+        return {}
+    signature, body = latest
+    with tempfile.TemporaryDirectory(prefix="pacer-windows-base-") as temporary:
+        unsigned = Path(temporary) / "appcast-windows.body"
+        unsigned.write_bytes(body)
+        verify(tools, unsigned, signature)
+    bases = {}
+    for item in ET.fromstring(body).findall("./channel/item"):
+        enclosure = item.find("enclosure")
+        digest = enclosure.get(f"{{{PACER_NAMESPACE}}}manifestSHA256") if enclosure is not None else None
+        if digest:
+            bases[enclosure.get(f"{{{NAMESPACE}}}os", "").removeprefix("windows-")] = (item.findtext(f"{{{NAMESPACE}}}version"), digest)
+    return bases
+
+
+def patch(directory, version, build, commit, architecture, manifest_digest, bases):
+    """CI's patch installer, kept only when its base is the latest published build."""
+    stem = f"CodexPacer-{version}-windows-{architecture}-patch-{commit[:7]}"
+    if not (directory / architecture / (stem + ".exe")).exists():
+        print(f"No {architecture} patch: CI had no published manifest to build one from.")
+        return None
+    path, data, digest = checked(directory, architecture, stem + ".exe")
+    info = json.loads((directory / architecture / (stem + ".json")).read_text(encoding="utf-8"))
+    if file_version(data) != f"{version}.{build}" or (info["sha256"], info["manifestSHA256"], info["architecture"], info["build"]) \
+            != (digest, manifest_digest, architecture, f"{version}.{build}"):
+        raise ValueError(f"The {architecture} patch does not belong to this build.")
+    if bases.get(architecture) != (info["baseBuild"], info["baseManifestSHA256"]):
+        print(f"Dropping the {architecture} patch: its base {info['baseBuild']} is not the latest published Windows build.")
+        return None
+    return path, digest, info
 
 
 def installer(directory, version, build, commit, architecture):
@@ -194,14 +299,28 @@ def prepare(tools, output, notes):
     with tempfile.TemporaryDirectory(prefix="pacer-windows-release-") as temporary:
         staging = Path(temporary)
         run = download(commit, staging)
-        assets, digests = [], {}
+        bases = published_bases(tools)
+        assets, digests, entries = [], {}, []
         for architecture in ARCHITECTURES:
             source, digest = installer(staging, version, build, commit, architecture)
             name = asset_name(version, architecture)
             target = output / name
             shutil.copy2(source, target)
-            assets.append((architecture, name, target.stat().st_size, sign(tools, target)))
+            signature = sign(tools, target)
             digests[name] = digest
+            manifest_source, manifest_digest = manifest(staging, version, build, commit, architecture)
+            shutil.copy2(manifest_source, output / manifest_name(version, architecture))
+            entry = {"architecture": architecture, "name": name, "sha256": digest, "signature": signature,
+                     "manifest": manifest_name(version, architecture), "manifestSHA256": manifest_digest, "patch": None}
+            found = patch(staging, version, build, commit, architecture, manifest_digest, bases)
+            if found:
+                patch_source, patch_digest, info = found
+                patch_target = output / patch_name(version, architecture, info["baseVersion"])
+                shutil.copy2(patch_source, patch_target)
+                entry["patch"] = {"name": patch_target.name, "length": patch_target.stat().st_size, "signature": sign(tools, patch_target),
+                                  "from": info["baseBuild"], "baseManifestSHA256": info["baseManifestSHA256"], "sha256": patch_digest}
+            entries.append(entry)
+            assets.append((architecture, name, target.stat().st_size, signature, manifest_digest, entry["patch"]))
         texts = [(language, notes[suffix].read_text(encoding="utf-8")) for language, suffix in LANGUAGES]
         body = build_feed(version, build, texts, assets, minimum)
         validate_feed(body, version, build, assets, minimum)
@@ -210,9 +329,7 @@ def prepare(tools, output, notes):
         feed_signature = sign(tools, unsigned)
     (output / FEED).write_bytes(SIGNATURE_PREFIX + feed_signature.encode("ascii") + b" -->\n" + body)
     metadata = {"version": version, "buildNumber": build, "commit": commit, "workflowRun": run, "publicEDKey": public_key,
-                "feed": FEED, "feedSHA256": hashlib.sha256((output / FEED).read_bytes()).hexdigest(),
-                "installers": [{"architecture": architecture, "name": name, "sha256": digests[name], "signature": signature}
-                               for architecture, name, _, signature in assets]}
+                "feed": FEED, "feedSHA256": hashlib.sha256((output / FEED).read_bytes()).hexdigest(), "installers": entries}
     (output / "windows-update.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(f"Verified Windows update feed: {output / FEED} (build {version}.{build}, run {run})")
 
@@ -231,7 +348,16 @@ def verify_release(tools, output, check_latest):
         if entry["name"] != asset_name(version, entry["architecture"]) or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
             raise ValueError("A Windows installer changed after signing.")
         verify(tools, path, entry["signature"])
-        assets.append((entry["architecture"], entry["name"], path.stat().st_size, entry["signature"]))
+        if entry["manifest"] != manifest_name(version, entry["architecture"]) or \
+                hashlib.sha256((output / entry["manifest"]).read_bytes()).hexdigest() != entry["manifestSHA256"]:
+            raise ValueError("A Windows manifest changed after signing.")
+        patch_entry = entry["patch"]
+        if patch_entry:
+            patch_path = output / patch_entry["name"]
+            if hashlib.sha256(patch_path.read_bytes()).hexdigest() != patch_entry["sha256"] or patch_path.stat().st_size != patch_entry["length"]:
+                raise ValueError("A Windows patch changed after signing.")
+            verify(tools, patch_path, patch_entry["signature"])
+        assets.append((entry["architecture"], entry["name"], path.stat().st_size, entry["signature"], entry["manifestSHA256"], patch_entry))
     signature, body = split_feed(signed)
     validate_feed(body, version, build, assets, minimum_windows())
     with tempfile.TemporaryDirectory(prefix="pacer-windows-feed-") as temporary:
@@ -243,16 +369,33 @@ def verify_release(tools, output, check_latest):
     print(f"Windows release signatures and build {version}.{build} verified.")
 
 
-def check_continuity(build=None):
-    """Once a release carries the Windows feed, later releases must carry a newer one."""
+def latest_feed():
+    """(signature, body) of the latest public release's Windows feed, or None when it has none."""
     latest = json.loads(subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/releases/latest"], text=True))
     if not any(asset["name"] == FEED for asset in latest["assets"]):
+        return None
+    with tempfile.TemporaryDirectory(prefix="pacer-windows-latest-") as temporary:
+        subprocess.run(["gh", "release", "download", latest["tag_name"], "--repo", REPOSITORY, "--pattern", FEED, "--dir", temporary], check=True)
+        return split_feed((Path(temporary) / FEED).read_bytes())
+
+
+def asset_names(output):
+    """Every Windows asset of a prepared release, for the shell scripts that checksum and upload them."""
+    metadata = json.loads((output / "windows-update.json").read_text())
+    names = []
+    for entry in metadata["installers"]:
+        names += [entry["name"], entry["manifest"]] + ([entry["patch"]["name"]] if entry["patch"] else [])
+    return names + [metadata["feed"]]
+
+
+def check_continuity(build=None):
+    """Once a release carries the Windows feed, later releases must carry a newer one."""
+    latest = latest_feed()
+    if latest is None:
         return
     if build is None:
         raise ValueError("The latest release ships Windows; enable scripts/release/windows-release.json for every later release.")
-    with tempfile.TemporaryDirectory(prefix="pacer-windows-latest-") as temporary:
-        subprocess.run(["gh", "release", "download", latest["tag_name"], "--repo", REPOSITORY, "--pattern", FEED, "--dir", temporary], check=True)
-        _, body = split_feed((Path(temporary) / FEED).read_bytes())
+    _, body = latest
     published = [tuple(map(int, item.findtext(f"{{{NAMESPACE}}}version", "").split("."))) for item in ET.fromstring(body).findall("./channel/item")]
     if not published or max(published) >= tuple(map(int, build.split("."))):
         raise ValueError("The Windows build must exceed every build in the latest public Windows feed.")
@@ -267,9 +410,15 @@ def main():
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--check-latest", action="store_true")
     parser.add_argument("--enabled", action="store_true", help="Exit 0 when Windows joins this release, 1 otherwise")
+    parser.add_argument("--assets", action="store_true", help="Print the prepared Windows asset names, one per line")
     args = parser.parse_args()
     if args.enabled:
         raise SystemExit(0 if enabled() else 1)
+    if args.assets:
+        if args.output is None:
+            parser.error("--output is required")
+        print("\n".join(asset_names(args.output.resolve())))
+        return
     if not enabled():
         check_continuity()
         return

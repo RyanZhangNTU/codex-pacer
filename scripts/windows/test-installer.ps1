@@ -14,6 +14,7 @@ $taskArpKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexPacer.Wi
 $taskRunKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $taskApprovalKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
 $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) ('Codex Pacer QA ' + $taskScope + '/Codex Pacer.lnk')
+$taskDesktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) ('Codex Pacer QA ' + $taskScope + '.lnk')
 $taskPreviousBundleCache = $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR
 $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = Join-Path $taskFixture 'bundle-cache'
 New-Item -ItemType Directory -Path $taskFixture -Force | Out-Null
@@ -135,19 +136,21 @@ $taskBeforeRun = Get-PacerOtherSnapshot $taskRunKey
 $taskBeforeApproval = Get-PacerOtherSnapshot $taskApprovalKey
 $taskElevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 try {
-    & (Join-Path $PSScriptRoot 'package-installer.ps1') -Archive $Archive -QaScope $taskScope
+    & (Join-Path $PSScriptRoot 'package-installer.ps1') -Archive $Archive -QaScope $taskScope -Compression 'lzma2/fast'
     $taskPackage = Get-Content -LiteralPath (Join-Path $taskRoot 'output/windows/installer-qa-location.json') -Raw | ConvertFrom-Json
     $taskSetup = $taskPackage.installer
-    $taskFlags = @('/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/RESTARTEXITCODE=3010',('/DIR=' + $taskApp))
+    # English keeps the uninstall log assertions independent of the runner's UI language.
+    $taskFlags = @('/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/RESTARTEXITCODE=3010','/LANG=english',('/DIR=' + $taskApp))
     $null = Invoke-PacerTestProcess $taskSetup $taskFlags
     $taskExe = Join-Path $taskApp 'CodexPacer.exe'
     $taskMaintenance = Join-Path $taskApp 'Maintenance/PacerMaintenance.exe'
-    Assert-Pacer ((Test-Path -LiteralPath $taskExe) -and (Test-Path -LiteralPath $taskMaintenance) -and (Test-Path -LiteralPath $taskShortcut)) 'The installed application, maintenance host or Start menu shortcut is missing.'
+    Assert-Pacer ((Test-Path -LiteralPath $taskExe) -and (Test-Path -LiteralPath $taskMaintenance) -and (Test-Path -LiteralPath $taskShortcut) -and
+        (Test-Path -LiteralPath $taskDesktopShortcut)) 'The installed application, maintenance host, or a default Start menu or desktop shortcut is missing.'
     Assert-Pacer ((Get-PacerRegistryValue $taskArpKey 'InstallLocation').TrimEnd('\') -eq $taskApp) 'The installer must register its current-user location.'
     $taskMachineKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($taskArpKey)
     try { Assert-Pacer ($null -eq $taskMachineKey) 'A per-user installer cannot register under LocalMachine.' }
     finally { if ($taskMachineKey) { $taskMachineKey.Dispose() } }
-    Record-Pacer 'current-user install, Chinese/space path, shortcut, self-contained maintenance and no machine registration'
+    Record-Pacer 'current-user install, Chinese/space path, default shortcuts, self-contained maintenance and no machine registration'
 
     New-Item -ItemType Directory -Path $taskData -Force | Out-Null
     $taskPreferences = Join-Path $taskData 'preferences-v1.json'
@@ -173,9 +176,14 @@ try {
     $taskAssembly = Join-Path $taskApp 'CodexPacer.dll'
     $taskAssemblyHash = (Get-FileHash -LiteralPath $taskAssembly).Hash
     [IO.File]::WriteAllText($taskAssembly, 'synthetic damaged assembly', [Text.UTF8Encoding]::new($false))
+    # A silent run over an installation keeps the shortcut choices as they are.
+    Remove-Item -LiteralPath $taskDesktopShortcut
     $null = Invoke-PacerTestProcess $taskSetup $taskFlags
     Assert-Pacer ((Get-FileHash -LiteralPath $taskAssembly).Hash -eq $taskAssemblyHash) 'Repair did not restore the damaged host assembly.'
-    Record-Pacer 'same-version repair with a damaged installed .NET main assembly'
+    Assert-Pacer ((Test-Path -LiteralPath $taskShortcut) -and !(Test-Path -LiteralPath $taskDesktopShortcut)) 'A silent repair must keep owned shortcuts and not restore a deleted one.'
+    $null = Invoke-PacerTestProcess $taskMaintenance @('shortcut',$taskScope,$taskApp,'desktop')
+    Assert-Pacer (Test-Path -LiteralPath $taskDesktopShortcut) 'The finish-page desktop shortcut entry did not create its shortcut.'
+    Record-Pacer 'same-version repair with a damaged installed .NET main assembly; silent repair keeps shortcut choices'
     $taskLock = [IO.FileStream]::new((Join-Path $taskApp 'Assets/Pacer.ico'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     try { $null = Invoke-PacerTestProcess $taskSetup $taskFlags @(7) }
     finally { $taskLock.Dispose() }
@@ -260,7 +268,7 @@ try {
     Assert-Pacer ($taskDemo.WaitForExit(10000)) 'Uninstall did not close its own demo.'
     $taskDemo.Dispose(); $taskDemo = $null
     $taskUninstalled = $true
-    Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskShortcut)) 'Uninstall left its owned application or shortcut.'
+    Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskShortcut) -and !(Test-Path -LiteralPath $taskDesktopShortcut)) 'Uninstall left its owned application or a shortcut.'
     Assert-Pacer ($null -eq (Get-PacerRegistryValue $taskRunKey $taskStartupName) -and $null -eq (Get-PacerRegistryValue $taskApprovalKey $taskStartupName)) 'Uninstall left its owned startup registration.'
     Assert-Pacer ($null -eq (Get-PacerRegistryValue $taskArpKey 'DisplayName') -and $null -eq (Get-PacerRegistryValue $taskInstallKey 'Path')) 'Uninstall left its owned application registrations.'
     $taskActual = [IO.File]::ReadAllText($taskClaudeSettings)
@@ -280,7 +288,7 @@ try {
         $taskStill = Get-Process -Id $ProtectedProcessId -ErrorAction SilentlyContinue
         Assert-Pacer ($taskStill -and $taskStill.StartTime -eq $taskProtectedStart) 'The protected preview process changed during the fixture.'
     }
-    Record-Pacer 'uninstall removes owned registrations, shortcut, startup and shared Claude wrappers; user settings and retained data survive'
+    Record-Pacer 'uninstall removes owned registrations, shortcuts, startup and shared Claude wrappers; user settings and retained data survive'
 
     # Simulate the interactive Continue choice through a QA-only installer
     # parameter. The production silent path cannot enable this test hook.
@@ -291,7 +299,7 @@ try {
     [IO.File]::WriteAllBytes($taskManifest, $taskValidManifest)
     $null = Invoke-PacerTestProcess $taskUninstaller ($taskSilent + '/PACERQAUNINSTALL=continue')
     $taskUninstalled = $true
-    Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskShortcut) -and
+    Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskShortcut) -and !(Test-Path -LiteralPath $taskDesktopShortcut) -and
         $null -eq (Get-PacerRegistryValue $taskRunKey $taskStartupName) -and
         $null -eq (Get-PacerRegistryValue $taskApprovalKey $taskStartupName) -and
         $null -eq (Get-PacerRegistryValue $taskArpKey 'DisplayName') -and
@@ -357,6 +365,8 @@ try {
         $null = Invoke-PacerTestProcess (Join-Path $taskApp 'unins000.exe') @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/PACERQAUNINSTALL=continue')
         $taskUninstalled = $true
     }
+    # The QA-scoped name cannot belong to anything else; never leave it behind.
+    if (Test-Path -LiteralPath $taskDesktopShortcut) { Remove-Item -LiteralPath $taskDesktopShortcut -Force }
     $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = $taskPreviousBundleCache
     if ($taskUninstalled) {
         $taskResolved = [IO.Path]::GetFullPath($taskFixture)

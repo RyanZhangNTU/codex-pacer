@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.2.3
+
+- Improve Windows updates. Updates now open in Pacer's own window, in the Settings style, with readable release notes and real download progress, replacing WinSparkle. The installer follows the Windows display language, offers a desktop shortcut, the Start menu and launch on its finish page, and removes files the new version no longer ships. Later updates download only the files that changed when the installation matches the previous release, and fall back to the full installer otherwise. Finished update downloads are deleted, and uninstall also removes the install folder.
+- Fix the Windows Settings display picker, which showed a type name instead of each display's name.
+
 ## 4.2.2
 
 - Add Codex Pacer for Windows, with the Mac's island, task list, quota rings, reminders and Settings for Codex, Claude Code and DeepSeek Harness, including SSH hosts, WSL and Codex Remote Control. It needs Windows 10 2004 (build 19041) or later on x64 or ARM64; Windows 11 22H2 and later get the glass surface. Each release carries x64 and ARM64 installers that install per user and update from **Settings → General**. They are not code signed yet, so SmartScreen asks once (**More info → Run anyway**).

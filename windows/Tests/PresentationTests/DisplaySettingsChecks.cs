@@ -39,6 +39,8 @@ internal static class DisplaySettingsChecks
             picker.SelectedIndex = 2;
             await Until(() => session.Current.DisplayID == left.DevicePath && picker.IsEnabled);
             Check(session.Current.DisplaySelection == "specified" && session.Current.DisplayX == -1920 && session.Current.DisplayName == left.Name, "Selection stores stable identity and fallback position");
+            Check(picker.SelectionBoxItem is string shown && shown == AutomationProperties.GetName((ComboBoxItem)picker.SelectedItem) && shown.StartsWith(left.Name, StringComparison.Ordinal),
+                "The closed picker shows the chosen display's name, not an element type");
             ((IToggleProvider)new CheckBoxAutomationPeer(fullscreen).GetPattern(PatternInterface.Toggle)).Toggle();
             await Until(() => session.Current.ShowInFullscreen && fullscreen.IsEnabled);
             reject = true; picker.SelectedIndex = 0;
