@@ -36,7 +36,7 @@ Diagnostics retain only the exception type and error code. Pacer never logs comp
 
 ## Patch updates
 
-From 4.2.3 each release publishes its file manifest (`build-info.json`) for each architecture. When the next release is built, CI makes a patch installer from the latest published manifest. It is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
+From 4.2.3 each release publishes its file manifest (`build-info.json`) for each architecture. When the next release is built, CI makes a patch installer from the latest published manifest. Until the version is bumped, the latest release is the build CI is making, so CI builds only the full installer. It is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
 
 The release Mac signs a patch and lists it only when its base is still the latest build in the signed public feed. It sits inside `<sparkle:deltas>` with `sparkle:deltaFrom` (the base build) and `pacer:baseManifestSHA256`. The full installer stays the item's only direct enclosure and gains `pacer:manifestSHA256`. Windows 4.2.2 and earlier read only that direct enclosure, so they keep installing in full; a test runs the 4.2.2 parser, frozen, on the new feed shape.
 
