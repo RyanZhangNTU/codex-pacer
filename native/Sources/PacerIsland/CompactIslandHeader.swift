@@ -187,10 +187,6 @@ struct CompactIslandComponent: View {
             model.fiveHourAlert(provider).map { (provider, $0) }
         }
     }
-    /// A late DeepSeek balance dims its ring and value instead of adding a mark.
-    private static func delayedQuotaProviders(_ model: IslandModel) -> [AgentProvider] {
-        model.warningItems(warnings: [.quotaDelay]).first { $0.kind == .quotaDelay }?.affectedProviders.compactMap(AgentProvider.init(rawValue:)) ?? []
-    }
     var body: some View {
         Button(action: action) {
             Group { if vertical { stripContent } else { content } }

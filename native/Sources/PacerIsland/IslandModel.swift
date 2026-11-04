@@ -184,7 +184,6 @@ final class IslandModel: ObservableObject {
             }
         }
     }
-    var refreshing: Bool { providerRefreshing(selectedProvider) }
     func isModuleEnabled(_ provider: AgentProvider) -> Bool { enabledProviders.contains(provider) }
     func providerDetected(_ provider: AgentProvider) -> Bool { installation.isInstalled(provider) }
     func providerRefreshing(_ provider: AgentProvider) -> Bool {
@@ -288,10 +287,6 @@ final class IslandModel: ObservableObject {
     func fiveHourAlert(_ provider: AgentProvider) -> FiveHourQuotaAlert? {
         CompactWarningPresentation.fiveHourAlert(provider: provider, snapshot: providerQuota(provider),
             failed: providerQuotaError(provider) != nil, now: now)
-    }
-    func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
-        CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider), failed: providerQuotaError(provider) != nil,
-            metric: .pace, selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     var claudeHome: URL {
         let configured = defaults.string(forKey: "claudeHome") ?? ""
@@ -757,7 +752,6 @@ final class IslandModel: ObservableObject {
         else { togglePin() }
     }
     var selectedWindow: QuotaWindow? { providerSelectedWindow(selectedProvider) }
-    var stale: Bool { (quota?.isStale(at: now) ?? false) || (selectedWindow?.resetsAt.map { $0 <= now } ?? false) }
     var compactMetricLabel: String {
         L10n.text((defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining).labelKey)
     }
@@ -785,7 +779,6 @@ final class IslandModel: ObservableObject {
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
     var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
-    var showsRate: Bool { !running.isEmpty }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.object(forKey: "monitorRemoteControl") == nil || defaults.bool(forKey: "monitorRemoteControl") }
     static let showsClaudeCloudProjectsKey = "showClaudeCloudProjects"
@@ -803,14 +796,6 @@ final class IslandModel: ObservableObject {
     /// plugin, for example). Terminal, editor and Desktop sessions always show.
     var showsEmbeddedClaudeSessions: Bool {
         defaults.object(forKey: Self.showsEmbeddedClaudeSessionsKey) == nil || defaults.bool(forKey: Self.showsEmbeddedClaudeSessionsKey)
-    }
-    var accent: Color {
-        if errorMessage != nil || stale { return Color(red: 0.65, green: 0.68, blue: 0.73) }
-        switch selectedProvider {
-        case .codex: return taskAccent
-        case .claude: return Color(red: 0.88, green: 0.59, blue: 0.40)
-        case .deepseek: return AgentProvider.deepseek.color
-        }
     }
     func projectName(_ activity: SessionActivity) -> String {
         ActivityTaskRowPresentation.title(activity, hideProjects: hideProjects)
@@ -1343,10 +1328,6 @@ final class IslandModel: ObservableObject {
     func refilterEmbeddedSessions() {
         combineActivities()
         for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
-    }
-    static func embeddedClaudeIDs(_ values: [SessionActivity]) -> Set<String> { embeddedActivityIDs(values) }
-    static func embeddedActivityIDs(_ values: [SessionActivity]) -> Set<String> {
-        EmbeddedSessionVisibility.embeddedActivityIDs(values)
     }
 
     private func localSubagentStates(_ values: [SessionActivity]) -> [String: SessionActivity.SubagentEvidence] {
