@@ -18,6 +18,8 @@ internal sealed class UpdateHttpsFixture : IAsyncDisposable
     internal byte[] Feed = [];
     internal byte[] Payload = [];
     internal bool Redirect;
+    /// Paces the package so manual QA can watch download progress; 0 sends it at once.
+    internal int BytesPerSecond;
     internal int Requests;
     internal string? FailureKind;
     internal Uri Root { get; }
@@ -44,7 +46,7 @@ internal sealed class UpdateHttpsFixture : IAsyncDisposable
         using (client)
         using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))
         {
-            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            timeout.CancelAfter(BytesPerSecond > 0 ? TimeSpan.FromMinutes(10) : TimeSpan.FromSeconds(5));
             try
             {
                 await using var tls = new SslStream(client.GetStream(), false);
@@ -62,7 +64,13 @@ internal sealed class UpdateHttpsFixture : IAsyncDisposable
                 string header = Redirect ? "HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:9/must-not-connect?private=value\r\n"
                     : "HTTP/1.1 200 OK\r\n";
                 await tls.WriteAsync(Encoding.ASCII.GetBytes(header + "Content-Length: " + body.Length + "\r\nConnection: close\r\n\r\n"), timeout.Token);
-                await tls.WriteAsync(body, timeout.Token);
+                if (BytesPerSecond <= 0 || path != "/setup.exe") await tls.WriteAsync(body, timeout.Token);
+                else
+                    for (int offset = 0; offset < body.Length; offset += 64 * 1024)
+                    {
+                        await tls.WriteAsync(body.AsMemory(offset, Math.Min(64 * 1024, body.Length - offset)), timeout.Token);
+                        await Task.Delay(TimeSpan.FromSeconds(64.0 * 1024 / BytesPerSecond), timeout.Token);
+                    }
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
             { FailureKind = error.GetType().Name + ":" + error.HResult.ToString("X8") + ":" + (error.GetBaseException() is System.ComponentModel.Win32Exception native ? native.NativeErrorCode.ToString("X8") : "unknown"); }

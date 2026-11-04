@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "c47150248084537a4cf6dae9519eb009650ed2ace3f27d2dfbb9cc0f5e2d96d4"
+    "windows/EngineSupport/Resources/Localization/en.json": "dd5990e956bea4fd7ba7fbfacbf60b669dcabe96d2166cf040bcf892860104d6"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -998,13 +998,33 @@
     "windows.storage.use_defaults": "Back Up and Use Defaults",
     "windows.support.share_message": "Codex Pacer keeps Codex, Claude Code and DeepSeek Harness activity in a desktop island on Windows.",
     "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link.",
-    "windows.updates.available": "An update is available. Use the update window to download and install it.",
-    "windows.updates.expired": "The update operation was idle for 30 minutes and its local connection closed. Download will start with a fresh check.",
+    "windows.updates.available": "An update is available. Use the update window to install it.",
+    "windows.updates.close": "Close",
+    "windows.updates.downloading": "Downloading the update\u2026",
+    "windows.updates.downloading_title": "Downloading update",
+    "windows.updates.error_detail": "Pacer couldn\u2019t check for or download the update. Check your connection and try again.",
+    "windows.updates.error_title": "The update couldn\u2019t finish",
     "windows.updates.failed": "The update could not finish. Try again; if it timed out, restart Pacer first.",
+    "windows.updates.install": "Install Update",
     "windows.updates.install_failed": "The update did not finish. Pacer has reopened; check for updates to try again.",
+    "windows.updates.install_relaunch": "Install and Relaunch",
+    "windows.updates.installing": "Installing the update\u2026",
+    "windows.updates.later": "Remind Me Later",
+    "windows.updates.new_version_detail": "Codex Pacer {0} is available. You have {1}.",
+    "windows.updates.new_version_title": "A new version of Codex Pacer is available",
+    "windows.updates.notes_empty": "This version has no release notes.",
     "windows.updates.notes_unavailable": "No signed release notes are available for this installed build.",
-    "windows.updates.pending": "Automatic updates are not available in the Windows preview yet.",
+    "windows.updates.ok": "OK",
+    "windows.updates.progress": "{0} of {1} ({2})",
+    "windows.updates.ready_detail": "Codex Pacer {0} is downloaded and verified. Pacer quits to install it and reopens when it finishes.",
+    "windows.updates.ready_title": "Ready to install",
+    "windows.updates.skip": "Skip This Version",
+    "windows.updates.try_again": "Try Again",
     "windows.updates.unconfigured": "The Windows update feed and trust key have not been configured.",
-    "windows.updates.view_notes": "View release notes"
+    "windows.updates.up_to_date_detail": "Codex Pacer {0} is the newest version available.",
+    "windows.updates.up_to_date_title": "You\u2019re up to date",
+    "windows.updates.verifying": "Verifying the update\u2026",
+    "windows.updates.view_notes": "View release notes",
+    "windows.updates.window_title": "Software Update"
   }
 }

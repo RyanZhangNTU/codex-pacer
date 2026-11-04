@@ -195,8 +195,7 @@ internal sealed partial class SettingsWindow
         }
         ComboBoxItem Add(string text, DisplayOption option)
         {
-            var label = Label(text); label.MaxWidth = 240; label.TextTrimming = TextTrimming.CharacterEllipsis;
-            var item = new ComboBoxItem { Content = label, Tag = option, ToolTip = text };
+            var item = new ComboBoxItem { Content = text, ContentTemplate = (DataTemplate)FindResource("SettingsChoiceText"), Tag = option, ToolTip = text };
             System.Windows.Automation.AutomationProperties.SetName(item, text); displayChoice.Items.Add(item); return item;
         }
     }

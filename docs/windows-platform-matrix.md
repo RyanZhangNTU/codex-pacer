@@ -16,7 +16,7 @@ ARM64 CI 采用 [GitHub 的原生 Windows ARM64 runner](https://docs.github.com/
 
 Claude 的嵌入式 Python 也按架构选择官方固定版本、散列和签名文件清单；运行库缓存以版本和散列隔离。ARM64 pin 来自 [Python 官方 ARM64 归档](https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-arm64.zip)，没有执行归档中的程序。Swift 安装辅助程序编译时选择对应 pin，x64 的既有 pin 和断言不变。
 
-WinSparkle 的 DLL、固定版本和验证由 B 通道负责。本构建链把 `PacerArchitecture` 传给 MSBuild；B 的 `setup-winsparkle.ps1 -Architecture <x64|arm64>` 接入后沿用该值。C 不复制 DLL、不改更新信任密钥或 feed。打包前的 PE 校验会检查所有 EXE/DLL，包括 WinSparkle：接受目标架构及中立托管程序集，拒绝混入其他架构的原生库。产品主程序、Swift 程序、Composition、维护程序和 Python 必须是目标原生架构。
+更新由应用内的托管代码完成，从 4.2.3 起不再随包附带 WinSparkle DLL。本构建链把 `PacerArchitecture` 传给 MSBuild，不改更新信任密钥或 feed。打包前的 PE 校验会检查所有 EXE/DLL：接受目标架构及中立托管程序集，拒绝混入其他架构的原生库。产品主程序、Swift 程序、Composition、维护程序和 Python 必须是目标原生架构。
 
 Inno 使用相同 payload 的架构和最低系统元数据，ARM64 采用 `arm64`，x64 保留 `x64compatible`。这与 [Inno 的架构规则](https://jrsoftware.org/ishelp/topic_setup_architecturesallowed.htm) 一致。安装器引导器本身由现有 Inno 编译器生成，其内部应用 payload 为目标架构；不把引导器的 PE 类型当成应用的架构。
 
@@ -40,4 +40,4 @@ ARM64 CI 只执行工具链准备、Release 构建、包散列/PE 检查和安�
 
 打包现在只在临时 ARM64 目录里移除未被引用的 x64 `vcruntime140_1.dll`，同步 Python 的逐文件清单后再生成包散列。原始归档、签名和缓存保持原样。引用扫描覆盖 EXE、DLL、PYD 的 ASCII 与 UTF-16 名称，发现引用就中止；清单的文件散列或大小不匹配时也不修改目录。其他错误架构文件仍会使原 PE 检查失败，x64 打包路径不变。这个筛选只证明包内容一致，ARM64 设备上的运行验收仍待完成。
 
-与 B 集成时核对 WinSparkle 的架构内容和包许可证；与 A 集成时统一合并 CI、入口、资源摘要及 lock 文件。此文档不代替正式发布步骤，正式发布仍遵循 [发布流程](releasing.md)。
+合并时统一核对 CI、入口、资源摘要及 lock 文件。此文档不代替正式发布步骤，正式发布仍遵循 [发布流程](releasing.md)。

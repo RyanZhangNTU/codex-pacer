@@ -4,7 +4,7 @@ The per-user installer, startup state, maintenance helpers and lifecycle checks 
 
 Preference keys, edit acknowledgements, migration and protected history storage are described in [Windows preferences and quota history](windows-preferences.md).
 
-The WinSparkle host, scoped local proxy, update verification and installation handoff are described in [Windows automatic updates](windows-automatic-updates.md).
+The update window, verified download and installation handoff are described in [Windows automatic updates](windows-automatic-updates.md).
 
 Claude and DeepSeek sign in through separate Pacer-owned WebView2 profiles. Before showing the site, the host records the existing session's one-way fingerprint. A changed fingerprint shows confirmation and closes the window after 1.5 seconds. Continue, Ctrl+Enter, Later and the close button also finish while a session is present; an unchanged session retains its history and selected workspace. Browser-process failure cannot complete sign-in. The host checks navigation and a one-second timer only while the window is open; closing stops the observer.
 

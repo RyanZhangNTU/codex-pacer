@@ -1,14 +1,12 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Automation;
+using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Threading;
 
 namespace CodexPacer.Windows;
 
@@ -18,11 +16,23 @@ public partial class App
     private WindowsUpdateState? updateState;
     private WindowsUpdateChannel? updateChannel;
     private WindowsInstallationIdentity? updateIdentity;
+    private UpdateWindow? updateWindow;
     private Window? updateNotes;
-    private async Task CreateWindowsUpdaterAsync(string[] arguments, Guid? qa, bool reference)
+    private string updateVersion = "";
+    private sealed class UpdatePresenter(App app) : IWindowsUpdatePresenter
     {
-        Action<Action> post = action => Dispatcher.BeginInvoke(action);
-        updates = new WindowsUpdateService(post);
+        public void Checking() => app.PresentUpdate(true, window => window.Checking());
+        public void Offer(WindowsUpdatePackage package, bool manual) => app.PresentUpdate(manual, window => window.Offer(package, manual));
+        public void UpToDate() => app.PresentUpdate(true, window => window.UpToDate());
+        public void Failed(bool manual) { if (manual) app.PresentUpdate(true, window => window.Failed(true)); }
+    }
+    private Task CreateWindowsUpdaterAsync(string[] arguments, Guid? qa, bool reference)
+    {
+        updates = new WindowsUpdateService(action => Dispatcher.BeginInvoke(action));
+        return CreateWindowsUpdaterCoreAsync(arguments, qa, reference);
+    }
+    private async Task CreateWindowsUpdaterCoreAsync(string[] arguments, Guid? qa, bool reference)
+    {
         try
         {
             var identity = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory);
@@ -38,31 +48,15 @@ public partial class App
             }
             else channel = demo ? null : WindowsUpdateChannel.Production;
             updateIdentity = identity;
-            updateState = new WindowsUpdateState(Path.Combine(identity.DataRoot, "Updates", "state-v1.json"));
+            updateState = new WindowsUpdateState(Path.Combine(UpdateSessions.Root(identity.DataRoot), "state-v1.json"));
             if (channel == null) return;
             channel.Validate();
             string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "arm64" : "x64";
             var build = channel.TestCurrentBuild ?? WindowsUpdateVersion.Read(typeof(App).Assembly);
-            var state = updateState;
-            var creation = Task.Run(() =>
-            {
-                var backend = new WinSparkleNative(AppContext.BaseDirectory, state);
-                try { return (backend, proxy: new UpdateFeedProxy(channel, arch, build, Environment.OSVersion.Version, ui!.Language)); }
-                catch { backend.Dispose(); throw; }
-            });
-            (WinSparkleNative backend, UpdateFeedProxy proxy) created;
-            try { created = await creation.WaitAsync(TimeSpan.FromSeconds(3)); }
-            catch
-            {
-                _ = creation.ContinueWith(async value =>
-                {
-                    if (value.IsCompletedSuccessfully) { value.Result.backend.Dispose(); await value.Result.proxy.DisposeAsync(); }
-                    _ = value.Exception;
-                }, TaskScheduler.Default).Unwrap();
-                throw;
-            }
-            updates = new WindowsUpdateService(post, created.backend, created.proxy, state: state);
-            updates.Changed += value => island?.SetUpdateInputSuspended(value.Busy);
+            updateVersion = WindowsUpdateVersion.Read(typeof(App).Assembly).ToString(3);
+            var client = new UpdateFeedClient(channel, arch, build, Environment.OSVersion.Version, ui!.Language);
+            updates = new WindowsUpdateService(action => Dispatcher.BeginInvoke(action), client, updateState) { Presenter = new UpdatePresenter(this) };
+            updates.Changed += value => island?.SetUpdateInputSuspended(value.Busy || updateNotes != null);
             updateChannel = channel;
         }
         catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { /* Fixed placeholder; never expose a feed path or key. */ }
@@ -72,20 +66,49 @@ public partial class App
         if (quitting || updates == null || ui == null) return;
         if (arguments.Contains("--update-failed")) island?.SetStatus(ui.Text("windows.updates.install_failed"));
         if (updateChannel != null && updateIdentity != null)
-        {
-            var build = updateChannel.TestCurrentBuild ?? WindowsUpdateVersion.Read(typeof(App).Assembly);
-            await updates.InitializeAsync(updateChannel, build.ToString(3), build.ToString(), ui.Language,
-                preferences.AutomaticUpdates, updateIdentity, Quit);
-        }
+            await updates.InitializeAsync(updateChannel, updateIdentity, ui.Language, preferences.AutomaticUpdates, Quit);
         int resultIndex = Array.IndexOf(arguments, "--update-result");
-        if (resultIndex < 0 || resultIndex + 1 >= arguments.Length || updateIdentity == null || updateState == null) return;
         try
         {
+            if (resultIndex < 0 || resultIndex + 1 >= arguments.Length || updateIdentity == null || updateState == null) return;
             var result = await Task.Run(() => UpdateHandoff.ConsumeResult(updateIdentity, arguments[resultIndex + 1], updateState, WindowsUpdateVersion.Read(typeof(App).Assembly))).WaitAsync(TimeSpan.FromSeconds(3));
             if (result == null || quitting) return;
             if (StartupPresentation.Resolve(null, result).Failure is { } failure) island?.SetStatus(ui.Text(failure));
         }
         catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { island?.SetStatus(ui.Text("windows.updates.install_failed")); }
+        finally { if (updateIdentity != null) _ = CleanUpdateSessionsAsync(updateIdentity.DataRoot); }
+    }
+    // The helper that relaunched this app may still be exiting, so its
+    // session can stay locked briefly; anything left goes at the next start.
+    private static async Task CleanUpdateSessionsAsync(string dataRoot)
+    {
+        for (int attempt = 0; attempt < 30; attempt++)
+        {
+            try { if (await Task.Run(() => UpdateSessions.Clean(dataRoot)) == 0) return; }
+            catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { return; }
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+    }
+    /// The single update window: automatic offers appear without taking focus.
+    private void PresentUpdate(bool activate, Action<UpdateWindow> apply)
+    {
+        if (quitting || ui == null || updates == null) return;
+        bool created = updateWindow == null;
+        if (updateWindow == null)
+        {
+            var window = new UpdateWindow(ui, updates, updateVersion, demoDark, island?.AppearanceSource) { ShowActivated = activate };
+            window.Closed += (_, _) => { if (ReferenceEquals(updateWindow, window)) updateWindow = null; island?.SetUpdateInputSuspended(updates.Status.Busy || updateNotes != null); };
+            updateWindow = window;
+        }
+        apply(updateWindow);
+        if (created) updateWindow.Show();
+        if (activate) updateWindow.Activate();
+    }
+    /// Brings the update window forward instead of opening something behind it.
+    private bool FocusUpdateWindow()
+    {
+        if (updateWindow == null) return false;
+        updateWindow.Activate(); return true;
     }
     private void ShowSignedUpdateNotes(string notes)
     {
@@ -94,10 +117,13 @@ public partial class App
         var window = new Window { Title = ui.Text("whats_new.window_title"), Width = 580, Height = 460,
             WindowStartupLocation = WindowStartupLocation.CenterScreen, FontFamily = PacerFonts.Interface };
         WindowRendering.Prepare(window); updateNotes = window;
-        var text = new TextBox { Text = notes, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new Thickness(0), Margin = new Thickness(20),
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        AutomationProperties.SetName(text, ui.Text("windows.updates.view_notes"));
-        window.Content = text; island?.SetUpdateInputSuspended(true);
+        window.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) });
+        var appearance = island?.AppearanceSource?.Current;
+        SettingsPalette.Apply(window.Resources, demoDark ?? appearance?.Dark ?? false, true, appearance);
+        window.SetResourceReference(Control.BackgroundProperty, "SettingsBackground");
+        var viewer = UpdateWindow.NotesView(ui, notes); viewer.Margin = new Thickness(16); viewer.MaxHeight = double.PositiveInfinity;
+        AutomationProperties.SetName(viewer, ui.Text("windows.updates.view_notes"));
+        window.Content = viewer; island?.SetUpdateInputSuspended(true);
         window.PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape) { window.Close(); args.Handled = true; } };
         window.Closed += (_, _) => { updateNotes = null; island?.SetUpdateInputSuspended(updates.Status.Busy); };
         window.Show(); window.Activate();

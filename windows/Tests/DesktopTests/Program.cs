@@ -13,8 +13,11 @@ internal static class Program
         { QuotaScheduleChecks.Run(); Console.WriteLine("PASS quota hold, early/late wake, completed slot and clock-boundary scheduling"); return 0; }
         if (args is ["--serve-update-feed", var updateDirectory, var updateScope, var updateInstaller, var updateArchitecture])
         { await WindowsUpdateChecks.Serve(updateDirectory, updateScope, updateInstaller, updateArchitecture); return 0; }
-        if (args is ["--updates-only"] or ["--updates-only", _])
-        { await WindowsUpdateChecks.Run(args.Length == 2 ? args[1] : null); return 0; }
+        if (args is ["--serve-update-feed", var pacedDirectory, var pacedScope, var pacedInstaller, var pacedArchitecture, var pace]
+            && int.TryParse(pace, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int bytesPerSecond) && bytesPerSecond > 0)
+        { await WindowsUpdateChecks.Serve(pacedDirectory, pacedScope, pacedInstaller, pacedArchitecture, bytesPerSecond); return 0; }
+        if (args is ["--updates-only"])
+        { await WindowsUpdateChecks.Run(); return 0; }
         if (args is ["--update-installer-only", var installerScope, var installerBuild, var installerPath])
         { WindowsUpdateChecks.CheckInstallerFile(installerPath, installerScope, installerBuild); return 0; }
         if (args is ["--remote-source-unit-only"])

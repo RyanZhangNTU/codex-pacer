@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "db0aa64e2883cadbdc5b0621fef2d58967a972ea9e67c868530eac90a838be59"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "e6dba165e14cafb445a502fce891918138f218851aa25bf504a6a4f309b33d6e"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -998,13 +998,33 @@
     "windows.storage.use_defaults": "\u5907\u4efd\u5e76\u4f7f\u7528\u9ed8\u8ba4\u8bbe\u7f6e",
     "windows.support.share_message": "Codex Pacer \u5728 Windows \u684c\u9762\u5c9b\u4e2d\u663e\u793a Codex\u3001Claude Code \u548c DeepSeek Harness \u7684\u52a8\u6001\u3002",
     "windows.support.share_unavailable": "Windows \u5206\u4eab\u5f53\u524d\u4e0d\u53ef\u7528\u3002\u4f60\u53ef\u4ee5\u590d\u5236\u9879\u76ee\u94fe\u63a5\u540e\u5206\u4eab\u3002",
-    "windows.updates.available": "\u6709\u53ef\u7528\u66f4\u65b0\uff0c\u8bf7\u5728\u66f4\u65b0\u7a97\u53e3\u4e2d\u786e\u8ba4\u4e0b\u8f7d\u548c\u5b89\u88c5\u3002",
-    "windows.updates.expired": "\u66f4\u65b0\u64cd\u4f5c\u5df2\u7a7a\u95f2 30 \u5206\u949f\uff0c\u672c\u5730\u8fde\u63a5\u5df2\u5173\u95ed\u3002\u518d\u6b21\u4e0b\u8f7d\u65f6\u4f1a\u5148\u91cd\u65b0\u68c0\u67e5\u66f4\u65b0\u3002",
+    "windows.updates.available": "\u6709\u53ef\u7528\u7684\u66f4\u65b0\uff0c\u8bf7\u5728\u66f4\u65b0\u7a97\u53e3\u4e2d\u5b89\u88c5\u3002",
+    "windows.updates.close": "\u5173\u95ed",
+    "windows.updates.downloading": "\u6b63\u5728\u4e0b\u8f7d\u66f4\u65b0\u2026",
+    "windows.updates.downloading_title": "\u6b63\u5728\u4e0b\u8f7d\u66f4\u65b0",
+    "windows.updates.error_detail": "Pacer \u65e0\u6cd5\u68c0\u67e5\u6216\u4e0b\u8f7d\u66f4\u65b0\u3002\u8bf7\u68c0\u67e5\u7f51\u7edc\u8fde\u63a5\u540e\u91cd\u8bd5\u3002",
+    "windows.updates.error_title": "\u66f4\u65b0\u672a\u80fd\u5b8c\u6210",
     "windows.updates.failed": "\u66f4\u65b0\u672a\u80fd\u5b8c\u6210\uff0c\u8bf7\u91cd\u8bd5\uff1b\u5982\u679c\u8bf7\u6c42\u8d85\u65f6\uff0c\u8bf7\u5148\u91cd\u542f Pacer\u3002",
+    "windows.updates.install": "\u5b89\u88c5\u66f4\u65b0",
     "windows.updates.install_failed": "\u66f4\u65b0\u672a\u80fd\u5b8c\u6210\uff0cPacer \u5df2\u91cd\u65b0\u6253\u5f00\u3002\u8bf7\u68c0\u67e5\u66f4\u65b0\u540e\u91cd\u8bd5\u3002",
+    "windows.updates.install_relaunch": "\u5b89\u88c5\u5e76\u91cd\u65b0\u6253\u5f00",
+    "windows.updates.installing": "\u6b63\u5728\u5b89\u88c5\u66f4\u65b0\u2026",
+    "windows.updates.later": "\u7a0d\u540e\u63d0\u9192",
+    "windows.updates.new_version_detail": "Codex Pacer {0} \u5df2\u63a8\u51fa\uff0c\u4f60\u5f53\u524d\u4f7f\u7528\u7684\u662f {1}\u3002",
+    "windows.updates.new_version_title": "Codex Pacer \u6709\u65b0\u7248\u672c",
+    "windows.updates.notes_empty": "\u8fd9\u4e2a\u7248\u672c\u6ca1\u6709\u66f4\u65b0\u8bf4\u660e\u3002",
     "windows.updates.notes_unavailable": "\u5f53\u524d\u5b89\u88c5\u7248\u672c\u6682\u65e0\u53ef\u9a8c\u8bc1\u7b7e\u540d\u7684\u53d1\u884c\u8bf4\u660e\u3002",
-    "windows.updates.pending": "Windows \u9884\u89c8\u7248\u6682\u4e0d\u652f\u6301\u81ea\u52a8\u66f4\u65b0\u3002",
+    "windows.updates.ok": "\u597d",
+    "windows.updates.progress": "\u5df2\u4e0b\u8f7d {0}\uff0c\u5171 {1}\uff08{2}\uff09",
+    "windows.updates.ready_detail": "Codex Pacer {0} \u5df2\u4e0b\u8f7d\u5e76\u901a\u8fc7\u6821\u9a8c\u3002\u5b89\u88c5\u65f6 Pacer \u4f1a\u9000\u51fa\uff0c\u5b8c\u6210\u540e\u81ea\u52a8\u91cd\u65b0\u6253\u5f00\u3002",
+    "windows.updates.ready_title": "\u53ef\u4ee5\u5b89\u88c5\u4e86",
+    "windows.updates.skip": "\u8df3\u8fc7\u6b64\u7248\u672c",
+    "windows.updates.try_again": "\u91cd\u8bd5",
     "windows.updates.unconfigured": "Windows \u66f4\u65b0\u6e90\u548c\u4fe1\u4efb\u5bc6\u94a5\u5c1a\u672a\u914d\u7f6e\u3002",
-    "windows.updates.view_notes": "\u67e5\u770b\u53d1\u884c\u8bf4\u660e"
+    "windows.updates.up_to_date_detail": "Codex Pacer {0} \u662f\u76ee\u524d\u7684\u6700\u65b0\u7248\u672c\u3002",
+    "windows.updates.up_to_date_title": "\u5df2\u662f\u6700\u65b0\u7248\u672c",
+    "windows.updates.verifying": "\u6b63\u5728\u6821\u9a8c\u66f4\u65b0\u2026",
+    "windows.updates.view_notes": "\u67e5\u770b\u53d1\u884c\u8bf4\u660e",
+    "windows.updates.window_title": "\u8f6f\u4ef6\u66f4\u65b0"
   }
 }

@@ -12,6 +12,7 @@ namespace CodexPacer.Windows;
 
 [Flags]
 internal enum UninstallFailure { None = 0, ClaudeConfiguration = 1, Registrations = 2 }
+internal enum InstallShortcut { StartMenu, Desktop }
 
 internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity identity,
     IUserRegistrationStore? registrations = null, IInstallationShortcut? shortcuts = null)
@@ -19,7 +20,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
     private readonly IUserRegistrationStore store = registrations ?? new UserRegistrationStore();
     private readonly IInstallationShortcut links = shortcuts ?? new WindowsInstallShortcuts();
     private WindowsStartupRegistration Startup() => new(identity.Executable, name: identity.StartupName, store: store);
-    private static readonly string[] OwnValues = ["SchemaVersion", "Path", "ShortcutPath", "ShortcutHash"];
+    private static readonly string[] OwnValues = ["SchemaVersion", "Path", "ShortcutPath", "ShortcutHash", "DesktopShortcutPath", "DesktopShortcutHash"];
     private string? Text(string name) => store.Read(identity.RegistryKey, name) is { Kind: RegistryValueKind.String, Value: string text } ? text : null;
     private bool OwnMarker => store.Read(identity.RegistryKey, "SchemaVersion") is { Kind: RegistryValueKind.DWord, Value: 1 };
     private static bool SamePath(string? a, string? b) => a != null && b != null && string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
@@ -55,45 +56,138 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
                 using var available = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
             }
         }
+        WriteStale(manifest.RootElement, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(payloadIndex))!, StaleList));
     }
+    internal const string StaleList = "pacer-stale.json";
+    private static Dictionary<string, string> ManifestFiles(JsonElement manifest)
+    {
+        var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in manifest.GetProperty("files").EnumerateArray())
+            if (item.GetProperty("path").GetString() is { Length: > 0 } relative && item.GetProperty("sha256").GetString() is { Length: 64 } digest)
+                files[relative.Replace('\\', '/')] = digest.ToLowerInvariant();
+        return files;
+    }
+    // Files the installed version listed and the new payload no longer has.
+    // Setup only adds and replaces files, so they would otherwise remain.
+    private void WriteStale(JsonElement payload, string list)
+    {
+        File.Delete(list);
+        string installed = Path.Combine(identity.Root, "build-info.json");
+        if (!File.Exists(installed)) return;
+        Dictionary<string, string> before;
+        try
+        {
+            using var current = JsonDocument.Parse(WindowsInstallationIdentity.ReadBounded(installed, 2 * 1024 * 1024));
+            before = ManifestFiles(current.RootElement);
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException or IOException) { return; }
+        var after = ManifestFiles(payload);
+        var stale = before.Where(pair => !after.ContainsKey(pair.Key)).Select(pair => new StaleFile(pair.Key, pair.Value)).ToArray();
+        File.WriteAllBytes(list, JsonSerializer.SerializeToUtf8Bytes(stale));
+    }
+    private sealed record StaleFile(string Path, string SHA256);
+    // Removes only listed regular files that still hold the old content, then
+    // the folders that leaves empty. Anything changed or unknown is kept.
+    internal int RemoveStale(string list)
+    {
+        if (!File.Exists(list)) return 0;
+        var files = JsonSerializer.Deserialize<StaleFile[]>(WindowsInstallationIdentity.ReadBounded(list, 2 * 1024 * 1024)) ?? [];
+        string root = Path.GetFullPath(identity.Root);
+        int removed = 0;
+        foreach (var file in files)
+        {
+            string path = Path.GetFullPath(Path.Combine(root, file.Path.Replace('/', Path.DirectorySeparatorChar)));
+            if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
+            try
+            {
+                WindowsInstallationIdentity.RequireNoReparse(path);
+                string digest;
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    digest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+                if (digest != file.SHA256) continue;
+                File.Delete(path); removed++;
+                for (string? folder = Path.GetDirectoryName(path); folder != null && folder.Length > root.Length
+                    && !Directory.EnumerateFileSystemEntries(folder).Any(); folder = Path.GetDirectoryName(folder))
+                    Directory.Delete(folder, false);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException) { }
+        }
+        return removed;
+    }
+    private (string File, string PathValue, string HashValue) Link(InstallShortcut kind) => kind == InstallShortcut.Desktop
+        ? (identity.DesktopShortcut, "DesktopShortcutPath", "DesktopShortcutHash") : (identity.Shortcut, "ShortcutPath", "ShortcutHash");
+    private bool Owns(InstallShortcut kind, string? previous)
+    {
+        var (file, pathValue, hashValue) = Link(kind);
+        string? hash = Text(hashValue);
+        return OwnMarker && SamePath(Text(pathValue), file) && hash != null && WindowsInstallShortcuts.Digest(file) == hash &&
+            (SamePath(links.Target(file), identity.Executable) || previous != null && SamePath(links.Target(file), Path.Combine(previous, "CodexPacer.exe")));
+    }
+    // Registration refreshes only the shortcuts this installation already
+    // owns. New ones come from the person's choice on the setup finish page
+    // (AddShortcut), so a silent update never adds one they did not ask for.
     internal void Register()
     {
         _ = WindowsInstallationIdentity.Load(identity.Root, identity.QaScope, requireContext: true);
         string? previous = OwnMarker ? Text("Path") : null;
         var before = OwnValues.ToDictionary(name => name, name => store.Read(identity.RegistryKey, name));
-        string? oldShortcut = Text("ShortcutPath"), oldHash = Text("ShortcutHash");
-        bool shortcutOwned = OwnMarker && SamePath(oldShortcut, identity.Shortcut) &&
-            oldHash != null && WindowsInstallShortcuts.Digest(identity.Shortcut) == oldHash &&
-            (SamePath(links.Target(identity.Shortcut), identity.Executable) ||
-             previous != null && SamePath(links.Target(identity.Shortcut), Path.Combine(previous, "CodexPacer.exe")));
-        byte[]? priorShortcut = shortcutOwned ? WindowsInstallationIdentity.ReadBounded(identity.Shortcut, 256 * 1024) : null;
-        bool writeShortcut = !File.Exists(identity.Shortcut) || shortcutOwned;
+        var owned = Enum.GetValues<InstallShortcut>().Where(kind => Owns(kind, previous))
+            .ToDictionary(kind => kind, kind => WindowsInstallationIdentity.ReadBounded(Link(kind).File, 256 * 1024));
         try
         {
             var startup = Startup();
             if (previous != null && !startup.MigrateFrom(Path.Combine(previous, "CodexPacer.exe")))
                 throw new IOException("The startup entry could not be migrated.");
-            if (writeShortcut) links.Create(identity.Shortcut, identity.Executable);
+            foreach (var kind in owned.Keys) links.Create(Link(kind).File, identity.Executable);
             store.Write(identity.RegistryKey, "SchemaVersion", new(1, RegistryValueKind.DWord));
             store.Write(identity.RegistryKey, "Path", new(identity.Root, RegistryValueKind.String));
-            if (writeShortcut)
+            foreach (var kind in Enum.GetValues<InstallShortcut>())
             {
-                store.Write(identity.RegistryKey, "ShortcutPath", new(identity.Shortcut, RegistryValueKind.String));
-                store.Write(identity.RegistryKey, "ShortcutHash", new(WindowsInstallShortcuts.Digest(identity.Shortcut)!, RegistryValueKind.String));
+                var (file, pathValue, hashValue) = Link(kind);
+                if (owned.ContainsKey(kind)) Claim(file, pathValue, hashValue);
+                else { store.Delete(identity.RegistryKey, pathValue); store.Delete(identity.RegistryKey, hashValue); }
             }
-            else { store.Delete(identity.RegistryKey, "ShortcutPath"); store.Delete(identity.RegistryKey, "ShortcutHash"); }
         }
         catch
         {
-            foreach (var pair in before)
-            { if (pair.Value == null) store.Delete(identity.RegistryKey, pair.Key); else store.Write(identity.RegistryKey, pair.Key, pair.Value); }
-            if (writeShortcut)
-            {
-                if (priorShortcut == null) { if (File.Exists(identity.Shortcut)) File.Delete(identity.Shortcut); }
-                else File.WriteAllBytes(identity.Shortcut, priorShortcut);
-            }
+            Restore(before);
+            foreach (var pair in owned) File.WriteAllBytes(Link(pair.Key).File, pair.Value);
             throw;
         }
+    }
+    // Creates a requested shortcut for this registered installation. A file
+    // already there that this installation does not own is left alone.
+    internal void AddShortcut(InstallShortcut kind)
+    {
+        _ = WindowsInstallationIdentity.Load(identity.Root, identity.QaScope, requireContext: true);
+        if (!OwnMarker || !SamePath(Text("Path"), identity.Root)) throw new InvalidDataException("Register this installation first.");
+        var (file, pathValue, hashValue) = Link(kind);
+        bool owned = Owns(kind, null);
+        if (File.Exists(file) && !owned) return;
+        byte[]? prior = owned ? WindowsInstallationIdentity.ReadBounded(file, 256 * 1024) : null;
+        var before = OwnValues.ToDictionary(name => name, name => store.Read(identity.RegistryKey, name));
+        try
+        {
+            links.Create(file, identity.Executable);
+            Claim(file, pathValue, hashValue);
+        }
+        catch
+        {
+            Restore(before);
+            if (prior != null) File.WriteAllBytes(file, prior);
+            else if (File.Exists(file)) File.Delete(file);
+            throw;
+        }
+    }
+    private void Claim(string file, string pathValue, string hashValue)
+    {
+        store.Write(identity.RegistryKey, pathValue, new(file, RegistryValueKind.String));
+        store.Write(identity.RegistryKey, hashValue, new(WindowsInstallShortcuts.Digest(file)!, RegistryValueKind.String));
+    }
+    private void Restore(Dictionary<string, RegistrationValue?> before)
+    {
+        foreach (var pair in before)
+        { if (pair.Value == null) store.Delete(identity.RegistryKey, pair.Key); else store.Write(identity.RegistryKey, pair.Key, pair.Value); }
     }
     internal async Task<UninstallFailure> UninstallAsync(CancellationToken cancellation, bool continueAfterFailure = false)
     {
@@ -128,6 +222,10 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
         try { RemoveOwnedRegistrations(); }
         catch { failures |= UninstallFailure.Registrations; }
+        // Downloaded installers are not preferences: remove them with the app.
+        // A locked or unknown session is left; it never changes the result.
+        try { UpdateSessions.Clean(identity.DataRoot); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         return failures;
     }
     internal void RemoveOwnedRegistrations()
@@ -135,13 +233,12 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         if (OwnValues.All(name => store.Read(identity.RegistryKey, name) == null)) return;
         if (!OwnMarker || !SamePath(Text("Path"), identity.Root)) throw new InvalidDataException("This installation does not own its registration.");
         if (!Startup().RemoveOwned()) throw new IOException("The startup entry could not be removed.");
-        string? shortcut = Text("ShortcutPath"), hash = Text("ShortcutHash");
-        if (SamePath(shortcut, identity.Shortcut) && hash != null && WindowsInstallShortcuts.Digest(identity.Shortcut) == hash
-            && SamePath(links.Target(identity.Shortcut), identity.Executable))
+        foreach (var kind in Enum.GetValues<InstallShortcut>())
         {
-            File.Delete(identity.Shortcut);
+            if (!Owns(kind, null)) continue;
+            File.Delete(Link(kind).File);
             string directory = Path.GetDirectoryName(identity.Shortcut)!;
-            if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory, false);
+            if (kind == InstallShortcut.StartMenu && !Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory, false);
         }
         var before = OwnValues.ToDictionary(name => name, name => store.Read(identity.RegistryKey, name));
         try { foreach (string name in OwnValues) store.Delete(identity.RegistryKey, name); }

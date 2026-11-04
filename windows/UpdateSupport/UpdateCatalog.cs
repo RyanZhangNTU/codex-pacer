@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -126,21 +125,5 @@ internal static class UpdateCatalog
             if (selected == null || build > selected.Build) selected = candidate;
         }
         return selected;
-    }
-    // WinSparkle sees only verified, compatible metadata and a loopback payload.
-    // Remote HTML and unsigned release-note links are never passed through.
-    internal static byte[] Project(WindowsUpdatePackage? item, Uri? download)
-    {
-        var channel = new XElement("channel", new XElement("title", "Codex Pacer"));
-        if (item != null && download != null)
-            channel.Add(new XElement("item", new XElement("title", item.Version),
-                new XElement(Sparkle + "version", item.Build), new XElement(Sparkle + "shortVersionString", item.Version),
-                new XElement(Sparkle + "minimumSystemVersion", item.MinimumWindows),
-                new XElement("description", new XCData("<pre>" + WebUtility.HtmlEncode(item.Notes) + "</pre>")),
-                new XElement("enclosure", new XAttribute("url", download), new XAttribute("length", item.Length),
-                    new XAttribute("type", "application/octet-stream"), new XAttribute(Sparkle + "os", "windows-" + item.Architecture),
-                    new XAttribute(Sparkle + "edSignature", item.Signature))));
-        return Encoding.UTF8.GetBytes(new XDocument(new XElement("rss", new XAttribute("version", "2.0"),
-            new XAttribute(XNamespace.Xmlns + "sparkle", Sparkle), channel)).ToString(SaveOptions.DisableFormatting));
     }
 }

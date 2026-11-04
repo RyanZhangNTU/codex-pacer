@@ -240,7 +240,7 @@ class WindowsArchitectureTests(unittest.TestCase):
             self.assertTrue(pin["url"].startswith("https://www.python.org/ftp/python/"))
         props = (contract.ROOT / "windows/desktop-platform.props").read_text()
         self.assertIn("win-$(PacerArchitecture)", props); self.assertIn("10.0.19041.0</SupportedOSPlatformVersion>", props)
-        self.assertIn("MinVersion=10.0.19041", (contract.ROOT / "windows/Installer/CodexPacer.iss").read_text())
+        self.assertIn("MinVersion=10.0.19041", (contract.ROOT / "windows/Installer/CodexPacer.iss").read_text(encoding="utf-8-sig"))
 
     def test_arm64_ci_only_builds_and_packages(self):
         workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text()

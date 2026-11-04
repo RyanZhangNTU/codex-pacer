@@ -53,6 +53,10 @@ try {
         if ($taskNotices.Count -eq 0) { throw ('Runtime notices are missing: ' + $taskPackage) }
         foreach ($taskNotice in $taskNotices) { Copy-Item -LiteralPath $taskNotice.FullName -Destination $taskLicenseTarget }
     }
+    # SatelliteResourceLanguages keeps only the shipped UI languages.
+    $taskSatellites = @(Get-ChildItem -LiteralPath $taskApplication -Directory | Where-Object { $_.Name -ne 'zh-Hans' -and
+        @(Get-ChildItem -LiteralPath $_.FullName -File -Filter '*.resources.dll').Count -gt 0 } | ForEach-Object Name)
+    if ($taskSatellites.Count -gt 0) { throw ('Unshipped resource languages were published: ' + ($taskSatellites -join ', ')) }
     if ($Architecture -eq 'arm64') {
         python -S scripts/windows/prune-arm64-runtime.py --root $taskApplication --architecture $Architecture
         if ($LASTEXITCODE -ne 0) { throw 'The ARM64 runtime dependency selection failed.' }

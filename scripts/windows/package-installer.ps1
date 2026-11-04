@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Archive,
     [string]$QaScope = '',
+    # Release builds use the smallest package; QA builds may trade size for time.
+    [ValidateSet('lzma2/ultra64','lzma2/max','lzma2/fast')][string]$Compression = 'lzma2/ultra64',
     [ValidateSet('x64','arm64')][string]$Architecture = $(if ($env:PACER_ARCHITECTURE) { $env:PACER_ARCHITECTURE } else { 'x64' })
 )
 $env:PACER_ARCHITECTURE = $Architecture
@@ -43,6 +45,13 @@ if ($taskScope -ne 'default') {
     $taskAppId += '.QA.' + $taskScope
     $taskAppName += ' QA ' + $taskScope
 }
+# The vendored Chinese messages are compiled into every installer; pin them.
+$taskLanguages = Join-Path $taskRoot 'windows/ThirdParty/InnoSetup'
+foreach ($taskSource in (Get-Content -LiteralPath (Join-Path $taskLanguages 'provenance.json') -Raw | ConvertFrom-Json).sources) {
+    $taskText = [IO.File]::ReadAllText((Join-Path $taskLanguages $taskSource.name), [Text.UTF8Encoding]::new($false)).Replace("`r`n", "`n")
+    $taskDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($taskText))).ToLowerInvariant()
+    if ($taskDigest -ne $taskSource.sha256) { throw ('A vendored installer language file changed: ' + $taskSource.name) }
+}
 $taskStart = [Diagnostics.ProcessStartInfo]::new($taskInno)
 $taskStart.UseShellExecute = $false
 $taskStart.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
@@ -53,18 +62,19 @@ foreach ($taskArgument in @(
     ('/DSourceDir=' + $taskPayload), ('/DArtifactDir=' + $taskArtifacts),
     ('/DPacerVersion=' + $taskVersion.version), ('/DPacerFileVersion=' + $taskVersion.version + '.' + $taskVersion.build),
     ('/DPacerScope=' + $taskScope), ('/DPacerAppId=' + $taskAppId), ('/DPacerAppName=' + $taskAppName),
-    ('/DArtifactName=' + $taskName), ('/DPacerArchitecture=' + $Architecture), (Join-Path $taskRoot 'windows/Installer/CodexPacer.iss')
+    ('/DArtifactName=' + $taskName), ('/DPacerArchitecture=' + $Architecture), ('/DPacerCompression=' + $Compression),
+    (Join-Path $taskRoot 'windows/Installer/CodexPacer.iss')
 )) { $taskStart.ArgumentList.Add($taskArgument) }
 $taskCompiler = [Diagnostics.Process]::Start($taskStart)
 try {
     $taskCompilerOut = $taskCompiler.StandardOutput.ReadToEndAsync()
     $taskCompilerErr = $taskCompiler.StandardError.ReadToEndAsync()
     $taskFinished = $false
-    for ($taskAttempt = 0; $taskAttempt -lt 5; $taskAttempt++) {
+    for ($taskAttempt = 0; $taskAttempt -lt 15; $taskAttempt++) {
         if ($taskCompiler.WaitForExit(60000)) { $taskFinished = $true; break }
         Write-Output 'The installer compiler is still running.'
     }
-    if (!$taskFinished) { $taskCompiler.Kill($true); throw 'The installer compiler exceeded five minutes.' }
+    if (!$taskFinished) { $taskCompiler.Kill($true); throw 'The installer compiler exceeded fifteen minutes.' }
     $taskCompilerText = $taskCompilerOut.GetAwaiter().GetResult() + $taskCompilerErr.GetAwaiter().GetResult()
     [IO.File]::WriteAllText((Join-Path $taskOutput ('installer-compile-' + $taskScope + '.log')), $taskCompilerText, [Text.UTF8Encoding]::new($false))
     if ($taskCompiler.ExitCode -ne 0 -or $taskCompilerText -match '(?im)^Warning:') { throw 'The installer compiler failed or reported a warning. See the local compiler log.' }

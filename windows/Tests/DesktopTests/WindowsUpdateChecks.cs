@@ -45,19 +45,58 @@ internal static class WindowsUpdateChecks
         try { action(); } catch (Exception error) when (error is IOException or InvalidDataException or FormatException or System.Xml.XmlException or ArgumentException) { return; }
         throw new InvalidOperationException(message);
     }
+    private static async Task Fails<T>(Func<Task> action, string message) where T : Exception
+    {
+        try { await action(); } catch (T) { return; }
+        throw new InvalidOperationException(message);
+    }
+    private sealed class Inline<T>(Action<T> action) : IProgress<T> { public void Report(T value) => action(value); }
+    /// A package body with no Content-Length, read in 64 KiB steps, optionally paced.
+    private sealed class Paced(byte[] bytes, TimeSpan pause) : Stream
+    {
+        private int position;
+        public override bool CanRead => true; public override bool CanSeek => false; public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException(); public override long Position { get => position; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (pause > TimeSpan.Zero) await Task.Delay(pause, cancellationToken);
+            int count = Math.Min(Math.Min(buffer.Length, 64 * 1024), bytes.Length - position);
+            bytes.AsMemory(position, count).CopyTo(buffer); position += count; return count;
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+    /// A connection that opens and then never sends a byte.
+    private sealed class Silent : Stream
+    {
+        public override bool CanRead => true; public override bool CanSeek => false; public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException(); public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        { await Task.Delay(Timeout.Infinite, cancellationToken); return 0; }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
     private sealed class Transport(byte[] feed) : HttpMessageHandler
     {
         internal byte[] Feed = feed;
-        internal bool Fail, Corrupt;
+        internal byte[]? Package;
+        internal bool Fail, Corrupt, Stall, Unsized;
+        internal TimeSpan Pause = TimeSpan.Zero;
         internal readonly List<Uri> Calls = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls.Add(request.RequestUri!);
-            return Task.FromResult(new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
-            {
-                RequestMessage = request,
-                Content = new ByteArrayContent(request.RequestUri!.AbsolutePath.EndsWith(".xml", StringComparison.Ordinal) ? Feed : Corrupt ? [1, 2, 3] : Payload)
-            });
+            byte[] body = Package ?? Payload;
+            HttpContent content = request.RequestUri!.AbsolutePath.EndsWith(".xml", StringComparison.Ordinal) ? new ByteArrayContent(Feed)
+                : Corrupt ? new ByteArrayContent([1, 2, 3]) : Stall ? new StreamContent(new Silent())
+                : Unsized || Pause > TimeSpan.Zero ? new StreamContent(new Paced(body, Pause)) : new ByteArrayContent(body);
+            return Task.FromResult(new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK) { RequestMessage = request, Content = content });
         }
     }
     /// Absolute URLs answer with a body or a redirect; anything else is missing.
@@ -74,28 +113,26 @@ internal static class WindowsUpdateChecks
             response.RequestMessage = request; return Task.FromResult(response);
         }
     }
-    private sealed class Backend : IWindowsUpdateBackend
+    private sealed class Presenter : IWindowsUpdatePresenter
     {
-        public event Action<UpdateBackendEvent, long>? Changed;
-        public Func<string, bool>? Install { get; set; }
-        internal bool Automatic, Block, FailSet;
-        internal int Checks, Disposals;
-        internal Uri? LastFeed;
-        internal long Context;
-        internal bool Interactive;
-        internal readonly ManualResetEventSlim Held = new(false);
-        public void Initialize(Uri feed, string key, string version, string build, string language, bool automatic) { Automatic = automatic; }
-        public void Check(Uri feed, bool interactive, long context) { Context = context; LastFeed = feed; Interactive = interactive; Checks++; if (Block) Held.Wait(); }
-        public void SetAutomatic(bool value) { if (FailSet) throw new IOException(); Automatic = value; }
-        internal void Emit(UpdateBackendEvent value, long? context = null) => Changed?.Invoke(value, context ?? Context);
-        public void Dispose() { Disposals++; Held.Set(); }
+        internal readonly List<string> Events = [];
+        public void Checking() => Events.Add("checking");
+        public void Offer(WindowsUpdatePackage package, bool manual) => Events.Add((manual ? "offer:" : "auto-offer:") + package.Build);
+        public void UpToDate() => Events.Add("up-to-date");
+        public void Failed(bool manual) => Events.Add(manual ? "failed" : "auto-failed");
     }
-    internal static async Task Run(string? nativeDirectory = null)
+    private static string Session(string root)
+    {
+        string directory = Path.Combine(root, "Updates", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory); return directory;
+    }
+    internal static async Task Run()
     {
         InstallerIdentityChecks();
-        Check(UpdateHandoff.InstallerArguments(@"C:\Users\Synthetic 中文\Codex Pacer").SequenceEqual(
-            new[] { "/SP-", "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", @"/DIR=C:\Users\Synthetic 中文\Codex Pacer" }),
-            "An accepted update installs without wizard pages or prompts, keeps its folder as one argument and never restarts Windows");
+        Check(UpdateHandoff.InstallerArguments(@"C:\Users\Synthetic 中文\Codex Pacer", @"C:\Users\Synthetic 中文\Updates\s\install.log", "zh-Hans").SequenceEqual(
+            new[] { "/SP-", "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LANG=chinesesimplified", @"/LOG=C:\Users\Synthetic 中文\Updates\s\install.log", @"/DIR=C:\Users\Synthetic 中文\Codex Pacer" }),
+            "An accepted update installs without wizard pages or prompts, in the app's language, logs beside its session, keeps each path as one argument and never restarts Windows");
+        Check(UpdateHandoff.InstallerLanguage("en") == "english" && UpdateHandoff.InstallerLanguage("fr") == "english", "Other UI languages install in English");
+        NotesChecks();
         string root = Path.Combine(Path.GetTempPath(), "Pacer update 中文 " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -108,14 +145,12 @@ internal static class WindowsUpdateChecks
             Check(UpdateCatalog.Parse(feed, channel, "arm64", Current, Windows, "en")?.Build == new Version(1, 2, 3, 6), "ARM64 keeps its own signed update");
             Check(UpdateCatalog.Parse(feed, channel, "x64", new(1, 2, 3, 5), Windows, "en") == null, "Current/older builds cannot update");
             var notesTransport = new Transport(feed);
-            await using (var notes = new UpdateFeedProxy(channel, "x64", new(1, 2, 3, 5), Windows, "zh-Hans", notesTransport))
+            using (var notes = new UpdateFeedClient(channel, "x64", new(1, 2, 3, 5), Windows, "zh-Hans", notesTransport))
             {
-                Check(await notes.ReadReleaseNotesAsync() == "合成中文说明" && !notes.IsListening && notesTransport.Calls.Count == 1,
-                    "An explicit release-notes read verifies the current build and language without starting a proxy or fetching a package");
+                Check(await notes.ReadReleaseNotesAsync() == "合成中文说明" && notesTransport.Calls.Count == 1,
+                    "An explicit release-notes read verifies the current build and language without fetching a package");
                 notesTransport.Feed = feed.ToArray(); notesTransport.Feed[^1] ^= 1;
-                bool rejected = false;
-                try { _ = await notes.ReadReleaseNotesAsync(); } catch (InvalidDataException) { rejected = true; }
-                Check(rejected, "Manual release notes reject a modified feed instead of reusing cached text");
+                await Fails<InvalidDataException>(() => notes.ReadReleaseNotesAsync(), "Manual release notes reject a modified feed instead of reusing cached text");
             }
             Check(UpdateCatalog.Parse(feed, channel, "x64", new(1, 2, 3, 6), Windows, "en", notesForCurrentBuild: true) == null,
                 "Manual release notes cannot borrow another installed build's description");
@@ -130,53 +165,223 @@ internal static class WindowsUpdateChecks
             Reject(() => UpdateCatalog.Parse(new byte[UpdateCatalog.FeedLimit + 1], channel, "x64", Current, Windows, "en"), "Feeds are bounded before parsing");
             var duplicate = Item(key); duplicate.Add(new XElement(UpdateCatalog.Sparkle + "version", "1.2.3.7"));
             Reject(() => UpdateCatalog.Parse(key.Feed(duplicate), channel, "x64", Current, Windows, "en"), "Duplicate version metadata must fail");
-            var transport = new Transport(feed);
-            await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "zh-Hans", transport))
-            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
-            {
-                Check(!proxy.IsListening, "Construction must not open a listener");
-                await proxy.StartOperationAsync();
-                byte[] projected = await http.GetByteArrayAsync(proxy.Feed);
-                string text = Encoding.UTF8.GetString(projected);
-                Check(text.Contains("合成中文说明") && !text.Contains("never-fetch") && !text.Contains("windows-arm64"), "The local feed exposes only verified compatible notes and no remote note URL");
-                var enclosure = XDocument.Parse(text).Descendants("enclosure").Single();
-                var url = new Uri(enclosure.Attribute("url")!.Value);
-                Check(url.Host == "127.0.0.1" && url.Port == proxy.Feed.Port, "The download is restricted to the bounded loopback proxy");
-                Check((await http.GetByteArrayAsync(url)).SequenceEqual(Payload), "The signed package reaches the SDK unchanged");
-                Check(proxy.ValidateDownloaded(Payload).Build == item!.Build, "The installer callback must match a verified offer");
-                Reject(() => proxy.ValidateDownloaded([1, 2, 3]), "A replaced downloaded installer cannot reach the handoff");
-                transport.Corrupt = true;
-                using (var invalid = await http.GetAsync(url)) Check(!invalid.IsSuccessStatusCode, "A bad package signature is not served");
-                await Closed(proxy);
-                Uri oldFeed = proxy.Feed;
-                transport.Corrupt = false; transport.Fail = true;
-                await proxy.StartOperationAsync();
-                using (var unavailable = await http.GetAsync(proxy.Feed)) Check(!unavailable.IsSuccessStatusCode, "A failed download remains an error");
-                await Closed(proxy);
-                transport.Fail = false; await proxy.StartOperationAsync();
-                Check((await http.GetAsync(proxy.Feed)).IsSuccessStatusCode, "The next check recovers after a download failure");
-                using var forbidden = await http.GetAsync(new Uri(proxy.Feed, "/not-owned"));
-                Check(forbidden.StatusCode == HttpStatusCode.NotFound, "The proxy has no unscoped endpoints");
-                Check(transport.Calls.All(uri => uri.Host == "127.0.0.1"), "No real feed or account was contacted");
-            }
-            await ServiceChecks(channel, feed);
-            await LifetimeChecks(channel, feed, root);
-            await HttpsChecks(key, channel);
-            await ProductionChecks(key);
+            await ClientChecks(key, channel, feed, root);
+            await ServiceChecks(key, channel, feed, root);
+            await HttpsChecks(key, channel, root);
+            await ProductionChecks(key, root);
             await HandoffChecks();
             SignerPolicyChecks(key, channel, root);
+            SessionChecks(root);
             StateChecks(root);
             string unsigned = Path.Combine(root, "unsigned.exe"); File.WriteAllBytes(unsigned, Payload);
             Check(!UpdateAuthenticode.Verify(unsigned, new string('0', 64)), "Production rejects unsigned installers without installing test trust");
-            if (nativeDirectory != null)
-            {
-                using var native = new WinSparkleNative(nativeDirectory, new WindowsUpdateState(Path.Combine(root, "native-state.json")));
-                Check(native.ValidateKey(key.Public), "The pinned native x64/ARM64 DLL accepts the isolated test public key");
-                Check(!native.ValidateKey("invalid"), "The pinned native DLL rejects invalid keys without starting update UI");
-            }
-            Console.WriteLine("PASS Windows updates: isolated signed feed/package, architecture/OS filtering, private loopback, async deadlines, rollback, shutdown ordering, recovery and once-only notes");
+            Console.WriteLine("PASS Windows updates: isolated signed feed/package, streamed verified download with progress, stall/cancel/tamper cleanup, redirects, skip/later/stale offers, session cleanup, rollback and once-only notes");
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+    private static void NotesChecks()
+    {
+        var blocks = ReleaseNotesMarkdown.Parse("Codex Pacer 4.2.2 comes to **Windows**.\r\n\r\n- **Codex Pacer for Windows.** The same island.\n* `/code-review` ends.\n\n### Install\n\n12. Run it\n" +
+            "See the [user guide](https://github.com/RyanZhangNTU/codex-pacer/blob/main/docs/guide.md), [elsewhere](https://example.com/x) and \\*not bold\\*.\n<script>alert(1)</script>");
+        Check(blocks.Select(block => block.Kind).SequenceEqual([NoteBlockKind.Paragraph, NoteBlockKind.Bullet, NoteBlockKind.Bullet, NoteBlockKind.Heading, NoteBlockKind.Numbered, NoteBlockKind.Paragraph]),
+            "Release notes keep their paragraphs, lists and headings");
+        Check(blocks[0].Spans.Select(span => (span.Kind, span.Text)).SequenceEqual([(NoteSpanKind.Text, "Codex Pacer 4.2.2 comes to "), (NoteSpanKind.Strong, "Windows"), (NoteSpanKind.Text, ".")])
+            && blocks[2].Spans[0] == new NoteSpan(NoteSpanKind.Code, "/code-review") && blocks[3] is { Level: 3 } && blocks[4].Number == 12,
+            "Strong text, code, heading levels and list numbers survive");
+        var links = blocks[5].Spans;
+        Check(links.Any(span => span is { Kind: NoteSpanKind.Link, Text: "user guide", Link.Host: "github.com" })
+            && links.Any(span => span is { Kind: NoteSpanKind.Text, Text: "elsewhere" }) && !links.Any(span => span.Link?.Host == "example.com"),
+            "Only GitHub HTTPS links stay links; other targets become plain text");
+        string text = string.Concat(links.Select(span => span.Text));
+        Check(text.Contains("*not bold*") && text.Contains("<script>alert(1)</script>"), "Escapes and HTML stay literal text");
+        Check(ReleaseNotesMarkdown.Parse(string.Join("\n\n", Enumerable.Repeat("p", 600))).Count == ReleaseNotesMarkdown.MaximumBlocks && ReleaseNotesMarkdown.Parse(null).Count == 0,
+            "Notes are bounded and empty notes have no blocks");
+    }
+    private static async Task ClientChecks(SigningFixture key, WindowsUpdateChannel channel, byte[] feed, string root)
+    {
+        var transport = new Transport(feed);
+        using var client = new UpdateFeedClient(channel, "x64", Current, Windows, "zh-Hans", transport, TimeSpan.FromMilliseconds(300));
+        var offer = (await client.ReadOfferAsync())!;
+        Check(offer is { Notes: "合成中文说明", Architecture: "x64" } && offer.Build == new Version(1, 2, 3, 5), "The offer is the verified compatible entry");
+        var reports = new List<UpdateProgress>();
+        string session = Session(root);
+        var download = await client.DownloadAsync(offer, session, new Inline<UpdateProgress>(reports.Add));
+        Check(File.ReadAllBytes(download.Installer).SequenceEqual(Payload) && download.SHA256 == Convert.ToHexStringLower(SHA256.HashData(Payload))
+            && download.Installer == Path.Combine(session, UpdateFeedClient.InstallerName) && !File.Exists(Path.Combine(session, UpdateFeedClient.PartialName)),
+            "The signed package reaches its owned session file unchanged");
+        Check(reports[0] == new UpdateProgress(0, Payload.Length) && reports[^1] == new UpdateProgress(Payload.Length, Payload.Length), "Progress starts at zero and ends at the signed length");
+        byte[] large = RandomNumberGenerator.GetBytes(10 * 64 * 1024);
+        var largeOffer = offer with { Length = large.Length, Signature = key.Sign(large) };
+        transport.Package = large; transport.Pause = TimeSpan.FromMilliseconds(40); reports.Clear();
+        var paced = await client.DownloadAsync(largeOffer, Session(root), new Inline<UpdateProgress>(reports.Add));
+        Check(File.ReadAllBytes(paced.Installer).SequenceEqual(large) && reports.Select(value => value.Received).Distinct().Count() >= 4
+            && reports.Zip(reports.Skip(1)).All(pair => pair.First.Received <= pair.Second.Received) && reports.All(value => value.Total == large.Length),
+            "A download without Content-Length reports growing progress toward the signed size");
+        async Task Refused<T>(WindowsUpdatePackage package, string message, CancellationToken token = default) where T : Exception
+        {
+            string directory = Session(root);
+            await Fails<T>(() => client.DownloadAsync(package, directory, null, token), message);
+            Check(!Directory.EnumerateFileSystemEntries(directory).Any(), message + " (and leaves no file behind)");
+        }
+        transport.Pause = TimeSpan.Zero; transport.Package = null; transport.Corrupt = true;
+        await Refused<InvalidDataException>(offer, "A response whose size differs from the signed offer is refused");
+        transport.Corrupt = false; transport.Package = Payload.Select(value => (byte)(value ^ 1)).ToArray();
+        await Refused<InvalidDataException>(offer, "A package of the right size with a bad signature never becomes setup.exe");
+        transport.Package = Payload.Concat(new byte[] { 0 }).ToArray(); transport.Unsized = true;
+        await Refused<InvalidDataException>(offer, "A package longer than signed stops as soon as it exceeds its size");
+        transport.Package = null; transport.Unsized = false; transport.Stall = true;
+        var stall = System.Diagnostics.Stopwatch.StartNew();
+        await Refused<TimeoutException>(offer, "A stalled connection fails after its idle deadline");
+        Check(stall.Elapsed < TimeSpan.FromSeconds(5), "The idle deadline does not wait for the overall limit");
+        using (var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50)))
+            await Refused<OperationCanceledException>(offer, "Cancel stops the download as a cancellation", cancel.Token);
+        transport.Stall = false; transport.Fail = true;
+        await Refused<IOException>(offer, "An upstream failure is an IO failure, not a crash");
+        transport.Fail = false;
+        Check((await client.DownloadAsync(offer, Session(root), null)).Package == offer, "The next download recovers after a failure");
+        Check(transport.Calls.All(uri => uri.Host == "127.0.0.1"), "No real feed or account was contacted");
+    }
+    private static async Task ServiceChecks(SigningFixture key, WindowsUpdateChannel channel, byte[] feed, string root)
+    {
+        var identity = new WindowsInstallationIdentity(Path.Combine(root, "service app"), channel.TestScope);
+        var state = new WindowsUpdateState(Path.Combine(root, "service-state.json"));
+        var clock = DateTimeOffset.UtcNow;
+        var transport = new Transport(feed);
+        var presenter = new Presenter();
+        await using var updates = new WindowsUpdateService(action => action(), new UpdateFeedClient(channel, "x64", Current, Windows, "en", transport), state, () => clock) { Presenter = presenter };
+        Check(!updates.Status.Available && !await updates.CheckAsync(), "An uninitialized updater cannot check");
+        await updates.InitializeAsync(channel, identity, "en", true, () => presenter.Events.Add("quit"));
+        Check(updates.Status.Available && state.Read("PacerAutomaticChecks") == "1", "Daily automatic checks default to enabled");
+        Check(await updates.CheckAsync() && presenter.Events.SequenceEqual(["checking", "offer:1.2.3.5"]) && updates.Status.Busy, "A manual check shows progress, then the verified offer, and suspends island input");
+        Check(!await updates.CheckAsync(), "A second check waits for the open window");
+        var downloaded = await updates.DownloadAsync(null, CancellationToken.None);
+        Check(string.Equals(Path.GetDirectoryName(downloaded.Directory), UpdateSessions.Root(identity.DataRoot), StringComparison.OrdinalIgnoreCase) && File.Exists(downloaded.Installer),
+            "A download lands in a new session the installation owns");
+        Check(!updates.Install(downloaded with { Package = downloaded.Package with { Build = new(9, 9, 9, 9) } }), "Only the offered package can be installed");
+        updates.Dismiss();
+        Check(!updates.Status.Busy && updates.Status.MessageKey == "updates.cancelled" && !Directory.Exists(downloaded.Directory) && updates.CurrentOffer == null,
+            "Remind Me Later restores input and removes the unfinished download");
+        presenter.Events.Clear();
+        Check(await updates.CheckAsync(), "A new manual check works after Later"); updates.Skip();
+        clock += TimeSpan.FromDays(1);
+        Check(await updates.CheckAutomaticIfDueAsync() && presenter.Events.SequenceEqual(["checking", "offer:1.2.3.5"]) && !updates.Status.Busy
+            && updates.Status.MessageKey == "updates.no_update", "A skipped build stays quiet in automatic checks");
+        Check(await updates.CheckAsync() && presenter.Events[^1] == "offer:1.2.3.5", "A manual check still offers a skipped build");
+        clock += TimeSpan.FromMinutes(31);
+        transport.Feed = key.Feed(Item(key, build: "1.2.3.7"));
+        await Fails<InvalidDataException>(() => updates.DownloadAsync(null, CancellationToken.None), "An offer older than its lifetime is verified again before downloading");
+        Check(updates.CurrentOffer?.Build == new Version(1, 2, 3, 7), "A changed feed replaces the stale offer");
+        updates.Dismiss();
+        clock += TimeSpan.FromDays(1); presenter.Events.Clear();
+        Check(await updates.CheckAutomaticIfDueAsync() && presenter.Events.SequenceEqual(["auto-offer:1.2.3.7"]) && updates.Status.Busy, "A newer build than the skipped one is offered automatically");
+        updates.Dismiss();
+        transport.Feed = key.Feed(); presenter.Events.Clear();
+        Check(await updates.CheckAsync() && presenter.Events.SequenceEqual(["checking", "up-to-date"]) && updates.Status.MessageKey == "updates.no_update", "No update shows the up-to-date result");
+        updates.Dismiss(); Check(!updates.Status.Busy && updates.Status.MessageKey == "updates.no_update", "Closing the result keeps its message");
+        transport.Fail = true; presenter.Events.Clear();
+        Check(!await updates.CheckAsync() && presenter.Events.SequenceEqual(["checking", "failed"]) && updates.Status.MessageKey == "windows.updates.failed", "A failed manual check reports it");
+        updates.Dismiss();
+        clock += TimeSpan.FromDays(1); presenter.Events.Clear();
+        Check(!await updates.CheckAutomaticIfDueAsync() && presenter.Events.Count == 0 && !updates.Status.Busy, "A failed automatic check stays quiet");
+        transport.Fail = false;
+        Check(!await updates.CheckAutomaticIfDueAsync(), "A daily check is not due right after the last one");
+        var failing = new PreferencesSession(new(), _ => Task.CompletedTask, _ => false);
+        Check(!await updates.ApplyAutomaticAsync(false, failing) && failing.Current.AutomaticUpdates && state.Read("PacerAutomaticChecks") == "1", "A failed preference save rolls the automatic setting back");
+        var saving = new PreferencesSession(new(), _ => Task.CompletedTask, _ => true);
+        Check(await updates.ApplyAutomaticAsync(false, saving) && !saving.Current.AutomaticUpdates && state.Read("PacerAutomaticChecks") == "0", "Automatic checks can be disabled and persisted");
+        clock += TimeSpan.FromDays(2); presenter.Events.Clear();
+        Check(!await updates.CheckAutomaticIfDueAsync() && presenter.Events.Count == 0, "Disabled automatic checks never run");
+        Check(await updates.CheckAsync(), "Disabling automatic checks keeps manual checks available"); updates.Dismiss();
+        Check(!presenter.Events.Contains("quit"), "No check or dismissal hands off an installer");
+    }
+    private static async Task HttpsChecks(SigningFixture key, WindowsUpdateChannel template, string root)
+    {
+        await using var https = new UpdateHttpsFixture();
+        var channel = template with { Feed = new Uri(https.Root, "appcast.xml"), TestCertificateSHA256 = https.CertificateSHA256 };
+        https.Feed = key.Feed(Item(key, download: new Uri(https.Root, "setup.exe").AbsoluteUri)); https.Payload = Payload;
+        using (var client = new UpdateFeedClient(channel, "x64", Current, Windows, "en"))
+        {
+            var offer = await client.ReadOfferAsync();
+            Check(offer != null, "An isolated TLS certificate pin works without changing system trust: " + https.Requests + ":" + https.FailureKind + ":" + client.FailureKind);
+            Check(File.ReadAllBytes((await client.DownloadAsync(offer!, Session(root), null)).Installer).SequenceEqual(Payload), "The package downloads over the pinned connection");
+            https.Redirect = true; int before = https.Requests;
+            await Fails<InvalidDataException>(() => client.ReadOfferAsync(), "A QA channel refuses redirects");
+            Check(https.Requests == before + 1, "A redirect is never followed to another host or port");
+            https.Redirect = false;
+        }
+        using (var wrongPin = new UpdateFeedClient(channel with { TestCertificateSHA256 = new string('0', 64) }, "x64", Current, Windows, "en"))
+            await Fails<InvalidDataException>(() => wrongPin.ReadOfferAsync(), "A wrong isolated TLS pin fails closed");
+        Reject(() => (channel with { Feed = new Uri("http://127.0.0.1/appcast.xml") }).Validate(), "Even local QA upstream traffic must use HTTPS");
+    }
+    private static async Task ProductionChecks(SigningFixture key, string root)
+    {
+        var production = WindowsUpdateChannel.Production; production.Validate();
+        Check(production.Feed.AbsoluteUri == WindowsUpdateChannel.ReleaseFeed && production.SignerSHA256 == null && production.TestScope == null,
+            "Production reads the latest GitHub Release feed and pins no Authenticode signer while installers are unsigned");
+        Check(production.AllowsRedirect(new Uri("https://release-assets.githubusercontent.com/asset")) && production.AllowsRedirect(new Uri("https://github.com/asset"))
+            && !production.AllowsRedirect(new Uri("https://example.com/asset")) && !production.AllowsRedirect(new Uri("http://github.com/asset"))
+            && !production.AllowsRedirect(new Uri("https://github.com:8443/asset")), "Redirects stay on GitHub's HTTPS release hosts");
+        Reject(() => (production with { TestScope = Guid.NewGuid(), TestCertificateSHA256 = new string('a', 64) }).Validate(), "A QA channel cannot inherit release redirects");
+        var channel = production with { PublicKey = key.Public };
+        const string release = "https://github.com/RyanZhangNTU/codex-pacer/releases/download/v1.2.3/", assets = "https://release-assets.githubusercontent.com/synthetic/";
+        var routes = new Routes();
+        routes.Redirect(WindowsUpdateChannel.ReleaseFeed, release + "appcast-windows.xml");
+        routes.Redirect(release + "appcast-windows.xml", assets + "feed");
+        routes.Serve(assets + "feed", key.Feed(Item(key, download: release + "setup.exe")));
+        routes.Redirect(release + "setup.exe", assets + "setup");
+        routes.Serve(assets + "setup", Payload);
+        using (var client = new UpdateFeedClient(channel, "x64", Current, Windows, "en", routes))
+        {
+            var offer = (await client.ReadOfferAsync())!;
+            Check(File.ReadAllBytes((await client.DownloadAsync(offer, Session(root), null)).Installer).SequenceEqual(Payload) && routes.Calls.Count == 5,
+                "The release feed and installer follow GitHub's download redirects and still pass their Ed25519 checks");
+        }
+        foreach (string target in new[] { "https://example.com/feed", "http://release-assets.githubusercontent.com/feed" })
+        {
+            routes.Redirect(release + "appcast-windows.xml", target); routes.Serve(target, key.Feed(Item(key)));
+            using var client = new UpdateFeedClient(channel, "x64", Current, Windows, "en", routes);
+            int before = routes.Calls.Count;
+            await Fails<InvalidDataException>(() => client.ReadOfferAsync(), "A redirect off GitHub's HTTPS hosts is refused");
+            Check(routes.Calls.Count == before + 2, "The refused redirect target is never requested");
+        }
+        routes.Redirect(release + "appcast-windows.xml", WindowsUpdateChannel.ReleaseFeed);
+        using (var client = new UpdateFeedClient(channel, "x64", Current, Windows, "en", routes))
+        {
+            int before = routes.Calls.Count;
+            await Fails<InvalidDataException>(() => client.ReadOfferAsync(), "A redirect loop fails");
+            Check(routes.Calls.Count - before == UpdateFeedClient.MaximumRedirects + 1, "A redirect loop stops at the hop limit");
+        }
+        routes.Map.Clear();
+        using (var client = new UpdateFeedClient(channel, "x64", Current, Windows, "en", routes))
+        {
+            Check(await client.ReadOfferAsync() == null, "A release without a Windows feed reads as no update rather than an error");
+            Check(await client.ReadReleaseNotesAsync() == null, "Missing release notes are absent rather than a verification failure");
+        }
+    }
+    private static void SessionChecks(string root)
+    {
+        string data = Path.Combine(root, "sessions"), updates = UpdateSessions.Root(data);
+        Directory.CreateDirectory(updates); File.WriteAllText(Path.Combine(updates, "state-v1.json"), "{}");
+        string Make(string name, params string[] files)
+        {
+            string directory = Path.Combine(updates, name); Directory.CreateDirectory(directory);
+            foreach (string file in files) File.WriteAllText(Path.Combine(directory, file), file);
+            return directory;
+        }
+        string done = Make(Guid.NewGuid().ToString("N"), "setup.exe", "PacerUpdate.exe", "plan.json", "result.json", "install.log", "plan.json.0a.tmp");
+        string unknown = Make(Guid.NewGuid().ToString("N"), "setup.exe", "notes.txt");
+        string named = Make("not-a-session", "setup.exe");
+        string locked = Make(Guid.NewGuid().ToString("N"), "setup.exe");
+        string kept = Make(Guid.NewGuid().ToString("N"), "result.json");
+        UpdateSessions.PreserveLog(done);
+        int remaining;
+        using (new FileStream(Path.Combine(locked, "setup.exe"), FileMode.Open, FileAccess.Read, FileShare.None)) remaining = UpdateSessions.Clean(data, Path.GetFileName(kept));
+        Check(!Directory.Exists(done) && Directory.Exists(unknown) && Directory.Exists(named) && Directory.Exists(locked) && Directory.Exists(kept) && remaining == 3,
+            "Cleanup removes finished sessions only: unknown files, other folders, locked files and the result being read stay");
+        Check(File.ReadAllText(Path.Combine(updates, UpdateSessions.LastLog)) == "install.log" && File.Exists(Path.Combine(updates, "state-v1.json")),
+            "The last installer log and the update state outlive their session");
+        Check(UpdateSessions.Clean(data) == 1 && !Directory.Exists(locked) && !Directory.Exists(kept) && Directory.Exists(unknown),
+            "A released session goes at the next attempt; a session with an unknown file never does");
     }
     private static void InstallerIdentityChecks()
     {
@@ -256,7 +461,7 @@ internal static class WindowsUpdateChecks
             UpdateHandoff.VerifyPackage(file, Payload, restored.SHA256, restored.Package.Signature, restored.PublicKey, restored.SignerSHA256, Trusted);
         }
     }
-    internal static async Task Serve(string directory, string qaScope, string installer, string architecture)
+    internal static async Task Serve(string directory, string qaScope, string installer, string architecture, int bytesPerSecond = 0)
     {
         Guid scope = Guid.ParseExact(qaScope, "N");
         directory = WindowsInstallationIdentity.SafeRoot(directory);
@@ -266,7 +471,7 @@ internal static class WindowsUpdateChecks
         UpdateHandoff.CheckInstallerIdentity(installer, new("C:/Synthetic", scope), build);
         byte[] payload = UpdateFiles.Read(installer, UpdateCatalog.PackageLimit);
         var key = new SigningFixture();
-        await using var server = new UpdateHttpsFixture { Payload = payload };
+        await using var server = new UpdateHttpsFixture { Payload = payload, BytesPerSecond = bytesPerSecond };
         var item = Item(key, architecture, build.ToString(), download: new Uri(server.Root, "setup.exe").AbsoluteUri);
         item.Element("enclosure")!.SetAttributeValue("length", payload.Length);
         item.Element("enclosure")!.SetAttributeValue(UpdateCatalog.Sparkle + "edSignature", key.Sign(payload));
@@ -279,154 +484,6 @@ internal static class WindowsUpdateChecks
         }));
         Console.WriteLine("READY isolated HTTPS update feed; press Enter or close stdin to stop. Maximum lifetime: 30 minutes.");
         try { _ = await Console.In.ReadLineAsync().WaitAsync(TimeSpan.FromMinutes(30)); } catch (TimeoutException) { }
-    }
-    private static async Task Closed(UpdateFeedProxy proxy)
-    {
-        for (int i=0;i<100 && proxy.IsListening;i++) await Task.Delay(10);
-        Check(!proxy.IsListening, "The operation must close its listener on failure or completion");
-        await proxy.StopOperationAsync();
-    }
-    private static async Task LifetimeChecks(WindowsUpdateChannel channel, byte[] feed, string root)
-    {
-        var backend = new Backend();
-        await using var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", new Transport(feed), TimeSpan.FromMilliseconds(100));
-        await using var updates = new WindowsUpdateService(action => action(), backend, proxy);
-        await updates.InitializeAsync(channel, "1.2.3", Current.ToString(), "en", false, new("C:/Synthetic", channel.TestScope), () => { });
-        Check(!proxy.IsListening, "An initialized updater has no listening socket before a check");
-        Check(await updates.CheckAsync(), "A manual update operation starts");
-        long firstContext = backend.Context;
-        Uri first = backend.LastFeed!;
-        Check(first.Host == "127.0.0.1" && first.Port != 0, "The operation binds an ephemeral IPv4 loopback port");
-        backend.Emit(UpdateBackendEvent.Found);
-        await Closed(proxy);
-        Check(updates.Status.MessageKey == "windows.updates.expired", "Thirty idle minutes end the operation through the injected idle deadline");
-        backend.Emit(UpdateBackendEvent.Failed); // Download selected in the expired native window.
-        for (int i = 0; i < 100 && backend.Checks < 2; i++) await Task.Delay(10);
-        Check(backend.Checks == 2 && backend.LastFeed!.AbsolutePath != first.AbsolutePath, "Expired Download restarts with a fresh operation token");
-        backend.Emit(UpdateBackendEvent.NoUpdate, firstContext);
-        Check(proxy.IsListening, "A late completion from the previous operation cannot close the new proxy");
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        using var stale = await http.GetAsync(new Uri(backend.LastFeed!, first.AbsolutePath));
-        Check(stale.StatusCode == HttpStatusCode.NotFound, "A previous operation's token cannot access the new listener");
-        backend.Emit(UpdateBackendEvent.NoUpdate); await Closed(proxy);
-        backend.Emit(UpdateBackendEvent.Dismissed); Check(!updates.Status.Busy, "Closing the native window restores interaction");
-        Check(await updates.CheckAsync(), "A new manual check works after dismissal");
-        backend.Emit(UpdateBackendEvent.Dismissed); await Closed(proxy);
-        Check(!backend.Install!(Path.Combine(root, "not-an-installer")), "A completed operation cannot start an installer");
-        var state = new WindowsUpdateState(Path.Combine(root, "daily.json"));
-        var clock = DateTimeOffset.UtcNow;
-        state.Write("PacerLastCheckUtc", clock.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
-        var autoBackend = new Backend();
-        await using var autoProxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", new Transport(feed));
-        await using var automatic = new WindowsUpdateService(action => action(), autoBackend, autoProxy, state: state, now: () => clock);
-        await automatic.InitializeAsync(channel, "1.2.3", Current.ToString(), "en", true, new("C:/Synthetic", channel.TestScope), () => { });
-        Check(!await automatic.CheckAutomaticIfDueAsync() && !autoProxy.IsListening, "A daily check is not due immediately after a saved check");
-        clock += TimeSpan.FromDays(1);
-        Check(await automatic.CheckAutomaticIfDueAsync() && !autoBackend.Interactive, "Daily automatic checks run without a manual progress window");
-        autoBackend.Emit(UpdateBackendEvent.NoUpdate); await Closed(autoProxy);
-        Check(await automatic.SetAutomaticAsync(false), "Automatic scheduling can be disabled"); clock += TimeSpan.FromDays(2);
-        Check(!await automatic.CheckAutomaticIfDueAsync() && !autoProxy.IsListening, "Disabled automatic checks keep their listener closed");
-    }
-    private static async Task HttpsChecks(SigningFixture key, WindowsUpdateChannel template)
-    {
-        await using var https = new UpdateHttpsFixture();
-        var channel = template with { Feed = new Uri(https.Root, "appcast.xml"), TestCertificateSHA256 = https.CertificateSHA256 };
-        https.Feed = key.Feed(Item(key, download: new Uri(https.Root, "setup.exe").AbsoluteUri));
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        await using var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en");
-        await proxy.StartOperationAsync();
-        using (var valid = await http.GetAsync(proxy.Feed)) Check(valid.IsSuccessStatusCode, "An isolated TLS certificate pin works without changing system trust: " + https.Requests + ":" + https.FailureKind + ":" + proxy.FailureKind);
-        await proxy.StopOperationAsync(); https.Redirect = true;
-        int before = https.Requests; await proxy.StartOperationAsync();
-        using (var redirect = await http.GetAsync(proxy.Feed))
-            Check(redirect.StatusCode == HttpStatusCode.BadGateway && (await redirect.Content.ReadAsStringAsync()) == "Update verification or download failed.", "Redirects receive a fixed error response without URL parameters");
-        await Closed(proxy); Check(https.Requests == before + 1, "A redirect is never followed to another host or port");
-        https.Redirect = false;
-        await using var wrongPin = new UpdateFeedProxy(channel with { TestCertificateSHA256 = new string('0', 64) }, "x64", Current, Windows, "en");
-        await wrongPin.StartOperationAsync();
-        using (var invalid = await http.GetAsync(wrongPin.Feed)) Check(invalid.StatusCode == HttpStatusCode.BadGateway, "A wrong isolated TLS pin fails closed");
-        await Closed(wrongPin);
-        Reject(() => (channel with { Feed = new Uri("http://127.0.0.1/appcast.xml") }).Validate(), "Even local QA upstream traffic must use HTTPS");
-    }
-    private static async Task ProductionChecks(SigningFixture key)
-    {
-        var production = WindowsUpdateChannel.Production; production.Validate();
-        Check(production.Feed.AbsoluteUri == WindowsUpdateChannel.ReleaseFeed && production.SignerSHA256 == null && production.TestScope == null,
-            "Production reads the latest GitHub Release feed and pins no Authenticode signer while installers are unsigned");
-        Check(production.AllowsRedirect(new Uri("https://release-assets.githubusercontent.com/asset")) && production.AllowsRedirect(new Uri("https://github.com/asset"))
-            && !production.AllowsRedirect(new Uri("https://example.com/asset")) && !production.AllowsRedirect(new Uri("http://github.com/asset"))
-            && !production.AllowsRedirect(new Uri("https://github.com:8443/asset")), "Redirects stay on GitHub's HTTPS release hosts");
-        Reject(() => (production with { TestScope = Guid.NewGuid(), TestCertificateSHA256 = new string('a', 64) }).Validate(), "A QA channel cannot inherit release redirects");
-        var channel = production with { PublicKey = key.Public };
-        const string release = "https://github.com/RyanZhangNTU/codex-pacer/releases/download/v1.2.3/", assets = "https://release-assets.githubusercontent.com/synthetic/";
-        var routes = new Routes();
-        routes.Redirect(WindowsUpdateChannel.ReleaseFeed, release + "appcast-windows.xml");
-        routes.Redirect(release + "appcast-windows.xml", assets + "feed");
-        routes.Serve(assets + "feed", key.Feed(Item(key, download: release + "setup.exe")));
-        routes.Redirect(release + "setup.exe", assets + "setup");
-        routes.Serve(assets + "setup", Payload);
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes))
-        {
-            await proxy.StartOperationAsync();
-            var url = new Uri(XDocument.Parse(await http.GetStringAsync(proxy.Feed)).Descendants("enclosure").Single().Attribute("url")!.Value);
-            Check((await http.GetByteArrayAsync(url)).SequenceEqual(Payload) && routes.Calls.Count == 5,
-                "The release feed and installer follow GitHub's download redirects and still pass their Ed25519 checks");
-            await proxy.StopOperationAsync();
-        }
-        foreach (string target in new[] { "https://example.com/feed", "http://release-assets.githubusercontent.com/feed" })
-        {
-            routes.Redirect(release + "appcast-windows.xml", target); routes.Serve(target, key.Feed(Item(key)));
-            await using var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes);
-            await proxy.StartOperationAsync(); int before = routes.Calls.Count;
-            using (var refused = await http.GetAsync(proxy.Feed))
-                Check(refused.StatusCode == HttpStatusCode.BadGateway && routes.Calls.Count == before + 2, "A redirect off GitHub's HTTPS hosts is refused before it is requested");
-            await Closed(proxy);
-        }
-        routes.Redirect(release + "appcast-windows.xml", WindowsUpdateChannel.ReleaseFeed);
-        await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes))
-        {
-            await proxy.StartOperationAsync(); int before = routes.Calls.Count;
-            using (var loop = await http.GetAsync(proxy.Feed))
-                Check(loop.StatusCode == HttpStatusCode.BadGateway && routes.Calls.Count - before == UpdateFeedProxy.MaximumRedirects + 1, "A redirect loop stops at the hop limit");
-            await Closed(proxy);
-        }
-        routes.Map.Clear();
-        await using (var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", routes))
-        {
-            await proxy.StartOperationAsync();
-            Check(!XDocument.Parse(await http.GetStringAsync(proxy.Feed)).Descendants("item").Any(), "A release without a Windows feed reads as no update rather than an error");
-            Check(await proxy.ReadReleaseNotesAsync() == null, "Missing release notes are absent rather than a verification failure");
-            await proxy.StopOperationAsync();
-        }
-    }
-    private static async Task ServiceChecks(WindowsUpdateChannel channel, byte[] feed)
-    {
-        var backend = new Backend();
-        await using var proxy = new UpdateFeedProxy(channel, "x64", Current, Windows, "en", new Transport(feed));
-        await using (var updates = new WindowsUpdateService(action => action(), backend, proxy, TimeSpan.FromMilliseconds(100)))
-        {
-            await updates.InitializeAsync(channel, "1.2.3", Current.ToString(), "en", true, new("C:/Synthetic", channel.TestScope), () => throw new InvalidOperationException());
-            Check(backend.Automatic && updates.Status.Available, "Daily automatic checks default to enabled");
-            var preferences = new PreferencesSession(new(), _ => Task.CompletedTask, _ => false);
-            Check(!await updates.ApplyAutomaticAsync(false, preferences) && backend.Automatic && preferences.Current.AutomaticUpdates, "A failed preference save rolls the native setting back");
-            preferences = new PreferencesSession(new(), _ => Task.CompletedTask, _ => true);
-            Check(await updates.ApplyAutomaticAsync(false, preferences) && !backend.Automatic && !preferences.Current.AutomaticUpdates, "Automatic checks can be disabled and persisted");
-            Check(await updates.CheckAsync() && backend.Checks == 1, "Disabling automatic checks keeps manual checks available");
-            backend.Emit(UpdateBackendEvent.NoUpdate); Check(updates.Status.MessageKey == "updates.no_update", "No-update result reaches the host");
-            backend.Emit(UpdateBackendEvent.Dismissed); Check(!updates.Status.Busy, "Dismissal restores island input");
-            Check(await updates.CheckAsync(), "A later background-style result belongs to a fresh active operation");
-            backend.Emit(UpdateBackendEvent.Found); Check(updates.Status.Busy, "Background update UI suspends island input");
-            backend.Emit(UpdateBackendEvent.Dismissed);
-            backend.FailSet = true; Check(!await updates.ApplyAutomaticAsync(true, preferences) && !preferences.Current.AutomaticUpdates, "A native switch failure preserves the previous preference");
-            backend.FailSet = false; backend.Block = true;
-            var timer = System.Diagnostics.Stopwatch.StartNew(); Task<bool> slow = updates.CheckAsync();
-            Check(!slow.IsCompleted && !backend.Held.IsSet, "An unresponsive native updater must yield while its worker is still blocked");
-            Check(!await slow && timer.Elapsed < TimeSpan.FromSeconds(1) && !updates.Status.Busy, "The request deadline restores interaction without a busy wait");
-            backend.Emit(UpdateBackendEvent.Found); Check(!updates.Status.Available, "A late callback cannot revive a timed-out updater");
-            backend.Held.Set();
-        }
-        Check(backend.Disposals == 1, "Native cleanup runs once");
     }
     private static async Task HandoffChecks()
     {
@@ -459,7 +516,7 @@ internal static class WindowsUpdateChecks
     private static void StateChecks(string root)
     {
         string path = Path.Combine(root, "state.json"); var state = new WindowsUpdateState(path);
-        state.Write("SkipThisVersion", "1.2.3.5"); Check(new WindowsUpdateState(path).Read("SkipThisVersion") == "1.2.3.5", "WinSparkle configuration survives restart without registry IO");
+        state.Write("SkipThisVersion", "1.2.3.5"); Check(new WindowsUpdateState(path).Read("SkipThisVersion") == "1.2.3.5", "Update state survives restart without registry IO");
         state.Write("SkipThisVersion", null); Check(state.Read("SkipThisVersion") == null, "Configuration delete uses the same file backend");
         Check(state.ClaimNotes("1.2.3.5") && !new WindowsUpdateState(path).ClaimNotes("1.2.3.5"), "Release notes are claimed once across restarts");
         byte[] future = Encoding.UTF8.GetBytes("{\"SchemaVersion\":2,\"Values\":{}}"); File.WriteAllBytes(path, future);

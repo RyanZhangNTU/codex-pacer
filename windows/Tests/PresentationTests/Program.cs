@@ -111,6 +111,7 @@ internal static class Program
                         if (group == "deepseek") { await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output)); }
                         if (All("display") || group == "displaySettings") await Attempt(nameof(DisplaySettingsChecks), () => DisplaySettingsChecks.Run(language, dark));
                         if (All("pages")) await Attempt(nameof(GuidePageChecks), () => GuidePageChecks.Run(language, dark, output));
+                        if (All("updates")) await Attempt(nameof(UpdateWindowChecks), () => UpdateWindowChecks.Run(language, dark, output));
                         if (All("settings"))
                         {
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));

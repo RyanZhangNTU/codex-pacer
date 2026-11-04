@@ -35,7 +35,7 @@ For an application release, update:
 - `CHANGELOG.md` and `docs/release-notes-VERSION.en.md` / `.zh-CN.md`: shipped changes and installation guidance. Keep both current note files; do not add a deferred-issue appendix unless requested.
 - README, user guide and development docs only when their behavior or instructions change. Older notes may be removed after publication; tags, Releases and the changelog retain history.
 
-Windows ships in the same GitHub Release once `scripts/release/windows-release.json` sets `publish` to `true`, a change made in the first Windows release's PR. From then on every release carries the Windows installers and `appcast-windows.xml`, and its notes cover both platforms; the publisher refuses a release that would drop the Windows feed.
+Windows has shipped in the same GitHub Release since 4.2.2, the first Windows release: `scripts/release/windows-release.json` sets `publish` to `true`, so every release carries the Windows installers and `appcast-windows.xml`, and its notes cover both platforms. The publisher refuses a release that would drop the Windows feed.
 
 Run the applicable validation above. Do not repeat a passing suite, live reproduction or packaging check without a relevant source/configuration/artifact change.
 
