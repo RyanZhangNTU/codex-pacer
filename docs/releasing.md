@@ -32,7 +32,7 @@ For an application release, update:
 - `native/Info.plist`: marketing version matching `vVERSION`, and an integer build above every build in the latest public appcast.
 - `native/Sources/PacerCore/RealtimeProbe.swift`: matching event-client version.
 - `native/Sources/PacerCore/WhatsNew.swift`: the version's highlights for the in-app update note, with strings in both catalogs. A version without an entry updates quietly.
-- `CHANGELOG.md` and `docs/release-notes-VERSION.en.md` / `.zh-CN.md`: shipped changes and installation guidance. Keep both current note files; do not add a deferred-issue appendix unless requested.
+- `CHANGELOG.md` and `docs/release-notes-VERSION.en.md` / `.zh-CN.md`: shipped changes. The notes also appear in the in-app update windows, so leave out install or update steps; the publisher puts a download table at the top of the Release body. Keep both current note files; do not add a deferred-issue appendix unless requested.
 - README, user guide and development docs only when their behavior or instructions change. Older notes may be removed after publication; tags, Releases and the changelog retain history.
 
 Windows has shipped in the same GitHub Release since 4.2.2, the first Windows release: `scripts/release/windows-release.json` sets `publish` to `true`, so every release carries the Windows installers and `appcast-windows.xml`, and its notes cover both platforms. The publisher refuses a release that would drop the Windows feed.
@@ -101,7 +101,7 @@ An explicitly requested overwrite installation is a separate local test: normal-
 
 Developer ID mode is the release channel. It requires `APPLE_SIGNING_IDENTITY` (the `Developer ID Application` identity in the login Keychain) and `APPLE_NOTARY_PROFILE`, a `notarytool` Keychain profile that the release owner creates once in their own terminal with `xcrun notarytool store-credentials PROFILE --apple-id APPLE_ID --team-id TEAM_ID`, typing the app-specific password at its hidden prompt. The build signs the app, its helper and Sparkle's components with hardened runtime and secure timestamps, notarizes and staples the app and DMG, and checks both with Gatekeeper. README and Release guidance is the normal drag-to-Applications install with the one-time macOS confirmation; the Release body carries no Open Anyway help.
 
-Windows installers are not Authenticode signed. When they are included, the Release body tells users how to get past SmartScreen ("More info → Run anyway") in both languages.
+The Release body opens with a download table naming one file per platform (the DMG, plus the x64 and ARM64 Windows installers when included) and says the other files serve in-app updates. Windows installers are not Authenticode signed, so the body also tells users how to get past SmartScreen ("More info → Run anyway") in both languages.
 
 Unsigned output has an ad-hoc app signature, an unsigned DMG and no notarization/stapling, and uses no Apple credentials. Its Release body appends Apple's first-launch help link and the tagged Open Anyway screenshot.
 
