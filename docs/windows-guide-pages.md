@@ -1,6 +1,6 @@
 # Windows 欢迎、更新记录与帮助页面
 
-Windows 外壳提供两步欢迎窗口、What's New 窗口，以及 Settings 中的更新历史、Help 和 Support Pacer。界面读取中英文目录，更新条目来自 `WhatsNew.windowsReleases`，支持链接与二维码来自 `ProjectSupport`。窗口不请求项目网站，也不检查 Star 状态。
+Windows 外壳提供两步欢迎窗口、What's New 窗口，以及 Settings 中的更新历史、Help 和 Support Pacer。界面读取中英文目录，更新条目与 Mac 共用 `WhatsNew.releases`，支持链接与二维码来自 `ProjectSupport`。窗口不请求项目网站，也不检查 Star 状态。
 
 ## 何时显示与记录
 

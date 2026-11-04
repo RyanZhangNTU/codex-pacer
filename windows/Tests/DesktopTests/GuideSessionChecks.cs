@@ -15,18 +15,18 @@ internal static class GuideSessionChecks
             int configured = 0, saved = 0;
             var store = new PreferencesStore(file);
             var session = new PreferencesSession(new() { HideProjects = true }, _ => { configured++; return Task.CompletedTask; }, value => { saved++; return store.Save(value); });
-            var guides = new GuideSession(session, Query, "4.2.0", "en", false, false);
+            var guides = new GuideSession(session, Query, "4.2.4", "en", false, false);
             var fresh = await guides.LoadAsync(); Check(fresh.Page == "welcome" && fresh.RecordLaunch, "Fresh installs show the two-step guide before release notes");
-            Check(await guides.RecordAsync(false) == PreferencesApplyResult.Applied && session.Current.WelcomeGuideVersion == 0 && session.Current.WhatsNewVersion == "4.2.0",
+            Check(await guides.RecordAsync(false) == PreferencesApplyResult.Applied && session.Current.WelcomeGuideVersion == 0 && session.Current.WhatsNewVersion == "4.2.4",
                 "Opening the welcome guide records the note, and closing owns the welcome record");
             Check(await guides.RecordAsync(true) == PreferencesApplyResult.Applied && session.Current.WelcomeGuideVersion == 4 && configured == 0, "Guide records never reconfigure collectors");
             Check(queries == 1, "Closing a guide records the engine-confirmed version without another IPC request");
-            await ColdRead(file, "4.2.0", 4);
+            await ColdRead(file, "4.2.4", 4);
             using (var json = JsonDocument.Parse(File.ReadAllText(file)))
                 Check(json.RootElement.GetProperty("schemaVersion").GetInt32() == 2
-                    && json.RootElement.GetProperty("welcomeGuideVersion").GetInt32() == 4 && json.RootElement.GetProperty("whatsNewVersion").GetString() == "4.2.0", "Schema 2 persists the exact Mac preference keys");
+                    && json.RootElement.GetProperty("welcomeGuideVersion").GetInt32() == 4 && json.RootElement.GetProperty("whatsNewVersion").GetString() == "4.2.4", "Schema 2 persists the exact Mac preference keys");
             var reopened = new PreferencesSession(new PreferencesStore(file).Load().Value, _ => throw new Exception("Unexpected collector change"), value => store.Save(value));
-            Check((await new GuideSession(reopened, Query, "4.2.0", "en", false, false).LoadAsync()).Page == null, "Restarting the same version opens neither window");
+            Check((await new GuideSession(reopened, Query, "4.2.4", "en", false, false).LoadAsync()).Page == null, "Restarting the same version opens neither window");
             var update = new GuideSession(reopened, Query, "4.3.0", "en", false, false);
             Check((await update.LoadAsync()).Page == null && await update.RecordAsync(false) == PreferencesApplyResult.Applied, "Versions without highlights update quietly");
             Check(reopened.Current.WelcomeGuideVersion == 4 && reopened.Current.WhatsNewVersion == "4.3.0", "Quiet updates retain the completed major line");
