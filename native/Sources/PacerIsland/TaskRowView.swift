@@ -84,7 +84,14 @@ struct TaskRowView: View {
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
         .accessibilityLabel(accessibilityText)
-        .accessibilityHint(enabled ? openHelp : L10n.text("activity.no_link"))
+        .accessibilityHint(accessibilityHint)
+    }
+
+    /// What a click does, then DeepSeek's turn cost explained: the peak price,
+    /// the task's spend today and its subagents.
+    private var accessibilityHint: String {
+        let costHelp = cost == nil ? nil : costDetail?.help ?? L10n.text("deepseek.turn_cost_row_help")
+        return [enabled ? openHelp : L10n.text("activity.no_link"), costHelp].compactMap { $0 }.joined(separator: " ")
     }
 
     private var accessibilityText: String {

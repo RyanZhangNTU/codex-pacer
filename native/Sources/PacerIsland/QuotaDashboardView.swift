@@ -106,7 +106,8 @@ private struct LegacyCodexQuotaView: View {
                         }
                         ForEach(bucket.windows, id: \.id) { window in
                             QuotaWindowView(reading: window,
-                                accent: presentation.fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary)
+                                accent: presentation.fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary,
+                                note: presentation.help)
                         }
                     }
             }
