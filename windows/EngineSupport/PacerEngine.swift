@@ -88,6 +88,7 @@ public enum PacerEngine {
         let claudeReference = CommandLine.arguments.contains("--claude-web-fixture")
         guard !claudeReference || reference else { return }
         if reference { NSTimeZone.default = TimeZone(secondsFromGMT: 0)! }
+        else if let zone = EngineStartupTimeZone.parse(CommandLine.arguments) { NSTimeZone.default = zone }
         let clock: @Sendable () -> Date = { reference ? Date(timeIntervalSince1970: 1_800_000_000) : Date() }
         var notificationStore: EngineNotificationRegistry.Store? = demo || readOnly ? nil : .applicationDefault
         if let index = CommandLine.arguments.firstIndex(of: "--notification-qa") {
