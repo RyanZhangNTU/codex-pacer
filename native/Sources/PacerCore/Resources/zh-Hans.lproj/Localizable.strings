@@ -67,8 +67,6 @@
 "claude.quota.connection_failed" = "无法连接 Claude 额度服务。";
 "claude.quota.account_changed" = "Claude 账户已更改，请刷新以读取当前账户。";
 "claude.monitoring_setup_failed" = "无法配置 Claude Code 任务监测，请检查配置目录后重试。";
-"claude.performance.ttft_help" = "实际观察到的流式首输出展示耗时，或服务报告的请求首 token 耗时。完整消息块无法推断首次输出时间。";
-"claude.performance.rate_help" = "按权威输出 token 数与服务报告的请求耗时或观察到的响应窗口计算吞吐，排除必要工具执行时段；此值不是模型解码速度。";
 "claude.open_remote_help" = "打开此主机上的 Claude Code 会话";
 "account.credit_balance" = "剩余积分：%@";
 "account.credits" = "积分";
@@ -283,7 +281,6 @@
 "settings.display_picker" = "显示器";
 "settings.fifteen_minutes" = "15 分钟";
 "settings.five_minutes" = "5 分钟";
-"settings.custom" = "自定义";
 "settings.four_hours" = "4 小时";
 "settings.fullscreen" = "在全屏空间显示";
 "settings.glass_requirement" = "液态玻璃需要 macOS 26 或更新版本";
@@ -297,8 +294,6 @@
 "appearance.glass_adjust" = "调整…";
 "appearance.glass_reduced" = "纯黑（已开启“降低透明度”）";
 "appearance.screen_position" = "屏幕位置";
-"appearance.position_center_note" = "菜单栏下方居中的悬浮胶囊。";
-"appearance.position_side_note" = "竖条贴住屏幕侧边，组件上下排列；悬停时面板从竖条旁展开。";
 "appearance.free_move" = "自由拖动";
 "appearance.free_move_detail" = "按住状态栏拖动，靠近屏幕边缘松手会贴边。";
 "appearance.position_reset" = "回到顶部中央";
@@ -378,17 +373,12 @@
 
 // Response performance
 "performance.awaiting_usage" = "等待用量";
-"performance.awaiting_usage_help" = "请求结算且完整观察到输出时段后显示 TPS。保留上次测量：更新后 15 秒内显示白色，之后显示灰色。";
 "performance.first_output" = "首输出 %@";
-"performance.latency_help" = "观察到的轮次开始至首次收到模型或推理文字的耗时；无法完整观察时使用服务返回的首输出耗时。本轮内保留，不等同于模型解码延迟。";
-"performance.response_help" = "最近一次已结算请求：%d 个输出 token / %.2f 秒，推理 token 只计算一次，排除工具等待。时段截止至最后观察到的生成条目，表示响应吞吐而非解码速度。";
 "performance.total_help" = "全局总 TPS：%.1f t/s，为所有运行会话可用速率之和。工具等待保留上次测量；待回复、已结束和内部审查会话不计入。各会话使用最近一次测得的请求均速。";
 "performance.partial_total_help" = "全局总 TPS：%.1f t/s。部分运行会话缺少测量或数据已过期，因此合计不完整。工具等待保留上次测量；待回复、已结束和内部审查会话不计入。";
 
 "activity.subagents_running" = "%d 个子代理运行中";
 "activity.subagent_running" = "%d 个子代理运行中";
-"performance.group_help" = "本会话与运行中子代理的最新可用 TPS 之和，缺失测量时合计不完整。15 秒内更新显示白色，之后显示灰色；工具等待不清除上次速率。";
-"performance.retained_help" = "本会话上次测得的 TPS，跨工具和新轮次保留。15 秒内更新显示白色，之后显示灰色。";
 
 // Collapsed bar component layout
 "layout.collapsed" = "折叠栏";
@@ -884,8 +874,6 @@
 "claude.cloud.coordinator" = "项目协调";
 "claude.cloud.project" = "项目";
 "claude.cloud.open_help" = "在 Claude 中打开此云端项目";
-"claude.cloud.performance_help" = "这一轮的输出除以生成时间，不含首字等待。";
-"claude.cloud.live_performance_help" = "根据这个线程正在写的回复估算。思考和调用工具时不更新；Pacer 开始监听前已在写的回复可能没有数值。这一轮结束后显示真实速度。";
 "claude.cloud.workers_help" = "此线程还有 %d 个会话在工作";
 "claude.cloud_projects" = "显示 Claude 云端项目";
 "claude.cloud_projects_help" = "跟随每个项目的线程和协调，结束或等你处理时提醒。需要上方的 claude.ai 登录。";
