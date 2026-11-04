@@ -6,52 +6,31 @@ final class CodexSessionOriginMacTests: XCTestCase {
     private let session = "019a0000-0000-7000-8000-0000000000a1"
     private let child = "019a0000-0000-7000-8000-0000000000a2"
 
+    // CodexSessionOriginTests in PacerCore covers the native reader, metadata
+    // and desktop rules on every host. These cases add the SSH and realtime
+    // Python probes and a real file writer, which run only on the Mac.
 
-
-
-
-
-
-    func testIgnoredRolloutsAndChildrenDoNotConsumeReaderSlotsOrWatches() async throws {
+    func testSSHProbeSkipsIgnoredRolloutsAndChildren() throws {
         let root = try directory(), now = Date()
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
         let folder = root.appendingPathComponent("sessions/" + formatter.string(from: now))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var ignored: [URL] = []
         for number in 1...40 {
             let id = String(format: "019a0000-0000-7000-8000-%012d", number)
             let url = folder.appendingPathComponent("rollout-" + id + ".jsonl")
             try log(id, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate", now: now).write(to: url)
-            ignored.append(url)
         }
-        let parentID = "019a0000-0000-7000-8000-000000000001"
-        let descendant = folder.appendingPathComponent("rollout-" + child + ".jsonl")
-        var childData = try metadata(child, origin: nil, parent: parentID)
+        var childData = try metadata(child, origin: nil, parent: "019a0000-0000-7000-8000-000000000001")
         childData.append(10)
-        try childData.write(to: descendant)
-        ignored.append(descendant)
+        try childData.write(to: folder.appendingPathComponent("rollout-" + child + ".jsonl"))
         let official = folder.appendingPathComponent("rollout-" + session + ".jsonl")
         try log(session, origin: "codex-tui", now: now).write(to: official)
-        let reader = LocalActivityReader()
-        let result = await reader.read(home: root, now: now)
-        XCTAssertEqual(result.activities.compactMap(\.threadID), [session])
-        XCTAssertTrue(ignored.allSatisfy { !result.watchURLs.contains($0) })
-        XCTAssertEqual(result.excludedIDs.count, ignored.count)
         let ssh = try python(SessionLogProbe.library + "\nprint(json.dumps(snapshot()))", home: root)
         let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ssh.utf8)) as? [String: Any])
         XCTAssertEqual((snapshot["sessions"] as? [[String: Any]])?.count, 1)
-
-        // An official resume of an excluded file must be discoverable again.
-        let revived = ignored[0]
-        let handle = try FileHandle(forWritingTo: revived); try handle.seekToEnd()
-        try handle.write(contentsOf: metadata(parentID, origin: "codex-tui", at: ISO8601DateFormatter().string(from: now)))
-        try handle.write(contentsOf: Data([10])); try handle.close()
-        let next = await reader.read(home: root, now: now)
-        XCTAssertFalse(next.excludedIDs.contains("local:" + parentID))
-        XCTAssertTrue(next.activities.contains { $0.threadID == parentID && !$0.launchedByEmbeddingApp })
     }
 
-    func testTranslationCannotResumeThroughRuntimeOrFollowThroughDesktop() throws {
+    func testRealtimeProbeExcludesATranslationWithoutResumingIt() throws {
         let root = try directory(), file = root.appendingPathComponent("sessions/rollout-" + session + ".jsonl")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate").write(to: file)
@@ -68,16 +47,6 @@ final class CodexSessionOriginMacTests: XCTestCase {
         print('excluded')
         """#
         XCTAssertEqual(try python(RealtimeProbe.library + "\n" + script, home: root).trimmingCharacters(in: .whitespacesAndNewlines), "excluded")
-        final class Sent { var values: [[String: Any]] = [] }
-        let sent = Sent(), remote = "remote-control:synthetic"
-        var desktop = try NativeDesktopSession(hosts: ["local", remote]) { sent.values.append($0) }
-        desktop.localOrigin = { _ in CodexRolloutMetadata.read(file) }
-        try desktop.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
-            "result": ["clientId": "019a0000-0000-7000-8000-0000000000b1"]]))
-        try desktop.discover([.init(host: "local", thread: session), .init(host: remote, thread: session)])
-        let follows = sent.values.filter { $0["method"] as? String == "thread-stream-following-changed" }.compactMap { $0["params"] as? [String: Any] }
-        XCTAssertFalse(follows.contains { $0["hostId"] as? String == "local" && $0["following"] as? Bool == true })
-        XCTAssertTrue(follows.contains { $0["hostId"] as? String == remote && $0["following"] as? Bool == true })
     }
 
     func testOpenRolloutOwnershipAndPidReuseWithARealWriter() throws {
@@ -96,7 +65,7 @@ final class CodexSessionOriginMacTests: XCTestCase {
         XCTAssertNil(CodexRolloutOwners.holders(rollouts: [session: file])[session])
     }
 
-    func testMetadataHeadAndTailKeepTheLatestLaunchAcrossChunkBoundaries() throws {
+    func testSSHProbeKeepsTheLatestLaunchAcrossChunkBoundaries() throws {
         let root = try directory(), file = root.appendingPathComponent("sessions/rollout-" + session + ".jsonl")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         for bytes in [64 * 1024, 160 * 1024] {
@@ -106,15 +75,12 @@ final class CodexSessionOriginMacTests: XCTestCase {
             data.append(try JSONSerialization.data(withJSONObject: ["type": "response_item", "payload": ["text": String(repeating: "S", count: bytes)]])); data.append(10)
             data.append(try metadata(session, origin: "private-client-name", at: "2026-10-15T00:00:01Z")); data.append(10)
             try data.write(to: file)
-            XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file)).origin.embedded)
-            // The reader passes the header chunk it already read; the result must not change.
-            XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file, head: data.prefix(32768))).origin.embedded)
             let output = try python(SessionLogProbe.library + "\nr=rollout_origin(home/'sessions'/'\(file.lastPathComponent)')\nprint(json.dumps(r['embedded']))", home: root)
             XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "false")
         }
     }
 
-    func testNativePreflightInheritsAnUnsubscribedParentsExclusion() throws {
+    func testSSHProbeInheritsAParentsExclusionAndRereadsIt() throws {
         let root = try directory(), format = DateFormatter(); format.dateFormat = "yyyy/MM/dd"
         let folder = root.appendingPathComponent("sessions/" + format.string(from: Date()))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -123,9 +89,6 @@ final class CodexSessionOriginMacTests: XCTestCase {
         try metadata(child, origin: nil, parent: session).write(to: folder.appendingPathComponent("rollout-" + child + ".jsonl"))
         let grandchild = "019a0000-0000-7000-8000-0000000000a3"
         try metadata(grandchild, origin: "codex-tui", parent: child).write(to: folder.appendingPathComponent("rollout-" + grandchild + ".jsonl"))
-        let lookup = CodexOriginLookup(home: root)
-        XCTAssertTrue(try XCTUnwrap(lookup.lookup(child)).origin.ignored)
-        XCTAssertTrue(try XCTUnwrap(lookup.lookup(grandchild)).origin.ignored)
         let script = #"""
         tid='019a0000-0000-7000-8000-0000000000a3'
         path=next(p for p in candidates() if p.stem.endswith(tid))
@@ -139,17 +102,6 @@ final class CodexSessionOriginMacTests: XCTestCase {
         print('inherited')
         """#
         XCTAssertEqual(try python(SessionLogProbe.library + "\n" + script, home: root).trimmingCharacters(in: .whitespacesAndNewlines), "inherited")
-        // Restore the excluded root before testing native IPC follow preflight.
-        try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate")
-            .write(to: folder.appendingPathComponent("rollout-" + session + ".jsonl"))
-        final class Sent { var values: [[String: Any]] = [] }
-        let sent = Sent()
-        var desktop = try NativeDesktopSession(hosts: ["local"]) { sent.values.append($0) }
-        desktop.localOrigin = { lookup.lookup($0) }
-        try desktop.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
-            "result": ["clientId": "019a0000-0000-7000-8000-0000000000b1"]]))
-        try desktop.discover([.init(host: "local", thread: child), .init(host: "local", thread: grandchild)])
-        XCTAssertFalse(sent.values.contains { $0["method"] as? String == "thread-stream-following-changed" })
     }
 
     private func directory() throws -> URL {
