@@ -107,8 +107,6 @@ internal static class ConversationNavigationChecks
         try { ((IInvokeProvider)UIElementAutomationPeer.CreatePeerForElement(button).GetPattern(PatternInterface.Invoke)).Invoke(); }
         catch (System.Windows.Automation.ElementNotEnabledException) { }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
-    { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++) { var child = VisualTreeHelper.GetChild(parent, i); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition, string message)
     { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(20); Check(condition(), message); await Pump(); }

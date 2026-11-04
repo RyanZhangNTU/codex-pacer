@@ -63,14 +63,6 @@ internal static class SingleQuotaChecks
         finally { CultureInfo.CurrentUICulture = previous; }
         Console.WriteLine("PASS single quota: real engine module transitions, native component bounds, localized details and multi-provider height restore in both languages");
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            var child = VisualTreeHelper.GetChild(root, index); yield return child;
-            foreach (var descendant in Descendants(child)) yield return descendant;
-        }
-    }
     private static async Task Until(Func<bool> condition, string message)
     {
         var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(25);

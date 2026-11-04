@@ -32,7 +32,7 @@ internal static class CollapsedLayoutChecks
             island.Show(); window.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
             await Pump(); await island.WaitForPresentationAsync();
-            var editor = Descendants(window).OfType<CompactLayoutEditorView>().Single();
+            var editor = SelfAndDescendants(window).OfType<CompactLayoutEditorView>().Single();
             Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && editor.ActualWidth <= 510,
                 "The inline editor must fit the existing Settings canvas");
             Check(engine.LatestSnapshot!.CompactContext != null, "The engine must provide a sanitized compact context");
@@ -115,11 +115,11 @@ internal static class CollapsedLayoutChecks
             var status = Find<CheckBox>(window, "compact.component.status"); bool original = status.IsChecked == true;
             reject = true; Toggle(status); await Until(() => !reject && status.IsEnabled);
             await island.WaitForPresentationAsync();
-            Check((status.IsChecked == true) == original && Descendants(island).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.status") == original,
+            Check((status.IsChecked == true) == original && SelfAndDescendants(island).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.status") == original,
                 "A failed write must restore the editor's acknowledged state");
             Check(configurations == 0, "A failed presentation write cannot reconfigure a source");
             var scroller = Find<ScrollViewer>(window, "settings.content"); scroller.ScrollToTop(); await Pump();
-            foreach (var chip in Descendants(editor).OfType<FrameworkElement>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.chip.", StringComparison.Ordinal)))
+            foreach (var chip in SelfAndDescendants(editor).OfType<FrameworkElement>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.chip.", StringComparison.Ordinal)))
             {
                 Rect bounds = new(chip.TranslatePoint(new Point(), editor), chip.RenderSize);
                 Check(bounds.Left >= -1 && bounds.Right <= editor.ActualWidth + 1, "Wrapped chips cannot clip outside either lane");
@@ -150,7 +150,7 @@ internal static class CollapsedLayoutChecks
                 "Choosing one reminder must restore the slot at the start with only that kind");
             await window.NavigateAsync("collapsed"); await Pump();
             await session.ChangeAsync(p => p with { Position = "bottomLeft", DisplayMode = "floating" }); await island.WaitForPresentationAsync();
-            Check(Descendants(island).OfType<Button>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.strip.", StringComparison.Ordinal)).All(value =>
+            Check(SelfAndDescendants(island).OfType<Button>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.strip.", StringComparison.Ordinal)).All(value =>
                 !AutomationProperties.GetAutomationId(value).EndsWith(".status", StringComparison.Ordinal) && !AutomationProperties.GetAutomationId(value).EndsWith(".quotaLabel", StringComparison.Ordinal)),
                 "The side strip must retain its saved components while omitting the two word labels");
             island.CapturePreview(Path.Combine(output, "collapsed-strip-" + name + ".png"));
@@ -162,12 +162,7 @@ internal static class CollapsedLayoutChecks
     }
     private static Point Centre(FrameworkElement element, Visual relative) => element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), (UIElement)relative);
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject
-        => Descendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        yield return root;
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var item in Descendants(VisualTreeHelper.GetChild(root, i))) yield return item;
-    }
+        => SelfAndDescendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Select(ComboBox value, string selection)

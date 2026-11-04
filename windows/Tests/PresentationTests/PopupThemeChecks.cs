@@ -28,15 +28,6 @@ internal static class PopupThemeChecks
         double ratio = (Luminance(ink.Color) + 0.05) / (Luminance(back.Color) + 0.05);
         if (Math.Max(ratio, 1 / ratio) < 4.5) throw new InvalidOperationException($"The {name} text must contrast with its surface ({ink.Color} on {back.Color}).");
     }
-    private static System.Collections.Generic.IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            var child = VisualTreeHelper.GetChild(root, index);
-            yield return child;
-            foreach (var value in Descendants(child)) yield return value;
-        }
-    }
     private static double Luminance(Color color)
     {
         static double Channel(byte value) { double c = value / 255.0; return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4); }

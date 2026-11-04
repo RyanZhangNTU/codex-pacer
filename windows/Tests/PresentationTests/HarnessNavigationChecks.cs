@@ -130,8 +130,6 @@ internal static class HarnessNavigationChecks
             Check(!button.IsEnabled, "UI Automation may reject a retired disabled row without dispatching its old action");
         }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) { var child = VisualTreeHelper.GetChild(root, index); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Until(Func<bool> condition, string message, TimeSpan? timeout = null)
     {
         var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < (timeout ?? TimeSpan.FromSeconds(8))) await Task.Delay(20);

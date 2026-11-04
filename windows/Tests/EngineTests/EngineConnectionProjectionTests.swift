@@ -47,6 +47,17 @@ final class EngineConnectionProjectionTests: XCTestCase {
         XCTAssertTrue(brokenTransport.hosts.allSatisfy { $0.modules.last?.state == "retrying" && $0.modules.last?.retrySetup == false },
             "Both transports report the broken collector before a cached hook-setup failure")
     }
+    func testOnlyAFailedReachableSSHStreamRaisesTheSSHReminder() {
+        var failed = RuntimeStreamStatus(); failed.sourceAvailable = true
+        var waiting = failed; waiting.waitingForSession = true
+        var offline = failed; offline.remoteHostOnline = false
+        var absent = RuntimeStreamStatus(); absent.sourceAvailable = false
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [["local": status(0)], [ssh.id: failed]]))
+        XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[ssh.id: status(2)], ["local": failed, profile.id: failed]]),
+            "A connected SSH stream, a local stream or a WSL source is not an SSH problem")
+        for quiet in [waiting, offline, absent] { XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[ssh.id: quiet]])) }
+        XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[:], [:]]))
+    }
     func testVersionSetupAndProviderAbsenceCannotLookLikeAnActiveClaudeSession() throws {
         let profile = profile, id = profile.id
         let installing = EngineClaudeRemoteSetup(sourceID: id, context: UUID().uuidString, configured: false, inFlight: true, canRetry: false, message: nil, retryAt: nil)

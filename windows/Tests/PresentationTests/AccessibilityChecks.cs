@@ -181,11 +181,6 @@ internal static class AccessibilityChecks
         Check(((UIElement)Keyboard.FocusedElement).MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)) && Keyboard.FocusedElement == first,
             "Reverse focus traversal returns to the preceding primary action");
     }
-    internal static IEnumerable<DependencyObject> Descendants(DependencyObject value)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(value); index++)
-        { var child = VisualTreeHelper.GetChild(value, index); yield return child; foreach (var nested in Descendants(child)) yield return nested; }
-    }
     internal static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
     internal static async Task Drain() { await Dispatcher.Yield(DispatcherPriority.ContextIdle); await Task.Delay(25); await Dispatcher.Yield(DispatcherPriority.ContextIdle); }
     internal static void PostKey(Window window, Key key, bool system = false)

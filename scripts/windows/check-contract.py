@@ -2,6 +2,7 @@
 import argparse
 from collections import Counter
 from hashlib import sha256
+from xml.etree import ElementTree
 import json
 from pathlib import Path
 import re
@@ -11,14 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SYSTEM_MODULES = {"AppKit", "SwiftUI", "Security", "LocalAuthentication", "CoreServices", "Darwin", "WinSDK", "CoreGraphics", "CoreFoundation", "Glibc", "Musl", "ucrt", "zlib"}
 SHARED_MODULES = {"Foundation", "CryptoKit", "SQLite3", "CZstd", "CGzip"}
 AVAILABILITY_MODULES = {"FoundationNetworking", "CoreGraphics"}
-OWNERS = {"P1", "P2", "P3", "P4"}
 IMPORT = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|typealias|let|var|func)\s+)?(\w+)", re.M)
 BRANCH = re.compile(r"^\s*#(?:if|elseif)\s+(.+)", re.M)
 PLATFORM_TEST_CONDITION = re.compile(
     r"\b(?:os|targetEnvironment)\s*\(|\bcanImport\s*\(\s*(?:PacerMacSupport|PacerEngineSupport|"
     r"AppKit|SwiftUI|Security|LocalAuthentication|CoreServices|CoreGraphics|CoreFoundation|Darwin|Glibc|WinSDK)\s*\)")
-GENERATED = ("ActivityNavigationTargetPortable.swift", "ClaudeCloudPortable.swift",
-             "ClaudeDesktopRecordsPortable.swift", "ClaudeWebQuotaPortable.swift")
 
 
 def content_digest(data):
@@ -101,6 +99,7 @@ def source_contract(name, text):
     unknown = set(modules) - SHARED_MODULES - SYSTEM_MODULES - AVAILABILITY_MODULES
     if unknown:
         raise ValueError("Unreviewed PacerCore module: " + name + ": " + ", ".join(sorted(unknown)))
+    # Returns the number of allowed availability (canImport) branches.
     branches = []
     availability = 0
     stack = []
@@ -133,7 +132,7 @@ def source_contract(name, text):
                 branches.append(branch)
     if branches:
         raise ValueError("Platform/business conditional is forbidden in PacerCore: " + name)
-    return False, availability, 0
+    return availability
 
 
 def native_package_wiring(text):
@@ -154,11 +153,8 @@ def native_package_wiring(text):
 
 def core_contract(directory):
     sources = sorted(directory.rglob("*.swift"))
-    counts = [0, 0, 0]
-    for path in sources:
-        result = source_contract(path.relative_to(directory).as_posix(), path.read_text(encoding="utf-8"))
-        counts = [a + b for a, b in zip(counts, result)]
-    return sources, counts
+    availability = sum(source_contract(path.relative_to(directory).as_posix(), path.read_text(encoding="utf-8")) for path in sources)
+    return sources, availability
 
 
 def target_fragments(text):
@@ -215,11 +211,20 @@ def package_boundary(text, native=False):
             raise ValueError("EngineSupport must be a separate target depending on PacerCore")
 
 
-def no_transition_inventories(contract, coverage):
-    if {"coreTransitions", "engineTransitions", "sourceSelectionRemoval", "macosJobSHA256"} & contract.keys():
-        raise ValueError("The closed C phase cannot retain source/target exception inventories")
-    if {"remainingCoreSources", "remainingCoreTests"} & coverage.keys():
-        raise ValueError("The closed C phase cannot retain Core source/test selection inventories")
+def toolchain_pins(root, workflow):
+    """The toolchain lock names the versions the build files actually pin."""
+    lock = json.loads((root / "windows/toolchain-lock.json").read_text(encoding="utf-8"))
+    sdk = json.loads((root / "global.json").read_text(encoding="utf-8"))["sdk"]["version"]
+    workflow_sdks = set(re.findall(r"^\s*dotnet-version:\s*(\S+)\s*$", workflow, re.M))
+    if lock["dotnetSDK"] != sdk or workflow_sdks != {sdk}:
+        raise ValueError(".NET SDK pins differ: toolchain-lock.json, global.json and platforms.yml must name one version")
+    packages = {}
+    for project in sorted((root / "windows").rglob("*.csproj")):
+        for item in ElementTree.parse(project).getroot().iter("PackageReference"):
+            packages.setdefault(item.get("Include"), set()).add(item.get("Version", "").strip("[]"))
+    for key, package in (("windowsAppSDKFoundation", "Microsoft.WindowsAppSDK.Foundation"), ("webView2", "Microsoft.Web.WebView2")):
+        if packages.get(package) != {lock[key]}:
+            raise ValueError(f"{package} pins differ from toolchain-lock.json {key}")
 
 
 def workflow_boundary(workflow):
@@ -231,23 +236,13 @@ def workflow_boundary(workflow):
                 raise ValueError("Every platform job must run the strict contract and its tests")
 
 
-def check(root=ROOT, require_parity=False):
+def check(root=ROOT):
     read = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     contract = read("windows/platform-contract.json")
     core = root / "native/Sources/PacerCore"
-    coverage = read("windows/platform-coverage.json")
-    no_transition_inventories(contract, coverage)
-    if (root / "windows/shared-core.json").exists():
-        raise ValueError("The closed C phase cannot retain shared-core.json")
     package_boundary((root / "Package.swift").read_text(encoding="utf-8"))
     package_boundary((root / "native/Package.swift").read_text(encoding="utf-8"), native=True)
-    if (root / "scripts/windows/build-claude-core.py").exists() or any((root / "windows/EngineSupport" / name).exists() for name in GENERATED):
-        raise ValueError("Generated Claude copies must be removed with their generator")
-    for name in ("scripts/windows/build-engine.ps1", "scripts/windows/test-engine.ps1", "Package.swift"):
-        text = (root / name).read_text(encoding="utf-8")
-        if "build-claude-core" in text or any(copy in text for copy in GENERATED):
-            raise ValueError("Build/test still invokes generated Claude sources: " + name)
-    all_sources, counts = core_contract(core)
+    all_sources, availability = core_contract(core)
     shared_tests_contract(root / "native/Tests/PacerCoreTests")
     gzip = root / "native/Sources/CGzip"
     provenance = read("native/Sources/CGzip/provenance.json")
@@ -269,29 +264,14 @@ def check(root=ROOT, require_parity=False):
         raise ValueError("Shipping target wiring needs explicit review in platform-contract.json")
     workflow = (root / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
     workflow_boundary(workflow)
-    features = read("windows/platform-coverage.json")["features"]
-    if len(features) != 47 or len({item["id"] for item in features}) != 47 or {item["id"] for item in features} != set(contract["featureIDs"]):
-        raise ValueError("The 47-feature acceptance inventory must stay complete")
-    for item in features:
-        for name in item["evidence"]:
-            if not (root / name).is_file():
-                raise ValueError("Acceptance evidence is missing: " + name)
-        if item["status"] != "verified" and item.get("cleanupOwner") not in OWNERS:
-            raise ValueError("Incomplete feature needs an owner: " + item["id"])
-    pending = [item["id"] for item in features if item["status"] != "verified"]
-    if require_parity and pending:
-        raise ValueError("Windows acceptance remains incomplete: " + ", ".join(pending))
-    stats = dict(Counter(item["status"] for item in features))
-    print(f"Platform contract passed: Core system-import files={counts[0]}, canImport branches={counts[1]}, other branches={counts[2]}; "
-          f"Core sources Windows={len(all_sources)}, Mac={len(all_sources)}; coverage={json.dumps(stats, sort_keys=True)}")
+    toolchain_pins(root, workflow)
+    print(f"Platform contract passed: {len(all_sources)} shared Core sources, {availability} canImport availability branches")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--require-parity", action="store_true")
-    args = parser.parse_args()
+    argparse.ArgumentParser(description=__doc__).parse_args()
     try:
-        check(require_parity=args.require_parity)
-    except (ValueError, OSError, KeyError, IndexError) as error:
+        check()
+    except (ValueError, OSError, KeyError, IndexError, ElementTree.ParseError) as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

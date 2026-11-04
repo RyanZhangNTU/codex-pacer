@@ -132,8 +132,6 @@ internal static class DeepSeekSoloChecks
                 $"The {child.GetType().Name} must fit its measured solo column: {point}, {child.ActualWidth}×{child.ActualHeight}, root {view.ActualWidth}×{view.ActualHeight}");
         }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { var child = VisualTreeHelper.GetChild(root, i); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

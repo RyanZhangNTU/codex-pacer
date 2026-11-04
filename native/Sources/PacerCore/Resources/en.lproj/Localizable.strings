@@ -50,7 +50,6 @@
 "provider.compact_quota" = "%1$@: %2$@";
 "provider.compact_time" = "%1$@ window time remaining: %2$@";
 "provider.window_selection" = "%@ quota window";
-"provider.claude_source" = "Claude Sources";
 "provider.claude_home" = "Claude home";
 "provider.choose_claude_home" = "Choose the Claude configuration folder";
 "provider.invalid_claude_home" = "Choose an existing Claude configuration folder.";
@@ -254,7 +253,6 @@
 "quota.pace_unknown" = "Pace —";
 "quota.pace_value" = "Pace %ld%%";
 "quota.reading" = "Reading quota";
-"quota.refresh_help" = "Refresh · %@";
 "quota.remaining" = "%ld%% remaining";
 "quota.reset_date" = "Resets: %@";
 "quota.reset_days" = "Resets in %1$ldd %2$ldh";
@@ -270,7 +268,6 @@
 "redaction.bearer" = "Bearer [redacted]";
 "redaction.email" = "[redacted]";
 "redaction.field" = "$1[redacted]";
-"redaction.hidden" = "[redacted]";
 "redaction.key" = "[redacted]";
 "redaction.token" = "[redacted]";
 "settings.auto_discovery" = "Find automatically";
@@ -283,7 +280,6 @@
 "settings.cli_path" = "CLI Path";
 "settings.codex_home" = "Codex Data Folder";
 "settings.compact_metric" = "Show As";
-"settings.data_source" = "Sources";
 "settings.display_picker" = "Display";
 "settings.fifteen_minutes" = "15 minutes";
 "settings.five_minutes" = "5 minutes";
@@ -374,7 +370,6 @@
 
 "activity.failed" = "Task failed";
 
-"quota.exhausted" = "Quota exhausted";
 
 // Response performance
 "performance.awaiting_usage" = "Awaiting usage";
@@ -391,7 +386,6 @@
 "performance.retained_help" = "Last measured TPS for this chat, retained across tools and new turns. White means updated within 15 seconds; gray means older.";
 
 // Collapsed bar component layout
-"layout.title" = "Collapsed bar layout";
 "layout.collapsed" = "Collapsed bar";
 "layout.help" = "Drag to reorder or switch sides; click × to hide.";
 "layout.arrangement" = "Layout";

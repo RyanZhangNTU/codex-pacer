@@ -1921,9 +1921,11 @@ actor EngineRuntime {
                 if snapshots[.claude] != nil { sourceTexts[.claude] = state.source?.label }
         }
         if snapshots[.codex] != nil { sourceTexts[.codex] = L10n.text("quota.source_codex") }
+        let codexSSH = enabled.contains(.codex) ? desktopState.flatMap { $0.context == lifecycle.version(.codex) ? $0.remoteStatuses : nil } ?? [:] : [:]
+        let sshIssue = !demo && monitorSSH && ConnectionSource.hasSSHFailure(in: [codexSSH, enabled.contains(.claude) ? claudeRemoteStatuses : [:]])
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
-            failed: failedProviders, wallet: wallet?.alert, now: date)
+            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
             sources: AgentProvider.allCases.filter { enabled.contains($0) }.map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))

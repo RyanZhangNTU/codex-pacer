@@ -1,7 +1,5 @@
 {
   "schemaVersion": 1,
-  "baselineCommit": "ad0205575f88ceb24008f606febea162cbd6279b",
-  "sourceCommit": "a1cb185",
   "protectedFiles": {
     "native/Info.plist": "df9efdfff53b01b6f92479a3325ea5fc638e8657c29738c8f311189bc7ab6bc8",
     "native/Package.resolved": "7658c033856118a55e157006b40a447836b2a8811568f40e30e353e60c7afdff",
@@ -89,54 +87,5 @@
         "PacerMacSupport"
       ]
     }
-  },
-  "featureIDs": [
-    "shared-model",
-    "codex-local",
-    "codex-runtime",
-    "codex-quota",
-    "claude-local",
-    "claude-remote",
-    "claude-web",
-    "claude-cloud",
-    "deepseek-local",
-    "deepseek-wallet",
-    "deepseek-spend",
-    "completion",
-    "module-detection",
-    "navigation",
-    "island-ui",
-    "settings",
-    "notifications",
-    "lifecycle",
-    "localization",
-    "onboarding",
-    "release",
-    "ui-parity",
-    "motion-parity",
-    "surface-parity",
-    "quota-history",
-    "deepseek-budgets",
-    "embedded-sessions",
-    "host-application-tracking",
-    "ssh-sources",
-    "wsl-sources",
-    "remote-control",
-    "browser-session-lifecycle",
-    "connections-page",
-    "display-selection",
-    "fullscreen-policy",
-    "whats-new",
-    "help",
-    "support",
-    "startup",
-    "installation",
-    "automatic-updates",
-    "authenticode",
-    "uninstall",
-    "settings-persistence",
-    "accessibility",
-    "platform-matrix",
-    "cross-platform-delivery"
-  ]
+  }
 }

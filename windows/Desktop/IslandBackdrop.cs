@@ -27,7 +27,6 @@ public partial class IslandWindow
         new(Environment.OSVersion.Version.Build, true, SystemParameters.HighContrast));
     internal bool GlassVisible => backdrop?.Glass == true;
     internal IntPtr BackdropWindowHandle => backdrop?.WindowHandle ?? IntPtr.Zero;
-    internal bool GlassSystemSupported => Environment.OSVersion.Version.Build >= 22621;
     private void InitializeBackdrop()
     {
         SourceInitialized += (_, _) =>

@@ -2,7 +2,7 @@
 
 Windows keeps display and source preferences in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`. The file name stays stable across upgrades. Schema 2 uses the Mac UserDefaults keys; schema 1's Windows aliases migrate on the next successful edit. Loading never rewrites a file. Unknown root keys survive edits.
 
-Older previews cannot read schema 2. Keep a preference backup when downgrading; an older build needs its schema-1 backup.
+Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files come only from development previews before 4.2.2, which cannot read schema 2.
 
 `PreferencesCodec` maps the desktop record to these keys:
 

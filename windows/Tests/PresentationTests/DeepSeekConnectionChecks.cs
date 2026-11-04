@@ -70,7 +70,7 @@ internal static class DeepSeekConnectionChecks
             Check(requestedPane == null, "A removed dial action cannot route after its connection context changes");
             Check(!JsonSerializer.Serialize(session.Current).Contains(key, StringComparison.Ordinal) && !JsonSerializer.Serialize(engine.LatestSnapshot).Contains(key, StringComparison.Ordinal),
                 "Preferences and snapshots cannot retain a key");
-            Check(!Descendants(window).OfType<TextBlock>().Any(value => value.Text.Contains(key, StringComparison.Ordinal)), "Visible or cached text cannot echo the key");
+            Check(!SelfAndDescendants(window).OfType<TextBlock>().Any(value => value.Text.Contains(key, StringComparison.Ordinal)), "Visible or cached text cannot echo the key");
             var remove = Find<Button>(window, "settings.deepseek.key.remove"); Check(remove.IsVisible && remove.IsEnabled, "Only an existing app-owned key offers removal");
             window.CapturePreview(Path.Combine(output, "settings-deepseek-api-" + name + "-connected.png"));
             ulong before = engine.LatestSnapshot!.Sequence; Invoke(Find<Button>(window, "settings.deepseek.sign_in"));
@@ -107,9 +107,7 @@ internal static class DeepSeekConnectionChecks
         await Pump();
     }
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject
-        => Descendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { yield return root; for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) foreach (var value in Descendants(VisualTreeHelper.GetChild(root, index))) yield return value; }
+        => SelfAndDescendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static async Task Pump() { await Task.Delay(30); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }

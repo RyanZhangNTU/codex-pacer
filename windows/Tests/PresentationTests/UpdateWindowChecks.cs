@@ -68,7 +68,7 @@ internal static class UpdateWindowChecks
             window.UpToDate(); await Pump();
             Check(Text(window, "update.status") == Format("windows.updates.up_to_date_detail", "4.2.2") && Find<Button>(window, "update.ok").IsDefault, "Up to date names the installed version");
             Capture(window, Name("current"));
-            window.Failed(true); await Pump();
+            window.Failed(); await Pump();
             Check(Find<Button>(window, "update.retry").IsDefault && Has(window, "update.close"), "A failure offers Try Again and Close");
             Capture(window, Name("failed"));
             window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), 0, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });

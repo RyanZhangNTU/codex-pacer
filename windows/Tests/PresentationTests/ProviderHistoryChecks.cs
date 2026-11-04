@@ -80,8 +80,6 @@ internal static class ProviderHistoryChecks
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap)); using var file = File.Create(path); png.Save(file);
     }
     private static void Press(FrameworkElement target, Key key) => target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(target), Environment.TickCount, key) { RoutedEvent = Keyboard.KeyDownEvent });
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { var child = VisualTreeHelper.GetChild(root, i); yield return child; foreach (var item in Descendants(child)) yield return item; } }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }

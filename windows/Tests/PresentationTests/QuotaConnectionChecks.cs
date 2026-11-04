@@ -70,14 +70,6 @@ internal static class QuotaConnectionChecks
         Console.WriteLine("PASS quota recovery: selectable messages, native capsules, acknowledged real-engine retry, duplicate rejection and supported settings dispatch in both languages");
     }
     private static Button Button(DependencyObject root, string id) => Descendants(root).OfType<Button>().Single(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            var child = VisualTreeHelper.GetChild(root, index); yield return child;
-            foreach (var nested in Descendants(child)) yield return nested;
-        }
-    }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Capture(FrameworkElement surface, string path)
     {

@@ -16,7 +16,7 @@ The bridge uses C++20 with MSVC 19.30 or newer. VS 2019 19.29 uses C++17 because
 
 Idle rendering uses a compositor badge ring, deadline-based quota switching and explicitly released finite animation clocks. Confirmed opaque fullscreen occlusion pauses cosmetic motion through window events. The [Windows idle CPU report](windows-idle-cpu.md) records the five-minute Black/Glass comparisons, engine measurements, rejected samples and remaining limits. Fullscreen visibility uses the separate policy described below.
 
-The [display and fullscreen controls](windows-display-fullscreen.md) select a stable Windows monitor identity, retain a disconnected selection and apply the target screen's DPI/work area. The fullscreen switch controls policy hiding or nonactivating display above fullscreen apps. Local synthetic acceptance remains separate from physical multi-monitor and exclusive-fullscreen acceptance.
+The [display and fullscreen controls](windows-display-fullscreen.md) select a stable Windows monitor identity, retain a disconnected selection and apply the target screen's DPI/work area. The fullscreen switch controls policy hiding or nonactivating display above fullscreen apps. Its checks use synthetic windows and injected topologies, not physical multi-monitor or exclusive-fullscreen setups.
 
 The WPF shell renders the shared engine's presentations over protocol version 1. Build it on Windows x64 with the tools pinned in `windows/toolchain-lock.json`; engine setup is described in [windows-engine.md](windows-engine.md).
 
@@ -29,7 +29,7 @@ The WPF shell renders the shared engine's presentations over protocol version 1.
 
 For focused DeepSeek checks, use the `web` and `deepseek` presentation groups once each. They use intercepted pages and isolated synthetic profiles. `DeepSeekOptionPersistenceChecks` also covers 26 schema-2 option writes, fresh stores and independent engine restarts. Production accounts are not needed for these checks.
 
-The unsigned ZIP and SHA-256 file are written under `output/windows`. The `windows-app-x64-unsigned` CI artifact contains both. Packaging validates the extracted application with a restricted runtime environment, Unicode paths, demo capture, and single-instance activation. It does not create a tag or release. The shipping Mac package and release workflow are unchanged.
+The unsigned ZIP and SHA-256 file are written under `output/windows`; the `windows-app-x64-unsigned` and `windows-app-arm64-unsigned` CI artifacts contain them. x64 packaging validates the extracted application with a restricted runtime environment, Unicode paths, demo capture, and single-instance activation; the ARM64 job only builds and packages. Packaging creates no tag or release: the [release workflow](releasing.md) takes the installers from the final commit's Platforms run and publishes them with the Mac DMG.
 
 For local toolchains outside the worktree, set `PACER_SWIFT_ROOT`, `PACER_WINDOWS_SDK_ROOT` and `PACER_DOTNET_ROOT` before running the scripts. They identify existing installations; build outputs, NuGet packages and source snapshots stay under the worktree or its configured temporary directory. Generated UI strings and DeepSeek scripts come from Core resources; `python scripts/windows/build-shell-resources.py --check` checks them.
 
@@ -47,7 +47,7 @@ Codex and Claude each have a “sessions from other apps” switch, enabled by d
 
 Windows uses the shared host tracking policy for caching, two-second scan throttling, sleep cancellation and wake retries. A bounded native process snapshot supplies parent links; every candidate is checked against its PID and creation time. The cache records the observed application's name and executable file identity while its task or completion card remains referenced.
 
-Opening a card first uses its current verified host. If that host has exited, the engine can restart the captured executable or packaged application after checking its file identity, size and modification time again. It passes no transcript arguments or prompt. Executable paths and package launch identities stay inside the engine; WPF receives a one-use navigation context. An unknown or replaced application, a failed launch, sleep or a source change leaves the ending unread. Remote Control, SSH and WSL acceptance remain separate work in the feature coverage record.
+Opening a card first uses its current verified host. If that host has exited, the engine can restart the captured executable or packaged application after checking its file identity, size and modification time again. It passes no transcript arguments or prompt. Executable paths and package launch identities stay inside the engine; WPF receives a one-use navigation context. An unknown or replaced application, a failed launch, sleep or a source change leaves the ending unread.
 
 The island retains a transparent HWND canvas across transitions, so its native rectangle can remain large after the visible panel closes. Its root UIA `ExpandCollapse` pattern reports the logical state and supports reveal/close actions. Input tests should read that state alongside the bounds, rather than infer expansion from the HWND size alone. Hover exit keeps the existing 0.4-second grace period used by the Mac model.
 
@@ -61,15 +61,13 @@ Activation arguments contain only a fixed action name and a random 128-bit refer
 
 `NotificationRegistryTests`, `NotificationActionChecks`, `NotificationChecks`, `NotificationActivationWindowChecks` and `ReminderSettingsChecks` cover expiry, replay, source changes, cold initialization, privacy, denied delivery, routing and the settings link. For native checks, first build the desktop, then publish `windows/Tests/NotificationProbe/Pacer.NotificationProbe.csproj` as self-contained. This separate QA identity uses an offline engine and synthetic content. `--native` verifies delivery, its own OS history and cleanup. `--warm all` waits for the five `--invoke-show`, `--invoke-task`, `--invoke-topup`, `--invoke-harness` and `--invoke-snooze` COM callbacks. For each cold action, run `--prepare-cold <action>` to completion, then the matching `--invoke-*` command. Results go to `notification-activation.result.jsonl` beside the probe. `--cleanup` removes only that QA identity's history, registration and reference store, including the SDK's retained path-to-AppId mapping. Close other screen tests before posting visible QA notifications.
 
-Native delivery/history and all five warm and cold COM routes passed on Windows 11 25H2 x64, build 26200.9711, on 2026-11-03. Cold checks registered and invoked the probe from a temporary current-user interactive scheduled task outside Codex's process tree; SCM started the executable with the App SDK activation flag and `-Embedding`. Every route waited for the offline engine and passed its source validation. External application handlers recorded synthetic destinations instead of opening a real account or Harness. QA history, registrations in both observed registry views, processes and temporary tasks were removed.
+Register and invoke cold checks as the interactive user outside an agent's sandboxed process tree, for example from a temporary current-user scheduled task. Inside Codex's process tree HKCU is isolated, so a probe registered there cannot be cold-activated (`0x80040154`). Real notification-banner clicks and system notification-setting changes are not automated.
 
-The earlier cold `0x80040154` was a test-environment issue: a Codex child saw one QA `HKCU\Software\Classes\CLSID\...\LocalServer32` and AppUserModelId, while a same-user, same-session external caller saw neither. Both callers had medium integrity, no restricted SIDs and belonged to a Job; Job membership alone does not explain the difference. Registering and invoking outside Codex succeeded with `0x00000000`. No matching DistributedCOM failure event was found. An Application event from a separate clean-environment check reported the QA probe's missing global .NET 10 runtime; publishing the probe as self-contained fixed that deployment issue. Real notification-banner clicks, real installed task/Harness activation and system notification-setting changes still need user acceptance, so notification preview coverage remains partial.
-
-## Local acceptance
+## Local checks
 
 Welcome, What's New, Help and Support behavior and validation are described in [Windows guide pages](windows-guide-pages.md). Use `--welcome` or `--whats-new` with a demo instance for synthetic checks; demo runs never record either page as seen.
 
-[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. SSH and WSL now share remote hook setup; real remote acceptance remains pending.
+[Windows SSH sources](windows-ssh.md) describes saved-route discovery, owned helpers, the shared SSH setting and terminal navigation. SSH and WSL share remote hook setup; see [WSL sources](#wsl-sources).
 
 Use demo data for screenshots and interaction checks:
 
@@ -85,7 +83,7 @@ The engine can be sampled without opening the shell:
 python scripts/windows/check-engine-idle.py --engine <engine-path> --seconds 300 --real-data --output output/windows/engine-real-idle.json
 ```
 
-This option reads real sources for at least five minutes, does not change source configuration or record protocol bodies, and reports engine CPU and shutdown time. The default mode uses empty provider homes. CPU results cover the engine process; they do not establish complete feature acceptance. Record manual evidence in `windows/platform-coverage.json` without promoting features whose remaining requirements are untested.
+This option reads real sources for at least five minutes, does not change source configuration or record protocol bodies, and reports engine CPU and shutdown time. The default mode uses empty provider homes. CPU results cover the engine process only.
 
 ## Codex Remote Control
 
@@ -95,7 +93,7 @@ The catalog keeps bearer credentials inside the read-only RPC/HTTP operation. It
 
 Only a currently verified account and exact device ID can open a Remote Control thread. Account and enrollment changes revoke old pipe proofs and navigation. A hashed account scope separates completion acknowledgments even when two accounts use the same device/thread/turn IDs. A token refresh for the same verified account retains its scope. EOF retains unread endings; failed opens retain unread state and report an error. Retry bypasses transport backoff without replacing a healthy channel.
 
-Development checks use synthetic catalogs, RPC replies and a private named-pipe fixture. They do not send prompts, activate a real provider, or modify real accounts. The Remote Control switch and source rows still need the integration presentation pass and installed-host acceptance.
+Development checks use synthetic catalogs, RPC replies and a private named-pipe fixture. They do not send prompts, activate a real provider, or modify real accounts.
 
 ## WSL sources
 
@@ -109,7 +107,7 @@ Claude hooks on SSH and WSL use the same installer, digest cache and scheduler. 
 
 The source's quota action uses read-only Codex RPC or the shared Claude quota client with a bounded, owner-checked Linux file snapshot. It never borrows Windows credentials or writes a credential cache. Credential stamps are checked again before publishing; only formatted quota windows reach the desktop. These on-demand readings stay separate from the selected Windows account's history. Source navigation uses a dedicated console mode and validates the same distribution/user/root before opening the captured session; failure keeps the ending unread.
 
-Development tests use synthetic profiles, private helpers and intercepted transport. Real WSL lifecycle, actual terminal activation and the complete presentation pass belong to integration and preview acceptance.
+Development tests use synthetic profiles, private helpers and intercepted transport; they do not exercise a real WSL lifecycle or terminal activation.
 
 ## Connections page
 
@@ -117,4 +115,4 @@ The Windows page consumes `ConnectionPagePresentation`, which combines Core's `C
 
 The page exposes the existing SSH and Remote Control preferences and the Windows WSL preference. A task-source retry clears backoff for inactive helpers, retries failed Claude setup and refreshes discovery without restarting healthy subscriptions. Quota and balance requests have their own actions. WSL quota reads remain bound to the selected Linux source; local quota rows use the existing shared freshness and error projections.
 
-SSH and WSL setup buttons use the same source/context pair. Removing a source, disabling it or replacing its identity invalidates an old button. The desktop also rejects a duplicate retry while setup is in flight. Synthetic Swift and headless desktop tests cover grouping, counts, source switches, retry ownership and protocol compatibility. Debug engine and desktop builds pass with no compiler warnings. The full display matrix, real WSL terminals and real-account read-only acceptance are deferred to the batch integration stage; no real provider account was accessed during these checks.
+SSH and WSL setup buttons use the same source/context pair. Removing a source, disabling it or replacing its identity invalidates an old button. The desktop also rejects a duplicate retry while setup is in flight. Synthetic Swift and headless desktop tests cover grouping, counts, source switches, retry ownership and protocol compatibility. They access no real provider account.
