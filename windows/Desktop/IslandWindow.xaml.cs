@@ -502,7 +502,8 @@ public partial class IslandWindow : Window
         Expanded.Width = Math.Max(1, layout.CanvasWidth - 12 - (side ? 32 : 0));
         Expanded.Height = Math.Max(1, layout.CanvasHeight - (side ? 0 : layout.HeaderHeight));
         Expanded.HorizontalAlignment = side ? left ? HorizontalAlignment.Left : HorizontalAlignment.Right : HorizontalAlignment.Center;
-        Expanded.VerticalAlignment = effective is 2 or 4 ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+        // Content opening upward stays next to the header while the shell grows away from it.
+        Expanded.VerticalAlignment = effective is 2 or 4 || (!side && layout.OpensUp) ? VerticalAlignment.Bottom : VerticalAlignment.Top;
         Expanded.Margin = side ? new Thickness(left ? 38 : 6, 0, left ? 6 : 38, 0)
             : layout.OpensUp ? new Thickness(6, 0, 6, layout.HeaderHeight) : new Thickness(6, layout.HeaderHeight, 6, 0);
     }

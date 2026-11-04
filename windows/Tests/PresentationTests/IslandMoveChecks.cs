@@ -76,8 +76,18 @@ internal static class IslandMoveChecks
             await KeyInput(Key.Left); await KeyInput(Key.Enter);
             await PresentationWait.UntilAsync(() => writes == before + 1 && session.Current.IslandPlacement != previous,
                 "The keyboard move commits once on Enter");
+            menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await KeyInput(Key.Space);
+            Check(AutomationProperties.GetName(pin) == originalPin && writes == before + 1, "Space neither pins nor places the island during a keyboard move");
+            for (int i = 0; i < 400 && window.VisibleScreenBounds.Left > work.Left + 2; i++) await KeyInput(Key.Left);
+            for (int i = 0; i < 6; i++) await KeyInput(Key.Left);
+            double pressedPast = window.VisibleScreenBounds.Left;
+            await KeyInput(Key.Right);
+            Check(window.VisibleScreenBounds.Left > pressedPast, "After pressing past an edge, one press back moves the island");
+            await KeyInput(Key.Escape);
+            Check(writes == before + 1, "Cancelling the edge test saves nothing");
             Console.WriteLine("PASS island position (" + (window.GlassVisible ? "Glass" : surface) +
-                "): native drag, preview, four edges, click, bottom expansion and keyboard commit/cancel");
+                "): native drag, preview, four edges, click, bottom expansion, keyboard commit/cancel, edge presses and Space");
 
             async Task KeyInput(Key key)
             {

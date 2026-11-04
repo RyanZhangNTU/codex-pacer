@@ -58,10 +58,13 @@ public partial class IslandWindow
 
     private void OnMovePointerDown(object sender, MouseButtonEventArgs e)
     {
+        // A press ends a keyboard move that was never placed.
+        if (move is { Capture: null }) CancelMove();
         if (presentationStopped || updateInputSuspended || move != null || sender is not FrameworkElement bar) return;
-        var pointer = e.GetPosition(bar);
-        var grab = new Point(Math.Clamp(pointer.X / Math.Max(1, bar.ActualWidth), 0, 1),
-            Math.Clamp(pointer.Y / Math.Max(1, bar.ActualHeight), 0, 1));
+        // Measure across the whole visible bar; the header band is inset by its margins.
+        var across = e.GetPosition(Shell); var within = e.GetPosition(bar);
+        var grab = new Point(Math.Clamp(across.X / Math.Max(1, Shell.ActualWidth), 0, 1),
+            Math.Clamp(within.Y / Math.Max(1, bar.ActualHeight), 0, 1));
         move = new(PointerPixels(), grab, SelectedDisplay.Display, bar);
         if (!bar.CaptureMouse()) { move = null; return; }
         collapse.Stop();
@@ -77,8 +80,10 @@ public partial class IslandWindow
         if (!gesture.Active)
         {
             var delta = (cursor - gesture.Start) / VisualTreeHelper.GetDpi(this).DpiScaleX;
-            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
-                Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+            // Leaving the notch is a mode change, so a jittery click must not start it.
+            double slack = (displayedPlacement ?? compactPreferences).DisplayMode == "notch" ? 3 : 1;
+            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance * slack &&
+                Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance * slack) return;
             StartMove(gesture);
         }
         UpdateMove(gesture, cursor);
@@ -106,13 +111,18 @@ public partial class IslandWindow
         MoreButton.ContextMenu.IsOpen = false;
         if (!CanMove || move != null) return;
         if (VisibleScreenBounds.IsEmpty) return;
+        // Arrow keys, Enter and Esc need focus; without it the move could never end.
+        if (!Activate()) return;
         var gesture = new MoveGesture(default, new Point(.5, .5), SelectedDisplay.Display, null);
         move = gesture;
         StartMove(gesture);
         var bar = layout.Position == 0 ? Header : Strip;
         gesture.Cursor = bar.PointToScreen(new Point(bar.ActualWidth / 2, bar.ActualHeight / 2));
-        Activate();
-        Keyboard.Focus(layout.Position == 0 ? HeaderAction : StripAction);
+        var target = layout.Position == 0 ? HeaderAction : StripAction;
+        // The focused control announces the mode and its keys to screen readers.
+        AutomationProperties.SetName(target, ui.Text("island.move"));
+        AutomationProperties.SetHelpText(target, ui.Text("island.move_keyboard"));
+        Keyboard.Focus(target);
     }
 
     private void OnMoveKey(object sender, KeyEventArgs e)
@@ -121,13 +131,20 @@ public partial class IslandWindow
         if (e.Key == Key.Escape) { e.Handled = true; CancelMove(); return; }
         if (gesture.Capture != null) return;
         if (e.Key == Key.Enter) { e.Handled = true; _ = FinishMoveAsync(gesture); return; }
+        // Space would press the focused pin button instead of placing the island.
+        if (e.Key == Key.Space) { e.Handled = true; return; }
         Vector delta = e.Key switch
         {
             Key.Left => new(-1, 0), Key.Right => new(1, 0), Key.Up => new(0, -1), Key.Down => new(0, 1), _ => new()
         };
         if (delta.LengthSquared == 0) return;
         e.Handled = true;
-        UpdateMove(gesture, gesture.Cursor + delta * (12 * VisualTreeHelper.GetDpi(this).DpiScaleX));
+        double scale = VisualTreeHelper.GetDpi(this).DpiScaleX, step = 12 * scale;
+        var next = gesture.Cursor + delta * step;
+        // Against a display edge, a further press continues onto the adjacent display.
+        var beyond = gesture.Cursor + new Vector(delta.X * (gesture.Size.Width * scale / 2 + step), delta.Y * (gesture.Size.Height * scale / 2 + step));
+        if (IslandPlacementGeometry.MonitorAt(displays.Current, beyond.X, beyond.Y, null) is { } other && other != gesture.Monitor) next = beyond;
+        UpdateMove(gesture, next);
     }
 
     private void StartMove(MoveGesture gesture)
@@ -143,7 +160,8 @@ public partial class IslandWindow
         if (move != gesture || !CanMove) return;
         gesture.Cursor = cursor;
         var monitor = IslandPlacementGeometry.MonitorAt(displays.Current, cursor.X, cursor.Y, gesture.Monitor);
-        if (monitor != gesture.Monitor) { gesture.Monitor = monitor; gesture.Edge = IslandEdge.Free; }
+        bool crossed = monitor != gesture.Monitor;
+        if (crossed) { gesture.Monitor = monitor; gesture.Edge = IslandEdge.Free; }
         var screen = IslandScreen.Read(this, monitor);
         var bounds = screenGeometry?.Invoke() ?? (screen.Screen, screen.Work);
         var raw = new MotionBounds(cursor.X / screen.Scale - gesture.Grab.X * gesture.Size.Width,
@@ -151,6 +169,10 @@ public partial class IslandWindow
         gesture.Edge = IslandPlacementGeometry.SnapEdge(bounds.Item2, raw, gesture.Edge);
         gesture.Placement = IslandPlacementGeometry.FromFrame(gesture.Edge, bounds.Item2, raw);
         var moving = IslandPlacementGeometry.Clamp(bounds.Item2, raw);
+        // Keyboard moves follow the frame that is shown, so presses against an
+        // edge leave nothing to undo in the other direction.
+        if (gesture.Capture == null && !crossed)
+            gesture.Cursor = new Point((moving.X + gesture.Grab.X * moving.Width) * screen.Scale, (moving.Y + gesture.Grab.Y * moving.Height) * screen.Scale);
         try
         {
             surfaceBounds = moving;
@@ -192,6 +214,11 @@ public partial class IslandWindow
         move = null;
         if (gesture.Capture?.IsMouseCaptured == true) gesture.Capture.ReleaseMouseCapture();
         snapPreview?.Close(); snapPreview = null;
+        if (gesture.Capture == null)
+        {
+            foreach (var target in new[] { HeaderAction, StripAction }) target.ClearValue(AutomationProperties.HelpTextProperty);
+            UpdateMainAction();
+        }
     }
 
     private void CancelMove()
@@ -212,15 +239,20 @@ public partial class IslandWindow
         EndMove(gesture);
         DesktopPreferences Edit(DesktopPreferences previous)
         {
+            // Moving within the display shown keeps the saved choice, including a
+            // disconnected display it fell back from; dropping on another display selects it.
             var oldDisplay = DisplaySelection.Resolve(displays.Current, previous);
-            if (gesture.Monitor is { } monitor && (oldDisplay.FellBack || monitor != oldDisplay.Display))
+            if (gesture.Monitor is { } monitor && monitor != oldDisplay.Display)
                 previous = monitor.Choose(previous);
             return previous with { IslandPlacement = placement, DisplayMode = "floating" };
         }
         displayedPlacement = Edit(compactPreferences);
         if (pinned) SetExpanded(true, snap: true); else Relayout(snap: true);
-        var result = await save(Edit);
-        displayedPlacement = null;
+        PreferencesApplyResult result;
+        try { result = await save(Edit); }
+        // An unexpected failure still releases the shown placement, so the island can move again.
+        catch (Exception error) when (error is not OutOfMemoryException) { result = PreferencesApplyResult.EngineFailed; }
+        finally { displayedPlacement = null; }
         if (presentationStopped) return;
         Relayout(snap: true); QueueDisplayRefresh(force: true);
         if (result != PreferencesApplyResult.Applied)
@@ -238,7 +270,11 @@ internal sealed class IslandSnapPreview : Window
         ShowInTaskbar = false; ShowActivated = false; Topmost = true;
         Background = Brushes.Transparent; Content = outline; IsHitTestVisible = false;
         SourceInitialized += (_, _) => NativeWindowBounds.MakeInputTransparent(this);
+        // Crossing a DPI boundary makes WPF apply its suggested size afterwards; restore the outline's pixels.
+        DpiChanged += (_, _) => Dispatcher.BeginInvoke(() => { if (IsVisible && pixels is { } target) NativeWindowBounds.ApplyPixels(this, target); },
+            System.Windows.Threading.DispatcherPriority.Input);
     }
+    private MotionBounds? pixels;
 
     internal void ShowAt(MotionBounds bounds, double scale, bool highContrast)
     {
@@ -248,6 +284,7 @@ internal sealed class IslandSnapPreview : Window
             Left = bounds.X; Top = bounds.Y; Width = bounds.Width; Height = bounds.Height;
             Show();
         }
-        NativeWindowBounds.ApplyPixels(this, new(bounds.X * scale, bounds.Y * scale, bounds.Width * scale, bounds.Height * scale));
+        pixels = new(bounds.X * scale, bounds.Y * scale, bounds.Width * scale, bounds.Height * scale);
+        NativeWindowBounds.ApplyPixels(this, pixels.Value);
     }
 }

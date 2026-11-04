@@ -51,9 +51,12 @@ internal static class IslandPlacementGeometry
         var edge = placement.Edge;
         var bar = placement.CollapsedFrame(work, barWidth, barHeight);
         double below = Bottom(work) - bar.Y, above = Bottom(bar) - work.Y;
-        double height = placement.Vertical ? Math.Max(bar.Height, contentHeight) : bar.Height + contentHeight;
-        bool up = edge == IslandEdge.Bottom || (edge != IslandEdge.Top && below < height && above > below);
-        height = Math.Min(height, up ? above : below);
+        double full = placement.Vertical ? Math.Max(bar.Height, contentHeight) : bar.Height + contentHeight;
+        bool up = edge == IslandEdge.Bottom || (edge != IslandEdge.Top && below < full && above > below);
+        // A bar placed mid-screen can have too little room on both sides; the open
+        // panel then slides inward to fit the work area instead of being clipped.
+        double height = Math.Min(full, work.Height);
+        double top = Math.Clamp(up ? Bottom(bar) - height : bar.Y, work.Y, Bottom(work) - height);
         double width = Math.Min(measured.CanvasWidth, work.Width);
         double center = bar.X + bar.Width / 2;
         bool left = edge == IslandEdge.Left || (!placement.Vertical && center - width / 2 < work.X);
@@ -61,8 +64,7 @@ internal static class IslandPlacementGeometry
         if (left) width = Math.Min(width, Right(work) - bar.X);
         if (right) width = Math.Min(width, Right(bar) - work.X);
         int anchor = left ? up ? 2 : 1 : right ? up ? 4 : 3 : up ? 5 : 0;
-        var panel = new MotionBounds(left ? bar.X : right ? Right(bar) - width : center - width / 2,
-            up ? Bottom(bar) - height : bar.Y, width, height);
+        var panel = new MotionBounds(left ? bar.X : right ? Right(bar) - width : center - width / 2, top, width, height);
         return measured with { Target = expanded ? panel : bar, CanvasWidth = width, CanvasHeight = height,
             Position = placement.Vertical ? anchor : 0, Dock = edge, OpensUp = up, Anchor = anchor };
     }

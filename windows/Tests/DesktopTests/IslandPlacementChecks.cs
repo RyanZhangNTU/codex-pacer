@@ -46,6 +46,20 @@ internal static class IslandPlacementChecks
             }
         }
 
+        // A 1080p screen at 150% leaves about 688 DIP: a bar placed mid-screen has room for
+        // neither half of the panel, so the open panel slides inward rather than clipping.
+        var shortWork = new MotionBounds(0, 0, 1280, 688);
+        foreach (var placement in new[] { new IslandPlacement(IslandEdge.Free, .5, .5), new IslandPlacement(IslandEdge.Left, 0, .5) })
+        {
+            var (width, height) = placement.Vertical ? (32, 126) : (160, 38);
+            var open = placement.Arrange(shortWork, measured, width, height, 402, true);
+            double needed = placement.Vertical ? 402 : 38 + 402;
+            Check(Math.Abs(open.Target.Height - needed) < .001 && open.Target.Y >= 0 && open.Target.Y + open.Target.Height <= 688,
+                "A mid-screen " + placement.Edge + " placement opens its whole panel inside a short work area");
+            var tall = placement.Arrange(shortWork, measured, width, height, 900, true);
+            Check(Math.Abs(tall.Target.Height - 688) < .001 && tall.Target.Y == 0, "Content taller than the screen fills the work area");
+        }
+
         var main = new DisplayMonitor(new(1), "main", "Main", "DISPLAY1", new(0, 0, 2000, 1200), new(0, 0, 2000, 1160), true);
         var secondary = new DisplayMonitor(new(2), "side", "Side", "DISPLAY2", new(-1920, 70, 0, 1150), new(-1870, 70, 0, 1150), false);
         Check(IslandPlacementGeometry.MonitorAt([main, secondary], -1, 580, main) == secondary &&
