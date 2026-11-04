@@ -80,7 +80,8 @@ internal static class Program
                 if (All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run());
                 if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (group != "all") await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
-                if (All("position"))
+                // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
+                if (group == "position")
                     foreach (string surface in new[] { "classic", "liquidGlass" })
                         await Attempt(nameof(IslandMoveChecks), () => IslandMoveChecks.Run(surface));
                 foreach (string language in new[] { "en", "zh-Hans" })

@@ -64,9 +64,20 @@ internal static class IslandPlacementGeometry
         if (left) width = Math.Min(width, Right(work) - bar.X);
         if (right) width = Math.Min(width, Right(bar) - work.X);
         int anchor = left ? up ? 2 : 1 : right ? up ? 4 : 3 : up ? 5 : 0;
-        var panel = new MotionBounds(left ? bar.X : right ? Right(bar) - width : center - width / 2, top, width, height);
-        return measured with { Target = expanded ? panel : bar, CanvasWidth = width, CanvasHeight = height,
+        var panel = Points(new MotionBounds(left ? bar.X : right ? Right(bar) - width : center - width / 2, top, width, height));
+        return measured with { Target = expanded ? panel : Points(bar), CanvasWidth = panel.Width, CanvasHeight = panel.Height,
             Position = placement.Vertical ? anchor : 0, Dock = edge, OpensUp = up, Anchor = anchor };
+    }
+
+    // Fractions of a work area give fractional frames. The shared motion settles on
+    // whole points, as IslandGeometry.windowFrame does on the Mac, so a fractional
+    // target would never match the displayed size. Rounding each edge keeps shared
+    // edges shared and integral sizes unchanged.
+    private static MotionBounds Points(MotionBounds frame)
+    {
+        double left = Math.Round(frame.X, MidpointRounding.AwayFromZero), top = Math.Round(frame.Y, MidpointRounding.AwayFromZero);
+        return new(left, top, Math.Max(1, Math.Round(Right(frame), MidpointRounding.AwayFromZero) - left),
+            Math.Max(1, Math.Round(Bottom(frame), MidpointRounding.AwayFromZero) - top));
     }
 
     internal static MotionBounds Clamp(MotionBounds work, MotionBounds bounds)

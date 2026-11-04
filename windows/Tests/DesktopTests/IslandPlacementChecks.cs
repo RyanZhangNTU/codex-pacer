@@ -60,6 +60,17 @@ internal static class IslandPlacementChecks
             Check(Math.Abs(tall.Target.Height - 688) < .001 && tall.Target.Y == 0, "Content taller than the screen fills the work area");
         }
 
+        // Half of a 1024-point CI screen: the fractional bar center would give a 329.6-point
+        // panel, and the shared motion settles on whole points, so the window never settled.
+        var narrow = new MotionBounds(512, 0, 384, 728);
+        var low = new IslandPlacement(IslandEdge.Bottom, .65, 1);
+        var shut = low.Arrange(narrow, measured, 160, 38, 402, false);
+        var wide = low.Arrange(narrow, measured, 160, 38, 402, true);
+        static bool Whole(MotionBounds value) => new[] { value.X, value.Y, value.Width, value.Height }.All(part => part == Math.Round(part));
+        Check(Whole(shut.Target) && Whole(wide.Target) && wide.CanvasWidth == wide.Target.Width && wide.CanvasHeight == wide.Target.Height
+            && shut.Target.X + shut.Target.Width == wide.Target.X + wide.Target.Width && wide.Target.X >= narrow.X
+            && shut.Target.Y + shut.Target.Height == narrow.Y + narrow.Height, "Fractional placements open on whole points and keep their anchored edges");
+
         var main = new DisplayMonitor(new(1), "main", "Main", "DISPLAY1", new(0, 0, 2000, 1200), new(0, 0, 2000, 1160), true);
         var secondary = new DisplayMonitor(new(2), "side", "Side", "DISPLAY2", new(-1920, 70, 0, 1150), new(-1870, 70, 0, 1150), false);
         Check(IslandPlacementGeometry.MonitorAt([main, secondary], -1, 580, main) == secondary &&

@@ -124,7 +124,8 @@ public partial class IslandWindow : Window
         RatePanel.Visibility = StripRatePanel.Visibility = Visibility.Collapsed;
         InitializeCompactBar();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
-        collapse.Tick += (_, _) => { collapse.Stop(); if (!pinned) SetExpanded(false); };
+        // Closing under the pointer can still raise a leave that starts the timer.
+        collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned) SetExpanded(false); };
         // The open menu holds the pointer, so leaving the island meanwhile raised no leave event.
         MoreButton.ContextMenu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
         { if (!presentationStopped && move == null && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
