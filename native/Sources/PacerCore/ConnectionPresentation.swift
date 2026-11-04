@@ -20,9 +20,12 @@ public struct ConnectionSource: Equatable, Identifiable {
     public static let wslPrefix = "wsl:"
 
     /// True when an SSH source's stream failed while its host is reachable
-    /// and the provider is available there: the compact bar's SSH reminder.
-    public static func hasSSHFailure(in statuses: [[String: RuntimeStreamStatus]]) -> Bool {
-        statuses.contains { $0.contains { $0.key.hasPrefix(sshPrefix) && $0.value.hasConnectionFailure } }
+    /// and the provider is available there, or when a monitored SSH source
+    /// failed outright (its helper exited, so it has no stream status left):
+    /// the compact bar's SSH reminder.
+    public static func hasSSHFailure(in statuses: [[String: RuntimeStreamStatus]], unavailable: [String] = []) -> Bool {
+        unavailable.contains { $0.hasPrefix(sshPrefix) } ||
+            statuses.contains { $0.contains { $0.key.hasPrefix(sshPrefix) && $0.value.hasConnectionFailure } }
     }
 
     /// Connected sources report their subscribed sessions; a reachable host

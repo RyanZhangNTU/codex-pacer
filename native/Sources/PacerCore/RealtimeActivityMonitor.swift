@@ -488,8 +488,9 @@ public actor RealtimeActivityMonitor {
         }
         let names = connections.values.flatMap { $0.state.nameUpdates } +
             (desktop?.states.values.flatMap { $0.nameUpdates } ?? [])
+        let down = failed.values.filter { status[$0.id]?.connected != true }
         let value = RealtimeActivitySnapshot(activities: activities(), statuses: status,
-            unavailable: failed.values.filter { status[$0.id]?.connected != true }.compactMap(\.name).sorted(),
+            unavailable: down.compactMap(\.name).sorted(), unavailableSources: down.map(\.id).sorted(),
             attention: requests.sorted { $0.detectedAt < $1.detectedAt }, names: names,
             performance: connections.values.flatMap { $0.state.performanceUpdates } + (desktop?.states.values.flatMap { $0.performanceUpdates } ?? []),
             bindings: remoteControlBindings, attentionThreads: desktop?.attentionThreads["local"] ?? [],
@@ -504,7 +505,11 @@ public actor RealtimeActivityMonitor {
 public struct RealtimeActivitySnapshot: Sendable {
     public let activities: [SessionActivity]
     public let statuses: [String: RuntimeStreamStatus]
+    /// Names of failed sources that have no connected stream.
     public let unavailable: [String]
+    /// The source IDs behind `unavailable`. A failed helper process leaves
+    /// `statuses`, so hosts that tell SSH from WSL read these IDs.
+    public let unavailableSources: [String]
     public let attention: [PendingAttentionRequest]
     public let names: [SessionNameUpdate]
     public let performance: [SessionPerformanceUpdate]

@@ -57,6 +57,8 @@ final class EngineConnectionProjectionTests: XCTestCase {
             "A connected SSH stream, a local stream or a WSL source is not an SSH problem")
         for quiet in [waiting, offline, absent] { XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[ssh.id: quiet]])) }
         XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[:], [:]]))
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [[:]], unavailable: [ssh.id]), "An exited SSH helper leaves only its failure record")
+        XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[:]], unavailable: [profile.id]), "A failed WSL source is not an SSH problem")
     }
     func testVersionSetupAndProviderAbsenceCannotLookLikeAnActiveClaudeSession() throws {
         let profile = profile, id = profile.id

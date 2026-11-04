@@ -221,10 +221,11 @@ def toolchain_pins(root, workflow):
     packages = {}
     for project in sorted((root / "windows").rglob("*.csproj")):
         for item in ElementTree.parse(project).getroot().iter("PackageReference"):
-            packages.setdefault(item.get("Include"), set()).add(item.get("Version", "").strip("[]"))
+            packages.setdefault(item.get("Include"), set()).add(item.get("Version", ""))
+    # NuGet reads a bare version as a minimum; only [x.y.z] pins one release.
     for key, package in (("windowsAppSDKFoundation", "Microsoft.WindowsAppSDK.Foundation"), ("webView2", "Microsoft.Web.WebView2")):
-        if packages.get(package) != {lock[key]}:
-            raise ValueError(f"{package} pins differ from toolchain-lock.json {key}")
+        if packages.get(package) != {"[" + lock[key] + "]"}:
+            raise ValueError(f"{package} must be pinned exactly as [{lock[key]}] from toolchain-lock.json {key}")
 
 
 def workflow_boundary(workflow):

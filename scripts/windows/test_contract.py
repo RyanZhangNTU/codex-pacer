@@ -96,6 +96,19 @@ class CoreBoundaryTests(unittest.TestCase):
         drifted = re.sub(r"(dotnet-version:\s*)\S+", r"\g<1>0.0.1", workflow, count=1)
         with self.assertRaises(ValueError):
             contract.toolchain_pins(contract.ROOT, drifted)
+        lock = json.loads((contract.ROOT / "windows/toolchain-lock.json").read_text(encoding="utf-8"))
+        project = (contract.ROOT / "windows/Desktop/Pacer.Windows.csproj").read_text(encoding="utf-8")
+        exact = '"[' + lock["webView2"] + ']"'
+        self.assertIn(exact, project)
+        for loose in ('"' + lock["webView2"] + '"', '"[' + lock["webView2"] + ',)"', '"0.0.1"'):
+            with self.subTest(version=loose), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "windows/Desktop").mkdir(parents=True)
+                for name in ("global.json", "windows/toolchain-lock.json"):
+                    (root / name).write_bytes((contract.ROOT / name).read_bytes())
+                (root / "windows/Desktop/Pacer.Windows.csproj").write_text(project.replace(exact, loose), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    contract.toolchain_pins(root, workflow)
 
     def test_core_and_host_target_boundary_is_checked_in_both_platform_branches(self):
         text = (contract.ROOT / "Package.swift").read_text(encoding="utf-8")

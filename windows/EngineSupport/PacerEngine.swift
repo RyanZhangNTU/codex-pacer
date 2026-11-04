@@ -1481,7 +1481,7 @@ actor EngineRuntime {
                     await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
                         attention: value.attention, attentionThreads: value.attentionThreads, names: value.names,
                         performance: value.performance, status: value.localDesktopStatus, statuses: value.statuses,
-                        bindings: value.bindings), binding: binding)
+                        bindings: value.bindings, unavailable: value.unavailableSources), binding: binding)
                 }
         }
         // Local transport fixtures need no directory request. Production owns
@@ -1512,7 +1512,8 @@ actor EngineRuntime {
         desktopState = .init(context: state.context, activities: rows,
             attention: state.attention.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }, attentionThreads: state.attentionThreads,
             names: state.names, performance: state.performance, status: state.status,
-            statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings)
+            statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings,
+            unavailable: state.unavailable.filter { allowsRemoteSource($0, provider: .codex) })
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
         else {
@@ -1921,8 +1922,9 @@ actor EngineRuntime {
                 if snapshots[.claude] != nil { sourceTexts[.claude] = state.source?.label }
         }
         if snapshots[.codex] != nil { sourceTexts[.codex] = L10n.text("quota.source_codex") }
-        let codexSSH = enabled.contains(.codex) ? desktopState.flatMap { $0.context == lifecycle.version(.codex) ? $0.remoteStatuses : nil } ?? [:] : [:]
-        let sshIssue = !demo && monitorSSH && ConnectionSource.hasSSHFailure(in: [codexSSH, enabled.contains(.claude) ? claudeRemoteStatuses : [:]])
+        let codexSSH = enabled.contains(.codex) ? desktopState.flatMap { $0.context == lifecycle.version(.codex) ? $0 : nil } : nil
+        let sshIssue = !demo && monitorSSH && ConnectionSource.hasSSHFailure(
+            in: [codexSSH?.remoteStatuses ?? [:], enabled.contains(.claude) ? claudeRemoteStatuses : [:]], unavailable: codexSSH?.unavailable ?? [])
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
             failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
