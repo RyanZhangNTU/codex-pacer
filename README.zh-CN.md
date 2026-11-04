@@ -22,7 +22,7 @@
   &nbsp;·&nbsp; <a href="README.md">English</a>
 </p>
 
-![Codex Pacer 在刘海处（演示数据）：悬停展开 DeepSeek Harness、Claude Code 和 Codex 三个运行中的任务，各自显示模型和推理强度，DeepSeek 任务还显示本回合估算花费；下方是 Codex 与 Claude 的额度圆环和 DeepSeek 日环；审批请求排到最前，收起后徽标保持琥珀色直到处理完成](docs/assets/demo.zh-CN.webp)
+![Codex Pacer 在刘海处（演示数据）：悬停展开本机的 Claude Code、SSH 上的 Codex 和 DeepSeek Harness 三个任务，各自显示速度、模型和推理强度；审批请求让灵动岛变成琥珀色，点一下任务就打开它的 Claude 窗口；接着依次是只开 Codex 时的配速和预计用完时间、Codex 加 Claude 云端线程、只开 DeepSeek 时的每日和每周预算，最后是 Windows 上的同一个灵动岛](docs/assets/demo.zh-CN.webp)
 
 ## 一眼看清
 

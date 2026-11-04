@@ -23,7 +23,7 @@
   &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-![Codex Pacer at the notch, with sample data: hovering expands three running tasks from DeepSeek Harness, Claude Code and Codex, each with its model and reasoning effort and the DeepSeek turn's estimated cost, above the Codex and Claude quota rings and the DeepSeek day dial; an approval request moves to the top, and the collapsed badge stays amber until it is handled](docs/assets/demo.webp)
+![Codex Pacer at the notch, with sample data: hovering opens a Claude Code task, a Codex task over SSH and a DeepSeek Harness task, each with its speed, model and reasoning effort; an approval request turns the island amber, and clicking the task opens its Claude window; then Codex alone with pace and a forecast, Codex with a Claude cloud thread, DeepSeek alone with daily and weekly budgets, and the same island on Windows](docs/assets/demo.webp)
 
 ## At a glance
 
