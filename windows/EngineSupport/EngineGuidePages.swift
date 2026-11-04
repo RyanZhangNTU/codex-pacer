@@ -39,7 +39,8 @@ enum EngineGuidePages {
               validVersion(input.current), input.seen.map({ $0.utf8.count <= 64 }) ?? true else { return nil }
         let quiet = input.demo || input.settings
         let welcome = input.forceWelcome || (!quiet && input.welcomed < WelcomeGuide.currentMajor)
-        let pending = WhatsNew.pending(current: input.current, seen: input.seen)
+        let pending = WhatsNew.pending(current: input.current, seen: input.seen, releases: WhatsNew.windowsReleases)
+        let history = WhatsNew.history(upTo: input.current, releases: WhatsNew.windowsReleases)
         let note = !welcome && (input.forceWhatsNew || (!quiet && !pending.isEmpty))
         func release(_ value: WhatsNew.Release) -> Release {
             Release(version: value.version, title: L10n.text("whats_new.version", value.version, language: language),
@@ -62,8 +63,8 @@ enum EngineGuidePages {
             versionTitle: L10n.text("whats_new.version", input.current, language: language),
             steps: (1...2).map { L10n.text("welcome.step_of", $0, 2, language: language) },
             moduleOff: Dictionary(uniqueKeysWithValues: AgentProvider.allCases.map { ($0.rawValue, L10n.text("welcome.module.off", $0.displayName, language: language)) }),
-            releases: (pending.isEmpty && note ? Array(WhatsNew.releases.prefix(1)) : pending).map(release),
-            history: WhatsNew.history(upTo: input.current).map(release),
+            releases: (pending.isEmpty && note ? Array(history.prefix(1)) : pending).map(release),
+            history: history.map(release),
             links: ["repository": repository, "star": ProjectSupport.star.absoluteString,
                 "feature": ProjectSupport.featureRequest.absoluteString, "bug": ProjectSupport.bugReport.absoluteString,
                 "donate": ProjectSupport.donationLinks.first?.url.absoluteString ?? repository,

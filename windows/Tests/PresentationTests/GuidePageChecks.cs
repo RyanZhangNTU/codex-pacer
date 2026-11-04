@@ -23,7 +23,7 @@ internal static class GuidePageChecks
         var ui = UiText.For(language == "zh-Hans"); await using var engine = new EngineClient();
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
         await PresentationWait.UntilAsync(() => engine.LatestSnapshot != null, "Guide samples require the first acknowledged demo snapshot");
-        Task<GuideCatalog> Query(string? seen, bool welcome = false) => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.2.0", seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
+        Task<GuideCatalog> Query(string? seen, bool welcome = false) => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.2.4", seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
         var catalog = await Query(null, true); int configured = 0, saved = 0; bool reject = false;
         var session = new PreferencesSession(new(), async value => { configured++; await engine.SendAsync("configure", value); }, _ => { saved++; if (!reject) return true; reject = false; return false; });
         var startup = new Startup(); var links = new List<Uri>(); var settingsActions = new List<string>(); int welcomeActions = 0;
@@ -41,6 +41,8 @@ internal static class GuidePageChecks
             Check(SelfAndDescendants(body).OfType<ActivityBadge>().Count() == 4 && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
                 && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
             Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
+            Check(Has(window, "windows.position.drag") && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any(),
+                "The first welcome step teaches dragging with an illustration");
             Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
             Space(Find<Button>(window, "welcome.next")); await Pump();
@@ -80,6 +82,7 @@ internal static class GuidePageChecks
         {
             noteWindow.Show(); await Pump(); var scroll = Find<ScrollViewer>(noteWindow, "guide.highlights");
             Check(noteWindow.ClientContent.ActualHeight <= 640.1 && scroll.ScrollableHeight > 0, "Cumulative highlights obey the 640-point cap and scroll inside the fixed chrome");
+            Capture(noteWindow.ClientContent, Path.Combine(output, "pages-whats-new-" + language + (dark ? "-dark" : "-light") + ".png"));
             var done = Find<Button>(noteWindow, "guide.done"); double footerBefore = done.TranslatePoint(new Point(), noteWindow).Y;
             scroll.ScrollToEnd(); await Pump(); Check(Math.Abs(done.TranslatePoint(new Point(), noteWindow).Y - footerBefore) < .1, "Scrolling highlights cannot move the title or footer");
             int beforeHostControl = configured; Toggle(Find<CheckBox>(noteWindow, "guide.control.showAppButtons")); await Until(() => !session.Current.ShowAppButtons);
@@ -95,7 +98,8 @@ internal static class GuidePageChecks
             Check(SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.settings.open_at_login_detail")),
                 "The login highlight uses the existing Windows caption while retaining the shared release entry");
             Invoke(Find<Button>(noteWindow, "guide.releaseNotes")); await Pump(); Check(links.Last().AbsoluteUri == note.Links["releaseNotes"], "Release Notes reaches the public default-browser boundary");
-            Capture(noteWindow.ClientContent, Path.Combine(output, "pages-whats-new-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Check(note.Releases[0].Version == "4.2.4" && SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.position.whats_new")),
+                "The upgrade window leads with the localized Windows drag feature");
             Escape(noteWindow); Check(!noteWindow.IsVisible, "Escape closes What's New");
         }
         finally { noteWindow.Close(); }
@@ -108,6 +112,7 @@ internal static class GuidePageChecks
             settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
             Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
             Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
+            Check(Has(settings, "windows.position.help"), "Help explains dragging, keyboard movement and reset");
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
             { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }

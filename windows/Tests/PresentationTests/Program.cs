@@ -79,6 +79,9 @@ internal static class Program
                 if (All("idle") || group == "quotaIdle") await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
                 if (All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run());
                 if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (group != "all") await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
+                if (group == "position")
+                    foreach (string surface in new[] { "classic", "liquidGlass" })
+                        await Attempt(nameof(IslandMoveChecks), () => IslandMoveChecks.Run(surface));
                 foreach (string language in new[] { "en", "zh-Hans" })
                 {
                     scenario = language;

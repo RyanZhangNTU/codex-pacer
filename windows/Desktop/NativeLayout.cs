@@ -4,22 +4,21 @@ using System.Runtime.InteropServices;
 namespace CodexPacer.Windows;
 
 internal readonly record struct IslandLayout(MotionBounds Target, double CanvasWidth, double CanvasHeight,
-    double HeaderHeight, bool Attached, int Position, double NotchWidth);
+    double HeaderHeight, bool Attached, int Position, double NotchWidth)
+{
+    internal IslandEdge Dock { get; init; }
+    internal bool OpensUp { get; init; }
+    internal int? Anchor { get; init; }
+    internal int MotionAnchor => Anchor ?? Position;
+}
 
 internal sealed class NativeLayout
 {
     private readonly Layout layout;
-    private readonly CustomPosition customPosition;
     private readonly double[] output = new double[10];
     internal NativeLayout(string directory)
     {
         layout = NativeMotion.SharedExport<Layout>(directory, "pacer_layout_frame");
-        customPosition = NativeMotion.SharedExport<CustomPosition>(directory, "pacer_custom_position");
-    }
-    internal int ResolveCustomPosition(int? saved, bool attached)
-    {
-        int result = customPosition(saved ?? -1, attached ? 1 : 0);
-        return result is >= 0 and <= 4 ? result : throw new ArgumentOutOfRangeException(nameof(saved));
     }
     internal IslandLayout Measure(MotionBounds screen, MotionBounds workArea, int displayMode, double safeTop,
         double notchWidth, int position, bool expanded, double contentWidth, double contentHeight, double headerWidth, double stripHeight)
@@ -31,5 +30,4 @@ internal sealed class NativeLayout
     }
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int Layout([In] double[] input, int count, [Out] double[] output, int capacity);
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CustomPosition(int saved, int attached);
 }

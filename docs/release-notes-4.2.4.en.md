@@ -1,0 +1,1 @@
+**Move the island anywhere on Windows.** Drag the status bar to a spot that works for you, or release it near a screen edge to snap it in place. Free Move replaces the fixed custom positions. Pacer remembers the new location, and you can return to the top center from Settings → Appearance.

@@ -187,19 +187,33 @@ internal sealed class GuideContent : StackPanel
     {
         var content = new Grid { Margin = new Thickness(10) };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); content.ColumnDefinitions.Add(new ColumnDefinition());
-        var scene = new WelcomeGestureScene { Margin = new Thickness(0, 0, 12, 0) }; content.Children.Add(scene);
+        var scene = new Viewbox { Width = 92, Height = 60, Child = new WelcomeGestureScene(), Margin = new Thickness(0, 0, 10, 0) };
+        content.Children.Add(scene);
         var lines = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        lines.Children.Add(Gesture("welcome.gesture.hover", "welcome.gesture.expand"));
+        lines.Children.Add(Gesture("welcome.gesture.hover", "welcome.gesture.expand", compact: true));
         var divider = new Border { Height = 1 }; divider.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); lines.Children.Add(divider);
-        lines.Children.Add(Gesture("welcome.gesture.leave", "welcome.gesture.collapse"));
+        lines.Children.Add(Gesture("welcome.gesture.leave", "welcome.gesture.collapse", compact: true));
         Grid.SetColumn(lines, 1); content.Children.Add(lines);
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var move = new WelcomeMoveScene { Width = 92, Height = 34, Margin = new Thickness(0, 4, 10, 0) };
+        Grid.SetRow(move, 1); content.Children.Add(move);
+        var drag = Gesture("windows.position.drag", "windows.position.drag_detail");
+        Grid.SetColumn(drag, 1); Grid.SetRow(drag, 1); content.Children.Add(drag);
         var group = new Border { Child = content, CornerRadius = new CornerRadius(10) }; group.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); return group;
     }
-    private StackPanel Gesture(string verb, string result)
+    private StackPanel Gesture(string verb, string result, bool compact = false)
     {
-        var line = new StackPanel { MinHeight = 44, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 0, 4) };
-        var first = Text(ui.Text(verb)); first.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); line.Children.Add(first);
-        line.Children.Add(Text(ui.Text(result))); Identify(line, verb, ui.Text(verb) + " " + ui.Text(result)); return line;
+        string action = ui.Text(verb), detail = ui.Text(result);
+        var line = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 0, 4) };
+        if (compact) line.Children.Add(Text(action + " → " + detail));
+        else
+        {
+            var title = Text(action);
+            title.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            line.Children.Add(title); line.Children.Add(Text(detail, 12));
+        }
+        Identify(line, verb, action + " " + detail); return line;
     }
     private static WarningMark Warning(string kind, bool solid = false, string provider = "codex") => new(new(kind == "lowBalance" ? "balance" : "fiveHour", kind == "lowBalance" ? "deepseek" : provider, solid,
         kind == "lowBalance" ? null : solid ? "0" : "12", kind == "lowBalance" ? "exclamationmark.circle" : null, ""));
@@ -355,7 +369,8 @@ internal sealed class GuideContent : StackPanel
             HelpRow("help.endings", Badge(2), Badge(3)),
             HelpRow("help.quota", Rings(("codex", 58), ("claude", 81)), Figure("58%", PacerPalette.Codex)),
             HelpRow("help.warnings", Warning("codex5hLow"), Warning("lowBalance"), Mark("clock.arrow.circlepath", PacerPalette.Attention, 11)),
-            HelpRow("help.customize", Mark("slider.horizontal.3")));
+            HelpRow("help.customize", Mark("slider.horizontal.3")),
+            HelpRow("windows.position.help", new WelcomeMoveScene { Width = 88, Height = 42 }));
         HelpSection("help.section.expanded",
             HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
             HelpRow("help.app_buttons", providers.Select(provider => (UIElement)Mark(GuideArt.ProviderSymbol(provider), PacerPalette.Provider(provider), 12)).ToArray()),

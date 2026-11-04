@@ -7,6 +7,7 @@ internal static class DisplaySelectionChecks
 {
     internal static async Task Run(string directory)
     {
+        IslandPlacementChecks.Run(directory);
         void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
         var main = new DisplayMonitor(new(1), "qa-main", "QA Twin", "DISPLAY1", new(0, 0, 2560, 1440), new(0, 0, 2560, 1400), true);
         var left = new DisplayMonitor(new(2), "qa-left", "QA Twin", "DISPLAY2", new(-1920, 0, 0, 1080), new(-1872, 0, 0, 1040), false);

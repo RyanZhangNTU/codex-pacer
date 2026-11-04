@@ -154,19 +154,24 @@ internal static class SettingsPresentationChecks
             if (scrolling.VerticallyScrollable) scrolling.SetScrollPercent(ScrollPatternIdentifiers.NoScroll, 0);
             Select(Find<RadioButton>(window, "appearance.mode.notch"));
             await Until(() => session.Current.DisplayMode == "notch", "The attached choice must save immediately");
-            Check(!Find<RadioButton>(window, "appearance.position.center").IsVisible, "Attached mode must hide the custom-position choices");
-            Select(Find<RadioButton>(window, "appearance.mode.custom"));
-            await Until(() => session.Current.DisplayMode == "floating" && session.Current.Position == "bottomLeft", "The first custom choice over notch mode must use the original bottom-left default");
-            foreach (string position in new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" })
-            {
-                Select(Find<RadioButton>(window, "appearance.position." + position));
-                await Until(() => session.Current.Position == position, "Every native position target must commit");
-                Check(session.Current.HasChosenPosition, "An explicit center or corner must survive future mode switches");
-            }
-            rejectSave = true; Select(Find<RadioButton>(window, "appearance.position.topLeft"));
-            await Until(() => Find<RadioButton>(window, "appearance.position.bottomRight").IsChecked == true,
-                "A failed position write must restore the last selected radio item");
-            Check(session.Current.Position == "bottomRight" && configureCalls == 3,
+            var resetPosition = Find<Button>(window, "appearance.position.reset");
+            Check(!resetPosition.IsVisible, "Attached mode hides the free-position reset");
+            rejectSave = true; Select(Find<RadioButton>(window, "appearance.mode.free"));
+            await Until(() => Find<RadioButton>(window, "appearance.mode.notch").IsChecked == true && !rejectSave,
+                "A failed mode write restores the selected appearance");
+            Select(Find<RadioButton>(window, "appearance.mode.free"));
+            await Until(() => session.Current.DisplayMode == "floating" && resetPosition.IsVisible && resetPosition.IsEnabled,
+                "Free Move starts at the untouched center and offers a reset");
+            Check(!session.Current.HasChosenPosition && session.Current.IslandPlacement == null,
+                "Toggling modes does not invent a position");
+            var placement = new IslandPlacement(IslandEdge.Right, 1, .62);
+            await session.ChangeAsync(p => p with { IslandPlacement = placement });
+            rejectSave = true; Invoke(resetPosition);
+            await Until(() => !rejectSave && resetPosition.IsEnabled, "A failed position reset must settle");
+            Check(session.Current.IslandPlacement == placement, "A failed reset retains the last saved placement");
+            Invoke(resetPosition);
+            await Until(() => session.Current.IslandPlacement == null && resetPosition.IsEnabled, "Reset returns to the untouched center");
+            Check(session.Current.Position == "center" && configureCalls == 3,
                 "Appearance choices and navigation cannot restart data collectors");
             Select(Find<RadioButton>(window, "settings.pane.connections"));
             await Until(() => session.Current.LastSettingsPane == "connections" && Descendants(window).OfType<FrameworkElement>().Any(value =>
@@ -182,7 +187,7 @@ internal static class SettingsPresentationChecks
             {
                 reopened.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
                 Check(Find<RadioButton>(reopened, "settings.pane.appearance").IsChecked == true
-                    && Find<RadioButton>(reopened, "appearance.position.bottomRight").IsChecked == true,
+                    && Find<RadioButton>(reopened, "appearance.mode.free").IsChecked == true,
                     "Reopening settings must restore the last pane and position");
                 Select(Find<RadioButton>(reopened, "settings.pane.general"));
                 await Until(() => Find<RadioButton>(reopened, "settings.pane.general").IsChecked == true, "General must open before editing SSH");

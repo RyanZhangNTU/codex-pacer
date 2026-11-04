@@ -4,8 +4,20 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CodexPacer.Windows;
+
+[JsonConverter(typeof(JsonStringEnumConverter<IslandEdge>))]
+internal enum IslandEdge { Free, Top, Bottom, Left, Right }
+
+// The center of the collapsed bar relative to the monitor's work area.
+// A docked edge overrides the coordinate across that edge.
+internal sealed record IslandPlacement(IslandEdge Edge, double X, double Y)
+{
+    internal bool IsValid => Enum.IsDefined(Edge) && X is >= 0 and <= 1 && Y is >= 0 and <= 1;
+    internal bool Vertical => Edge is IslandEdge.Left or IslandEdge.Right;
+}
 
 internal sealed record DesktopPreferences
 {
@@ -14,6 +26,7 @@ internal sealed record DesktopPreferences
     public string? WhatsNewVersion { get; init; }
     public string Language { get; init; } = "system";
     public string Position { get; init; } = "center";
+    public IslandPlacement? IslandPlacement { get; init; }
     public string DisplayMode { get; init; } = "automatic";
     public string DisplaySelection { get; init; } = "automatic";
     public string DisplayID { get; init; } = "";
@@ -65,10 +78,11 @@ internal sealed record DesktopPreferences
     internal bool IsValid => SchemaVersion == 1 && WelcomeGuideVersion >= 0 && (WhatsNewVersion == null || WhatsNewVersion.Length <= 64)
         && Language is "system" or "en" or "zh-Hans"
         && Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight"
+        && (IslandPlacement == null || IslandPlacement.IsValid)
         && DisplayMode is "automatic" or "notch" or "floating"
         && DisplaySelection is "automatic" or "primary" or "specified"
         && ValidWindow(DisplayID) && ValidWindow(DisplayName)
-        && (DisplaySelection != "specified" || DisplayID.Length > 0 || DisplayName.Length > 0)
+        && (DisplaySelection != "specified" || DisplayID is not ("" or "0") || DisplayName.Length > 0)
         && IslandAppearance is "classic" or "liquidGlass"
         && ExpandedQuotaStyle is "split" or "classic"
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)

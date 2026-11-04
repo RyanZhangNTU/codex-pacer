@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "0a5d5ca20f6498361cd405be2f58cee318123e337e0ba1768b739a2f50edc8de",
-    "windows/EngineSupport/Resources/Localization/en.json": "c6b0512c333fa9dc87bf63f6d98ae15b1aaacc75c6c5fe2d106aced74206551a"
+    "windows/EngineSupport/Resources/Localization/en.json": "80e72d8f68576a258a23b41dbf86c06ae3260bda5b2f493e27be17fcd706c67e"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -942,6 +942,16 @@
     "windows.pages.copy_failed": "Windows couldn't copy the link. Try again.",
     "windows.pages.open_failed": "Windows couldn't open the link. Try again in your browser.",
     "windows.platform.unsupported": "Codex Pacer requires Windows 10 build 19041 or later.",
+    "windows.position.drag": "Drag to move",
+    "windows.position.drag_detail": "Drag the island\u2019s status bar. Release near an edge to snap it in place.",
+    "windows.position.free": "Free Move",
+    "windows.position.help.detail": "Drag the status bar to move the island. Release near any edge to snap it in place. In the island\u2019s More menu, choose Move Island to use the arrow keys. To start over, use Return to Top Center in Settings \u2192 Appearance.",
+    "windows.position.help.title": "Move the island",
+    "windows.position.keyboard": "Use the arrow keys to move the island. Press Enter to place it or Esc to cancel.",
+    "windows.position.move": "Move Island",
+    "windows.position.reset": "Return to Top Center",
+    "windows.position.whats_new": "Move the island anywhere",
+    "windows.position.whats_new_detail": "Drag the status bar to place the island where you want it. It snaps to any screen edge when you release it nearby. Free Move replaces the fixed positions in Appearance.",
     "windows.provider.detected": "Detected on this PC",
     "windows.provider.local": "This PC",
     "windows.provider.not_detected": "Not detected on this PC",

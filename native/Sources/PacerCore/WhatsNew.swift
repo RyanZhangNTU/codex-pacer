@@ -6,6 +6,12 @@ import Foundation
 public enum WhatsNew {
     public static let defaultsKey = "whatsNewVersion"
 
+    public static let windowsReleases = [
+        Release(version: "4.2.4", items: [
+            Item(symbol: "cursorarrow.rays", titleKey: "windows.position.whats_new", detailKey: "windows.position.whats_new_detail")
+        ])
+    ] + releases
+
     public struct Item: Equatable, Sendable {
         public enum Control: Equatable, Sendable { case openAtLogin, showEmbeddedSessions, showAppButtons }
         public let symbol: String

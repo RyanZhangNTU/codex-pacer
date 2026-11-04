@@ -47,6 +47,19 @@ final class EngineGuidePagesTests: XCTestCase {
             XCTAssertEqual(forced.page, "whatsNew"); XCTAssertEqual(forced.nextSeen, seen); XCTAssertFalse(forced.releases.isEmpty)
         }
     }
+    func testWindows424UpgradeShowsDragNoteOnceAndFreshInstallKeepsWelcome() throws {
+        for language in AppLanguage.allCases {
+            let upgrade = try plan("4.2.4", seen: "4.2.3", language: language.rawValue)
+            XCTAssertEqual(upgrade.page, "whatsNew")
+            let item = try XCTUnwrap(upgrade.releases.first?.items.first)
+            XCTAssertEqual(upgrade.releases.map(\.version), ["4.2.4"])
+            XCTAssertEqual(item.title, L10n.text("windows.position.whats_new", language: language))
+            XCTAssertNotEqual(item.title, "windows.position.whats_new")
+            XCTAssertEqual(try plan("4.2.4", seen: "4.2.3", welcomed: 0).page, "welcome")
+            XCTAssertNil(try plan("4.2.4", seen: "4.2.4").page)
+            XCTAssertFalse(WhatsNew.history(upTo: "4.2.4").contains { $0.version == "4.2.4" })
+        }
+    }
     func testHistoryContainsEveryReleaseAndUsesBothAuthoritativeCatalogs() throws {
         for language in AppLanguage.allCases {
             let value = try plan(language: language.rawValue)

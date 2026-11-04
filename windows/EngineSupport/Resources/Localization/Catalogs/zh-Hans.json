@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "3353c677953f29df256d9c576e259940790c652fa1386c62ff4f46262bd20806",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "67006ab141ca57e01e2109eadd389e330dee161e74d8792452966ba3912096ec"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8e42e84fdd31be8fdcca535206cc9bb554640a74e35ca7199e62cecc7623f00b"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -942,6 +942,16 @@
     "windows.pages.copy_failed": "Windows \u65e0\u6cd5\u590d\u5236\u94fe\u63a5\uff0c\u8bf7\u91cd\u8bd5\u3002",
     "windows.pages.open_failed": "Windows \u65e0\u6cd5\u6253\u5f00\u94fe\u63a5\uff0c\u8bf7\u5728\u6d4f\u89c8\u5668\u4e2d\u91cd\u8bd5\u3002",
     "windows.platform.unsupported": "Codex Pacer \u9700\u8981 Windows 10 \u5185\u90e8\u7248\u672c 19041 \u6216\u66f4\u9ad8\u7248\u672c\u3002",
+    "windows.position.drag": "\u62d6\u52a8\u4f4d\u7f6e",
+    "windows.position.drag_detail": "\u6309\u4f4f\u7075\u52a8\u5c9b\u7684\u72b6\u6001\u680f\u62d6\u52a8\uff0c\u9760\u8fd1\u5c4f\u5e55\u8fb9\u7f18\u540e\u677e\u624b\u5373\u53ef\u8d34\u8fb9\u3002",
+    "windows.position.free": "\u81ea\u7531\u62d6\u52a8",
+    "windows.position.help.detail": "\u6309\u4f4f\u72b6\u6001\u680f\u62d6\u52a8\u7075\u52a8\u5c9b\uff0c\u9760\u8fd1\u4efb\u4e00\u5c4f\u5e55\u8fb9\u7f18\u540e\u677e\u624b\u5373\u53ef\u8d34\u8fb9\u3002\u4e5f\u53ef\u4ee5\u4ece\u7075\u52a8\u5c9b\u7684\u201c\u66f4\u591a\u201d\u83dc\u5355\u9009\u201c\u79fb\u52a8\u7075\u52a8\u5c9b\u201d\uff0c\u518d\u7528\u65b9\u5411\u952e\u79fb\u52a8\u3002\u8981\u6062\u590d\u9ed8\u8ba4\u4f4d\u7f6e\uff0c\u8bf7\u5728\u201c\u8bbe\u7f6e \u2192 \u5916\u89c2\u201d\u4e2d\u9009\u201c\u56de\u5230\u9876\u90e8\u4e2d\u592e\u201d\u3002",
+    "windows.position.help.title": "\u79fb\u52a8\u7075\u52a8\u5c9b",
+    "windows.position.keyboard": "\u7528\u65b9\u5411\u952e\u79fb\u52a8\u7075\u52a8\u5c9b\uff0c\u6309 Enter \u786e\u8ba4\u4f4d\u7f6e\uff0c\u6309 Esc \u53d6\u6d88\u3002",
+    "windows.position.move": "\u79fb\u52a8\u7075\u52a8\u5c9b",
+    "windows.position.reset": "\u56de\u5230\u9876\u90e8\u4e2d\u592e",
+    "windows.position.whats_new": "\u81ea\u7531\u79fb\u52a8\u7075\u52a8\u5c9b",
+    "windows.position.whats_new_detail": "\u6309\u4f4f\u72b6\u6001\u680f\uff0c\u628a\u7075\u52a8\u5c9b\u62d6\u5230\u987a\u624b\u7684\u4f4d\u7f6e\u3002\u9760\u8fd1\u4efb\u4e00\u5c4f\u5e55\u8fb9\u7f18\u540e\u677e\u624b\uff0c\u5c0f\u5c9b\u5c31\u4f1a\u8d34\u8fb9\u3002\u5916\u89c2\u8bbe\u7f6e\u91cc\u7684\u56fa\u5b9a\u4f4d\u7f6e\u5df2\u6539\u4e3a\u201c\u81ea\u7531\u62d6\u52a8\u201d\u3002",
     "windows.provider.detected": "\u5df2\u5728\u6b64\u7535\u8111\u4e0a\u68c0\u6d4b\u5230",
     "windows.provider.local": "\u6b64\u7535\u8111",
     "windows.provider.not_detected": "\u672a\u5728\u6b64\u7535\u8111\u4e0a\u68c0\u6d4b\u5230",

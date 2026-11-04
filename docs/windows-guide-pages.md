@@ -1,6 +1,6 @@
 # Windows 欢迎、更新记录与帮助页面
 
-Windows 外壳提供两步欢迎窗口、What's New 窗口，以及 Settings 中的更新历史、Help 和 Support Pacer。界面读取现有中英文目录，更新条目直接来自 `WhatsNew.releases`，支持链接与二维码来自 `ProjectSupport`。窗口不自行维护发布清单，也不请求项目网站或检查 Star 状态。
+Windows 外壳提供两步欢迎窗口、What's New 窗口，以及 Settings 中的更新历史、Help 和 Support Pacer。界面读取中英文目录，更新条目来自 `WhatsNew.windowsReleases`，支持链接与二维码来自 `ProjectSupport`。窗口不请求项目网站，也不检查 Star 状态。
 
 ## 何时显示与记录
 
@@ -17,7 +17,7 @@ Windows 外壳提供两步欢迎窗口、What's New 窗口，以及 Settings 中
 
 ## 欢迎窗口
 
-第一步显示收起栏、运行/待处理/结束三种徽章、组件图例和手势说明。All Marks 打开 Help。示例复用 `ActivityBadge`、`CompactQuotaGlyph` 和 `WarningMark`，只使用合成值，不读取任务内容。
+第一步显示收起栏、运行/待处理/结束三种徽章、组件图例和手势说明。“操作”里的示意图说明从哪里拖动小岛，以及松手后怎样贴边。All Marks 打开 Help。示例只使用合成值，不读取任务内容。
 
 第二步提供三家模块卡片。开关提交显式 enabled/disabled，automatic 的检测结果仍有说明；状态及唯一动作随安装、账户、工作区和余额状态变化。动作进入现有提供商设置与连接协调器，继续使用原有登录、工作区选择或粘贴密钥界面。折叠栏入口打开对应设置页，通知和登录启动分别复用 `NotificationSession` 与 OS 注册服务。引导不创造登录启动偏好。
 
