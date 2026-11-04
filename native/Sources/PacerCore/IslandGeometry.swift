@@ -132,6 +132,25 @@ public enum IslandGeometry {
         return bar
     }
 
+    /// One arrow press of a keyboard move: where the bar's center goes. The bar
+    /// stays inside its display's visible area; pressing on against an edge
+    /// carries it onto the display beyond that edge, so there is no dead zone.
+    public static func keyboardStep(bar: CGRect, dx: CGFloat, dy: CGFloat, display: CGRect, visible: CGRect,
+                                    others: [(frame: CGRect, visible: CGRect)]) -> CGPoint {
+        func center(_ frame: CGRect) -> CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
+        let moved = clamp(CGRect(x: bar.minX + dx, y: bar.minY + dy, width: bar.width, height: bar.height), to: visible)
+        guard abs(moved.minX - bar.minX) < 0.5, abs(moved.minY - bar.minY) < 0.5 else { return center(moved) }
+        let probe = CGPoint(x: dx > 0 ? display.maxX + 1 : dx < 0 ? display.minX - 1 : bar.midX,
+                            y: dy > 0 ? display.maxY + 1 : dy < 0 ? display.minY - 1 : bar.midY)
+        guard let next = others.first(where: {
+            probe.x >= $0.frame.minX && probe.x < $0.frame.maxX && probe.y >= $0.frame.minY && probe.y < $0.frame.maxY
+        }) else { return center(moved) }
+        let entering = CGRect(x: dx > 0 ? next.visible.minX : dx < 0 ? next.visible.maxX - bar.width : bar.minX,
+                              y: dy > 0 ? next.visible.minY : dy < 0 ? next.visible.maxY - bar.height : bar.minY,
+                              width: bar.width, height: bar.height)
+        return center(clamp(entering, to: next.visible))
+    }
+
     public struct Arrangement: Equatable, Sendable {
         public var frame: CGRect
         /// The same for the closed and the open island, so it opens in place.
@@ -149,16 +168,19 @@ public enum IslandGeometry {
         let bar = collapsedFrame(placement, visible: visible, size: barSize)
         let content = contentHeight.isFinite ? max(0, contentHeight) : 0
         let below = bar.maxY - visible.minY, above = visible.maxY - bar.minY
-        var height = placement.vertical ? max(bar.height, content) : bar.height + content
-        let up = placement.edge == .bottom || (placement.edge != .top && below < height && above > below)
-        height = min(height, up ? above : below)
+        let full = placement.vertical ? max(bar.height, content) : bar.height + content
+        let up = placement.edge == .bottom || (placement.edge != .top && below < full && above > below)
+        // A bar placed mid-screen can have too little room on both sides; the
+        // open panel then slides inward to fit the visible area, not clipped.
+        let height = min(full, visible.height)
+        let minY = min(max(up ? bar.minY : bar.maxY - height, visible.minY), visible.maxY - height)
         var width = min(expandedWidth.isFinite ? max(bar.width, expandedWidth) : bar.width, visible.width)
         let left = placement.edge == .left || (!placement.vertical && bar.midX - width / 2 < visible.minX)
         let right = placement.edge == .right || (!placement.vertical && bar.midX + width / 2 > visible.maxX)
         if left { width = min(width, visible.maxX - bar.minX) }
         if right { width = min(width, bar.maxX - visible.minX) }
         let panel = CGRect(x: left ? bar.minX : right ? bar.maxX - width : bar.midX - width / 2,
-            y: up ? bar.minY : bar.maxY - height, width: width, height: height)
+            y: minY, width: width, height: height)
         let anchor = Anchor(horizontal: left ? .left : right ? .right : .center, vertical: up ? .bottom : .top)
         return Arrangement(frame: windowFrame(expanded ? panel : bar, anchor: anchor), anchor: anchor, opensUp: up)
     }

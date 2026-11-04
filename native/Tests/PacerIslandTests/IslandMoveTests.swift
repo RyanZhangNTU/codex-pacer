@@ -68,4 +68,27 @@ final class IslandMoveTests: XCTestCase {
         XCTAssertEqual(layouts, 1)
         await model.shutdown()
     }
+
+    func testAKeyboardMoveFromThePinnedIslandSurvivesItsOwnCollapse() async throws {
+        let (model, defaults, name, directory) = try fixture()
+        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        // The panel reads the display mode from the standard defaults; float it
+        // for this test only, without writing a preference.
+        let registered = UserDefaults.standard.volatileDomain(forName: UserDefaults.registrationDomain)
+        UserDefaults.standard.setVolatileDomain(registered.merging(["islandDisplayMode": "floating"]) { $1 },
+                                                forName: UserDefaults.registrationDomain)
+        defer { UserDefaults.standard.setVolatileDomain(registered, forName: UserDefaults.registrationDomain) }
+        let controller = PanelController(model: model)
+        defer { controller.stop() }
+        model.pinned = true
+        model.setExpanded(true)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        // Collapsing for the move resigns key before the move begins; that must not cancel it.
+        model.beginKeyboardMove()
+        XCTAssertTrue(model.islandMoving)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(model.islandMoving, "The keyboard move keeps going after the island collapses for it")
+        XCTAssertFalse(model.expanded)
+        await model.shutdown()
+    }
 }

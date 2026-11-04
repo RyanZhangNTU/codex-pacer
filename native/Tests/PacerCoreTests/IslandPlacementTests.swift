@@ -61,6 +61,50 @@ final class IslandPlacementTests: XCTestCase {
         XCTAssertEqual(high.frame.minX, visible.minX)
     }
 
+    func testATallPanelSlidesInwardInsteadOfBeingClipped() {
+        // Mid-screen, neither side has room: the panel keeps its height and moves inside.
+        let middle = IslandPlacement(edge: .free, x: 0.5, y: 0.5)
+        let bar = CGSize(width: 160, height: 38)
+        for content in [600.0, 900.0] {
+            let open = IslandGeometry.arrange(middle, visible: visible, barSize: bar, expandedWidth: 460,
+                contentHeight: content, expanded: true)
+            XCTAssertEqual(open.frame.height, min(38 + content, visible.height), "\(content): not cut to one side's room")
+            XCTAssertTrue(visible.contains(open.frame), "\(content)")
+        }
+        let open = IslandGeometry.arrange(middle, visible: visible, barSize: bar, expandedWidth: 460, contentHeight: 600, expanded: true)
+        XCTAssertFalse(open.opensUp, "Equal room on both sides opens down, as before")
+        XCTAssertEqual(open.frame.minY, visible.minY, "Opening down, it slides up until it fits")
+        // With room on one side nothing moves, and a docked side strip slides the same way.
+        let low = IslandGeometry.arrange(.init(edge: .free, x: 0.5, y: 0.9), visible: visible, barSize: bar, expandedWidth: 460,
+            contentHeight: 382, expanded: true)
+        let closed = IslandGeometry.arrange(.init(edge: .free, x: 0.5, y: 0.9), visible: visible, barSize: bar, expandedWidth: 460,
+            contentHeight: 382, expanded: false)
+        XCTAssertEqual(low.frame.minY, closed.frame.minY)
+        let side = IslandGeometry.arrange(.init(edge: .left, x: 0, y: 0.5), visible: visible, barSize: CGSize(width: 32, height: 126),
+            expandedWidth: 492, contentHeight: 1000, expanded: true)
+        XCTAssertEqual(side.frame.height, visible.height)
+        XCTAssertTrue(visible.contains(side.frame))
+    }
+
+    func testKeyboardStepsStopAtAnEdgeOrCarryOnToTheNextDisplay() {
+        let display = CGRect(x: 0, y: 0, width: 1728, height: 1117), main = CGRect(x: 0, y: 0, width: 1728, height: 1084)
+        let beside = (frame: CGRect(x: 1728, y: 100, width: 1920, height: 1080), visible: CGRect(x: 1728, y: 100, width: 1920, height: 1055))
+        let edge = CGRect(x: 1568, y: 600, width: 160, height: 38)
+        // Against the edge with nothing beyond, the bar stays and the first press back moves it.
+        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge, dx: 12, dy: 0, display: display, visible: main, others: []), CGPoint(x: 1648, y: 619))
+        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge, dx: -12, dy: 0, display: display, visible: main, others: []), CGPoint(x: 1636, y: 619))
+        // Short of the edge, it moves no further than the edge.
+        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge.offsetBy(dx: -5, dy: 0), dx: 12, dy: 0, display: display, visible: main,
+            others: [beside]), CGPoint(x: 1648, y: 619))
+        // Pressing on against it enters the display beyond, just inside its visible edge.
+        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge, dx: 12, dy: 0, display: display, visible: main, others: [beside]),
+            CGPoint(x: 1808, y: 619))
+        // A display that does not reach the bar's row is not beyond it.
+        let top = CGRect(x: 1568, y: main.maxY - 38, width: 160, height: 38)
+        XCTAssertEqual(IslandGeometry.keyboardStep(bar: top, dx: 0, dy: 12, display: display, visible: main, others: [beside]),
+            CGPoint(x: 1648, y: main.maxY - 19))
+    }
+
     func testAPlacementFollowsTheVisibleFrameOfAnyDisplay() {
         let side = IslandPlacement(edge: .left, x: 0, y: 0.55)
         for secondary in [CGRect(x: -1870, y: 70, width: 1870, height: 1080), CGRect(x: 2560, y: -300, width: 1280, height: 777)] {

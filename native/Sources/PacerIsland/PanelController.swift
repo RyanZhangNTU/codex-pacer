@@ -29,7 +29,6 @@ final class PanelController: NSObject {
         var grab: CGPoint
         var size: CGSize
         var screen: NSScreen
-        var cursor: CGPoint
         let keyboard: Bool
         var edge = IslandPlacement.Edge.free
         var placement: IslandPlacement?
@@ -67,8 +66,13 @@ final class PanelController: NSObject {
         model.onEndMoveGesture = { [weak self] in
             if self?.move?.keyboard == false { self?.finishMove() }
         }
-        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
-            Task { @MainActor in if self?.move?.keyboard == true { self?.cancelMove() } }
+        // Checked as it happens: collapsing for a keyboard move resigns key
+        // just before the move begins, which must not end it.
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.move?.keyboard == true, !self.panel.isKeyWindow else { return }
+                self.cancelMove()
+            }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.layout(animated: false) }
@@ -91,7 +95,9 @@ final class PanelController: NSObject {
                     let step: CGFloat = 12
                     let delta = [123: CGPoint(x: -step, y: 0), 124: CGPoint(x: step, y: 0),
                                  125: CGPoint(x: 0, y: -step), 126: CGPoint(x: 0, y: step)][event.keyCode] ?? .zero
-                    self.updateMove(cursor: CGPoint(x: move.cursor.x + delta.x, y: move.cursor.y + delta.y))
+                    let others = NSScreen.screens.filter { $0 != move.screen }.map { (frame: $0.frame, visible: $0.visibleFrame) }
+                    self.updateMove(cursor: IslandGeometry.keyboardStep(bar: self.panel.frame, dx: delta.x, dy: delta.y,
+                        display: move.screen.frame, visible: move.screen.visibleFrame, others: others))
                     return nil
                 default: return move.keyboard ? nil : event
                 }
@@ -99,11 +105,18 @@ final class PanelController: NSObject {
             if event.keyCode == 53, event.window === self.panel { self.model.close(); return nil }
             return event
         }) { monitors.append(monitor) }
+        // A pointer press ends a keyboard move, wherever it lands.
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+            if self?.move?.keyboard == true { self?.cancelMove() }
+            return event
+        }) { monitors.append(monitor) }
         // The panel moves with the pointer, so follow AppKit's events rather
         // than the drag gesture's local coordinates.
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp], handler: { [weak self] event in
             guard let self, let move = self.move, !move.keyboard else { return event }
-            if event.type == .leftMouseUp { self.finishMove() } else { self.updateMove(cursor: NSEvent.mouseLocation) }
+            if event.type == .leftMouseUp { self.finishMove() }
+            else if !Self.buttonHeld { self.cancelMove() } // its mouse-up went elsewhere
+            else { self.updateMove(cursor: NSEvent.mouseLocation) }
             return event
         }) { monitors.append(monitor) }
         layout(animated: false)
@@ -121,6 +134,7 @@ final class PanelController: NSObject {
 
     func setUpdatePresentationActive(_ active: Bool) {
         guard active != model.interactionSuspended else { return }
+        if active { cancelMove() }
         model.setInteractionSuspended(active)
         panel.ignoresMouseEvents = active
         // A normal-level window is constrained below the menu bar. Restore the
@@ -145,7 +159,11 @@ final class PanelController: NSObject {
         NSScreen.screens.first { Self.number($0) == model.displayID } ?? NSScreen.screens.first
     }
 
+    private static var buttonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
+
     private func layout(animated: Bool = true) {
+        // A drag whose mouse-up never arrived would otherwise hold layout forever.
+        if let move, !move.keyboard, !Self.buttonHeld { cancelMove(); return }
         guard move == nil else { return }
         if !model.expanded { panel.resignKey() }
         guard let screen = selectedScreen else { return }
@@ -216,7 +234,12 @@ final class PanelController: NSObject {
         let hasBlackHeader = layout.attached && model.appearance == .liquidGlass
         let target = IslandTransition.Sample.resting(at: frame, expanded: model.expanded, hasBlackHeader: hasBlackHeader)
         let from = anchor.point(in: current.frame), to = anchor.point(in: frame)
-        let sameAnchor = anchor == self.anchor && abs(from.y - to.y) < 1 && abs(from.x - to.x) < 1
+        // A tall panel that slides inward to fit moves its anchor between the
+        // bar and the open panel; that still springs like any open or close.
+        let resting = [islandFrame(false), expandedFrame].map { anchor.point(in: $0).y }
+        let onTrack = { (y: CGFloat) in y >= resting.min()! - 1 && y <= resting.max()! + 1 }
+        let sameAnchor = anchor == self.anchor && abs(from.x - to.x) < 1
+            && (abs(from.y - to.y) < 1 || (onTrack(from.y) && onTrack(to.y)))
         self.anchor = anchor
         if animated && sameAnchor && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             // Quota/settings updates must not restart an unchanged destination.
@@ -292,7 +315,7 @@ final class PanelController: NSObject {
         layout(animated: false)
         let bar = panel.frame
         let cursor = grab == nil ? CGPoint(x: bar.midX, y: bar.midY) : NSEvent.mouseLocation
-        move = Move(grab: grab ?? CGPoint(x: 0.5, y: 0.5), size: bar.size, screen: screen, cursor: cursor, keyboard: grab == nil)
+        move = Move(grab: grab ?? CGPoint(x: 0.5, y: 0.5), size: bar.size, screen: screen, keyboard: grab == nil)
         if grab == nil {
             panel.makeKey()
             NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
@@ -303,7 +326,7 @@ final class PanelController: NSObject {
 
     private func updateMove(cursor: CGPoint) {
         guard var move else { return }
-        move.cursor = cursor
+        guard model.canMoveIsland else { cancelMove(); return }
         let screen = NSScreen.screens.first { $0.frame.contains(cursor) } ?? move.screen
         if screen != move.screen { move.screen = screen; move.edge = .free }
         let visible = screen.visibleFrame
@@ -327,12 +350,13 @@ final class PanelController: NSObject {
     /// Saves the place, on the display under the bar, and shows the island there.
     private func finishMove() {
         guard let move else { return }
-        guard let placement = move.placement else { cancelMove(); return }
+        guard model.canMoveIsland, let placement = move.placement else { cancelMove(); return }
         endMove()
         let defaults = model.defaults
         placement.save(to: defaults)
-        let current = model.displayID == 0 ? NSScreen.screens.first : NSScreen.screens.first { Self.number($0) == model.displayID }
-        if current != move.screen { defaults.set(Self.number(move.screen), forKey: "displayID") }
+        // A drag that stays on the fallback display keeps the chosen one, so
+        // the island returns there when it reconnects.
+        if selectedScreen != move.screen { defaults.set(Self.number(move.screen), forKey: "displayID") }
         if IslandDisplayMode.load(from: defaults) != .floating { IslandDisplayMode.floating.save(to: defaults) }
         model.islandPlacementSaved()
         if model.pinned { model.setExpanded(true) }
