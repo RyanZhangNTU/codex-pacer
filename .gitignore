@@ -34,5 +34,5 @@ __pycache__/
 .idea/
 *.sw?
 
-# Optional short workspace build/test root on Windows
+# Short Windows root for installer payloads and test fixtures written by scripts/windows
 /out/

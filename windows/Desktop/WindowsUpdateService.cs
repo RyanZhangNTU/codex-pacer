@@ -14,7 +14,8 @@ internal interface IWindowsUpdatePresenter
     void Checking();
     void Offer(WindowsUpdatePackage package, bool manual);
     void UpToDate();
-    void Failed(bool manual);
+    // Only a manual check reports a failure; automatic checks fail quietly.
+    void Failed();
 }
 
 internal sealed class WindowsUpdateService : IAsyncDisposable
@@ -92,7 +93,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             catch (Exception error) when (Recoverable(error))
             {
                 if (disposed) return false;
-                if (manual) { Publish(Status with { Busy = true, MessageKey = "windows.updates.failed" }); Presenter?.Failed(true); }
+                if (manual) { Publish(Status with { Busy = true, MessageKey = "windows.updates.failed" }); Presenter?.Failed(); }
                 else Publish(Status with { MessageKey = "windows.updates.failed" });
                 return false;
             }

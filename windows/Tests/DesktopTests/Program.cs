@@ -23,8 +23,6 @@ internal static class Program
         { await WindowsUpdateChecks.Run(); return 0; }
         if (args is ["--update-installer-only", var installerScope, var installerBuild, var installerPath])
         { WindowsUpdateChecks.CheckInstallerFile(installerPath, installerScope, installerBuild); return 0; }
-        if (args is ["--remote-source-unit-only"])
-        { WslTerminalChecks.Run(); SshTerminalChecks.Run(); ConnectionActionChecks.Run(); await ConversationApplicationChecks.Run(); Console.WriteLine("PASS remote routing, source-bound recovery and engine-owned host navigation"); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
@@ -48,8 +46,6 @@ internal static class Program
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--ssh-only"])
         { SshTerminalChecks.Run(); Console.WriteLine("PASS SSH terminal argv, fallback and preference persistence"); return 0; }
-        if (args is ["--navigation-only"])
-        { await ConversationApplicationChecks.Run(); SshTerminalChecks.Run(); Console.WriteLine("PASS host capabilities and SSH navigation"); return 0; }
         if (args is ["--installation-only"])
         { InstallationServiceChecks.Run(); Console.WriteLine("PASS installation identity, repair, ownership, data retention, failure rollback and notification cleanup"); return 0; }
         if (args.Contains("--hold")) { await Task.Delay(Timeout.Infinite); return 0; }
@@ -115,6 +111,7 @@ internal static class Program
 
         await Test("provider-pinned conversation links, matched cloud fallback and existing host plans", ConversationApplicationChecks.Run);
         await Test("SSH terminal argv, console fallback and shared preference key", () => { SshTerminalChecks.Run(); return Task.CompletedTask; });
+        await Test("WSL terminal argv, unsafe plan rejection and failed launch", () => { WslTerminalChecks.Run(); return Task.CompletedTask; });
         await Test("real engine: Claude/Codex/DeepSeek discovery, reads and write notifications beyond MAX_PATH", () => LongPathChecks.Run(engine));
 
         await Test("real Claude file notification: first reply after large Desktop metadata", async () =>

@@ -28,7 +28,10 @@ final class CodexDiagnosticTests: XCTestCase {
         let once = CodexDiagnosticText.sanitized(input)
         XCTAssertEqual(CodexDiagnosticText.sanitized(once), once)
         XCTAssertFalse(once.contains("]]"))
-        XCTAssertFalse(once.contains(L10n.text("redaction.hidden") + " " + L10n.text("redaction.hidden")))
+        for key in ["redaction.bearer", "redaction.key", "redaction.token", "redaction.field"] {
+            let marker = L10n.text(key)
+            XCTAssertFalse(once.contains(marker + " " + marker), "A sanitized value keeps a single marker: " + key)
+        }
     }
     func testRpcAndTimeoutDescriptionsNameTheFailingOperation() {
         let failure = CodexClientError.server(method: "account/rateLimits/read", code: -32601, message: "Method not found")

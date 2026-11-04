@@ -170,14 +170,6 @@ internal static class CodexSettingsChecks
     }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            var child = VisualTreeHelper.GetChild(root, index); yield return child;
-            foreach (var item in Descendants(child)) yield return item;
-        }
-    }
     private static void Edit(TextBox field, string value)
     { ((IValueProvider)new TextBoxAutomationPeer(field).GetPattern(PatternInterface.Value)).SetValue(value); Enter(field); }
     private static void Enter(TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(field), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });

@@ -162,6 +162,14 @@ final class DeepSeekActivityTests: XCTestCase {
         XCTAssertFalse(DeepSeekPricing.isOfficial(provider: "openrouter"))
     }
 
+    func testHolidayCalendarCoversTheCurrentBeijingYear() {
+        XCTAssertTrue(DeepSeekPricing.holidays.allSatisfy { Int($0.prefix(4)).map { $0 <= DeepSeekPricing.calendarYear } == true },
+            "Listed holidays cannot extend past calendarYear")
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = DeepSeekPricing.beijing
+        XCTAssertLessThanOrEqual(calendar.component(.year, from: Date()), DeepSeekPricing.calendarYear,
+            "Add the new year's State Council holiday schedule to DeepSeekPricing.holidays and raise calendarYear")
+    }
+
     func testSubagentSpendCountsTowardItsRootTaskAndThirdPartyChannelsAreNotPriced() throws {
         var state = DeepSeekActivityState()
         feed(&state, [header, line("model/selection", seq: 1, at: 0, ["provider": "deepseek-account", "model": "deepseek-flash"]),

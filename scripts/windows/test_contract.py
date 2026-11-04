@@ -33,13 +33,13 @@ class CoreBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 contract.core_contract(root)
             nested.write_text("import Foundation", encoding="utf-8")
-            sources, counts = contract.core_contract(root)
+            sources, availability = contract.core_contract(root)
             self.assertEqual(len(sources), 2)
-            self.assertEqual(counts, [0, 0, 0])
+            self.assertEqual(availability, 0)
 
     def test_availability_whitelist_allows_only_the_guarded_import(self):
-        self.assertEqual(self.check("#if canImport(FoundationNetworking)\nimport FoundationNetworking\n#endif"), (False, 1, 0))
-        self.assertEqual(self.check("#if canImport(CoreGraphics)\nimport CoreGraphics\n#endif"), (False, 1, 0))
+        self.assertEqual(self.check("#if canImport(FoundationNetworking)\nimport FoundationNetworking\n#endif"), 1)
+        self.assertEqual(self.check("#if canImport(CoreGraphics)\nimport CoreGraphics\n#endif"), 1)
         for text in ("import FoundationNetworking", "import CoreGraphics", "#if os(Windows)\nlet value = 1\n#endif",
                      "#if canImport(FoundationNetworking)\nimport FoundationNetworking\nlet value = 1\n#endif",
                      "#if canImport(FoundationNetworking)\nimport FoundationNetworking\n#else\nlet value = 1\n#endif"):
@@ -48,7 +48,7 @@ class CoreBoundaryTests(unittest.TestCase):
 
     def test_embedded_helpers_comments_and_string_contents_are_not_swift_imports(self):
         text = 'import Foundation\nlet script = #"""\nimport os\nimport Darwin\n#if os(Windows)\n"""#\n/* import WinSDK */\n'
-        self.assertEqual(self.check(text), (False, 0, 0))
+        self.assertEqual(self.check(text), 0)
 
     def test_shared_test_functions_cannot_hide_in_platform_conditionals(self):
         for text in (
@@ -90,14 +90,25 @@ class CoreBoundaryTests(unittest.TestCase):
         self.assertEqual(contract.native_package_wiring("// Comment only\n" + text), expected)
         self.assertNotEqual(contract.native_package_wiring(text.replace('"PacerCore"', '"WindowsHost"')), expected)
 
-    def test_closed_c_phase_rejects_every_legacy_exception_inventory(self):
-        contract.no_transition_inventories({}, {})
-        for key in ("coreTransitions", "engineTransitions", "sourceSelectionRemoval", "macosJobSHA256"):
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                contract.no_transition_inventories({key: {}}, {})
-        for key in ("remainingCoreSources", "remainingCoreTests"):
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                contract.no_transition_inventories({}, {key: {}})
+    def test_toolchain_lock_names_the_pinned_sdk_and_packages(self):
+        workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
+        contract.toolchain_pins(contract.ROOT, workflow)
+        drifted = re.sub(r"(dotnet-version:\s*)\S+", r"\g<1>0.0.1", workflow, count=1)
+        with self.assertRaises(ValueError):
+            contract.toolchain_pins(contract.ROOT, drifted)
+        lock = json.loads((contract.ROOT / "windows/toolchain-lock.json").read_text(encoding="utf-8"))
+        project = (contract.ROOT / "windows/Desktop/Pacer.Windows.csproj").read_text(encoding="utf-8")
+        exact = '"[' + lock["webView2"] + ']"'
+        self.assertIn(exact, project)
+        for loose in ('"' + lock["webView2"] + '"', '"[' + lock["webView2"] + ',)"', '"0.0.1"'):
+            with self.subTest(version=loose), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "windows/Desktop").mkdir(parents=True)
+                for name in ("global.json", "windows/toolchain-lock.json"):
+                    (root / name).write_bytes((contract.ROOT / name).read_bytes())
+                (root / "windows/Desktop/Pacer.Windows.csproj").write_text(project.replace(exact, loose), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    contract.toolchain_pins(root, workflow)
 
     def test_core_and_host_target_boundary_is_checked_in_both_platform_branches(self):
         text = (contract.ROOT / "Package.swift").read_text(encoding="utf-8")
@@ -155,7 +166,7 @@ class WindowsArchitectureTests(unittest.TestCase):
     def test_arm64_excludes_only_unreferenced_x64_crt_and_updates_its_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); crt, native, before = self.runtime_fixture(root)
-            foreign = root / "WinSparkle.dll"; foreign.write_bytes(self.image(0x8664))
+            foreign = root / "Vendor.dll"; foreign.write_bytes(self.image(0x8664))
             self.assertEqual(self.arm_runtime.prune(root, "arm64"), [crt.name])
             self.assertFalse(crt.exists()); self.assertTrue(native.exists()); self.assertTrue(foreign.exists())
             after = json.loads((root / "pacer-runtime.json").read_text())
@@ -227,7 +238,7 @@ class WindowsArchitectureTests(unittest.TestCase):
                          "Engine/PacerInstallerHooks.exe", "Maintenance/PacerMaintenance.exe", "Engine/Python/python.exe", "Engine/Python/python3.dll", "Engine/Python/python314.dll"]:
                 target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(self.image(0xAA64))
             self.architecture.check(root, "arm64")
-            (root / "WinSparkle.dll").write_bytes(self.image(0x8664))
+            (root / "Vendor.dll").write_bytes(self.image(0x8664))
             with self.assertRaises(ValueError): self.architecture.check(root, "arm64")
 
     def test_architecture_pins_and_minimum_build_declarations(self):

@@ -40,7 +40,10 @@ internal static class ReminderSettingsChecks
             var low = Find<TextBox>(window, "settings.reminders.lowLine"); var spike = Find<TextBox>(window, "settings.reminders.spikeLine");
             var lowSwitch = Find<CheckBox>(window, "settings.reminders.lowBalance"); var budget = Find<CheckBox>(window, "settings.reminders.budget");
             Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && low.Tag is string { Length: > 0 } && spike.Tag is string { Length: > 0 }, "Reminder geometry and automatic thresholds follow the original page and Core rules");
-            Check(!Find<CheckBox>(window, "settings.reminders.ssh").IsEnabled && Find<CheckBox>(window, "settings.reminders.fiveHour").IsEnabled, "Working quota reminders and pending SSH monitoring are distinguished");
+            var ssh = Find<CheckBox>(window, "settings.reminders.ssh"); bool sshShown = session.Current.WarningKinds.Contains("ssh");
+            Check(ssh.IsEnabled && ssh.ToolTip == null && Find<CheckBox>(window, "settings.reminders.fiveHour").IsEnabled, "The SSH reminder is configurable like the quota reminders");
+            Toggle(ssh); await Until(() => session.Current.WarningKinds.Contains("ssh") != sshShown && ssh.IsEnabled);
+            Toggle(ssh); await Until(() => session.Current.WarningKinds.Contains("ssh") == sshShown && ssh.IsEnabled);
             window.CapturePreview(Path.Combine(output, "settings-" + scenario + "-reminders.png"));
             low.Text = "90"; Enter(window, low); await Until(() => session.Current.DeepSeekLowBalanceLine == 90 && low.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert?.Kind == "lowBalance", "The saved threshold changes the real wallet state");
@@ -95,8 +98,6 @@ internal static class ReminderSettingsChecks
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) { var child = VisualTreeHelper.GetChild(root, index); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition)
     { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < 8) await Task.Delay(20); Check(condition(), "The reminder settings action must finish"); await Pump(); }

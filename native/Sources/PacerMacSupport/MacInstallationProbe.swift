@@ -2,23 +2,6 @@ import CoreServices
 import Foundation
 import PacerCore
 
-public struct MacInstallationProbe: ProviderInstallationProbe {
-    public let userHome: URL
-    public let environment: [String: String]
-    public let applicationURLs: [AgentProvider: [URL]]?
-    public let systemBinDirectories: [String]
-    public init(userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        applicationURLs: [AgentProvider: [URL]]? = nil, systemBinDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) {
-        self.userHome = userHome; self.environment = environment
-        self.applicationURLs = applicationURLs; self.systemBinDirectories = systemBinDirectories
-    }
-    public func detect() -> ProviderInstallationDetection {
-        ProviderInstallationDetection.detect(userHome: userHome, environment: environment,
-            applicationURLs: applicationURLs, systemBinDirectories: systemBinDirectories)
-    }
-}
-
 extension ProviderInstallationDetection {
     /// Detect known app/CLI locations without launching either app or reading authentication.
     public static func detect(userHome: URL = FileManager.default.homeDirectoryForCurrentUser,

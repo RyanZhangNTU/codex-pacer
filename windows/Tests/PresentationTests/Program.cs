@@ -31,15 +31,6 @@ internal static class Program
             try { SystemAppearanceUnitChecks.Run(); QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult(); SettingsPageUnitChecks.Run(); return 0; }
             catch (Exception error) { Console.Error.WriteLine(error); return 1; }
         }
-        if (args is ["--quota-cycle-units"])
-        {
-            try
-            {
-                for (int iteration = 0; iteration < 10; iteration++) QuotaCycleCompletionChecks.Run().GetAwaiter().GetResult();
-                Console.WriteLine("PASS quota-cycle completion: ten headless runs, unchanged deadline, stale/duplicate events, cancellation and cleanup"); return 0;
-            }
-            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
-        }
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
         string group = args.Length > 1 ? args[1] : "all";
         string? desktop = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
@@ -385,5 +376,4 @@ internal static class Program
         public override void Write(string? message) { if (message != null) Errors.Add(message); }
         public override void WriteLine(string? message) { if (message != null) Errors.Add(message); }
     }
-    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
 }

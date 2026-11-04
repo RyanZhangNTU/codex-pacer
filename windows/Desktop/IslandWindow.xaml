@@ -46,7 +46,7 @@
    <Setter Property="Width" Value="22"/><Setter Property="Height" Value="22"/>
   </Style>
  </Window.Resources>
- <Grid x:Name="MotionSurface" Background="Transparent">
+ <Grid Background="Transparent">
  <Border x:Name="Shell" Background="#0B0C0E" CornerRadius="19" HorizontalAlignment="Left" VerticalAlignment="Top" MouseEnter="OnMouseEnter" MouseLeave="OnMouseLeave">
   <Border.RenderTransform><TranslateTransform x:Name="ShellOffset"/></Border.RenderTransform>
   <Grid>
@@ -88,7 +88,7 @@
    <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,38,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
     <local:RevealHost.RenderTransform><TranslateTransform x:Name="RevealOffset"/></local:RevealHost.RenderTransform>
     <ScrollViewer x:Name="ExpandedScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
-     <StackPanel x:Name="ExpandedContent" Margin="0,4,0,14">
+     <StackPanel Margin="0,4,0,14">
       <Grid x:Name="TaskToolbar" Height="24" Margin="9,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

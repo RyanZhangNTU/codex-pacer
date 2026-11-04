@@ -203,17 +203,6 @@ struct FiveHourAlertGlyph: View {
     }
 }
 
-enum DeepSeekWalletColors {
-    static func balance(_ state: DeepSeekWallet.State) -> Color {
-        switch state {
-        case .normal: AgentProvider.deepseek.tint
-        case .low: PacerPalette.attention
-        case .exhausted: PacerPalette.danger
-        case .stale, .disconnected: PacerPalette.secondary
-        }
-    }
-}
-
 /// DeepSeek's one alert, shaped like the 5h capsule and always in DeepSeek's
 /// blue: ¥ for the balance, a flame for a spend spike, 日/周 for a budget.
 /// Outlined means take note, solid means act now.

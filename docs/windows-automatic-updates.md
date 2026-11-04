@@ -30,11 +30,13 @@ Limits:
 
 The package streams into `setup.exe.download` in a new owned session directory and reports progress. Only after its length and Ed25519 signature pass is it renamed to `setup.exe`. Any failure or cancellation deletes the partial file. An offer older than 30 minutes is verified again when the download starts; if the feed now selects a different build, that build replaces the offer.
 
+The release Mac signs both installers and the feed with the Mac appcast's Keychain key (`prepare-windows-update.py`, run by the [release build](releasing.md#3-build-and-publish-once)), with one feed entry per architecture and English and Simplified Chinese notes. The feed starts with a `<!-- pacer-feed-ed25519:SIGNATURE -->` line covering the XML bytes that follow, and each `enclosure` carries the installer's `sparkle:edSignature`; the signatures, not the redirect hosts, establish trust. The script signs the feed body under a non-`.xml` name because `sign_update` rewrites files it recognizes as appcasts. A missing Windows feed means there is no Windows update yet.
+
 Diagnostics retain only the exception type and error code. Pacer never logs complete URLs, query parameters, remote response text or keys.
 
 ## Patch updates
 
-From 4.2.3 each release publishes its file manifest (`build-info.json`) for each architecture. When the next release is built, CI makes a patch installer from the latest published manifest. It is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
+From 4.2.3 each release publishes its file manifest (`build-info.json`) for each architecture. When the next release is built, CI makes a patch installer from the latest published manifest. Until the version is bumped, the latest release is the build CI is making, so CI builds only the full installer. It is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
 
 The release Mac signs a patch and lists it only when its base is still the latest build in the signed public feed. It sits inside `<sparkle:deltas>` with `sparkle:deltaFrom` (the base build) and `pacer:baseManifestSHA256`. The full installer stays the item's only direct enclosure and gains `pacer:manifestSHA256`. Windows 4.2.2 and earlier read only that direct enclosure, so they keep installing in full; a test runs the 4.2.2 parser, frozen, on the new feed shape.
 
@@ -59,20 +61,20 @@ Before changing anything, the patch installer checks that the installation is ex
 
 Update state uses a checked, bounded, versioned file at `%LOCALAPPDATA%\CodexPacer\Updates\state-v1.json`, never HKCU. It holds the schedule, the skipped build and the presented notes; the keys keep the names WinSparkle used, so existing choices carry over. Update files reject reparse points and hard links. Their owner must be the current user, or Administrators when the current token is elevated with that group enabled. Future state versions are preserved.
 
-Each update uses `Updates\<session>`. **签名者校验随签名方案开启。** When the channel configures `SignerSHA256`, both sides of the handoff additionally require cached Windows Authenticode trust and that exact signer-certificate SHA-256. An absent pin permits an unsigned installer. Empty or malformed pins are rejected; they cannot select unsigned mode. Ed25519 and SHA-256 remain mandatory at both handoff boundaries in either mode. The installer product name, QA identity and file build must still match the signed offer.
+Each update uses `Updates\<session>`. When the channel configures `SignerSHA256`, both sides of the handoff additionally require cached Windows Authenticode trust and that exact signer-certificate SHA-256. An absent pin permits an unsigned installer; production pins no signer because the installers are not Authenticode signed yet, and adding one later makes Authenticode mandatory for every subsequent update. Empty or malformed pins are rejected; they cannot select unsigned mode. Ed25519 and SHA-256 remain mandatory at both handoff boundaries in either mode. The installer product name, QA identity and file build must still match the signed offer.
 
 The handoff to the helper:
 
 1. The host adds the self-contained maintenance executable and a plan to the session that holds the verified installer.
 2. The helper waits for the original process to exit. Normal app shutdown stops collectors, browsers and owned processes and releases the instance lock first.
 3. It verifies the installer again and runs it with `/SP- /SILENT /SUPPRESSMSGBOXES /NORESTART /LANG=<app language> /LOG=<session>\install.log /DIR=<installation>`. The installer shows only its progress, because the person already chose to install. Each value is a separate argument, so spaces and Chinese paths are preserved.
-4. Afterwards it keeps the log as `Updates\last-install.log`, deletes the installer, and records in `result.json` the version Windows now lists under Installed apps.
+4. Afterwards it keeps the log as `Updates\last-install.log`, deletes the installer, and records in `result.json` whether installation succeeded, with the offered build and its notes.
 
 Cancellation, failed verification or installer failure relaunches the existing application and reports failure. Failure to save the result cannot prevent relaunch. A still-running installer is never killed or overlapped with a relaunch. If damaged application files prevent relaunch, repair is required.
 
 The relaunched app reads the result once, then deletes finished sessions in the background. It retries for a minute while the helper exits, and anything still locked goes at the next start. Cleanup removes only folders named as a session that hold only the files above. Uninstall removes them too; the state file and `last-install.log` stay with the retained preferences.
 
-## Development checks and integration acceptance
+## Development and QA checks
 
 `WindowsUpdateChecks` covers:
 

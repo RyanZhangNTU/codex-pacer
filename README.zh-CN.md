@@ -41,7 +41,7 @@
 
 ## 一个面板看全部
 
-- **所有任务一个列表。** 本机、SSH 主机以及 Codex Remote Control 上的 Codex 与 Claude Code 任务，Claude 云端项目里的线程和协调，还有本机的 DeepSeek Harness 任务，都显示当前阶段、模型与推理强度、本轮用时和输出速度。任务派生的子代理归在它下面。
+- **所有任务一个列表。** 本机、SSH 主机、Windows 上的 WSL 以及 Codex Remote Control 上的 Codex 与 Claude Code 任务，Claude 云端项目里的线程和协调，还有本机的 DeepSeek Harness 任务，都显示当前阶段、模型与推理强度、本轮用时和输出速度。任务派生的子代理归在它下面。
 - **一点就回到对话。** 点击任务打开对应会话。任务结束后会保留一张卡片，直到你打开它或保留时间到期，不会错过任何一次结束。
 - **额度带配速。** 每个服务一个圆环：较短的上弧显示 5 小时，较长的下弧显示 7 天，各自保留剩余额度、重置倒计时和白色配速刻度。没有 5 小时限制时显示底部开口的每周圆环。只开启一个服务时，配速、重置时刻和预计显示在圆环右侧。可在“设置 → 外观 → 展开态额度”切回原版经典样式。
 - **DeepSeek 按余额或预算。** DeepSeek 按余额扣费，没有额度窗口，所以它的环是今天的 24 小时钟面：每个小时花了多少、单价翻倍的高峰时段，中间是余额。也可以改用每日、每周预算，环会像额度一样显示配速。Pacer 用余额变化和本机估算对账，联网搜索、别的设备等不在本机的花费也会算进去；10 分钟花得比平时多时会提醒你。每个任务显示这一回合的估算花费；只开启 DeepSeek 时，面板还会显示今天的花费去向和近 7 天。余额按 Harness 的登录方式，通过 Pacer 窗口中的 DeepSeek 开放平台登录或 API Key 读取。
@@ -84,7 +84,7 @@ Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 
 1. 从[最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)下载 `Codex-Pacer-版本号-windows-x64-setup.exe`（ARM 电脑下载 `windows-arm64-setup.exe`）并运行。按当前用户安装，无需管理员权限。
 2. 安装包暂未做代码签名。如果 SmartScreen 提示“Windows 已保护你的电脑”，点**更多信息 → 仍要运行**。
 
-之后的更新和 Mac 一样，在“设置 → 通用”中进行。在 Windows“已安装的应用”中卸载，偏好与已读记录会保留。
+之后的更新和 Mac 一样，在“设置 → 通用”中进行。在 Windows“已安装的应用”中卸载，偏好与已读记录会保留。需要用示例数据截图时，先退出 Pacer，再从安装目录（默认 `%LOCALAPPDATA%\Programs\Codex Pacer`）运行 `CodexPacer.exe --demo`。更多说明见 [Windows 安装](docs/windows-installation.md)。
 
 ## 系统要求
 

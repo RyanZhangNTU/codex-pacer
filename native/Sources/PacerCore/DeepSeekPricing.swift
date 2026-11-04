@@ -15,7 +15,7 @@ public struct DeepSeekUsage: Equatable, Sendable {
 
 /// The published CNY price list (2026-10-27). Weekday 09–12 and 14–18 in
 /// Beijing are peak hours at twice the off-peak price. Weekends and public
-/// holidays are off-peak; the calendar covers 2026, and make-up working days
+/// holidays are off-peak; the calendar covers through `calendarYear`, and make-up working days
 /// on weekends are treated as weekends, so peak hours are an estimate.
 public enum DeepSeekPricing {
     struct Rate: Equatable { let cacheHit: Double; let cacheMiss: Double; let output: Double }
@@ -31,7 +31,8 @@ public enum DeepSeekPricing {
         "2026-04-06", "2026-05-01", "2026-05-04", "2026-05-05", "2026-06-19", "2026-09-25",
         "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"
     ]
-    /// The last Beijing year whose holidays are known.
+    /// The last Beijing year whose holidays are known. A test fails once Beijing
+    /// reaches the next year, so add that year's State Council schedule first.
     public static let calendarYear = 2026
     /// Search and fetch tool calls cost ¥5 per 1,000 from 2026-11-01 in Beijing.
     public static let searchCallPrice = 0.005
@@ -45,7 +46,6 @@ public enum DeepSeekPricing {
         searchTools.contains(name.lowercased()) && date >= searchBillingStart ? searchCallPrice : nil
     }
 
-    public static func knowsModel(_ model: String?) -> Bool { model.map { rate(for: $0) != nil } ?? false }
     static func rate(for model: String) -> Rate? {
         let name = model.lowercased()
         if let exact = offPeak[name] { return exact }

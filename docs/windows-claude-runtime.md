@@ -1,6 +1,6 @@
 # Windows Claude 本机运行时
 
-Windows 包附带官方 CPython 3.14.10 x64 embeddable runtime。Claude hook 和 status-line 不再依赖用户安装的 Python、PATH 中的 python3 或 Microsoft Store 别名。遥测继续使用共享引擎中的本机 loopback HTTP 服务，不启动另一个 Python 服务。
+Windows 包按架构附带官方 CPython 3.14.10 embeddable runtime（x64 或 ARM64）。Claude hook 和 status-line 不再依赖用户安装的 Python、PATH 中的 python3 或 Microsoft Store 别名。遥测继续使用共享引擎中的本机 loopback HTTP 服务，不启动另一个 Python 服务。
 
 采用嵌入式 Python，是为了复用原有共享 helper 的事件、归属、额度和隐私规则。共享 claude_hook.py 的内容保持不变；Windows 适配层处理文件安全检查、锁和原 status-line renderer 的执行器。文件按句柄检查所有者、重解析点和硬链接，检查通过后才能截断；锁使用最多等待 2 秒的 Windows 内核 mutex，不轮询。
 
@@ -10,9 +10,9 @@ Windows 包附带官方 CPython 3.14.10 x64 embeddable runtime。Claude hook 和
 
 第一次启用本机 Claude 模块时，将已校验的运行时部署到：
 
-    %LOCALAPPDATA%\CodexPacer\ClaudeRuntime\3.14.10-90905e64a840\
+    %LOCALAPPDATA%\CodexPacer\ClaudeRuntime\<版本>-<ZIP SHA-256 前 12 位>\
 
-所有 Claude home 共用这个用户级目录。每个 home 仍只保留与 Mac 对等的 hook 脚本和记账文件。移动应用、切换安装目录或使用便携包不会改变已写入的运行时路径。
+例如 x64 为 `3.14.10-90905e64a840`，ARM64 为 `3.14.10-bbe116bb1248`。所有 Claude home 共用这个用户级目录。每个 home 仍只保留与 Mac 对等的 hook 脚本和记账文件。移动应用、切换安装目录或使用便携包不会改变已写入的运行时路径。
 
 Windows 上，Claude Code 的 hook 和 statusLine 默认经 Git Bash 执行；未安装 Git Bash 时改用 PowerShell。[hook 文档](https://code.claude.com/docs/en/hooks#command-hook-fields)、[statusLine 文档](https://code.claude.com/docs/en/statusline#windows-configuration) 因此启动命令按以下顺序选择：
 
@@ -34,9 +34,9 @@ Windows 上，Claude Code 的 hook 和 statusLine 默认经 Git Bash 执行；�
 
 ## 固定依赖与安全更新
 
-固定信息在 windows/InstallerSupport/Resources/python-runtime-lock.json：版本、官方 ZIP 地址、SHA-256、发布者和需检查签名的文件。构建脚本校验 ZIP 哈希、四个可执行文件/库的 Python Software Foundation Authenticode 签名，并逐文件生成部署清单。包内保留官方 LICENSE.txt；官方 Python 部分为 37 个文件，共 24,450,611 字节，约 23.3 MiB，压缩包约 12 MB；另附 Pacer 自有的 `pacer-launch.ps1`，同样受文件哈希清单、修复和卸载检查保护。[Python 发行说明](https://www.python.org/downloads/release/python-31410/)、[嵌入式发行包说明](https://docs.python.org/3/using/windows.html#the-embeddable-package)
+固定信息在 windows/InstallerSupport/Resources/python-runtime-lock.json（x64）和 python-runtime-lock-arm64.json（ARM64）：版本、架构、官方 ZIP 地址、SHA-256、发布者和需检查签名的文件。构建脚本按目标架构选择锁文件，校验 ZIP 哈希、四个可执行文件/库的 Python Software Foundation Authenticode 签名，并逐文件生成部署清单。官方 ARM64 归档附带一份 x64 的 `vcruntime140_1.dll`；打包时 `scripts/windows/prune-arm64-runtime.py` 确认没有文件引用它后，只在临时打包目录中移除它并同步清单，原始归档和缓存不变。包内保留官方 LICENSE.txt；x64 的官方 Python 部分为 37 个文件，共 24,450,611 字节，约 23.3 MiB，压缩包约 12 MB；另附 Pacer 自有的 `pacer-launch.ps1`，同样受文件哈希清单、修复和卸载检查保护。[Python 发行说明](https://www.python.org/downloads/release/python-31410/)、[嵌入式发行包说明](https://docs.python.org/3/using/windows.html#the-embeddable-package)
 
-安全更新时，从 Python 官方取得修复版本，核对官方来源及签名，再更新锁文件中的版本、URL、哈希和签名文件名。使用干净构建生成新包，运行共享测试、无用户 Python 的三种 shell 测试和安装生命周期测试。新版本部署到新的哈希目录，共享安装器迁移自有命令；旧版本仅在全部已记录 home 不再引用时回收。不覆盖正在使用的解释器，也不自动下载运行时。
+安全更新时，从 Python 官方取得修复版本，核对官方来源及签名，再更新两个锁文件中的版本、URL、哈希和签名文件名。使用干净构建生成新包，运行共享测试、无用户 Python 的三种 shell 测试和安装生命周期测试。新版本部署到新的哈希目录，共享安装器迁移自有命令；旧版本仅在全部已记录 home 不再引用时回收。不覆盖正在使用的解释器，也不自动下载运行时。
 
 应用与安装器仍未签名。Python 的原签名保留，不能代替应用签名；SmartScreen、企业策略或杀软仍可能阻止运行。本步骤不修改系统安全设置、不添加排除项。
 
@@ -46,6 +46,6 @@ Windows 上，Claude Code 的 hook 和 statusLine 默认经 Git Bash 执行；�
 
 当前支持本地驱动器路径。含控制字符或 shell 展开/控制字符（双引号、美元符号、反引号、百分号、感叹号、插入符号、与号、竖线、尖括号）的路径会安全拒绝，不写入不可用命令。空格和中文已验证。命令长度上限为 7,000 个 UTF-16 单元。
 
-回收范围是 Pacer 记录的 home；手动复制到未登记 home 的命令不会被自动发现。已运行的 Claude 进程也可能缓存旧配置；若旧解释器仍被占用，清理保留它供之后重试。实际 Claude Code 版本、其他 Windows 设备和 ARM64 仍需验收。
+回收范围是 Pacer 记录的 home；手动复制到未登记 home 的命令不会被自动发现。已运行的 Claude 进程也可能缓存旧配置；若旧解释器仍被占用，清理保留它供之后重试。这些测试在 x64 上运行；ARM64 CI 只构建和打包，不覆盖 ARM64 设备上的实际运行，也不覆盖每个 Claude Code 版本和其他 Windows 设备。
 
 本机 Codex 进程树的 HKCU 与真实交互用户视图隔离，树内注册表测试只证明隔离视图。安装登记、Run、StartupApproved、通知注册及卸载的真实系统行为，由 GitHub CI 和进程树外的当前用户临时交互计划任务检查；测试任务及安装在结束后移除。

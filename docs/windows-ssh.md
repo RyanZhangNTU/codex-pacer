@@ -10,11 +10,11 @@ Shared collector commands travel in a bounded length-prefixed stdin frame. A sma
 
 Opening a task passes a structured base64 plan to a separate console mode of `PacerEngine.exe`. That mode validates the route and UUID again using Core before launching SSH with a TTY. Windows Terminal is preferred; a normal console is the fallback. Codex opens `codex resume <UUID>` and Claude uses the shared `ClaudeRemoteResume` program. Neither supplies a prompt. Terminal activation confirms that the console was opened; an authentication or missing-CLI failure can still appear in that console.
 
-## Verification and remaining acceptance
+## Verification
 
 `WindowsSSHTests` uses a synthetic SSH executable with disposable local directories. It covers discovery and deduplication, route caching, Windows identity paths, unchanged SSH files, long commands, split output, ordered stdin/EOF, approval/reply/ending projection, reconnect, disable/reopen and shutdown. The fixture's POSIX compatibility shims are test code only. Desktop tests check terminal argv, console fallback and preference persistence. The `ssh` presentation group checks the setting in English/Chinese and light/dark appearances.
 
-No real remote is modified by these tests. A user must still verify an existing noninteractive target, real Windows Terminal/console TTY resume and remote sleep/reconnect. Preview coverage stays partial. WSL and Remote Control are separate work.
+No real remote is modified by these tests, and they do not exercise a real noninteractive target, Windows Terminal/console TTY resume or remote sleep/reconnect. WSL and Remote Control sources are described in [the WPF shell guide](windows-shell.md#wsl-sources).
 
 ## Claude remote hooks
 
@@ -26,4 +26,4 @@ The bounded version-1 cache contains only validated SSH aliases and adapter dige
 
 For the connection-page host, snapshots add `claudeRemoteSetups`: each row has `sourceID`, an opaque `context`, `configured`, `inFlight`, `canRetry`, an optional localized `message`, and optional Unix `retryAt`. Send `retryClaudeRemoteSetup` with the current row's `sourceID` and `context`. The engine resolves its owned target; the caller cannot supply a host or a command. The reply acknowledges scheduling, and later snapshots report the result. The UI must keep its normal asynchronous request timeout.
 
-`WindowsClaudeRemoteTests` executes the unchanged shared installer only in disposable synthetic remotes. It checks existing user entries and renderer metadata, byte-identical repeat installation, malformed settings, missing Claude homes, telemetry conflicts, EOF/timeout, digest upgrades, retry boundaries, manual retry, revocation and private output. Remote hook installation on a real host remains part of user acceptance.
+`WindowsClaudeRemoteTests` executes the unchanged shared installer only in disposable synthetic remotes. It checks existing user entries and renderer metadata, byte-identical repeat installation, malformed settings, missing Claude homes, telemetry conflicts, EOF/timeout, digest upgrades, retry boundaries, manual retry, revocation and private output. It installs no hooks on a real host.

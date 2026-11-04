@@ -142,8 +142,8 @@ internal static class ClaudeConnectionChecks
     }
     private static async Task<Window> Picker()
     {
-        await Until(() => Application.Current.Windows.OfType<Window>().Any(window => Descendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "claude.organization.picker")));
-        return Application.Current.Windows.OfType<Window>().Single(window => Descendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "claude.organization.picker"));
+        await Until(() => Application.Current.Windows.OfType<Window>().Any(window => SelfAndDescendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "claude.organization.picker")));
+        return Application.Current.Windows.OfType<Window>().Single(window => SelfAndDescendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "claude.organization.picker"));
     }
     private static void SelectWorkspace(Window window, int index)
     { Find<ComboBox>(window, "claude.organization.picker").SelectedIndex = index; Invoke(Find<Button>(window, "claude.organization.continue")); }
@@ -176,8 +176,7 @@ internal static class ClaudeConnectionChecks
     }
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Invoke(MenuItem value) => ((IInvokeProvider)new MenuItemAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
-    private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => Descendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject value) { yield return value; for (int i = 0; i < VisualTreeHelper.GetChildrenCount(value); i++) foreach (var child in Descendants(VisualTreeHelper.GetChild(value, i))) yield return child; }
+    private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => SelfAndDescendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
     private static async Task Until(Func<bool> condition) { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < 12) await Pump(); Check(condition(), "The bounded Claude connection action did not finish"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }

@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$ConversationNavigationOnly, [ValidateSet('all','island','settings','collapsed','quota','web','connection','host','harness','conversation','responsive','idle','quotaIdle','clocks','recovery','persistence','deepseek','display','displaySettings','pages','accessibility','ssh','updates')][string]$Group = 'all')
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [ValidateSet('all','island','settings','collapsed','quota','web','connection','host','harness','conversation','responsive','idle','quotaIdle','recovery','persistence','deepseek','display','displaySettings','pages','accessibility','ssh','updates')][string]$Group = 'all')
 . (Join-Path $PSScriptRoot 'environment.ps1')
 . (Join-Path $PSScriptRoot 'version.ps1')
 . (Join-Path $PSScriptRoot 'harness-fixture.ps1')
@@ -6,7 +6,6 @@ $taskPreviousFixture = $env:PACER_HARNESS_DESKTOP_FIXTURE
 Push-Location $taskRoot
 try {
     $env:PACER_HARNESS_DESKTOP_FIXTURE = Get-HarnessMetadataFixture
-    if ($ConversationNavigationOnly) { $Group = 'conversation' }
     $taskVersion = Get-PacerVersion
     dotnet build windows/Tests/PresentationTests/Pacer.PresentationTests.csproj --configuration $Configuration -warnaserror "-p:Version=$($taskVersion.version)" "-p:FileVersion=$($taskVersion.version).$($taskVersion.build)"
     if ($LASTEXITCODE -ne 0) { throw 'Presentation test build failed.' }

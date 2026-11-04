@@ -6,6 +6,5 @@ function Get-PacerArchitecture([string]$Architecture = $env:PACER_ARCHITECTURE) 
         Name = $Architecture; RuntimeIdentifier = 'win-' + $Architecture; Triple = $taskTriple
         DesktopSuffix = if ($Architecture -eq 'x64') { '' } else { '/arm64' }
         Receipt = if ($Architecture -eq 'x64') { 'engine-location.json' } else { 'engine-location-arm64.json' }
-        Machine = if ($Architecture -eq 'arm64') { 0xAA64 } else { 0x8664 }
     }
 }

@@ -99,25 +99,12 @@ final class ClaudeLiveSessionRegistryTests: XCTestCase {
         try write(["pid": child.processIdentifier, "sessionId": session, "kind": "sdk", "procStart": recorded],
                   home: home, name: String(child.processIdentifier))
         XCTAssertEqual(ClaudeLiveSessionRegistry.holder(for: session, claudeHome: home), child.processIdentifier)
-        XCTAssertEqual(ClaudeLiveSessionRegistry.parentProcess(child.processIdentifier), getpid())
+        XCTAssertEqual(ProcessOwnership.parentProcess(child.processIdentifier), getpid())
         // launchd is root-owned, as is the `login` above Terminal and iTerm shells.
-        XCTAssertEqual(ClaudeLiveSessionRegistry.parentProcess(1), 0)
+        XCTAssertEqual(ProcessOwnership.parentProcess(1), 0)
         XCTAssertNotNil(ClaudeLiveSessionRegistry.processStartDate(1))
         child.terminate(); child.waitUntilExit()
         XCTAssertNil(ClaudeLiveSessionRegistry.holder(for: session, claudeHome: home))
-    }
-
-    func testOwnerIsTheFirstApplicationAboveTheHolder() {
-        // claude (30) <- node bridge (20) <- embedding app (10) <- launchd
-        let parents: [pid_t: pid_t] = [30: 20, 20: 10, 10: 1, 40: 41, 41: 40]
-        let parent: (pid_t) -> pid_t? = { parents[$0] }
-        XCTAssertEqual(ClaudeLiveSessionRegistry.owner(of: 30, currentProcess: 99, isApplication: { $0 == 10 }, parent: parent), 10)
-        XCTAssertEqual(ClaudeLiveSessionRegistry.owner(of: 30, currentProcess: 99, isApplication: { $0 == 10 || $0 == 30 }, parent: parent), 30)
-        XCTAssertNil(ClaudeLiveSessionRegistry.owner(of: 30, currentProcess: 99, isApplication: { _ in false }, parent: parent))
-        XCTAssertNil(ClaudeLiveSessionRegistry.owner(of: 30, currentProcess: 99, isApplication: { $0 == 1 }, parent: parent))
-        XCTAssertNil(ClaudeLiveSessionRegistry.owner(of: 30, currentProcess: 20, isApplication: { $0 == 10 }, parent: parent))
-        XCTAssertNil(ClaudeLiveSessionRegistry.owner(of: 40, currentProcess: 99, isApplication: { _ in false }, parent: parent))
-        XCTAssertNil(ClaudeLiveSessionRegistry.owner(of: 30, currentProcess: 99, isApplication: { $0 == 10 }, parent: { _ in nil }))
     }
 
     private func write(_ record: [String: Any], home: URL, name: String) throws {

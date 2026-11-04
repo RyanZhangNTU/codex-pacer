@@ -206,14 +206,6 @@ internal static class SettingsPresentationChecks
     }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            var child = VisualTreeHelper.GetChild(root, index); yield return child;
-            foreach (var nested in Descendants(child)) yield return nested;
-        }
-    }
     private static void Toggle(CheckBox check) => ((IToggleProvider)new CheckBoxAutomationPeer(check).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Select(RadioButton choice) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(choice).GetPattern(PatternInterface.SelectionItem)).Select();
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();

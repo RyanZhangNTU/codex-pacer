@@ -44,7 +44,7 @@ internal static class TypographyLocaleChecks
                         string expected = language == "zh-Hans" ? "zh-Hans" : "en-US";
                         Check(settings.Language.IetfLanguageTag.Equals(expected, StringComparison.OrdinalIgnoreCase) &&
                             island.Language.IetfLanguageTag.Equals(expected, StringComparison.OrdinalIgnoreCase), "Both actual windows must use their selected UI language");
-                        var text = Descendants(settings.ClientContent).OfType<TextBlock>()
+                        var text = SelfAndDescendants(settings.ClientContent).OfType<TextBlock>()
                             .Single(value => value.Text == ui.Text("settings.pane.collapsed") && value.FontSize == 20);
                         Check(text.Language == settings.Language, "The actual heading must inherit its window's rendering language");
                         var heading = Glyphs(text).ToArray();
@@ -53,7 +53,7 @@ internal static class TypographyLocaleChecks
                         var islandGlyphs = Glyphs(island).ToArray();
                         Validate(settingsGlyphs, language); Validate(islandGlyphs, language);
                         if (language == "zh-Hans") Check(heading.Any(run => Han(run)) && islandGlyphs.Any(run => Han(run)), "Chinese coverage requires actual Han glyphs in both windows");
-                        var rows = Descendants(island).OfType<TaskRow>().ToArray();
+                        var rows = SelfAndDescendants(island).OfType<TaskRow>().ToArray();
                         Check(rows.Length > 0 && rows.All(row => row.Language == island.Language), "Task rows must receive their language before natural-width measurement");
                         double[] ideal = rows.Select(row => row.IdealWidth()).ToArray();
                         if (widths.TryGetValue(language, out var prior)) Check(prior.Length == ideal.Length && prior.Zip(ideal).All(pair => Math.Abs(pair.First - pair.Second) < .01),
@@ -88,18 +88,13 @@ internal static class TypographyLocaleChecks
     private static bool Han(GlyphRun run) => run.Characters?.Any(value => value is >= '\u3400' and <= '\u9fff') == true;
     private static IEnumerable<GlyphRun> Glyphs(DependencyObject root)
     {
-        foreach (var value in Descendants(root).OfType<Visual>())
+        foreach (var value in SelfAndDescendants(root).OfType<Visual>())
             if (VisualTreeHelper.GetDrawing(value) is Drawing drawing) foreach (var run in Runs(drawing)) yield return run;
     }
     private static IEnumerable<GlyphRun> Runs(Drawing drawing)
     {
         if (drawing is GlyphRunDrawing glyph) yield return glyph.GlyphRun;
         if (drawing is DrawingGroup group) foreach (var child in group.Children) foreach (var run in Runs(child)) yield return run;
-    }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        yield return root;
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var value in Descendants(VisualTreeHelper.GetChild(root, i))) yield return value;
     }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }

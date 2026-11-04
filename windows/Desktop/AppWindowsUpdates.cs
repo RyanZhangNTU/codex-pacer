@@ -24,7 +24,7 @@ public partial class App
         public void Checking() => app.PresentUpdate(true, window => window.Checking());
         public void Offer(WindowsUpdatePackage package, bool manual) => app.PresentUpdate(manual, window => window.Offer(package, manual));
         public void UpToDate() => app.PresentUpdate(true, window => window.UpToDate());
-        public void Failed(bool manual) { if (manual) app.PresentUpdate(true, window => window.Failed(true)); }
+        public void Failed() => app.PresentUpdate(true, window => window.Failed());
     }
     private Task CreateWindowsUpdaterAsync(string[] arguments, Guid? qa, bool reference)
     {

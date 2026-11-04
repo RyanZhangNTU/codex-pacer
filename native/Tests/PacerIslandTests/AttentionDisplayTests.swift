@@ -21,7 +21,8 @@ final class AttentionDisplayTests: XCTestCase {
         XCTAssertEqual(model.headerStatus, L10n.text("attention.input"))
         XCTAssertEqual(model.headerDisplayStatus, model.headerStatus)
         model.isAttached = true
-        XCTAssertEqual(CompactIslandComponent.isVisible(.tps, model: model), !model.hidesHeaderRate)
+        XCTAssertEqual(CompactIslandComponent.isVisible(.tps, model: model), L10n.language != .english,
+            "Attached English status text takes the rate's room while a reply is needed")
         XCTAssertTrue(CompactIslandComponent.isVisible(.tps, model: model, showsStatus: false),
             "Hiding status text allows the chosen TPS component to remain visible during attention")
         XCTAssertEqual(model.headerDisplayStatus, L10n.text("attention.input"), "Notch retains the actionable meaning")
@@ -60,9 +61,9 @@ final class AttentionDisplayTests: XCTestCase {
         XCTAssertTrue(ended.orbit.isEmpty)
         model.unavailableSSH = ["Synthetic unavailable source"]
         XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.ssh))
-        XCTAssertEqual(model.headerStatus, model.completionSummary)
+        XCTAssertEqual(model.headerStatus, L10n.text("activity.done_compact"), "The SSH warning leaves the unread ending's text")
         model.isAttached = true
-        XCTAssertEqual(model.headerDisplayStatus, model.completionSummary)
+        XCTAssertEqual(model.headerDisplayStatus, L10n.text("activity.done_compact"))
     }
     func testAttentionJoinsMatchingTaskWithoutDuplicatesAndRetainsUnmatchedRouting() {
         let model = IslandModel(demo: true)

@@ -119,7 +119,7 @@ internal static class WindowsUpdateChecks
         public void Checking() => Events.Add("checking");
         public void Offer(WindowsUpdatePackage package, bool manual) => Events.Add((manual ? "offer:" : "auto-offer:") + package.Build);
         public void UpToDate() => Events.Add("up-to-date");
-        public void Failed(bool manual) => Events.Add(manual ? "failed" : "auto-failed");
+        public void Failed() => Events.Add("failed");
     }
     private static string Session(string root)
     {

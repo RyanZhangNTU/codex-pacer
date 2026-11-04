@@ -71,8 +71,6 @@ internal static class ClassicLayoutChecks
     }
     private static void Select(RadioButton radio) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(radio).GetPattern(PatternInterface.SelectionItem)).Select();
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { var child = VisualTreeHelper.GetChild(root, i); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition)
     { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < 8) await Task.Delay(20); Check(condition(), "The bounded classic layout action must finish"); await Pump(); }

@@ -5,7 +5,7 @@ param(
 )
 . (Join-Path $PSScriptRoot 'environment.ps1')
 $taskScreens = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    $_.ProcessName -match '^(CodexPacer|Pacer.*(BackdropTests|Prototype|PresentationTests))$'
+    $_.ProcessName -match '^(CodexPacer|Pacer.*(BackdropTests|PresentationTests))$'
 })
 if ($taskScreens.Count) { throw 'Another Pacer screen test is active. Close or coordinate it before continuing.' }
 $taskEngine = Join-Path $taskRoot "windows/Desktop/bin/$Configuration/net10.0-windows/Engine/PacerEngine.exe"

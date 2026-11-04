@@ -50,7 +50,6 @@
 "provider.compact_quota" = "%1$@：%2$@";
 "provider.compact_time" = "%1$@ 额度窗口剩余时间：%2$@";
 "provider.window_selection" = "%@ 额度窗口";
-"provider.claude_source" = "Claude 数据来源";
 "provider.claude_home" = "Claude 配置目录";
 "provider.choose_claude_home" = "选择 Claude 配置目录";
 "provider.invalid_claude_home" = "请选择已存在的 Claude 配置目录。";
@@ -254,7 +253,6 @@
 "quota.pace_unknown" = "配速 —";
 "quota.pace_value" = "配速 %ld%%";
 "quota.reading" = "正在读取额度";
-"quota.refresh_help" = "刷新 · %@";
 "quota.remaining" = "剩余 %ld%%";
 "quota.reset_date" = "重置：%@";
 "quota.reset_days" = "%1$ld天%2$ld小时后重置";
@@ -270,7 +268,6 @@
 "redaction.bearer" = "Bearer [已隐藏]";
 "redaction.email" = "[邮箱已隐藏]";
 "redaction.field" = "$1[已隐藏]";
-"redaction.hidden" = "[已隐藏]";
 "redaction.key" = "[密钥已隐藏]";
 "redaction.token" = "[令牌已隐藏]";
 "settings.auto_discovery" = "自动查找";
@@ -283,7 +280,6 @@
 "settings.cli_path" = "CLI 路径";
 "settings.codex_home" = "Codex 目录";
 "settings.compact_metric" = "显示为";
-"settings.data_source" = "数据来源";
 "settings.display_picker" = "显示器";
 "settings.fifteen_minutes" = "15 分钟";
 "settings.five_minutes" = "5 分钟";
@@ -374,7 +370,6 @@
 
 "activity.failed" = "任务失败";
 
-"quota.exhausted" = "额度用尽";
 
 // Response performance
 "performance.awaiting_usage" = "等待用量";
@@ -391,7 +386,6 @@
 "performance.retained_help" = "本会话上次测得的 TPS，跨工具和新轮次保留。15 秒内更新显示白色，之后显示灰色。";
 
 // Collapsed bar component layout
-"layout.title" = "折叠栏布局";
 "layout.collapsed" = "折叠栏";
 "layout.help" = "拖动调整顺序或换边，点 × 隐藏。";
 "layout.arrangement" = "布局";
