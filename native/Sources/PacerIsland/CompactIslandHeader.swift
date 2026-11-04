@@ -194,7 +194,7 @@ struct CompactIslandComponent: View {
         }
             .buttonStyle(.plain)
             .lineLimit(1)
-            .help(help)
+            .accessibilityHint(help)
             .opacity(dimmed ? CompactBarPresentation.expandedOpacity : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: CompactBarPresentation.dimDuration), value: dimmed)
     }

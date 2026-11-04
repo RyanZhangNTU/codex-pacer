@@ -32,7 +32,7 @@ struct QuotaWindowView: View {
             }
             quotaTrack
             HStack(spacing: 8) {
-                Text(reading.countdown).help(reading.resetDate)
+                Text(reading.countdown).accessibilityHint(reading.resetDate)
                 Spacer(minLength: 4)
                 Text(reading.paceText).foregroundStyle(reading.pacePercent.map { $0 < 85 ? Color.orange : $0 > 115 ? accent : secondary } ?? secondary)
             }.font(.system(size: 11)).foregroundStyle(secondary).monospacedDigit()
@@ -51,7 +51,6 @@ struct QuotaWindowView: View {
                 }
             }
         }.frame(height: 6).padding(.vertical, 3)
-        .help(L10n.text("quota.track_help"))
         .accessibilityHidden(true)
     }
 }
