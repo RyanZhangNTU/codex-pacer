@@ -85,7 +85,8 @@ internal sealed class UpdateWindow : Window, IWindowsUpdatePresenter
         ("windows.updates.close", "update.close", Close, false), ("windows.updates.try_again", "update.retry", Retry, true));
     public void Offer(WindowsUpdatePackage package, bool manual)
     {
-        Show(Stage.Offer, ui.Text("windows.updates.new_version_title"), Format("windows.updates.new_version_detail", package.Version, currentVersion), NotesView(ui, package.Notes),
+        string size = Format(package.Incremental ? "windows.updates.download_size_incremental" : "windows.updates.download_size", Size(package.Length));
+        Show(Stage.Offer, ui.Text("windows.updates.new_version_title"), Format("windows.updates.new_version_detail", package.Version, currentVersion) + "\n" + size, NotesView(ui, package.Notes),
             ("windows.updates.later", "update.later", Close, false), ("windows.updates.install", "update.install", Download, true));
         var skip = CreateButton("windows.updates.skip", "update.skip", () => { handedOff = true; service.Skip(); Close(); }, false);
         DockPanel.SetDock(skip, Dock.Left); footer.Children.Insert(0, skip);

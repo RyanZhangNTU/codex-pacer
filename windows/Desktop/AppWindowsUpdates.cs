@@ -74,6 +74,8 @@ public partial class App
             var result = await Task.Run(() => UpdateHandoff.ConsumeResult(updateIdentity, arguments[resultIndex + 1], updateState, WindowsUpdateVersion.Read(typeof(App).Assembly))).WaitAsync(TimeSpan.FromSeconds(3));
             if (result == null || quitting) return;
             if (StartupPresentation.Resolve(null, result).Failure is { } failure) island?.SetStatus(ui.Text(failure));
+            // The patch did not apply here: offer the same update in full now.
+            if (!result.Success && result.Incremental) _ = updates.RetryAfterFailedPatchAsync();
         }
         catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { island?.SetStatus(ui.Text("windows.updates.install_failed")); }
         finally { if (updateIdentity != null) _ = CleanUpdateSessionsAsync(updateIdentity.DataRoot); }

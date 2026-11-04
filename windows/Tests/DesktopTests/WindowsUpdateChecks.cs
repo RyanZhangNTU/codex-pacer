@@ -166,6 +166,7 @@ internal static class WindowsUpdateChecks
             var duplicate = Item(key); duplicate.Add(new XElement(UpdateCatalog.Sparkle + "version", "1.2.3.7"));
             Reject(() => UpdateCatalog.Parse(key.Feed(duplicate), channel, "x64", Current, Windows, "en"), "Duplicate version metadata must fail");
             await ClientChecks(key, channel, feed, root);
+            await DeltaChecks(key, channel, root);
             await ServiceChecks(key, channel, feed, root);
             await HttpsChecks(key, channel, root);
             await ProductionChecks(key, root);
@@ -461,7 +462,71 @@ internal static class WindowsUpdateChecks
             UpdateHandoff.VerifyPackage(file, Payload, restored.SHA256, restored.Package.Signature, restored.PublicKey, restored.SignerSHA256, Trusted);
         }
     }
-    internal static async Task Serve(string directory, string qaScope, string installer, string architecture, int bytesPerSecond = 0)
+    private static XElement WithPatch(SigningFixture key, XElement item, byte[] patch, string from, string baseDigest, string arch = "x64",
+        string download = "https://127.0.0.1:9/patch.exe")
+    {
+        XNamespace sparkle = UpdateCatalog.Sparkle;
+        item.Add(new XElement(sparkle + "deltas", new XElement("enclosure", new XAttribute("url", download), new XAttribute("length", patch.Length),
+            new XAttribute("type", "application/octet-stream"), new XAttribute(sparkle + "os", "windows-" + arch), new XAttribute(sparkle + "deltaFrom", from),
+            new XAttribute(sparkle + "edSignature", key.Sign(patch)), new XAttribute(UpdateCatalog.Pacer + "baseManifestSHA256", baseDigest))));
+        return item;
+    }
+    // Patches: published inside <sparkle:deltas>, used only for the exact
+    // installed manifest and build, and never again for a build whose patch
+    // failed here. 4.2.2 clients keep reading the full installer.
+    private static async Task DeltaChecks(SigningFixture key, WindowsUpdateChannel channel, string root)
+    {
+        byte[] patch = Encoding.UTF8.GetBytes("synthetic patch installer, never executed");
+        var identity = new WindowsInstallationIdentity(Path.Combine(root, "delta app"), channel.TestScope);
+        Directory.CreateDirectory(identity.Root);
+        string manifest = Path.Combine(identity.Root, UpdateCatalog.ManifestName);
+        File.WriteAllText(manifest, "{\"schemaVersion\":1,\"files\":[]}");
+        string digest = UpdateCatalog.InstalledManifest(identity.Root)!;
+        byte[] feed = key.Feed(WithPatch(key, Item(key), patch, Current.ToString(), digest), WithPatch(key, Item(key, "arm64", "1.2.3.6"), patch, Current.ToString(), digest, "arm64"));
+        var offer = UpdateCatalog.Parse(feed, channel, "x64", Current, Windows, "en")!;
+        Check(offer.Patch is { } found && found.From == Current && found.BaseManifestSHA256 == digest && found.Length == patch.Length && found.Download.AbsolutePath == "/patch.exe"
+            && offer.Download.AbsolutePath == "/setup.exe" && offer.Length == Payload.Length, "The offer keeps the full installer and adds the patch for this build");
+        var incremental = offer.AsIncremental();
+        Check(incremental is { Incremental: true, Patch: null } && incremental.Length == patch.Length && incremental.Build == offer.Build && incremental.Notes == offer.Notes,
+            "The incremental package is the same update delivered by the patch");
+        Check(UpdateCatalog.Parse(feed, channel, "x64", new(1, 2, 3, 3), Windows, "en")?.Patch == null, "A patch from another build is not offered");
+        Check(UpdateCatalog.Parse(key.Feed(WithPatch(key, Item(key), patch, Current.ToString(), "not-a-digest")), channel, "x64", Current, Windows, "en") is { Patch: null } full
+            && full.Length == Payload.Length, "A malformed patch leaves the full installer in use");
+        Check(UpdateCatalog.Parse(key.Feed(WithPatch(key, Item(key), patch, Current.ToString(), digest, download: "https://not-loopback.example/patch.exe")), channel, "x64", Current, Windows, "en")
+            is { Patch: null }, "A patch outside the channel's hosts is ignored");
+        var frozen = Frozen422Catalog.Parse(feed, channel, "x64", Current, Windows, "en");
+        Check(frozen is { } old && old.Download.AbsolutePath == "/setup.exe" && old.Length == Payload.Length && old.Build == offer.Build,
+            "The 4.2.2 parser reads the same feed and still installs the full package");
+
+        var state = new WindowsUpdateState(Path.Combine(root, "delta-state.json"));
+        var transport = new Transport(feed) { Package = patch };
+        var presenter = new Presenter();
+        await using var updates = new WindowsUpdateService(action => action(), new UpdateFeedClient(channel, "x64", Current, Windows, "en", transport), state) { Presenter = presenter };
+        await updates.InitializeAsync(channel, identity, "en", false, () => { });
+        Check(await updates.CheckAsync() && updates.CurrentOffer is { Incremental: true } planned && planned.Length == patch.Length,
+            "An installation that matches the base downloads only the patch");
+        var download = await updates.DownloadAsync(null, CancellationToken.None);
+        Check(File.ReadAllBytes(download.Installer).SequenceEqual(patch) && download.Package == updates.CurrentOffer && transport.Calls[^1].AbsolutePath == "/patch.exe",
+            "The verified patch is what the installer handoff receives");
+        updates.Dismiss();
+        File.AppendAllText(manifest, " ");
+        transport.Package = null;
+        Check(await updates.CheckAsync() && updates.CurrentOffer is { Incremental: false } fallback && fallback.Length == Payload.Length,
+            "A modified installation downloads the full installer");
+        updates.Dismiss();
+        File.WriteAllText(manifest, "{\"schemaVersion\":1,\"files\":[]}");
+        state.Write(UpdateHandoff.PatchFailedKey, offer.Build.ToString());
+        Check(await updates.CheckAsync() && updates.CurrentOffer is { Incremental: false }, "After its patch failed, the same build installs in full");
+        updates.Dismiss();
+
+        string session = Guid.NewGuid().ToString("N");
+        var resultState = new WindowsUpdateState(Path.Combine(root, "delta-result-state.json"));
+        UpdateFiles.Write(Path.Combine(identity.DataRoot, "Updates", session, "result.json"),
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new UpdateInstallResult(1, false, "1.2.3.5", "", Incremental: true)));
+        Check(UpdateHandoff.ConsumeResult(identity, session, resultState, Current) is { Success: false, Incremental: true }
+            && resultState.Read(UpdateHandoff.PatchFailedKey) == "1.2.3.5", "A failed patch is remembered so the retry uses the full installer");
+    }
+    internal static async Task Serve(string directory, string qaScope, string installer, string architecture, int bytesPerSecond = 0, string? patchInstaller = null)
     {
         Guid scope = Guid.ParseExact(qaScope, "N");
         directory = WindowsInstallationIdentity.SafeRoot(directory);
@@ -476,6 +541,15 @@ internal static class WindowsUpdateChecks
         item.Element("enclosure")!.SetAttributeValue("length", payload.Length);
         item.Element("enclosure")!.SetAttributeValue(UpdateCatalog.Sparkle + "edSignature", key.Sign(payload));
         item.Element(UpdateCatalog.Sparkle + "shortVersionString")!.Value = build.ToString(3);
+        if (patchInstaller != null)
+        {
+            // The QA installation reports build 0.0.0.0 (below), so the patch is
+            // published from that build, for the manifest its metadata names.
+            using var patchInfo = System.Text.Json.JsonDocument.Parse(UpdateFiles.Read(Path.ChangeExtension(patchInstaller, ".json"), 64 * 1024));
+            UpdateHandoff.CheckInstallerIdentity(patchInstaller, new("C:/Synthetic", scope), build);
+            server.Patch = UpdateFiles.Read(patchInstaller, UpdateCatalog.PackageLimit);
+            WithPatch(key, item, server.Patch, "0.0.0.0", patchInfo.RootElement.GetProperty("baseManifestSHA256").GetString()!, architecture, new Uri(server.Root, "patch.exe").AbsoluteUri);
+        }
         server.Feed = key.Feed(item);
         UpdateFiles.Write(Path.Combine(directory, "channel.json"), System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
         {

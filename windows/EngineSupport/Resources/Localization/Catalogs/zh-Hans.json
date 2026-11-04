@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "05975cc0080f62d8d1889a287d45e15a6844d58bc7e2c92322e8d9d3cd0b5282",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "e6dba165e14cafb445a502fce891918138f218851aa25bf504a6a4f309b33d6e"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "614dac164250897c92bf2150838fd16ce6c4a6428b3454fadf98d7fe0c29d588"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -1000,6 +1000,8 @@
     "windows.support.share_unavailable": "Windows \u5206\u4eab\u5f53\u524d\u4e0d\u53ef\u7528\u3002\u4f60\u53ef\u4ee5\u590d\u5236\u9879\u76ee\u94fe\u63a5\u540e\u5206\u4eab\u3002",
     "windows.updates.available": "\u6709\u53ef\u7528\u7684\u66f4\u65b0\uff0c\u8bf7\u5728\u66f4\u65b0\u7a97\u53e3\u4e2d\u5b89\u88c5\u3002",
     "windows.updates.close": "\u5173\u95ed",
+    "windows.updates.download_size": "\u4e0b\u8f7d\u5927\u5c0f\uff1a{0}",
+    "windows.updates.download_size_incremental": "\u4e0b\u8f7d\u5927\u5c0f\uff1a{0}\uff0c\u53ea\u542b\u6709\u53d8\u5316\u7684\u6587\u4ef6",
     "windows.updates.downloading": "\u6b63\u5728\u4e0b\u8f7d\u66f4\u65b0\u2026",
     "windows.updates.downloading_title": "\u6b63\u5728\u4e0b\u8f7d\u66f4\u65b0",
     "windows.updates.error_detail": "Pacer \u65e0\u6cd5\u68c0\u67e5\u6216\u4e0b\u8f7d\u66f4\u65b0\u3002\u8bf7\u68c0\u67e5\u7f51\u7edc\u8fde\u63a5\u540e\u91cd\u8bd5\u3002",

@@ -14,7 +14,8 @@ internal sealed record UpdateInstallPlan(int SchemaVersion, int Parent, long Par
     Guid? TestScope, WindowsUpdatePackage Package, string SHA256, string Language = "en");
 // Written by the previous build's helper and read by the new app: fields are
 // only ever added, as optional values.
-internal sealed record UpdateInstallResult(int SchemaVersion, bool Success, string Build, string Notes, string? InstalledDisplayVersion = null);
+internal sealed record UpdateInstallResult(int SchemaVersion, bool Success, string Build, string Notes, string? InstalledDisplayVersion = null,
+    bool Incremental = false);
 internal sealed record PreparedWindowsUpdate(string Helper, string Plan, WindowsInstallationIdentity Identity);
 internal sealed class UpdateInstallerStillRunning : Exception;
 
@@ -40,6 +41,8 @@ internal static class UpdateInstallFlow
 
 internal static class UpdateHandoff
 {
+    /// The build whose patch failed here; that build is then installed in full.
+    internal const string PatchFailedKey = "PacerPatchFailedBuild";
     // JSON escaping can expand the bounded 128 KiB Unicode notes by 6x.
     private const int MetadataLimit = 1024 * 1024;
     internal static PreparedWindowsUpdate Prepare(VerifiedDownload download, WindowsUpdateChannel channel,
@@ -120,7 +123,7 @@ internal static class UpdateHandoff
                 displayVersion = InstalledDisplayVersion(identity);
                 return code;
             }, ok => { installed = ok; UpdateFiles.Write(Path.Combine(directory, "result.json"), JsonSerializer.SerializeToUtf8Bytes(
-                new UpdateInstallResult(1, ok, plan.Package.Build.ToString(), plan.Package.Notes, displayVersion))); }, () =>
+                new UpdateInstallResult(1, ok, plan.Package.Build.ToString(), plan.Package.Notes, displayVersion, plan.Package.Incremental))); }, () =>
             {
                 var start = new ProcessStartInfo(identity.Executable) { UseShellExecute = false, WorkingDirectory = identity.Root };
                 start.ArgumentList.Add("--update-result"); start.ArgumentList.Add(session);
@@ -198,6 +201,7 @@ internal static class UpdateHandoff
         var value = JsonSerializer.Deserialize<UpdateInstallResult>(UpdateFiles.Read(file, MetadataLimit));
         if (value?.SchemaVersion != 1 || !Version.TryParse(value.Build, out _) || value.Notes.Length > 128 * 1024) throw new InvalidDataException();
         if (value.Success && current < Version.Parse(value.Build)) value = value with { Success = false, Notes = "" };
+        if (!value.Success && value.Incremental) state.Write(PatchFailedKey, value.Build);
         // Claim before presenting. A second launch cannot show this build twice.
         return state.ClaimNotes(value.Success ? value.Build : "failed-" + session) ? value : null;
     }

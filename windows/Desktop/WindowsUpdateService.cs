@@ -22,7 +22,8 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     internal static readonly TimeSpan AutomaticInterval = TimeSpan.FromDays(1);
     /// An offer older than this is verified again before its download starts.
     internal static readonly TimeSpan OfferLifetime = TimeSpan.FromMinutes(30);
-    private const string SkipKey = "SkipThisVersion", AutomaticKey = "PacerAutomaticChecks", LastCheckKey = "PacerLastCheckUtc";
+    internal const string SkipKey = "SkipThisVersion", AutomaticKey = "PacerAutomaticChecks", LastCheckKey = "PacerLastCheckUtc",
+        PatchFailedKey = UpdateHandoff.PatchFailedKey;
     private readonly UpdateFeedClient? client;
     private readonly WindowsUpdateState? state;
     private readonly Func<DateTimeOffset> now;
@@ -38,10 +39,13 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     private bool automatic;
     private DateTimeOffset lastCheck = DateTimeOffset.MinValue, offeredAt;
     private WindowsUpdatePackage? offer;
+    private bool incremental;
     internal WindowsUpdateStatus Status { get; private set; } = new(false, false, "windows.updates.unconfigured");
     internal event Action<WindowsUpdateStatus>? Changed;
     internal IWindowsUpdatePresenter? Presenter { get; set; }
-    internal WindowsUpdatePackage? CurrentOffer => offer;
+    /// What Install would download: the patch when it applies to this
+    /// installation, otherwise the full installer.
+    internal WindowsUpdatePackage? CurrentOffer => offer == null ? null : incremental ? offer.AsIncremental() : offer;
     internal WindowsUpdateService(Action<Action> post, UpdateFeedClient? client = null, WindowsUpdateState? state = null, Func<DateTimeOffset>? now = null)
     {
         this.post = post; this.client = client; this.state = state; this.now = now ?? (() => DateTimeOffset.UtcNow);
@@ -101,8 +105,8 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
                 else Publish(Status with { MessageKey = "updates.no_update" });
                 return true;
             }
-            offer = found; offeredAt = now();
-            Publish(new(true, true, "windows.updates.available")); Presenter?.Offer(found, manual);
+            offer = found; offeredAt = now(); incremental = await Task.Run(() => PatchApplies(found));
+            Publish(new(true, true, "windows.updates.available")); Presenter?.Offer(CurrentOffer!, manual);
             return true;
         }
         finally { operations.Release(); if (!Status.Busy) ArmAutomatic(); }
@@ -113,13 +117,17 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     internal async Task<VerifiedDownload> DownloadAsync(IProgress<UpdateProgress>? progress, CancellationToken cancellation)
     {
         if (client == null || identity == null || offer == null || disposed || installing) throw new InvalidOperationException("No update is offered.");
-        var item = offer;
         if (now() - offeredAt > OfferLifetime)
         {
             var fresh = await client.ReadOfferAsync(cancellation);
-            if (fresh == null || fresh != item) { offer = fresh; offeredAt = now(); throw new InvalidDataException("The offered update changed."); }
+            if (fresh == null || fresh != offer)
+            {
+                offer = fresh; offeredAt = now(); incremental = fresh != null && await Task.Run(() => PatchApplies(fresh));
+                throw new InvalidDataException("The offered update changed.");
+            }
             offeredAt = now();
         }
+        var item = CurrentOffer!;
         string session = UpdateSessions.Create(identity);
         Publish(Status with { MessageKey = "windows.updates.downloading" });
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
@@ -129,12 +137,28 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     /// Hands a verified download to the helper; the app then quits.
     internal bool Install(VerifiedDownload download)
     {
-        if (disposed || installing || channel == null || identity == null || offer == null || download.Package != offer) return false;
+        if (disposed || installing || channel == null || identity == null || offer == null || download.Package != CurrentOffer) return false;
         var prepared = UpdateHandoff.Prepare(download, channel, identity, Path.Combine(identity.Root, "Maintenance", "PacerMaintenance.exe"), language);
         UpdateHandoff.Start(prepared); installing = true;
         Publish(Status with { MessageKey = "windows.updates.installing" });
         post(() => installStarted?.Invoke()); return true;
     }
+    // A patch is used only for the exact installation it was built from, and
+    // not again for a build whose patch already failed to install here. The
+    // installer checks every file again before it replaces anything.
+    private bool PatchApplies(WindowsUpdatePackage package)
+    {
+        if (package.Patch is not { } patch || identity == null) return false;
+        try
+        {
+            return state?.Read(PatchFailedKey) != package.Build.ToString() &&
+                UpdateCatalog.InstalledManifest(identity.Root) == patch.BaseManifestSHA256;
+        }
+        catch (Exception error) when (Recoverable(error)) { return false; }
+    }
+    /// After a patch failed to install, offers the same update again, now as
+    /// the full installer, without waiting for the next daily check.
+    internal Task<bool> RetryAfterFailedPatchAsync() => CheckCore(manual: false);
     /// Remembers the offered build so automatic checks stay quiet about it.
     internal void Skip()
     {
@@ -146,7 +170,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     {
         if (disposed || installing) return;
         bool offered = offer != null;
-        offer = null;
+        offer = null; incremental = false;
         if (identity != null) try { UpdateSessions.Clean(identity.DataRoot); } catch (Exception error) when (Recoverable(error)) { }
         Publish(Status with { Busy = false, MessageKey = offered || Status.MessageKey is "updates.checking" or "windows.updates.downloading" ? "updates.cancelled" : Status.MessageKey });
         ArmAutomatic();

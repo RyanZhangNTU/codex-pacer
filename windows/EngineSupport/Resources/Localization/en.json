@@ -119,6 +119,8 @@
   "windows.updates.window_title": "Software Update",
   "windows.updates.new_version_title": "A new version of Codex Pacer is available",
   "windows.updates.new_version_detail": "Codex Pacer {0} is available. You have {1}.",
+  "windows.updates.download_size": "Download size: {0}",
+  "windows.updates.download_size_incremental": "Download size: {0}, only the files that changed",
   "windows.updates.install": "Install Update",
   "windows.updates.skip": "Skip This Version",
   "windows.updates.later": "Remind Me Later",

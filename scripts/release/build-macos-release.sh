@@ -75,7 +75,9 @@ task_windows=()
 if python3 scripts/release/prepare-windows-update.py --enabled; then
     python3 scripts/release/prepare-windows-update.py --output "$task_output" --tools "$task_sparkle_tools" \
         --notes "$task_notes" --notes-zh "$task_notes_zh"
-    task_windows=("Codex-Pacer-${task_version}-windows-x64-setup.exe" "Codex-Pacer-${task_version}-windows-arm64-setup.exe" appcast-windows.xml)
+    # Installers, manifests, any patches and the feed, as prepared and signed above.
+    while IFS= read -r task_asset; do task_windows+=("$task_asset"); done \
+        < <(python3 scripts/release/prepare-windows-update.py --assets --output "$task_output")
 fi
 (cd "$task_output" && shasum -a 256 "$task_name" appcast.xml ${task_windows[@]+"${task_windows[@]}"} > SHA256SUMS.txt)
 python3 - "$task_output" "$task_build" "$task_version" "$(git rev-parse HEAD)" "$task_mode" "$task_name" <<'PY'

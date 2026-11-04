@@ -310,6 +310,64 @@ class WindowsReleaseTests(unittest.TestCase):
             self.assertEqual(self.release.file_version(self.image((4, 2, 1, 73), plus)), "4.2.1.73")
         with self.assertRaises(ValueError): self.release.file_version(b"MZ" + bytes(0x3A) + struct.pack("<I", 0x40) + b"NE\0\0" + bytes(64))
 
+    def test_patches_live_inside_deltas_where_4_2_2_never_looks(self):
+        release = self.release
+        signature = base64.b64encode(bytes(range(64))).decode()
+        manifest = "ab" * 32
+        patch = {"name": release.patch_name("1.2.4", "x64", "1.2.3"), "length": 500, "signature": signature,
+                 "from": "1.2.3.45", "baseManifestSHA256": "cd" * 32}
+        assets = [("x64", release.asset_name("1.2.4", "x64"), 1000, signature, manifest, patch),
+                  ("arm64", release.asset_name("1.2.4", "arm64"), 1001, signature, manifest, None)]
+        notes = [("en", "English notes"), ("zh-Hans", "中文说明")]
+        body = release.build_feed("1.2.4", "46", notes, assets, "10.0.19041")
+        release.validate_feed(body, "1.2.4", "46", assets, "10.0.19041")
+        items = ET.fromstring(body).findall("./channel/item")
+        for item in items:
+            # Windows 4.2.2 reads only the direct enclosure: still exactly the full installer.
+            direct = item.findall("enclosure")
+            self.assertEqual(len(direct), 1)
+            self.assertTrue(direct[0].get("url").endswith("-setup.exe"))
+            self.assertEqual(direct[0].get(f"{{{release.PACER_NAMESPACE}}}manifestSHA256"), manifest)
+        nested = items[0].find(f"{{{release.NAMESPACE}}}deltas/enclosure")
+        self.assertEqual(nested.get(f"{{{release.NAMESPACE}}}deltaFrom"), "1.2.3.45")
+        self.assertEqual(nested.get(f"{{{release.PACER_NAMESPACE}}}baseManifestSHA256"), "cd" * 32)
+        self.assertEqual(nested.get("url"), "https://github.com/RyanZhangNTU/codex-pacer/releases/download/v1.2.4/Codex-Pacer-1.2.4-windows-x64-update-from-1.2.3.exe")
+        self.assertIsNone(items[1].find(f"{{{release.NAMESPACE}}}deltas"))
+        for broken in ([assets[0][:5] + (dict(patch, length=501),), assets[1]], [assets[0][:5] + (None,), assets[1]],
+                       [assets[0][:4] + ("ef" * 32, patch), assets[1]]):
+            with self.subTest(broken=broken[0][4:]), self.assertRaises(ValueError):
+                release.validate_feed(body, "1.2.4", "46", broken, "10.0.19041")
+
+    def test_a_patch_is_kept_only_for_the_latest_published_base(self):
+        release = self.release
+        commit = "abcdef1" + "0" * 33
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "x64").mkdir()
+            stem = "CodexPacer-1.2.4-windows-x64-patch-abcdef1"
+            data = self.image((1, 2, 4, 46))
+            digest = __import__("hashlib").sha256(data).hexdigest()
+            (directory / "x64" / (stem + ".exe")).write_bytes(data)
+            (directory / "x64" / (stem + ".exe.sha256")).write_text(f"{digest}  {stem}.exe\n", encoding="utf-8")
+            info = {"sha256": digest, "manifestSHA256": "ab" * 32, "architecture": "x64", "build": "1.2.4.46",
+                    "baseVersion": "1.2.3", "baseBuild": "1.2.3.45", "baseManifestSHA256": "cd" * 32}
+            (directory / "x64" / (stem + ".json")).write_text(json.dumps(info), encoding="utf-8")
+            latest = {"x64": ("1.2.3.45", "cd" * 32)}
+            self.assertEqual(release.patch(directory, "1.2.4", "46", commit, "x64", "ab" * 32, latest)[2]["baseBuild"], "1.2.3.45")
+            for bases in ({"x64": ("1.2.3.44", "cd" * 32)}, {"x64": ("1.2.3.45", "ef" * 32)}, {}):
+                with self.subTest(bases=bases):
+                    self.assertIsNone(release.patch(directory, "1.2.4", "46", commit, "x64", "ab" * 32, bases))
+            with self.assertRaises(ValueError):
+                release.patch(directory, "1.2.4", "46", commit, "x64", "ef" * 32, latest)
+            self.assertIsNone(release.patch(directory, "1.2.4", "46", "1234567" + "0" * 33, "x64", "ab" * 32, latest))
+            metadata = {"feed": release.FEED, "installers": [
+                {"name": release.asset_name("1.2.4", "x64"), "manifest": release.manifest_name("1.2.4", "x64"), "patch": {"name": release.patch_name("1.2.4", "x64", "1.2.3")}},
+                {"name": release.asset_name("1.2.4", "arm64"), "manifest": release.manifest_name("1.2.4", "arm64"), "patch": None}]}
+            (directory / "windows-update.json").write_text(json.dumps(metadata))
+            self.assertEqual(release.asset_names(directory), [
+                "Codex-Pacer-1.2.4-windows-x64-setup.exe", "Codex-Pacer-1.2.4-windows-x64-manifest.json", "Codex-Pacer-1.2.4-windows-x64-update-from-1.2.3.exe",
+                "Codex-Pacer-1.2.4-windows-arm64-setup.exe", "Codex-Pacer-1.2.4-windows-arm64-manifest.json", "appcast-windows.xml"])
+
 
 class WindowsLocalizationTests(unittest.TestCase):
     @classmethod

@@ -16,6 +16,9 @@ internal static class Program
         if (args is ["--serve-update-feed", var pacedDirectory, var pacedScope, var pacedInstaller, var pacedArchitecture, var pace]
             && int.TryParse(pace, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int bytesPerSecond) && bytesPerSecond > 0)
         { await WindowsUpdateChecks.Serve(pacedDirectory, pacedScope, pacedInstaller, pacedArchitecture, bytesPerSecond); return 0; }
+        if (args is ["--serve-update-feed", var patchDirectory, var patchScope, var patchInstaller, var patchArchitecture, var patchPace, var patchFile]
+            && int.TryParse(patchPace, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int patchBytesPerSecond))
+        { await WindowsUpdateChecks.Serve(patchDirectory, patchScope, patchInstaller, patchArchitecture, patchBytesPerSecond, patchFile); return 0; }
         if (args is ["--updates-only"])
         { await WindowsUpdateChecks.Run(); return 0; }
         if (args is ["--update-installer-only", var installerScope, var installerBuild, var installerPath])

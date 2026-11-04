@@ -16,14 +16,14 @@
     "scripts/native/render-app-icon.swift": "003e374674b47ffc60e1db39199f5eee8d362b759f2425a516c6f7857b54b068",
     "scripts/native/swiftpm-environment.sh": "14f817c154e77c6f729aef3f73880abb04b37c867354364017c74185b2499d0f",
     "scripts/native/test-island.sh": "5dbb994707786c95c5101607c0b320d419548aaf9f2991cf50747550e0a19d11",
-    "scripts/release/build-macos-release.sh": "d2f233e44ae559cfa805e9bc27ae3f1d3a6b9996550f53de7c00611cbc177f37",
+    "scripts/release/build-macos-release.sh": "771257dede765afb10f489005a05cf684144feb5e6a154d7dabedafe3bf75898",
     "scripts/release/dmg-background.swift": "55c3d7639804cecb9fdbcb45f4ee8f11c1bfa1d0ed603a2130b311d099cc364e",
     "scripts/release/dmg-requirements.txt": "95076c7eba194304f84f0b4e041a35aea7033155343e4ab94c5d25902fdc8eaf",
     "scripts/release/notarize.py": "eec8af5b27f0cb06e76bcb8d3ef695c38fa92359a1940d6eba0c180e3fb587fd",
     "scripts/release/package-dmg.py": "e103a5d0825a4faca5b1ffbcb540f5d4789a93acaf6eee57dd58fab2e561cf6c",
     "scripts/release/prepare-update.py": "42acda3581238084a922280d8a3cbadffa9fcf5b0c0656d7b42c477e6117cadf",
-    "scripts/release/prepare-windows-update.py": "c2e0ab2b2a5dd772025ff760498d526f973e2f5bf907d8a096620ddb8b3d892a",
-    "scripts/release/publish-github-release.sh": "37e578af90cfabc519b20c9ac8ba0df8b802259c6c202640d073bd57a9ae52e6"
+    "scripts/release/prepare-windows-update.py": "71ecf1dbafc479a483b69b6db5b43c76556dd55dae1c599464f455d8984391a2",
+    "scripts/release/publish-github-release.sh": "c9630eeaa65634cfa204698717c08c59193a6c1467218268049598d8b4d5ebe9"
   },
   "nativePackageInvariants": [
     "// swift-tools-version: 5.10",

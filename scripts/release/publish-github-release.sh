@@ -48,7 +48,9 @@ task_windows_names=()
 task_windows_enabled=0
 if python3 scripts/release/prepare-windows-update.py --enabled; then
     task_windows_enabled=1
-    task_windows_names=("Codex-Pacer-${task_version}-windows-x64-setup.exe" "Codex-Pacer-${task_version}-windows-arm64-setup.exe" appcast-windows.xml)
+    # Installers, manifests, any patches and the feed, as verified above.
+    while IFS= read -r task_asset; do task_windows_names+=("$task_asset"); done \
+        < <(python3 scripts/release/prepare-windows-update.py --assets --output "$task_output")
     task_windows=("${task_windows_names[@]/#/$task_output/}")
 fi
 if [[ "$task_mode" == signed ]]; then
@@ -75,9 +77,11 @@ if mode == 'unsigned':
 if windows != '0':
     # Windows installers are not Authenticode signed, so SmartScreen asks once.
     body += (f'\n## Windows\n\nRun `Codex-Pacer-{version}-windows-x64-setup.exe` (ARM64: `Codex-Pacer-{version}-windows-arm64-setup.exe`). '
-        + 'The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**.\n\n'
+        + 'The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**. '
+        + 'The other Windows files are used by in-app updates; you do not need to download them.\n\n'
         + f'运行 `Codex-Pacer-{version}-windows-x64-setup.exe`（ARM64 设备用 `Codex-Pacer-{version}-windows-arm64-setup.exe`）。'
-        + '安装包暂未做代码签名；如果 SmartScreen 提示"Windows 已保护你的电脑"，点**更多信息 → 仍要运行**。\n')
+        + '安装包暂未做代码签名；如果 SmartScreen 提示"Windows 已保护你的电脑"，点**更多信息 → 仍要运行**。'
+        + '其他 Windows 文件供应用内更新使用，无需下载。\n')
 combined.write_text(body)
 PY
 gh release create "$task_tag" "$task_dmg" "$task_output/appcast.xml" ${task_windows[@]+"${task_windows[@]}"} --verify-tag --draft \

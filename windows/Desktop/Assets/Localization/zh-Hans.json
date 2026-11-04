@@ -996,6 +996,8 @@
     "windows.support.share_unavailable": "Windows 分享当前不可用。你可以复制项目链接后分享。",
     "windows.updates.available": "有可用的更新，请在更新窗口中安装。",
     "windows.updates.close": "关闭",
+    "windows.updates.download_size": "下载大小：{0}",
+    "windows.updates.download_size_incremental": "下载大小：{0}，只含有变化的文件",
     "windows.updates.downloading": "正在下载更新…",
     "windows.updates.downloading_title": "正在下载更新",
     "windows.updates.error_detail": "Pacer 无法检查或下载更新。请检查网络连接后重试。",

@@ -32,6 +32,29 @@ The package streams into `setup.exe.download` in a new owned session directory a
 
 Diagnostics retain only the exception type and error code. Pacer never logs complete URLs, query parameters, remote response text or keys.
 
+## Patch updates
+
+From 4.2.3 each release publishes its file manifest (`build-info.json`) for each architecture. When the next release is built, CI makes a patch installer from the latest published manifest. It is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
+
+The release Mac signs a patch and lists it only when its base is still the latest build in the signed public feed. It sits inside `<sparkle:deltas>` with `sparkle:deltaFrom` (the base build) and `pacer:baseManifestSHA256`. The full installer stays the item's only direct enclosure and gains `pacer:manifestSHA256`. Windows 4.2.2 and earlier read only that direct enclosure, so they keep installing in full; a test runs the 4.2.2 parser, frozen, on the new feed shape.
+
+The app takes the patch only when all of the following hold:
+
+- the patch is from exactly the running build;
+- the SHA-256 of the installed `build-info.json` equals the patch's base;
+- this build's patch has not already failed here.
+
+Otherwise it downloads the full installer. The offer shows the download size and says when only changed files are downloaded. Download, Ed25519 and length verification, and the handoff are the same as for a full installer.
+
+Before changing anything, the patch installer checks that the installation is exactly its base, and that every file the patch does not carry already holds the new content. A modified or different installation is refused and left untouched. The relaunched app then records the failed patch and offers the same update again as the full installer. After copying, the patch verifies every file against the new manifest. Files the new build no longer lists are removed by the usual stale-file pass.
+
+`test-patch.ps1` covers this with a synthetic next build in an isolated QA scope. It changes, adds and drops one file each, then checks:
+
+- a modified installation refuses the patch;
+- the patch turns the base into the next build;
+- the same patch is refused a second time;
+- uninstall leaves nothing behind.
+
 ## Installation and recovery
 
 Update state uses a checked, bounded, versioned file at `%LOCALAPPDATA%\CodexPacer\Updates\state-v1.json`, never HKCU. It holds the schedule, the skipped build and the presented notes; the keys keep the names WinSparkle used, so existing choices carry over. Update files reject reparse points and hard links. Their owner must be the current user, or Administrators when the current token is elevated with that group enabled. Future state versions are preserved.
@@ -60,6 +83,7 @@ The relaunched app reads the result once, then deletes finished sessions in the 
 - the service's offer, skip, later, stale-offer, up-to-date and failure paths;
 - daily and manual scheduling and preference rollback;
 - session cleanup, shutdown and install ordering, cancellation recovery and once-only notes;
+- patch selection: the exact base build and manifest, fallback to the full installer for a modified installation or after a failed patch, and the frozen 4.2.2 parser on a feed with patches;
 - the release-notes Markdown subset.
 
 Its HTTPS fixture creates only a temporary test key; no certificate is installed in a trust store. `UpdateWindowChecks` (presentation group `updates`) renders every window stage in both languages and themes, checks note contrast, progress text and default actions, and saves captures.
@@ -69,10 +93,10 @@ dotnet run --project windows/Tests/DesktopTests/Pacer.DesktopTests.csproj -c Deb
 ./scripts/windows/test-presentation.ps1 -Group updates
 ```
 
-For UI and install acceptance, build an installer with an isolated `QaScope` using the existing installer workflow; its product metadata includes that scope. The fixture serves that installer over loopback HTTPS and signs its feed and package with an in-memory test key. It writes only public channel configuration. An optional last argument paces the package in bytes per second so download progress can be watched:
+For UI and install acceptance, build an installer with an isolated `QaScope` using the existing installer workflow; its product metadata includes that scope. The fixture serves that installer over loopback HTTPS and signs its feed and package with an in-memory test key. It writes only public channel configuration. An optional argument paces the package in bytes per second so download progress can be watched. A QA patch built with `package-installer.ps1 -BaseManifest` can follow it (with a pace, 0 for none); the fixture then publishes it from the QA build override, for the base its metadata names:
 
 ```powershell
-dotnet run --no-build --project windows/Tests/DesktopTests/Pacer.DesktopTests.csproj -c Debug -- --serve-update-feed <isolated-output-directory> <scope-in-N-format> <QA-installer> x64 [bytes-per-second]
+dotnet run --no-build --project windows/Tests/DesktopTests/Pacer.DesktopTests.csproj -c Debug -- --serve-update-feed <isolated-output-directory> <scope-in-N-format> <QA-installer> x64 [bytes-per-second [QA-patch]]
 ```
 
 Start the matching QA installation with `--demo --reference-fixture --activation-qa <scope> --update-qa <isolated-output-directory>/channel.json`. The fixture supplies a test-only current-build override, so the same packaged version can exercise the update path without changing `Info.plist` or project versions; production rejects the override. Press Enter or close the fixture's stdin to stop it; its maximum lifetime is 30 minutes.

@@ -33,7 +33,8 @@ internal static class UpdateWindowChecks
         {
             window.Show(); window.Offer(package, true); await Pump();
             Check(window.Current == UpdateWindow.Stage.Offer && Text(window, "update.title") == ui.Text("windows.updates.new_version_title")
-                && Text(window, "update.status") == Format("windows.updates.new_version_detail", "4.2.3", "4.2.2"), "The offer names the new and installed versions");
+                && Text(window, "update.status") == Format("windows.updates.new_version_detail", "4.2.3", "4.2.2") + "\n" + Format("windows.updates.download_size", "170.5 MB"),
+                "The offer names the new and installed versions and the download size");
             Check(Find<Button>(window, "update.install").IsDefault && !Find<Button>(window, "update.later").IsDefault && Has(window, "update.skip"),
                 "Install is the default action, with Later and Skip beside it");
             var viewer = Find<FlowDocumentScrollViewer>(window, "update.notes");
@@ -49,6 +50,10 @@ internal static class UpdateWindowChecks
             Check(document.Foreground is SolidColorBrush { Color: var shown } && shown == ink && viewer.Parent is Border { Background: SolidColorBrush { Color: var behind } } && behind == tile
                 && Contrast(ink, tile) >= 4.5, "Release notes use the Settings palette with readable contrast in light and dark");
             Capture(window, Name("offer"));
+            window.Offer(package with { Length = 21_400_000, Incremental = true }, true); await Pump();
+            Check(Text(window, "update.status").EndsWith(Format("windows.updates.download_size_incremental", (21_400_000 / 1048576.0).ToString("0.0", CultureInfo.CurrentCulture) + " MB"), StringComparison.Ordinal),
+                "A patch offer says it downloads only the changed files, with its own size");
+            Capture(window, Name("offer-incremental"));
             window.BeginDownload(package); window.Report(new(42_100_000, package.Length)); await Pump();
             var progress = Find<ProgressBar>(window, "update.progress");
             Check(window.Current == UpdateWindow.Stage.Downloading && Math.Abs(progress.Value - 42_100_000.0 / package.Length) < 1e-9
@@ -71,7 +76,7 @@ internal static class UpdateWindowChecks
             Check(!window.IsVisible && !service.Status.Busy, "Escape closes the window and ends the update operation");
         }
         finally { if (window.IsVisible) window.Close(); }
-        Console.WriteLine("PASS update window " + language + (dark ? " dark" : " light") + ": offer with rendered notes, progress, verify, ready, up to date, failure and Escape");
+        Console.WriteLine("PASS update window " + language + (dark ? " dark" : " light") + ": full and patch offers with rendered notes, progress, verify, ready, up to date, failure and Escape");
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);

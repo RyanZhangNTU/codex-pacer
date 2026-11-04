@@ -996,6 +996,8 @@
     "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link.",
     "windows.updates.available": "An update is available. Use the update window to install it.",
     "windows.updates.close": "Close",
+    "windows.updates.download_size": "Download size: {0}",
+    "windows.updates.download_size_incremental": "Download size: {0}, only the files that changed",
     "windows.updates.downloading": "Downloading the update…",
     "windows.updates.downloading_title": "Downloading update",
     "windows.updates.error_detail": "Pacer couldn’t check for or download the update. Check your connection and try again.",

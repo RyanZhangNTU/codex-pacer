@@ -58,7 +58,49 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         }
         WriteStale(manifest.RootElement, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(payloadIndex))!, StaleList));
     }
-    internal const string StaleList = "pacer-stale.json";
+    internal const string StaleList = "pacer-stale.json", PatchFile = "pacer-patch.json";
+    internal sealed record PatchDescription(int SchemaVersion, string BaseBuild, string BaseManifestSHA256, string[] Files);
+    // A patch carries only the files that changed since one build, so it may
+    // replace files only in exactly that installation. Every file it does not
+    // carry must already hold the new content, or nothing is touched.
+    internal async Task PreparePatchAsync(string patchPath, CancellationToken cancellation)
+    {
+        // Written by package-installer.ps1 in camelCase.
+        var patch = JsonSerializer.Deserialize<PatchDescription>(WindowsInstallationIdentity.ReadBounded(patchPath, 2 * 1024 * 1024),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? throw new InvalidDataException("Invalid update patch.");
+        if (patch.SchemaVersion != 1 || patch.BaseManifestSHA256.Length != 64) throw new InvalidDataException("Invalid update patch.");
+        string payloadIndex = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(patchPath))!, "build-info.json");
+        string installed = Path.Combine(identity.Root, "build-info.json");
+        if (!File.Exists(installed) || !string.Equals(Digest(installed), patch.BaseManifestSHA256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("This update applies only to the installation it was built from.");
+        var carried = new HashSet<string>(patch.Files.Select(path => path.Replace('\\', '/')), StringComparer.OrdinalIgnoreCase);
+        using (var manifest = JsonDocument.Parse(WindowsInstallationIdentity.ReadBounded(payloadIndex, 2 * 1024 * 1024)))
+            CheckFiles(ManifestFiles(manifest.RootElement).Where(pair => !carried.Contains(pair.Key)), cancellation);
+        await PrepareAsync(payloadIndex, cancellation);
+    }
+    /// Confirms the installed files match this installation's manifest.
+    internal void Verify(CancellationToken cancellation)
+    {
+        using var manifest = JsonDocument.Parse(WindowsInstallationIdentity.ReadBounded(Path.Combine(identity.Root, "build-info.json"), 2 * 1024 * 1024));
+        CheckFiles(ManifestFiles(manifest.RootElement), cancellation);
+    }
+    private void CheckFiles(IEnumerable<KeyValuePair<string, string>> files, CancellationToken cancellation)
+    {
+        string root = Path.GetFullPath(identity.Root);
+        foreach (var (relative, digest) in files)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            string path = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Invalid package path.");
+            if (!File.Exists(path) || Digest(path) != digest) throw new InvalidDataException("An installed file differs from its manifest.");
+        }
+    }
+    private static string Digest(string path)
+    {
+        WindowsInstallationIdentity.RequireNoReparse(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+    }
     private static Dictionary<string, string> ManifestFiles(JsonElement manifest)
     {
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -100,11 +142,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
             try
             {
-                WindowsInstallationIdentity.RequireNoReparse(path);
-                string digest;
-                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                    digest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
-                if (digest != file.SHA256) continue;
+                if (Digest(path) != file.SHA256) continue;
                 File.Delete(path); removed++;
                 for (string? folder = Path.GetDirectoryName(path); folder != null && folder.Length > root.Length
                     && !Directory.EnumerateFileSystemEntries(folder).Any(); folder = Path.GetDirectoryName(folder))

@@ -57,8 +57,19 @@ internal sealed record WindowsUpdateChannel(Uri Feed, string PublicKey, string? 
     }
 }
 
+/// A signed installer that carries only the files changed since one earlier
+/// build. It applies only to an installation whose manifest is exactly that
+/// build's (BaseManifestSHA256 is the SHA-256 of its build-info.json).
+internal sealed record WindowsUpdatePatch(Version From, string BaseManifestSHA256, Uri Download, long Length, string Signature);
+
 internal sealed record WindowsUpdatePackage(string Version, Version Build, string Architecture, Version MinimumWindows,
-    Uri Download, long Length, string Signature, string Notes);
+    Uri Download, long Length, string Signature, string Notes, WindowsUpdatePatch? Patch = null, bool Incremental = false)
+{
+    /// The same update delivered by its patch installer instead of the full one.
+    internal WindowsUpdatePackage AsIncremental() => Patch is { } patch
+        ? this with { Download = patch.Download, Length = patch.Length, Signature = patch.Signature, Patch = null, Incremental = true }
+        : throw new InvalidOperationException("This update has no patch.");
+}
 
 internal static class UpdateCatalog
 {
@@ -66,6 +77,8 @@ internal static class UpdateCatalog
     internal const int PackageLimit = 256 * 1024 * 1024;
     internal const string SignaturePrefix = "<!-- pacer-feed-ed25519:";
     internal static readonly XNamespace Sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle";
+    internal static readonly XNamespace Pacer = "urn:codex-pacer:windows-update";
+    internal const string ManifestName = "build-info.json";
     internal static bool Verify(byte[] bytes, string signature, string key)
     {
         try
@@ -121,9 +134,38 @@ internal static class UpdateCatalog
             string notes = item.Elements("description").FirstOrDefault(value => (string?)value.Attribute(XNamespace.Xml + "lang") == language)?.Value
                 ?? item.Elements("description").FirstOrDefault(value => (string?)value.Attribute(XNamespace.Xml + "lang") is null or "en")?.Value ?? "";
             if (Encoding.UTF8.GetByteCount(notes) > 128 * 1024) throw new InvalidDataException("Update notes exceed their limit.");
-            var candidate = new WindowsUpdatePackage(display, build, architecture, minimum, url, length, payloadSignature, notes);
+            var patch = notesForCurrentBuild ? null : ReadPatch(item, channel, architecture, currentBuild);
+            var candidate = new WindowsUpdatePackage(display, build, architecture, minimum, url, length, payloadSignature, notes, patch);
             if (selected == null || build > selected.Build) selected = candidate;
         }
         return selected;
+    }
+    // Patches sit in <sparkle:deltas>, which 4.2.2 and earlier never read: they
+    // take only the item's direct <enclosure>. A patch is optional, so one that
+    // is not for this build or is malformed leaves the full installer in use.
+    private static WindowsUpdatePatch? ReadPatch(XElement item, WindowsUpdateChannel channel, string architecture, Version currentBuild)
+    {
+        var deltas = item.Elements(Sparkle + "deltas").ToArray();
+        if (deltas.Length != 1) return null;
+        var matches = deltas[0].Elements("enclosure").Take(16).Where(value =>
+            (string?)value.Attribute(Sparkle + "os") == "windows-" + architecture &&
+            Version.TryParse((string?)value.Attribute(Sparkle + "deltaFrom"), out var from) && from == currentBuild).ToArray();
+        if (matches.Length != 1) return null;
+        var enclosure = matches[0];
+        string digest = (string?)enclosure.Attribute(Pacer + "baseManifestSHA256") ?? "", signature = (string?)enclosure.Attribute(Sparkle + "edSignature") ?? "";
+        if (digest.Length != 64 || !digest.All(Uri.IsHexDigit) ||
+            !Uri.TryCreate((string?)enclosure.Attribute("url"), UriKind.Absolute, out var url) || !channel.Allows(url) ||
+            !long.TryParse((string?)enclosure.Attribute("length"), NumberStyles.None, CultureInfo.InvariantCulture, out long length) || length is <= 0 or > PackageLimit)
+            return null;
+        try { if (Convert.FromBase64String(signature).Length != 64) return null; }
+        catch (FormatException) { return null; }
+        return new(currentBuild, digest.ToLowerInvariant(), url, length, signature);
+    }
+    /// SHA-256 of an installation's manifest, which a patch's base must match.
+    internal static string? InstalledManifest(string root)
+    {
+        string path = Path.Combine(root, ManifestName);
+        if (!File.Exists(path)) return null;
+        return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(UpdateFiles.Read(path, 4 * 1024 * 1024)));
     }
 }

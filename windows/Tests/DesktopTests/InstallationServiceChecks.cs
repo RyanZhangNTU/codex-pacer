@@ -108,6 +108,55 @@ internal static class InstallationServiceChecks
         }
         NotificationOwnership();
         StaleFiles();
+        PatchFiles();
+    }
+    // A patch replaces files only in exactly its base installation, and only
+    // when every file it does not carry already holds the new content.
+    private static void PatchFiles()
+    {
+        string fixture = Path.Combine(Path.GetTempPath(), "pacer-patch-中文-" + Guid.NewGuid().ToString("N"));
+        var identity = new WindowsInstallationIdentity(Path.Combine(fixture, "app space"), Guid.NewGuid());
+        try
+        {
+            static string Hash(string text) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+            static object Entry(string path, string text) => new { path, sha256 = Hash(text) };
+            void Write(string relative, string text)
+            {
+                string path = Path.Combine(identity.Root, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, text);
+            }
+            Write("CodexPacer.exe", "synthetic executable"); Write("Same.dll", "same"); Write("Changed.dll", "old");
+            string installed = Path.Combine(identity.Root, "build-info.json");
+            File.WriteAllText(installed, JsonSerializer.Serialize(new { schemaVersion = 1, files = new[] { Entry("CodexPacer.exe", "synthetic executable"), Entry("Same.dll", "same"), Entry("Changed.dll", "old") } }));
+            string temporary = Path.Combine(fixture, "setup temp"); Directory.CreateDirectory(temporary);
+            File.WriteAllText(Path.Combine(temporary, "build-info.json"), JsonSerializer.Serialize(new { schemaVersion = 1, files = new[]
+                { Entry("CodexPacer.exe", "synthetic executable"), Entry("Same.dll", "same"), Entry("Changed.dll", "new"), Entry("Added/new.txt", "added") } }));
+            string patch = Path.Combine(temporary, WindowsInstallationOperations.PatchFile);
+            // The same camelCase shape package-installer.ps1 writes.
+            File.WriteAllText(patch, JsonSerializer.Serialize(new { schemaVersion = 1, baseBuild = "1.2.3.4",
+                baseManifestSHA256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(installed))),
+                files = new[] { "Changed.dll", "Added/new.txt", "Maintenance/PacerMaintenance.exe" } }));
+            var operations = new WindowsInstallationOperations(identity, new StartupRegistrationChecks.Store(), new Links());
+            void Prepare() => operations.PreparePatchAsync(patch, CancellationToken.None).GetAwaiter().GetResult();
+            void Refused(string message)
+            {
+                try { Prepare(); } catch (InvalidDataException) { return; }
+                throw new InvalidOperationException(message);
+            }
+            Prepare();
+            Check(File.Exists(Path.Combine(temporary, WindowsInstallationOperations.StaleList)), "A matching base prepares like a full installation");
+            Write("Same.dll", "locally modified");
+            Refused("A file the patch does not carry must already hold its new content");
+            Write("Same.dll", "same");
+            File.AppendAllText(installed, " ");
+            Refused("A patch refuses an installation whose manifest is not its base");
+            File.WriteAllText(installed, File.ReadAllText(installed).TrimEnd());
+            operations.Verify(CancellationToken.None);
+            Write("Changed.dll", "damaged");
+            try { operations.Verify(CancellationToken.None); throw new InvalidOperationException("Verification accepted a file that differs from the manifest."); }
+            catch (InvalidDataException) { }
+        }
+        finally { if (Directory.Exists(fixture)) Directory.Delete(fixture, true); }
     }
     private static void NotificationOwnership()
     {

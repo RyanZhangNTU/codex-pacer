@@ -28,6 +28,16 @@
 #ifndef PacerCompression
   #define PacerCompression "lzma2/ultra64"
 #endif
+; A patch installer (PacerPatch) carries only changed files in SourceDir; its
+; icon and license still come from the complete payload.
+#ifndef PacerAssetsDir
+  #define PacerAssetsDir SourceDir
+#endif
+#ifdef PacerPatch
+  #ifndef PacerPatchFile
+    #error PacerPatchFile is required for a patch installer
+  #endif
+#endif
 
 [Setup]
 AppId={#PacerAppId}
@@ -53,7 +63,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
 OutputDir={#ArtifactDir}
 OutputBaseFilename={#ArtifactName}
-SetupIconFile={#SourceDir}\Assets\Pacer.ico
+SetupIconFile={#PacerAssetsDir}\Assets\Pacer.ico
 UninstallDisplayIcon={app}\Assets\Pacer.ico
 Compression={#PacerCompression}
 SolidCompression=yes
@@ -66,7 +76,7 @@ SignedUninstaller=no
 UninstallLogging=yes
 WizardStyle=modern
 DisableWelcomePage=no
-LicenseFile={#SourceDir}\LICENSE.txt
+LicenseFile={#PacerAssetsDir}\LICENSE.txt
 ; Chinese on a Chinese Windows UI, English otherwise; a selector only when
 ; neither matches.
 ShowLanguageDialog=auto
@@ -103,6 +113,10 @@ english.PacerSilentUninstallStopped=Pacer cleanup failed. Silent uninstall was s
 chinesesimplified.PacerSilentUninstallStopped=Pacer 清理失败。静默卸载已在删除应用文件前停止。手动清理说明见卸载日志。
 english.PacerStartMenuShortcut=Add to the &Start menu
 chinesesimplified.PacerStartMenuShortcut=添加到开始菜单(&S)
+english.PacerPatchMismatch=This update package applies only to the Codex Pacer installation it was made for, and this one differs. Download the full installer from the GitHub release instead.
+chinesesimplified.PacerPatchMismatch=此更新包只适用于它所对应的 Codex Pacer 安装，当前安装与之不符。请改为从 GitHub Release 下载完整安装包。
+english.PacerPatchVerifyFailed=The updated files could not be verified. Run the full installer from the GitHub release to repair Codex Pacer.
+chinesesimplified.PacerPatchVerifyFailed=更新后的文件未通过校验。请从 GitHub Release 下载完整安装包，运行它来修复 Codex Pacer。
 english.PacerUninstallCancelled=Uninstall cancelled. Application files have not been removed.
 chinesesimplified.PacerUninstallCancelled=卸载已取消，应用文件没有被删除。
 
@@ -129,6 +143,9 @@ Filename: "{app}\CodexPacer.exe"; Parameters: "--demo --reference-fixture --acti
 Source: "{#SourceDir}\Maintenance\PacerMaintenance.exe"; DestDir: "{app}\Maintenance"; Flags: ignoreversion
 Source: "{#SourceDir}\build-info.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "Maintenance\PacerMaintenance.exe,build-info.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef PacerPatch
+Source: "{#PacerPatchFile}"; Flags: dontcopy
+#endif
 
 [Code]
 var
@@ -165,8 +182,16 @@ begin
   ExtractTemporaryFile('PacerMaintenance.exe');
   ExtractTemporaryFile('build-info.json');
   Bootstrap := ExpandConstant('{tmp}\PacerMaintenance.exe');
+#ifdef PacerPatch
+  { Before any file changes: the installation must be exactly this patch's
+    base, and every file the patch does not carry must already be current. }
+  ExtractTemporaryFile('pacer-patch.json');
+  if not Maintenance(Bootstrap, 'prepare-patch', ExpandConstant('{tmp}\pacer-patch.json')) then
+    Result := CustomMessage('PacerPatchMismatch')
+#else
   if not Maintenance(Bootstrap, 'prepare', ExpandConstant('{tmp}\build-info.json')) then
     Result := CustomMessage('PacerPrepareFailed')
+#endif
   else
     Result := '';
 end;
@@ -180,6 +205,10 @@ begin
       Log('Pacer stale file removal code ' + IntToStr(MaintenanceExitCode) + '.');
     if not Maintenance(Bootstrap, 'register', '') then
       RaiseException(CustomMessage('PacerRegistrationFailed'));
+#ifdef PacerPatch
+    if not Maintenance(Bootstrap, 'verify', '') then
+      RaiseException(CustomMessage('PacerPatchVerifyFailed'));
+#endif
   end;
 end;
 

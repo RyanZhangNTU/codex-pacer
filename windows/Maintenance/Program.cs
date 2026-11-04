@@ -21,6 +21,8 @@ internal static class Program
                 case "prepare" when args.Length == 4: await operations.PrepareAsync(args[3], deadline.Token); break;
                 case "register" when args.Length == 3: operations.Register(); break;
                 case "remove-stale" when args.Length == 4: operations.RemoveStale(args[3]); break;
+                case "prepare-patch" when args.Length == 4: await operations.PreparePatchAsync(args[3], deadline.Token); break;
+                case "verify" when args.Length == 3: operations.Verify(deadline.Token); break;
                 case "shortcut" when args.Length == 4:
                     operations.AddShortcut(args[3] switch { "desktop" => InstallShortcut.Desktop, "start-menu" => InstallShortcut.StartMenu, _ => throw new ArgumentException("Unknown shortcut.") });
                     break;

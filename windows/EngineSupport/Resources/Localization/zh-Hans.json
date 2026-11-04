@@ -119,6 +119,8 @@
   "windows.updates.window_title": "软件更新",
   "windows.updates.new_version_title": "Codex Pacer 有新版本",
   "windows.updates.new_version_detail": "Codex Pacer {0} 已推出，你当前使用的是 {1}。",
+  "windows.updates.download_size": "下载大小：{0}",
+  "windows.updates.download_size_incremental": "下载大小：{0}，只含有变化的文件",
   "windows.updates.install": "安装更新",
   "windows.updates.skip": "跳过此版本",
   "windows.updates.later": "稍后提醒",

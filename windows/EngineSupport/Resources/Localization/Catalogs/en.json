@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f8a425d8a96566813459755603cedf198ecb9f9237352540d0be98fbdbd8e04e",
-    "windows/EngineSupport/Resources/Localization/en.json": "dd5990e956bea4fd7ba7fbfacbf60b669dcabe96d2166cf040bcf892860104d6"
+    "windows/EngineSupport/Resources/Localization/en.json": "42245fce68a60f6985790665bd9164ef86f715a5548910957c0d78e8fea48a5a"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1000,6 +1000,8 @@
     "windows.support.share_unavailable": "Windows sharing is unavailable. Use Copy Link to share the project link.",
     "windows.updates.available": "An update is available. Use the update window to install it.",
     "windows.updates.close": "Close",
+    "windows.updates.download_size": "Download size: {0}",
+    "windows.updates.download_size_incremental": "Download size: {0}, only the files that changed",
     "windows.updates.downloading": "Downloading the update\u2026",
     "windows.updates.downloading_title": "Downloading update",
     "windows.updates.error_detail": "Pacer couldn\u2019t check for or download the update. Check your connection and try again.",
