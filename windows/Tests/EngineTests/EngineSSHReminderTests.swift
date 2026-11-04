@@ -37,7 +37,7 @@ final class EngineSSHReminderTests: XCTestCase {
     /// first frame. Its stream status then leaves the snapshot and only the
     /// collector's failure record remains; the compact bar's SSH reminder must
     /// keep reporting it while the host is monitored.
-    func testAnExitedCodexSSHHelperKeepsTheSSHReminderOnlyWhileMonitored() async throws {
+    func testAnExitedCodexSSHHelperKeepsTheSSHReminderWhileMonitoredAndEnabled() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("SSH 提醒 " + UUID().uuidString)
         let home = root.appendingPathComponent("codex")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -71,11 +71,14 @@ final class EngineSSHReminderTests: XCTestCase {
         XCTAssertFalse(streaming(), "The helper must not reconnect inside its retry interval")
         XCTAssertTrue(raised(), "An exited SSH helper must keep the SSH reminder from its failure record")
 
+        // With the same failure still recorded, only the reminder switch changes.
+        _ = await runtime.receive(try command("configure", ["reminderSettings": reminders([])]))
+        try await until("Turning the SSH reminder off must hide it") { !raised() }
+        XCTAssertFalse(streaming(), "The helper is still down while the reminder is off")
+        _ = await runtime.receive(try command("configure", ["reminderSettings": reminders(["ssh"])]))
+        try await until("Turning the SSH reminder back on must show the same failure", raised)
         _ = await runtime.receive(try command("configure", ["monitorSSH": false]))
         try await until("An unmonitored host kept the SSH reminder") { !raised() }
-        _ = await runtime.receive(try command("configure", ["monitorSSH": true, "reminderSettings": reminders([])]))
-        _ = await runtime.receive(try command("refresh"))
-        XCTAssertFalse(raised(), "A disabled SSH reminder stays hidden")
         await runtime.stop()
     }
 }

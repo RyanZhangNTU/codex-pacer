@@ -60,6 +60,24 @@ final class EngineConnectionProjectionTests: XCTestCase {
         XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [[:]], unavailable: [ssh.id]), "An exited SSH helper leaves only its failure record")
         XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[:]], unavailable: [profile.id]), "A failed WSL source is not an SSH problem")
     }
+    func testTheSSHReminderReadsOnlySourcesMonitoredAtPublication() {
+        var failed = RuntimeStreamStatus(); failed.sourceAvailable = true
+        let dropped = ConnectionSource.sshPrefix + "dropped"
+        var codexHosts: Set<String> = [ssh.id], claudeHosts: Set<String> = [ssh.id]
+        func raised(_ codex: [String: RuntimeStreamStatus] = [:], unavailable: [String] = [], claude: [String: RuntimeStreamStatus] = [:]) -> Bool {
+            EngineSSHReminder.raised(codex: codex, codexUnavailable: unavailable, claude: claude) { id, provider in
+                (provider == .codex ? codexHosts : claudeHosts).contains(id)
+            }
+        }
+        XCTAssertTrue(raised(unavailable: [ssh.id])); XCTAssertTrue(raised([ssh.id: failed])); XCTAssertTrue(raised(claude: [ssh.id: failed]))
+        XCTAssertFalse(raised([dropped: failed], unavailable: [dropped], claude: [dropped: failed]),
+            "A host discovery dropped cannot keep the reminder while an older collector snapshot still names it")
+        claudeHosts = []
+        XCTAssertFalse(raised(claude: [ssh.id: failed]), "Each provider's failures are checked against that provider's monitored hosts")
+        XCTAssertTrue(raised(unavailable: [ssh.id]))
+        codexHosts = []
+        XCTAssertFalse(raised([ssh.id: failed], unavailable: [ssh.id], claude: [ssh.id: failed]))
+    }
     func testVersionSetupAndProviderAbsenceCannotLookLikeAnActiveClaudeSession() throws {
         let profile = profile, id = profile.id
         let installing = EngineClaudeRemoteSetup(sourceID: id, context: UUID().uuidString, configured: false, inFlight: true, canRetry: false, message: nil, retryAt: nil)

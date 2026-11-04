@@ -1923,8 +1923,10 @@ actor EngineRuntime {
         }
         if snapshots[.codex] != nil { sourceTexts[.codex] = L10n.text("quota.source_codex") }
         let codexSSH = enabled.contains(.codex) ? desktopState.flatMap { $0.context == lifecycle.version(.codex) ? $0 : nil } : nil
-        let sshIssue = !demo && monitorSSH && ConnectionSource.hasSSHFailure(
-            in: [codexSSH?.remoteStatuses ?? [:], enabled.contains(.claude) ? claudeRemoteStatuses : [:]], unavailable: codexSSH?.unavailable ?? [])
+        let sshIssue = !demo && monitorSSH && EngineSSHReminder.raised(codex: codexSSH?.remoteStatuses ?? [:],
+            codexUnavailable: codexSSH?.unavailable ?? [], claude: enabled.contains(.claude) ? claudeRemoteStatuses : [:]) {
+                allowsRemoteSource($0, provider: $1)
+            }
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
             failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
