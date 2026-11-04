@@ -553,12 +553,11 @@ struct DeepSeekWhereItWent: View {
                     Text(part.title).lineLimit(1).truncationMode(.tail).frame(maxWidth: 140, alignment: .leading).fixedSize()
                     Text(part.amountText).foregroundStyle(PacerPalette.primary)
                     if part.elsewhere {
-                        // The info mark exists to explain, so it keeps its tooltip.
-                        // A popover would leave the panel and collapse it; a click
-                        // opens the usage page.
+                        // A popover would leave the panel and collapse it, so the
+                        // mark opens the usage page; the user guide explains what
+                        // "not on this Mac" covers.
                         Button { NSWorkspace.shared.open(IslandModel.deepseekUsageURL) } label: { Image(systemName: "info.circle") }
                             .buttonStyle(.plain).foregroundStyle(PacerPalette.tertiary)
-                            .help(L10n.text("deepseek.elsewhere_help"))
                             .accessibilityHint(L10n.text("deepseek.elsewhere_help"))
                             .accessibilityLabel(L10n.text("deepseek.usage_link"))
                     }
