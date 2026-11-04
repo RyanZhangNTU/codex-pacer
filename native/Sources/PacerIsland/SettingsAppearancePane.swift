@@ -2,8 +2,9 @@ import AppKit
 import PacerCore
 import SwiftUI
 
-/// Style, position and screen position are pictures; changes apply to the real
-/// island at once, so the page needs no preview of its own. Liquid Glass has no
+/// Style and position are pictures; changes apply to the real island at once,
+/// so the page needs no preview of its own. Free Move places the island by
+/// dragging it, so the page only explains that and offers a way back. Liquid Glass has no
 /// settings of its own: like system glass it follows the look chosen in System
 /// Settings, shown as one row rather than footnotes.
 struct SettingsAppearancePane: View {
@@ -29,6 +30,17 @@ struct SettingsAppearancePane: View {
     /// Before a choice, the island attaches only around a notch, so the tile
     /// that matches what the island shows here is the selected one.
     private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }
+    /// Reread after each drag; Settings does not hold the dragged place itself.
+    private var placement: IslandPlacement? {
+        _ = model.placementRevision
+        return IslandPlacement.load(from: model.defaults)
+    }
+    /// The tile shows a strip for a side dock, otherwise the bar.
+    private var swatchPosition: IslandPosition {
+        guard let placement else { return customPosition }
+        guard placement.vertical else { return .center }
+        return .corner(side: placement.edge == .left ? .left : .right, bottom: placement.y > 0.5)
+    }
     var customBinding: Binding<IslandPosition> {
         Binding(get: { customPosition }, set: {
             position = $0
@@ -82,18 +94,19 @@ struct SettingsAppearancePane: View {
                 tile(L10n.text("settings.notch"), selected: attachesHere) { displayMode = .notch } art: {
                     PositionSwatch(kind: .attached)
                 }
-                tile(L10n.text("settings.custom"), selected: !attachesHere) {
+                tile(L10n.text("appearance.free_move"), selected: !attachesHere) {
                     customBinding.wrappedValue = customPosition
                 } art: {
-                    PositionSwatch(kind: .custom(customPosition))
+                    PositionSwatch(kind: .custom(swatchPosition))
                 }
             }
             if !attachesHere {
                 LabeledContent {
-                    ScreenPositionPicker(selection: customBinding)
+                    Button(L10n.text("appearance.position_reset")) { model.resetIslandPlacement() }
+                        .disabled(placement == nil && customPosition == .center)
                 } label: {
                     Text(L10n.text("appearance.screen_position"))
-                    Text(L10n.text(customPosition == .center ? "appearance.position_center_note" : "appearance.position_side_note"))
+                    Text(L10n.text("appearance.free_move_detail"))
                 }
             }
             Picker(L10n.text("settings.display_picker"), selection: $displayID) {
@@ -156,58 +169,8 @@ private struct StyleSwatch: View {
     }
 }
 
-/// A small screen with the five places a floating island can sit: the capsule
-/// below the menu bar, and a strip against the side at each corner.
-private struct ScreenPositionPicker: View {
-    @Binding var selection: IslandPosition
-    private static let size = CGSize(width: 168, height: 104)
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // The wallpaper's glows are wider than the screen; pin it so edge
-            // positions are measured from the visible edges.
-            Wallpaper().frame(width: Self.size.width, height: Self.size.height)
-            Rectangle().fill(Color.black.opacity(0.22)).frame(height: 9)
-            Capsule().fill(Color.white.opacity(0.3)).frame(width: 56, height: 8)
-                .position(x: Self.size.width / 2, y: Self.size.height - 7)
-            ForEach(IslandPosition.allCases, id: \.self) { position in spot(position) }
-        }
-        .frame(width: Self.size.width, height: Self.size.height)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(L10n.text("appearance.screen_position"))
-    }
-
-    private func spot(_ position: IslandPosition) -> some View {
-        let selected = position == selection
-        let inner: CGFloat = 5
-        let shape = UnevenRoundedRectangle(topLeadingRadius: position.side == .left ? 0 : inner,
-            bottomLeadingRadius: position.side == .left ? 0 : inner,
-            bottomTrailingRadius: position.side == .right ? 0 : inner, topTrailingRadius: position.side == .right ? 0 : inner)
-        let size = position.side == nil ? CGSize(width: 40, height: 11) : CGSize(width: 11, height: 32)
-        let x: CGFloat = switch position.side {
-        case nil: Self.size.width / 2
-        case .left: size.width / 2
-        case .right: Self.size.width - size.width / 2
-        }
-        let y: CGFloat = position.side == nil ? 19 : position.isBottom ? Self.size.height - 18 - size.height / 2 : 13 + size.height / 2
-        return Button { selection = position } label: {
-            shape.fill(selected ? Color.black : Color.black.opacity(0.15))
-                .overlay(shape.stroke(selected ? Color.accentColor : Color.white.opacity(0.8),
-                    style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: selected ? [] : [3, 2])))
-                .frame(width: size.width, height: size.height)
-                .padding(5).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .position(x: x, y: y)
-        .help(position.label)
-        .accessibilityLabel(position.label)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-}
-
-/// A screen's top edge: the bar hangs from it when attached. Custom shows the
-/// chosen place: the capsule below the menu bar or a strip at a corner.
+/// A screen's top edge: the bar hangs from it when attached. Free Move shows
+/// the bar below the menu bar, or a strip when it is docked at a side.
 private struct PositionSwatch: View {
     enum Kind { case attached, custom(IslandPosition) }
     let kind: Kind

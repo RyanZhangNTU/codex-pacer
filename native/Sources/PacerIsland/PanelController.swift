@@ -21,6 +21,22 @@ final class PanelController: NSObject {
     private var motionRevision = 0
     /// The point the current frame keeps fixed; set before each frame is applied.
     private var anchor = IslandGeometry.Anchor.topCenter
+    /// The collapsed bar's two shapes from the last layout, for Free Move.
+    private var headerSize = CGSize(width: 300, height: 38)
+    private var stripSize = CGSize(width: IslandGeometry.stripWidth, height: 132)
+    private struct Move {
+        /// The pointer's place on the bar, as fractions from its top left.
+        var grab: CGPoint
+        var size: CGSize
+        var screen: NSScreen
+        var cursor: CGPoint
+        let keyboard: Bool
+        var edge = IslandPlacement.Edge.free
+        var placement: IslandPlacement?
+    }
+    /// While set, the move owns the panel's frame and layout waits.
+    private var move: Move?
+    private var snapPreview: SnapPreviewPanel?
 
     init(model: IslandModel) {
         self.model = model
@@ -47,17 +63,47 @@ final class PanelController: NSObject {
             guard let self, !self.model.interactionSuspended else { return }
             self.panel.makeKey()
         }
+        model.onBeginMove = { [weak self] grab in self?.beginMove(grab: grab) }
+        model.onEndMoveGesture = { [weak self] in
+            if self?.move?.keyboard == false { self?.finishMove() }
+        }
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
+            Task { @MainActor in if self?.move?.keyboard == true { self?.cancelMove() } }
+        })
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.layout(animated: false) }
         })
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+                self.cancelMove()
                 self.model.close()
             }
         }) { monitors.append(monitor) }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            if event.keyCode == 53, event.window === self?.panel { self?.model.close(); return nil }
+            guard let self else { return event }
+            // A move takes Escape before Escape-to-close, and owns the arrows and Return.
+            if let move = self.move {
+                switch (event.keyCode, move.keyboard) {
+                case (53, _): self.cancelMove(); return nil
+                case (36, true), (76, true): self.finishMove(); return nil
+                case (123, true), (124, true), (125, true), (126, true):
+                    let step: CGFloat = 12
+                    let delta = [123: CGPoint(x: -step, y: 0), 124: CGPoint(x: step, y: 0),
+                                 125: CGPoint(x: 0, y: -step), 126: CGPoint(x: 0, y: step)][event.keyCode] ?? .zero
+                    self.updateMove(cursor: CGPoint(x: move.cursor.x + delta.x, y: move.cursor.y + delta.y))
+                    return nil
+                default: return move.keyboard ? nil : event
+                }
+            }
+            if event.keyCode == 53, event.window === self.panel { self.model.close(); return nil }
+            return event
+        }) { monitors.append(monitor) }
+        // The panel moves with the pointer, so follow AppKit's events rather
+        // than the drag gesture's local coordinates.
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp], handler: { [weak self] event in
+            guard let self, let move = self.move, !move.keyboard else { return event }
+            if event.type == .leftMouseUp { self.finishMove() } else { self.updateMove(cursor: NSEvent.mouseLocation) }
             return event
         }) { monitors.append(monitor) }
         layout(animated: false)
@@ -91,12 +137,18 @@ final class PanelController: NSObject {
         }
     }
 
+    private static func number(_ screen: NSScreen) -> Int {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0
+    }
+    /// The chosen display, or the main one when none is chosen or it is gone.
+    private var selectedScreen: NSScreen? {
+        NSScreen.screens.first { Self.number($0) == model.displayID } ?? NSScreen.screens.first
+    }
+
     private func layout(animated: Bool = true) {
+        guard move == nil else { return }
         if !model.expanded { panel.resignKey() }
-        let selected = NSScreen.screens.first {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue == model.displayID
-        }
-        guard let screen = selected ?? NSScreen.screens.first else { return }
+        guard let screen = selectedScreen else { return }
         let demoNotch = model.isDemo && CommandLine.arguments.contains("--demo-notch")
         let hardwareNotchWidth: CGFloat
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
@@ -108,9 +160,6 @@ final class PanelController: NSObject {
         let mode: IslandDisplayMode = demoNotch ? .notch : model.displayMode
         let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width)
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
-        let position = layout.attached ? IslandPosition.center : model.islandPosition
-        let dock = position.side == nil ? nil : position
-        if model.sideDock != dock { model.sideDock = dock }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
         if model.baseHeaderHeight != layout.topHeight { model.baseHeaderHeight = layout.topHeight }
         let headerHeight = layout.topHeight
@@ -121,23 +170,51 @@ final class PanelController: NSObject {
         let expandedWidth = IslandWidth.desired(expanded: true, notchWidth: layout.notchWidth,
             leading: 80, trailing: 65,
             contentWidth: model.measuredContentWidth, headerWidth: model.measuredCompactWidth)
-        func islandFrame(expanded: Bool) -> CGRect {
-            if let dock {
-                return IslandGeometry.sideFrame(visible: screen.visibleFrame, position: dock, stripHeight: model.stripHeight,
-                    expanded: expanded, panelWidth: IslandWidth.sidePanel(contentWidth: model.measuredContentWidth),
-                    contentHeight: model.panelContentHeight)
+        headerSize = CGSize(width: max(1, min(screen.frame.width - 24, collapsedWidth)), height: model.topHeight)
+        stripSize = CGSize(width: IslandGeometry.stripWidth, height: model.stripHeight)
+        let sidePanelWidth = IslandWidth.sidePanel(contentWidth: model.measuredContentWidth)
+        let anchor: IslandGeometry.Anchor, dock: IslandPosition?, opensUp: Bool, edge: IslandPlacement.Edge?
+        let islandFrame: (Bool) -> CGRect
+        if !layout.attached, let placement = IslandPlacement.load(from: model.defaults) {
+            // Free Move: the dragged place, opening toward the room it has.
+            let vertical = placement.vertical, visible = screen.visibleFrame, content = model.panelContentHeight
+            let barSize = vertical ? stripSize : headerSize
+            let width = vertical ? IslandGeometry.stripWidth + sidePanelWidth : expandedWidth
+            let arranged = { (expanded: Bool) in
+                IslandGeometry.arrange(placement, visible: visible, barSize: barSize, expandedWidth: width,
+                    contentHeight: content, expanded: expanded)
             }
-            return IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
-                topHeight: model.topHeight, expanded: expanded, attached: layout.attached,
-                contentHeight: model.panelContentHeight, desiredWidth: expanded ? expandedWidth : collapsedWidth)
+            let open = arranged(true)
+            anchor = open.anchor
+            dock = vertical ? .corner(side: placement.edge == .left ? .left : .right, bottom: open.opensUp) : nil
+            opensUp = !vertical && open.opensUp
+            edge = placement.edge == .free ? nil : placement.edge
+            islandFrame = { arranged($0).frame }
+        } else {
+            // The notch, or a saved position from before Free Move.
+            let position = layout.attached ? IslandPosition.center : model.islandPosition
+            let side = position.side == nil ? nil : position
+            anchor = position.anchor; dock = side; opensUp = false
+            edge = position.side.map { $0 == .left ? .left : .right }
+            islandFrame = { expanded in
+                if let side {
+                    return IslandGeometry.sideFrame(visible: screen.visibleFrame, position: side, stripHeight: self.model.stripHeight,
+                        expanded: expanded, panelWidth: sidePanelWidth, contentHeight: self.model.panelContentHeight)
+                }
+                return IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
+                    topHeight: self.model.topHeight, expanded: expanded, attached: layout.attached,
+                    contentHeight: self.model.panelContentHeight, desiredWidth: expanded ? expandedWidth : collapsedWidth)
+            }
         }
-        let frame = islandFrame(expanded: model.expanded), expandedFrame = islandFrame(expanded: true)
+        if model.sideDock != dock { model.sideDock = dock }
+        if model.opensUp != opensUp { model.opensUp = opensUp }
+        if model.dockedEdge != edge { model.dockedEdge = edge }
+        let frame = islandFrame(model.expanded), expandedFrame = islandFrame(true)
         if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample
         let hasBlackHeader = layout.attached && model.appearance == .liquidGlass
         let target = IslandTransition.Sample.resting(at: frame, expanded: model.expanded, hasBlackHeader: hasBlackHeader)
-        let anchor = position.anchor
         let from = anchor.point(in: current.frame), to = anchor.point(in: frame)
         let sameAnchor = anchor == self.anchor && abs(from.y - to.y) < 1 && abs(from.x - to.x) < 1
         self.anchor = anchor
@@ -204,10 +281,117 @@ final class PanelController: NSObject {
         displayLink?.invalidate(); displayLink = nil; motion = nil
     }
 
+    // MARK: Free Move
+
+    /// Collapses the island in place and lets the pointer, or the arrow keys
+    /// when `grab` is nil, carry the bar until it is placed or cancelled.
+    private func beginMove(grab: CGPoint?) {
+        guard move == nil, model.canMoveIsland, panel.isVisible, let screen = panel.screen ?? selectedScreen else { return }
+        model.setIslandMoving(true)
+        if model.expanded { model.setExpanded(false) }
+        layout(animated: false)
+        let bar = panel.frame
+        let cursor = grab == nil ? CGPoint(x: bar.midX, y: bar.midY) : NSEvent.mouseLocation
+        move = Move(grab: grab ?? CGPoint(x: 0.5, y: 0.5), size: bar.size, screen: screen, cursor: cursor, keyboard: grab == nil)
+        if grab == nil {
+            panel.makeKey()
+            NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
+                .announcement: L10n.text("island.move_keyboard"), .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
+        updateMove(cursor: cursor)
+    }
+
+    private func updateMove(cursor: CGPoint) {
+        guard var move else { return }
+        move.cursor = cursor
+        let screen = NSScreen.screens.first { $0.frame.contains(cursor) } ?? move.screen
+        if screen != move.screen { move.screen = screen; move.edge = .free }
+        let visible = screen.visibleFrame
+        let raw = CGRect(x: cursor.x - move.grab.x * move.size.width, y: cursor.y - (1 - move.grab.y) * move.size.height,
+            width: move.size.width, height: move.size.height)
+        move.edge = IslandGeometry.snapEdge(visible: visible, bar: raw, previous: move.edge)
+        let placement = IslandGeometry.placement(edge: move.edge, visible: visible, bar: raw)
+        move.placement = placement
+        self.move = move
+        stopMotion()
+        apply(.resting(at: IslandGeometry.windowFrame(IslandGeometry.clamp(raw, to: visible), anchor: anchor),
+            expanded: false, hasBlackHeader: false))
+        if move.edge == .free { snapPreview?.orderOut(nil); return }
+        let target = IslandGeometry.windowFrame(IslandGeometry.collapsedFrame(placement, visible: visible,
+            size: placement.vertical ? stripSize : headerSize), anchor: anchor)
+        let preview = snapPreview ?? SnapPreviewPanel()
+        snapPreview = preview
+        preview.show(target, edge: move.edge, below: panel)
+    }
+
+    /// Saves the place, on the display under the bar, and shows the island there.
+    private func finishMove() {
+        guard let move else { return }
+        guard let placement = move.placement else { cancelMove(); return }
+        endMove()
+        let defaults = model.defaults
+        placement.save(to: defaults)
+        let current = model.displayID == 0 ? NSScreen.screens.first : NSScreen.screens.first { Self.number($0) == model.displayID }
+        if current != move.screen { defaults.set(Self.number(move.screen), forKey: "displayID") }
+        if IslandDisplayMode.load(from: defaults) != .floating { IslandDisplayMode.floating.save(to: defaults) }
+        model.islandPlacementSaved()
+        if model.pinned { model.setExpanded(true) }
+        layout(animated: false)
+    }
+
+    private func cancelMove() {
+        guard move != nil else { return }
+        endMove()
+        if model.pinned { model.setExpanded(true) }
+        layout(animated: false)
+    }
+
+    private func endMove() {
+        move = nil
+        snapPreview?.orderOut(nil)
+        model.setIslandMoving(false)
+    }
+
     func stop() {
+        cancelMove()
+        snapPreview?.close(); snapPreview = nil
         stopMotion()
         monitors.forEach { NSEvent.removeMonitor($0) }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         panel.orderOut(nil)
+    }
+}
+
+/// The outline of the edge a released drag docks to. It never takes input or focus.
+private final class SnapPreviewPanel: NSPanel {
+    private let outline = SnapOutline()
+
+    init() {
+        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        isOpaque = false; backgroundColor = .clear; hasShadow = false; ignoresMouseEvents = true
+        level = .statusBar; hidesOnDeactivate = false; isReleasedWhenClosed = false
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        contentView = outline
+    }
+
+    override var canBecomeKey: Bool { false }
+
+    func show(_ frame: CGRect, edge: IslandPlacement.Edge, below window: NSWindow) {
+        if outline.edge != edge { outline.edge = edge; outline.needsDisplay = true }
+        if self.frame != frame { setFrame(frame, display: true) }
+        order(.below, relativeTo: window.windowNumber)
+    }
+}
+
+private final class SnapOutline: NSView {
+    var edge = IslandPlacement.Edge.free
+
+    override func draw(_ dirtyRect: NSRect) {
+        let line: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 3 : 2
+        let rect = bounds.insetBy(dx: line / 2, dy: line / 2)
+        let radius = min(19, rect.width / 2, rect.height / 2)
+        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+        NSColor.controlAccentColor.withAlphaComponent(0.16).setFill(); path.fill()
+        NSColor.controlAccentColor.setStroke(); path.lineWidth = line; path.stroke()
     }
 }
