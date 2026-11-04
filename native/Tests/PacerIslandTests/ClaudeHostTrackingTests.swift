@@ -74,12 +74,13 @@ final class ClaudeHostTrackingTests: XCTestCase {
         let model = fixture.model, scans = Scans(), first = zotero, second = terminal
         let running = "019a0000-0000-7000-8000-0000000000a1", ended = "019a0000-0000-7000-8000-0000000000a2"
         let vanishing = "019a0000-0000-7000-8000-0000000000a3"
-        model.claudeHostResolver = { sessions, _ in
+        model.hostApplicationResolver = { provider, sessions, _ in
+            guard provider == .claude else { return [:] }
             await scans.record(sessions)
             return [running: first, vanishing: second].filter { sessions.contains($0.key) }
         }
         model.receiveClaudeUpdate([activity(running), activity(ended, completed: true), activity(vanishing)], statuses: [:], requests: [])
-        try await waitUntil { model.claudeHosts.count == 2 }
+        try await waitUntil { model.hostApplications[.claude]?.count == 2 }
         var requests = await scans.all()
         XCTAssertEqual(requests, [[running, ended, vanishing]])
         XCTAssertEqual(model.taskSourceName(activity(running)), "Zotero")
@@ -87,8 +88,8 @@ final class ClaudeHostTrackingTests: XCTestCase {
 
         // Within two seconds nothing is rescanned; later only running sessions
         // are, so the latest live holder can replace a record.
-        model.trackClaudeHosts(now: Date())
-        model.trackClaudeHosts(now: Date().addingTimeInterval(3))
+        model.trackHostApplications(for: .claude, now: Date())
+        model.trackHostApplications(for: .claude, now: Date().addingTimeInterval(3))
         try await waitUntil { await scans.all().count == 2 }
         requests = await scans.all()
         XCTAssertEqual(requests.last, [running, vanishing])
@@ -97,8 +98,8 @@ final class ClaudeHostTrackingTests: XCTestCase {
         // a session that leaves the list takes its record with it.
         model.receiveClaudeUpdate([activity(running, completed: true), activity(ended, completed: true)], statuses: [:], requests: [])
         XCTAssertEqual(model.claudeHost(for: activity(running, completed: true)), zotero)
-        try await waitUntil { model.claudeHosts[vanishing] == nil }
-        XCTAssertEqual(Set(model.claudeHosts.keys), [running])
+        try await waitUntil { model.hostApplications[.claude]?[vanishing] == nil }
+        XCTAssertEqual(Set((model.hostApplications[.claude] ?? [:]).keys), [running])
         await model.shutdown()
     }
 
@@ -112,7 +113,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
         subagent.updateParent(parent)
         let ssh = activity(remote, hostID: "remote-ssh-discovered:synthetic")
         model.receiveClaudeUpdate([activity(parent), subagent, activity(inDesktop), ssh], statuses: [:], requests: [])
-        model.recordClaudeHosts([parent.uppercased(): terminal, inDesktop: desktop, remote: zotero])
+        model.recordHostApplications([parent.uppercased(): terminal, inDesktop: desktop, remote: zotero], provider: .claude)
         XCTAssertEqual(model.taskSourceName(activity(parent)), "Terminal")
         XCTAssertEqual(model.claudeHost(for: subagent), terminal)
         XCTAssertEqual(model.taskSourceName(subagent), "Terminal")
@@ -136,20 +137,20 @@ final class ClaudeHostTrackingTests: XCTestCase {
         }
         func update() { model.receiveClaudeUpdate([embedded, subagent, activity(terminal)], statuses: [:], requests: questions) }
         func shown() -> Set<String> { Set(model.activities.compactMap(\.threadID)) }
-        XCTAssertTrue(model.showsEmbeddedClaudeSessions, "On unless turned off")
+        XCTAssertTrue(model.showsEmbeddedSessions(for: .claude), "On unless turned off")
         update()
         XCTAssertEqual(shown(), [plugin, child, terminal])
         XCTAssertEqual(model.attentionRequests.count, 3)
 
         fixture.defaults.set(false, forKey: IslandModel.showsEmbeddedClaudeSessionsKey)
-        model.refilterClaudeSessions()
+        model.refilterEmbeddedSessions()
         XCTAssertEqual(shown(), [terminal])
         XCTAssertEqual(model.attentionRequests.map(\.threadID), [terminal])
         update()
         XCTAssertEqual(shown(), [terminal], "Later reads stay filtered")
 
         fixture.defaults.set(true, forKey: IslandModel.showsEmbeddedClaudeSessionsKey)
-        model.refilterClaudeSessions()
+        model.refilterEmbeddedSessions()
         XCTAssertEqual(shown(), [plugin, child, terminal])
         XCTAssertEqual(model.attentionRequests.count, 3)
         await model.shutdown()
@@ -192,7 +193,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
         // Own defaults leave system notifications off; no monitor is started.
         let model = IslandModel(defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
-        model.claudeHostResolver = { _, _ in [:] }
+        model.hostApplicationResolver = { _, _, _ in [:] }
         return Fixture(model: model, defaults: defaults, domain: domain)
     }
 

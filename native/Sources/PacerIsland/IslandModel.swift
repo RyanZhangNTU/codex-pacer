@@ -63,16 +63,6 @@ final class IslandModel: ObservableObject {
     var hostApplicationResolver: @Sendable (AgentProvider, Set<String>, URL) async -> [String: HostApplication] = { provider, sessions, home in
         await Task.detached(priority: .utility) { HostApplication.resolve(sessions: sessions, provider: provider, home: home) }.value
     }
-    var claudeHosts: [String: HostApplication] { hostApplications[.claude] ?? [:] }
-    var claudeHostResolver: @Sendable (Set<String>, URL) async -> [String: HostApplication] {
-        get { let resolve = hostApplicationResolver; return { await resolve(.claude, $0, $1) } }
-        set {
-            let old = hostApplicationResolver
-            hostApplicationResolver = { provider, sessions, home in
-                provider == .claude ? await newValue(sessions, home) : await old(provider, sessions, home)
-            }
-        }
-    }
     @Published private(set) var attentionRequests: [PendingAttentionRequest] = []
     private var localActivities: [SessionActivity] {
         get { activityState.localActivities }
@@ -253,10 +243,6 @@ final class IslandModel: ObservableObject {
         case .claude: claudeQuotaSource?.label
         case .deepseek: deepseekBalance.map { L10n.text($0.source == .web ? "deepseek.source.web" : "deepseek.source.api") }
         }
-    }
-    func providerQuotaIsStale(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> Bool {
-        let window = period.map { providerWindow(provider, period: $0) } ?? providerSelectedWindow(provider)
-        return QuotaDashboardPresentation.isStale(snapshot: providerQuota(provider), window: window, now: now)
     }
     func providerFreshnessText(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> String {
         let window = period.map { providerWindow(provider, period: $0) } ?? providerSelectedWindow(provider)
@@ -724,14 +710,9 @@ final class IslandModel: ObservableObject {
     func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? {
         taskPresentation.attentionKind(for: activity)
     }
-    var hidesHeaderRate: Bool {
-        isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
-    }
     var headerRateText: String? { rate == nil ? nil : compactComponent(.tps).text }
     var hasSSHConnectionIssue: Bool {
-        monitorsSSH && (!unavailableSSH.isEmpty || (Array(streamStatuses) + Array(claudeStreamStatuses)).contains {
-            $0.key.contains("remote-ssh-discovered:") && $0.value.hasConnectionFailure
-        })
+        monitorsSSH && (!unavailableSSH.isEmpty || ConnectionSource.hasSSHFailure(in: [streamStatuses, claudeStreamStatuses]))
     }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
     private var readableCompletions: [SessionActivity] { taskPresentation.readableCompletions }
@@ -740,11 +721,6 @@ final class IslandModel: ObservableObject {
         guard activityState.markAllRead(at: now) else { return }
         applyActivityUpdate(activityState.update())
         onLayoutChange?(); onStatusChange?()
-    }
-    var completionSummary: String {
-        let pending = pendingCompletions
-        guard let first = pending.first else { return L10n.text("activity.idle") }
-        return pending.count == 1 ? L10n.text(first.turnFailed ? "activity.failed" : first.phase == .interrupted ? "activity.stopped_compact" : "activity.done_compact") : L10n.text("activity.ended_compact", pending.count)
     }
     func openCompletionOrPin() {
         if let request = pendingInputRequests.first, canOpen(request.activity) { open(request.activity) }
@@ -787,15 +763,12 @@ final class IslandModel: ObservableObject {
     }
     static let showsEmbeddedClaudeSessionsKey = "showEmbeddedClaudeSessions"
     static let showsEmbeddedCodexSessionsKey = "showEmbeddedCodexSessions"
+    /// Sessions that another app runs through an agent SDK (a Zotero plugin,
+    /// for example). Terminal, editor and Desktop sessions always show.
     func showsEmbeddedSessions(for provider: AgentProvider) -> Bool {
         guard provider != .deepseek else { return true }
         let key = provider == .codex ? Self.showsEmbeddedCodexSessionsKey : Self.showsEmbeddedClaudeSessionsKey
         return defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
-    }
-    /// Claude sessions that another app runs through the Agent SDK (a Zotero
-    /// plugin, for example). Terminal, editor and Desktop sessions always show.
-    var showsEmbeddedClaudeSessions: Bool {
-        defaults.object(forKey: Self.showsEmbeddedClaudeSessionsKey) == nil || defaults.bool(forKey: Self.showsEmbeddedClaudeSessionsKey)
     }
     func projectName(_ activity: SessionActivity) -> String {
         ActivityTaskRowPresentation.title(activity, hideProjects: hideProjects)
@@ -989,8 +962,6 @@ final class IslandModel: ObservableObject {
     func recordHostApplications(_ found: [String: HostApplication], provider: AgentProvider) {
         if hostTracking.record(found, provider: provider) { publishHostApplications() }
     }
-    func recordClaudeHosts(_ found: [String: HostApplication]) { recordHostApplications(found, provider: .claude) }
-    func trackClaudeHosts(now: Date = Date()) { trackHostApplications(for: .claude, now: now) }
     func trackHostApplications(for provider: AgentProvider, now: Date = Date(), refreshRunning: Bool = true) {
         let decision = hostTracking.prepare(provider: provider, references: knownActivities(for: provider), activities: activities, inbox: completionInbox,
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)), version: UInt64(sourceGeneration(for: provider)), now: now,
@@ -1305,13 +1276,13 @@ final class IslandModel: ObservableObject {
         }
         now = Date(); claudeReceivedActivities = values.filter { !excluded.contains($0.id) }; claudeStreamStatuses = statuses
         claudeReceivedRequests = requests
-        let hidden = hiddenClaudeActivityIDs
+        let hidden = hiddenEmbeddedActivityIDs
         let measured = performance.filter { !excluded.contains($0.id) }
         completionInbox.updatePerformance(measured)
         for update in measured where !hidden.contains(update.id) {
             rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt)
         }
-        refilterClaudeSessions()
+        refilterEmbeddedSessions()
         scheduleClaudeRemoteSetup()
     }
 
@@ -1323,8 +1294,6 @@ final class IslandModel: ObservableObject {
     }
     private var ignoredCodexActivityIDs: Set<String> { activityState.ignoredCodexActivityIDs }
     private var hiddenEmbeddedActivityIDs: Set<String> { activityState.hiddenActivityIDs(activityVisibility) }
-    private var hiddenClaudeActivityIDs: Set<String> { hiddenEmbeddedActivityIDs }
-    func refilterClaudeSessions() { refilterEmbeddedSessions() }
     func refilterEmbeddedSessions() {
         combineActivities()
         for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
