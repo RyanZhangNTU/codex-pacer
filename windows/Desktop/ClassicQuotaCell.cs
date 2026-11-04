@@ -44,7 +44,6 @@ internal sealed class ClassicQuotaCell : StackPanel
                 AutomationProperties.SetName(summary, other.AccessibilityLabel); Children.Add(summary);
             }
         }
-        ToolTip = reading.ClassicHelp;
         AutomationProperties.SetName(Ring, reading.ClassicAccessibilityLabel);
         AutomationProperties.SetHelpText(Ring, reading.ClassicHelp);
     }

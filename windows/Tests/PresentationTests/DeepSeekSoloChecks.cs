@@ -106,7 +106,7 @@ internal static class DeepSeekSoloChecks
                     Check(UIElementAutomationPeer.CreatePeerForElement(Descendants(view).OfType<DeepSeekBudgetDial>().Single()).GetName().Contains(wallet.Solo.Budgets[0].Whole + wallet.Solo.Budgets[0].Cents), "Budget accessibility must include the actual money remaining");
                     var compact = new DeepSeekQuotaCell(wallet with { Dial = wallet.Dial! with { StaleCaption = true } }, ui, 88);
                     compact.Measure(new Size(120, double.PositiveInfinity)); compact.Arrange(new Rect(0, 0, 120, compact.DesiredSize.Height));
-                    Check(compact.Face.Children.Count == 1 && compact.Face.Children[0] is DeepSeekBudgetDial && compact.ToolTip is string help && help.Contains(wallet.Solo.Budgets[0].Help),
+                    Check(compact.Face.Children.Count == 1 && compact.Face.Children[0] is DeepSeekBudgetDial && compact.ToolTip == null && System.Windows.Automation.AutomationProperties.GetHelpText(compact).Contains(wallet.Solo.Budgets[0].Help),
                         "The compact provider cell must switch to the same budget and its help, including while the unrelated account balance is stale");
                     Check(!UIElementAutomationPeer.CreatePeerForElement(compact.Children.OfType<QuotaReadingHost>().Single()).GetName().Contains(ui.Text("common.not_updated")),
                         "A live local budget caption must not announce the stale account balance");

@@ -164,7 +164,10 @@ public partial class IslandWindow : Window
     }
     internal double VisibleWidth => Shell.ActualWidth;
     internal double VisibleHeight => Shell.ActualHeight;
-    private static void SetButtonName(Button button, string title) { button.ToolTip = title; AutomationProperties.SetName(button, title); }
+    // Only the first toolbar row shows hover tooltips; the rest of the island
+    // keeps its descriptions for screen readers alone.
+    private static void SetButtonName(Button button, string title, bool tooltip = true)
+    { button.ToolTip = tooltip ? title : null; AutomationProperties.SetName(button, title); }
     private void OnShellProjectionChanged(string method)
     {
         if (method.Length > 0 && method != "projectCompactBar") return;

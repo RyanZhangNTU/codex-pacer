@@ -23,8 +23,7 @@ internal sealed class DeepSeekBalanceStatusView : StackPanel
         {
             bool supported = action.Kind == "retry" ? retry != null : action.Kind == "settings" && settings != null;
             var button = new Button { Content = action.Title, Style = (Style)FindResource("QuotaLinkButton"),
-                ContentTemplate = (DataTemplate)FindResource("QuotaActionTitle"), ToolTip = action.Title, IsEnabled = action.Enabled && supported };
-            ToolTipService.SetShowOnDisabled(button, true);
+                ContentTemplate = (DataTemplate)FindResource("QuotaActionTitle"), IsEnabled = action.Enabled && supported };
             AutomationProperties.SetAutomationId(button, "deepseek.balance.status." + action.Kind); AutomationProperties.SetName(button, action.Title);
             if (action.Kind == "settings") button.Click += (_, _) => { if (button.IsVisible && button.IsEnabled) settings?.Invoke(); };
             else if (action.Kind == "retry") button.Click += async (_, _) =>

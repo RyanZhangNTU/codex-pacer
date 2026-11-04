@@ -14,7 +14,7 @@ internal sealed class LegacyQuotaView : StackPanel
     internal LegacyQuotaView(LegacyQuotaDashboard data, UiText ui, string? help = null, FrameworkElement? status = null)
     {
         string details = string.Join("\n\n", new[] { data.Help, help }.Where(value => !string.IsNullOrWhiteSpace(value)));
-        Margin = new Thickness(9, 0, 9, 0); ToolTip = details;
+        Margin = new Thickness(9, 0, 9, 0); AutomationProperties.SetHelpText(this, details);
         if (!data.Fresh)
         {
             var freshness = new StackPanel { Orientation = Orientation.Horizontal, Height = 15 };
@@ -31,13 +31,14 @@ internal sealed class LegacyQuotaView : StackPanel
                 var reading = new QuotaReadingHost { Margin = new Thickness(0, group.Children.Count > 0 ? 14 : 0, 0, 0) };
                 reading.Children.Add(new LegacyQuotaHeading(window));
                 reading.Children.Add(new LegacyQuotaTrack(window, data.Fresh ? PacerPalette.Codex : PacerPalette.Secondary)
-                    { Margin = new Thickness(0, 8, 0, 0), ToolTip = ui.Text("quota.track_help") });
+                    { Margin = new Thickness(0, 8, 0, 0) });
                 var footer = new Grid { Margin = new Thickness(0, 8, 0, 0) };
                 footer.ColumnDefinitions.Add(new()); footer.ColumnDefinitions.Add(new() { Width = new GridLength(8) }); footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                var reset = Label(window.Countdown, 11, PacerPalette.Secondary); reset.ToolTip = window.ResetDate; footer.Children.Add(reset);
+                var reset = Label(window.Countdown, 11, PacerPalette.Secondary); footer.Children.Add(reset);
                 Brush ink = window.PacePercent is < 85 ? PacerPalette.LegacyPace : window.PacePercent is > 115 ? PacerPalette.Codex : PacerPalette.Secondary;
                 var pace = Label(window.PaceText, 11, ink); Grid.SetColumn(pace, 2); footer.Children.Add(pace); reading.Children.Add(footer);
-                AutomationProperties.SetName(reading, window.AccessibilityLabel); AutomationProperties.SetHelpText(reading, window.ResetDate);
+                AutomationProperties.SetName(reading, window.AccessibilityLabel);
+                AutomationProperties.SetHelpText(reading, window.ResetDate + "\n" + ui.Text("quota.track_help"));
                 group.Children.Add(reading);
             }
             Children.Add(group);

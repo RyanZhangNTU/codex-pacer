@@ -20,11 +20,11 @@ internal sealed class DeepSeekQuotaCell : StackPanel
         if (budget?.Count is not > 0 && wallet?.Dial?.ConnectTitle is string title)
         {
             var connect = new Button { Content = title, Style = (Style)FindResource("QuotaLinkButton"), IsEnabled = connectAction != null,
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, dial.ConnectButtonTop, 0, 0),
-                ToolTip = connectAction == null ? connectUnavailable ?? ui.Text("windows.deepseek.runtime_required") : null };
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, dial.ConnectButtonTop, 0, 0) };
             AutomationProperties.SetAutomationId(connect, "deepseek.balance.connect");
+            if (connectAction == null) AutomationProperties.SetHelpText(connect, connectUnavailable ?? ui.Text("windows.deepseek.runtime_required"));
             connect.Click += (_, _) => { if (connect.IsVisible && connect.IsEnabled) connectAction?.Invoke(); };
-            ToolTipService.SetShowOnDisabled(connect, true); AutomationProperties.SetName(connect, title); face.Children.Add(connect);
+            AutomationProperties.SetName(connect, title); face.Children.Add(connect);
         }
         var caption = new QuotaReadingHost { Orientation = Orientation.Horizontal, Height = 15, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 8, 0, 6) };
         AutomationProperties.SetName(caption, budget?.Count > 0 ? "DeepSeek" + (budget[0].Verdict == "fast" ? ", " + budget[0].VerdictText : "")
@@ -41,12 +41,15 @@ internal sealed class DeepSeekQuotaCell : StackPanel
             caption.Children.Add(stale);
         }
         else if (wallet?.Dial?.PeakText is string peakText)
+        {
             caption.Children.Add(new Border { CornerRadius = new CornerRadius(7.5), Height = 15, Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(5, 0, 0, 0),
-                Background = PacerPalette.Ink(255, 189, 97, 36), ToolTip = wallet?.Dial?.PeakHelp,
+                Background = PacerPalette.Ink(255, 189, 97, 36),
                 Child = new TextBlock { Text = peakText, FontFamily = PacerFonts.Interface, FontSize = 10, FontWeight = FontWeights.Bold, Foreground = PacerPalette.Attention, VerticalAlignment = VerticalAlignment.Center } });
+            if (wallet?.Dial?.PeakHelp is string peakHelp) AutomationProperties.SetHelpText(caption, peakHelp);
+        }
         Children.Add(caption);
         if (balanceStatus != null) Children.Add(balanceStatus);
         string? help = budget?.Count > 0 ? string.Join("\n\n", System.Linq.Enumerable.Select(budget, value => value.Help)) : wallet?.Dial?.Help;
-        if (help != null) { ToolTip = help; AutomationProperties.SetHelpText(this, help); }
+        if (help != null) AutomationProperties.SetHelpText(this, help);
     }
 }

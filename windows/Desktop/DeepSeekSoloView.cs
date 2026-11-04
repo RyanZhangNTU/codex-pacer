@@ -35,10 +35,11 @@ internal sealed class DeepSeekSoloView : StackPanel
             {
                 var connect = new Button { Content = title, Style = (Style)FindResource("QuotaLinkButton"), IsEnabled = connectAction != null,
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(0, dial.ConnectButtonTop, 0, 0), ToolTip = connectAction == null ? connectUnavailable ?? ui.Text("windows.deepseek.runtime_required") : null };
+                    Margin = new Thickness(0, dial.ConnectButtonTop, 0, 0) };
                 AutomationProperties.SetAutomationId(connect, "deepseek.balance.connect");
+                if (connectAction == null) AutomationProperties.SetHelpText(connect, connectUnavailable ?? ui.Text("windows.deepseek.runtime_required"));
                 connect.Click += (_, _) => { if (connect.IsVisible && connect.IsEnabled) connectAction?.Invoke(); };
-                ToolTipService.SetShowOnDisabled(connect, true); AutomationProperties.SetName(connect, title); host.Children.Add(connect);
+                AutomationProperties.SetName(connect, title); host.Children.Add(connect);
             }
             face.Children.Add(host);
         }
@@ -50,7 +51,8 @@ internal sealed class DeepSeekSoloView : StackPanel
             { label.Inlines.Add(new InlineUIContainer(new Border { Width = 4, Height = 1 })); label.Inlines.Add(new Run(until) { FontWeight = FontWeights.Medium }); }
             face.Children.Add(new Border { Height = 20, CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 0, 8, 0),
                 Margin = new Thickness(0, 8, 0, 0), Background = PacerPalette.Ink(255, 189, 97, 36), HorizontalAlignment = HorizontalAlignment.Center,
-                Child = label, ToolTip = wallet.Dial?.PeakHelp });
+                Child = label });
+            if (wallet.Dial?.PeakHelp is string peakHelp) AutomationProperties.SetHelpText(label, peakHelp);
         }
         top.Children.Add(face);
         var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -62,7 +64,7 @@ internal sealed class DeepSeekSoloView : StackPanel
                 var today = DeepSeekElements.Text(data.TodayLabel, 11, PacerPalette.Tertiary, FontWeights.SemiBold);
                 today.Inlines.Add(new InlineUIContainer(new Border { Width = 10, Height = 1 }));
                 today.Inlines.Add(new Run(data.TodayText) { FontSize = 20, Foreground = PacerPalette.Primary });
-                today.ToolTip = data.TodayHelp; AutomationProperties.SetAutomationId(today, "deepseek.today"); right.Children.Add(today);
+                AutomationProperties.SetHelpText(today, data.TodayHelp); AutomationProperties.SetAutomationId(today, "deepseek.today"); right.Children.Add(today);
             }
             if (data.Speed != null) AddSpaced(right, new DeepSeekSpeedView(data.Speed, data.TodayLabel), 12);
             if (detailed && !budget && data.Distribution != null) AddSpaced(right, new DeepSeekDistributionView(data.Distribution, openUsage), 12);
@@ -108,7 +110,7 @@ internal sealed class DeepSeekSpeedView : QuotaReadingHost
 {
     internal DeepSeekSpeedView(DeepSeekSpeedPresentation data, string todayLabel)
     {
-        AutomationProperties.SetName(this, data.AccessibilityLabel); AutomationProperties.SetAutomationId(this, "deepseek.speed"); ToolTip = data.Help;
+        AutomationProperties.SetName(this, data.AccessibilityLabel); AutomationProperties.SetAutomationId(this, "deepseek.speed"); AutomationProperties.SetHelpText(this, data.Help);
         var label = DeepSeekElements.Text(data.Label, 11, PacerPalette.Tertiary, FontWeights.SemiBold);
         var other = DeepSeekElements.Text(todayLabel, 11, PacerPalette.Tertiary, FontWeights.SemiBold);
         label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); other.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
@@ -148,22 +150,24 @@ internal sealed class DeepSeekDistributionView : StackPanel
         var legend = new DeepSeekFlowRow { Margin = new Thickness(0, 7, 0, 0) };
         foreach (var part in data.Parts)
         {
-            var item = new StackPanel { Orientation = Orientation.Horizontal, ToolTip = part.Help };
+            var item = new StackPanel { Orientation = Orientation.Horizontal };
             item.Children.Add(new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center,
                 Background = part.Elsewhere ? PacerPalette.Ink(255, 255, 255, 102) : DeepSeekElements.Opacity(PacerPalette.DeepSeek, Math.Max(.32, part.Opacity)) });
             var title = DeepSeekElements.Text(part.Title, 10.5, PacerPalette.Secondary); title.MaxWidth = 140; title.Margin = new Thickness(4, 0, 0, 0); item.Children.Add(title);
+            if (part.Help != null) AutomationProperties.SetHelpText(title, part.Help);
             var amount = DeepSeekElements.Text(part.AmountText, 10.5, PacerPalette.Primary); amount.Margin = new Thickness(4, 0, 0, 0); item.Children.Add(amount);
             if (part.Elsewhere)
             {
                 var link = new Button { Style = (Style)FindResource("DeepSeekInfoButton"), Width = 13, Height = 13, Margin = new Thickness(4, 0, 0, 0),
-                    Padding = new Thickness(0), Content = new IconGlyph { Symbol = "info.circle", Width = 11, Height = 11, Ink = PacerPalette.Tertiary }, ToolTip = data.UsageHelp };
+                    Padding = new Thickness(0), Content = new IconGlyph { Symbol = "info.circle", Width = 11, Height = 11, Ink = PacerPalette.Tertiary } };
                 AutomationProperties.SetName(link, data.UsageTitle); AutomationProperties.SetAutomationId(link, "deepseek.usage");
+                AutomationProperties.SetHelpText(link, data.UsageHelp);
                 link.Click += (_, _) =>
                 {
                     if (openUsage != null) { openUsage(); return; }
                     try { Process.Start(new ProcessStartInfo("https://platform.deepseek.com/usage") { UseShellExecute = true }); }
                     catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
-                    { link.ToolTip = data.UsageTitle + "\nhttps://platform.deepseek.com/usage"; }
+                    { AutomationProperties.SetHelpText(link, data.UsageTitle + "\nhttps://platform.deepseek.com/usage"); }
                 };
                 item.Children.Add(link);
             }
@@ -201,7 +205,7 @@ internal sealed class DeepSeekSpendStrip : Panel
 {
     private readonly IReadOnlyList<DeepSeekPart> parts;
     internal DeepSeekSpendStrip(IReadOnlyList<DeepSeekPart> values)
-    { parts = values; foreach (var part in parts) Children.Add(new DeepSeekSpendSegment(part) { ToolTip = part.Help }); }
+    { parts = values; foreach (var part in parts) Children.Add(new DeepSeekSpendSegment(part)); }
     protected override Size MeasureOverride(Size available)
     { foreach (UIElement child in InternalChildren) child.Measure(new Size(0, 10)); return new Size(0, 10); }
     protected override Size ArrangeOverride(Size final)
@@ -247,17 +251,7 @@ internal sealed class DeepSeekWeekView : QuotaReadingHost
 internal sealed class DeepSeekWeekPlot : FrameworkElement
 {
     private readonly DeepSeekWeekPresentation data;
-    private int hovered = -1;
-    internal DeepSeekWeekPlot(DeepSeekWeekPresentation value)
-    {
-        data = value;
-        MouseMove += (_, e) =>
-        {
-            int index = ActualWidth <= 0 ? -1 : Math.Clamp((int)(e.GetPosition(this).X / ActualWidth * data.Days.Count), 0, data.Days.Count - 1);
-            if (index != hovered) { hovered = index; ToolTip = index < 0 ? null : data.Days[index].Help; }
-        };
-        MouseLeave += (_, _) => { hovered = -1; ToolTip = null; };
-    }
+    internal DeepSeekWeekPlot(DeepSeekWeekPresentation value) => data = value;
     protected override Size MeasureOverride(Size available) => new(0, 44);
     protected override void OnRender(DrawingContext drawing)
     {
@@ -285,7 +279,7 @@ internal sealed class DeepSeekBudgetDetails : StackPanel
             foreach (var reading in budgets)
             {
                 if (Children.Count > 0) Children.Add(new Border { Height = 1, Background = PacerPalette.Hairline, Margin = new Thickness(0, 9, 0, 9) });
-                var period = new QuotaReadingHost { ToolTip = reading.Help }; AutomationProperties.SetName(period, reading.Help + "\n" + ui.Text("dashboard.pace") + " " + reading.PaceText);
+                var period = new QuotaReadingHost(); AutomationProperties.SetName(period, reading.Help + "\n" + ui.Text("dashboard.pace") + " " + reading.PaceText);
                 var title = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
                 title.Children.Add(DeepSeekElements.Text(reading.Label, 11, reading.Exceeded ? PacerPalette.Danger : reading.Pressing ? PacerPalette.Attention : PacerPalette.Secondary, FontWeights.SemiBold));
                 if (reading.Exceeded || reading.Verdict != null) { var chip = Chip(reading, ui); chip.Margin = new Thickness(6, 0, 0, 0); title.Children.Add(chip); }
@@ -330,7 +324,6 @@ internal sealed class DeepSeekBudgetDial : FrameworkElement
     internal DeepSeekBudgetDial(IReadOnlyList<DeepSeekBudgetPresentation> values, UiText language, double size)
     {
         budgets = values; ui = language; side = size; Width = size; Height = size;
-        ToolTip = string.Join("\n\n", budgets.Select(value => value.Help));
         AutomationProperties.SetName(this, string.Join("\n\n", budgets.Select(value => value.Label + " " + value.Whole + value.Cents + "\n" + value.Help)));
         AutomationProperties.SetAutomationId(this, "deepseek.budget.dial");
     }
