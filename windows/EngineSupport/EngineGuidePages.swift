@@ -39,8 +39,8 @@ enum EngineGuidePages {
               validVersion(input.current), input.seen.map({ $0.utf8.count <= 64 }) ?? true else { return nil }
         let quiet = input.demo || input.settings
         let welcome = input.forceWelcome || (!quiet && input.welcomed < WelcomeGuide.currentMajor)
-        let pending = WhatsNew.pending(current: input.current, seen: input.seen, releases: WhatsNew.windowsReleases)
-        let history = WhatsNew.history(upTo: input.current, releases: WhatsNew.windowsReleases)
+        let pending = WhatsNew.pending(current: input.current, seen: input.seen)
+        let history = WhatsNew.history(upTo: input.current)
         let note = !welcome && (input.forceWhatsNew || (!quiet && !pending.isEmpty))
         func release(_ value: WhatsNew.Release) -> Release {
             Release(version: value.version, title: L10n.text("whats_new.version", value.version, language: language),

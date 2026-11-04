@@ -41,8 +41,13 @@ internal static class GuidePageChecks
             Check(SelfAndDescendants(body).OfType<ActivityBadge>().Count() == 4 && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
                 && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
             Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
-            Check(Has(window, "windows.position.drag") && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any(),
-                "The first welcome step teaches dragging with an illustration");
+            Check(Has(window, "welcome.gesture.drag") && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any()
+                && SelfAndDescendants(body).OfType<TextBlock>().Any(text => text.Text == ui.Text("welcome.gesture.snap")),
+                "The first welcome step teaches dragging and edge snapping beside an illustration");
+            var gestureLines = new[] { "welcome.gesture.hover", "welcome.gesture.leave", "welcome.gesture.drag" }
+                .Select(id => (FrameworkElement)SelfAndDescendants(body).OfType<FrameworkElement>().First(item => AutomationProperties.GetAutomationId(item) == id)).ToArray();
+            Check(gestureLines.All(line => line is StackPanel panel && panel.Children[0] is TextBlock first && first.Text.Contains(" → ")),
+                "All three gestures share one action → result style");
             Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
             Space(Find<Button>(window, "welcome.next")); await Pump();
@@ -98,8 +103,8 @@ internal static class GuidePageChecks
             Check(SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.settings.open_at_login_detail")),
                 "The login highlight uses the existing Windows caption while retaining the shared release entry");
             Invoke(Find<Button>(noteWindow, "guide.releaseNotes")); await Pump(); Check(links.Last().AbsoluteUri == note.Links["releaseNotes"], "Release Notes reaches the public default-browser boundary");
-            Check(note.Releases[0].Version == "4.2.4" && SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.position.whats_new")),
-                "The upgrade window leads with the localized Windows drag feature");
+            Check(note.Releases[0].Version == "4.2.4" && SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("whats_new.free_move")),
+                "The upgrade window leads with the shared Free Move highlight");
             Escape(noteWindow); Check(!noteWindow.IsVisible, "Escape closes What's New");
         }
         finally { noteWindow.Close(); }
@@ -112,7 +117,7 @@ internal static class GuidePageChecks
             settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
             Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
             Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
-            Check(Has(settings, "windows.position.help"), "Help explains dragging, keyboard movement and reset");
+            Check(Has(settings, "help.move"), "Help explains dragging, keyboard movement and reset");
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
             { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }

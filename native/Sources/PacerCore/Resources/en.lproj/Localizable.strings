@@ -299,6 +299,11 @@
 "appearance.screen_position" = "Screen Position";
 "appearance.position_center_note" = "A capsule centered below the menu bar.";
 "appearance.position_side_note" = "A vertical strip against the side of the screen, with its components stacked. Hover to open the panel beside it.";
+"appearance.free_move" = "Free Move";
+"appearance.free_move_detail" = "Drag the status bar. Release near an edge to snap.";
+"appearance.position_reset" = "Return to Top Center";
+"island.move" = "Move Island";
+"island.move_keyboard" = "Use the arrow keys to move the island. Press Enter to place it or Esc to cancel.";
 "position.center" = "Center";
 "position.topLeft" = "Top Left";
 "position.bottomLeft" = "Bottom Left";
@@ -564,6 +569,9 @@
 "welcome.gesture.expand" = "expands";
 "welcome.gesture.leave" = "Move away";
 "welcome.gesture.collapse" = "collapses";
+"welcome.gesture.drag" = "Drag the bar";
+"welcome.gesture.move" = "Move";
+"welcome.gesture.snap" = "Release near a screen edge to snap.";
 "welcome.modules_note" = "Each module works on its own; turn any of them on or off anytime in Settings.";
 "welcome.section.personalize" = "Personalize";
 "welcome.module.ready" = "Ready";
@@ -856,6 +864,8 @@
 "deepseek.speed_basis_help" = "This Mac estimates from tasks here and updates with every reply. Account counts balance changes, including other devices and web searches, about once a minute, and needs a connected balance. Speed bars and the spend-spike alert follow this.";
 "help.hover.title" = "Expand and collapse";
 "help.hover.detail" = "Move the pointer onto the bar to expand it, and away to collapse it.";
+"help.move.title" = "Move the island";
+"help.move.detail" = "Drag the status bar; release near an edge to snap. With the keyboard, choose More → Move Island. To start over, use Settings → Appearance → Return to Top Center.";
 "help.section.services" = "Modules";
 "help.enable.title" = "Choose modules";
 "help.enable.detail" = "Turn Codex, Claude and DeepSeek on or off separately, each on its own page in Settings.";
@@ -890,3 +900,7 @@
 "whats_new.cloud_projects_detail" = "Threads and coordinators from your Projects now appear in the task list, with a cloud icon and the project’s name. They use your claude.ai sign-in; turn them off in Settings → Claude.";
 "whats_new.cloud_coordination" = "Threads and coordination";
 "whats_new.cloud_coordination_detail" = "Pacer reminds you when a thread needs a decision or a reply and when it is resolved, and a resolved thread you read in Claude clears here. A thread shows an estimated speed while it writes a reply, and the real speed when its turn ends.";
+"whats_new.free_move" = "Move the island anywhere";
+"whats_new.free_move_detail" = "Drag the status bar to place the island where you want it. Release near a screen edge to snap. Free Move replaces the fixed positions in Appearance.";
+"whats_new.subagent_endings" = "Background subagents end on time";
+"whats_new.subagent_endings_detail" = "A Claude Code subagent that finishes while its chat is busy no longer stays running, and the speed keeps updating while only subagents work.";

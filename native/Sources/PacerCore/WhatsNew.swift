@@ -6,12 +6,6 @@ import Foundation
 public enum WhatsNew {
     public static let defaultsKey = "whatsNewVersion"
 
-    public static let windowsReleases = [
-        Release(version: "4.2.4", items: [
-            Item(symbol: "cursorarrow.rays", titleKey: "windows.position.whats_new", detailKey: "windows.position.whats_new_detail")
-        ])
-    ] + releases
-
     public struct Item: Equatable, Sendable {
         public enum Control: Equatable, Sendable { case openAtLogin, showEmbeddedSessions, showAppButtons }
         public let symbol: String
@@ -31,6 +25,10 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "4.2.4", items: [
+            Item(symbol: "cursorarrow.rays", titleKey: "whats_new.free_move", detailKey: "whats_new.free_move_detail"),
+            Item(symbol: "person.2", titleKey: "whats_new.subagent_endings", detailKey: "whats_new.subagent_endings_detail")
+        ]),
         Release(version: "4.2.0", items: [
             Item(symbol: "cloud", titleKey: "whats_new.cloud_projects", detailKey: "whats_new.cloud_projects_detail"),
             Item(symbol: "arrow.triangle.branch", titleKey: "whats_new.cloud_coordination", detailKey: "whats_new.cloud_coordination_detail")

@@ -40,9 +40,9 @@ public partial class IslandWindow
             bar.PreviewMouseMove += OnMovePointerMotion;
             bar.LostMouseCapture += (_, _) => { if (move?.Capture == bar) CancelMove(); };
         }
-        MoveMenu.Header = ui.Text("windows.position.move");
-        MoveMenu.ToolTip = ui.Text("windows.position.keyboard");
-        AutomationProperties.SetHelpText(MoveMenu, ui.Text("windows.position.keyboard"));
+        MoveMenu.Header = ui.Text("island.move");
+        MoveMenu.ToolTip = ui.Text("island.move_keyboard");
+        AutomationProperties.SetHelpText(MoveMenu, ui.Text("island.move_keyboard"));
         Deactivated += (_, _) => { if (move is { Capture: null }) CancelMove(); };
         PreviewKeyDown += OnMoveKey;
     }
