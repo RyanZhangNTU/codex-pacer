@@ -24,7 +24,8 @@ INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/Installer
              "windows/toolchain-lock.json", "global.json", "scripts/windows/package-", "scripts/windows/test-installer.ps1",
              "scripts/windows/test-patch.ps1", "scripts/windows/test-preview.ps1", "scripts/windows/setup-installer.ps1",
              "scripts/windows/fetch-update-base.ps1", "scripts/windows/build-maintenance.ps1",
-             "scripts/windows/prune-arm64-runtime.py", "scripts/windows/setup-swift.ps1", ".github/workflows/", "scripts/ci/",
+             "scripts/windows/prune-arm64-runtime.py", "scripts/windows/setup-swift.ps1", "scripts/windows/build-engine.ps1",
+             "scripts/windows/build-desktop.ps1", ".github/workflows/", "scripts/ci/",
              # The app code the installer and package checks start: launch, single instance,
              # installation identity, notification and startup registration, and the packaged project.
              "windows/Desktop/App.xaml.cs", "windows/Desktop/WindowsInstanceActivation.cs",

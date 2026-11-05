@@ -1,0 +1,99 @@
+name: Engine cache
+
+# Pull requests into develop can restore caches saved on develop, but nothing
+# else runs there. After a merge that changes what the release engine is built
+# from, this builds it once per architecture, so the next pull requests start
+# with a cache hit. It tests nothing. A key that is already cached ends the job
+# after the lookup.
+on:
+  push:
+    branches: [develop]
+    # What the engine cache key covers: the engine source snapshot
+    # (scripts/windows/stage-engine.py), the toolchain lock and the build scripts.
+    paths:
+      - 'Package.swift'
+      - 'Package.resolved'
+      - 'native/Info.plist'
+      - 'native/Sources/PacerCore/**'
+      - 'native/Sources/CZstd/**'
+      - 'native/Sources/CGzip/**'
+      - 'native/Tests/PacerCoreTests/**'
+      - 'native/Tests/PresentationTables/**'
+      - 'windows/Engine/**'
+      - 'windows/EngineSupport/**'
+      - 'windows/Native/**'
+      - 'windows/Tests/EngineTests/**'
+      - 'windows/Bridge/**'
+      - 'windows/InstallerSupport/**'
+      - 'windows/InstallerHooks/**'
+      - 'windows/toolchain-lock.json'
+      - 'scripts/windows/build-engine.ps1'
+      - 'scripts/windows/build-desktop.ps1'
+      - 'scripts/windows/environment.ps1'
+      - 'scripts/windows/architecture.ps1'
+      - 'scripts/windows/setup-swift.ps1'
+      - 'scripts/windows/stage-engine.py'
+      - '.github/workflows/engine-cache.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only the newest develop commit's engine is worth keeping.
+concurrency:
+  group: engine-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Engine cache (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            runner: windows-2025
+          - architecture: arm64
+            runner: windows-11-arm
+    env:
+      PACER_ARCHITECTURE: ${{ matrix.architecture }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Engine source snapshot
+        id: engine
+        run: |
+          $taskStage = python -S scripts/windows/stage-engine.py
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the Windows source snapshot.' }
+          "snapshot=$(Split-Path $taskStage -Leaf)" >> $env:GITHUB_OUTPUT
+      - name: Look up the engine products
+        id: cached
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/windows/engine-products-${{ matrix.architecture }}
+          key: windows-engine-${{ matrix.architecture }}-release-${{ steps.engine.outputs.snapshot }}-${{ hashFiles('windows/toolchain-lock.json', 'scripts/windows/build-engine.ps1', 'scripts/windows/build-desktop.ps1', 'scripts/windows/environment.ps1', 'scripts/windows/architecture.ps1', 'scripts/windows/setup-swift.ps1') }}
+          lookup-only: true
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        if: steps.cached.outputs.cache-hit != 'true'
+        with:
+          dotnet-version: 10.0.403
+      - name: Pinned Swift toolchain
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: ./scripts/windows/setup-swift.ps1 -Architecture $env:PACER_ARCHITECTURE
+      - name: Build the engine and its adapters
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: |
+          $taskProducts = "output/windows/engine-products-$env:PACER_ARCHITECTURE"
+          ./scripts/windows/build-engine.ps1 -Configuration release -Products $taskProducts *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-engine.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-engine.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'Engine compiler warning.' }
+          ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine -SaveEngineProducts $taskProducts
+      - name: Save the engine products
+        if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/windows/engine-products-${{ matrix.architecture }}
+          key: ${{ steps.cached.outputs.cache-primary-key }}

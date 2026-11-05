@@ -27,7 +27,7 @@ The WPF shell renders the shared engine's presentations over protocol version 1.
 ./scripts/windows/package-preview.ps1 -SkipBuild
 ```
 
-For focused DeepSeek checks, use the `web` and `deepseek` presentation groups once each. They use intercepted pages and isolated synthetic profiles. `DeepSeekOptionPersistenceChecks` also covers 26 schema-2 option writes, fresh stores and independent engine restarts. Production accounts are not needed for these checks.
+`-Group` also takes several groups, such as `-Group settings,island`; CI splits the suite this way across three jobs. For focused DeepSeek checks, use the `web` and `deepseek` presentation groups once each. They use intercepted pages and isolated synthetic profiles. `DeepSeekOptionPersistenceChecks` also covers 26 schema-2 option writes, fresh stores and independent engine restarts. Production accounts are not needed for these checks.
 
 The unsigned ZIP and SHA-256 file are written under `output/windows`; the `windows-app-x64-unsigned` and `windows-app-arm64-unsigned` CI artifacts contain them. The Release workflow packages both architectures for a release tag or a manual run; Platforms packages x64 on pull requests that change what the installers are built from or what the package checks start. x64 packaging validates the extracted application with a restricted runtime environment, Unicode paths, demo capture, and single-instance activation; ARM64 only compiles on pull requests and packages without running in the Release workflow. Only a tag run publishes: it signs the Windows feed and publishes the installers with the Mac DMG ([release workflow](releasing.md)).
 

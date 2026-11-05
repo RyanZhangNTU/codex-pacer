@@ -267,10 +267,13 @@ Keep tests grouped by the behavior they protect. When consolidating overlapping 
   - Documentation runs nothing.
   - The platform contract, its tests, the shared localization check and the DeepSeek web identity check run once on Linux for every run.
   - The Mac suite runs on Apple silicon.
-  - Windows runs two x64 jobs side by side. One compiles the shared engine and runs its tests. The other builds the release engine and desktop and runs the desktop, Claude runtime and presentation tests and the engine idle check. ARM64 compiles only.
-  - The Windows package smoke test and the installer and patch lifecycle run when the change touches what the installers are built from or what those checks start: the installer, maintenance, update and hook projects, the packaging scripts, the toolchain pins, the workflow, and the app's launch, single-instance, installation identity, notification and startup registration code.
+  - Windows x64 compiles the shared engine and runs its tests in one job. Another job builds the release engine and desktop once. Three jobs then share that build for the desktop, Claude runtime, presentation and idle checks; none of them installs the Swift toolchain. ARM64 compiles only.
+  - `test-presentation.ps1 -Group` takes a list of groups. Each group that `all` runs is in exactly one of the three test jobs, and `scripts/windows/check-contract.py` checks this against the runner's `AllGroups`.
+  - The release engine and its two adapters are cached per architecture. The key is the engine source snapshot from `stage-engine.py`, plus the toolchain lock and the build scripts. On a hit, `build-engine.ps1 -Products` copies them instead of compiling. GitHub limits a pull request's caches to that pull request and its base branch, so a pull request hits either an earlier run of its own with the same engine sources, or what the develop warm-up saved.
+  - The Windows package smoke test and the installer and patch lifecycle run in their own job when the change touches what the installers are built from or what those checks start: the installer, maintenance, update and hook projects, the packaging scripts, the toolchain pins, the workflow, and the app's launch, single-instance, installation identity, notification and startup registration code.
   - A newer push cancels the pull request's older run.
-- **Push to develop or main, or a promotion pull request into main.** Nothing runs.
+- **Push to develop.** Only `.github/workflows/engine-cache.yml` can run, and only when the push changes what the engine cache key covers. For each architecture it looks the key up and ends there when it is cached; otherwise it builds the release engine and its adapters once and saves them, so the next pull requests start with a hit. It tests nothing. `scripts/windows/check-contract.py` keeps its path filter and key in step with the snapshot and the other caches.
+- **Push to main or a promotion pull request into main.** Nothing runs.
 - **Manual Platforms run.** Runs every test job, on any branch.
 - **Release tag (`vVERSION`).** The code is what develop already tested, so `release.yml` tests nothing again. [The release](releasing.md) workflow:
   - builds the Windows installers: x64 with its package smoke test, and ARM64 without running it;
