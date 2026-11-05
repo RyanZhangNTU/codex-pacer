@@ -19,6 +19,16 @@ def credentials():
     return ["--keychain-profile", profile] if profile else None
 
 
+def redact(text):
+    """Keep account identifiers and the key file path out of CI logs."""
+    for name, label in (("APPLE_NOTARY_KEY_PATH", "<key-file>"), ("APPLE_NOTARY_KEY_ID", "<key-id>"),
+                        ("APPLE_NOTARY_ISSUER_ID", "<issuer-id>"), ("APPLE_NOTARY_PROFILE", "<profile>")):
+        value = os.environ.get(name)
+        if value:
+            text = text.replace(value, label)
+    return text
+
+
 def main():
     artifact = Path(sys.argv[1]).resolve(strict=True)
     credential = credentials()
@@ -32,7 +42,7 @@ def main():
     except json.JSONDecodeError:
         # notarytool explains credential and network failures only on stderr; it never prints the key.
         print("Notarization failed before a receipt was returned:", file=sys.stderr)
-        print((result.stderr or result.stdout or "notarytool gave no reason").strip(), file=sys.stderr)
+        print(redact((result.stderr or result.stdout or "notarytool gave no reason").strip()), file=sys.stderr)
         return 1
     status = receipt.get("status", "Unknown")
     request_id = receipt.get("id", "unavailable")
