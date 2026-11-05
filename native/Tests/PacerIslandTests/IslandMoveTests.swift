@@ -53,15 +53,10 @@ final class IslandMoveTests: XCTestCase {
     func testOnlyAFloatingIslandMovesAndReturnToTopCenterForgetsThePlace() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
-        var started: [CGPoint?] = []
-        model.onBeginMove = { started.append($0) }
         model.isAttached = true
         XCTAssertFalse(model.canMoveIsland, "The notch island stays put")
-        model.beginKeyboardMove()
-        XCTAssertTrue(started.isEmpty)
         model.isAttached = false
-        model.beginKeyboardMove()
-        XCTAssertEqual(started.count, 1); XCTAssertNil(started[0], "The keyboard move has no grab point")
+        XCTAssertTrue(model.canMoveIsland)
 
         IslandPlacement(edge: .right, x: 1, y: 0.4).save(to: defaults)
         IslandPosition.bottomLeft.save(to: defaults)
@@ -78,24 +73,6 @@ final class IslandMoveTests: XCTestCase {
         await model.shutdown()
     }
 
-    func testAKeyboardMoveFromThePinnedIslandSurvivesItsOwnCollapse() async throws {
-        let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
-        let restore = floatTheStandardIsland()
-        defer { restore() }
-        let controller = PanelController(model: model)
-        defer { controller.stop() }
-        model.pinned = true
-        model.setExpanded(true)
-        try await Task.sleep(nanoseconds: 200_000_000)
-        // Collapsing for the move resigns key before the move begins; that must not cancel it.
-        model.beginKeyboardMove()
-        XCTAssertTrue(model.islandMoving)
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertTrue(model.islandMoving, "The keyboard move keeps going after the island collapses for it")
-        XCTAssertFalse(model.expanded)
-        await model.shutdown()
-    }
     func testADragIsCancelledOnlyWhenItsMouseUpStaysLost() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }

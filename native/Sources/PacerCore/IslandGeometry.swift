@@ -132,25 +132,6 @@ public enum IslandGeometry {
         return bar
     }
 
-    /// One arrow press of a keyboard move: where the bar's center goes. The bar
-    /// stays inside its display's visible area; pressing on against an edge
-    /// carries it onto the display beyond that edge, so there is no dead zone.
-    public static func keyboardStep(bar: CGRect, dx: CGFloat, dy: CGFloat, display: CGRect, visible: CGRect,
-                                    others: [(frame: CGRect, visible: CGRect)]) -> CGPoint {
-        func center(_ frame: CGRect) -> CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
-        let moved = clamp(CGRect(x: bar.minX + dx, y: bar.minY + dy, width: bar.width, height: bar.height), to: visible)
-        guard abs(moved.minX - bar.minX) < 0.5, abs(moved.minY - bar.minY) < 0.5 else { return center(moved) }
-        let probe = CGPoint(x: dx > 0 ? display.maxX + 1 : dx < 0 ? display.minX - 1 : bar.midX,
-                            y: dy > 0 ? display.maxY + 1 : dy < 0 ? display.minY - 1 : bar.midY)
-        guard let next = others.first(where: {
-            probe.x >= $0.frame.minX && probe.x < $0.frame.maxX && probe.y >= $0.frame.minY && probe.y < $0.frame.maxY
-        }) else { return center(moved) }
-        let entering = CGRect(x: dx > 0 ? next.visible.minX : dx < 0 ? next.visible.maxX - bar.width : bar.minX,
-                              y: dy > 0 ? next.visible.minY : dy < 0 ? next.visible.maxY - bar.height : bar.minY,
-                              width: bar.width, height: bar.height)
-        return center(clamp(entering, to: next.visible))
-    }
-
     public struct Arrangement: Equatable, Sendable {
         public var frame: CGRect
         /// The same for the closed and the open island, so it opens in place.

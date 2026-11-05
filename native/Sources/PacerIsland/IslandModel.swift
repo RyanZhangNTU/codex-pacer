@@ -319,8 +319,8 @@ final class IslandModel: ObservableObject {
     @Published private(set) var placementRevision = 0
     private var moveEndedAt = Date.distantPast
     /// Set by the panel: starts a drag with the grab point as fractions of the
-    /// bar from its top left, or a keyboard move when nil.
-    var onBeginMove: ((CGPoint?) -> Void)?
+    /// bar from its top left.
+    var onBeginMove: ((CGPoint) -> Void)?
     var onEndMoveGesture: (() -> Void)?
     /// The notch island and an island behind an update prompt stay put.
     var canMoveIsland: Bool { !isAttached && !interactionSuspended }
@@ -330,10 +330,6 @@ final class IslandModel: ObservableObject {
         if moving { closeWork?.cancel() } else { moveEndedAt = Date() }
     }
     func islandPlacementSaved() { placementRevision += 1 }
-    func beginKeyboardMove() {
-        guard canMoveIsland else { return }
-        onBeginMove?(nil)
-    }
     /// Return to Top Center: forget the dragged place and the old corner.
     func resetIslandPlacement() {
         IslandPlacement.clear(from: defaults)

@@ -86,25 +86,6 @@ final class IslandPlacementTests: XCTestCase {
         XCTAssertTrue(visible.contains(side.frame))
     }
 
-    func testKeyboardStepsStopAtAnEdgeOrCarryOnToTheNextDisplay() {
-        let display = CGRect(x: 0, y: 0, width: 1728, height: 1117), main = CGRect(x: 0, y: 0, width: 1728, height: 1084)
-        let beside = (frame: CGRect(x: 1728, y: 100, width: 1920, height: 1080), visible: CGRect(x: 1728, y: 100, width: 1920, height: 1055))
-        let edge = CGRect(x: 1568, y: 600, width: 160, height: 38)
-        // Against the edge with nothing beyond, the bar stays and the first press back moves it.
-        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge, dx: 12, dy: 0, display: display, visible: main, others: []), CGPoint(x: 1648, y: 619))
-        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge, dx: -12, dy: 0, display: display, visible: main, others: []), CGPoint(x: 1636, y: 619))
-        // Short of the edge, it moves no further than the edge.
-        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge.offsetBy(dx: -5, dy: 0), dx: 12, dy: 0, display: display, visible: main,
-            others: [beside]), CGPoint(x: 1648, y: 619))
-        // Pressing on against it enters the display beyond, just inside its visible edge.
-        XCTAssertEqual(IslandGeometry.keyboardStep(bar: edge, dx: 12, dy: 0, display: display, visible: main, others: [beside]),
-            CGPoint(x: 1808, y: 619))
-        // A display that does not reach the bar's row is not beyond it.
-        let top = CGRect(x: 1568, y: main.maxY - 38, width: 160, height: 38)
-        XCTAssertEqual(IslandGeometry.keyboardStep(bar: top, dx: 0, dy: 12, display: display, visible: main, others: [beside]),
-            CGPoint(x: 1648, y: main.maxY - 19))
-    }
-
     func testAPlacementFollowsTheVisibleFrameOfAnyDisplay() {
         let side = IslandPlacement(edge: .left, x: 0, y: 0.55)
         for secondary in [CGRect(x: -1870, y: 70, width: 1870, height: 1080), CGRect(x: 2560, y: -300, width: 1280, height: 777)] {

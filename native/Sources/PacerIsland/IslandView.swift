@@ -196,10 +196,6 @@ struct IslandPanelControls: View {
             Menu {
                 Button(L10n.text("common.refresh")) { model.refreshQuota(); model.refreshTaskSources() }
                     .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
-                // Starts after the menu closes, so the arrow keys reach the island.
-                Button(L10n.text("island.move")) { DispatchQueue.main.async { model.beginKeyboardMove() } }
-                    .disabled(!model.canMoveIsland)
-                    .accessibilityHint(L10n.text("island.move_keyboard"))
                 Divider()
                 Button(L10n.text("common.quit")) { model.onQuit?() }
             } label: {

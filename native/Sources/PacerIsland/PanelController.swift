@@ -29,7 +29,6 @@ final class PanelController: NSObject {
         var grab: CGPoint
         var size: CGSize
         var screen: NSScreen
-        let keyboard: Bool
         var edge = IslandPlacement.Edge.free
         var placement: IslandPlacement?
     }
@@ -64,17 +63,7 @@ final class PanelController: NSObject {
             self.panel.makeKey()
         }
         model.onBeginMove = { [weak self] grab in self?.beginMove(grab: grab) }
-        model.onEndMoveGesture = { [weak self] in
-            if self?.move?.keyboard == false { self?.finishMove() }
-        }
-        // Checked as it happens: collapsing for a keyboard move resigns key
-        // just before the move begins, which must not end it.
-        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: nil) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.move?.keyboard == true, !self.panel.isKeyWindow else { return }
-                self.cancelMove()
-            }
-        })
+        model.onEndMoveGesture = { [weak self] in self?.finishMove() }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.layout(animated: false) }
         })
@@ -87,34 +76,15 @@ final class PanelController: NSObject {
         }) { monitors.append(monitor) }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             guard let self else { return event }
-            // A move takes Escape before Escape-to-close, and owns the arrows and Return.
-            if let move = self.move {
-                switch (event.keyCode, move.keyboard) {
-                case (53, _): self.cancelMove(); return nil
-                case (36, true), (76, true): self.finishMove(); return nil
-                case (123, true), (124, true), (125, true), (126, true):
-                    let step: CGFloat = 12
-                    let delta = [123: CGPoint(x: -step, y: 0), 124: CGPoint(x: step, y: 0),
-                                 125: CGPoint(x: 0, y: -step), 126: CGPoint(x: 0, y: step)][event.keyCode] ?? .zero
-                    let others = NSScreen.screens.filter { $0 != move.screen }.map { (frame: $0.frame, visible: $0.visibleFrame) }
-                    self.updateMove(cursor: IslandGeometry.keyboardStep(bar: self.panel.frame, dx: delta.x, dy: delta.y,
-                        display: move.screen.frame, visible: move.screen.visibleFrame, others: others))
-                    return nil
-                default: return move.keyboard ? nil : event
-                }
-            }
+            // A drag takes Escape before Escape-to-close.
+            if event.keyCode == 53, self.move != nil { self.cancelMove(); return nil }
             if event.keyCode == 53, event.window === self.panel { self.model.close(); return nil }
-            return event
-        }) { monitors.append(monitor) }
-        // A pointer press ends a keyboard move, wherever it lands.
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
-            if self?.move?.keyboard == true { self?.cancelMove() }
             return event
         }) { monitors.append(monitor) }
         // The panel moves with the pointer, so follow AppKit's events rather
         // than the drag gesture's local coordinates.
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp], handler: { [weak self] event in
-            guard let self, let move = self.move, !move.keyboard else { return event }
+            guard let self, self.move != nil else { return event }
             if event.type == .leftMouseUp { self.finishMove() } else { self.updateMove(cursor: NSEvent.mouseLocation) }
             return event
         }) { monitors.append(monitor) }
@@ -161,7 +131,7 @@ final class PanelController: NSObject {
     private static var buttonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
 
     private func layout(animated: Bool = true) {
-        if let move, !move.keyboard, !Self.buttonHeld { checkForLostMouseUp() }
+        if move != nil, !Self.buttonHeld { checkForLostMouseUp() }
         guard move == nil else { return }
         if !model.expanded { panel.resignKey() }
         guard let screen = selectedScreen else { return }
@@ -304,22 +274,16 @@ final class PanelController: NSObject {
 
     // MARK: Free Move
 
-    /// Collapses the island in place and lets the pointer, or the arrow keys
-    /// when `grab` is nil, carry the bar until it is placed or cancelled.
-    private func beginMove(grab: CGPoint?) {
+    /// Collapses the island in place and lets the pointer carry the bar until
+    /// it is placed or cancelled.
+    private func beginMove(grab: CGPoint) {
         guard move == nil, model.canMoveIsland, panel.isVisible, let screen = panel.screen ?? selectedScreen else { return }
         model.setIslandMoving(true)
         if model.expanded { model.setExpanded(false) }
         layout(animated: false)
         let bar = panel.frame
-        let cursor = grab == nil ? CGPoint(x: bar.midX, y: bar.midY) : NSEvent.mouseLocation
-        move = Move(grab: grab ?? CGPoint(x: 0.5, y: 0.5), size: bar.size, screen: screen, keyboard: grab == nil)
-        if grab == nil {
-            panel.makeKey()
-            NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
-                .announcement: L10n.text("island.move_keyboard"), .priority: NSAccessibilityPriorityLevel.high.rawValue])
-        }
-        updateMove(cursor: cursor)
+        move = Move(grab: grab, size: bar.size, screen: screen)
+        updateMove(cursor: NSEvent.mouseLocation)
     }
 
     private func updateMove(cursor: CGPoint) {
@@ -376,7 +340,7 @@ final class PanelController: NSObject {
         let check = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.lostMouseUpCheck = nil
-            if let move = self.move, !move.keyboard, !Self.buttonHeld { self.cancelMove() }
+            if self.move != nil, !Self.buttonHeld { self.cancelMove() }
         }
         lostMouseUpCheck = check
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: check)
