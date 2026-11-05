@@ -36,6 +36,7 @@ final class PanelController: NSObject {
     /// While set, the move owns the panel's frame and layout waits.
     private var move: Move?
     private var snapPreview: SnapPreviewPanel?
+    private var lostMouseUpCheck: DispatchWorkItem?
 
     init(model: IslandModel) {
         self.model = model
@@ -114,9 +115,7 @@ final class PanelController: NSObject {
         // than the drag gesture's local coordinates.
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp], handler: { [weak self] event in
             guard let self, let move = self.move, !move.keyboard else { return event }
-            if event.type == .leftMouseUp { self.finishMove() }
-            else if !Self.buttonHeld { self.cancelMove() } // its mouse-up went elsewhere
-            else { self.updateMove(cursor: NSEvent.mouseLocation) }
+            if event.type == .leftMouseUp { self.finishMove() } else { self.updateMove(cursor: NSEvent.mouseLocation) }
             return event
         }) { monitors.append(monitor) }
         layout(animated: false)
@@ -162,8 +161,7 @@ final class PanelController: NSObject {
     private static var buttonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
 
     private func layout(animated: Bool = true) {
-        // A drag whose mouse-up never arrived would otherwise hold layout forever.
-        if let move, !move.keyboard, !Self.buttonHeld { cancelMove(); return }
+        if let move, !move.keyboard, !Self.buttonHeld { checkForLostMouseUp() }
         guard move == nil else { return }
         if !model.expanded { panel.resignKey() }
         guard let screen = selectedScreen else { return }
@@ -370,7 +368,22 @@ final class PanelController: NSObject {
         layout(animated: false)
     }
 
+    /// A drag whose mouse-up never arrived would hold layout forever. The
+    /// button reads as released before its queued drag events and mouse-up
+    /// are handled, so wait briefly before deciding the mouse-up is lost.
+    private func checkForLostMouseUp() {
+        guard lostMouseUpCheck == nil else { return }
+        let check = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.lostMouseUpCheck = nil
+            if let move = self.move, !move.keyboard, !Self.buttonHeld { self.cancelMove() }
+        }
+        lostMouseUpCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: check)
+    }
+
     private func endMove() {
+        lostMouseUpCheck?.cancel(); lostMouseUpCheck = nil
         move = nil
         snapPreview?.orderOut(nil)
         model.setIslandMoving(false)

@@ -18,6 +18,15 @@ final class IslandMoveTests: XCTestCase {
         return (model, defaults, name, directory)
     }
 
+    /// The panel reads the display mode from the standard defaults; float it
+    /// for one test without writing a preference.
+    private func floatTheStandardIsland() -> () -> Void {
+        let registered = UserDefaults.standard.volatileDomain(forName: UserDefaults.registrationDomain)
+        UserDefaults.standard.setVolatileDomain(registered.merging(["islandDisplayMode": "floating"]) { $1 },
+                                                forName: UserDefaults.registrationDomain)
+        return { UserDefaults.standard.setVolatileDomain(registered, forName: UserDefaults.registrationDomain) }
+    }
+
     func testAMoveHoldsHoverAndTheClickThatEndsItDoesNotPin() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
@@ -72,12 +81,8 @@ final class IslandMoveTests: XCTestCase {
     func testAKeyboardMoveFromThePinnedIslandSurvivesItsOwnCollapse() async throws {
         let (model, defaults, name, directory) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
-        // The panel reads the display mode from the standard defaults; float it
-        // for this test only, without writing a preference.
-        let registered = UserDefaults.standard.volatileDomain(forName: UserDefaults.registrationDomain)
-        UserDefaults.standard.setVolatileDomain(registered.merging(["islandDisplayMode": "floating"]) { $1 },
-                                                forName: UserDefaults.registrationDomain)
-        defer { UserDefaults.standard.setVolatileDomain(registered, forName: UserDefaults.registrationDomain) }
+        let restore = floatTheStandardIsland()
+        defer { restore() }
         let controller = PanelController(model: model)
         defer { controller.stop() }
         model.pinned = true
@@ -89,6 +94,24 @@ final class IslandMoveTests: XCTestCase {
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertTrue(model.islandMoving, "The keyboard move keeps going after the island collapses for it")
         XCTAssertFalse(model.expanded)
+        await model.shutdown()
+    }
+    func testADragIsCancelledOnlyWhenItsMouseUpStaysLost() async throws {
+        let (model, defaults, name, directory) = try fixture()
+        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        let restore = floatTheStandardIsland()
+        defer { restore() }
+        let controller = PanelController(model: model)
+        defer { controller.stop() }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        // No button is held here, as just after a release whose mouse-up is still queued.
+        model.onBeginMove?(CGPoint(x: 0.5, y: 0.5))
+        XCTAssertTrue(model.islandMoving)
+        model.onLayoutChange?()
+        XCTAssertTrue(model.islandMoving, "A layout before the queued mouse-up must not drop the drop")
+        try await Task.sleep(nanoseconds: 800_000_000)
+        XCTAssertFalse(model.islandMoving, "A mouse-up that never arrives ends the move")
+        XCTAssertNil(IslandPlacement.load(from: defaults), "and nothing is saved")
         await model.shutdown()
     }
 }
