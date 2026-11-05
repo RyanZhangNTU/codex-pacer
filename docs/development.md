@@ -265,7 +265,10 @@ Keep tests grouped by the behavior they protect. When consolidating overlapping 
   - Shared Core, the root package, `native/Info.plist`, the workflow and unknown files run both platforms.
   - Mac-only and Windows-only paths run only their platform.
   - Documentation runs nothing.
+  - The platform contract, its tests, the shared localization check and the DeepSeek web identity check run once on Linux for every pull request.
   - The Mac suite runs on Apple silicon.
+  - Windows runs two x64 jobs side by side. One compiles the shared engine and runs its tests. The other builds the release engine and desktop and runs the desktop, Claude runtime and presentation tests and the engine idle check. ARM64 compiles only.
+  - The Windows package smoke test and the installer and patch lifecycle run when the change touches what the installers are built from or what those checks start: the installer, maintenance, update and hook projects, the packaging scripts, the toolchain pins, the workflow, and the app's launch, single-instance, installation identity, notification and startup registration code.
   - A newer push cancels the pull request's older run.
 - **Push to develop or a promotion pull request into main.** Nothing runs.
 - **Push to main (a release promotion).** The code is what develop already tested, so this run tests nothing again. It only builds the Windows installers the release publishes; [the release](releasing.md) takes them from the run on the exact release commit. The run is never cancelled. The local release build compiles both Mac architectures.

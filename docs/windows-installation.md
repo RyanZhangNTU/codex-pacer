@@ -1,6 +1,6 @@
 # Windows 每用户安装
 
-Windows CI 为 x64 和 ARM64 各生成未签名安装器（windows-installer-ARCH-unsigned）和便携 ZIP（windows-app-ARCH-unsigned）。[发布流程](releasing.md)从最终提交的 Platforms 运行取得安装器，与 Mac DMG 一起发布到同一个 GitHub Release。便携 ZIP 只用于开发验证：解压整个包后运行 CodexPacer.exe，并保留同目录的 Engine、Maintenance、资源和运行库。
+main 上的发版运行（以及手动运行）为 x64 和 ARM64 各生成未签名安装器（windows-installer-ARCH-unsigned）和便携 ZIP（windows-app-ARCH-unsigned）。安装生命周期测试只在 PR 上运行，并且只在改到安装器、维护、更新、打包脚本、工具链，或这些检查会启动的应用代码（启动、单实例、安装身份、通知和开机启动登记）时运行，见[持续集成](development.md#continuous-integration)。main 上的发版运行只打包，不重跑测试。[发布流程](releasing.md)从最终提交的 Platforms 运行取得安装器，与 Mac DMG 一起发布到同一个 GitHub Release。便携 ZIP 只用于开发验证：解压整个包后运行 CodexPacer.exe，并保留同目录的 Engine、Maintenance、资源和运行库。
 
 安装器使用 Inno Setup，默认安装到 %LOCALAPPDATA%\Programs\Codex Pacer。注册项和快捷方式属于当前用户，不申请管理员权限。这由 [PrivilegesRequired=lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm) 指定。应用和安装器需要 Windows 10 2004（内部版本 19041）或更新版本。安装器暂未做代码签名：首次运行若 SmartScreen 提示“Windows 已保护你的电脑”，点“更多信息 → 仍要运行”。
 

@@ -229,12 +229,20 @@ def toolchain_pins(root, workflow):
 
 
 def workflow_boundary(workflow):
-    macos = workflow.split("  macos:\n", 1)[1].split("  windows:\n", 1)[0]
-    windows = workflow.split("  windows:\n", 1)[1]
-    for job in (macos, windows):
-        for script in ("scripts/windows/check-contract.py", "scripts/windows/test_contract.py"):
-            if not re.search(r"^\s+python3? " + re.escape(script) + r"\s*$", job, re.M):
-                raise ValueError("Every platform job must run the strict contract and its tests")
+    """The contract job runs the strict contract and its tests on every pull request.
+
+    The checks need no platform, so CI runs them once, whatever a change touches.
+    """
+    job = re.search(r"(?ms)^  contract:\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow)
+    if not job:
+        raise ValueError("CI must have a contract job")
+    body = job.group(1)
+    for script in ("scripts/windows/check-contract.py", "scripts/windows/test_contract.py"):
+        if not re.search(r"^\s+python3? " + re.escape(script) + r"\s*$", body, re.M):
+            raise ValueError("The contract job must run the strict contract and its tests")
+    conditions = [value.strip() for value in re.findall(r"^    if:(.*)$", body, re.M)]
+    if "needs.changes" in body or any(value != "github.event_name == 'pull_request'" for value in conditions):
+        raise ValueError("The contract job must run on every pull request")
 
 
 def check(root=ROOT):
