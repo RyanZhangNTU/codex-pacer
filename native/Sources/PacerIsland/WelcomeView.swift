@@ -440,6 +440,7 @@ private extension View {
 
 /// The island's own spring, scaled down: the pointer arrives and the bar
 /// opens, then it leaves and the bar closes. Reduce Motion shows it open.
+/// Below, the third gesture: dragging the bar to a screen edge.
 private struct WelcomeGestureDemo: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let scale: CGFloat = 0.25
@@ -456,39 +457,43 @@ private struct WelcomeGestureDemo: View {
         TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { context in
             let time = reduceMotion ? 1.6 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period)
             let hovering = time >= 0.3 && time < Self.closesAt
-            HStack(spacing: 12) {
-                scene(at: time)
-                    .frame(width: Self.canvas.width, height: Self.canvas.height)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 0) {
-                    gesture("welcome.gesture.hover", "welcome.gesture.expand", active: reduceMotion || hovering)
-                    Divider()
-                    gesture("welcome.gesture.leave", "welcome.gesture.collapse", active: reduceMotion || !hovering)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    scene(at: time)
+                        .frame(width: Self.canvas.width, height: Self.canvas.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        gesture("welcome.gesture.hover", "welcome.gesture.expand", active: reduceMotion || hovering)
+                        Divider()
+                        gesture("welcome.gesture.leave", "welcome.gesture.collapse", active: reduceMotion || !hovering)
+                    }
                 }
+                Divider().padding(.leading, Self.canvas.width + 12)
+                // The snap hint spans the card: the text column beside the
+                // scenes is too narrow for it in English.
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 12) {
+                        WelcomeMoveScene().frame(width: Self.canvas.width, height: WelcomeMoveScene.height).accessibilityHidden(true)
+                        gesture("welcome.gesture.drag", "welcome.gesture.move", minHeight: WelcomeMoveScene.height, active: true)
+                    }
+                    Text(L10n.text("welcome.gesture.snap")).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
             }
-            .padding(10)
+            .padding(.horizontal, 10).padding(.vertical, 8)
         }
     }
 
-    /// One line where it fits, otherwise the result under the gesture.
-    private func gesture(_ verb: String, _ result: String, active: Bool) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 6) {
-                Text(L10n.text(verb)).foregroundStyle(.secondary)
-                Text(L10n.text(result))
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(L10n.text(verb)).foregroundStyle(.secondary)
-                Text(L10n.text(result))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .font(.system(size: 13))
-        .opacity(active ? 1 : 0.4)
-        .animation(.easeOut(duration: 0.2), value: active)
-        .frame(height: 44)
-        .accessibilityElement(children: .combine)
+    /// Each gesture reads "action → result" in one style.
+    private func gesture(_ verb: String, _ result: String, minHeight: CGFloat = 44, active: Bool) -> some View {
+        Text(L10n.text(verb) + " → " + L10n.text(result)).font(.system(size: 13))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(active ? 1 : 0.4)
+            .animation(.easeOut(duration: 0.2), value: active)
+            .frame(minHeight: minHeight)
     }
 
     private func scene(at time: TimeInterval) -> some View {
@@ -552,6 +557,31 @@ private struct WelcomeGestureDemo: View {
         PointerArrow().fill(Color.white)
             .overlay(PointerArrow().stroke(Color.black, lineWidth: 3))
             .frame(width: 41, height: 66)
+    }
+}
+
+/// The bar dragged toward the right edge, where it docks as a strip.
+private struct WelcomeMoveScene: View {
+    static let height: CGFloat = 32
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Wallpaper().frame(width: 132, height: Self.height)
+            Capsule().fill(Color.black).frame(width: 39, height: 11).offset(x: 22, y: 10)
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: 4)); path.addLine(to: CGPoint(x: 34, y: 4))
+                path.move(to: CGPoint(x: 29, y: 0)); path.addLine(to: CGPoint(x: 34, y: 4)); path.addLine(to: CGPoint(x: 29, y: 8))
+            }
+            .stroke(Color.white, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            .frame(width: 34, height: 8).offset(x: 68, y: 12)
+            UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 5).fill(Color.black)
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 5).stroke(AgentProvider.codex.tint, lineWidth: 1))
+                .frame(width: 12, height: 24).offset(x: 120, y: 4)
+            PointerArrow().fill(Color.white).overlay(PointerArrow().stroke(Color.black, lineWidth: 1))
+                .frame(width: 9, height: 14).offset(x: 52, y: 15)
+        }
+        .frame(width: 132, height: Self.height, alignment: .topLeading)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

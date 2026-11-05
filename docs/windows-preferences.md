@@ -9,7 +9,7 @@ Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files com
 | Choices | Stored keys | Missing-value defaults |
 | --- | --- | --- |
 | Language | `appLanguage` | `system` |
-| Position and attachment | `islandPosition`, `islandDisplayMode`, legacy `floatingIsland` | No explicit position; `automatic`, then the legacy floating choice |
+| Position and attachment | `islandPlacement`, legacy `islandPosition`, `islandDisplayMode`, legacy `floatingIsland` | No explicit position; `automatic`, then the legacy floating choice |
 | Display and fullscreen | `displayID`, `displayName`, `displayX`, `displayY`, `showInFullscreen` | Main Display, fullscreen off |
 | Surface and quota style | `islandAppearance`, `expandedQuotaStyle` | `liquidGlass`, `split`; the existing platform fallback still applies |
 | Collapsed bar | `compactIslandLayout`, `compactSingleTask`, `compactMetric` | Core's standard layout, `stage`, `remaining` |
@@ -24,9 +24,11 @@ Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files com
 
 The layout is the same UTF-8 JSON Data saved by the Mac, represented as base64 in this JSON file. Its warnings remain inside the layout. An explicit empty layout stays empty. Present empty or unknown ring choices mean no ring; an absent key means automatic. A saved center position is distinct from an untouched position. The desktop pane name `collapsed` is stored as the Mac value `collapsedBar`.
 
+`islandPlacement` stores `edge` (Free, Top, Bottom, Left, or Right) and the collapsed bar's center as work-area fractions `x` and `y`. A docked edge fixes the coordinate perpendicular to that edge. Old profiles keep their center or corner until the user moves the island or resets the position. An invalid placement falls back to the old position. Notch mode leaves the last free placement saved. Moving the island to another monitor saves its placement and display in one edit. While a disconnected display is shown on Main Display, a move that stays there saves only the placement, so the island still returns to the saved display when it reconnects.
+
 `displayID` follows Mac's main-display meaning: an absent, null or empty value, numeric `0`, and string `"0"` all select Main Display. A specified Windows display uses its device-interface path string; Mac's nonzero numeric display IDs do not identify Windows devices. `displayName` and physical desktop coordinates `displayX` / `displayY` provide a unique name-and-position fallback when an interface path changes. Disconnecting falls back to Main Display while retaining the saved choice for reconnection. `showInFullscreen` uses the Mac boolean key and defaults to false.
 
-The picker offers one Main Display choice plus individual devices. Old `displaySelection` values `automatic` and `primary` both mean Main Display. Schema-1 profiles retain their original values and bytes when read, then migrate only on a successful edit. New schema-2 profiles derive selection from `displayID` without writing a new selection key. Unrelated edits preserve an existing main-display representation, including a legacy alias retained in a schema-2 file. These fields never reconfigure collectors.
+The picker offers one Main Display choice plus individual devices. Old `displaySelection` values `automatic` and `primary` both mean Main Display. Schema-1 profiles retain their original values and bytes when read, then migrate only on a successful edit. Schema 2 derives the selection from `displayID`; a monitor without a device path uses `displaySelection: "specified"` with its name and position. Unrelated edits preserve an existing main-display representation, including a legacy alias retained in a schema-2 file. These fields never reconfigure collectors.
 
 Open at Login remains an OS registration managed by the startup service, as on Mac. It has no invented preference key. Appearance follows the system theme; `--theme` is a demo fixture. Credentials and browser sessions remain in their existing separate stores.
 

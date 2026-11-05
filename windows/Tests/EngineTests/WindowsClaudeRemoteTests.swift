@@ -41,7 +41,7 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         return (root, exe, env)
     }
     private func wait(_ condition: @escaping () async -> Bool) async throws {
-        for _ in 0..<300 { if await condition() { return }; try await Task.sleep(nanoseconds: 10_000_000) }
+        if try await TestWait.until(condition) { return }
         XCTFail("The synthetic remote setup did not reach its boundary"); throw ClaudeRemoteSetup.Failure.timedOut
     }
     private func installer(_ exe: URL, env: [String: String], timeout: TimeInterval = 15) -> ClaudeRemoteSetup {

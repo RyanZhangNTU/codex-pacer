@@ -56,7 +56,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 - **Arrange the bar.** Drag components between the left and right of the camera, hide what you don't need, choose which module each quota ring shows, and pick 5 hours or 7 days for each service's quota. With DeepSeek alone, a price clock shows the peak hours at a glance.
 - **Black or Liquid Glass.** On macOS 26 and later the island can use Liquid Glass, and its clarity follows the system setting.
-- **Notch or custom.** Around the notch, or placed yourself on any display: centered below the menu bar or as a narrow strip against the side of the screen in any corner. Full-screen spaces too, if you like.
+- **Place the island where it fits.** On Windows, drag the status bar anywhere or snap it to any screen edge. On Mac, place it around the notch, under the menu bar, or at a corner. Both platforms let you choose a display and whether the island appears over full-screen apps.
 - **Only what you use.** Turn the Codex, Claude and DeepSeek modules on or off independently.
 - **Notifications, if you want them.** macOS notifications when a task needs you or ends, quota or the balance runs low, DeepSeek spending spikes or a budget runs out.
 - **In your language.** English and Simplified Chinese.

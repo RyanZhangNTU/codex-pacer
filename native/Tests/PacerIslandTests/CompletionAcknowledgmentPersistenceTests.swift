@@ -147,7 +147,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             model.onOpenActivity = { _ in outcome }
             model.onStatusChange = { if !reported { reported = true; handled.fulfill() } }
             model.open(ended)
-            await fulfillment(of: [handled], timeout: 2)
+            await fulfillment(of: [handled], timeout: TestWait.limit)
             let acknowledged = outcome == .openedConversation
             XCTAssertEqual(FileManager.default.fileExists(atPath: fixture.file.path), acknowledged)
             XCTAssertEqual(model.isUnreadCompletion(ended), !acknowledged)
@@ -175,12 +175,12 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             returned.fulfill(); return outcome
         }
         model.open(ended)
-        await fulfillment(of: [dispatched], timeout: 2)
+        await fulfillment(of: [dispatched], timeout: TestWait.limit)
         model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
             remoteControlBindings: .init(hostIDs: [], authoritative: true))
         model.refreshRemote() // Periodic discovery must not reinstate the stale saved route.
         try XCTUnwrap(continuation).resume(returning: .openedConversation)
-        await fulfillment(of: [returned], timeout: 2); await Task.yield()
+        await fulfillment(of: [returned], timeout: TestWait.limit); await Task.yield()
         XCTAssertTrue(model.isUnreadCompletion(ended), "An old open cannot acknowledge the removed device's ending")
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.file.path))
         XCTAssertTrue(model.isUnreadCompletion(claude), "The other provider's completion remains independent")
@@ -238,7 +238,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     first.onOpenActivity = { _ in outcome }
                     first.onStatusChange = { if !reported { reported = true; processed.fulfill() } }
                     first.open(ended)
-                    await fulfillment(of: [processed], timeout: 2)
+                    await fulfillment(of: [processed], timeout: TestWait.limit)
                     await first.shutdown()
                     let acknowledges = outcome == .openedConversation
                     XCTAssertEqual(FileManager.default.fileExists(atPath: file.path), acknowledges)
@@ -296,13 +296,13 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                         return outcome
                     }
                     model.open(ended)
-                    await fulfillment(of: [dispatched], timeout: 2)
+                    await fulfillment(of: [dispatched], timeout: TestWait.limit)
                     if replaceHome { try configuration("/synthetic/replacement-home") }
                     // Reconcile the real target configuration without changing the provider generation.
                     model.refreshRemote()
                     model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [])
                     try XCTUnwrap(continuation).resume(returning: .openedConversation)
-                    await fulfillment(of: [returned], timeout: 2)
+                    await fulfillment(of: [returned], timeout: TestWait.limit)
                     await Task.yield()
                     XCTAssertEqual(model.activities.contains { $0.id == ended.id }, replaceHome || waiting)
                     XCTAssertEqual(model.isUnreadCompletion(ended), replaceHome && !waiting)
@@ -340,7 +340,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     model.onOpenActivity = { target in XCTAssertEqual(target.id, parent.id); return outcome }
                     model.onStatusChange = { processed.fulfill() }
                     model.open(parent)
-                    await fulfillment(of: [processed], timeout: 2)
+                    await fulfillment(of: [processed], timeout: TestWait.limit)
                     let success = outcome == .openedConversation
                     for ending in [parent, child, grandchild] { XCTAssertEqual(model.activities.contains { $0.id == ending.id }, !success) }
                     for ending in [unrelated, otherHost] { XCTAssertTrue(model.activities.contains { $0.id == ending.id }) }
@@ -369,7 +369,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                 returned.fulfill(); return outcome
             }
             model.open(parent)
-            await fulfillment(of: [started], timeout: 2)
+            await fulfillment(of: [started], timeout: TestWait.limit)
             let later = Date().addingTimeInterval(-1)
             let currentParent = change == "parent-turn" ? familyActivity(.claude, 920, turn: "new-parent-turn", at: later) : parent
             let currentChild = change == "child-turn" ? familyActivity(.claude, 921, parent: parent.threadID, turn: "new-child-turn", at: later) :
@@ -378,7 +378,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             let stillRunning = familyActivity(.claude, 923, parent: parent.threadID, completed: false, at: at)
             publishFamily([currentParent, currentChild, late, stillRunning], to: model)
             try XCTUnwrap(continuation).resume(returning: .openedConversation)
-            await fulfillment(of: [returned], timeout: 2); await Task.yield()
+            await fulfillment(of: [returned], timeout: TestWait.limit); await Task.yield()
             XCTAssertTrue(model.activities.contains { $0.id == late.id }, "A child ending after the click is never swept into acknowledgment")
             XCTAssertTrue(model.activities.contains { $0.id == stillRunning.id && $0.phase == .running })
             XCTAssertEqual(model.activities.contains { $0.id == currentChild.id }, change != "unchanged")
@@ -392,12 +392,12 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                 childReturned.fulfill(); return outcome
             }
             model.open(late)
-            await fulfillment(of: [childStarted], timeout: 2)
+            await fulfillment(of: [childStarted], timeout: TestWait.limit)
             let replacement = change == "child-parent" ? familyActivity(.claude, 922, parent: "019a0000-0000-7000-8000-000000000998", at: at) :
                 familyActivity(.claude, 922, parent: parent.threadID, turn: "late-child-next-turn", at: Date().addingTimeInterval(-1))
             publishFamily([currentParent, currentChild, replacement, stillRunning], to: model)
             try XCTUnwrap(childContinuation).resume(returning: .openedConversation)
-            await fulfillment(of: [childReturned], timeout: 2); await Task.yield()
+            await fulfillment(of: [childReturned], timeout: TestWait.limit); await Task.yield()
             XCTAssertTrue(model.activities.contains { $0.id == replacement.id && $0.turnID == replacement.turnID },
                 "An old parent-navigation outcome cannot acknowledge a new child turn or changed parent route")
             await model.shutdown()
@@ -441,12 +441,12 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                 }
                 model.onStatusChange = { processed.fulfill() }
                 model.open(child)
-                await fulfillment(of: [processed], timeout: 2)
+                await fulfillment(of: [processed], timeout: TestWait.limit)
                 XCTAssertEqual(model.activities.contains { $0.id == child.id }, outcome != .openedConversation)
                 let nestedProcessed = expectation(description: "Nested orphan navigation processed")
                 model.onStatusChange = { nestedProcessed.fulfill() }
                 model.open(nested)
-                await fulfillment(of: [nestedProcessed], timeout: 2)
+                await fulfillment(of: [nestedProcessed], timeout: TestWait.limit)
                 XCTAssertEqual(model.activities.contains { $0.id == nested.id }, outcome != .openedConversation)
                 XCTAssertTrue(model.activities.contains { $0.id == opaqueAncestor.id }, "Navigating a late child does not acknowledge a different ancestor ending")
                 await model.shutdown()
@@ -505,7 +505,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                 returned.fulfill(); return outcome
             }
             model.open(codex)
-            await fulfillment(of: [dispatched], timeout: 2)
+            await fulfillment(of: [dispatched], timeout: TestWait.limit)
             switch change {
             case "host-removed":
                 try configuration(directory, enabled: false)
@@ -525,7 +525,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             // Identical replay now belongs to the replacement/unbound scope.
             model.receiveRemoteUpdate([codex], statuses: [:], unavailable: [], requests: [], names: [])
             try XCTUnwrap(continuation).resume(returning: .openedConversation)
-            await fulfillment(of: [returned], timeout: 2); await Task.yield()
+            await fulfillment(of: [returned], timeout: TestWait.limit); await Task.yield()
             XCTAssertTrue(model.activities.contains { $0.id == codex.id }); XCTAssertTrue(model.isUnreadCompletion(codex))
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
             XCTAssertEqual(model.providerQuota(.claude), quota)

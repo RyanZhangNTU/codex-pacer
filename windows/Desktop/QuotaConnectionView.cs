@@ -29,11 +29,7 @@ internal sealed class QuotaConnectionView : StackPanel
             var button = new Button { Style = (Style)FindResource("QuotaLinkButton"), Content = action.Title,
                 IsEnabled = action.Enabled && supported, Margin = new Thickness(actions.Children.Count > 0 ? 6 : 0, 0, 0, 0) };
             AutomationProperties.SetName(button, action.Title); AutomationProperties.SetAutomationId(button, "quota." + provider + "." + action.Kind);
-            if (!supported)
-            {
-                button.ToolTip = ui.Text(action.Kind == "settings" ? "windows.settings.pane_pending" : "windows.quota.retry_pending");
-                ToolTipService.SetShowOnDisabled(button, true);
-            }
+            if (!supported) AutomationProperties.SetHelpText(button, ui.Text(action.Kind == "settings" ? "windows.settings.pane_pending" : "windows.quota.retry_pending"));
             if (action.Kind == "settings") button.Click += (_, _) => settings?.Invoke();
             else if (action.Kind == "retry") button.Click += async (_, _) =>
             {

@@ -112,6 +112,12 @@ struct SettingsView: View {
         .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
         // Settings apply as they change, like System Settings; there is no Save.
         .onChange(of: liveSettings) { _, _ in scheduleApply() }
+        // A drag or Return to Top Center saved the display and position itself.
+        .onChange(of: model.placementRevision) { _, _ in
+            displayMode = IslandDisplayMode.load()
+            position = IslandPosition.saved()
+            displayID = UserDefaults.standard.integer(forKey: "displayID")
+        }
         .onChange(of: focusedText) { previous, _ in if let previous { commit(previous) } }
         .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
         .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }

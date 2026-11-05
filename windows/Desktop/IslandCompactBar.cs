@@ -112,7 +112,7 @@ public partial class IslandWindow
             foreach (var item in data.Components)
             {
                 var slot = slots[item.Id]; slot.Tag = item.DimsExpanded;
-                AutomationProperties.SetName(slot, item.Accessibility); AutomationProperties.SetHelpText(slot, item.Help); slot.ToolTip = item.Help;
+                AutomationProperties.SetName(slot, item.Accessibility); AutomationProperties.SetHelpText(slot, item.Help);
             }
             var rate = data.Components.Single(value => value.Id == "tps");
             if (column) { FitStripNumber(StripRate, rate.StripText); StripRatePanel.Visibility = rate.Shown && rate.Visible ? Visibility.Visible : Visibility.Collapsed; }

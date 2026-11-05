@@ -12,6 +12,7 @@
     <Compile Include="../../Desktop/WindowsUpdateService.cs" Link="WindowsUpdateService.cs"/>
     <Compile Include="../../Desktop/ReleaseNotesMarkdown.cs" Link="ReleaseNotesMarkdown.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
+    <Compile Include="../../Desktop/EngineTimeZone.cs" Link="EngineTimeZone.cs"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
     <Compile Include="../../Desktop/ConnectionActions.cs" Link="ConnectionActions.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
@@ -41,6 +42,7 @@
     <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
     <Compile Include="../../Desktop/NativeMotion.cs" Link="NativeMotion.cs"/>
     <Compile Include="../../Desktop/NativeLayout.cs" Link="NativeLayout.cs"/>
+    <Compile Include="../../Desktop/IslandPlacementGeometry.cs" Link="IslandPlacementGeometry.cs"/>
     <Compile Include="../../Desktop/BackdropPolicy.cs" Link="BackdropPolicy.cs"/>
     <Compile Include="../../Desktop/WindowsPlatformPolicy.cs" Link="WindowsPlatformPolicy.cs"/>
     <Compile Include="../../Desktop/BackdropController.cs" Link="BackdropController.cs"/>

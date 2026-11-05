@@ -121,10 +121,7 @@ final class CodexEmbeddedSessionTests: XCTestCase {
         return value
     }
     private func waitUntil(_ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(2)
-        while !condition() {
-            guard Date() < deadline else { return XCTFail("Timed out") }
-            try await Task.sleep(nanoseconds: 5_000_000)
-        }
+        if try await TestWait.until(condition) { return }
+        XCTFail("Timed out")
     }
 }

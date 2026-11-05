@@ -33,7 +33,7 @@ final class SystemNotificationPreferenceTests: XCTestCase {
         prompt.onRequest = { started.fulfill() }
         let preference = SystemNotificationPreference(defaults: defaults, requestPermission: { await prompt.request() })
         let request = try XCTUnwrap(preference.setEnabled(true))
-        await fulfillment(of: [started], timeout: 1)
+        await fulfillment(of: [started], timeout: TestWait.limit)
         XCTAssertTrue(preference.enabled)
         XCTAssertFalse(defaults.bool(forKey: "systemNotifications"), "Delivery stays off until authorization succeeds")
         preference.setEnabled(false)
@@ -50,7 +50,7 @@ final class SystemNotificationPreferenceTests: XCTestCase {
         prompt.onRequest = { started.fulfill() }
         let preference = SystemNotificationPreference(defaults: defaults, requestPermission: { await prompt.request() })
         let request = try XCTUnwrap(preference.setEnabled(true))
-        await fulfillment(of: [started], timeout: 1)
+        await fulfillment(of: [started], timeout: TestWait.limit)
         prompt.answer(false)
         await request.value
         XCTAssertFalse(preference.enabled)
@@ -66,12 +66,12 @@ final class SystemNotificationPreferenceTests: XCTestCase {
         prompt.onRequest = { firstStarted.fulfill() }
         let preference = SystemNotificationPreference(defaults: defaults, requestPermission: { await prompt.request() })
         let first = try XCTUnwrap(preference.setEnabled(true))
-        await fulfillment(of: [firstStarted], timeout: 1)
+        await fulfillment(of: [firstStarted], timeout: TestWait.limit)
         preference.setEnabled(false)
         let nextStarted = expectation(description: "new permission request")
         prompt.onRequest = { nextStarted.fulfill() }
         let next = try XCTUnwrap(preference.setEnabled(true))
-        await fulfillment(of: [nextStarted], timeout: 1)
+        await fulfillment(of: [nextStarted], timeout: TestWait.limit)
         prompt.answer(true, request: 2)
         await next.value
         prompt.answer(false, request: 1)

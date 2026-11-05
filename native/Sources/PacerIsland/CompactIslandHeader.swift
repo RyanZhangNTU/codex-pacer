@@ -49,7 +49,7 @@ struct CompactIslandHeader: View {
             DispatchQueue.main.async { model.updateMeasuredCompactWidth(width) }
         }
         .contentShape(Rectangle())
-        .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.togglePin() })
+        .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.barClicked { model.togglePin() } })
         .contextMenu {
             Button(L10n.text("common.settings")) { model.onSettings?() }
             Button(L10n.text("common.quit")) { model.onQuit?() }
@@ -99,7 +99,7 @@ struct CompactIslandStrip: View {
                 DispatchQueue.main.async { model.updateMeasuredStripHeight(height) }
             }
             .contentShape(Rectangle())
-            .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.togglePin() })
+            .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.barClicked { model.togglePin() } })
             .contextMenu {
                 Button(L10n.text("common.settings")) { model.onSettings?() }
                 Button(L10n.text("common.quit")) { model.onQuit?() }
@@ -194,7 +194,7 @@ struct CompactIslandComponent: View {
         }
             .buttonStyle(.plain)
             .lineLimit(1)
-            .help(help)
+            .accessibilityHint(help)
             .opacity(dimmed ? CompactBarPresentation.expandedOpacity : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: CompactBarPresentation.dimDuration), value: dimmed)
     }
@@ -398,9 +398,11 @@ struct CompactIslandComponent: View {
         model.compactTimeRemainingText(provider)
     }
     private func action() {
-        switch component {
-        case .activity, .status: model.openCompletionOrPin()
-        default: model.togglePin()
+        model.barClicked {
+            switch component {
+            case .activity, .status: model.openCompletionOrPin()
+            default: model.togglePin()
+            }
         }
     }
 }
@@ -413,4 +415,35 @@ struct CompactStripIdealHeight: PreferenceKey {
 struct CompactHeaderIdealWidth: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// Free Move: dragging the collapsed bar moves the island. The drag starts
+/// only after the pointer travels a few points, so a click still pins the
+/// island or opens a task; the panel follows the pointer from there. The
+/// notch island does not move.
+struct IslandMoveGesture: ViewModifier {
+    @ObservedObject var model: IslandModel
+    @State private var size = CGSize.zero
+    @State private var started = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(GeometryReader { geometry in
+                Color.clear
+                    .onAppear { size = geometry.size }
+                    .onChange(of: geometry.size) { _, value in size = value }
+            })
+            .highPriorityGesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
+                .onChanged { value in
+                    guard !started else { return }
+                    started = true
+                    let grab = CGPoint(x: size.width > 0 ? min(1, max(0, value.startLocation.x / size.width)) : 0.5,
+                        y: size.height > 0 ? min(1, max(0, value.startLocation.y / size.height)) : 0.5)
+                    model.onBeginMove?(grab)
+                }
+                .onEnded { _ in
+                    started = false
+                    model.onEndMoveGesture?()
+                }, including: model.canMoveIsland ? .all : .subviews)
+    }
 }

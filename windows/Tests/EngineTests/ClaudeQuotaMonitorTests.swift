@@ -102,7 +102,7 @@ final class ClaudeQuotaMonitorTests: XCTestCase {
         let monitor = ClaudeQuotaMonitor(services: .init(makeClient: { _, _, _ in try await factory.make() }, history: nil), output: { _ in })
         await monitor.configure(home: home, organization: "", enabled: true, context: 1); await monitor.setWebAvailable(true)
         _ = await monitor.refreshIfDue(expanded: true)
-        for _ in 0..<200 { if await old.reads > 0 { break }; try await Task.sleep(nanoseconds: 1_000_000) }
+        try await TestWait.until { await old.reads > 0 }
         let previous = await monitor.currentState()
         await monitor.configure(home: home.appendingPathComponent("other"), organization: "", enabled: true, context: 2)
         _ = await monitor.refreshIfDue(expanded: true); await monitor.waitForRefresh(); await old.release()

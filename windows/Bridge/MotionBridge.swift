@@ -15,6 +15,7 @@ private final class MotionBox {
 }
 
 private func anchor(_ position: Int32) -> IslandGeometry.Anchor? {
+    if position == 5 { return .init(horizontal: .center, vertical: .bottom) }
     guard (0...4).contains(position) else { return nil }
     return [IslandPosition.center, .topLeft, .bottomLeft, .topRight, .bottomRight][Int(position)].anchor
 }
@@ -27,14 +28,6 @@ private func frame(_ x: Double, _ y: Double, _ width: Double, _ height: Double) 
 
 @_cdecl("pacer_motion_abi_version")
 public func pacerMotionABIVersion() -> Int32 { 1 }
-
-@_cdecl("pacer_custom_position")
-public func pacerCustomPosition(_ saved: Int32, _ attached: Int32) -> Int32 {
-    let positions: [IslandPosition] = [.center, .topLeft, .bottomLeft, .topRight, .bottomRight]
-    guard (-1...4).contains(saved) else { return -1 }
-    let value = IslandPosition.custom(saved: saved < 0 ? nil : positions[Int(saved)], attached: attached != 0)
-    return Int32(positions.firstIndex(of: value)!)
-}
 
 @_cdecl("pacer_motion_create")
 public func pacerMotionCreate(_ x: Double, _ y: Double, _ width: Double, _ height: Double,

@@ -67,8 +67,6 @@
 "claude.quota.connection_failed" = "Could not connect to the Claude usage service.";
 "claude.quota.account_changed" = "Claude account changed. Refresh to read the current account.";
 "claude.monitoring_setup_failed" = "Could not set up Claude Code task monitoring. Check the configuration folder and try again.";
-"claude.performance.ttft_help" = "Actual streaming first-display timing when observed, or service-reported request time to first token. Completed message blocks cannot establish first-output timing.";
-"claude.performance.rate_help" = "Throughput from authoritative output tokens and service-reported request duration or an observed response window. Required tool time is excluded; this is not model decoder speed.";
 "claude.open_remote_help" = "Open Claude Code on this host";
 "account.credit_balance" = "Credits left: %@";
 "account.credits" = "credits";
@@ -283,7 +281,6 @@
 "settings.display_picker" = "Display";
 "settings.fifteen_minutes" = "15 minutes";
 "settings.five_minutes" = "5 minutes";
-"settings.custom" = "Custom";
 "settings.four_hours" = "4 hours";
 "settings.fullscreen" = "Show in Full Screen";
 "settings.glass_requirement" = "Liquid Glass requires macOS 26 or later";
@@ -297,8 +294,9 @@
 "appearance.glass_adjust" = "Adjust…";
 "appearance.glass_reduced" = "Solid (Reduce Transparency is on)";
 "appearance.screen_position" = "Screen Position";
-"appearance.position_center_note" = "A capsule centered below the menu bar.";
-"appearance.position_side_note" = "A vertical strip against the side of the screen, with its components stacked. Hover to open the panel beside it.";
+"appearance.free_move" = "Free Move";
+"appearance.free_move_detail" = "Drag the status bar. Release near an edge to snap.";
+"appearance.position_reset" = "Return to Top Center";
 "position.center" = "Center";
 "position.topLeft" = "Top Left";
 "position.bottomLeft" = "Bottom Left";
@@ -373,17 +371,12 @@
 
 // Response performance
 "performance.awaiting_usage" = "Awaiting usage";
-"performance.awaiting_usage_help" = "TPS is available once a request settles and its output window is observed. The last measurement stays visible: white for 15 seconds after updating, then gray.";
 "performance.first_output" = "First output %@";
-"performance.latency_help" = "Time from an observed turn start to the first nonempty model or reasoning text, or service-reported first-output timing when available. Kept for the same turn; this is not decoder-only latency.";
-"performance.response_help" = "Latest settled request: %d output tokens / %.2f s, including reasoning once and excluding tool waits. Timing ends at the last observed generated item. This is response throughput, not decoder speed.";
 "performance.total_help" = "Global total TPS: %.1f t/s, the sum of available rates across running chats. Tool waits keep their last measured rate; waiting, finished and internal-review chats are excluded. Each chat uses its latest measured request rate.";
 "performance.partial_total_help" = "Global total TPS: %.1f t/s. Some running chats have missing or older measurements, so this is a partial total. Tool waits keep their last measured rate; waiting, finished and internal-review chats are excluded.";
 
 "activity.subagents_running" = "%d subagents running";
 "activity.subagent_running" = "%d subagent running";
-"performance.group_help" = "Total of the latest available TPS from this chat and its running subagents. Missing measurements make the total incomplete. White means updated within 15 seconds; gray means older. Tool waits retain the last rate.";
-"performance.retained_help" = "Last measured TPS for this chat, retained across tools and new turns. White means updated within 15 seconds; gray means older.";
 
 // Collapsed bar component layout
 "layout.collapsed" = "Collapsed bar";
@@ -564,6 +557,9 @@
 "welcome.gesture.expand" = "expands";
 "welcome.gesture.leave" = "Move away";
 "welcome.gesture.collapse" = "collapses";
+"welcome.gesture.drag" = "Drag the bar";
+"welcome.gesture.move" = "moves";
+"welcome.gesture.snap" = "Release near a screen edge to snap.";
 "welcome.modules_note" = "Each module works on its own; turn any of them on or off anytime in Settings.";
 "welcome.section.personalize" = "Personalize";
 "welcome.module.ready" = "Ready";
@@ -856,6 +852,8 @@
 "deepseek.speed_basis_help" = "This Mac estimates from tasks here and updates with every reply. Account counts balance changes, including other devices and web searches, about once a minute, and needs a connected balance. Speed bars and the spend-spike alert follow this.";
 "help.hover.title" = "Expand and collapse";
 "help.hover.detail" = "Move the pointer onto the bar to expand it, and away to collapse it.";
+"help.move.title" = "Move the island";
+"help.move.detail" = "Drag the status bar; release near an edge to snap. To start over, use Settings → Appearance → Return to Top Center.";
 "help.section.services" = "Modules";
 "help.enable.title" = "Choose modules";
 "help.enable.detail" = "Turn Codex, Claude and DeepSeek on or off separately, each on its own page in Settings.";
@@ -874,8 +872,6 @@
 "claude.cloud.coordinator" = "Project coordinator";
 "claude.cloud.project" = "Project";
 "claude.cloud.open_help" = "Open this cloud Project in Claude";
-"claude.cloud.performance_help" = "This turn’s output over its generating time, without the wait for first output.";
-"claude.cloud.live_performance_help" = "An estimate from the reply this thread is writing. It does not update during thinking or tool calls, and may not appear for a reply already underway when Pacer starts listening. The turn’s real speed appears when it ends.";
 "claude.cloud.workers_help" = "%d more sessions working in this thread";
 "claude.cloud_projects" = "Show Claude cloud Projects";
 "claude.cloud_projects_help" = "Follows each Project’s threads and coordinator and reminds you when they end or wait for you. Needs the claude.ai sign-in above.";
@@ -890,3 +886,7 @@
 "whats_new.cloud_projects_detail" = "Threads and coordinators from your Projects now appear in the task list, with a cloud icon and the project’s name. They use your claude.ai sign-in; turn them off in Settings → Claude.";
 "whats_new.cloud_coordination" = "Threads and coordination";
 "whats_new.cloud_coordination_detail" = "Pacer reminds you when a thread needs a decision or a reply and when it is resolved, and a resolved thread you read in Claude clears here. A thread shows an estimated speed while it writes a reply, and the real speed when its turn ends.";
+"whats_new.free_move" = "Move the island anywhere";
+"whats_new.free_move_detail" = "Drag the status bar to place the island where you want it. Release near a screen edge to snap. Free Move replaces the fixed positions in Appearance.";
+"whats_new.subagent_endings" = "Background subagents end on time";
+"whats_new.subagent_endings_detail" = "A Claude Code subagent that finishes while its chat is busy no longer stays running, and the speed keeps updating while only subagents work.";

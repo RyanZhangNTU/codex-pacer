@@ -329,7 +329,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         }
         // Foundation's synchronous exit wait can stall on an async executor
         // after pipe EOF; observe the callback established before launch.
-        await fulfillment(of: [childEnded], timeout: 5)
+        await fulfillment(of: [childEnded], timeout: TestWait.limit)
         XCTAssertEqual(child.terminationStatus, 0)
         XCTAssertEqual(received, 8 * 1024 * 1024)
     }

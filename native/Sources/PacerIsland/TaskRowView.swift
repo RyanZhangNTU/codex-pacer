@@ -50,27 +50,6 @@ struct TaskRowView: View {
         // A cloud run's first output is only known when its turn ends.
         return activity.claudeCloud != nil && phase == .running ? speed : speed + "  ·  " + latencyText
     }
-    private var performanceHelp: String {
-        if activity.claudeCloud != nil {
-            if phase == .running { return L10n.text("claude.cloud.live_performance_help") }
-            let definition = L10n.text("claude.cloud.performance_help")
-            return rate == nil ? definition : latencyText + "\n" + definition
-        }
-        let definition: String
-        if activity.provider == .claude {
-            definition = L10n.text("claude.performance.rate_help") + "\n" + L10n.text("claude.performance.ttft_help")
-        } else if let group, group.members.count > 1 {
-            definition = L10n.text("performance.latency_help")
-        } else if activity.displayedRateIsEstimated(at: now) {
-            definition = L10n.text("performance.retained_help") + "\n" + L10n.text("performance.latency_help")
-        } else if let sample = activity.responsePerformance {
-            definition = L10n.text("performance.response_help", sample.outputTokens, sample.duration) + "\n" + L10n.text("performance.latency_help")
-        } else {
-            definition = L10n.text("performance.awaiting_usage_help") + "\n" + L10n.text("performance.latency_help")
-        }
-        let total = group.map { $0.members.count > 1 ? L10n.text("performance.group_help") + "\n" : "" } ?? ""
-        return latencyText + "\n" + total + definition
-    }
     private var color: Color {
         if attention != nil { return PacerPalette.attention }
         if activity.turnFailed { return PacerPalette.danger }
@@ -87,10 +66,6 @@ struct TaskRowView: View {
         return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
     private var symbol: String { StatusSymbols.symbol(presentation.symbol) }
-    private var modelHelp: String? {
-        guard let raw = activity.modelName else { return nil }
-        return [raw, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " · ")
-    }
 
     var body: some View {
         Button(action: action) {
@@ -108,8 +83,15 @@ struct TaskRowView: View {
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
-        .help(enabled ? [name, openHelp, modelHelp].compactMap { $0 }.joined(separator: "\n") : L10n.text("activity.no_link"))
         .accessibilityLabel(accessibilityText)
+        .accessibilityHint(accessibilityHint)
+    }
+
+    /// What a click does, then DeepSeek's turn cost explained: the peak price,
+    /// the task's spend today and its subagents.
+    private var accessibilityHint: String {
+        let costHelp = cost == nil ? nil : costDetail?.help ?? L10n.text("deepseek.turn_cost_row_help")
+        return [enabled ? openHelp : L10n.text("activity.no_link"), costHelp].compactMap { $0 }.joined(separator: " ")
     }
 
     private var accessibilityText: String {
@@ -158,7 +140,6 @@ struct TaskRowView: View {
                     Text(presentation.subagentText).monospacedDigit()
                 }
                 .foregroundStyle(PacerPalette.secondary).fixedSize()
-                .help(subagentText)
             }
             if let source = sourceName {
                 HStack(spacing: 3) {
@@ -169,7 +150,6 @@ struct TaskRowView: View {
                     Text(Self.middleTruncated(source, limit: 16))
                 }
                 .foregroundStyle(PacerPalette.secondary).lineLimit(1).fixedSize()
-                .help(source)
             }
         }
         .font(.system(size: 11, weight: .medium))
@@ -194,7 +174,6 @@ struct TaskRowView: View {
             }
         }
         .monospacedDigit().lineLimit(1).fixedSize()
-        .help(performanceHelp)
     }
 
     private var modelLine: some View {
@@ -207,14 +186,12 @@ struct TaskRowView: View {
                     Text(DeepSeekWallet.turnAmount(cost)).foregroundStyle(PacerPalette.primary.opacity(0.86))
                 }
                 .padding(.trailing, 3)
-                .help(costDetail?.help ?? L10n.text("deepseek.turn_cost_row_help"))
             }
             Text(modelLabel)
             if let effortLabel { Text(effortLabel).opacity(0.62) }
         }
         .font(.system(size: 11, weight: .medium)).foregroundStyle(activity.provider.tint)
         .opacity(dimmed ? 0.7 : 1).lineLimit(1).fixedSize()
-        .help(modelHelp ?? "")
     }
 
     static func shortened(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.shortened(text, limit: limit) }

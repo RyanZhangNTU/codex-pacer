@@ -127,7 +127,7 @@ final class EngineEmbeddedSessionTests: XCTestCase {
         }
         func append(_ data: Data) throws { let handle = try FileHandle(forWritingTo: file); try handle.seekToEnd(); try handle.write(contentsOf: data); try handle.close() }
         func until(_ condition: () throws -> Bool) async throws {
-            for _ in 0..<400 { if try condition() { return }; try await Task.sleep(nanoseconds: 5_000_000) }
+            if try await TestWait.until(condition) { return }
             XCTFail("The private Claude fixture did not publish its matching state")
         }
         try append(row("metadata", parent, ["embedded": true]) + row("prompt", parent) +

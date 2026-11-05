@@ -5,6 +5,12 @@ internal static class WindowsPlatformChecks
 {
     internal static void Run()
     {
+        var now = new DateTimeOffset(2027, 1, 15, 8, 0, 0, TimeSpan.Zero);
+        Check(EngineTimeZone.Argument(TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), now) == ("--time-zone", "Asia/Shanghai")
+            && EngineTimeZone.Argument(TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"), now) == ("--time-zone", "America/New_York"),
+            "Windows zones reach the engine as IANA names with their own DST rules");
+        var custom = TimeZoneInfo.CreateCustomTimeZone("Pacer Synthetic Zone", TimeSpan.FromMinutes(345), "Synthetic", "Synthetic");
+        Check(EngineTimeZone.Argument(custom, now) == ("--time-zone-offset", "20700"), "A zone without an IANA name falls back to its current offset");
         Check(!WindowsPlatformPolicy.Supports(6, 19041) && !WindowsPlatformPolicy.Supports(10, 19040)
             && WindowsPlatformPolicy.Supports(10, 19041) && WindowsPlatformPolicy.Supports(10, 19045)
             && WindowsPlatformPolicy.Supports(10, 22000), "The minimum build includes Windows 10 and early Windows 11 without enabling glass");

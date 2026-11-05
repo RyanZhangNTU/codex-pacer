@@ -173,18 +173,17 @@ final class ClaudeRemoteSetupTests: XCTestCase {
     }
 
     private func waitForPID(_ file: URL) async throws -> Int32 {
-        for _ in 0..<100 {
-            if let bytes = try? String(contentsOf: file, encoding: .utf8), let pid = Int32(bytes) { return pid }
-            try await Task.sleep(nanoseconds: 20_000_000)
+        var started: Int32?
+        try await TestWait.until {
+            if let bytes = try? String(contentsOf: file, encoding: .utf8), let pid = Int32(bytes) { started = pid }
+            return started != nil
         }
+        if let started { return started }
         XCTFail("owned setup process did not start"); throw ClaudeRemoteSetup.Failure.setupFailed
     }
 
     private func assertExited(_ pid: Int32) async throws {
-        for _ in 0..<100 {
-            if Darwin.kill(pid, 0) != 0, errno == ESRCH { return }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
+        if try await TestWait.until({ Darwin.kill(pid, 0) != 0 && errno == ESRCH }) { return }
         XCTFail("owned setup process remained alive")
         _ = Darwin.kill(pid, SIGKILL)
     }

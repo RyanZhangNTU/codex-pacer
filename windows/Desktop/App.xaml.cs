@@ -237,6 +237,7 @@ public partial class App : Application
             await engineReady.Task.WaitAsync(TimeSpan.FromSeconds(15));
             return await PreferencesAcknowledgement.ValidateAsync(engine, value);
         });
+        island.SaveIslandPlacement = edit => settingsSession.ChangeAsync(edit);
         notificationActions = new NotificationActions(engineReady.Task, () => quitting || settingsSession.Current.SystemNotifications != true, island.Reveal,
             () => engine.SendAsync("snoozeDeepSeekSpike"), OpenNotificationLink, notificationLifetime.Token, () => applications.Open("deepseek"),
             (kind, reference) => engine.QueryAsync<EngineNotificationActivation>("activateNotification", new { context = reference, notificationAction = kind }),
@@ -255,11 +256,12 @@ public partial class App : Application
         int? launchPosition = positionIndex >= 0 ? position : null;
         settingsSession.Changed += value =>
         {
-            if (value.Position != preferences.Position || value.DisplayMode != preferences.DisplayMode) launchPosition = null;
+            if (value.Position != preferences.Position || value.DisplayMode != preferences.DisplayMode ||
+                value.IslandPlacement != preferences.IslandPlacement) launchPosition = null;
             preferences = value;
-            island.ApplyPreferences(launchPosition is int forced ? value with { Position = positions[forced], DisplayMode = "floating" } : value);
+            island.ApplyPreferences(launchPosition is int forced ? value with { Position = positions[forced], DisplayMode = "floating", IslandPlacement = null } : value);
         };
-        island.ApplyPreferences(positionIndex >= 0 ? preferences with { Position = positions[position], DisplayMode = "floating" } : preferences);
+        island.ApplyPreferences(positionIndex >= 0 ? preferences with { Position = positions[position], DisplayMode = "floating", IslandPlacement = null } : preferences);
         MainWindow = island;
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add(ui.Text("windows.show_island"), null, (_, _) => Dispatcher.Invoke(island.Reveal));

@@ -44,7 +44,6 @@
   "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
   "windows.appearance.display_unavailable": "Windows could not read the displays. The island stays on the current screen.",
   "windows.appearance.fullscreen": "Show above fullscreen apps",
-  "windows.appearance.position_center_note": "A capsule centered near the top of the screen.",
   "windows.quota.retry_pending": "Quota retries for this service are not available on Windows yet.",
   "windows.provider.detected": "Detected on this PC",
   "windows.provider.not_detected": "Not detected on this PC",

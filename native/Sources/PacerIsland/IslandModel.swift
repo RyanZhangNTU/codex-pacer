@@ -308,6 +308,41 @@ final class IslandModel: ObservableObject {
     /// The docked corner while the island floats as a vertical strip; nil for
     /// the centered bar and notch attachment.
     @Published var sideDock: IslandPosition?
+    /// A bar placed low on the screen, or docked at its bottom, opens upward.
+    @Published var opensUp = false
+    /// The screen edge a docked island touches; its corners there stay square.
+    @Published var dockedEdge: IslandPlacement.Edge?
+    /// While Free Move runs, hover neither opens nor closes the island.
+    @Published private(set) var islandMoving = false
+    /// Changes when a drag or Return to Top Center saves a new place, so an
+    /// open Settings window reloads the display and position it shows.
+    @Published private(set) var placementRevision = 0
+    private var moveEndedAt = Date.distantPast
+    /// Set by the panel: starts a drag with the grab point as fractions of the
+    /// bar from its top left.
+    var onBeginMove: ((CGPoint) -> Void)?
+    var onEndMoveGesture: (() -> Void)?
+    /// The notch island and an island behind an update prompt stay put.
+    var canMoveIsland: Bool { !isAttached && !interactionSuspended }
+    func setIslandMoving(_ moving: Bool) {
+        guard moving != islandMoving else { return }
+        islandMoving = moving
+        if moving { closeWork?.cancel() } else { moveEndedAt = Date() }
+    }
+    func islandPlacementSaved() { placementRevision += 1 }
+    /// Return to Top Center: forget the dragged place and the old corner.
+    func resetIslandPlacement() {
+        IslandPlacement.clear(from: defaults)
+        IslandPosition.center.save(to: defaults)
+        IslandDisplayMode.floating.save(to: defaults)
+        placementRevision += 1
+        onLayoutChange?()
+    }
+    /// The mouse-up that ends a drag must not also pin the island or open a task.
+    func barClicked(_ action: () -> Void) {
+        guard !islandMoving, Date().timeIntervalSince(moveEndedAt) > 0.3 else { return }
+        action()
+    }
     @Published var notchWidth: CGFloat = 0
     /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
     @Published var screenNotchSize: CGSize = .zero
@@ -885,7 +920,7 @@ final class IslandModel: ObservableObject {
         if value { refreshDesktopApplications(force: false) }
     }
     func hover(_ entered: Bool) {
-        guard !interactionSuspended else { return }
+        guard !interactionSuspended, !islandMoving else { return }
         closeWork?.cancel()
         if entered { setExpanded(true) }
         else if !pinned {

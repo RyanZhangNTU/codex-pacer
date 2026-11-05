@@ -44,7 +44,6 @@
   "windows.appearance.display_fallback": "选中的显示器已断开，暂时使用主显示器；重新连接后会恢复。",
   "windows.appearance.display_unavailable": "Windows 无法读取显示器信息，岛暂时留在当前屏幕。",
   "windows.appearance.fullscreen": "在全屏应用上方显示",
-  "windows.appearance.position_center_note": "胶囊位于屏幕顶部中央附近。",
   "windows.quota.retry_pending": "Windows 尚未接通此服务的额度重试。",
   "windows.provider.detected": "已在此电脑上检测到",
   "windows.provider.not_detected": "未在此电脑上检测到",

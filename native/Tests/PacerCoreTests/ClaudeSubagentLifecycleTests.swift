@@ -108,6 +108,84 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
         }
     }
+    /// Claude Code 2.1.317 queues a background agent's notification as an
+    /// attachment when it arrives while the chat is mid-turn.
+    private func queuedNotificationFixture(_ text: String, type: String = "queued_command", mode: String = "task-notification",
+                                           origin: Any? = ["kind": "task-notification", "producer": "session-task"],
+                                           at: String = "2027-01-15T08:00:10Z") -> [String: Any] {
+        var attachment: [String: Any] = ["type": type, "prompt": text, "commandMode": mode, "source_uuid": "fixture-source",
+                                         "delivery_id": "fixture-delivery", "runId": "fixture-run", "timestamp": at,
+                                         "toolsUsedDelta": ["SubagentHandback"], "usage": ["totalTokens": 90, "toolUses": 3, "durationMs": 9000]]
+        if let origin { attachment["origin"] = origin }
+        return ["type": "attachment", "sessionId": parent, "uuid": "fixture-attachment", "parentUuid": "fixture-previous", "isSidechain": false,
+                "timestamp": at, "attachment": attachment, "rendered": [["content": "PRIVATE rendered reminder"]], "renderedRole": "system"]
+    }
+    func testQueuedAttachmentNotificationEndsTheBackgroundChildWhileTheParentWorks() throws {
+        let valid = notification()
+        let accepted = [queuedNotificationFixture(valid), queuedNotificationFixture(valid, origin: nil)]
+        let rejected = [queuedNotificationFixture(valid, mode: "prompt"), queuedNotificationFixture(valid, type: "file"),
+                        queuedNotificationFixture(valid, origin: ["kind": "human"]),
+                        queuedNotificationFixture(valid, origin: ["kind": "task-notification", "producer": "other"]),
+                        queuedNotificationFixture(valid, origin: "PRIVATE malformed"),
+                        queuedNotificationFixture(notification(status: "running")), queuedNotificationFixture("PRIVATE queued prompt")]
+        let fixtures = accepted + rejected
+        let native = try fixtures.flatMap { ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode($0)!, sessionID: parent, promptID: turn) }
+            .map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+        XCTAssertTrue(NSArray(array: try pythonRows(fixtures, owner: parent, parentID: nil)).isEqual(to: native), "Native and SSH parsers agree")
+        let notices = native.filter { $0["kind"] as? String == "agentNotification" }
+        XCTAssertEqual(notices.count, accepted.count)
+        XCTAssertTrue(notices.allSatisfy { $0["agentId"] as? String == child && $0["itemId"] as? String == "agent-tool" && $0["agentStatus"] as? String == "completed" })
+        for host in [String?.none, "remote-ssh-discovered:fixture"] {
+            var state = ClaudeActivityState(sourceID: host)
+            send("prompt", to: &state, at: 0)
+            send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+            send("subagentStart", to: &state, thread: child, at: 2)
+            send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+            send("toolStart", to: &state, at: 4, extra: ["itemId": "parent-work"])
+            // The ending only arrives as the queued attachment; the parent is still working.
+            for row in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(queuedNotificationFixture(valid))!, sessionID: parent) {
+                state.consume(row, now: now.addingTimeInterval(100))
+            }
+            XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .completed)
+            XCTAssertEqual(state.activities.first { $0.threadID == parent }?.phase, .running)
+            XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 0, "The parent row no longer counts the ended child")
+        }
+    }
+    func testBackgroundChildKeepsItsTurnAndRateAfterTheParentMovesOn() throws {
+        var state = ClaudeActivityState()
+        send("prompt", to: &state, at: 0)
+        send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+        send("subagentStart", to: &state, thread: child, at: 2)
+        send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+        send("stopVerified", to: &state, at: 4)
+        // Another agent's notification opens a new parent turn; the child's hooks now carry its prompt.
+        send("prompt", to: &state, at: 5, extra: ["promptId": "parent-next-turn"])
+        send("stopVerified", to: &state, at: 5.5, extra: ["promptId": "parent-next-turn"])
+        send("toolStart", to: &state, thread: child, at: 6, extra: ["promptId": "parent-next-turn", "itemId": "child-tool"])
+        send("toolEnd", to: &state, thread: child, at: 7, extra: ["promptId": "parent-next-turn", "itemId": "child-tool"])
+        let working = try XCTUnwrap(state.activities.first { $0.threadID == child })
+        XCTAssertEqual(working.turnID, turn, "The child keeps the turn its SubagentStart opened")
+        XCTAssertEqual(working.phase, .running); XCTAssertEqual(working.lastObserved, now.addingTimeInterval(7))
+        // Subagent request spans name the agent and carry no prompt.
+        func request(_ id: String, agent: String, start: Double, end: Double, tokens: Int) -> Data {
+            ClaudeActivityRecord.encode(["kind": "request", "sessionId": parent, "agentId": agent, "requestId": id, "startedAt": now.timeIntervalSince1970 + start,
+                "at": now.timeIntervalSince1970 + end, "outputTokens": tokens, "durationMs": (end - start) * 1000])!
+        }
+        state.consume(request("child-request", agent: child, start: 6, end: 9, tokens: 300), now: now.addingTimeInterval(10))
+        XCTAssertEqual(state.activities.first { $0.threadID == child }?.responsePerformance?.tokensPerSecond, 100)
+        XCTAssertNil(state.activities.first { $0.threadID == parent }?.responsePerformance, "A child's span never measures the parent")
+        let group = try XCTUnwrap(ActivityTaskGroup.make(state.activities).first)
+        XCTAssertEqual(group.runningSubagentCount, 1)
+        XCTAssertEqual(group.displayedRate(at: now.addingTimeInterval(10))?.value ?? 0, 100, accuracy: 0.01, "Only the working child sets the group's rate")
+        // An internal agent that never spawned a child cannot create one.
+        state.consume(request("internal-request", agent: "internal-agent", start: 6, end: 9, tokens: 300), now: now.addingTimeInterval(10))
+        XCTAssertNil(state.activities.first { $0.threadID == "internal-agent" })
+        // Once the child ends, a late record with the parent's newer prompt cannot reopen it.
+        send("agentNotification", to: &state, at: 11, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+        XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .completed)
+        send("toolStart", to: &state, thread: child, at: 12, extra: ["promptId": "parent-next-turn", "itemId": "late-tool"])
+        XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .completed)
+    }
     func testHooksDisabledParentBeforeChildBindsRealChildPromptAndHistoricalReplayStaysQuiet() throws {
         for status in ["completed", "async_launched"] {
             var state = ClaudeActivityState(), inbox = CompletionInbox(), policy = AttentionPolicy()

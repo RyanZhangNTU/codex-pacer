@@ -48,6 +48,7 @@ struct SettingsHelpPane: View {
                 Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold))
             }
             row("help.customize", symbol: "slider.horizontal.3")
+            row("help.move") { MoveSample() }
         }
         Section(L10n.text("help.section.expanded")) {
             row("help.hover", symbol: "cursorarrow.rays")
@@ -165,6 +166,18 @@ struct SettingsHelpPane: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A small bar, an arrow and the screen edge it snaps to.
+private struct MoveSample: View {
+    var body: some View {
+        HStack(spacing: 5) {
+            Capsule().fill(Color.white.opacity(0.25)).overlay(Capsule().stroke(Color.white.opacity(0.55), lineWidth: 1))
+                .frame(width: 20, height: 8)
+            Image(systemName: "arrow.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.white)
+            RoundedRectangle(cornerRadius: 1.5).fill(AgentProvider.codex.tint).frame(width: 3, height: 18)
+        }
     }
 }
 

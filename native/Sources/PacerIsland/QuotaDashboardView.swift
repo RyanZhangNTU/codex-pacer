@@ -97,7 +97,7 @@ private struct LegacyCodexQuotaView: View {
             if !presentation.fresh {
                 Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness)
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.attention)
-                    .help(presentation.help)
+                    .accessibilityHint(presentation.help)
             }
             ForEach(presentation.buckets, id: \.id) { bucket in
                     VStack(alignment: .leading, spacing: 14) {
@@ -106,14 +106,14 @@ private struct LegacyCodexQuotaView: View {
                         }
                         ForEach(bucket.windows, id: \.id) { window in
                             QuotaWindowView(reading: window,
-                                accent: presentation.fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary)
+                                accent: presentation.fresh ? AgentProvider.codex.tint : PacerPalette.secondary, secondary: PacerPalette.secondary,
+                                note: presentation.help)
                         }
                     }
             }
             QuotaProviderStatusView(model: model, provider: .codex).frame(maxWidth: .infinity)
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.bottom, 4)
-        .help(presentation.help)
     }
 }
 
@@ -219,9 +219,9 @@ struct QuotaDashboardRingView: View {
             }
         }
         .frame(maxWidth: showsCaption ? .infinity : nil)
-        .help(detailsHelp)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(quota.provider.displayName)
+        .accessibilityHint(detailsHelp)
     }
 }
 
@@ -289,7 +289,6 @@ private struct QuotaRingValue: View {
             }
         }
         .opacity(reading.stale ? 0.55 : 1)
-        .help(reading.detailsHelp)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(reading.accessibilityLabel)
         .accessibilityHint(reading.detailsHelp)
@@ -329,8 +328,8 @@ private struct QuotaDashboardDetailsView: View {
                                 (weekly.projection == nil || weekly.projection == .tooEarly ? PacerPalette.tertiary : PacerPalette.primary))
                     }
                 }
-                .help(weekly.detailsHelp)
                 .accessibilityElement(children: .combine)
+                .accessibilityHint(weekly.detailsHelp)
             }
         }
         .monospacedDigit().lineLimit(1)
@@ -367,8 +366,8 @@ private struct QuotaPeriodDetailView: View {
             }
             .font(.system(size: 10)).foregroundStyle(PacerPalette.tertiary)
         }
-        .help(reading.detailsHelp)
         .accessibilityElement(children: .combine)
+        .accessibilityHint(reading.detailsHelp)
     }
 }
 
@@ -417,7 +416,7 @@ struct QuotaProviderStatusView: View {
         HStack(spacing: 6) {
             if provider == .claude, model.claudeConnectionNeeded {
                 QuotaLinkButton(title: L10n.text(model.claudeConnectionActionTitleKey), prominent: true) { model.connectClaudeQuota() }
-                    .help(L10n.text(model.claudeConnectionActionHelpKey)).disabled(model.providerRefreshing(provider))
+                    .accessibilityHint(L10n.text(model.claudeConnectionActionHelpKey)).disabled(model.providerRefreshing(provider))
             }
             QuotaLinkButton(title: L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.retry")) {
                 model.retryQuotaConnection(for: provider)

@@ -61,7 +61,7 @@ final class WindowsWSLHookTests: XCTestCase {
     private let wsl = RemoteActivityTarget(id: "wsl:fixture", name: "WSL", alias: "wsl-fixture-old", home: "/home/fixture/.claude")
     private func status() -> RuntimeStreamStatus { var value = RuntimeStreamStatus(); value.connected = true; value.sourceAvailable = true; return value }
     private func wait(_ condition: () async -> Bool) async throws {
-        let end = Date().addingTimeInterval(3)
+        let end = Date().addingTimeInterval(TestWait.limit)
         while !(await condition()), Date() < end { try await Task.sleep(nanoseconds: 5_000_000) }
         let ready = await condition(); XCTAssertTrue(ready)
         if !ready { throw ClaudeRemoteSetup.Failure.timedOut }

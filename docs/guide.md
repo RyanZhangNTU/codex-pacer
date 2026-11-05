@@ -43,9 +43,9 @@ After later 4.x updates, a short **What's New** note appears once instead. It li
 
 Optional components include status text, the latest time to first output and, with DeepSeek on, the price clock. Arrange everything in **Settings → Collapsed Bar**: drag components between the left and right of the camera, click × to hide one, or restore the defaults. **Outer** and **Inner** under the quota rings choose which module each ring shows. Each service's quota can show its 5-hour or 7-day window; accounts with only a weekly limit always show 7 days.
 
-Until you choose otherwise, the bar sits around the camera on a display with a notch and stays black so it blends in; on other displays it is a capsule just below the menu bar.
+Drag the island by its status bar to move it, on the Mac and on Windows. It stays where you release it, or snaps to a screen edge if you release it nearby. The top and bottom edges keep the horizontal bar. The left and right edges turn it into a narrow vertical strip: the left group sits at the top and the right group at the bottom, each number above its unit, and status text and the quota label stay in the panel. The panel opens toward the free side of the screen, up from the bottom edge and inward from a side, and the island stays clear of the taskbar, the menu bar and the Dock. Pacer remembers the position and the display. **Settings → Appearance → Position** offers **Notch** and **Free Move**; **Return to Top Center** puts a moved island back. An island placed by an earlier version stays where it was until you move it.
 
-**Settings → Appearance → Position** offers **Notch** and **Custom**. Notch keeps the bar at the top center of any display. Custom shows **Screen Position** below it: Center is the capsule below the menu bar, and a corner (bottom left when you first switch from Notch) makes the bar a narrow vertical strip with its long edge against the side of the screen, 10 points from the menu bar or the Dock. The strip stacks its components: the left group at the top, the right group at the bottom, each number above its unit. Status text and the quota label don't fit, so they stay in tooltips and the panel. Hover the strip and the panel opens beside it, with the two groups holding its top and bottom edges.
+On the Mac, the bar starts around the camera on a display with a notch and stays black so it blends in; on other displays it is a capsule just below the menu bar. A Notch bar stays at the top center, so choose **Free Move** before dragging it. On Windows, dragging a Notch bar switches it to **Free Move**.
 
 ## The expanded island
 
@@ -58,7 +58,7 @@ Until you choose otherwise, the bar sits around the camera on a display with a n
 Tasks from all services share one list: tasks that need you come first, then running tasks, then ended ones, most recent first within each group. Each row shows:
 
 - the task title and, below it, its current stage (thinking, running a tool, responding, waiting for you, ended), the number of running agents it spawned and the SSH host or Remote Control source when it is not local;
-- on the right, the latest output speed and the turn's time: how long it has run, or how long it took once it ended. White numbers were updated in the last 15 seconds; gray numbers are older. Hover the speed for the time to first output;
+- on the right, the latest output speed and the turn's time: how long it has run, or how long it took once it ended. White numbers were updated in the last 15 seconds; gray numbers are older. Screen readers also announce the time to first output;
 - below the speed, the model and its reasoning effort in the service's color. Until the model is known, the service name appears there. DeepSeek tasks also show the turn's estimated cost first, such as `≈¥0.42`.
 
 The icon shows the stage in the service's color, amber when a task needs you and red when it failed. Ended tasks you have opened or marked as read turn gray; unread ones keep their color.
@@ -78,7 +78,7 @@ When a turn ends, its card stays until you open it, clear it with **Mark All as 
 In Split Ring, each service gets one ring. When it reports a 5-hour limit, the shorter upper arc shows **5h** and the longer lower arc shows **7d**, with each period’s remaining percentage and reset countdown inside the ring. The same layout applies with only one service on.
 
 - Each colored arc shows the quota left in its own window. Its white tick marks the remaining-time fraction; quota beyond the tick is ahead of an even pace.
-- When a period has 15% or less left, or is being used too fast, its label and percentage turn amber; the 5-hour arc turns amber too. Hover each value for the pace verdict, reset date and freshness.
+- When a period has 15% or less left, or is being used too fast, its label and percentage turn amber; the 5-hour arc turns amber too. Screen readers also announce each value's pace verdict, reset date and freshness.
 - An unknown value shows a dash and a dotted arc. Accounts without a 5-hour limit show a 7-day gauge that opens at the bottom, with **7d** in the opening.
 - With only one service on, its ring sits on the left. On the right, the 5-hour and 7-day groups face their arcs and show the pace verdict and percentage, the reset time and a forecast. The forecast extends your spending so far to the reset: how much will be left, or when quota would run out (in amber). Early in a window it waits for more data. Accounts without a 5-hour limit show pace, reset and forecast as three rows. Codex limits that are neither 5-hour nor 7-day still appear as quota bars.
 
@@ -88,7 +88,7 @@ In **Budget** mode the ring is a **budget dial**, split like Codex's 5 hours and
 
 With only DeepSeek on, the dial sits on the left; during peak hours a chip under it, such as **×2 until 18:00**, says when prices drop. Each block beside and below it appears only when it has something to show, so a quiet day makes a short panel:
 
-- **Today** sits beside the day dial: spend so far, with the part estimated on this Mac and the part not on this Mac in its tooltip. Beside the budget dial, each budget shows its pace, reset and forecast instead.
+- **Today** sits beside the day dial: spend so far. **Where it went** below shows how much of it is not on this Mac. Beside the budget dial, each budget shows its pace, reset and forecast instead.
 - **Speed** shows what each 10 minutes of the last two hours cost, with the spend-spike line dashed in red, and the spend per minute. It appears when there was spend in the last two hours.
 - **Where it went** splits today's spend between the two largest tasks, the rest and a hatched **Not on this Mac** part: what the account was charged that no task on this Mac accounts for, such as web searches, background requests or another device. Its info button opens the platform's usage page. A task keeps its name after its row is gone.
 - **7 days** draws one bar per day against your daily budget's dashed line, or your daily average without one, with the part over budget in red. It appears once two days before today had spend.
@@ -97,7 +97,7 @@ With only DeepSeek on, the dial sits on the left; during peak hours a chip under
 
 ![DeepSeek alone: the day dial with its ×2 until 6:00 PM chip, beside Today, Speed and Where it went with its hatched Not on this Mac part, above 7 days](assets/deepseek.png)
 
-If quota cannot be read, the ring says why and offers a retry. Hover over a ring for the source and last update. Quota history, credits and banked resets are in **Settings → Codex** and **Settings → Claude**.
+If quota cannot be read, the ring says why and offers a retry. Screen readers also announce the source and last update. Quota history, credits and banked resets are in **Settings → Codex** and **Settings → Claude**.
 
 The ⋯ menu in the task header refreshes data or quits Pacer; the gear opens Settings.
 
@@ -125,7 +125,7 @@ Pacer uses `~/.claude`, or `CLAUDE_CONFIG_DIR` when set; choose another folder u
 
 Pacer reads DeepSeek Harness's session logs in `~/.dsh`, or `DSH_HOME` when set; choose another folder under **Settings → DeepSeek → Custom locations**. It follows the stage of each turn, its speed and time to first output, approvals, questions that wait for your reply, and how the turn ended, from the token counts and timing only. Harness saves each reply when its step finishes, so speed and cost update step by step rather than while text streams. Harness sessions on SSH hosts are not followed yet.
 
-**Turn cost.** Pacer estimates each turn's cost from its tokens and DeepSeek's published prices, doubled at peak times, and shows it before the model name. An amber dot means part of the turn was billed at peak; hover for the task's spend today. A sub-agent's spend counts toward the task that started it, and web searches and fetches add ¥0.005 each from 1 November 2026. Weekends and China's 2026 public holidays are off-peak; holidays of later years are not known yet. Only DeepSeek's own channels are priced, so a third-party provider gets no estimate. The platform bill is authoritative. Turn the estimate off with **Settings → DeepSeek → Show each turn's estimated cost**.
+**Turn cost.** Pacer estimates each turn's cost from its tokens and DeepSeek's published prices, doubled at peak times, and shows it before the model name. An amber dot means part of the turn was billed at peak; screen readers also announce the task's spend today. A sub-agent's spend counts toward the task that started it, and web searches and fetches add ¥0.005 each from 1 November 2026. Weekends and China's 2026 public holidays are off-peak; holidays of later years are not known yet. Only DeepSeek's own channels are priced, so a third-party provider gets no estimate. The platform bill is authoritative. Turn the estimate off with **Settings → DeepSeek → Show each turn's estimated cost**.
 
 **Balance follows how Harness signs in.** When Harness uses a DeepSeek account, click **Sign In** (on the dial, in the welcome guide or in Settings) to open the DeepSeek platform in Pacer's own window and sign in as usual; the window closes by itself, and the session stays in Pacer's private WebKit storage. When Harness uses an API key, paste a key in **Settings → DeepSeek**; it is kept in your login keychain and used only to read the balance. Pacer never reads Harness's own sign-in or key. The ⋯ menu beside the connection in **Settings → DeepSeek** lets you choose web sign-in or an API key instead of the automatic choice.
 
@@ -154,7 +154,7 @@ Settings apply as you change them; there is no Save button. Text fields apply wh
 | Page | What you can change |
 | --- | --- |
 | General | Updates, Open at Login, language (follow macOS, English or Simplified Chinese), Hide Project Names, Show App Buttons. |
-| Appearance | Solid black or Liquid Glass, Notch or Custom with its screen position (center or a corner strip), which display, and whether to show in full-screen spaces. |
+| Appearance | Solid black or Liquid Glass, Notch or Free Move with Return to Top Center, display selection, and visibility over full-screen apps. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, which module each quota ring shows, and each service's 5-hour or 7-day window. |
 | Reminders | Collapsed-bar warnings with DeepSeek's balance, spike and budget lines, system notifications, and how long ended tasks stay. |
 | Codex, Claude, DeepSeek | Turn each module on or off, what Pacer found on this Mac, custom locations, Claude sign-in and cloud Projects, each service's sessions from other apps, quota history and details; for DeepSeek, sign-in or API key and the balance source, Balance or Budget mode, the expanded panel, what speed counts, the turn-cost estimate and the peak hours of the next working day in your time zone. |

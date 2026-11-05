@@ -74,6 +74,13 @@ internal sealed class EngineClient : IAsyncDisposable
             start.ArgumentList.Add("--claude-runtime-root"); start.ArgumentList.Add(Path.GetFullPath(claudeRuntimeRoot));
         }
         start.ArgumentList.Add("--language"); start.ArgumentList.Add(language);
+        // Swift Foundation on Windows reports GMT as the current zone, so local
+        // days (Codex log folders, daily budgets, reset times) need the user's zone.
+        if (!referenceFixture)
+        {
+            var zone = EngineTimeZone.Argument(TimeZoneInfo.Local, DateTimeOffset.UtcNow);
+            start.ArgumentList.Add(zone.Flag); start.ArgumentList.Add(zone.Value);
+        }
         job = new OwnedJob();
         try
         {

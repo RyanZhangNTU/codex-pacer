@@ -67,7 +67,7 @@ final class ClaudeActivityDirectoryWatchMacTests: XCTestCase {
         let watches = await monitor.localWatchCount()
         XCTAssertGreaterThan(watches, 0); XCTAssertLessThanOrEqual(watches, 32 + ClaudeActivityReader.maximumDirectoryWatches)
         try prompt(session: session, id: "symlink-discovery").write(to: fixture.beta.appendingPathComponent(session + ".jsonl"))
-        await fulfillment(of: [discovered], timeout: 2)
+        await fulfillment(of: [discovered], timeout: TestWait.limit)
         let activities = await monitor.activities()
         XCTAssertEqual(activities.filter { $0.threadID == session }.count, 1)
         await monitor.shutdown()

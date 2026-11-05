@@ -46,7 +46,7 @@ internal static class DeepSeekWebConnectionChecks
             browserActions = false; island.ApplyPreferences(preferences with { DeepSeekPanelStyle = "simple" });
             await island.WaitForPresentationAsync();
             var offlineConnect = Find<Button>(island, "deepseek.balance.connect");
-            Check(!offlineConnect.IsEnabled && (string?)offlineConnect.ToolTip == ui.Text("windows.deepseek.demo_web_help"),
+            Check(!offlineConnect.IsEnabled && offlineConnect.ToolTip == null && System.Windows.Automation.AutomationProperties.GetHelpText(offlineConnect) == ui.Text("windows.deepseek.demo_web_help"),
                 "A synthetic web reader cannot advertise a real login action in the offline demo");
             browserActions = true; island.ApplyPreferences(preferences);
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();

@@ -122,8 +122,7 @@ final class DeepSeekIslandTests: XCTestCase {
         // A busy full-suite run can take well over a second; a refresh that never
         // finishes must fail here rather than in the assertions that follow.
         func settle(line: UInt = #line) async {
-            let deadline = Date().addingTimeInterval(10)
-            while model.deepseekRefreshing, Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+            _ = try? await TestWait.until { !model.deepseekRefreshing }
             XCTAssertFalse(model.deepseekRefreshing, "The DeepSeek balance refresh did not finish", line: line)
         }
 
@@ -353,7 +352,7 @@ final class DeepSeekIslandTests: XCTestCase {
     }
 
     private func waitUntil(_ condition: () -> Bool) async {
-        for _ in 0..<200 where !condition() { try? await Task.sleep(nanoseconds: 5_000_000) }
+        _ = try? await TestWait.until(condition)
         XCTAssertTrue(condition(), "The controlled balance read did not start or settle")
     }
 
