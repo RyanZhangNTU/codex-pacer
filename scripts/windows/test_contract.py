@@ -133,13 +133,20 @@ class CoreBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             contract.package_boundary(text.replace('name: "PacerEngineSupport"', 'name: "CombinedCore"'))
 
-    def test_ci_checks_the_contract_on_mac_and_windows(self):
+    def test_ci_checks_the_contract_on_every_pull_request(self):
         workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
         contract.workflow_boundary(workflow)
+        for script in ("check-contract.py", "test_contract.py"):
+            with self.assertRaises(ValueError):
+                contract.workflow_boundary(workflow.replace("python3 scripts/windows/" + script, "true", 1))
         with self.assertRaises(ValueError):
-            contract.workflow_boundary(workflow.replace("python3 scripts/windows/check-contract.py", "true", 1))
-        with self.assertRaises(ValueError):
-            contract.workflow_boundary(workflow.replace("python scripts/windows/check-contract.py", "Write-Output skipped", 1))
+            contract.workflow_boundary(workflow.replace("\n  contract:\n", "\n  checks:\n", 1))
+        gate = "    name: Platform contract\n    if: github.event_name == 'pull_request'\n"
+        self.assertIn(gate, workflow)
+        for skipped in ("    needs: changes\n    if: needs.changes.outputs.windows == 'true'\n",
+                        "    if: github.event_name != 'pull_request'\n"):
+            with self.assertRaises(ValueError):
+                contract.workflow_boundary(workflow.replace(gate, "    name: Platform contract\n" + skipped, 1))
 
 
 class WindowsArchitectureTests(unittest.TestCase):

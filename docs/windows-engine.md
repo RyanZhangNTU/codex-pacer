@@ -1,6 +1,6 @@
 # Windows engine development
 
-The root package builds `PacerEngine` and its platform adapters. The WPF host and its CI packages are described in [windows-shell.md](windows-shell.md). The Mac app builds from `native/Package.swift`; its CI jobs run the full native tests and app build.
+The root package builds `PacerEngine` and its platform adapters. The WPF host and its CI packages are described in [windows-shell.md](windows-shell.md). The Mac app builds from `native/Package.swift`; pull requests run its full native tests on Apple silicon, and the local release build compiles both architectures ([continuous integration](development.md#continuous-integration)).
 
 Use Windows x64, Visual Studio C++ build tools and a Windows SDK. `windows/toolchain-lock.json` pins Swift 6.4.2 and .NET SDK 10.0.403. The .NET SDK builds the shell and synthetic process/pipe fixtures. `setup-swift.ps1` installs the pinned, verified Swift toolchain under ignored `output/toolchains` when needed.
 

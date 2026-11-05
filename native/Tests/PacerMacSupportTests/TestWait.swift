@@ -8,8 +8,11 @@ enum TestWait {
     static let limit: TimeInterval = 20
 
     /// Polls until `condition` holds or the limit passes, and returns the last result.
+    /// It runs on the caller's actor, so a condition that holds is still true
+    /// on the caller's next line: no other work on that actor runs in between.
     @discardableResult
-    static func until(_ condition: () async throws -> Bool) async throws -> Bool {
+    static func until(isolation: isolated (any Actor)? = #isolation,
+                      _ condition: () async throws -> Bool) async throws -> Bool {
         let end = ProcessInfo.processInfo.systemUptime + limit
         while true {
             if try await condition() { return true }
