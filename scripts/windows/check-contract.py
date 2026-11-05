@@ -269,6 +269,37 @@ def release_boundary(release):
         raise ValueError("A release run must never be cancelled")
 
 
+def engine_cache(platforms, cache, stage):
+    """The release engine caches share one key, and the develop warm-up runs whenever its inputs change."""
+    keys = {re.sub(r"\$\{\{ matrix\.architecture \}\}|x64|arm64", "ARCH", key)
+            for key in re.findall(r"^\s+key: (windows-engine-.+?)\s*$", platforms + cache, re.M)}
+    if len(keys) != 1:
+        raise ValueError("The engine caches in platforms.yml and engine-cache.yml must share one key")
+    directories = re.search(r"DIRECTORIES = \((.*?)\)", stage, re.S)
+    if not directories:
+        raise ValueError("stage-engine.py must list the directories of the engine source snapshot")
+    inputs = {name + "/**" for name in re.findall(r'"([^"]+)"', directories.group(1))}
+    inputs |= {"Package.swift", "Package.resolved", "native/Info.plist"}
+    inputs |= set(re.findall(r"'([^']+)'", re.search(r"hashFiles\((.*?)\)", next(iter(keys))).group(1)))
+    missing = inputs - set(re.findall(r"^\s+- '([^']+)'\s*$", cache, re.M))
+    if missing:
+        raise ValueError("engine-cache.yml must run when the engine cache key changes: " + ", ".join(sorted(missing)))
+
+
+def presentation_shards(workflow, program):
+    """Each group the presentation suite runs for "all" is in exactly one CI test job."""
+    match = re.search(r"AllGroups = \[(.*?)\];", program, re.S)
+    if not match:
+        raise ValueError("The presentation runner must list the groups it runs for all")
+    groups = re.findall(r'"(\w+)"', match.group(1))
+    body = workflow_job(workflow, "windows-tests")
+    if body is None:
+        raise ValueError("CI must run the presentation tests in a windows-tests job")
+    sharded = [name for line in re.findall(r"^\s+groups:\s*(\S+)\s*$", body, re.M) for name in line.split(",")]
+    if sorted(sharded) != sorted(groups):
+        raise ValueError("Each presentation group must run in exactly one CI test job")
+
+
 def check(root=ROOT):
     read = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     contract = read("windows/platform-contract.json")
@@ -295,11 +326,13 @@ def check(root=ROOT):
         raise ValueError("Shipping package dependencies changed")
     if native_package_wiring(package) != contract["nativeTargets"]:
         raise ValueError("Shipping target wiring needs explicit review in platform-contract.json")
-    platforms = (root / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
-    release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    platforms, release, cache = ((root / ".github/workflows" / name).read_text(encoding="utf-8")
+                                 for name in ("platforms.yml", "release.yml", "engine-cache.yml"))
     workflow_boundary(platforms)
     release_boundary(release)
-    toolchain_pins(root, platforms + release)
+    presentation_shards(platforms, (root / "windows/Tests/PresentationTests/Program.cs").read_text(encoding="utf-8-sig"))
+    engine_cache(platforms, cache, (root / "scripts/windows/stage-engine.py").read_text(encoding="utf-8"))
+    toolchain_pins(root, platforms + release + cache)
     print(f"Platform contract passed: {len(all_sources)} shared Core sources, {availability} canImport availability branches")
 
 

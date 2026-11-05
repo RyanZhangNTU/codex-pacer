@@ -39,7 +39,7 @@ internal static class ProviderWebStartupChecks
         await Start(engine);
         var first = coordinator.StartAsync();
         var second = coordinator.StartAsync();
-        await session.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        await session.Entered.Task.WaitAsync(PresentationWait.Limit);
         Check(session.Starts == 1 && session.Reads == 0, "Concurrent starts must share one prewarm without reading a not-ready browser");
         Check(!coordinator.Available && engine.LatestSnapshot?.ClaudeConnection?.WebAvailable != true,
             "The engine cannot request cookies before private-profile startup completes");
@@ -57,7 +57,7 @@ internal static class ProviderWebStartupChecks
         var coordinator = new ClaudeConnectionCoordinator(engine, session, Application.Current.Dispatcher);
         await Start(engine);
         var starting = coordinator.StartAsync();
-        await session.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        await session.Entered.Task.WaitAsync(PresentationWait.Limit);
         await coordinator.DisposeAsync();
         await starting;
         Check(session.Cancelled && session.Disposed && session.Reads == 0 && !coordinator.Available,

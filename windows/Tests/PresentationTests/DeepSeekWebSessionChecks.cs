@@ -91,12 +91,7 @@ internal static class DeepSeekWebSessionChecks
             string target = Path.GetFullPath(root), parent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!target.StartsWith(parent, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(target).StartsWith("pacer-web-fixture-", StringComparison.Ordinal) ||
                 new DirectoryInfo(target).LinkTarget != null) throw new InvalidOperationException("Unexpected browser fixture directory");
-            for (int attempt = 0; attempt < 20; attempt++)
-            {
-                try { Directory.Delete(target, true); break; }
-                catch (IOException) { await Task.Delay(100); }
-                catch (UnauthorizedAccessException) { await Task.Delay(100); }
-            }
+            await PresentationWait.RemoveBrowserFixtureAsync(target);
         }
     }
     private static async Task Lifecycle(DeepSeekWebSession session, Site site)
@@ -111,7 +106,7 @@ internal static class DeepSeekWebSessionChecks
         await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any() && site.Ready);
         window = Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
         await site.Main!.ExecuteScriptAsync("localStorage.setItem('userToken', JSON.stringify({value:'synthetic-other-account-token-000000'}))");
-        Check(await changed.WaitAsync(TimeSpan.FromSeconds(8)) && session.SignInWasNew && !window.IsVisible,
+        Check(await changed.WaitAsync(PresentationWait.Limit) && session.SignInWasNew && !window.IsVisible,
             "A new isolated token must automatically finish the login without Continue");
         int checks = window.SessionChecks; await Task.Delay(1100);
         Check(window.SessionChecks == checks, "Closed login windows stop their fingerprint observer");
@@ -188,6 +183,6 @@ internal static class DeepSeekWebSessionChecks
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
     private static async Task Until(Func<bool> condition)
-    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed.TotalSeconds < 8) await Pump(); Check(condition(), "The browser condition did not arrive"); await Pump(); }
+    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The browser condition did not arrive"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

@@ -80,7 +80,7 @@ internal static class DisplaySettingsChecks
     }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => SelfAndDescendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
     private static async Task Until(Func<bool> ready)
-    { var clock = Stopwatch.StartNew(); while (!ready() && clock.Elapsed.TotalSeconds < 5) await Task.Delay(20); Check(ready(), "Display settings did not settle"); }
+    { var clock = Stopwatch.StartNew(); while (!ready() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Task.Delay(20); Check(ready(), "Display settings did not settle"); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool value) => true; }
 }

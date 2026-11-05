@@ -109,6 +109,6 @@ internal static class ConversationNavigationChecks
     }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition, string message)
-    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(20); Check(condition(), message); await Pump(); }
+    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < PresentationWait.Limit) await Task.Delay(20); Check(condition(), message); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }
