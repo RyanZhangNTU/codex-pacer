@@ -57,7 +57,8 @@ final class CodexEmbeddedSessionTests: XCTestCase {
         var ended = activity(session, completed: true); ended.setCodexOrigin(.init(embedded: true, ignored: false))
         model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [])
         XCTAssertTrue(model.canOpen(ended), "A missing host must report a visible error")
-        model.navigationErrorDuration = 0.05
+        // Long enough that a slow runner still sees the error before it clears.
+        model.navigationErrorDuration = 1
         model.onOpenActivity = { value in await CodexConversationOpener.open(value, home: root, recordedHost: nil) }
         model.open(ended)
         try await waitUntil { model.navigationError != nil }
