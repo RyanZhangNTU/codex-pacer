@@ -72,12 +72,9 @@ internal sealed class AppearanceBackdropSource : IBackdropSystemSource
 
 internal static class DesktopAppearance
 {
-    internal static readonly DependencyProperty SnapshotProperty = DependencyProperty.RegisterAttached("Snapshot", typeof(SystemAppearance), typeof(DesktopAppearance), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.Inherits));
     public static readonly DependencyProperty HighContrastProperty = DependencyProperty.RegisterAttached("HighContrast", typeof(bool), typeof(DesktopAppearance), new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.Inherits));
     public static bool GetHighContrast(DependencyObject value) => (bool)value.GetValue(HighContrastProperty);
     public static void SetHighContrast(DependencyObject value, bool enabled) => value.SetValue(HighContrastProperty, enabled);
-    internal static SystemAppearance? GetSnapshot(DependencyObject value) => value.GetValue(SnapshotProperty) as SystemAppearance;
-    internal static void Apply(DependencyObject value, SystemAppearance snapshot)
-    { value.SetValue(SnapshotProperty, snapshot); SetHighContrast(value, snapshot.HighContrast); }
+    internal static void Apply(DependencyObject value, SystemAppearance snapshot) => SetHighContrast(value, snapshot.HighContrast);
     internal static SolidColorBrush Ink(Color value) { var brush = new SolidColorBrush(value); brush.Freeze(); return brush; }
 }

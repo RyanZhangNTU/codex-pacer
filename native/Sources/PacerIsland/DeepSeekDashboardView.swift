@@ -34,9 +34,9 @@ struct DeepSeekDayDial: View {
             centre
         }
         .frame(width: size, height: size)
-        .help(help)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(help)
     }
 
     @ViewBuilder private var centre: some View {
@@ -153,7 +153,7 @@ struct DeepSeekPeakChip: View {
             .foregroundStyle(PacerPalette.attention)
             .padding(.horizontal, compact ? 5 : 8).frame(height: compact ? 15 : 20)
             .background(PacerPalette.attention.opacity(0.14), in: Capsule())
-            .help(L10n.text("deepseek.peak_hours_help"))
+            .accessibilityHint(L10n.text("deepseek.peak_hours_help"))
         }
     }
 }
@@ -232,7 +232,7 @@ struct DeepSeekBudgetDial: View {
             Text(reading.countdown).font(.system(size: max(8.5, 9 * scale), weight: .medium)).monospacedDigit()
                 .foregroundStyle(PacerPalette.tertiary).lineLimit(1).minimumScaleFactor(0.8)
         }
-        .help([reading.label, L10n.text("deepseek.resets_in", reading.countdown), reading.projection?.text].compactMap { $0 }.joined(separator: "\n"))
+        .accessibilityHint([reading.label, L10n.text("deepseek.resets_in", reading.countdown), reading.projection?.text].compactMap { $0 }.joined(separator: "\n"))
     }
 }
 
@@ -365,7 +365,7 @@ struct DeepSeekSoloDashboard: View {
             Text(model.deepseekSoloPresentation.todayLabel).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
             Text(model.deepseekSoloPresentation.todayText).font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(PacerPalette.primary).monospacedDigit()
-                .help(model.deepseekSoloPresentation.todayHelp)
+                .accessibilityHint(model.deepseekSoloPresentation.todayHelp)
         }
     }
 }
@@ -395,7 +395,7 @@ struct DeepSeekSpeedRow: View {
                 Text(value.rateText).font(.system(size: 11, weight: .medium)).monospacedDigit()
                     .foregroundStyle(value.spiking ? PacerPalette.danger : PacerPalette.secondary).fixedSize()
             }
-            .help(value.help).accessibilityElement(children: .ignore).accessibilityLabel(value.accessibilityLabel)
+            .accessibilityElement(children: .ignore).accessibilityLabel(value.accessibilityLabel).accessibilityHint(value.help)
         }
     }
     private func draw(_ value: DeepSeekSoloPresentation.Speed, in context: inout GraphicsContext, size: CGSize) {
@@ -519,7 +519,7 @@ struct DeepSeekWhereItWent: View {
                 HStack(spacing: 2) {
                     ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                         segment(part).frame(width: max(4, available * CGFloat(part.fraction)))
-                            .help(part.help)
+                            .accessibilityHint(part.help)
                     }
                 }
             }.frame(height: 10)
@@ -554,10 +554,11 @@ struct DeepSeekWhereItWent: View {
                     Text(part.amountText).foregroundStyle(PacerPalette.primary)
                     if part.elsewhere {
                         // A popover would leave the panel and collapse it, so the
-                        // explanation is a tooltip and the mark opens the usage page.
+                        // mark opens the usage page; the user guide explains what
+                        // "not on this Mac" covers.
                         Button { NSWorkspace.shared.open(IslandModel.deepseekUsageURL) } label: { Image(systemName: "info.circle") }
                             .buttonStyle(.plain).foregroundStyle(PacerPalette.tertiary)
-                            .help(L10n.text("deepseek.elsewhere_help") + "\n" + L10n.text("deepseek.usage_link"))
+                            .accessibilityHint(L10n.text("deepseek.elsewhere_help"))
                             .accessibilityLabel(L10n.text("deepseek.usage_link"))
                     }
                 }
@@ -637,7 +638,7 @@ struct DeepSeekWeekChart: View {
             Spacer(minLength: 0)
             if over >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(PacerPalette.danger.opacity(day.today ? 0.95 : 0.6)).frame(height: over) }
             if within >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(AgentProvider.deepseek.tint.opacity(day.today ? 1 : 0.5)).frame(height: within) }
-        }.frame(width: 22, height: Self.height).frame(maxWidth: .infinity).contentShape(Rectangle()).help(day.help)
+        }.frame(width: 22, height: Self.height).frame(maxWidth: .infinity).contentShape(Rectangle()).accessibilityHint(day.help)
     }
 }
 

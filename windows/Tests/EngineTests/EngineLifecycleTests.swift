@@ -58,13 +58,13 @@ final class EngineLifecycleTests: XCTestCase {
             quotaServices: .init(makeClient: { _, _ in await clients.make() }, history: nil), output: { frames.append($0) })
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
         let first = clients.first, second = clients.second
-        for _ in 0..<400 { if first.entered.isFinished { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { first.entered.isFinished }
         XCTAssertTrue(first.entered.isFinished)
         await runtime.prepareForSleep()
         XCTAssertTrue(first.closing.isFinished)
         XCTAssertTrue(frames.snapshot?.quota.isEmpty == true)
         await runtime.resumeAfterSleep()
-        for _ in 0..<400 { if frames.snapshot?.quota.first?.capturedAt == date.timeIntervalSince1970 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { frames.snapshot?.quota.first?.capturedAt == date.timeIntervalSince1970 }
         XCTAssertTrue(second.entered.isFinished)
         XCTAssertEqual(frames.snapshot?.quota.first?.capturedAt, date.timeIntervalSince1970)
         let sequence = frames.snapshot?.sequence

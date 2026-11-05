@@ -1,8 +1,8 @@
 # Windows 每用户安装
 
-Windows CI 保留便携 ZIP（windows-app-x64-unsigned），并提供未签名安装器（windows-installer-x64-unsigned）。这些是 develop 的测试产物，不是 GitHub Release。
+Windows CI 为 x64 和 ARM64 各生成未签名安装器（windows-installer-ARCH-unsigned）和便携 ZIP（windows-app-ARCH-unsigned）。[发布流程](releasing.md)从最终提交的 Platforms 运行取得安装器，与 Mac DMG 一起发布到同一个 GitHub Release。便携 ZIP 只用于开发验证：解压整个包后运行 CodexPacer.exe，并保留同目录的 Engine、Maintenance、资源和运行库。
 
-安装器使用 Inno Setup，默认安装到 %LOCALAPPDATA%\Programs\Codex Pacer。注册项和快捷方式属于当前用户，不申请管理员权限。这由 [PrivilegesRequired=lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm) 指定。
+安装器使用 Inno Setup，默认安装到 %LOCALAPPDATA%\Programs\Codex Pacer。注册项和快捷方式属于当前用户，不申请管理员权限。这由 [PrivilegesRequired=lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm) 指定。应用和安装器需要 Windows 10 2004（内部版本 19041）或更新版本。安装器暂未做代码签名：首次运行若 SmartScreen 提示“Windows 已保护你的电脑”，点“更多信息 → 仍要运行”。
 
 安装器按 Windows 显示语言自动使用简体中文或英文；其他语言的系统会先弹出选择框。中文消息来自 Inno Setup 项目的非官方翻译，固定在 `windows/ThirdParty/InnoSetup`（含许可证和来源哈希），打包前会校验。安装完成页提供“创建桌面快捷方式”“添加到开始菜单”和“运行 Codex Pacer”，默认全部勾选，点“完成”后执行；取消勾选只是不新建，不删除已有的快捷方式。应用内更新静默运行，不显示这些选项：只刷新本安装已有的快捷方式，不补回已删除的，并由更新流程自行重新打开应用。静默的全新安装按默认创建两个快捷方式。
 
@@ -40,6 +40,10 @@ Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 
 
 偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；正常清理后，配置不再引用这些脚本。
 
+## 演示数据
+
+需要演示或截图时，先退出 Pacer，再从安装目录运行 `CodexPacer.exe --demo`：它只显示示例数据，不读取真实任务，也不写入正式偏好。所有副本共用同一个单实例锁，Pacer 仍在运行时只会把已有窗口调到前面。不要分享真实任务、账户、凭据或原始引擎通信内容。
+
 ## 开发验证
 
 编译器固定为 Inno Setup 6.7.4。脚本校验官方安装包的 SHA-256 和发布者签名，以便携方式放在工作树的 output 下，不创建系统安装登记。PACER_INNO_ROOT 可指向已验证的便携工具目录。
@@ -52,8 +56,8 @@ Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 
 
 生命周期测试编译独立 QA 标识的安装器，使用中文路径、独立启动项、开始菜单目录、桌面快捷方式名称和合成 Claude 配置。它验证安装、默认快捷方式、损坏修复（静默修复保持快捷方式选择）、文件占用失败、运行中覆盖安装、合成偏好与已读文件保留、启动项、卸载清理和离线 demo。无效 Claude JSON 场景覆盖静默中止、交互取消、重复重试和明确继续卸载，并检查原始字节及日志隐私；交互选择通过仅限 QA 包的参数调用同一维护入口。测试后卸载并清理测试目录。截图只包含 demo 数据。
 
-使用屏幕前，测试确认没有原型或展示测试进程占用桌面；占用时每分钟检查一次，最多等 30 分钟。测试只关闭自己安装位置的应用。可选 ProtectedProcessId 参数只检查指定进程仍存在，不向它发送消息。
+使用屏幕前，测试等待其他展示或背景测试进程退出；每分钟检查一次，最多等 30 分钟。测试只关闭自己安装位置的应用。可选 ProtectedProcessId 参数只检查指定进程仍存在，不向它发送消息。
 
 本机 Codex 进程树的 HKCU 被隔离；树内注册表测试不能证明真实系统生效。真实 HKCU 的登记、启动项、通知和卸载检查需在进程树外的当前交互用户任务中补跑，CI 安装生命周期测试也必须通过。文件系统检查仍是实际文件系统。
 
-这些检查不代替重新登录、干净系统、其他 Windows 设备或 ARM64 的验收。以 coverage 中记录的实机范围为准。
+这些检查不代替重新登录、干净系统、其他 Windows 设备或 ARM64 设备上的实机验证；ARM64 CI 只构建和打包。

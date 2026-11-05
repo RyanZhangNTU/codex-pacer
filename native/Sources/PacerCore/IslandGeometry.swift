@@ -86,4 +86,83 @@ public enum IslandGeometry {
         let y = position.isBottom ? visible.minY + margin : visible.maxY - margin - height
         return windowFrame(CGRect(x: x, y: y, width: width, height: height), anchor: position.anchor)
     }
+
+    // MARK: Free Move
+
+    /// A dragged bar snaps to an edge it comes within 16 points of and keeps
+    /// it within 24 points, so small reversals and corner jitter keep the preview.
+    public static let snapEntry: CGFloat = 16, snapHold: CGFloat = 24
+
+    public static func snapEdge(visible: CGRect, bar: CGRect, previous: IslandPlacement.Edge) -> IslandPlacement.Edge {
+        let distances: [(edge: IslandPlacement.Edge, distance: CGFloat)] = [
+            (.left, max(0, bar.minX - visible.minX)), (.right, max(0, visible.maxX - bar.maxX)),
+            (.top, max(0, visible.maxY - bar.maxY)), (.bottom, max(0, bar.minY - visible.minY))
+        ]
+        guard let nearest = distances.min(by: { $0.distance < $1.distance }) else { return .free }
+        if previous != .free, let held = distances.first(where: { $0.edge == previous })?.distance,
+           held <= snapHold, nearest.distance > snapEntry || held <= nearest.distance + 4 { return previous }
+        return nearest.distance <= snapEntry ? nearest.edge : .free
+    }
+
+    public static func placement(edge: IslandPlacement.Edge, visible: CGRect, bar: CGRect) -> IslandPlacement {
+        func fraction(_ offset: CGFloat, _ length: CGFloat) -> Double { length > 0 ? Double(min(1, max(0, offset / length))) : 0.5 }
+        return IslandPlacement(edge: edge, x: fraction(bar.midX - visible.minX, visible.width),
+            y: fraction(visible.maxY - bar.midY, visible.height))
+    }
+
+    /// Keeps a frame inside the visible frame, shrinking it only when it is larger.
+    public static func clamp(_ frame: CGRect, to visible: CGRect) -> CGRect {
+        let width = min(visible.width, frame.width), height = min(visible.height, frame.height)
+        return CGRect(x: min(max(frame.minX, visible.minX), visible.maxX - width),
+            y: min(max(frame.minY, visible.minY), visible.maxY - height), width: width, height: height)
+    }
+
+    public static func collapsedFrame(_ placement: IslandPlacement, visible: CGRect, size: CGSize) -> CGRect {
+        let width = min(size.width, visible.width), height = min(size.height, visible.height)
+        let center = CGPoint(x: visible.minX + CGFloat(placement.x) * visible.width,
+            y: visible.maxY - CGFloat(placement.y) * visible.height)
+        var bar = clamp(CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height), to: visible)
+        switch placement.edge {
+        case .left: bar.origin.x = visible.minX
+        case .right: bar.origin.x = visible.maxX - width
+        case .top: bar.origin.y = visible.maxY - height
+        case .bottom: bar.origin.y = visible.minY
+        case .free: break
+        }
+        return bar
+    }
+
+    public struct Arrangement: Equatable, Sendable {
+        public var frame: CGRect
+        /// The same for the closed and the open island, so it opens in place.
+        public var anchor: Anchor
+        public var opensUp: Bool
+    }
+
+    /// The island at a placement. It opens toward the room it has: up from a
+    /// bottom dock or a low bar, down from a top dock, inward from a side, and
+    /// beside a free bar that is too close to a side to open around its center.
+    /// A strip's panel sits beside it (`contentHeight` is the panel's height);
+    /// a bar's panel sits below or above it (`contentHeight` excludes the bar).
+    public static func arrange(_ placement: IslandPlacement, visible: CGRect, barSize: CGSize, expandedWidth: CGFloat,
+                               contentHeight: CGFloat, expanded: Bool) -> Arrangement {
+        let bar = collapsedFrame(placement, visible: visible, size: barSize)
+        let content = contentHeight.isFinite ? max(0, contentHeight) : 0
+        let below = bar.maxY - visible.minY, above = visible.maxY - bar.minY
+        let full = placement.vertical ? max(bar.height, content) : bar.height + content
+        let up = placement.edge == .bottom || (placement.edge != .top && below < full && above > below)
+        // A bar placed mid-screen can have too little room on both sides; the
+        // open panel then slides inward to fit the visible area, not clipped.
+        let height = min(full, visible.height)
+        let minY = min(max(up ? bar.minY : bar.maxY - height, visible.minY), visible.maxY - height)
+        var width = min(expandedWidth.isFinite ? max(bar.width, expandedWidth) : bar.width, visible.width)
+        let left = placement.edge == .left || (!placement.vertical && bar.midX - width / 2 < visible.minX)
+        let right = placement.edge == .right || (!placement.vertical && bar.midX + width / 2 > visible.maxX)
+        if left { width = min(width, visible.maxX - bar.minX) }
+        if right { width = min(width, bar.maxX - visible.minX) }
+        let panel = CGRect(x: left ? bar.minX : right ? bar.maxX - width : bar.midX - width / 2,
+            y: minY, width: width, height: height)
+        let anchor = Anchor(horizontal: left ? .left : right ? .right : .center, vertical: up ? .bottom : .top)
+        return Arrangement(frame: windowFrame(expanded ? panel : bar, anchor: anchor), anchor: anchor, opensUp: up)
+    }
 }

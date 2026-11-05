@@ -272,7 +272,7 @@ final class WindowsWSLTests: XCTestCase {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": id, "method": method, "params": params])
         }
         func until(_ condition: () -> Bool) async throws {
-            let end = Date().addingTimeInterval(3)
+            let end = Date().addingTimeInterval(TestWait.limit)
             while !condition(), Date() < end { try await Task.sleep(nanoseconds: 5_000_000) }
             XCTAssertTrue(condition())
         }

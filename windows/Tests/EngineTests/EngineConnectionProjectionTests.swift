@@ -47,6 +47,37 @@ final class EngineConnectionProjectionTests: XCTestCase {
         XCTAssertTrue(brokenTransport.hosts.allSatisfy { $0.modules.last?.state == "retrying" && $0.modules.last?.retrySetup == false },
             "Both transports report the broken collector before a cached hook-setup failure")
     }
+    func testOnlyAFailedReachableSSHStreamRaisesTheSSHReminder() {
+        var failed = RuntimeStreamStatus(); failed.sourceAvailable = true
+        var waiting = failed; waiting.waitingForSession = true
+        var offline = failed; offline.remoteHostOnline = false
+        var absent = RuntimeStreamStatus(); absent.sourceAvailable = false
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [["local": status(0)], [ssh.id: failed]]))
+        XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[ssh.id: status(2)], ["local": failed, profile.id: failed]]),
+            "A connected SSH stream, a local stream or a WSL source is not an SSH problem")
+        for quiet in [waiting, offline, absent] { XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[ssh.id: quiet]])) }
+        XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[:], [:]]))
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [[:]], unavailable: [ssh.id]), "An exited SSH helper leaves only its failure record")
+        XCTAssertFalse(ConnectionSource.hasSSHFailure(in: [[:]], unavailable: [profile.id]), "A failed WSL source is not an SSH problem")
+    }
+    func testTheSSHReminderReadsOnlySourcesMonitoredAtPublication() {
+        var failed = RuntimeStreamStatus(); failed.sourceAvailable = true
+        let dropped = ConnectionSource.sshPrefix + "dropped"
+        var codexHosts: Set<String> = [ssh.id], claudeHosts: Set<String> = [ssh.id]
+        func raised(_ codex: [String: RuntimeStreamStatus] = [:], unavailable: [String] = [], claude: [String: RuntimeStreamStatus] = [:]) -> Bool {
+            EngineSSHReminder.raised(codex: codex, codexUnavailable: unavailable, claude: claude) { id, provider in
+                (provider == .codex ? codexHosts : claudeHosts).contains(id)
+            }
+        }
+        XCTAssertTrue(raised(unavailable: [ssh.id])); XCTAssertTrue(raised([ssh.id: failed])); XCTAssertTrue(raised(claude: [ssh.id: failed]))
+        XCTAssertFalse(raised([dropped: failed], unavailable: [dropped], claude: [dropped: failed]),
+            "A host discovery dropped cannot keep the reminder while an older collector snapshot still names it")
+        claudeHosts = []
+        XCTAssertFalse(raised(claude: [ssh.id: failed]), "Each provider's failures are checked against that provider's monitored hosts")
+        XCTAssertTrue(raised(unavailable: [ssh.id]))
+        codexHosts = []
+        XCTAssertFalse(raised([ssh.id: failed], unavailable: [ssh.id], claude: [ssh.id: failed]))
+    }
     func testVersionSetupAndProviderAbsenceCannotLookLikeAnActiveClaudeSession() throws {
         let profile = profile, id = profile.id
         let installing = EngineClaudeRemoteSetup(sourceID: id, context: UUID().uuidString, configured: false, inFlight: true, canRetry: false, message: nil, retryAt: nil)

@@ -6,13 +6,17 @@ struct QuotaWindowView: View {
     let accent: Color
     let secondary: Color
     var referenceColor: Color = .white
+    /// Read after the window's own description, such as where the quota came from.
+    var note: String?
 
     init(window: QuotaWindow, now: Date, allowPace: Bool, accent: Color, secondary: Color, referenceColor: Color = .white) {
         self.init(reading: .init(window: window, allowPace: allowPace, now: now), accent: accent,
             secondary: secondary, referenceColor: referenceColor)
     }
-    init(reading: QuotaDashboardPresentation.LegacyWindow, accent: Color, secondary: Color, referenceColor: Color = .white) {
+    init(reading: QuotaDashboardPresentation.LegacyWindow, accent: Color, secondary: Color, referenceColor: Color = .white,
+         note: String? = nil) {
         self.reading = reading; self.accent = accent; self.secondary = secondary; self.referenceColor = referenceColor
+        self.note = note
     }
 
     var body: some View {
@@ -32,11 +36,12 @@ struct QuotaWindowView: View {
             }
             quotaTrack
             HStack(spacing: 8) {
-                Text(reading.countdown).help(reading.resetDate)
+                Text(reading.countdown)
                 Spacer(minLength: 4)
                 Text(reading.paceText).foregroundStyle(reading.pacePercent.map { $0 < 85 ? Color.orange : $0 > 115 ? accent : secondary } ?? secondary)
             }.font(.system(size: 11)).foregroundStyle(secondary).monospacedDigit()
         }.accessibilityElement(children: .combine)
+        .accessibilityHint([reading.resetDate, L10n.text("quota.track_help"), note].compactMap { $0 }.joined(separator: " "))
     }
     private var quotaTrack: some View {
         GeometryReader { geometry in
@@ -51,7 +56,6 @@ struct QuotaWindowView: View {
                 }
             }
         }.frame(height: 6).padding(.vertical, 3)
-        .help(L10n.text("quota.track_help"))
         .accessibilityHidden(true)
     }
 }

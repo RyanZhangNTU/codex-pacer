@@ -17,6 +17,7 @@
     <Compile Include="../../Desktop/WindowsPlatformPolicy.cs" Link="WindowsPlatformPolicy.cs"/>
     <Compile Include="../../Desktop/NotificationActions.cs" Link="NotificationActions.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
+    <Compile Include="../../Desktop/EngineTimeZone.cs" Link="EngineTimeZone.cs"/>
     <Compile Include="../../Desktop/OwnedJob.cs" Link="OwnedJob.cs"/>
     <Content Include="../../Desktop/bin/$(Configuration)/net10.0-windows/Engine/**/*" Link="Engine/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
     <Content Include="../../Desktop/Assets/Pacer.ico" Link="Assets/Pacer.ico" CopyToOutputDirectory="PreserveNewest"/>

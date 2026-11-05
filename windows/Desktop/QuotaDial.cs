@@ -265,11 +265,7 @@ internal sealed class QuotaCell : StackPanel
         if (status != null) Children.Add(status);
         string details = string.Join("\n\n", new[] { provider != "deepseek" && dial.Split ? dashboard?.FiveHour.SplitHelp : null,
             provider != "deepseek" ? dashboard?.Weekly.SplitHelp : null, provider != "deepseek" ? dashboard?.Weekly.SourceText : null, help }.Where(value => !string.IsNullOrWhiteSpace(value)));
-        if (!string.IsNullOrWhiteSpace(details))
-        {
-            ToolTip = details;
-            AutomationProperties.SetHelpText(this, details);
-        }
+        if (!string.IsNullOrWhiteSpace(details)) AutomationProperties.SetHelpText(this, details);
         AutomationProperties.SetName(this, dial.AccessibleName);
     }
 }

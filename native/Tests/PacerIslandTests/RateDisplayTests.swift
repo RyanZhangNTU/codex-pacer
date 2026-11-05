@@ -26,7 +26,7 @@ final class RateDisplayTests: XCTestCase {
         let stale = expectation(description: "retained rate becomes stale without polling")
         model.onStatusChange = { if !model.rateIsFresh { stale.fulfill() } }
         // Deliberately never call start(): no quota, file, SSH or periodic-clock work.
-        await fulfillment(of: [stale], timeout: 2)
+        await fulfillment(of: [stale], timeout: TestWait.limit)
         XCTAssertEqual(model.rate, 10, "Freshness expiry must retain the last measured speed")
         XCTAssertFalse(model.rateIsFresh)
         XCTAssertEqual(model.running.count, 1, "Freshness expiry must not change task lifecycle")

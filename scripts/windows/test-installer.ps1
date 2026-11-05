@@ -113,9 +113,9 @@ function Set-PacerApproval([byte]$State) {
 }
 function Wait-PacerScreen {
     for ($taskMinute = 0; $taskMinute -lt 30; $taskMinute++) {
-        $taskBusy = @(Get-Process | Where-Object { $_.ProcessName -match 'BackdropPrototype|route.?b|Pacer\.PresentationTests' })
+        $taskBusy = @(Get-Process | Where-Object { $_.ProcessName -match '^Pacer\.(PresentationTests|BackdropTests)$' })
         if ($taskBusy.Count -eq 0) { return }
-        Write-Host 'Another prototype or presentation test is using the desktop; waiting one minute.'
+        Write-Host 'Another presentation or backdrop test is using the desktop; waiting one minute.'
         Start-Sleep -Seconds 60
     }
     throw 'The desktop remained in use for thirty minutes.'

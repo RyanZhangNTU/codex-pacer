@@ -301,7 +301,7 @@ final class ProviderDisplayTests: XCTestCase {
                 processed.fulfill()
             }
             model.open(completed)
-            await fulfillment(of: [dispatched, processed], timeout: 2)
+            await fulfillment(of: [dispatched, processed], timeout: TestWait.limit)
             XCTAssertEqual(model.activities.contains { $0.id == completed.id && $0.turnID == completed.turnID }, !acknowledges)
             XCTAssertEqual(model.isUnreadCompletion(completed), !acknowledges, "Only the actual conversation-open result acknowledges the chat")
             XCTAssertEqual(model.pendingCompletions.map(\.id), acknowledges ? [] : [completed.id])
@@ -365,7 +365,7 @@ final class ProviderDisplayTests: XCTestCase {
                 let model = IslandModel(defaults: defaults,
                     installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false), claudeQuotaReads: reads)
                 model.selectProvider(.claude); model.retryQuotaConnection()
-                await fulfillment(of: [started], timeout: 2)
+                await fulfillment(of: [started], timeout: TestWait.limit)
                 // This waiter captures the actual old owned task before Save replaces it.
                 let oldReadFinished = Task { await model.waitForClaudeQuotaRefresh() }
                 await Task.yield()

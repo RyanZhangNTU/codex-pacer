@@ -50,7 +50,7 @@ final class WindowsClaudeAccountBindingTests: XCTestCase {
             WindowsEnvironment.replacing("PACER_CLAUDE_TEST_TARGET", with: WindowsCodexExecutableDiscovery.path(home), in: ProcessInfo.processInfo.environment))
         process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
         try process.run()
-        for _ in 0..<500 where process.isRunning { Thread.sleep(forTimeInterval: 0.01) }
+        TestWait.whileRunning(process)
         if process.isRunning { process.terminate(); XCTFail("The private junction fixture exceeded its deadline"); return }
         XCTAssertEqual(process.terminationStatus, 0)
         XCTAssertTrue(WindowsClaudeAccountBinding.sameDirectory(alias, home))

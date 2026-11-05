@@ -23,7 +23,7 @@ internal static class GuidePageChecks
         var ui = UiText.For(language == "zh-Hans"); await using var engine = new EngineClient();
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
         await PresentationWait.UntilAsync(() => engine.LatestSnapshot != null, "Guide samples require the first acknowledged demo snapshot");
-        Task<GuideCatalog> Query(string? seen, bool welcome = false) => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.2.0", seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
+        Task<GuideCatalog> Query(string? seen, bool welcome = false) => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.2.4", seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
         var catalog = await Query(null, true); int configured = 0, saved = 0; bool reject = false;
         var session = new PreferencesSession(new(), async value => { configured++; await engine.SendAsync("configure", value); }, _ => { saved++; if (!reject) return true; reject = false; return false; });
         var startup = new Startup(); var links = new List<Uri>(); var settingsActions = new List<string>(); int welcomeActions = 0;
@@ -38,9 +38,16 @@ internal static class GuidePageChecks
             var highlights = Find<ScrollViewer>(window, "guide.highlights");
             var highlightsPeer = UIElementAutomationPeer.CreatePeerForElement(highlights);
             Check(highlightsPeer.GetName() == catalog.Steps[0], "The welcome content UIA name identifies the first step");
-            Check(Descendants(body).OfType<ActivityBadge>().Count() == 4 && Descendants(body).OfType<CompactQuotaGlyph>().Any()
-                && Descendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
+            Check(SelfAndDescendants(body).OfType<ActivityBadge>().Count() == 4 && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
+                && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
             Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
+            Check(Has(window, "welcome.gesture.drag") && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any()
+                && SelfAndDescendants(body).OfType<TextBlock>().Any(text => text.Text == ui.Text("welcome.gesture.snap")),
+                "The first welcome step teaches dragging and edge snapping beside an illustration");
+            var gestureLines = new[] { "welcome.gesture.hover", "welcome.gesture.leave", "welcome.gesture.drag" }
+                .Select(id => (FrameworkElement)SelfAndDescendants(body).OfType<FrameworkElement>().First(item => AutomationProperties.GetAutomationId(item) == id)).ToArray();
+            Check(gestureLines.All(line => line is StackPanel panel && panel.Children[0] is TextBlock first && first.Text.Contains(" → ")),
+                "All three gestures share one action → result style");
             Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
             Space(Find<Button>(window, "welcome.next")); await Pump();
@@ -80,6 +87,7 @@ internal static class GuidePageChecks
         {
             noteWindow.Show(); await Pump(); var scroll = Find<ScrollViewer>(noteWindow, "guide.highlights");
             Check(noteWindow.ClientContent.ActualHeight <= 640.1 && scroll.ScrollableHeight > 0, "Cumulative highlights obey the 640-point cap and scroll inside the fixed chrome");
+            Capture(noteWindow.ClientContent, Path.Combine(output, "pages-whats-new-" + language + (dark ? "-dark" : "-light") + ".png"));
             var done = Find<Button>(noteWindow, "guide.done"); double footerBefore = done.TranslatePoint(new Point(), noteWindow).Y;
             scroll.ScrollToEnd(); await Pump(); Check(Math.Abs(done.TranslatePoint(new Point(), noteWindow).Y - footerBefore) < .1, "Scrolling highlights cannot move the title or footer");
             int beforeHostControl = configured; Toggle(Find<CheckBox>(noteWindow, "guide.control.showAppButtons")); await Until(() => !session.Current.ShowAppButtons);
@@ -92,10 +100,11 @@ internal static class GuidePageChecks
             Check(embedded.IsChecked == false && session.Current.WhatsNewVersion == null, "The combined release switch disables both providers without marking the note seen");
             Toggle(embedded); await Until(() => session.Current.ShowEmbeddedCodexSessions && session.Current.ShowEmbeddedClaudeSessions && embedded.IsEnabled);
             Check(embedded.IsChecked == true, "The same control restores both independent provider choices");
-            Check(Descendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.settings.open_at_login_detail")),
+            Check(SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("windows.settings.open_at_login_detail")),
                 "The login highlight uses the existing Windows caption while retaining the shared release entry");
             Invoke(Find<Button>(noteWindow, "guide.releaseNotes")); await Pump(); Check(links.Last().AbsoluteUri == note.Links["releaseNotes"], "Release Notes reaches the public default-browser boundary");
-            Capture(noteWindow.ClientContent, Path.Combine(output, "pages-whats-new-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Check(note.Releases[0].Version == "4.2.4" && SelfAndDescendants(noteBody).OfType<TextBlock>().Any(text => text.Text == ui.Text("whats_new.free_move")),
+                "The upgrade window leads with the shared Free Move highlight");
             Escape(noteWindow); Check(!noteWindow.IsVisible, "Escape closes What's New");
         }
         finally { noteWindow.Close(); }
@@ -108,6 +117,7 @@ internal static class GuidePageChecks
             settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
             Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
             Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
+            Check(Has(settings, "help.move"), "Help explains dragging, snapping and reset");
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
             { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }
@@ -124,15 +134,15 @@ internal static class GuidePageChecks
             foreach (string action in new[] { "star", "feature", "bug", "donate" }) { var button = Find<Button>(settings, "guide.link." + action); Check(button.Focusable, "Support links remain keyboard reachable"); Invoke(button); await Pump(); }
             var copy = Find<Button>(settings, "support.copy"); Invoke(copy); await Pump();
             Check(copied == note.Links["repository"] && copy.Content!.ToString() == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
-            var support = Descendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.wechat")); await Pump();
-            Check(support.SupportCodePopup?.IsOpen == true && Descendants(support.SupportCodePopup.Child).OfType<Image>().Single().ActualWidth == 220, "The packaged WeChat QR code opens only on request");
+            var support = SelfAndDescendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.wechat")); await Pump();
+            Check(support.SupportCodePopup?.IsOpen == true && SelfAndDescendants(support.SupportCodePopup.Child).OfType<Image>().Single().ActualWidth == 220, "The packaged WeChat QR code opens only on request");
             var qrClose = Find<Button>(support.SupportCodePopup!.Child, "support.wechat.close"); Space(qrClose); await Pump();
             Check(support.SupportCodePopup.IsOpen == false && settings.IsVisible, "Keyboard closes the QR layer while preserving Settings");
             Invoke(Find<Button>(settings, "support.wechat")); await Pump(); Escape(Find<Button>(support.SupportCodePopup.Child, "support.wechat.close")); await Pump();
             Check(!support.SupportCodePopup.IsOpen && settings.IsVisible, "Escape belongs to the QR layer before the settings window");
             Check(saved == beforeReadOnly && JsonSerializer.Serialize(session.Current) == beforeBytes, "Help tabs, public links and Support never write any preferences");
             settings.CapturePreview(Path.Combine(output, "pages-support-" + language + (dark ? "-dark" : "-light") + ".png"));
-            Select(Find<RadioButton>(settings, "settings.pane.whatsNew")); await Until(() => Descendants(settings).OfType<GuideContent>().Any(value => Descendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
+            Select(Find<RadioButton>(settings, "settings.pane.whatsNew")); await Until(() => SelfAndDescendants(settings).OfType<GuideContent>().Any(value => SelfAndDescendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
             Check(session.Current.WhatsNewVersion == null, "Settings lists all release history without marking it seen");
             Check(links.Count == 7 && links.All(uri => uri.Scheme == "https"), "All seven requested public links dispatch once without page network access");
             Escape(settings); Check(!settings.IsVisible, "Escape closes the auxiliary settings pages");
@@ -146,7 +156,7 @@ internal static class GuidePageChecks
         foreach (string provider in new[] { "codex", "claude", "deepseek" })
         {
             var tab = Find<RadioButton>(window, "help.module." + provider); tab.ApplyTemplate();
-            var label = Descendants(tab).OfType<TextBlock>().SingleOrDefault();
+            var label = SelfAndDescendants(tab).OfType<TextBlock>().SingleOrDefault();
             Check(label != null && label.Text == AutomationProperties.GetName(tab), "Help provider names render as the segmented choice's own text");
             // The caller switches high contrast on and off; matching colors after each switch prove the label follows the theme live.
             Check(label!.Foreground is SolidColorBrush brush && brush.Color == expected && brush.Color.A == 255
@@ -165,10 +175,8 @@ internal static class GuidePageChecks
         value.UpdateLayout(); var bitmap = new RenderTargetBitmap((int)Math.Ceiling(value.ActualWidth), (int)Math.Ceiling(value.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(value);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using var stream = File.Create(file); encoder.Save(stream);
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { yield return root; for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child; }
-    private static bool Has(DependencyObject root, string id) => Descendants(root).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id);
-    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static bool Has(DependencyObject root, string id) => SelfAndDescendants(root).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id);
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => SelfAndDescendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();

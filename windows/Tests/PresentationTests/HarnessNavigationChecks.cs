@@ -49,7 +49,7 @@ internal static class HarnessNavigationChecks
                 "A completed Harness row must retain its native height and support keyboard activation");
             var peer = UIElementAutomationPeer.CreatePeerForElement(row);
             Check(peer.GetAutomationControlType() == AutomationControlType.Button && peer.GetChildren()?.Count is null or 0
-                && peer.GetName().Contains(value.Title) && ((string)row.ToolTip).Contains(ui.Text("common.open_chat")),
+                && peer.GetName().Contains(value.Title) && row.ToolTip == null && System.Windows.Automation.AutomationProperties.GetHelpText(row).Contains(ui.Text("common.open_chat")),
                 "The row must expose one named button and its original open help");
             island.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             Check(buttons.Visibility == Visibility.Collapsed && row.IsEnabled, "Hiding app buttons cannot disable task navigation");
@@ -110,7 +110,7 @@ internal static class HarnessNavigationChecks
             Check(!apps.Open("deepseek"), "Fresh revalidation must detect the missing installation");
             island.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             var missingRow = Descendants(island).OfType<TaskRow>().Single();
-            Check(!missingRow.IsEnabled && !missingRow.Focusable && (string)missingRow.ToolTip == ui.Text("activity.no_link") && buttons.Children.Count == 0,
+            Check(!missingRow.IsEnabled && !missingRow.Focusable && missingRow.ToolTip == null && System.Windows.Automation.AutomationProperties.GetHelpText(missingRow) == ui.Text("activity.no_link") && buttons.Children.Count == 0,
                 "A missing app must disable its row and remove the toolbar action on refresh");
             Hover(missingRow, true);
             Check(missingRow.HoverProgress == 0 && !missingRow.HasAnimatedProperties && opened.Count == 3,
@@ -130,8 +130,6 @@ internal static class HarnessNavigationChecks
             Check(!button.IsEnabled, "UI Automation may reject a retired disabled row without dispatching its old action");
         }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) { var child = VisualTreeHelper.GetChild(root, index); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Until(Func<bool> condition, string message, TimeSpan? timeout = null)
     {
         var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < (timeout ?? TimeSpan.FromSeconds(8))) await Task.Delay(20);

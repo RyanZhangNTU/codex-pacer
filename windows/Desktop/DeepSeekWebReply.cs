@@ -72,6 +72,4 @@ internal sealed class DeepSeekWebScripts
         Summary = data.RootElement.GetProperty("summaryScript").GetString() ?? throw new InvalidDataException();
         SignedIn = data.RootElement.GetProperty("signedInScript").GetString() ?? throw new InvalidDataException();
     }
-    internal static bool IsPlatform(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-        uri.Scheme == Uri.UriSchemeHttps && uri.IdnHost == Origin.IdnHost && uri.IsDefaultPort && uri.UserInfo.Length == 0;
 }

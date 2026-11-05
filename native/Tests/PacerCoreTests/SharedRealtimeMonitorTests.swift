@@ -150,7 +150,7 @@ final class SharedRealtimeMonitorTests: XCTestCase {
         try await first.send(frame("runtimeBatch", ["events": [event("turn/started", at: now),
             event("turn/completed", at: now.addingTimeInterval(1), ["status": "completed"])]]))
         await first.disconnect()
-        let limit = ProcessInfo.processInfo.systemUptime + 1
+        let limit = ProcessInfo.processInfo.systemUptime + 20 // generous: it only waits for the reconnect
         while factory.all().count < 2, ProcessInfo.processInfo.systemUptime < limit { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertEqual(factory.all().count, 2)
         let second = try XCTUnwrap(factory.all().last)

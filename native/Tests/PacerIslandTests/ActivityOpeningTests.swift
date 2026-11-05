@@ -86,7 +86,7 @@ final class ActivityOpeningTests: XCTestCase {
         let finished = expectation(description: "open attempted")
         model.onOpenActivity = { _ in finished.fulfill(); return .failed("Synthetic open failure") }
         model.open(activity)
-        await fulfillment(of: [finished], timeout: 2)
+        await fulfillment(of: [finished], timeout: TestWait.limit)
         await Task.yield()
         XCTAssertTrue(model.activities.contains { $0.id == activity.id })
         XCTAssertTrue(model.isUnreadCompletion(activity))
@@ -108,7 +108,7 @@ final class ActivityOpeningTests: XCTestCase {
         let finished = expectation(description: "open succeeded")
         model.onOpenActivity = { _ in finished.fulfill(); return .openedConversation }
         model.open(activity)
-        await fulfillment(of: [finished], timeout: 2)
+        await fulfillment(of: [finished], timeout: TestWait.limit)
         await Task.yield()
         XCTAssertFalse(model.activities.contains { $0.id == activity.id })
         XCTAssertFalse(model.isUnreadCompletion(activity))
@@ -127,13 +127,13 @@ final class ActivityOpeningTests: XCTestCase {
             return .openedConversation
         }
         model.open(old)
-        await fulfillment(of: [started], timeout: 2)
+        await fulfillment(of: [started], timeout: TestWait.limit)
         clock.now = clock.now.addingTimeInterval(31)
         model.setDemoStage(.thinking)
         model.setDemoStage(.completed)
         let latest = try XCTUnwrap(model.activities.first { $0.id == old.id })
         XCTAssertNotEqual(latest.phaseChangedAt, old.phaseChangedAt)
-        await fulfillment(of: [finish], timeout: 2)
+        await fulfillment(of: [finish], timeout: TestWait.limit)
         await Task.yield()
         XCTAssertTrue(model.activities.contains { $0.id == latest.id && $0.phaseChangedAt == latest.phaseChangedAt })
         XCTAssertTrue(model.isUnreadCompletion(latest))
@@ -149,7 +149,7 @@ final class ActivityOpeningTests: XCTestCase {
             finish.fulfill(); return .openedConversation
         }
         model.open(activity); model.open(activity)
-        await fulfillment(of: [finish], timeout: 2)
+        await fulfillment(of: [finish], timeout: TestWait.limit)
         XCTAssertEqual(launches, 1)
     }
 
@@ -171,7 +171,7 @@ final class ActivityOpeningTests: XCTestCase {
         let codexFound = expectation(description: "Codex app found")
         both.onLayoutChange = { codexFound.fulfill() }
         both.refreshDesktopApplications()
-        await fulfillment(of: [codexFound], timeout: 2)
+        await fulfillment(of: [codexFound], timeout: TestWait.limit)
         both.onLayoutChange = nil
         XCTAssertEqual(both.appButtonProviders, [.codex])
         var opened: [(AgentProvider, URL)] = []
@@ -181,7 +181,7 @@ final class ActivityOpeningTests: XCTestCase {
         }
         both.openDesktopApplication(.claude)
         both.openDesktopApplication(.codex)
-        await fulfillment(of: [launched], timeout: 2)
+        await fulfillment(of: [launched], timeout: TestWait.limit)
         XCTAssertEqual(opened.map(\.0), [.codex]); XCTAssertEqual(opened.first?.1, codexApp)
         XCTAssertNil(both.navigationError)
         defaults.set(false, forKey: IslandModel.showsAppButtonsKey)
@@ -197,7 +197,7 @@ final class ActivityOpeningTests: XCTestCase {
         let claudeFound = expectation(description: "Claude app found")
         claudeOnly.onLayoutChange = { claudeFound.fulfill() }
         claudeOnly.refreshDesktopApplications()
-        await fulfillment(of: [claudeFound], timeout: 2)
+        await fulfillment(of: [claudeFound], timeout: TestWait.limit)
         claudeOnly.onLayoutChange = nil
         XCTAssertEqual(claudeOnly.appButtonProviders, [.claude])
         XCTAssertNil(claudeOnly.desktopApplications[.codex])
@@ -211,7 +211,7 @@ final class ActivityOpeningTests: XCTestCase {
         let failed = expectation(description: "open attempted")
         demo.onOpenDesktopApplication = { _, _ in failed.fulfill(); return .failed("Synthetic open failure") }
         demo.openDesktopApplication(.claude)
-        await fulfillment(of: [failed], timeout: 2)
+        await fulfillment(of: [failed], timeout: TestWait.limit)
         await Task.yield()
         XCTAssertEqual(demo.navigationError, "Synthetic open failure")
     }

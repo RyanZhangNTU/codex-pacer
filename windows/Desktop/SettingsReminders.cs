@@ -68,7 +68,6 @@ internal sealed partial class SettingsWindow
         reminderQuotaRows = new StackPanel(); reminderWalletRows = new StackPanel();
         AddReminderRow(reminderQuotaRows, ReminderRow("fiveHour", ui.Text("warning.fiveHour"), null, ReminderSample(ReminderMark("fiveHour", "codex", false, "5h"))));
         AddReminderRow(reminderQuotaRows, ReminderRow("ssh", ui.Text("warning.ssh"), null, ReminderSample(new IconGlyph { Symbol = "network.slash", Width = 11, Height = 11, Ink = PacerPalette.Attention })));
-        reminderKinds["ssh"].ToolTip = ui.Text("windows.reminders.ssh_pending"); ToolTipService.SetShowOnDisabled(reminderKinds["ssh"], true);
         AddReminderRow(reminderQuotaRows, ReminderRow("quotaDelay", ui.Text("warning.quotaDelay"), null, ReminderSample(new IconGlyph { Symbol = "clock.arrow.circlepath", Width = 11, Height = 11, Ink = PacerPalette.Attention })));
         AddReminderRow(reminderWalletRows, ReminderRow("lowBalance", ui.Text("reminders.low_balance"), ui.Text("reminders.low_balance_detail"),
             ReminderSample(ReminderMark("lowBalance", "deepseek", false, "¥"), ReminderMark("exhausted", "deepseek", true, "¥")), ReminderAmount(true)));
@@ -163,7 +162,7 @@ internal sealed partial class SettingsWindow
         bool Module(string provider) => snapshot?.Modules?.FirstOrDefault(value => value.Provider == provider)?.Enabled
             ?? snapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == provider) ?? preferences.ProviderModes[provider] != "disabled";
         var warnings = NativeCompactBar.Shared.Read(preferences, ui.Language, NativeCompactBar.Providers(preferences, snapshot)).Components.FirstOrDefault(value => value.Id == "warnings");
-        foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null && pair.Key != "ssh"; }
+        foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
         reminderWalletRows!.Visibility = reminderFooter!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
         reminderGroupSeparator!.Visibility = reminderQuotaRows.Visibility == Visibility.Visible && reminderWalletRows.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;

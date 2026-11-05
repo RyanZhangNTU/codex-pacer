@@ -60,7 +60,7 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
             defer { probe.trigger = nil; window.orderOut(nil); window.contentView = nil; window.close() }
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
-            try await Task.sleep(nanoseconds: 50_000_000)
+            try await TestWait.until { probe.trigger != nil && probe.width > 0 }
             _ = try XCTUnwrap(probe.trigger, "The probe must capture the actual style button's action")
             XCTAssertFalse(state.expanded)
             XCTAssertGreaterThanOrEqual(probe.width, 359,
@@ -68,14 +68,12 @@ final class QuotaDetailsDisclosureTests: XCTestCase {
             let collapsedHeight = host.fittingSize.height
             XCTAssertTrue(probe.press())
             XCTAssertTrue(state.expanded, "Pressing the full-row button expands its bound disclosure")
-            try await Task.sleep(nanoseconds: 50_000_000)
-            host.layoutSubtreeIfNeeded()
+            try await TestWait.until { host.layoutSubtreeIfNeeded(); return host.fittingSize.height > collapsedHeight }
             XCTAssertGreaterThan(host.fittingSize.height, collapsedHeight, "The details become visible after expansion")
             XCTAssertGreaterThanOrEqual(probe.width, 359, "Expansion keeps the whole header clickable")
             XCTAssertTrue(probe.press())
             XCTAssertFalse(state.expanded, "Pressing the same full-row button again collapses it")
-            try await Task.sleep(nanoseconds: 50_000_000)
-            host.layoutSubtreeIfNeeded()
+            try await TestWait.until { host.layoutSubtreeIfNeeded(); return abs(host.fittingSize.height - collapsedHeight) <= 1 }
             XCTAssertEqual(host.fittingSize.height, collapsedHeight, accuracy: 1, "Collapsing hides the details again")
         }
     }

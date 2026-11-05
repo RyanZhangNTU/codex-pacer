@@ -46,14 +46,14 @@ public partial class IslandWindow
 {
     private readonly IDisplayTopologySource displays;
     internal IDisplayTopologySource DisplayTopology => displays;
-    internal DisplayResolution SelectedDisplay => DisplaySelection.Resolve(displays.Current, compactPreferences);
+    internal DisplayResolution SelectedDisplay => DisplaySelection.Resolve(displays.Current, displayedPlacement ?? compactPreferences);
     private IslandScreen.Context? currentDisplay;
     private bool displayRefreshPending, displayRefreshAgain, displayForce;
-    private void DisplayTopologyChanged() => QueueDisplayRefresh(force: true);
+    private void DisplayTopologyChanged() { CancelMove(); QueueDisplayRefresh(force: true); }
     private void RememberDisplay() { if (screenGeometry == null) currentDisplay = IslandScreen.Read(this); }
     private void QueueDisplayRefresh(bool force = false)
     {
-        if (presentationStopped || screenGeometry != null) return;
+        if (presentationStopped || screenGeometry != null || move?.Active == true) return;
         displayForce |= force;
         if (displayRefreshPending) { displayRefreshAgain = true; return; }
         displayRefreshPending = true;
@@ -61,7 +61,7 @@ public partial class IslandWindow
         {
             try
             {
-                if (presentationStopped || !Shell.IsLoaded) return;
+                if (presentationStopped || !Shell.IsLoaded || move?.Active == true) return;
                 bool requested = displayForce; displayForce = false;
                 var selected = SelectedDisplay.Display;
                 var actual = IslandScreen.Read(this);

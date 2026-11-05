@@ -32,7 +32,7 @@ internal static class ConversationNavigationChecks
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             var completed = Descendants(island).OfType<TaskRow>().First(row => State(row).Unread);
             string id = State(completed).Id;
-            Check(completed.IsEnabled && completed.Focusable && ((string)completed.ToolTip).Contains(ui.Text("common.open_chat"), StringComparison.Ordinal), "A provider row must expose its conversation action without changing geometry");
+            Check(completed.IsEnabled && completed.Focusable && completed.ToolTip == null && System.Windows.Automation.AutomationProperties.GetHelpText(completed).Contains(ui.Text("common.open_chat"), StringComparison.Ordinal), "A provider row must expose its conversation action without changing geometry");
             Check(Math.Abs(completed.ActualHeight - 54) < 0.01, "Conversation actions must preserve the native task row height");
             Invoke(completed); await Until(() => opened.Count == 1 && completed.IsEnabled, "A failed open must finish its single flight");
             await Until(() => engine.LatestSnapshot?.NavigationError != null, "The failed open must publish its shared error");
@@ -107,8 +107,6 @@ internal static class ConversationNavigationChecks
         try { ((IInvokeProvider)UIElementAutomationPeer.CreatePeerForElement(button).GetPattern(PatternInterface.Invoke)).Invoke(); }
         catch (System.Windows.Automation.ElementNotEnabledException) { }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
-    { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++) { var child = VisualTreeHelper.GetChild(parent, i); yield return child; foreach (var value in Descendants(child)) yield return value; } }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition, string message)
     { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(20); Check(condition(), message); await Pump(); }

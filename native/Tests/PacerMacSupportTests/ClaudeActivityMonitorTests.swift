@@ -46,10 +46,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         RemoteActivityTarget(id: "remote-ssh-discovered:" + alias, name: "Synthetic SSH", alias: alias, home: "~/.claude")
     }
     private func assertExited(_ pid: Int32) async throws {
-        for _ in 0..<100 {
-            if Darwin.kill(pid, 0) != 0 && errno == ESRCH { return }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
+        if try await TestWait.until({ Darwin.kill(pid, 0) != 0 && errno == ESRCH }) { return }
         XCTFail("The exact owned helper remained alive after stdin EOF")
         _ = Darwin.kill(pid, SIGKILL)
     }
@@ -72,7 +69,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         await monitor.start(home: fixture.home, remoteTargets: [host]) { _, statuses, _, _ in
             seen.once(statuses[host.id]?.sourceAvailable == false && statuses[host.id]?.watchingLogs == false, parked)
         }
-        await fulfillment(of: [parked], timeout: 10)
+        await fulfillment(of: [parked], timeout: TestWait.limit)
         let pid = try XCTUnwrap(Int32(String(decoding: Data(contentsOf: pidFile), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
         try await assertExited(pid)
         let statuses = await monitor.statuses()
@@ -104,7 +101,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         await monitor.start(home: fixture.home, remoteTargets: [host]) { _, statuses, requests, _ in
             if statuses[host.id]?.sourceAvailable == false { XCTAssertTrue(requests.isEmpty); parked.fulfill() }
         }
-        await fulfillment(of: [parked], timeout: 5)
+        await fulfillment(of: [parked], timeout: TestWait.limit)
         let values = await monitor.activities(), statuses = await monitor.statuses()
         XCTAssertEqual(values.first { $0.threadID == "running-session" }?.phase, .unknown)
         XCTAssertEqual(values.first { $0.threadID == "late-session" }?.phase, .unknown, "A later record in the parked batch cannot leave a running task")
@@ -140,7 +137,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         await monitor.start(home: fixture.home, remoteTargets: [healthy, missing]) { _, statuses, _, _ in
             seen.update(statuses[missing.id], parked: parked, recovered: recovered)
         }
-        await fulfillment(of: [parked], timeout: 5)
+        await fulfillment(of: [parked], timeout: TestWait.limit)
         func pids(_ alias: String) throws -> [Int32] { try String(contentsOf: fixture.root.appendingPathComponent(alias + ".pids")).split(separator: "\n").compactMap { Int32($0) } }
         let old = try XCTUnwrap(pids("missing").first); try await assertExited(old)
         try Data().write(to: fixture.root.appendingPathComponent("ready"))
@@ -148,7 +145,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         await monitor.refresh(remoteTargetID: "not-wanted")
         XCTAssertEqual(try pids("missing").count, 1, "Routine discovery retains the pause")
         await monitor.refresh(remoteTargetID: missing.id)
-        await fulfillment(of: [recovered], timeout: 5)
+        await fulfillment(of: [recovered], timeout: TestWait.limit)
         await monitor.refresh()
         XCTAssertEqual(try pids("missing").count, 2)
         XCTAssertEqual(try pids("healthy").count, 1, "Explicit refresh must preserve healthy source ownership")
@@ -219,7 +216,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         await monitor.start(home: fixture.home, remoteTargets: [destination]) { values, statuses, _, _ in
             observations.terminal(values, statuses: statuses, host: destination.id, completed: completed, eof: eof)
         }
-        await fulfillment(of: [completed, eof], timeout: 2, enforceOrder: true)
+        await fulfillment(of: [completed, eof], timeout: TestWait.limit, enforceOrder: true)
         let values = await monitor.activities(), statuses = await monitor.statuses()
         XCTAssertEqual(values.filter { $0.sourceHostID == destination.id }.map(\.phase), [.completed])
         XCTAssertFalse(statuses[destination.id]?.connected == true)

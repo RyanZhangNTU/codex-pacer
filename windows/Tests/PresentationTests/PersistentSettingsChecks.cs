@@ -53,10 +53,11 @@ internal static class PersistentSettingsChecks
             await Until(() => session.Current.ExpandedQuotaStyle == "classic" && Find<RadioButton>(first, "appearance.quota.classic").IsEnabled);
             Select(Find<RadioButton>(first, "appearance.mode.notch"));
             await Until(() => session.Current.DisplayMode == "notch" && Find<RadioButton>(first, "appearance.mode.notch").IsEnabled);
-            Select(Find<RadioButton>(first, "appearance.mode.custom"));
-            await Until(() => session.Current.DisplayMode == "floating" && Find<RadioButton>(first, "appearance.position.bottomRight").IsEnabled);
-            Select(Find<RadioButton>(first, "appearance.position.bottomRight"));
-            await Until(() => session.Current.Position == "bottomRight" && Find<RadioButton>(first, "appearance.position.bottomRight").IsEnabled);
+            Select(Find<RadioButton>(first, "appearance.mode.free"));
+            await Until(() => session.Current.DisplayMode == "floating" && Find<Button>(first, "appearance.position.reset").IsEnabled);
+            var placement = new IslandPlacement(IslandEdge.Bottom, .43, 1);
+            Check(await session.ChangeAsync(p => p with { IslandPlacement = placement }) == PreferencesApplyResult.Applied,
+                "A placement saves through the same session as settings");
             await first.NavigateAsync("general"); await Pump();
             byte[] saved = File.ReadAllBytes(file);
             const string damaged = "{synthetic damaged preferences";
@@ -86,7 +87,7 @@ internal static class PersistentSettingsChecks
                 && actual.GetProperty("languageChoice").GetString() == language && actual.GetProperty("renderMode").GetString() == "SoftwareOnly",
                 "Restored controls reflect the saved privacy, app-button and language choices");
             var restored = new PreferencesStore(file).Load();
-            Check(!restored.Unavailable && restored.Value.Position == "bottomRight" && restored.Value.HasChosenPosition && restored.Value.DisplayMode == "floating",
+            Check(!restored.Unavailable && restored.Value.IslandPlacement == placement && restored.Value.DisplayMode == "floating",
                 "Explicit positions survive a complete process restart");
             Console.WriteLine("PASS persistent settings " + scenario + ": real acknowledgement, two windows, disk rollback, application restart and synthetic capture");
         }
@@ -99,8 +100,6 @@ internal static class PersistentSettingsChecks
             Directory.Delete(root); CultureInfo.CurrentUICulture = previous;
         }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { var child = VisualTreeHelper.GetChild(root, i); yield return child; foreach (var item in Descendants(child)) yield return item; } }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
     private static void Toggle(CheckBox check) => ((IToggleProvider)new CheckBoxAutomationPeer(check).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();

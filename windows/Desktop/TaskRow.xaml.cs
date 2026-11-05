@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Automation.Peers;
 using System.Windows.Media;
@@ -25,7 +26,6 @@ public partial class TaskRow : Button
         FontFamily = PacerFonts.Interface;
         DataContext = new TaskRowState(value);
         Background = PacerPalette.Hover; IsEnabled = false;
-        ToolTipService.SetShowOnDisabled(this, true);
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
         MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
@@ -33,7 +33,7 @@ public partial class TaskRow : Button
         Loaded += (_, _) => ApplyAppearance();
     }
     internal void SetOpenAction(Action? action, string help, bool animate)
-    { open = action; IsEnabled = action != null; Focusable = IsEnabled; ToolTip = help; animations = animate; UpdateHover(); }
+    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); }
     internal void SetAnimations(bool value) { animations = value; if (!value) UpdateHover(); }
     internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()

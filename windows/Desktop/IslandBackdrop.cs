@@ -27,7 +27,6 @@ public partial class IslandWindow
         new(Environment.OSVersion.Version.Build, true, SystemParameters.HighContrast));
     internal bool GlassVisible => backdrop?.Glass == true;
     internal IntPtr BackdropWindowHandle => backdrop?.WindowHandle ?? IntPtr.Zero;
-    internal bool GlassSystemSupported => Environment.OSVersion.Version.Build >= 22621;
     private void InitializeBackdrop()
     {
         SourceInitialized += (_, _) =>
@@ -70,6 +69,7 @@ public partial class IslandWindow
     private IntPtr BackdropMessage(IntPtr hwnd, int message, IntPtr wparam, IntPtr lparam, ref bool handled)
     {
         if (message == 0x0021) { handled = true; return new IntPtr(3); }
+        if (message == 0x02E0) QueueMoveDpiRefresh();
         if (message is 0x02E0 or 0x007E or 0x0047) QueueDisplayRefresh();
         if (message is 0x007E or 0x031E) backdrop?.GraphicsChanged();
         if (message is 0x001A or 0x031A && appearance is SystemAppearanceSource source) source.Refresh();

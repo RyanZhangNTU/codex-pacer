@@ -42,7 +42,7 @@ final class ClaudeCloudOwnerTests: XCTestCase {
     private let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-cloud-missing-fixture")
     private let organization = "11111111-1111-4111-8111-111111111111"
     private func until(_ condition: () async -> Bool) async throws {
-        for _ in 0..<400 { if await condition() { return }; try await Task.sleep(nanoseconds: 5_000_000) }
+        if try await TestWait.until(condition) { return }
         XCTFail("The scoped cloud operation did not reach its bounded checkpoint"); throw URLError(.timedOut)
     }
     private func reply(_ key: String, organization: String? = nil) -> ClaudeWebSessionReply {

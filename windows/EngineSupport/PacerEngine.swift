@@ -88,6 +88,7 @@ public enum PacerEngine {
         let claudeReference = CommandLine.arguments.contains("--claude-web-fixture")
         guard !claudeReference || reference else { return }
         if reference { NSTimeZone.default = TimeZone(secondsFromGMT: 0)! }
+        else if let zone = EngineStartupTimeZone.parse(CommandLine.arguments) { NSTimeZone.default = zone }
         let clock: @Sendable () -> Date = { reference ? Date(timeIntervalSince1970: 1_800_000_000) : Date() }
         var notificationStore: EngineNotificationRegistry.Store? = demo || readOnly ? nil : .applicationDefault
         if let index = CommandLine.arguments.firstIndex(of: "--notification-qa") {
@@ -1481,7 +1482,7 @@ actor EngineRuntime {
                     await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
                         attention: value.attention, attentionThreads: value.attentionThreads, names: value.names,
                         performance: value.performance, status: value.localDesktopStatus, statuses: value.statuses,
-                        bindings: value.bindings), binding: binding)
+                        bindings: value.bindings, unavailable: value.unavailableSources), binding: binding)
                 }
         }
         // Local transport fixtures need no directory request. Production owns
@@ -1512,7 +1513,8 @@ actor EngineRuntime {
         desktopState = .init(context: state.context, activities: rows,
             attention: state.attention.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }, attentionThreads: state.attentionThreads,
             names: state.names, performance: state.performance, status: state.status,
-            statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings)
+            statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings,
+            unavailable: state.unavailable.filter { allowsRemoteSource($0, provider: .codex) })
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
         else {
@@ -1921,9 +1923,14 @@ actor EngineRuntime {
                 if snapshots[.claude] != nil { sourceTexts[.claude] = state.source?.label }
         }
         if snapshots[.codex] != nil { sourceTexts[.codex] = L10n.text("quota.source_codex") }
+        let codexSSH = enabled.contains(.codex) ? desktopState.flatMap { $0.context == lifecycle.version(.codex) ? $0 : nil } : nil
+        let sshIssue = !demo && monitorSSH && EngineSSHReminder.raised(codex: codexSSH?.remoteStatuses ?? [:],
+            codexUnavailable: codexSSH?.unavailable ?? [], claude: enabled.contains(.claude) ? claudeRemoteStatuses : [:]) {
+                allowsRemoteSource($0, provider: $1)
+            }
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
-            failed: failedProviders, wallet: wallet?.alert, now: date)
+            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
             sources: AgentProvider.allCases.filter { enabled.contains($0) }.map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))

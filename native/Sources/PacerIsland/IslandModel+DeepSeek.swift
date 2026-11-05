@@ -142,11 +142,6 @@ extension IslandModel {
         return deepseekWallet.alert(lowBalance: kinds.contains(.lowBalance), spike: kinds.contains(.spendSpike), budget: kinds.contains(.budget))
     }
 
-    /// The saved provider of a ring, `nil` for an empty ring, or unset.
-    func quotaRingChoice(_ slot: QuotaRingSlot) -> AgentProvider?? {
-        guard let value = defaults.string(forKey: slot.defaultsKey) else { return .none }
-        return .some(AgentProvider(rawValue: value))
-    }
     /// The providers in the collapsed rings, outer first. DeepSeek draws only with a budget.
     var compactRingProviders: [AgentProvider] {
         compactPresentation().rings.map(\.provider)
@@ -223,11 +218,6 @@ extension IslandModel {
         }
         guard let total = deepseekBalance?.total else { return "¥—" }
         return total < 10 ? String(format: "¥%.1f", total) : DeepSeekWallet.compactAmount(total)
-    }
-    /// "until 12:00" style text for the next peak or off-peak boundary.
-    var deepseekPriceChangeText: String {
-        guard let change = DeepSeekPricing.nextChange(after: now) else { return "—" }
-        return change.formatted(date: Calendar.current.isDate(change, inSameDayAs: now) ? .omitted : .abbreviated, time: .shortened)
     }
 
     func startDeepSeekActivity() {

@@ -15,7 +15,7 @@ final class MacChildProcessShutdownTests: XCTestCase {
             if String(decoding: data, as: UTF8.self).contains("ready") { ready.fulfill() }
         }, ended: {})
         defer { child.close(); child.terminateImmediately() }
-        await fulfillment(of: [ready], timeout: 3)
+        await fulfillment(of: [ready], timeout: TestWait.limit)
         let stalledReader = ShutdownSignal(), started = Date()
         child.close()
         await ShutdownDeadline().finish(readers: [stalledReader], children: [child])

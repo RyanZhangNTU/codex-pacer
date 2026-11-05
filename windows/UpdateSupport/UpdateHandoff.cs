@@ -14,8 +14,7 @@ internal sealed record UpdateInstallPlan(int SchemaVersion, int Parent, long Par
     Guid? TestScope, WindowsUpdatePackage Package, string SHA256, string Language = "en");
 // Written by the previous build's helper and read by the new app: fields are
 // only ever added, as optional values.
-internal sealed record UpdateInstallResult(int SchemaVersion, bool Success, string Build, string Notes, string? InstalledDisplayVersion = null,
-    bool Incremental = false);
+internal sealed record UpdateInstallResult(int SchemaVersion, bool Success, string Build, string Notes, bool Incremental = false);
 internal sealed record PreparedWindowsUpdate(string Helper, string Plan, WindowsInstallationIdentity Identity);
 internal sealed class UpdateInstallerStillRunning : Exception;
 
@@ -87,7 +86,6 @@ internal static class UpdateHandoff
         string package = Path.Combine(directory, UpdateFeedClient.InstallerName), log = Path.Combine(directory, UpdateSessions.InstallLog);
         FileStream? locked = null;
         bool installed = false;
-        string? displayVersion = null;
         try
         {
             bool success = await UpdateInstallFlow.Run(async () =>
@@ -120,10 +118,9 @@ internal static class UpdateHandoff
                 int code = process.ExitCode;
                 locked?.Dispose(); locked = null;
                 await Finished(directory, log, package);
-                displayVersion = InstalledDisplayVersion(identity);
                 return code;
             }, ok => { installed = ok; UpdateFiles.Write(Path.Combine(directory, "result.json"), JsonSerializer.SerializeToUtf8Bytes(
-                new UpdateInstallResult(1, ok, plan.Package.Build.ToString(), plan.Package.Notes, displayVersion, plan.Package.Incremental))); }, () =>
+                new UpdateInstallResult(1, ok, plan.Package.Build.ToString(), plan.Package.Notes, plan.Package.Incremental))); }, () =>
             {
                 var start = new ProcessStartInfo(identity.Executable) { UseShellExecute = false, WorkingDirectory = identity.Root };
                 start.ArgumentList.Add("--update-result"); start.ArgumentList.Add(session);
@@ -156,16 +153,6 @@ internal static class UpdateHandoff
         }
         try { UpdateSessions.PreserveLog(directory); } catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException) { }
         try { File.Delete(package); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
-    }
-    // What Windows lists under Installed apps after this update ran.
-    private static string? InstalledDisplayVersion(WindowsInstallationIdentity identity)
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + identity.AppId + "_is1");
-            return key?.GetValue("DisplayVersion") as string;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return null; }
     }
     // Both handoff boundaries always verify content. A publisher certificate
     // is an additional requirement only when the channel explicitly pins one.

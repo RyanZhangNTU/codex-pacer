@@ -47,6 +47,19 @@ final class EngineGuidePagesTests: XCTestCase {
             XCTAssertEqual(forced.page, "whatsNew"); XCTAssertEqual(forced.nextSeen, seen); XCTAssertFalse(forced.releases.isEmpty)
         }
     }
+    func test424UpgradeShowsTheSharedMoveNoteOnceAndFreshInstallKeepsWelcome() throws {
+        for language in AppLanguage.allCases {
+            let upgrade = try plan("4.2.4", seen: "4.2.3", language: language.rawValue)
+            XCTAssertEqual(upgrade.page, "whatsNew")
+            let item = try XCTUnwrap(upgrade.releases.first?.items.first)
+            XCTAssertEqual(upgrade.releases.map(\.version), ["4.2.4"])
+            XCTAssertEqual(item.title, L10n.text("whats_new.free_move", language: language))
+            XCTAssertNotEqual(item.title, "whats_new.free_move")
+            XCTAssertEqual(try plan("4.2.4", seen: "4.2.3", welcomed: 0).page, "welcome")
+            XCTAssertNil(try plan("4.2.4", seen: "4.2.4").page)
+            XCTAssertEqual(WhatsNew.history(upTo: "4.2.4").first?.version, "4.2.4", "Mac and Windows share one release list")
+        }
+    }
     func testHistoryContainsEveryReleaseAndUsesBothAuthoritativeCatalogs() throws {
         for language in AppLanguage.allCases {
             let value = try plan(language: language.rawValue)

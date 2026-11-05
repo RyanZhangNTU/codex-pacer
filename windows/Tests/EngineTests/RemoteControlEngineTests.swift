@@ -110,7 +110,7 @@ final class RemoteControlEngineTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": id, "method": method, "params": params])
     }
     private func until(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
-        let end = Date().addingTimeInterval(4)
+        let end = Date().addingTimeInterval(TestWait.limit)
         while !(await condition()) {
             if Date() >= end { XCTFail("Remote fixture did not settle", file: file, line: line); throw ActivityNavigationError.unavailable }
             try await Task.sleep(nanoseconds: 5_000_000)

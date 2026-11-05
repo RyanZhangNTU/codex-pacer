@@ -76,5 +76,7 @@ struct CodexDesktopState: Sendable {
     let status: RuntimeStreamStatus
     var statuses: [String: RuntimeStreamStatus] = [:]
     var bindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
+    /// Failed sources without a stream status, such as an exited SSH helper.
+    var unavailable: [String] = []
     var remoteStatuses: [String: RuntimeStreamStatus] { statuses.filter { $0.key != "local" } }
 }

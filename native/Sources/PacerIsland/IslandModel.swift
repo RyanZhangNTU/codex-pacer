@@ -63,16 +63,6 @@ final class IslandModel: ObservableObject {
     var hostApplicationResolver: @Sendable (AgentProvider, Set<String>, URL) async -> [String: HostApplication] = { provider, sessions, home in
         await Task.detached(priority: .utility) { HostApplication.resolve(sessions: sessions, provider: provider, home: home) }.value
     }
-    var claudeHosts: [String: HostApplication] { hostApplications[.claude] ?? [:] }
-    var claudeHostResolver: @Sendable (Set<String>, URL) async -> [String: HostApplication] {
-        get { let resolve = hostApplicationResolver; return { await resolve(.claude, $0, $1) } }
-        set {
-            let old = hostApplicationResolver
-            hostApplicationResolver = { provider, sessions, home in
-                provider == .claude ? await newValue(sessions, home) : await old(provider, sessions, home)
-            }
-        }
-    }
     @Published private(set) var attentionRequests: [PendingAttentionRequest] = []
     private var localActivities: [SessionActivity] {
         get { activityState.localActivities }
@@ -184,7 +174,6 @@ final class IslandModel: ObservableObject {
             }
         }
     }
-    var refreshing: Bool { providerRefreshing(selectedProvider) }
     func isModuleEnabled(_ provider: AgentProvider) -> Bool { enabledProviders.contains(provider) }
     func providerDetected(_ provider: AgentProvider) -> Bool { installation.isInstalled(provider) }
     func providerRefreshing(_ provider: AgentProvider) -> Bool {
@@ -255,10 +244,6 @@ final class IslandModel: ObservableObject {
         case .deepseek: deepseekBalance.map { L10n.text($0.source == .web ? "deepseek.source.web" : "deepseek.source.api") }
         }
     }
-    func providerQuotaIsStale(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> Bool {
-        let window = period.map { providerWindow(provider, period: $0) } ?? providerSelectedWindow(provider)
-        return QuotaDashboardPresentation.isStale(snapshot: providerQuota(provider), window: window, now: now)
-    }
     func providerFreshnessText(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> String {
         let window = period.map { providerWindow(provider, period: $0) } ?? providerSelectedWindow(provider)
         return QuotaDashboardPresentation.freshness(snapshot: providerQuota(provider), window: window,
@@ -288,10 +273,6 @@ final class IslandModel: ObservableObject {
     func fiveHourAlert(_ provider: AgentProvider) -> FiveHourQuotaAlert? {
         CompactWarningPresentation.fiveHourAlert(provider: provider, snapshot: providerQuota(provider),
             failed: providerQuotaError(provider) != nil, now: now)
-    }
-    func providerPace(_ provider: AgentProvider, selection: String? = nil) -> Double? {
-        CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider), failed: providerQuotaError(provider) != nil,
-            metric: .pace, selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
     }
     var claudeHome: URL {
         let configured = defaults.string(forKey: "claudeHome") ?? ""
@@ -327,6 +308,41 @@ final class IslandModel: ObservableObject {
     /// The docked corner while the island floats as a vertical strip; nil for
     /// the centered bar and notch attachment.
     @Published var sideDock: IslandPosition?
+    /// A bar placed low on the screen, or docked at its bottom, opens upward.
+    @Published var opensUp = false
+    /// The screen edge a docked island touches; its corners there stay square.
+    @Published var dockedEdge: IslandPlacement.Edge?
+    /// While Free Move runs, hover neither opens nor closes the island.
+    @Published private(set) var islandMoving = false
+    /// Changes when a drag or Return to Top Center saves a new place, so an
+    /// open Settings window reloads the display and position it shows.
+    @Published private(set) var placementRevision = 0
+    private var moveEndedAt = Date.distantPast
+    /// Set by the panel: starts a drag with the grab point as fractions of the
+    /// bar from its top left.
+    var onBeginMove: ((CGPoint) -> Void)?
+    var onEndMoveGesture: (() -> Void)?
+    /// The notch island and an island behind an update prompt stay put.
+    var canMoveIsland: Bool { !isAttached && !interactionSuspended }
+    func setIslandMoving(_ moving: Bool) {
+        guard moving != islandMoving else { return }
+        islandMoving = moving
+        if moving { closeWork?.cancel() } else { moveEndedAt = Date() }
+    }
+    func islandPlacementSaved() { placementRevision += 1 }
+    /// Return to Top Center: forget the dragged place and the old corner.
+    func resetIslandPlacement() {
+        IslandPlacement.clear(from: defaults)
+        IslandPosition.center.save(to: defaults)
+        IslandDisplayMode.floating.save(to: defaults)
+        placementRevision += 1
+        onLayoutChange?()
+    }
+    /// The mouse-up that ends a drag must not also pin the island or open a task.
+    func barClicked(_ action: () -> Void) {
+        guard !islandMoving, Date().timeIntervalSince(moveEndedAt) > 0.3 else { return }
+        action()
+    }
     @Published var notchWidth: CGFloat = 0
     /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
     @Published var screenNotchSize: CGSize = .zero
@@ -729,14 +745,9 @@ final class IslandModel: ObservableObject {
     func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? {
         taskPresentation.attentionKind(for: activity)
     }
-    var hidesHeaderRate: Bool {
-        isAttached && L10n.language == .english && (!pendingInputRequests.isEmpty || !waiting.isEmpty)
-    }
     var headerRateText: String? { rate == nil ? nil : compactComponent(.tps).text }
     var hasSSHConnectionIssue: Bool {
-        monitorsSSH && (!unavailableSSH.isEmpty || (Array(streamStatuses) + Array(claudeStreamStatuses)).contains {
-            $0.key.contains("remote-ssh-discovered:") && $0.value.hasConnectionFailure
-        })
+        monitorsSSH && (!unavailableSSH.isEmpty || ConnectionSource.hasSSHFailure(in: [streamStatuses, claudeStreamStatuses]))
     }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
     private var readableCompletions: [SessionActivity] { taskPresentation.readableCompletions }
@@ -746,18 +757,12 @@ final class IslandModel: ObservableObject {
         applyActivityUpdate(activityState.update())
         onLayoutChange?(); onStatusChange?()
     }
-    var completionSummary: String {
-        let pending = pendingCompletions
-        guard let first = pending.first else { return L10n.text("activity.idle") }
-        return pending.count == 1 ? L10n.text(first.turnFailed ? "activity.failed" : first.phase == .interrupted ? "activity.stopped_compact" : "activity.done_compact") : L10n.text("activity.ended_compact", pending.count)
-    }
     func openCompletionOrPin() {
         if let request = pendingInputRequests.first, canOpen(request.activity) { open(request.activity) }
         else if let activity = pendingCompletions.first, canOpen(activity) { open(activity) }
         else { togglePin() }
     }
     var selectedWindow: QuotaWindow? { providerSelectedWindow(selectedProvider) }
-    var stale: Bool { (quota?.isStale(at: now) ?? false) || (selectedWindow?.resetsAt.map { $0 <= now } ?? false) }
     var compactMetricLabel: String {
         L10n.text((defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining).labelKey)
     }
@@ -785,7 +790,6 @@ final class IslandModel: ObservableObject {
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
     var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
-    var showsRate: Bool { !running.isEmpty }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.object(forKey: "monitorRemoteControl") == nil || defaults.bool(forKey: "monitorRemoteControl") }
     static let showsClaudeCloudProjectsKey = "showClaudeCloudProjects"
@@ -794,23 +798,12 @@ final class IslandModel: ObservableObject {
     }
     static let showsEmbeddedClaudeSessionsKey = "showEmbeddedClaudeSessions"
     static let showsEmbeddedCodexSessionsKey = "showEmbeddedCodexSessions"
+    /// Sessions that another app runs through an agent SDK (a Zotero plugin,
+    /// for example). Terminal, editor and Desktop sessions always show.
     func showsEmbeddedSessions(for provider: AgentProvider) -> Bool {
         guard provider != .deepseek else { return true }
         let key = provider == .codex ? Self.showsEmbeddedCodexSessionsKey : Self.showsEmbeddedClaudeSessionsKey
         return defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
-    }
-    /// Claude sessions that another app runs through the Agent SDK (a Zotero
-    /// plugin, for example). Terminal, editor and Desktop sessions always show.
-    var showsEmbeddedClaudeSessions: Bool {
-        defaults.object(forKey: Self.showsEmbeddedClaudeSessionsKey) == nil || defaults.bool(forKey: Self.showsEmbeddedClaudeSessionsKey)
-    }
-    var accent: Color {
-        if errorMessage != nil || stale { return Color(red: 0.65, green: 0.68, blue: 0.73) }
-        switch selectedProvider {
-        case .codex: return taskAccent
-        case .claude: return Color(red: 0.88, green: 0.59, blue: 0.40)
-        case .deepseek: return AgentProvider.deepseek.color
-        }
     }
     func projectName(_ activity: SessionActivity) -> String {
         ActivityTaskRowPresentation.title(activity, hideProjects: hideProjects)
@@ -927,7 +920,7 @@ final class IslandModel: ObservableObject {
         if value { refreshDesktopApplications(force: false) }
     }
     func hover(_ entered: Bool) {
-        guard !interactionSuspended else { return }
+        guard !interactionSuspended, !islandMoving else { return }
         closeWork?.cancel()
         if entered { setExpanded(true) }
         else if !pinned {
@@ -1004,8 +997,6 @@ final class IslandModel: ObservableObject {
     func recordHostApplications(_ found: [String: HostApplication], provider: AgentProvider) {
         if hostTracking.record(found, provider: provider) { publishHostApplications() }
     }
-    func recordClaudeHosts(_ found: [String: HostApplication]) { recordHostApplications(found, provider: .claude) }
-    func trackClaudeHosts(now: Date = Date()) { trackHostApplications(for: .claude, now: now) }
     func trackHostApplications(for provider: AgentProvider, now: Date = Date(), refreshRunning: Bool = true) {
         let decision = hostTracking.prepare(provider: provider, references: knownActivities(for: provider), activities: activities, inbox: completionInbox,
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)), version: UInt64(sourceGeneration(for: provider)), now: now,
@@ -1320,13 +1311,13 @@ final class IslandModel: ObservableObject {
         }
         now = Date(); claudeReceivedActivities = values.filter { !excluded.contains($0.id) }; claudeStreamStatuses = statuses
         claudeReceivedRequests = requests
-        let hidden = hiddenClaudeActivityIDs
+        let hidden = hiddenEmbeddedActivityIDs
         let measured = performance.filter { !excluded.contains($0.id) }
         completionInbox.updatePerformance(measured)
         for update in measured where !hidden.contains(update.id) {
             rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt)
         }
-        refilterClaudeSessions()
+        refilterEmbeddedSessions()
         scheduleClaudeRemoteSetup()
     }
 
@@ -1338,15 +1329,9 @@ final class IslandModel: ObservableObject {
     }
     private var ignoredCodexActivityIDs: Set<String> { activityState.ignoredCodexActivityIDs }
     private var hiddenEmbeddedActivityIDs: Set<String> { activityState.hiddenActivityIDs(activityVisibility) }
-    private var hiddenClaudeActivityIDs: Set<String> { hiddenEmbeddedActivityIDs }
-    func refilterClaudeSessions() { refilterEmbeddedSessions() }
     func refilterEmbeddedSessions() {
         combineActivities()
         for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
-    }
-    static func embeddedClaudeIDs(_ values: [SessionActivity]) -> Set<String> { embeddedActivityIDs(values) }
-    static func embeddedActivityIDs(_ values: [SessionActivity]) -> Set<String> {
-        EmbeddedSessionVisibility.embeddedActivityIDs(values)
     }
 
     private func localSubagentStates(_ values: [SessionActivity]) -> [String: SessionActivity.SubagentEvidence] {

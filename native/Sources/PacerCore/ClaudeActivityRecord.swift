@@ -6,7 +6,7 @@ struct ClaudeTranscriptFields {
     let values: [String: JSONFieldView]
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment"]) else { return nil }
         self.values = values
     }
 }
@@ -88,6 +88,23 @@ enum ClaudeActivityRecord {
                 return [encode(value)].compactMap { $0 }
             }
             return []
+        }
+        // While its chat is mid-turn, Claude Code delivers a background agent's
+        // notification as a queued attachment inside the running turn instead
+        // of a user record. The notification text is the same.
+        if kind == "attachment", parentID == nil,
+           let attachment = fields["attachment"].flatMap({ try? $0.fields(["type", "commandMode", "origin", "prompt"]) }),
+           attachment["type"]?.matchesStringLiteral("queued_command") == true,
+           attachment["commandMode"]?.matchesStringLiteral("task-notification") == true {
+            if let origin = attachment["origin"] {
+                let source = try? origin.fields(["kind", "producer"])
+                guard source?["kind"]?.matchesStringLiteral("task-notification") == true,
+                      source?["producer"]?.matchesStringLiteral("session-task") == true else { return [] }
+            }
+            guard let raw = attachment["prompt"]?.string(limit: 65_537), let notification = ClaudeAgentNotification(raw) else { return [] }
+            var value = base; value["kind"] = "agentNotification"; value["agentId"] = notification.agentID
+            value["itemId"] = notification.itemID; value["agentStatus"] = notification.status
+            return [encode(value)].compactMap { $0 }
         }
         if kind == "user", !humanOrigin, !legacyHuman { return [] }
         // Verified in the bundled Claude Code 2.1.293 schema and a controlled
@@ -310,6 +327,14 @@ struct ClaudeActivityState: Sendable {
            sessions[key]?.turnID == nil, kind != "subagentStart" { return }
         var value = sessions[key] ?? SessionActivity(id: thread, project: sourceName ?? "Claude Code", sourceHost: sourceName,
             sourceHostID: sourceID, phaseAwareRate: true, provider: .claude, sessionID: thread)
+        // A child's hooks, transcript and telemetry carry its parent's current
+        // prompt, which moves on while a background child keeps working. Until
+        // it ends, the child's records belong to the turn its SubagentStart opened.
+        var record = record
+        if kind != "subagentStart", kind != "prompt", value.parentThreadID != nil, [.running, .waitingForInput].contains(value.phase),
+           let current = value.turnID, let incoming = ClaudeActivityRecord.identifier(record["promptId"] as? String), incoming != current {
+            record["promptId"] = current
+        }
         if kind == "discontinuity" {
             observedMeters[key]?.markGap()
             guard !hooks.contains(key) else { return }

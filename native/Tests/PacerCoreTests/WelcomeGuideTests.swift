@@ -10,7 +10,7 @@ final class WelcomeGuideTests: XCTestCase {
         defaults.set(2, forKey: WelcomeGuide.defaultsKey)
         XCTAssertTrue(WelcomeGuide.shouldShow(defaults: defaults), "An upgrade from an earlier major line sees the guide")
         WelcomeGuide.markShown(defaults: defaults)
-        XCTAssertFalse(WelcomeGuide.shouldShow(defaults: defaults), "Later launches and updates within 3.x stay quiet")
+        XCTAssertFalse(WelcomeGuide.shouldShow(defaults: defaults), "Later launches and updates within the same major line stay quiet")
         XCTAssertEqual(defaults.integer(forKey: WelcomeGuide.defaultsKey), WelcomeGuide.currentMajor)
         defaults.set(WelcomeGuide.currentMajor + 1, forKey: WelcomeGuide.defaultsKey)
         XCTAssertFalse(WelcomeGuide.shouldShow(defaults: defaults), "Downgrading never replays a newer guide")

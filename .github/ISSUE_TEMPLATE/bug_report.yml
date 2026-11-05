@@ -14,22 +14,32 @@ body:
       description: What went wrong?
     validations:
       required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true
   - type: input
     id: environment
     attributes:
       label: Environment
-      description: Codex Pacer version, macOS version, and Apple silicon or Intel
-      placeholder: Codex Pacer 3.0.0, macOS 26.1, Apple silicon
+      description: Codex Pacer version, OS version, and Apple silicon, Intel, x64 or ARM64
+      placeholder: Codex Pacer 4.2.3, macOS 26.1, Apple silicon / Codex Pacer 4.2.3, Windows 11 24H2, x64
     validations:
       required: true
   - type: dropdown
     id: module
     attributes:
-      label: Affected module
+      label: Affected modules
+      multiple: true
       options:
         - Codex
         - Claude Code
-        - Both
+        - DeepSeek Harness
         - Not related to a module
     validations:
       required: true
@@ -39,9 +49,11 @@ body:
       label: Task source
       multiple: true
       options:
-        - This Mac
+        - This Mac or PC
         - SSH host
+        - WSL (Windows)
         - Codex Remote Control
+        - Claude cloud Projects
         - Not related to tasks
   - type: textarea
     id: steps

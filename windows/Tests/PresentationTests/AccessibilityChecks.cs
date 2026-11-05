@@ -44,6 +44,7 @@ internal static class AccessibilityChecks
             Check(peer.GetAutomationControlType() == AutomationControlType.Button && peer.GetName() == ui.Text("common.pin") && main.Focusable,
                 "The collapsed row exposes a named, focusable primary button");
             await Audit(window);
+            CheckHoverTooltips(window, "collapsed");
             Invoke(main); await PresentationWait.UntilAsync(() => window.IsExpandedForAutomation, "UIA invokes the collapsed primary action");
             Check(peer.GetName() == ui.Text("common.unpin"), "The primary action updates its accessible pin state");
             window.CollapseForAutomation(); await window.WaitForPresentationAsync();
@@ -97,6 +98,7 @@ internal static class AccessibilityChecks
             appearance.Set(appearance.Current with { Transparency = true }); await Drain();
             Check(window.GlassVisible, "Restoring system transparency restores the user's Glass preference");
             window.Reveal(); await window.WaitForPresentationAsync();
+            CheckHoverTooltips(window, "expanded");
             appearance.Set(appearance.Current with { HighContrast = true }); await Drain(); window.UpdateLayout();
             Check(!window.GlassVisible && ((SolidColorBrush)((Border)window.FindName("Shell")).Background).Color == appearance.Current.Colors.Window,
                 "High contrast selects the semantic window background and disables Glass");
@@ -181,11 +183,6 @@ internal static class AccessibilityChecks
         Check(((UIElement)Keyboard.FocusedElement).MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)) && Keyboard.FocusedElement == first,
             "Reverse focus traversal returns to the preceding primary action");
     }
-    internal static IEnumerable<DependencyObject> Descendants(DependencyObject value)
-    {
-        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(value); index++)
-        { var child = VisualTreeHelper.GetChild(value, index); yield return child; foreach (var nested in Descendants(child)) yield return nested; }
-    }
     internal static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
     internal static async Task Drain() { await Dispatcher.Yield(DispatcherPriority.ContextIdle); await Task.Delay(25); await Dispatcher.Yield(DispatcherPriority.ContextIdle); }
     internal static void PostKey(Window window, Key key, bool system = false)
@@ -197,6 +194,20 @@ internal static class AccessibilityChecks
             && PostMessage(hwnd, system ? 0x0105u : 0x0101u, new(virtualKey), new(flags | (1L << 30) | (1L << 31))), "The test key is posted only to its owned HWND");
     }
     internal static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+    /// Only the expanded island's first toolbar row shows hover tooltips; the
+    /// rest of the island keeps its descriptions for assistive technology.
+    private static void CheckHoverTooltips(IslandWindow window, string state)
+    {
+        var toolbar = (FrameworkElement)window.FindName("TaskToolbar");
+        var stray = SelfAndDescendants(window).OfType<FrameworkElement>()
+            .Where(element => element.ToolTip != null && element != toolbar && !toolbar.IsAncestorOf(element))
+            .Select(element => element.GetType().Name + ":" + AutomationProperties.GetAutomationId(element)).ToArray();
+        Check(stray.Length == 0, "Only the first toolbar row shows hover tooltips (" + state + "): " + string.Join(", ", stray));
+        Check(new[] { "PreviousPage", "NextPage", "MarkReadButton", "PinButton", "SettingsButton", "MoreButton" }
+            .All(name => ((Button)window.FindName(name)).ToolTip is string { Length: > 0 }), "The first toolbar row keeps its button tooltips (" + state + ")");
+        var row = SelfAndDescendants(window).OfType<TaskRow>().FirstOrDefault();
+        Check(row == null || AutomationProperties.GetHelpText(row).Length > 0, "Task rows keep their open help for screen readers (" + state + ")");
+    }
     [DllImport("user32.dll", EntryPoint = "PostMessageW")] private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam);
     [DllImport("user32.dll", EntryPoint = "MapVirtualKeyW")] private static extern uint MapVirtualKey(uint code, uint type);
 }

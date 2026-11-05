@@ -124,6 +124,15 @@ def transcript_record(value, owner, parent=None, prompt=None):
         text=content if isinstance(content,str) else content[0].get('text') if isinstance(content,list) and len(content)==1 and isinstance(content[0],dict) and content[0].get('type')=='text' else None
         notification=agent_notification(text)
         return [dict(base,kind='agentNotification',agentId=notification[0],itemId=notification[1],agentStatus=notification[2])] if notification else []
+    # While its chat is mid-turn, Claude Code delivers a background agent's
+    # notification as a queued attachment inside the running turn instead of a
+    # user record. The notification text is the same.
+    attachment=value.get('attachment') if isinstance(value.get('attachment'),dict) else None
+    if kind=='attachment' and not parent and attachment and attachment.get('type')=='queued_command' and attachment.get('commandMode')=='task-notification':
+        source=attachment.get('origin')
+        if source is not None and not (isinstance(source,dict) and source.get('kind')=='task-notification' and source.get('producer')=='session-task'):return []
+        notification=agent_notification(attachment.get('prompt'))
+        return [dict(base,kind='agentNotification',agentId=notification[0],itemId=notification[1],agentStatus=notification[2])] if notification else []
     if kind=='user' and not human and not legacy:return []
     if kind=='user' and 'origin' not in value and 'promptSource' not in value and 'turnOrigin' not in value and value.get('isMeta') is not False and value.get('isSynthetic') is not False and ident(value.get('promptId')) and isinstance(content,list) and len(content)==1:
         marker=content[0]
@@ -297,9 +306,10 @@ def otlp_records(raw):
                     if success is not True:continue
                 session,prompt=otel_identifier(a.get('session.id')),otel_identifier(a.get('prompt.id'))
                 if 'prompt.id' in a and not prompt:continue
-                # Current Claude Code omits prompt.id on request spans. Only a
-                # main-conversation request may bind to the session's current turn.
-                if not prompt and otel_string(a.get('llm_request.context'))!='interaction':continue
+                # Current Claude Code omits prompt.id on request spans. A main-conversation
+                # request binds to the session's current turn; a subagent's request names
+                # its agent and binds only to that already observed child's turn.
+                if not prompt and otel_string(a.get('llm_request.context'))!='interaction' and not otel_identifier(a.get('agent_id')):continue
                 request=otel_identifier(a.get('request_id') if 'request_id' in a else a.get('gen_ai.response.id'))
                 start=otel_integer(span.get('startTimeUnixNano'),1,18446744073709551615)
                 end=otel_integer(span.get('endTimeUnixNano'),1,18446744073709551615)

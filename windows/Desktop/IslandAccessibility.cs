@@ -43,7 +43,7 @@ public partial class IslandWindow
     private void UpdateMainAction()
     {
         string name = ui.Text(pinned ? "common.unpin" : "common.pin");
-        foreach (var button in new[] { HeaderAction, StripAction }) { SetButtonName(button, name); AutomationProperties.SetAutomationId(button, button == HeaderAction ? "island.main.row" : "island.main.strip"); }
+        foreach (var button in new[] { HeaderAction, StripAction }) { SetButtonName(button, name, tooltip: false); AutomationProperties.SetAutomationId(button, button == HeaderAction ? "island.main.row" : "island.main.strip"); }
     }
     private void FinishPageTransition()
     {

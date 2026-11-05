@@ -57,7 +57,7 @@ final class WindowsDesktopCollectorTests: XCTestCase {
             process.arguments = [mode, endpoint, WindowsCodexExecutableDiscovery.path(ready), WindowsCodexExecutableDiscovery.path(file)]
             process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
             do { try process.run() } catch { try? FileManager.default.removeItem(at: root); throw error }
-            let limit = Date().addingTimeInterval(5)
+            let limit = Date().addingTimeInterval(TestWait.limit)
             while process.isRunning && !exists("") && Date() < limit { Thread.sleep(forTimeInterval: 0.01) }
             guard exists("") else { stop(); throw WindowsDesktopTransport.Failure.unavailable }
         }
@@ -70,7 +70,7 @@ final class WindowsDesktopCollectorTests: XCTestCase {
         }
         func stop() { if process.isRunning { process.terminate() }; process.waitUntilExit(); try? FileManager.default.removeItem(at: root) }
     }
-    private func until(_ message: String, timeout: TimeInterval = 4, _ condition: () async -> Bool) async throws {
+    private func until(_ message: String, timeout: TimeInterval = TestWait.limit, _ condition: () async -> Bool) async throws {
         let end = ProcessInfo.processInfo.systemUptime + timeout
         while !(await condition()), ProcessInfo.processInfo.systemUptime < end { try await Task.sleep(nanoseconds: 20_000_000) }
         let result = await condition(); XCTAssertTrue(result, message)

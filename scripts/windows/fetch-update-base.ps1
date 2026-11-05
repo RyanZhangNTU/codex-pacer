@@ -9,6 +9,8 @@ param(
 # installer is built. The release Mac checks the base again against the
 # signed feed, and the app and installer check it against the installation.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'version.ps1')
+$taskCurrent = Get-PacerVersion
 $taskRepository = 'https://github.com/RyanZhangNTU/codex-pacer/releases'
 $taskSparkle = 'http://www.andymatuschak.org/xml-namespaces/sparkle'
 $taskPacer = 'urn:codex-pacer:windows-update'
@@ -35,6 +37,12 @@ try {
     $taskDigest = $taskItem.SelectSingleNode('enclosure').GetAttribute('manifestSHA256', $taskPacer).ToLowerInvariant()
     $taskVersion = $taskItem.SelectSingleNode('sparkle:shortVersionString', $taskNames).InnerText
     $taskBuild = $taskItem.SelectSingleNode('sparkle:version', $taskNames).InnerText
+    # Between a release and the next version bump this build is the latest
+    # release itself; a patch needs an earlier base.
+    $taskThis = $taskCurrent.version + '.' + $taskCurrent.build
+    $taskParsed = $null
+    if (![Version]::TryParse($taskBuild, [ref]$taskParsed)) { throw 'The latest Windows feed names an invalid build.' }
+    if ($taskParsed -ge [Version]$taskThis) { Write-Output ('No patch base: the latest release ' + $taskBuild + ' is not older than this build ' + $taskThis + '.'); return }
     if ($taskDigest -notmatch '^[0-9a-f]{64}$') { Write-Output ('No patch base: ' + $taskVersion + ' publishes no Windows manifest.'); return }
     $taskName = 'Codex-Pacer-' + $taskVersion + '-windows-' + $Architecture + '-manifest.json'
     $taskManifest = Join-Path $taskTemporary $taskName

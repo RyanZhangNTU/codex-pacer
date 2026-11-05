@@ -46,13 +46,13 @@
    <Setter Property="Width" Value="22"/><Setter Property="Height" Value="22"/>
   </Style>
  </Window.Resources>
- <Grid x:Name="MotionSurface" Background="Transparent">
+ <Grid Background="Transparent">
  <Border x:Name="Shell" Background="#0B0C0E" CornerRadius="19" HorizontalAlignment="Left" VerticalAlignment="Top" MouseEnter="OnMouseEnter" MouseLeave="OnMouseLeave">
   <Border.RenderTransform><TranslateTransform x:Name="ShellOffset"/></Border.RenderTransform>
   <Grid>
    <!-- The attached glass header turns black edge to edge, behind the header's inset content. -->
    <Border x:Name="HeaderBand" Height="{Binding ActualHeight, ElementName=Header}" VerticalAlignment="Top" IsHitTestVisible="False"/>
-   <Grid x:Name="Header" Height="38" Margin="15,0" VerticalAlignment="Top" Cursor="Hand" MouseLeftButtonUp="OnHeaderClick">
+   <Grid x:Name="Header" Height="38" Margin="15,0" VerticalAlignment="Top" Cursor="Hand" Background="Transparent">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Button x:Name="HeaderAction" Grid.ColumnSpan="3" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>
     <StackPanel x:Name="HeaderLeading" Orientation="Horizontal" VerticalAlignment="Center">
@@ -68,7 +68,7 @@
      <local:AlternatingQuotaText x:Name="QuotaLabel" Margin="8,0,0,0" FontSize="12" VerticalAlignment="Center"/>
     </StackPanel>
    </Grid>
-   <Grid x:Name="Strip" Width="32" Visibility="Collapsed" Cursor="Hand" MouseLeftButtonUp="OnHeaderClick">
+   <Grid x:Name="Strip" Width="32" Visibility="Collapsed" Cursor="Hand" Background="Transparent">
     <Button x:Name="StripAction" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>
     <StackPanel x:Name="StripLeading" VerticalAlignment="Top" Margin="0,12,0,0" HorizontalAlignment="Center">
      <local:ActivityBadge x:Name="StripBadge"/>
@@ -88,7 +88,7 @@
    <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,38,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
     <local:RevealHost.RenderTransform><TranslateTransform x:Name="RevealOffset"/></local:RevealHost.RenderTransform>
     <ScrollViewer x:Name="ExpandedScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
-     <StackPanel x:Name="ExpandedContent" Margin="0,4,0,14">
+     <StackPanel Margin="0,4,0,14">
       <Grid x:Name="TaskToolbar" Height="24" Margin="9,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

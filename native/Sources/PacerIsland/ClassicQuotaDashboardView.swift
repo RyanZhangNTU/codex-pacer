@@ -100,7 +100,7 @@ struct ClassicQuotaDashboardRingView: View {
                         if quota.window?.resetsAt != nil {
                             Text(countdown).font(.system(size: 10, weight: .medium)).monospacedDigit()
                                 .foregroundStyle(PacerPalette.tertiary)
-                                .lineLimit(1).minimumScaleFactor(0.8).help(resetDate)
+                                .lineLimit(1).minimumScaleFactor(0.8)
                         }
                     }
                     .frame(maxWidth: 66)
@@ -125,7 +125,6 @@ struct ClassicQuotaDashboardRingView: View {
             }.frame(height: 15)
         }
         .frame(maxWidth: .infinity)
-        .help(detailsHelp)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(detailsHelp)
@@ -158,7 +157,6 @@ struct ClassicQuotaDashboardRingView: View {
     private var accessibilityLabel: String { reading.classicAccessibilityLabel }
     private var detailsHelp: String { reading.classicHelp(providerHelp: providerHelp) }
     private var countdown: String { reading.countdown }
-    private var resetDate: String { reading.resetDate }
 
 }
 

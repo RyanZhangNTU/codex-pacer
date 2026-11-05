@@ -78,9 +78,7 @@ internal static class DisplaySettingsChecks
         }
         finally { window.AllowClose = true; window.Close(); }
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    { yield return root; for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var item in Descendants(VisualTreeHelper.GetChild(root, i))) yield return item; }
-    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => SelfAndDescendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
     private static async Task Until(Func<bool> ready)
     { var clock = Stopwatch.StartNew(); while (!ready() && clock.Elapsed.TotalSeconds < 5) await Task.Delay(20); Check(ready(), "Display settings did not settle"); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }

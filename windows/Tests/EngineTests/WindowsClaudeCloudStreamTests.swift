@@ -62,7 +62,7 @@ final class WindowsClaudeCloudStreamTests: XCTestCase {
         Task { do { for try await line in stream { outcome.line(line) }; outcome.end() } catch { outcome.end(error) } }
     }
     private func until(_ condition: () -> Bool) async throws {
-        for _ in 0..<800 { if condition() { return }; try await Task.sleep(nanoseconds: 10_000_000) }
+        if try await TestWait.until(condition) { return }
         XCTFail("The intercepted FoundationNetworking stream did not finish its bounded operation")
         throw URLError(.timedOut)
     }

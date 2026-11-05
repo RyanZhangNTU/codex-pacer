@@ -143,7 +143,6 @@ public actor ClaudeActivityMonitor {
         await deadline.finish(readers: [], children: children)
     }
     public func transcriptURL(for sessionID: String) -> URL? { localReader.transcriptURL(for: sessionID) }
-    public func knownLocalSessionIDs() -> Set<String> { local.knownStartedSessionIDs }
     private func stopLocal() {
         localGeneration = UUID()
         localMirrorRoots.removeAll()

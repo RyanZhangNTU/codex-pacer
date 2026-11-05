@@ -202,3 +202,23 @@ internal sealed class WelcomeGestureScene : Grid
             Width = 14, Height = 14, Margin = new Thickness(0, 0, 14, 0) };
     }
 }
+
+internal sealed class WelcomeMoveScene : Grid
+{
+    protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
+    internal WelcomeMoveScene()
+    {
+        Width = 132; Height = 46;
+        var art = new Canvas { Width = 132, Height = 46, Clip = new RectangleGeometry(new Rect(0, 0, 132, 46), 8, 8),
+            Background = GuideArt.Wallpaper() };
+        Add(new Border { Width = 39, Height = 11, CornerRadius = new CornerRadius(5.5), Background = Brushes.Black }, 22, 17);
+        Add(new Path { Data = Geometry.Parse("M 0 4 L 34 4 M 29 0 L 34 4 L 29 8"), Stroke = Brushes.White, StrokeThickness = 1.5 }, 68, 19);
+        Add(new Border { Width = 12, Height = 29, CornerRadius = new CornerRadius(5, 0, 0, 5), Background = Brushes.Black,
+            BorderBrush = PacerPalette.Codex, BorderThickness = new Thickness(1) }, 120, 8);
+        Add(GuideArt.Pointer(14), 52, 23);
+        Children.Add(new Viewbox { Child = art });
+
+        void Add(UIElement element, double x, double y)
+        { Canvas.SetLeft(element, x); Canvas.SetTop(element, y); art.Children.Add(element); }
+    }
+}

@@ -81,6 +81,9 @@ internal static class DisplayWindowChecks
             window.ApplyPreferences(preference); window.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
             window.Reveal(); await window.WaitForPresentationAsync(); CheckLocation(right);
+            preference = preference with { IslandPlacement = new(IslandEdge.Bottom, .65, 1) };
+            window.ApplyPreferences(preference);
+            await window.WaitForPresentationAsync(); CheckLocation(right);
             topology.Set(left); await window.WaitForPresentationAsync();
             Check(window.SelectedDisplay.FellBack, "Disconnect reports a temporary fallback"); CheckLocation(left);
             topology.Set(left, right); await window.WaitForPresentationAsync();
@@ -103,6 +106,8 @@ internal static class DisplayWindowChecks
                 var visible = window.VisibleScreenBounds;
                 Check(visible.X >= expected.Bounds.Left - 2 && visible.Right <= expected.Bounds.Right + 2 && visible.Y >= expected.Bounds.Top - 2 && visible.Bottom <= expected.Bounds.Bottom + 2,
                     "The actual visible window follows the injected monitor and work area");
+                if (preference.IslandPlacement != null)
+                    Check(Math.Abs(visible.Bottom - expected.Work.Bottom) <= 2, "The saved bottom edge follows the fallback and reconnected work areas");
                 Check(GetWindowRect(new WindowInteropHelper(window).Handle, out var canvas) && canvas.Right - canvas.Left <= expected.Bounds.Right - expected.Bounds.Left + 2,
                     "A display switch does not retain a canvas spanning two monitors");
             }

@@ -136,11 +136,6 @@
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
- <Style x:Key="SettingsPositionChoice" TargetType="RadioButton">
-  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
-   <Border Background="Transparent"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-  </ControlTemplate></Setter.Value></Setter>
- </Style>
  <Style x:Key="SettingsSegmentChoice" TargetType="RadioButton">
   <Setter Property="MinWidth" Value="76"/><Setter Property="Height" Value="24"/><Setter Property="Padding" Value="7,2"/>
   <Setter Property="FontSize" Value="13"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/>

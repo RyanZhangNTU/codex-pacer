@@ -20,9 +20,8 @@ internal sealed class SingleQuotaView : Grid
         ColumnDefinitions.Add(new());
         Dial = new QuotaDial(provider.Provider, raw, null, dashboard: provider) { Width = 104, Height = 104, VerticalAlignment = VerticalAlignment.Center };
         Children.Add(Dial);
-        ToolTip = string.Join("\n\n", new[] { Dial.Split ? provider.FiveHour.SplitHelp : null, provider.Weekly.SplitHelp,
-            provider.Weekly.SourceText, help }.Where(value => !string.IsNullOrWhiteSpace(value)));
-        AutomationProperties.SetHelpText(this, (string)ToolTip);
+        AutomationProperties.SetHelpText(this, string.Join("\n\n", new[] { Dial.Split ? provider.FiveHour.SplitHelp : null, provider.Weekly.SplitHelp,
+            provider.Weekly.SourceText, help }.Where(value => !string.IsNullOrWhiteSpace(value))));
         var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         if (Dial.Split)
         {
@@ -45,7 +44,6 @@ internal sealed class SingleQuotaView : Grid
             details.Children.Add(Separator());
             Brush ink = weekly.ProjectionWarns ? PacerPalette.Attention : weekly.ProjectionText == null || weekly.ProjectionEarly ? PacerPalette.Tertiary : PacerPalette.Primary;
             details.Children.Add(Row(Text(ui.Text("dashboard.projection"), 11, PacerPalette.Secondary), Text(weekly.ProjectionText ?? "—", 11, ink), 26));
-            details.ToolTip = weekly.SplitHelp;
         }
         Grid.SetColumn(details, 2); Children.Add(details);
         status ??= new Border { Height = 0 };
@@ -53,7 +51,7 @@ internal sealed class SingleQuotaView : Grid
     }
     private static StackPanel Period(DashboardReading reading, UiText ui)
     {
-        var group = new StackPanel { ToolTip = reading.SplitHelp };
+        var group = new StackPanel();
         var title = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         title.Children.Add(Text(reading.Period, 11, reading.Pressing ? PacerPalette.Attention : PacerPalette.Secondary, true));
         if (reading.Availability == "stale") title.Children.Add(Freshness());

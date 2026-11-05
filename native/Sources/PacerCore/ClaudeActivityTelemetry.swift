@@ -42,6 +42,8 @@ public final class ClaudeActivityTelemetry: @unchecked Sendable {
     private var counts = Counters(httpRequests: 0, projectedRequests: 0, missingCorrelations: 0, rejectedRequests: 0)
     public var listeningPort: UInt16 { lock.lock(); defer { lock.unlock() }; return listener?.port ?? 0 }
     public var counters: Counters { lock.lock(); defer { lock.unlock() }; return counts }
+    /// Accepted clients that still hold a request worker; tests wait on it.
+    var openConnections: Int { lock.lock(); defer { lock.unlock() }; return connections.count }
 
     private func recordCounters(http: Int = 0, projected: Int = 0, missing: Int = 0, rejected: Int = 0) {
         lock.lock(); defer { lock.unlock() }
@@ -277,12 +279,14 @@ public final class ClaudeActivityTelemetry: @unchecked Sendable {
         guard fields["name"]?.string(limit: 64) == "claude_code.llm_request" else { return nil }
         let values = common.merging(try attributes(fields["attributes"])) { _, selected in selected }
         let prompt = try identifier(values["prompt.id"])
-        // Current Claude Code omits prompt.id on request spans. Only a
-        // main-conversation request may bind to the session's current turn.
+        // Current Claude Code omits prompt.id on request spans. A main-conversation
+        // request binds to the session's current turn; a subagent's request names
+        // its agent and binds only to that already observed child's turn.
         guard let session = try identifier(values["session.id"]),
               let request = try identifier(values["request_id"] ?? values["gen_ai.response.id"]),
               values["prompt.id"] == nil || prompt != nil,
-              try prompt != nil || string(values["llm_request.context"], limit: 32) == "interaction" else { missing += 1; return nil }
+              try prompt != nil || string(values["llm_request.context"], limit: 32) == "interaction" || identifier(values["agent_id"]) != nil
+        else { missing += 1; return nil }
         if let status = fields["status"], !status.isNull {
             guard status.isObject else { rejected += 1; return nil }
             let code = try status.fields(["code"])["code"]

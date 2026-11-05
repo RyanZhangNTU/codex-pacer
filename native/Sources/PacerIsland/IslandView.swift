@@ -11,7 +11,7 @@ struct IslandView: View {
             if let dock = model.sideDock, let side = dock.side { docked(dock, side: side) } else { centered }
         }
         .foregroundStyle(PacerPalette.primary)
-        .modifier(IslandSurface(appearance: model.appearance, attached: attached, flatSide: model.sideDock?.side,
+        .modifier(IslandSurface(appearance: model.appearance, attached: attached, flatEdge: model.dockedEdge,
             expanded: model.expanded, progress: presentation.expansion))
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
@@ -19,23 +19,27 @@ struct IslandView: View {
         .environment(\.locale, L10n.locale)
     }
 
+    /// The bar holds the window's top edge, or its bottom edge when the island
+    /// opens upward; the panel unfolds on the other side.
     private var centered: some View {
-        VStack(spacing: 0) {
+        let edge: Alignment = model.opensUp ? .bottom : .top, away: CGFloat = model.opensUp ? -1 : 1
+        return VStack(spacing: 0) {
             CompactIslandHeader(model: model, layout: model.compactLayout,
                 baseHeight: model.baseHeaderHeight, notchWidth: model.notchWidth)
                 .background(attached && model.appearance == .liquidGlass
                     ? Color.black.opacity(presentation.blackOpacity) : Color.clear)
+                .modifier(IslandMoveGesture(model: model))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .overlay(alignment: .top) {
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge)
+        .overlay(alignment: edge) {
             // Retire invisible content before the spring settles, so the final
             // capsule frame only stops motion rather than changing its subtree.
             if model.expanded || presentation.contentVisibility > 0 {
                 revealed(IslandExpandedContent(model: model)
                     .frame(width: max(0, presentation.canvas.width - 2 * IslandMetrics.edgeInset),
-                           height: max(0, presentation.canvas.height - model.topHeight), alignment: .top)
+                           height: max(0, presentation.canvas.height - model.topHeight), alignment: edge)
                     .padding(.horizontal, IslandMetrics.edgeInset)
-                    .offset(y: model.topHeight + (1 - presentation.contentVisibility) * 8))
+                    .offset(y: away * (model.topHeight + (1 - presentation.contentVisibility) * 8)))
             }
         }
     }
@@ -52,6 +56,7 @@ struct IslandView: View {
         }
         let strip = IslandGeometry.stripWidth, inward: CGFloat = side == .left ? 1 : -1
         return CompactIslandStrip(model: model, layout: model.compactLayout)
+            .modifier(IslandMoveGesture(model: model))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner)
             .overlay(alignment: corner) {
                 if model.expanded || presentation.contentVisibility > 0 {

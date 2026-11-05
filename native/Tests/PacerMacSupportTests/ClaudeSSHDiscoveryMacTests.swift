@@ -16,31 +16,22 @@ final class ClaudeSSHDiscoveryMacTests: XCTestCase {
     }
     private let desktop = "Library/Application Support/Claude/ssh_configs.json"
 
-
-
-    func testInvalidRoutesAndIdentityPathsAreRejectedButBrokenSafeRoutesRemainVisible() async throws {
+    // ClaudeSSHDiscoveryTests in PacerCore covers route validation on every
+    // host; this case adds the Mac file system's symbolic-link refusal.
+    func testASymlinkedDesktopConfigurationIsIgnored() async throws {
         let root = try fixture()
-        try write(["configs": [
-            ["sshHost": "fixture@valid.example", "sshPort": 2222, "sshIdentityFile": "/fixture/key's name"],
-            ["sshHost": "::1", "sshPort": 22],
-            ["sshHost": "-oProxyCommand=bad"], ["sshHost": "host\n"], ["sshHost": "user@host;bad"],
-            ["sshHost": "safe", "sshPort": true], ["sshHost": "safe", "sshPort": 0],
-            ["sshHost": "safe", "sshIdentityFile": "-oBad"], ["sshHost": "safe", "sshIdentityFile": "/key\n"]]], desktop, root: root)
-        let discovery = ClaudeSSHDiscovery { _, _ in nil }
-        let targets = await discovery.configured(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
-        XCTAssertEqual(targets.count, 2)
-        let args = try XCTUnwrap(targets.first?.sshArguments())
-        XCTAssertEqual(Array(args.suffix(6)), ["-p", "2222", "-i", "/fixture/key's name", "--", "fixture@valid.example"])
-        XCTAssertTrue(args.contains("StrictHostKeyChecking=yes"))
-        let installer = try ClaudeRemoteSetup.arguments(target: targets[0])
-        XCTAssertEqual(Array(installer.dropLast()), args, "Collection and setup use the same route and key")
-        try FileManager.default.removeItem(at: root.appendingPathComponent(desktop))
         let external = root.appendingPathComponent("external.json")
-        try JSONSerialization.data(withJSONObject: ["configs": [["sshHost": "unsafe-link"]]]).write(to: external)
-        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent(desktop), withDestinationURL: external)
+        try write(["configs": [["sshHost": "unsafe-link"]]], "external.json", root: root)
+        let file = root.appendingPathComponent(desktop)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: external)
+        let discovery = ClaudeSSHDiscovery { _, _ in nil }
         let linked = await discovery.configured(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
         XCTAssertTrue(linked.isEmpty)
+        // The same file read directly is a valid route, so only the link is refused.
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.copyItem(at: external, to: file)
+        let direct = await discovery.configured(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
+        XCTAssertEqual(direct.count, 1)
     }
-
-
 }

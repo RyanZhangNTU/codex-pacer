@@ -19,7 +19,9 @@ final class DeepSeekSoloPresentationTests: XCTestCase {
         }
         var history = DeepSeekBalanceHistory()
         let start = calendar.startOfDay(for: now).addingTimeInterval(1)
-        history.record(total: 94.1, at: start, source: "web"); history.record(total: 80, at: now, source: "web")
+        // The history splits spending by day; it must use the wallet's calendar, not the machine's.
+        history.record(total: 94.1, at: start, source: "web", calendar: calendar)
+        history.record(total: 80, at: now, source: "web", calendar: calendar)
         let wallet = DeepSeekWallet(balance: .init(total: 80, capturedAt: now, source: .web), connected: true, ledger: ledger, now: now, history: history, calendar: calendar)
         let names = ["private-session-0": "Confidential launch plan", "private-session-1": "Internal review"]
         let shown = DeepSeekSoloPresentation(wallet: wallet, at: now, taskTitle: { names[$0] ?? "Other private task" })

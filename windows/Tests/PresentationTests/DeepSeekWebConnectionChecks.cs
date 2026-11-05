@@ -46,7 +46,7 @@ internal static class DeepSeekWebConnectionChecks
             browserActions = false; island.ApplyPreferences(preferences with { DeepSeekPanelStyle = "simple" });
             await island.WaitForPresentationAsync();
             var offlineConnect = Find<Button>(island, "deepseek.balance.connect");
-            Check(!offlineConnect.IsEnabled && (string?)offlineConnect.ToolTip == ui.Text("windows.deepseek.demo_web_help"),
+            Check(!offlineConnect.IsEnabled && offlineConnect.ToolTip == null && System.Windows.Automation.AutomationProperties.GetHelpText(offlineConnect) == ui.Text("windows.deepseek.demo_web_help"),
                 "A synthetic web reader cannot advertise a real login action in the offline demo");
             browserActions = true; island.ApplyPreferences(preferences);
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
@@ -89,7 +89,7 @@ internal static class DeepSeekWebConnectionChecks
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
             session.FailClear = true; await Menu(window, "settings.deepseek.account.sign_out");
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Color: "orange" } &&
-                Descendants(window).OfType<TextBlock>().Any(value => value.IsVisible && value.Text == ui.Text("windows.connection.refresh_failed")));
+                SelfAndDescendants(window).OfType<TextBlock>().Any(value => value.IsVisible && value.Text == ui.Text("windows.connection.refresh_failed")));
             int reads = site.Reads; await engine.SendAsync("configure", settings.Current.EngineConfiguration()); await Pump();
             Check(site.Reads == reads && engine.LatestSnapshot?.Wallet?.Balance == null, "A failed profile clear cannot silently reconnect the old account");
             session.Unavailable = true; await connection.StartAsync();
@@ -159,7 +159,7 @@ internal static class DeepSeekWebConnectionChecks
                 Check(message.Text == engine.LatestSnapshot!.DeepseekConnection!.Status!.Message && retry.IsEnabled && settings.IsEnabled &&
                     retry.ActualHeight == 22 && settings.ActualHeight == 22 && engine.LatestSnapshot.Wallet?.Balance == 86.4,
                     "A transient read must retain the wallet and show the original status and 22-point actions in " + layout);
-                var statusView = Descendants(island).OfType<DeepSeekBalanceStatusView>().Single();
+                var statusView = SelfAndDescendants(island).OfType<DeepSeekBalanceStatusView>().Single();
                 var retryBounds = retry.TransformToAncestor(statusView).TransformBounds(new Rect(retry.RenderSize));
                 var settingsBounds = settings.TransformToAncestor(statusView).TransformBounds(new Rect(settings.RenderSize));
                 Check(retryBounds.Left >= -.1 && settingsBounds.Right <= statusView.ActualWidth + .1 && retryBounds.Right + 5.9 <= settingsBounds.Left,
@@ -188,7 +188,7 @@ internal static class DeepSeekWebConnectionChecks
     private static async Task<DeepSeekLoginWindow> Login(DeepSeekWebSessionChecks.Site site)
     {
         await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any(value =>
-            Descendants(value).OfType<WebView2>().Any(view => view.CoreWebView2 != null && view.CoreWebView2.Source == "https://platform.deepseek.com/usage")) && site.Ready);
+            SelfAndDescendants(value).OfType<WebView2>().Any(view => view.CoreWebView2 != null && view.CoreWebView2.Source == "https://platform.deepseek.com/usage")) && site.Ready);
         return Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
     }
     private static async Task Continue(DeepSeekLoginWindow window)
@@ -206,9 +206,7 @@ internal static class DeepSeekWebConnectionChecks
         Check(item.IsVisible && item.IsEnabled, "The actual account menu action must be available"); Invoke(item); await Pump();
     }
     private static T Find<T>(DependencyObject value, string id) where T : DependencyObject =>
-        Descendants(value).OfType<T>().First(item => AutomationProperties.GetAutomationId(item) == id);
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject value)
-    { yield return value; for (int i = 0; i < VisualTreeHelper.GetChildrenCount(value); i++) foreach (var child in Descendants(VisualTreeHelper.GetChild(value, i))) yield return child; }
+        SelfAndDescendants(value).OfType<T>().First(item => AutomationProperties.GetAutomationId(item) == id);
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Invoke(MenuItem item) => ((IInvokeProvider)new MenuItemAutomationPeer(item).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }

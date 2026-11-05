@@ -1,6 +1,6 @@
 # Windows Composition glass
 
-Windows 的 Liquid Glass 使用路线 B：原生 Composition 背景窗口承载模糊材质，现有分层 WPF 窗口承载内容。Classic 保留 Black 表面。原型分支 `codex/p4-backdrop-prototype` 只作参考，没有合并。
+Windows 的 Liquid Glass 使用路线 B：原生 Composition 背景窗口承载模糊材质，现有分层 WPF 窗口承载内容。Classic 保留 Black 表面。
 
 ## 接入方式
 
@@ -84,12 +84,6 @@ WPF 保留默认硬件路径；透明内容底使用 1/255 alpha，避免空白�
 
 原始数据见 `cpu.json` 和 `motion.json`。`cpu.json` 内的辅助间隔字段混有转场之间的短间歇；帧间隔结论使用 `motion.json` 的独立测量。可用 `test-backdrop.ps1 -Mode motion` 重跑。
 
-## 其他设备验收
+## 限制
 
-- 两块及更多显示器，不同 DPI、负坐标、副屏和主屏切换，实际跨屏移动。
-- 在 Windows 设置里实际切换透明效果和高对比度，确认自动恢复；本 PR 的自动化覆盖使用状态注入。
-- Narrator 实际朗读和键盘使用；UIA 结构与动作测试不能替代听读验收。
-- 睡眠、锁屏、远程桌面、显卡切换和真实设备重置后的恢复。
-- 不同显卡和驱动上的模糊、动画观感与 CPU/GPU 开销。普通非分层 WPF 硬件内容消失的问题尚不能归因于某个驱动；本方案沿用已在本机可见的分层内容路径。
-
-待 Mac 实机检查：无。本 PR 不改 Mac 代码、资源、偏好、版本、签名或更新参数。
+上述结果只来自一台设备。系统设置的实际切换、多屏与混合 DPI、Narrator 朗读、睡眠/锁屏/远程桌面/显卡切换后的恢复，以及其他显卡和驱动上的观感与 CPU/GPU 开销，都不在自动化范围内。

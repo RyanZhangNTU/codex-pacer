@@ -65,7 +65,7 @@ public sealed class CompactWarningsView : StackPanel
         }
         Visibility = items.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         string summary = string.Join("\n", items.Select(item => item.Help));
-        ToolTip = summary; AutomationProperties.SetName(this, summary);
+        AutomationProperties.SetName(this, summary);
         AutomationProperties.SetHelpText(this, summary);
     }
 }

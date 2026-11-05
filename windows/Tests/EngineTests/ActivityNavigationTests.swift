@@ -133,7 +133,7 @@ final class ActivityNavigationTests: XCTestCase {
         let context = try XCTUnwrap(frames.snapshot?.activityLinks?.first?.context)
         let request = try command("prepareActivityOpen", ["context": context])
         let preparing = Task { await runtime.receive(request) }
-        for _ in 0..<400 { if await gate.waiting { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { await gate.waiting }
         let waiting = await gate.waiting; XCTAssertTrue(waiting)
         _ = await runtime.receive(try command("configure", ["enabledProviders": ["claude"]]))
         await gate.release(); _ = await preparing.value
@@ -174,7 +174,7 @@ final class ActivityNavigationTests: XCTestCase {
         XCTAssertEqual(try frames.plan().kind, "host")
         let data = try command("activateActivityHost", ["context": link.context])
         let activating = Task { await runtime.receive(data) }
-        for _ in 0..<400 { if await !gate.calls.isEmpty { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { await !gate.calls.isEmpty }
         let calls = await gate.calls
         XCTAssertEqual(calls.map(\.identity), [.init(pid: 42, started: 84)])
         XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
@@ -197,7 +197,7 @@ final class ActivityNavigationTests: XCTestCase {
         _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
         let data = try command("activateActivityHost", ["context": link.context])
         let activating = Task { await runtime.receive(data) }
-        for _ in 0..<400 { if await !gate.calls.isEmpty { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { await !gate.calls.isEmpty }
         await gate.release(false); _ = await activating.value
         _ = await runtime.receive(try command("failActivityOpen", ["context": link.context, "navigationMessage": "Synthetic editor was removed"]))
         XCTAssertEqual(frames.snapshot?.navigationError?.message, "Synthetic editor was removed")
@@ -231,7 +231,7 @@ final class ActivityNavigationTests: XCTestCase {
         let context = try XCTUnwrap(frames.snapshot?.activityLinks?.first?.context)
         let accepted = await runtime.enqueue(try command("prepareActivityOpen", ["context": context]))
         XCTAssertTrue(accepted)
-        for _ in 0..<400 { if await gate.waiting { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { await gate.waiting }
         let waiting = await gate.waiting; XCTAssertTrue(waiting)
         let slept = expectation(description: "Sleep completes before the resolver is released")
         let sleeping = Task { await runtime.prepareForSleep(); slept.fulfill() }
@@ -315,7 +315,7 @@ final class ClaudeDesktopNavigationMetadataTests: XCTestCase {
             WindowsEnvironment.replacing("PACER_NAV_TEST_TARGET", with: WindowsCodexExecutableDiscovery.path(target), in: ProcessInfo.processInfo.environment))
         process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
         try process.run()
-        for _ in 0..<500 where process.isRunning { Thread.sleep(forTimeInterval: 0.01) }
+        TestWait.whileRunning(process)
         if process.isRunning { process.terminate(); process.waitUntilExit(); XCTFail("The private account junction fixture exceeded its deadline"); return }
         XCTAssertEqual(process.terminationStatus, 0)
         XCTAssertTrue(ClaudeDesktopRecords.load(configFiles: [root.appendingPathComponent("config.json")]).isEmpty)

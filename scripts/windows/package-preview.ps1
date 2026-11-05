@@ -34,13 +34,11 @@ try {
             Copy-Item -LiteralPath $_.FullName -Destination $taskApplication
         }
     }
-    Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/windows-preview.md') -Destination (Join-Path $taskApplication '开始使用.txt')
     Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination (Join-Path $taskApplication 'LICENSE.txt')
     $taskLicenses = Join-Path $taskApplication 'Licenses/Swift'
     New-Item -ItemType Directory -Path $taskLicenses -Force | Out-Null
     Get-ChildItem -LiteralPath (Join-Path $taskRoot 'windows/ThirdParty/Swift') -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $taskLicenses }
     Copy-Item -LiteralPath (Join-Path $taskRoot 'native/Sources/CZstd/LICENSE') -Destination (Join-Path $taskApplication 'Licenses/Zstd-LICENSE.txt')
-    [IO.File]::WriteAllText((Join-Path $taskApplication 'Demo.cmd'), "@echo off`r`nstart `"`" `"%~dp0CodexPacer.exe`" --demo`r`n", [Text.ASCIIEncoding]::new())
     $taskRuntimeConfig = Get-Content -LiteralPath (Join-Path $taskApplication 'CodexPacer.runtimeconfig.json') -Raw | ConvertFrom-Json
     $taskFrameworks = @($taskRuntimeConfig.runtimeOptions.includedFrameworks)
     if ($taskFrameworks.Count -lt 2) { throw 'The preview must include both .NET and Windows Desktop runtimes.' }
@@ -66,9 +64,9 @@ try {
     $taskFiles = @(Get-ChildItem -LiteralPath $taskApplication -File -Recurse | Sort-Object FullName | ForEach-Object {
         @{ path = [IO.Path]::GetRelativePath($taskApplication, $_.FullName).Replace([char]92,[char]47); sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
     })
-    $taskManifest = @{ schemaVersion=1; channel='development-preview'; version=$taskVersion.version; build=$taskVersion.build;
-        sourceCommit=$taskCommit; sourceDirty=$taskDirty; builtAt=[DateTime]::UtcNow.ToString('o'); architecture=$Architecture; validation=$(if ($BuildOnly) { 'build-only' } else { 'runtime-preview' });
-        minimumWindowsBuild=19041; signed=$false; automaticUpdates=$false; engineSourceHash=(Split-Path $taskEngine.source -Leaf);
+    $taskManifest = @{ schemaVersion=1; version=$taskVersion.version; build=$taskVersion.build;
+        sourceCommit=$taskCommit; sourceDirty=$taskDirty; builtAt=[DateTime]::UtcNow.ToString('o'); architecture=$Architecture;
+        minimumWindowsBuild=19041; signed=$false; engineSourceHash=(Split-Path $taskEngine.source -Leaf);
         includedFrameworks=$taskFrameworks; toolchain=(Get-Content -LiteralPath windows/toolchain-lock.json -Raw | ConvertFrom-Json); files=$taskFiles }
     [IO.File]::WriteAllText((Join-Path $taskApplication 'build-info.json'), ($taskManifest | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
     python -S scripts/windows/check-architecture.py --root $taskApplication --architecture $Architecture

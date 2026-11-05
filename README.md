@@ -42,7 +42,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 ## Everything in one panel
 
-- **Every task in one list.** Codex and Claude Code tasks on this Mac, on your SSH hosts and through Codex Remote Control, threads and coordinators in Claude's cloud Projects, and DeepSeek Harness tasks on this Mac, each with its current stage, model and reasoning effort, turn time and output speed. Agents a task spawns are grouped under it.
+- **Every task in one list.** Codex and Claude Code tasks on this Mac or PC, on your SSH hosts, in WSL on Windows and through Codex Remote Control, threads and coordinators in Claude's cloud Projects, and local DeepSeek Harness tasks, each with its current stage, model and reasoning effort, turn time and output speed. Agents a task spawns are grouped under it.
 - **Jump back in.** Click a task to open its conversation. An ended task stays as a card until you open it or its retention time passes, so nothing finishes unnoticed.
 - **Quota with pace.** Each service has one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own remaining quota, reset countdown and white pace tick. Accounts without a 5-hour limit get a weekly gauge that opens at the bottom. With one service on, its pace, reset time and a forecast sit beside the ring. Switch to the original Classic layout in **Settings → Appearance → Expanded Quota**.
 - **DeepSeek by balance or budget.** DeepSeek charges a balance instead of quota windows, so its dial is today on a 24-hour face: what each hour cost, the doubled-price peak hours and the balance in the middle. Switch to daily and weekly budgets and the dial paces them like quota. Pacer checks balance changes against its own estimate, so spend not made on this Mac, such as web searches or another device, counts too, and it warns you when 10 minutes cost more than usual. Each task shows its turn's estimated cost, and with DeepSeek alone the panel adds where today's money went and the last 7 days. The balance comes from a DeepSeek platform sign-in in Pacer's own window or an API key, whichever matches how Harness signs in.
@@ -56,7 +56,7 @@ Collapsed, Pacer is a slim bar around the camera that tells you how your agents 
 
 - **Arrange the bar.** Drag components between the left and right of the camera, hide what you don't need, choose which module each quota ring shows, and pick 5 hours or 7 days for each service's quota. With DeepSeek alone, a price clock shows the peak hours at a glance.
 - **Black or Liquid Glass.** On macOS 26 and later the island can use Liquid Glass, and its clarity follows the system setting.
-- **Notch or custom.** Around the notch, or placed yourself on any display: centered below the menu bar or as a narrow strip against the side of the screen in any corner. Full-screen spaces too, if you like.
+- **Place the island where it fits.** On Windows, drag the status bar anywhere or snap it to any screen edge. On Mac, place it around the notch, under the menu bar, or at a corner. Both platforms let you choose a display and whether the island appears over full-screen apps.
 - **Only what you use.** Turn the Codex, Claude and DeepSeek modules on or off independently.
 - **Notifications, if you want them.** macOS notifications when a task needs you or ends, quota or the balance runs low, DeepSeek spending spikes or a budget runs out.
 - **In your language.** English and Simplified Chinese.
@@ -85,7 +85,7 @@ After that, Pacer updates itself: it checks daily, installs when you choose to a
 1. Download `Codex-Pacer-VERSION-windows-x64-setup.exe` from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest), or `windows-arm64-setup.exe` on an ARM PC, and run it. It installs for the current user without administrator rights.
 2. The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**.
 
-Updates then work as on the Mac, from **Settings → General**. Uninstall from Windows **Installed apps**; preferences and read history are kept.
+Updates then work as on the Mac, from **Settings → General**. Uninstall from Windows **Installed apps**; preferences and read history are kept. For screenshots with sample data, quit Pacer and run `CodexPacer.exe --demo` from its install folder (`%LOCALAPPDATA%\Programs\Codex Pacer` by default). More details are in [Windows installation](docs/windows-installation.md).
 
 ## Requirements
 

@@ -177,7 +177,8 @@ internal sealed partial class SettingsWindow
         if (projection.Components.Length == 0) { compactEditor.IsEnabled = false; return; }
         if (compactRows.Count == 0) { RebuildPane("collapsed"); RefreshValues(); return; }
         compactProjection = projection;
-        var providers = CompactProviders(); bool docked = session.Current.DisplayMode != "notch" && session.Current.Position != "center";
+        var providers = CompactProviders(); bool docked = session.Current.DisplayMode != "notch" &&
+            (session.Current.IslandPlacement?.Vertical ?? session.Current.Position != "center");
         compactEditor.Update(projection, docked); compactEditor.IsEnabled = !busy && !session.RequiresRestart;
         var components = projection.Components.ToDictionary(value => value.Id);
         foreach (var component in projection.Components)

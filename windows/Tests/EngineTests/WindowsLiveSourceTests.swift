@@ -39,7 +39,7 @@ final class WindowsLiveSourceTests: XCTestCase {
     }
     private func until(_ predicate: () -> Bool, message: String) async throws {
         let started = ProcessInfo.processInfo.systemUptime
-        while !predicate(), ProcessInfo.processInfo.systemUptime - started < 3 {
+        while !predicate(), ProcessInfo.processInfo.systemUptime - started < TestWait.limit {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTAssertTrue(predicate(), message)

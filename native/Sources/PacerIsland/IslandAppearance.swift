@@ -27,8 +27,8 @@ enum IslandAppearance: String, CaseIterable {
 struct IslandSurface: ViewModifier {
     let appearance: IslandAppearance
     let attached: Bool
-    /// A docked strip's corners against the screen edge stay square.
-    var flatSide: IslandPosition.Side?
+    /// A docked island's corners against the screen edge stay square.
+    var flatEdge: IslandPlacement.Edge?
     let expanded: Bool
     var progress: Double?
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -37,10 +37,10 @@ struct IslandSurface: ViewModifier {
     private var shape: UnevenRoundedRectangle {
         let fraction = progress ?? (expanded ? 1 : 0)
         let bottom = 19 + 8 * fraction
-        let top = attached ? 0 : bottom
-        let left: CGFloat = flatSide == .left ? 0 : 1, right: CGFloat = flatSide == .right ? 0 : 1
+        let top = attached || flatEdge == .top ? 0 : bottom, lower = flatEdge == .bottom ? 0 : bottom
+        let left: CGFloat = flatEdge == .left ? 0 : 1, right: CGFloat = flatEdge == .right ? 0 : 1
         return UnevenRoundedRectangle(topLeadingRadius: top * left,
-            bottomLeadingRadius: bottom * left, bottomTrailingRadius: bottom * right, topTrailingRadius: top * right)
+            bottomLeadingRadius: lower * left, bottomTrailingRadius: lower * right, topTrailingRadius: top * right)
     }
 
     func body(content: Content) -> some View {

@@ -111,6 +111,9 @@ final class ClaudeTelemetryProtocolTests: XCTestCase {
             (Data(nonfinite.utf8), 400, 0),
             (try payload([invalidStatus]), 200, 0),
             (try payload([invalidOwner], resource: ["session.id": "resource-owner"]), 200, 0),
+            // A subagent's span names its agent instead of a prompt; Core binds it only to an observed child.
+            (try payload([replacing("prompt.id", with: context("agent") + [["key": "agent_id", "value": ["stringValue": "fixture-child"]]])]), 200, 1),
+            (try payload([replacing("prompt.id", with: context("agent") + [["key": "agent_id", "value": ["stringValue": "fixture child\n"]]])]), 200, 0),
             (try payload([replacing("prompt.id", with: context("interaction"))]), 200, 1),
             (try payload([replacing("prompt.id", with: context("interaction") + [["key": "prompt.id", "value": ["stringValue": "invalid prompt"]]])]), 200, 0),
             (try payload([replacing("prompt.id", with: [])]), 200, 0),

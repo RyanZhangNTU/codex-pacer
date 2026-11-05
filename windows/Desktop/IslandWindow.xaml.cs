@@ -51,7 +51,7 @@ public partial class IslandWindow : Window
     internal void SetUpdateInputSuspended(bool value)
     {
         updateInputSuspended = value;
-        if (value) { collapse.Stop(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
+        if (value) { CancelMove(); collapse.Stop(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
         IsHitTestVisible = !value;
     }
     private bool renderCallback;
@@ -110,7 +110,7 @@ public partial class IslandWindow : Window
         surfaceBounds = destination;
         Left = destination.X; Top = destination.Y; Width = destination.Width; Height = destination.Height;
         Shell.Width = destination.Width; Shell.Height = destination.Height;
-        motion = new NativeMotion(directory, destination, position: layout.Position);
+        motion = new NativeMotion(directory, destination, position: layout.MotionAnchor);
         DemoTag.Visibility = demo ? Visibility.Visible : Visibility.Collapsed;
         TasksTitle.Text = ui.Text("layout.group.tasks"); QuotaTitle.Text = ui.Text("layout.group.quota_balance"); DemoLabel.Text = ui.Text("demo.label");
         SetButtonName(MarkReadButton, ui.Text("activity.mark_all_read")); SetButtonName(PinButton, ui.Text("common.pin")); SetButtonName(MoreButton, ui.Text("common.more"));
@@ -118,15 +118,17 @@ public partial class IslandWindow : Window
         SetButtonName(SettingsButton, ui.Text("common.settings"));
         AutomationProperties.SetName(ExpandedScroll, ui.Text("activity.task_list"));
         RefreshMenu.Header = ui.Text("common.refresh"); QuitMenu.Header = ui.Text("common.quit"); SettingsMenu.Header = ui.Text("common.settings");
+        InitializeMove();
         // Hover and connection errors can expand the HWND before the first
         // engine snapshot. Give every measured lane a real initial value.
         RatePanel.Visibility = StripRatePanel.Visibility = Visibility.Collapsed;
         InitializeCompactBar();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
-        collapse.Tick += (_, _) => { collapse.Stop(); if (!pinned) SetExpanded(false); };
+        // Closing under the pointer can still raise a leave that starts the timer.
+        collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned) SetExpanded(false); };
         // The open menu holds the pointer, so leaving the island meanwhile raised no leave event.
         MoreButton.ContextMenu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
-        { if (!presentationStopped && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
+        { if (!presentationStopped && move == null && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
         engine.Snapshot += value => Dispatcher.InvokeAsync(() => Render(value));
         engine.Status += value => Dispatcher.InvokeAsync(() => SetStatus(ui.Text(value == "engineStopped" ? "windows.connection.closed" : "windows.connection.refresh_failed")));
         ShellProjection.Changed += OnShellProjectionChanged;
@@ -139,7 +141,7 @@ public partial class IslandWindow : Window
             MoreButton.ContextMenu.IsEnabled = IsVisible;
             if (!IsVisible) MoreButton.ContextMenu.IsOpen = false;
             if (presentationStopped) return;
-            if (!IsVisible) { StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
+            if (!IsVisible) { CancelMove(); StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
             else { UpdateCompactBar(); StartRendering(); }
             RefreshRowMotion();
             SyncBackdrop();
@@ -163,7 +165,10 @@ public partial class IslandWindow : Window
     }
     internal double VisibleWidth => Shell.ActualWidth;
     internal double VisibleHeight => Shell.ActualHeight;
-    private static void SetButtonName(Button button, string title) { button.ToolTip = title; AutomationProperties.SetName(button, title); }
+    // Only the first toolbar row shows hover tooltips; the rest of the island
+    // keeps its descriptions for screen readers alone.
+    private static void SetButtonName(Button button, string title, bool tooltip = true)
+    { button.ToolTip = tooltip ? title : null; AutomationProperties.SetName(button, title); }
     private void OnShellProjectionChanged(string method)
     {
         if (method.Length > 0 && method != "projectCompactBar") return;
@@ -286,6 +291,9 @@ public partial class IslandWindow : Window
     {
         bool screenChanged = compactPreferences.DisplaySelection != preferences.DisplaySelection || compactPreferences.DisplayID != preferences.DisplayID
             || compactPreferences.DisplayName != preferences.DisplayName || compactPreferences.DisplayX != preferences.DisplayX || compactPreferences.DisplayY != preferences.DisplayY;
+        bool placementChanged = compactPreferences.IslandPlacement != preferences.IslandPlacement ||
+            compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
+        if (screenChanged || placementChanged) CancelMove();
         compactPreferences = preferences;
         PreferSurface(preferences.IslandAppearance);
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
@@ -299,7 +307,7 @@ public partial class IslandWindow : Window
         }
         UpdateAppButtons(); UpdateCompactBar();
         if (screenChanged && PresentationSource.FromVisual(this) != null && screenGeometry == null) QueueDisplayRefresh(force: true);
-        else Relayout();
+        else Relayout(snap: placementChanged);
         ApplyFullscreenVisibility(); occlusion?.Request();
     }
     private void UpdateAppButtons()
@@ -336,9 +344,8 @@ public partial class IslandWindow : Window
         if (desktopApplications?.Open(provider) == true) DismissForSettings();
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
-    private void OnMouseEnter(object sender, MouseEventArgs e) { RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
-    private void OnMouseLeave(object sender, MouseEventArgs e) { RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
-    private void OnHeaderClick(object sender, MouseButtonEventArgs e) { SetPinned(!pinned); SetExpanded(true); }
+    private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
+    private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
     private void SetPinned(bool value)
     {
@@ -356,7 +363,7 @@ public partial class IslandWindow : Window
     private void OnSettings(object sender, RoutedEventArgs e)
     { DismissForSettings(); SettingsRequested?.Invoke(); }
     internal void DismissForSettings()
-    { MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
+    { CancelMove(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
     private void OnMore(object sender, RoutedEventArgs e)
     {
         collapse.Stop(); MoreButton.ContextMenu.PlacementTarget = MoreButton; MoreButton.ContextMenu.IsOpen = true;
@@ -387,9 +394,9 @@ public partial class IslandWindow : Window
         pointerDown = null;
     }
     private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; visibleRequested = false; ApplyFullscreenVisibility(); } else StopPresentation(); }
-    private void SetExpanded(bool value)
+    private void SetExpanded(bool value, bool snap = false)
     {
-        if (value && updateInputSuspended) return;
+        if (value && (updateInputSuspended || move?.Active == true)) return;
         collapse.Stop();
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
@@ -397,16 +404,27 @@ public partial class IslandWindow : Window
         UIElementAutomationPeer.FromElement(this)?.RaisePropertyChangedEvent(ExpandCollapsePatternIdentifiers.ExpandCollapseStateProperty,
             value ? ExpandCollapseState.Collapsed : ExpandCollapseState.Expanded,
             value ? ExpandCollapseState.Expanded : ExpandCollapseState.Collapsed);
-        SetCompactDimState(value, true); Relayout(); _ = Send("setExpanded", new { expanded = value });
+        SetCompactDimState(value, true); Relayout(snap); _ = Send("setExpanded", new { expanded = value });
     }
     private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open)
     {
         var current = IslandScreen.Read(this, SelectedDisplay.Display);
         var bounds = screenGeometry?.Invoke() ?? (current.Screen, current.Work);
+        var preferences = displayedPlacement ?? compactPreferences;
+        if (preferences.DisplayMode != "notch" && preferences.IslandPlacement is { } placement)
+            return MeasurePlacement(placement, bounds.Item1, bounds.Item2, contentWidth, contentHeight, headerWidth, open);
         return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
+    }
+    private IslandLayout MeasurePlacement(IslandPlacement placement, MotionBounds screen, MotionBounds work,
+        double contentWidth, double contentHeight, double headerWidth, bool open)
+    {
+        int side = placement.Edge == IslandEdge.Left ? 1 : placement.Edge == IslandEdge.Right ? 3 : 0;
+        var measured = geometry.Measure(screen, work, 2, 0, 0, side, false, contentWidth, contentHeight, headerWidth, measuredStripHeight);
+        return placement.Arrange(work, measured, measured.Target.Width, measured.Target.Height, contentHeight, open);
     }
     private void Relayout(bool snap = false)
     {
+        if (move?.Active == true && !snap) return;
         double Probe(string text, double size, FontWeight weight)
         {
             var label = new TextBlock { Text = text, FontFamily = RateLabel.FontFamily, FontSize = size, FontWeight = weight };
@@ -418,6 +436,7 @@ public partial class IslandWindow : Window
         // The native header also measures a separate, unconstrained copy.
         RateUnit.Width = Math.Max(NativeTypography.RateUnitWidth, Probe("t/s", 9, FontWeights.Medium));
         double measuredHeader = MeasureCompactBar().Header;
+        dragHeaderWidth = measuredHeader;
         double rowsHeight = rows.Count == 0 ? 44 : Math.Min(3, rows.Count) * 54 + (Math.Min(3, rows.Count) - 1) * 2;
         TaskToolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double contentWidth = Math.Max(measuredRowsWidth + 12, TaskToolbar.DesiredSize.Width + 12);
@@ -431,7 +450,9 @@ public partial class IslandWindow : Window
         // fractional text line must not create a scrollbar and narrow the
         // already measured content when geometry snaps the panel to points.
         contentHeight = Math.Ceiling(contentHeight);
+        int previousAnchor = layout.MotionAnchor;
         layout = MeasureLayout(contentWidth, contentHeight, measuredHeader, expanded);
+        snap |= previousAnchor != layout.MotionAnchor;
         ApplyPresentationLayout();
         bool blackHeader = layout.Attached && islandAppearance == "liquidGlass";
         if (snap)
@@ -439,7 +460,7 @@ public partial class IslandWindow : Window
             StopRendering(); motion.Dispose();
             destination = layout.Target; destinationExpanded = expanded; destinationBlackHeader = blackHeader; surfaceBounds = destination;
             motionRevision++; transitionStarted = Clock();
-            motion = new NativeMotion(Path.Combine(AppContext.BaseDirectory, "Engine"), destination, expanded, blackHeader, layout.Position);
+            motion = new NativeMotion(Path.Combine(AppContext.BaseDirectory, "Engine"), destination, expanded, blackHeader, layout.MotionAnchor);
             NativeWindowBounds.Apply(this, surfaceBounds); ApplyMotion(motion.SettledAt(transitionStarted));
             return;
         }
@@ -449,11 +470,11 @@ public partial class IslandWindow : Window
         destinationBlackHeader = blackHeader;
         motionRevision++;
         Expanded.Visibility = Visibility.Visible;
-        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.Position);
+        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.MotionAnchor);
         PrepareSurface();
         // Allocation can wait on the system compositor. Start the displayed
         // transition after that work, retaining the same last displayed sample.
-        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.Position);
+        transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.MotionAnchor);
         if (!AnimationsEnabled) { StopRendering(); ApplyMotion(motion.SettledAt(transitionStarted)); }
         else StartRendering();
     }
@@ -478,14 +499,17 @@ public partial class IslandWindow : Window
         int effective = layout.Position;
         bool side = effective != 0, left = effective is 1 or 2;
         Header.Height = layout.HeaderHeight;
+        Header.VerticalAlignment = HeaderBand.VerticalAlignment = layout.OpensUp ? VerticalAlignment.Bottom : VerticalAlignment.Top;
         Header.Visibility = side ? Visibility.Collapsed : Visibility.Visible;
         Strip.Visibility = side ? Visibility.Visible : Visibility.Collapsed;
         Strip.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
         Expanded.Width = Math.Max(1, layout.CanvasWidth - 12 - (side ? 32 : 0));
         Expanded.Height = Math.Max(1, layout.CanvasHeight - (side ? 0 : layout.HeaderHeight));
         Expanded.HorizontalAlignment = side ? left ? HorizontalAlignment.Left : HorizontalAlignment.Right : HorizontalAlignment.Center;
-        Expanded.VerticalAlignment = effective is 2 or 4 ? VerticalAlignment.Bottom : VerticalAlignment.Top;
-        Expanded.Margin = side ? new Thickness(left ? 38 : 6, 0, left ? 6 : 38, 0) : new Thickness(6, layout.HeaderHeight, 6, 0);
+        // Content opening upward stays next to the header while the shell grows away from it.
+        Expanded.VerticalAlignment = effective is 2 or 4 || (!side && layout.OpensUp) ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+        Expanded.Margin = side ? new Thickness(left ? 38 : 6, 0, left ? 6 : 38, 0)
+            : layout.OpensUp ? new Thickness(6, 0, 6, layout.HeaderHeight) : new Thickness(6, layout.HeaderHeight, 6, 0);
     }
     private static double Clock() => (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency;
     private void StartRendering()
@@ -525,11 +549,12 @@ public partial class IslandWindow : Window
         double radius = 19 + 8 * frame.Expansion;
         int effective = layout.Position;
         Shell.CornerRadius = effective is 1 or 2 ? new(0, radius, radius, 0) : effective is 3 or 4 ? new(radius, 0, 0, radius)
-            : layout.Attached ? new(0, 0, radius, radius) : new(radius);
+            : layout.Attached || layout.Dock == IslandEdge.Top ? new(0, 0, radius, radius)
+            : layout.Dock == IslandEdge.Bottom ? new(radius, radius, 0, 0) : new(radius);
         Shell.Clip = ClipShape(frame.Window.Width, frame.Window.Height, Shell.CornerRadius);
         Expanded.Opacity = frame.Content;
         RevealOffset.X = effective == 0 ? 0 : (effective is 1 or 2 ? 1 : -1) * (1 - frame.Content) * 8;
-        RevealOffset.Y = effective == 0 ? (1 - frame.Content) * 8 : 0;
+        RevealOffset.Y = effective == 0 ? (layout.OpensUp ? -1 : 1) * (1 - frame.Content) * 8 : 0;
         bool interactive = expanded && frame.Content > 0.95;
         Expanded.IsHitTestVisible = interactive; Expanded.SetAccessible(interactive);
         KeyboardNavigation.SetTabNavigation(Expanded, interactive ? KeyboardNavigationMode.Continue : KeyboardNavigationMode.None);
@@ -562,7 +587,7 @@ public partial class IslandWindow : Window
     {
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged;
-        presentationStopped = true; StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
         DisposeAppearance();
