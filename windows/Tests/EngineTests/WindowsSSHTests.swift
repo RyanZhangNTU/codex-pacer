@@ -55,7 +55,7 @@ final class WindowsSSHTests: XCTestCase {
     }
     private func target() -> RemoteActivityTarget { .init(id: "remote-ssh-discovered:alias-a", name: "Synthetic", alias: "alias-a", home: "~/.codex") }
     private func wait(_ condition: @escaping () async -> Bool) async throws {
-        for _ in 0..<300 { if await condition() { return }; try await Task.sleep(nanoseconds: 10_000_000) }
+        if try await TestWait.until(condition) { return }
         XCTFail("Synthetic SSH boundary was not reached"); throw CodexClientError.invalidResponse
     }
     func testOpenSSHLookupAndWindowsPathsKeepTheCoreValidationBoundary() throws {

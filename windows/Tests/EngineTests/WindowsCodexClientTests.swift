@@ -178,7 +178,7 @@ for line in sys.stdin.buffer:
             .split(whereSeparator: \.isNewline).map { try XCTUnwrap(DWORD($0)) }
         XCTAssertEqual(pids.count, expectedCount, file: file, line: line)
         for pid in pids {
-            for _ in 0..<100 where running(pid) { try await Task.sleep(nanoseconds: 20_000_000) }
+            try await TestWait.until { !running(pid) }
             XCTAssertFalse(running(pid), "The client must release its helpers and their descendants", file: file, line: line)
         }
     }

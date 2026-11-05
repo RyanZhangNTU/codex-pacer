@@ -26,7 +26,7 @@ final class EngineSSHReminderTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
     }
     private func until(_ message: String, _ condition: () -> Bool) async throws {
-        let end = Date().addingTimeInterval(15)
+        let end = Date().addingTimeInterval(TestWait.limit)
         while !condition() {
             if Date() >= end { XCTFail(message); throw ActivityNavigationError.unavailable }
             try await Task.sleep(nanoseconds: 20_000_000)

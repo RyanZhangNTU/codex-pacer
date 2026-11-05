@@ -9,7 +9,8 @@ private final class ClaudeHostFrames: @unchecked Sendable {
     func append(_ value: ClaudeWebHostMessage) { lock.lock(); defer { lock.unlock() }; messages.append(value) }
     func all() -> [ClaudeWebHostMessage] { lock.lock(); defer { lock.unlock() }; return messages }
     func request() async throws -> ClaudeWebHostMessage {
-        for _ in 0..<200 { if let value = all().last(where: { $0.type == "hostRequest" }) { return value }; try await Task.sleep(nanoseconds: 1_000_000) }
+        try await TestWait.until { all().contains { $0.type == "hostRequest" } }
+        if let value = all().last(where: { $0.type == "hostRequest" }) { return value }
         throw ClaudeQuotaError.timedOut
     }
 }
@@ -46,7 +47,7 @@ final class ClaudeWebBridgeTests: XCTestCase {
             do { _ = try await reading.value; XCTFail("A revoked cookie request completed") }
             catch { XCTAssertTrue(error is CancellationError || error as? ClaudeQuotaError == .connectionFailed) }
             let accepted = await bridge.complete(id: request.requestID, context: context, reply: reply()); XCTAssertFalse(accepted)
-            for _ in 0..<100 where !frames.all().contains(where: { $0.type == "hostCancel" }) { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await TestWait.until { frames.all().contains { $0.type == "hostCancel" } }
             XCTAssertTrue(frames.all().contains { $0.type == "hostCancel" && $0.context == context })
             await bridge.setAvailable(false)
         }

@@ -29,9 +29,7 @@ final class EngineClaudeHookSetupTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": "synthetic-setup", "method": method, "params": params])
     }
     private func wait(_ condition: @escaping () async -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline { if await condition() { return true }; try? await Task.sleep(nanoseconds: 10_000_000) }
-        return false
+        (try? await TestWait.until(condition)) ?? false
     }
     func testPendingSetupDoesNotBlockInitializeOrRetryAndLateRepliesAreIgnored() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-binding-" + UUID().uuidString)

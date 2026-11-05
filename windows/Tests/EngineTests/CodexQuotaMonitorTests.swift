@@ -88,10 +88,7 @@ final class CodexQuotaMonitorTests: XCTestCase {
         await monitor.configure(home: home, customPath: "", enabled: true, context: context)
     }
     private func until(_ predicate: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
-        for _ in 0..<200 {
-            if await predicate() { return }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        if try await TestWait.until(predicate) { return }
         XCTFail("Expected the bounded asynchronous operation to finish", file: file, line: line)
     }
 

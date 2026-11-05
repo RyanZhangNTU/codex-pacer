@@ -223,7 +223,9 @@ final class ClaudeWebQuotaTests: XCTestCase {
             throw ClaudeQuotaError.connectionFailed
         }, now: { capturedAt })
         let task = Task { try await value.readQuota() }
-        for _ in 0..<100 where !started.value { try await Task.sleep(nanoseconds: 1_000_000) }
+        // A wait for the request to start costs time only when it never starts.
+        let end = ProcessInfo.processInfo.systemUptime + 20
+        while !started.value, ProcessInfo.processInfo.systemUptime < end { try await Task.sleep(nanoseconds: 1_000_000) }
         task.cancel()
         do { _ = try await task.value; XCTFail("Cancellation must interrupt the owned request") }
         catch { XCTAssertTrue(error is CancellationError) }

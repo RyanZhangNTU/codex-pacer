@@ -183,7 +183,7 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
         await runtime.stop()
     }
     private func wait(_ condition: @Sendable () -> Bool) async throws {
-        for _ in 0..<250 { if condition() { return }; try await Task.sleep(nanoseconds: 10_000_000) }
+        if try await TestWait.until(condition) { return }
         XCTFail("The correlated balance update did not arrive")
     }
     private final class KeyMemory: @unchecked Sendable {
