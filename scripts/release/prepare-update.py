@@ -13,6 +13,8 @@ from urllib.parse import quote
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
+import sparkle_key
+
 REPOSITORY = "RyanZhangNTU/codex-pacer"
 KEY_ACCOUNT = "com.codexpacer.app"
 NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
@@ -60,8 +62,7 @@ def validate_configuration(info, tools):
     public_key = info["SUPublicEDKey"]
     if len(base64.b64decode(public_key, validate=True)) != 32:
         raise ValueError("The application has no valid update verification key.")
-    actual_key = subprocess.check_output([str(tools / "generate_keys"), "--account", KEY_ACCOUNT, "-p"], text=True).strip()
-    if public_key != actual_key:
+    if public_key != sparkle_key.public_key(tools):
         raise ValueError("The app's public key does not match the release signing key.")
     required = ("SUVerifyUpdateBeforeExtraction", "SURequireSignedFeed")
     if not all(info.get(key) is True for key in required):
@@ -79,10 +80,9 @@ def prepare(info_path, archive, tools, notes, notes_zh):
         staged_archive = staging / archive.name
         shutil.copy2(archive, staged_archive)
         shutil.copy2(notes, staged_archive.with_suffix(".md"))
-        subprocess.run([str(tools / "generate_appcast"), "--account", KEY_ACCOUNT,
-                        "--download-url-prefix", prefix, "--maximum-deltas", "0",
+        sparkle_key.run(tools / "generate_appcast", "--download-url-prefix", prefix, "--maximum-deltas", "0",
                         "--embed-release-notes", "--link", f"https://github.com/{REPOSITORY}/releases/tag/v{version}",
-                        "-o", str(staging / "appcast.xml"), str(staging)], check=True)
+                        "-o", staging / "appcast.xml", staging)
         feed = staging / "appcast.xml"
         # Parsing intentionally drops the old signature comments. Re-sign after
         # embedding both languages; modifying a signed feed invalidates it.
@@ -95,10 +95,10 @@ def prepare(info_path, archive, tools, notes, notes_zh):
             description.text = path.read_text(encoding="utf-8")
         ET.indent(tree, space="    ")
         tree.write(feed, encoding="utf-8", xml_declaration=True)
-        subprocess.run([str(tools / "sign_update"), "--account", KEY_ACCOUNT, str(feed)], check=True)
+        sparkle_key.run(tools / "sign_update", feed)
         signature = validate_appcast(feed, staged_archive, version, build, download_url)
-        subprocess.run([str(tools / "sign_update"), "--account", KEY_ACCOUNT, "--verify", str(feed)], check=True)
-        subprocess.run([str(tools / "sign_update"), "--account", KEY_ACCOUNT, "--verify", str(staged_archive), signature], check=True)
+        sparkle_key.run(tools / "sign_update", "--verify", feed)
+        sparkle_key.run(tools / "sign_update", "--verify", staged_archive, signature)
         shutil.copy2(feed, archive.parent / "appcast.xml")
     metadata = {"version": version, "buildNumber": build, "feed": "appcast.xml", "archive": archive.name,
                 "publicEDKey": public_key, "archiveSignature": signature, "downloadURL": download_url,
@@ -120,8 +120,8 @@ def verify_release(info_path, archive, tools, check_latest=False):
                 "feedSHA256": hashlib.sha256(feed.read_bytes()).hexdigest()}
     if any(metadata.get(key) != value for key, value in expected.items()):
         raise ValueError("Update metadata does not match the verified release artifacts.")
-    subprocess.run([str(tools / "sign_update"), "--account", KEY_ACCOUNT, "--verify", str(feed)], check=True)
-    subprocess.run([str(tools / "sign_update"), "--account", KEY_ACCOUNT, "--verify", str(archive), signature], check=True)
+    sparkle_key.run(tools / "sign_update", "--verify", feed)
+    sparkle_key.run(tools / "sign_update", "--verify", archive, signature)
     if check_latest:
         latest = json.loads(subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/releases/latest"], text=True))
         published = next((asset for asset in latest["assets"] if asset["name"] == "appcast.xml"), None)

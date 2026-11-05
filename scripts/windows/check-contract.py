@@ -217,7 +217,7 @@ def toolchain_pins(root, workflow):
     sdk = json.loads((root / "global.json").read_text(encoding="utf-8"))["sdk"]["version"]
     workflow_sdks = set(re.findall(r"^\s*dotnet-version:\s*(\S+)\s*$", workflow, re.M))
     if lock["dotnetSDK"] != sdk or workflow_sdks != {sdk}:
-        raise ValueError(".NET SDK pins differ: toolchain-lock.json, global.json and platforms.yml must name one version")
+        raise ValueError(".NET SDK pins differ: toolchain-lock.json, global.json and the workflows must name one version")
     packages = {}
     for project in sorted((root / "windows").rglob("*.csproj")):
         for item in ElementTree.parse(project).getroot().iter("PackageReference"):
@@ -228,21 +228,45 @@ def toolchain_pins(root, workflow):
             raise ValueError(f"{package} must be pinned exactly as [{lock[key]}] from toolchain-lock.json {key}")
 
 
+def workflow_job(workflow, name):
+    """The body of a top-level job in a workflow, or None."""
+    match = re.search(r"(?ms)^  " + re.escape(name) + r":\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow)
+    return match.group(1) if match else None
+
+
 def workflow_boundary(workflow):
-    """The contract job runs the strict contract and its tests on every pull request.
+    """The contract job runs the strict contract and its tests on every run.
 
     The checks need no platform, so CI runs them once, whatever a change touches.
     """
-    job = re.search(r"(?ms)^  contract:\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow)
-    if not job:
+    body = workflow_job(workflow, "contract")
+    if body is None:
         raise ValueError("CI must have a contract job")
-    body = job.group(1)
     for script in ("scripts/windows/check-contract.py", "scripts/windows/test_contract.py"):
         if not re.search(r"^\s+python3? " + re.escape(script) + r"\s*$", body, re.M):
             raise ValueError("The contract job must run the strict contract and its tests")
-    conditions = [value.strip() for value in re.findall(r"^    if:(.*)$", body, re.M)]
-    if "needs.changes" in body or any(value != "github.event_name == 'pull_request'" for value in conditions):
-        raise ValueError("The contract job must run on every pull request")
+    if re.search(r"^    (if|needs):", body, re.M):
+        raise ValueError("The contract job must run on every run")
+
+
+# The release publisher downloads these artifacts by name.
+RELEASE_INSTALLERS = {"windows-x64": "windows-installer-x64-unsigned", "windows-arm64": "windows-installer-arm64-unsigned"}
+
+
+def release_boundary(release):
+    """The Windows release jobs build the installers the publisher reads, and hold no secrets.
+
+    The installers are not Authenticode signed, so only the Mac and publish jobs
+    need the release environment. A release run is never cancelled halfway.
+    """
+    for name, artifact in RELEASE_INSTALLERS.items():
+        body = workflow_job(release, name)
+        if body is None or not re.search(r"^\s+name: " + re.escape(artifact) + r"\s*$", body, re.M):
+            raise ValueError(f"release.yml must build {artifact} in its {name} job")
+        if re.search(r"^    environment:", body, re.M) or "secrets." in body:
+            raise ValueError(f"The {name} release job must hold no secrets")
+    if not re.search(r"^  cancel-in-progress: false\s*$", release, re.M):
+        raise ValueError("A release run must never be cancelled")
 
 
 def check(root=ROOT):
@@ -271,9 +295,11 @@ def check(root=ROOT):
         raise ValueError("Shipping package dependencies changed")
     if native_package_wiring(package) != contract["nativeTargets"]:
         raise ValueError("Shipping target wiring needs explicit review in platform-contract.json")
-    workflow = (root / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
-    workflow_boundary(workflow)
-    toolchain_pins(root, workflow)
+    platforms = (root / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
+    release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    workflow_boundary(platforms)
+    release_boundary(release)
+    toolchain_pins(root, platforms + release)
     print(f"Platform contract passed: {len(all_sources)} shared Core sources, {availability} canImport availability branches")
 
 

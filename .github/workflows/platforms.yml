@@ -1,12 +1,10 @@
 name: Platforms
 
 # Each change is tested once: on its pull request into develop, running only the
-# platforms it touches. A push to main promotes code develop already tested, so
-# it tests nothing again and only builds the Windows installers the release
-# publishes. develop pushes and promotion pull requests run nothing.
+# platforms it touches. develop and main pushes and promotion pull requests run
+# nothing; release.yml builds and publishes a tagged release. A manual run tests
+# every platform.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [develop]
   workflow_dispatch:
@@ -14,8 +12,7 @@ on:
 permissions:
   contents: read
 
-# A newer push replaces an older pull request run. A main run is never
-# cancelled: the release takes its installers from that exact commit.
+# A newer push replaces an older pull request run; a manual run finishes.
 concurrency:
   group: platforms-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -39,11 +36,10 @@ jobs:
           python3 scripts/ci/test_changed_platforms.py
           python3 scripts/ci/changed-platforms.py
 
-  # Every pull request, whatever it touches. These checks need no platform, so
-  # they run once, on Linux.
+  # Every run, whatever it touches. These checks need no platform, so they run
+  # once, on Linux.
   contract:
     name: Platform contract
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -56,11 +52,11 @@ jobs:
       - name: DeepSeek web identity contract
         run: node scripts/windows/check-deepseek-web-identity.mjs
 
-  # Pull requests: the full Mac suite on Apple silicon.
+  # The full Mac suite on Apple silicon.
   macos:
     name: macOS (arm64)
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.mac == 'true'
+    if: needs.changes.outputs.mac == 'true'
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -84,12 +80,11 @@ jobs:
             ${{ runner.temp }}/pacer-test-sample-*.txt
           retention-days: 7
 
-  # Pull requests: the shared engine's compilation and tests, in parallel with
-  # the desktop job.
+  # The shared engine's compilation and tests, in parallel with the desktop job.
   windows-engine:
     name: Windows engine (x86_64)
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.windows == 'true'
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 40
     defaults:
@@ -123,13 +118,13 @@ jobs:
           path: ${{ runner.temp }}/pacer-windows-tests.log
           retention-days: 7
 
-  # Pull requests: the release engine and desktop, their integration,
+  # The release engine and desktop, their integration,
   # presentation and idle checks, and the package and installer checks when the
   # change touches what the installers are built from or what those checks start.
   windows-desktop:
     name: Windows desktop (x86_64)
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.windows == 'true'
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 50
     defaults:
@@ -201,75 +196,8 @@ jobs:
             output/windows/patch-tests.json
           retention-days: 7
 
-  # Releases: the x64 package and installer the release publishes. The tests
-  # already ran on the pull requests; packaging keeps its own smoke test.
-  windows-release:
-    name: Windows release (x86_64)
-    if: github.event_name != 'pull_request'
-    runs-on: windows-2025
-    timeout-minutes: 50
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: 10.0.403
-      - name: Pinned Swift toolchain
-        run: ./scripts/windows/setup-swift.ps1
-      - name: Build engine
-        run: |
-          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
-          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
-            throw 'Compiler warnings in Windows build.'
-          }
-      - name: Build Windows desktop
-        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
-      - name: Package unsigned Windows application
-        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
-      - name: Upload unsigned Windows application
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-app-x64-unsigned
-          if-no-files-found: error
-          path: |
-            output/windows/*-windows-x64-preview-*.zip
-            output/windows/*-windows-x64-preview-*.zip.sha256
-          retention-days: 7
-      - name: Package unsigned Windows installer
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          # Also a patch from the latest release, when that release published its manifest.
-          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture x64 -Output "$env:RUNNER_TEMP/pacer-update-base-x64.json" | Select-Object -Last 1
-          $taskArguments = @{ Archive = $taskArchive }
-          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
-          ./scripts/windows/package-installer.ps1 @taskArguments *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
-      - name: Upload unsigned Windows installer
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-installer-x64-unsigned
-          if-no-files-found: error
-          path: |
-            output/windows/installer-artifact/*.exe
-            output/windows/installer-artifact/*.exe.sha256
-            output/windows/installer-artifact/*.json
-            output/windows/installer-artifact/*.json.sha256
-          retention-days: 7
-      - name: Upload validation logs
-        if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-release-validation
-          path: |
-            ${{ runner.temp }}/pacer-windows-build.log
-            ${{ runner.temp }}/pacer-desktop-build.log
-            ${{ runner.temp }}/pacer-windows-package.log
-            ${{ runner.temp }}/pacer-installer-build.log
-          retention-days: 7
-
-  # Pull requests compile ARM64; releases also package its application and
-  # installer. No tests run on it: the x64 jobs test the same sources.
+  # ARM64 compiles only; release.yml packages it. No tests run on it: the x64
+  # jobs test the same sources.
   windows-arm64:
     name: Windows (arm64 build)
     needs: changes
@@ -296,41 +224,6 @@ jobs:
         run: |
           ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
-      - name: Package unsigned ARM64 application without runtime tests
-        if: github.event_name != 'pull_request'
-        run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 -BuildOnly
-      - name: Upload unsigned ARM64 application
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-app-arm64-unsigned
-          if-no-files-found: error
-          path: |
-            output/windows/*-windows-arm64-preview-*.zip
-            output/windows/*-windows-arm64-preview-*.zip.sha256
-          retention-days: 7
-      - name: Package unsigned ARM64 installer without installing
-        if: github.event_name != 'pull_request'
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          # Also a patch from the latest release, when that release published its manifest.
-          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture arm64 -Output "$env:RUNNER_TEMP/pacer-update-base-arm64.json" | Select-Object -Last 1
-          $taskArguments = @{ Archive = $taskArchive; Architecture = 'arm64' }
-          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
-          ./scripts/windows/package-installer.ps1 @taskArguments
-      - name: Upload unsigned ARM64 installer
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-installer-arm64-unsigned
-          if-no-files-found: error
-          path: |
-            output/windows/installer-artifact/*-windows-arm64-setup-*.exe
-            output/windows/installer-artifact/*-windows-arm64-setup-*.exe.sha256
-            output/windows/installer-artifact/*-windows-arm64-manifest-*.json
-            output/windows/installer-artifact/*-windows-arm64-manifest-*.json.sha256
-            output/windows/installer-artifact/*-windows-arm64-patch-*
-          retention-days: 7
       - name: Upload ARM64 build logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

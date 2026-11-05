@@ -91,11 +91,14 @@ class CoreBoundaryTests(unittest.TestCase):
         self.assertNotEqual(contract.native_package_wiring(text.replace('"PacerCore"', '"WindowsHost"')), expected)
 
     def test_toolchain_lock_names_the_pinned_sdk_and_packages(self):
-        workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
+        workflows = contract.ROOT / ".github/workflows"
+        platforms, release = ((workflows / name).read_text(encoding="utf-8") for name in ("platforms.yml", "release.yml"))
+        workflow = platforms + release
         contract.toolchain_pins(contract.ROOT, workflow)
-        drifted = re.sub(r"(dotnet-version:\s*)\S+", r"\g<1>0.0.1", workflow, count=1)
-        with self.assertRaises(ValueError):
-            contract.toolchain_pins(contract.ROOT, drifted)
+        drift = lambda text: re.sub(r"(dotnet-version:\s*)\S+", r"\g<1>0.0.1", text, count=1)
+        for drifted in (drift(platforms) + release, platforms + drift(release)):
+            with self.assertRaises(ValueError):
+                contract.toolchain_pins(contract.ROOT, drifted)
         lock = json.loads((contract.ROOT / "windows/toolchain-lock.json").read_text(encoding="utf-8"))
         project = (contract.ROOT / "windows/Desktop/Pacer.Windows.csproj").read_text(encoding="utf-8")
         exact = '"[' + lock["webView2"] + ']"'
@@ -133,7 +136,7 @@ class CoreBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             contract.package_boundary(text.replace('name: "PacerEngineSupport"', 'name: "CombinedCore"'))
 
-    def test_ci_checks_the_contract_on_every_pull_request(self):
+    def test_ci_checks_the_contract_on_every_run(self):
         workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
         contract.workflow_boundary(workflow)
         for script in ("check-contract.py", "test_contract.py"):
@@ -141,12 +144,26 @@ class CoreBoundaryTests(unittest.TestCase):
                 contract.workflow_boundary(workflow.replace("python3 scripts/windows/" + script, "true", 1))
         with self.assertRaises(ValueError):
             contract.workflow_boundary(workflow.replace("\n  contract:\n", "\n  checks:\n", 1))
-        gate = "    name: Platform contract\n    if: github.event_name == 'pull_request'\n"
-        self.assertIn(gate, workflow)
-        for skipped in ("    needs: changes\n    if: needs.changes.outputs.windows == 'true'\n",
-                        "    if: github.event_name != 'pull_request'\n"):
+        name = "    name: Platform contract\n"
+        self.assertIn(name, workflow)
+        for gate in ("    needs: changes\n    if: needs.changes.outputs.windows == 'true'\n",
+                     "    if: github.event_name == 'pull_request'\n"):
+            with self.subTest(gate=gate), self.assertRaises(ValueError):
+                contract.workflow_boundary(workflow.replace(name, name + gate, 1))
+
+    def test_release_windows_jobs_build_the_installers_without_secrets(self):
+        release = (contract.ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        contract.release_boundary(release)
+        x64 = "  windows-x64:\n    name: Windows installer (x64)\n"
+        for broken in (release.replace("name: windows-installer-arm64-unsigned", "name: windows-installer-arm64", 1),
+                       release.replace("\n  windows-x64:\n", "\n  windows-amd64:\n", 1),
+                       release.replace(x64, x64 + "    environment: release\n", 1),
+                       release.replace("      PACER_ARCHITECTURE: arm64\n",
+                                       "      PACER_ARCHITECTURE: arm64\n      TOKEN: ${{ secrets.SPARKLE_PRIVATE_KEY }}\n", 1),
+                       release.replace("cancel-in-progress: false", "cancel-in-progress: true", 1)):
+            self.assertNotEqual(broken, release)
             with self.assertRaises(ValueError):
-                contract.workflow_boundary(workflow.replace(gate, "    name: Platform contract\n" + skipped, 1))
+                contract.release_boundary(broken)
 
 
 class WindowsArchitectureTests(unittest.TestCase):
@@ -261,8 +278,12 @@ class WindowsArchitectureTests(unittest.TestCase):
         self.assertIn("MinVersion=10.0.19041", (contract.ROOT / "windows/Installer/CodexPacer.iss").read_text(encoding="utf-8-sig"))
 
     def test_arm64_ci_only_builds_and_packages(self):
-        workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text()
-        job = re.search(r"(?ms)^  windows-arm64:\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow).group(1)
+        workflows = contract.ROOT / ".github/workflows"
+        # Pull requests compile ARM64; the release packages it. Neither runs it.
+        compile_only = contract.workflow_job((workflows / "platforms.yml").read_text(encoding="utf-8"), "windows-arm64")
+        self.assertIn("runs-on: windows-11-arm", compile_only)
+        self.assertNotRegex(compile_only, r"scripts/windows/(test|package)-")
+        job = contract.workflow_job((workflows / "release.yml").read_text(encoding="utf-8"), "windows-arm64")
         self.assertIn("runs-on: windows-11-arm", job)
         self.assertIn("-Architecture arm64 -BuildOnly", job)
         for artifact in ("windows-app-arm64-unsigned", "windows-installer-arm64-unsigned"):
