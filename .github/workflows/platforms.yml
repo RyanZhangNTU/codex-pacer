@@ -1,9 +1,10 @@
 name: Platforms
 
 # Each change is tested once: on its pull request into develop, running only the
-# platforms it touches. develop and main pushes and promotion pull requests run
-# nothing; release.yml builds and publishes a tagged release. A manual run tests
-# every platform.
+# platforms it touches. main pushes and promotion pull requests run nothing; a
+# develop push only refreshes the engine cache (engine-cache.yml), and
+# release.yml builds and publishes a tagged release. A manual run tests every
+# platform.
 on:
   pull_request:
     branches: [develop]
@@ -80,7 +81,7 @@ jobs:
             ${{ runner.temp }}/pacer-test-sample-*.txt
           retention-days: 7
 
-  # The shared engine's compilation and tests, in parallel with the desktop job.
+  # The shared engine's compilation and tests, in parallel with the build job.
   windows-engine:
     name: Windows engine (x86_64)
     needs: changes
@@ -118,15 +119,15 @@ jobs:
           path: ${{ runner.temp }}/pacer-windows-tests.log
           retention-days: 7
 
-  # The release engine and desktop, their integration,
-  # presentation and idle checks, and the package and installer checks when the
-  # change touches what the installers are built from or what those checks start.
-  windows-desktop:
-    name: Windows desktop (x86_64)
+  # The release engine and desktop that every Windows test job uses. The engine
+  # and its adapters come from the cache when a run already built this exact
+  # source snapshot with this toolchain.
+  windows-build:
+    name: Windows build (x86_64)
     needs: changes
     if: needs.changes.outputs.windows == 'true'
     runs-on: windows-2025
-    timeout-minutes: 50
+    timeout-minutes: 40
     defaults:
       run:
         shell: pwsh
@@ -137,51 +138,103 @@ jobs:
           dotnet-version: 10.0.403
       - name: Pinned Swift toolchain
         run: ./scripts/windows/setup-swift.ps1
+      - name: Engine source snapshot
+        id: engine
+        run: |
+          $taskStage = python -S scripts/windows/stage-engine.py
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the Windows source snapshot.' }
+          "snapshot=$(Split-Path $taskStage -Leaf)" >> $env:GITHUB_OUTPUT
+      - name: Engine products of this snapshot
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/windows/engine-products-x64
+          key: windows-engine-x64-release-${{ steps.engine.outputs.snapshot }}-${{ hashFiles('windows/toolchain-lock.json', 'scripts/windows/build-engine.ps1', 'scripts/windows/build-desktop.ps1', 'scripts/windows/environment.ps1', 'scripts/windows/architecture.ps1', 'scripts/windows/setup-swift.ps1') }}
       - name: Build engine
         run: |
-          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
+          ./scripts/windows/build-engine.ps1 -Configuration release -Products output/windows/engine-products-x64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
             throw 'Compiler warnings in Windows build.'
           }
       - name: Build Windows desktop
-        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine -SaveEngineProducts output/windows/engine-products-x64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+      - name: Upload the built desktop
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-desktop-x64-build
+          if-no-files-found: error
+          compression-level: 1
+          path: |
+            windows/Desktop/bin/Release/net10.0-windows/
+            output/windows/engine-location.json
+          retention-days: 1
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-build-logs
+          path: |
+            ${{ runner.temp }}/pacer-windows-build.log
+            ${{ runner.temp }}/pacer-desktop-build.log
+          retention-days: 7
+
+  # The desktop, Claude runtime, presentation and idle checks, in three jobs of
+  # about the same length. They use the build job's desktop, so none of them
+  # needs the Swift toolchain. Each presentation group is in exactly one job.
+  windows-tests:
+    name: Windows tests (${{ matrix.shard }})
+    needs: [changes, windows-build]
+    runs-on: windows-2025
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: connections
+            groups: connection
+            desktop: true
+          - shard: settings
+            groups: settings,island,accessibility
+            idle: true
+          - shard: providers
+            groups: web,quota,harness,conversation,idle,display,host,responsive,pages,updates,collapsed,recovery
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: windows-desktop-x64-build
       - name: Build notification acceptance probe
+        if: matrix.desktop
         run: |
           dotnet publish windows/Tests/NotificationProbe/Pacer.NotificationProbe.csproj --configuration Release --runtime win-x64 --self-contained true --output output/windows/notification-probe -warnaserror -p:PacerArchitecture=x64 -p:RestoreLockedMode=true *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-notification-probe-build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Notification acceptance probe build failed.' }
       - name: Desktop integration tests
+        if: matrix.desktop
         run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
       - name: Claude runtime without user Python
+        if: matrix.desktop
         run: ./scripts/windows/test-claude-runtime.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-claude-runtime.log"
       - name: Functional presentation tests
-        run: ./scripts/windows/test-presentation.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
+        env:
+          PACER_GROUPS: ${{ matrix.groups }}
+        run: ./scripts/windows/test-presentation.ps1 -Configuration Release -Group ($env:PACER_GROUPS -split ',') *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
       - name: Engine idle and shutdown protocol
+        if: matrix.idle
         run: |
-          . ./scripts/windows/environment.ps1
-          $taskEngine = Join-Path $taskScratchPath 'x86_64-unknown-windows-msvc/release/PacerEngine.exe'
+          $taskEngine = 'windows/Desktop/bin/Release/net10.0-windows/Engine/PacerEngine.exe'
           python scripts/windows/check-engine-idle.py --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
           if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check failed.' }
-      - name: Package unsigned Windows application
-        if: needs.changes.outputs.installer == 'true'
-        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
-      - name: Windows installer lifecycle
-        if: needs.changes.outputs.installer == 'true'
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          ./scripts/windows/test-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-tests.log"
-      - name: Windows patch installer lifecycle
-        if: needs.changes.outputs.installer == 'true'
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          ./scripts/windows/test-patch.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-patch-tests.log"
       - name: Upload validation logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: windows-desktop-validation
+          name: windows-tests-${{ matrix.shard }}
           path: |
-            ${{ runner.temp }}/pacer-windows-build.log
-            ${{ runner.temp }}/pacer-desktop-build.log
             ${{ runner.temp }}/pacer-notification-probe-build.log
             ${{ runner.temp }}/pacer-desktop-tests.log
             ${{ runner.temp }}/pacer-claude-runtime.log
@@ -189,6 +242,43 @@ jobs:
             ${{ runner.temp }}/pacer-presentation-tests.log
             ${{ runner.temp }}/pacer-windows-idle.log
             ${{ runner.temp }}/pacer-windows-idle.json
+          retention-days: 7
+
+  # Changes to what the installers are built from, or what their checks start:
+  # the package with its smoke test, and the installer and patch lifecycle.
+  windows-installer:
+    name: Windows installer (x86_64)
+    needs: [changes, windows-build]
+    if: needs.changes.outputs.installer == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: windows-desktop-x64-build
+      - name: Package unsigned Windows application
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
+      - name: Windows installer lifecycle
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-tests.log"
+      - name: Windows patch installer lifecycle
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-patch.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-patch-tests.log"
+      - name: Upload validation logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-installer-validation
+          path: |
             ${{ runner.temp }}/pacer-windows-package.log
             ${{ runner.temp }}/pacer-installer-tests.log
             ${{ runner.temp }}/pacer-patch-tests.log
@@ -197,7 +287,7 @@ jobs:
           retention-days: 7
 
   # ARM64 compiles only; release.yml packages it. No tests run on it: the x64
-  # jobs test the same sources.
+  # jobs test the same sources. The engine comes from the cache like x64's.
   windows-arm64:
     name: Windows (arm64 build)
     needs: changes
@@ -216,13 +306,24 @@ jobs:
           dotnet-version: 10.0.403
       - name: Pinned native ARM64 Swift toolchain
         run: ./scripts/windows/setup-swift.ps1 -Architecture arm64
+      - name: Engine source snapshot
+        id: engine
+        run: |
+          $taskStage = python -S scripts/windows/stage-engine.py
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the Windows source snapshot.' }
+          "snapshot=$(Split-Path $taskStage -Leaf)" >> $env:GITHUB_OUTPUT
+      - name: Engine products of this snapshot
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/windows/engine-products-arm64
+          key: windows-engine-arm64-release-${{ steps.engine.outputs.snapshot }}-${{ hashFiles('windows/toolchain-lock.json', 'scripts/windows/build-engine.ps1', 'scripts/windows/build-desktop.ps1', 'scripts/windows/environment.ps1', 'scripts/windows/architecture.ps1', 'scripts/windows/setup-swift.ps1') }}
       - name: Build ARM64 engine
         run: |
-          ./scripts/windows/build-engine.ps1 -Configuration release -Architecture arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-engine.log"
+          ./scripts/windows/build-engine.ps1 -Configuration release -Architecture arm64 -Products output/windows/engine-products-arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-engine.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-engine.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 engine compiler warning.' }
       - name: Build ARM64 desktop and native dependencies
         run: |
-          ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
+          ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine -SaveEngineProducts output/windows/engine-products-arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
       - name: Upload ARM64 build logs
         if: failure()

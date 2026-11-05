@@ -191,7 +191,7 @@ internal static class GuidePageChecks
         value.RaiseEvent(key); if (!key.Handled) { key.RoutedEvent = Keyboard.KeyDownEvent; value.RaiseEvent(key); }
     }
     private static async Task Until(Func<bool> predicate)
-    { var clock = Stopwatch.StartNew(); while (!predicate() && clock.Elapsed.TotalSeconds < 5) await Task.Delay(20); Check(predicate(), "Guide page state did not settle"); }
+    { var clock = Stopwatch.StartNew(); while (!predicate() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Task.Delay(20); Check(predicate(), "Guide page state did not settle"); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration
     {

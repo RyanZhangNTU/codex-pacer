@@ -112,7 +112,7 @@ internal static class DeepSeekConnectionChecks
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static async Task Pump() { await Task.Delay(30); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
     private static async Task Until(Func<bool> condition)
-    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed.TotalSeconds < 6) await Pump(); Check(condition(), "The DeepSeek connection did not settle in time"); await Pump(); }
+    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The DeepSeek connection did not settle in time"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }
 }

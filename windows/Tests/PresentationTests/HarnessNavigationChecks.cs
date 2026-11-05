@@ -132,7 +132,7 @@ internal static class HarnessNavigationChecks
     }
     private static async Task Until(Func<bool> condition, string message, TimeSpan? timeout = null)
     {
-        var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < (timeout ?? TimeSpan.FromSeconds(8))) await Task.Delay(20);
+        var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < (timeout ?? PresentationWait.Limit)) await Task.Delay(20);
         Check(condition(), message); await Pump();
     }
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);

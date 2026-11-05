@@ -22,7 +22,8 @@ class ChangedPlatformsTests(unittest.TestCase):
     def test_installer_checks_run_only_for_what_the_installers_are_built_from(self):
         for path in ("windows/Installer/CodexPacer.iss", "windows/Maintenance/Program.cs", "windows/UpdateSupport/Patch.cs",
                      "scripts/windows/package-installer.ps1", "scripts/windows/test-patch.ps1", "windows/toolchain-lock.json",
-                     "global.json", "windows/Desktop/App.xaml.cs", "windows/Desktop/WindowsSystemNotifications.cs"):
+                     "global.json", "windows/Desktop/App.xaml.cs", "windows/Desktop/WindowsSystemNotifications.cs",
+                     "scripts/windows/build-desktop.ps1"):
             self.assertEqual(platforms.classify([path]), (False, True, True), path)
 
     def test_shared_core_runs_both_platforms_without_the_installers(self):

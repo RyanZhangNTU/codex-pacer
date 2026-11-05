@@ -20,6 +20,10 @@ using CodexPacer.Windows;
 internal static class Program
 {
     private static readonly List<string> Errors = [];
+    // The groups "all" runs. CI splits them across parallel jobs, and the
+    // platform contract checks that each one is in exactly one of them.
+    internal static readonly string[] AllGroups = ["recovery", "responsive", "quota", "web", "host", "idle", "display", "accessibility",
+        "island", "conversation", "harness", "pages", "updates", "settings", "collapsed", "connection"];
     [STAThread]
     private static int Main(string[] args)
     {
@@ -32,7 +36,12 @@ internal static class Program
             catch (Exception error) { Console.Error.WriteLine(error); return 1; }
         }
         string output = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "pacer-presentation-tests");
-        string group = args.Length > 1 ? args[1] : "all";
+        // One group, "all", or a comma-separated list of groups.
+        string[] groups = (args.Length > 1 ? args[1] : "all").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        bool Has(string name) => groups.Contains(name);
+        bool All(string name) => (Has("all") && AllGroups.Contains(name)) || Has(name);
+        // Several groups, like "all", report every failed case rather than stopping at the first.
+        bool many = Has("all") || groups.Length > 1;
         string? desktop = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
         Directory.CreateDirectory(output);
         int result = 1;
@@ -52,7 +61,7 @@ internal static class Program
             async Task Attempt(string name, Func<Task> check)
             {
                 try { await check(); }
-                catch (Exception error) when (group == "all")
+                catch (Exception error) when (many)
                 {
                     string failure = name + " [" + scenario + "]: " + error.Message;
                     caseFailures.Add(failure); Console.Error.WriteLine("FAIL " + failure); Console.Error.WriteLine(error);
@@ -63,25 +72,24 @@ internal static class Program
             {
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
-                if (group is "all" or "recovery" or "persistence") await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
+                if (All("recovery") || Has("persistence")) await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
                 SystemAppearanceUnitChecks.Run(); await Attempt(nameof(QuotaCycleCompletionChecks), () => QuotaCycleCompletionChecks.Run()); SettingsPageUnitChecks.Run(); TypographyChecks.Run(); PopupThemeChecks.Run(); TimingBindingChecks.Run(); await Attempt(nameof(QuotaChartBridgeChecks), () => QuotaChartBridgeChecks.Run());
-                if (group is "all" or "responsive") { await Attempt(nameof(SlowEngineChecks), () => SlowEngineChecks.Run()); await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run()); }
-                if (group == "persistence") await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run());
-                bool All(string name) => group == "all" || group == name;
+                if (All("responsive")) { await Attempt(nameof(SlowEngineChecks), () => SlowEngineChecks.Run()); await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run()); }
+                if (Has("persistence")) await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run());
                 if (All("quota"))
                 {
                     await Attempt(nameof(QuotaProjectionChecks), () => QuotaProjectionChecks.Run()); await Attempt(nameof(ClassicQuotaChecks), () => ClassicQuotaChecks.Run(output)); await Attempt(nameof(SingleQuotaChecks), () => SingleQuotaChecks.Run(output));
                     await Attempt(nameof(LegacyQuotaChecks), () => LegacyQuotaChecks.Run(output)); await Attempt(nameof(QuotaConnectionChecks), () => QuotaConnectionChecks.Run(output)); await Attempt(nameof(TypographyLocaleChecks), () => TypographyLocaleChecks.Run(output));
                 }
                 if (All("web")) { await Attempt(nameof(ProviderWebStartupChecks), () => ProviderWebStartupChecks.Run()); await Attempt(nameof(ClaudeWebSessionChecks), () => ClaudeWebSessionChecks.Run()); await Attempt(nameof(DeepSeekWebSessionChecks), () => DeepSeekWebSessionChecks.Run()); }
-                if (group == "deepseek") { await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run("zh-Hans", true, output)); await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run("en", false, output)); }
+                if (Has("deepseek")) { await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run("zh-Hans", true, output)); await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run("en", false, output)); }
                 if (All("host")) { await Attempt(nameof(NotificationActivationWindowChecks), () => NotificationActivationWindowChecks.Run()); await Attempt(nameof(IslandHostChecks), () => IslandHostChecks.Run()); await Attempt(nameof(BackdropPresentationChecks), () => BackdropPresentationChecks.Run()); }
-                if (All("idle") || group == "quotaIdle") await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
+                if (All("idle") || Has("quotaIdle")) await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
                 if (All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run());
-                if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (group != "all") await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
+                if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (!All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
                 // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
-                if (group == "position")
+                if (Has("position"))
                     foreach (string surface in new[] { "classic", "liquidGlass" })
                         await Attempt(nameof(IslandMoveChecks), () => IslandMoveChecks.Run(surface));
                 foreach (string language in new[] { "en", "zh-Hans" })
@@ -99,13 +107,13 @@ internal static class Program
                     foreach (bool dark in new[] { false, true })
                     {
                         scenario = language + "/dark=" + dark;
-                        if (group == "persistence")
+                        if (Has("persistence"))
                         {
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));
                             await Attempt(nameof(QuotaHistoryChecks), () => QuotaHistoryChecks.Run(language, dark, output)); await Attempt(nameof(ProviderHistoryChecks), () => ProviderHistoryChecks.Run(language, dark, output));
                         }
-                        if (group == "deepseek") { await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output)); }
-                        if (All("display") || group == "displaySettings") await Attempt(nameof(DisplaySettingsChecks), () => DisplaySettingsChecks.Run(language, dark));
+                        if (Has("deepseek")) { await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output)); }
+                        if (All("display") || Has("displaySettings")) await Attempt(nameof(DisplaySettingsChecks), () => DisplaySettingsChecks.Run(language, dark));
                         if (All("pages")) await Attempt(nameof(GuidePageChecks), () => GuidePageChecks.Run(language, dark, output));
                         if (All("updates")) await Attempt(nameof(UpdateWindowChecks), () => UpdateWindowChecks.Run(language, dark, output));
                         if (All("settings"))
@@ -115,7 +123,7 @@ internal static class Program
                             foreach (string provider in new[] { "claude", "deepseek" }) await Attempt(nameof(ProviderHomeSettingsChecks), () => ProviderHomeSettingsChecks.Run(provider, language, dark, output));
                             await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output));
                         }
-                        if (group == "ssh") await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output));
+                        if (Has("ssh")) await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output));
                         if (All("collapsed")) foreach (bool motion in new[] { false, true }) await Attempt(nameof(CollapsedLayoutChecks), () => CollapsedLayoutChecks.Run(language, dark, motion, output));
                         if (All("quota")) { await Attempt(nameof(QuotaHistoryChecks), () => QuotaHistoryChecks.Run(language, dark, output)); await Attempt(nameof(ProviderHistoryChecks), () => ProviderHistoryChecks.Run(language, dark, output)); }
                         if (All("connection"))
@@ -243,10 +251,22 @@ internal static class Program
             badge.Update(attention, motion); await Pump();
             Check(badge.TransientMotion.Ripple == motion, "New attention must play the native ripple only when motion is enabled");
             var completed = idle with { Ending = "checkmark.circle", EndingProvider = "codex", EndingIsCore = false };
-            badge.Update(completed, motion); await Pump();
-            if (motion) await Until(() => badge.TransientMotion.Bloom && badge.TransientMotion.Scale > 1.1,
-                "New endings must display the measured native bloom through the actual animation clock");
-            else Check(!badge.TransientMotion.Bloom && badge.TransientMotion.Scale == 1, "Reduced motion must keep the ending static");
+            // The bloom stays above 1.1 for only about 120 ms of its 0.48 s, so
+            // sample every rendered frame rather than polling for its peak.
+            double bloomPeak = 0;
+            void SampleBloom(object? sender, EventArgs args)
+            {
+                var state = badge.TransientMotion;
+                if (state.Bloom) bloomPeak = Math.Max(bloomPeak, state.Scale);
+            }
+            CompositionTarget.Rendering += SampleBloom;
+            try
+            {
+                badge.Update(completed, motion); await Pump();
+                if (motion) await Until(() => bloomPeak > 1.1, "New endings must display the measured native bloom through the actual animation clock");
+                else Check(!badge.TransientMotion.Bloom && badge.TransientMotion.Scale == 1, "Reduced motion must keep the ending static");
+            }
+            finally { CompositionTarget.Rendering -= SampleBloom; }
             await Until(() => !badge.TransientMotion.Ripple && !badge.TransientMotion.Bloom, "The native transient clocks must finish naturally"); await Pump();
             Check(!badge.TransientMotion.Ripple && !badge.TransientMotion.Bloom,
                 "The two native ripples and finite bloom must finish without recurring timers");
@@ -372,7 +392,7 @@ internal static class Program
     private static async Task Until(Func<bool> condition, string message)
     {
         var clock = Stopwatch.StartNew();
-        while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(25);
+        while (!condition() && clock.Elapsed < PresentationWait.Limit) await Task.Delay(25);
         Check(condition(), message);
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
