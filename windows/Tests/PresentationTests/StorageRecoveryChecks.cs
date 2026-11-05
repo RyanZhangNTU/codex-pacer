@@ -75,6 +75,6 @@ internal static class StorageRecoveryChecks
     }
     private static async Task Pump() { await Dispatcher.Yield(DispatcherPriority.ContextIdle); await Task.Delay(60); }
     private static async Task Until(Func<bool> condition)
-    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(20); Check(condition(), "Recovery did not settle"); await Pump(); }
+    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < PresentationWait.Limit) await Task.Delay(20); Check(condition(), "Recovery did not settle"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

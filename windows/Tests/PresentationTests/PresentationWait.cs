@@ -6,10 +6,15 @@ using CodexPacer.Windows;
 
 internal static class PresentationWait
 {
+    // A wait for something to happen costs time only when it never happens, and
+    // hosted runners are slower than a desktop, so these waits share one generous
+    // limit. A check that bounds how long something may take keeps its own.
+    internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
+
     internal static async Task UntilAsync(Func<bool> condition, string message)
     {
         var clock = Stopwatch.StartNew();
-        while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(20);
+        while (!condition() && clock.Elapsed < Limit) await Task.Delay(20);
         if (!condition()) throw new TimeoutException(message);
         // EngineClient publishes snapshots before IslandWindow queues its render.
         // Drain both callbacks before inspecting the resulting visual tree.

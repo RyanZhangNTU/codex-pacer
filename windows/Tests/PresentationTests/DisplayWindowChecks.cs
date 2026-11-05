@@ -124,7 +124,7 @@ internal static class DisplayWindowChecks
         return seen && valid;
     }
     private static async Task Until(Func<bool> ready, string message)
-    { var clock = Stopwatch.StartNew(); while (!ready() && clock.Elapsed.TotalSeconds < 5) await Task.Delay(20); Check(ready(), message); }
+    { var clock = Stopwatch.StartNew(); while (!ready() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Task.Delay(20); Check(ready(), message); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private sealed class Fixture : IAsyncDisposable
     {

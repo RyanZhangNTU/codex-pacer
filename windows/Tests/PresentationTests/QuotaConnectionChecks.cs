@@ -78,7 +78,7 @@ internal static class QuotaConnectionChecks
     }
     private static async Task Until(Func<bool> condition, string message)
     {
-        var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < TimeSpan.FromSeconds(8)) await Task.Delay(25);
+        var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < PresentationWait.Limit) await Task.Delay(25);
         Check(condition(), message); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }

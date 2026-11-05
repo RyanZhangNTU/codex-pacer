@@ -105,6 +105,6 @@ internal static class PersistentSettingsChecks
     private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition)
-    { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(25); Check(condition(), "The acknowledged UI edit must settle"); await Pump(); }
+    { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed < PresentationWait.Limit) await Task.Delay(25); Check(condition(), "The acknowledged UI edit must settle"); await Pump(); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }

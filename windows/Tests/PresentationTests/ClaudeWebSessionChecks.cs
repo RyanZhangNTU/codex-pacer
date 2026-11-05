@@ -120,7 +120,7 @@ internal static class ClaudeWebSessionChecks
             await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.Ready);
             window = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single();
             Put(site.Core!, "sessionKey", key);
-            Check(await changed.WaitAsync(TimeSpan.FromSeconds(8)) && session.SignInWasNew && !window.IsVisible,
+            Check(await changed.WaitAsync(PresentationWait.Limit) && session.SignInWasNew && !window.IsVisible,
                 "A changed HttpOnly cookie must automatically finish Claude sign-in");
         }
         int checks = window.SessionChecks; await Task.Delay(1100);
@@ -162,6 +162,6 @@ internal static class ClaudeWebSessionChecks
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
     private static async Task Until(Func<bool> condition)
-    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed.TotalSeconds < 8) await Pump(); Check(condition(), "The Claude browser condition did not arrive"); await Pump(); }
+    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The Claude browser condition did not arrive"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

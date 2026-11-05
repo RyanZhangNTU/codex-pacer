@@ -178,7 +178,7 @@ internal static class ClaudeConnectionChecks
     private static void Invoke(MenuItem value) => ((IInvokeProvider)new MenuItemAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => SelfAndDescendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
-    private static async Task Until(Func<bool> condition) { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < 12) await Pump(); Check(condition(), "The bounded Claude connection action did not finish"); await Pump(); }
+    private static async Task Until(Func<bool> condition) { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The bounded Claude connection action did not finish"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool value) => true; }
 }
