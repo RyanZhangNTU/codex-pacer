@@ -7,6 +7,7 @@ it from standard input, so it never reaches a file, a log or an argument list.
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 ACCOUNT = "com.codexpacer.app"
 ENVIRONMENT = "SPARKLE_PRIVATE_KEY"
@@ -30,6 +31,12 @@ def public_key(tools):
     """The public half of the signing key, to compare with the app's SUPublicEDKey."""
     secret = _secret()
     if secret:
-        return subprocess.run(["xcrun", "swift", str(DERIVE)], input=secret + "\n", stdout=subprocess.PIPE,
-                              text=True, check=True).stdout.strip()
+        public = subprocess.run(["xcrun", "swift", str(DERIVE)], input=secret + "\n", stdout=subprocess.PIPE,
+                                text=True, check=True).stdout.strip()
+        # A legacy key carries its public half; prove the pair by verifying a fresh signature with it.
+        with tempfile.NamedTemporaryFile(prefix="pacer-key-probe-") as probe:
+            probe.write(os.urandom(64)); probe.flush()
+            signature = run(Path(tools) / "sign_update", "-p", probe.name, capture=True).strip()
+            subprocess.run(["xcrun", "swift", str(DERIVE), "--verify", public, signature, probe.name], check=True)
+        return public
     return subprocess.check_output([str(Path(tools) / "generate_keys"), "--account", ACCOUNT, "-p"], text=True).strip()

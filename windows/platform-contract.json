@@ -23,8 +23,8 @@
     "scripts/release/prepare-windows-update.py": "39a61748cc94a83b00b6723821cb07d947c7354b407d71938030a4a98d21647b",
     "scripts/release/publish-github-release.sh": "9e9a17ec24586076a4dab3dad7b241eaea6f047bef6ece9b70de76fa902d6628",
     "scripts/release/sign-updates.sh": "a8b09bf3cdc7ca5ea765d26d8eee744e6ac6a6978ee02dcb0b298630bf84858e",
-    "scripts/release/sparkle-public-key.swift": "1c9821d026d34b350386c81e220e3ffef9c6a7f0a4c7e8df5bfb2eee27ee6237",
-    "scripts/release/sparkle_key.py": "46913e483e13dda7fda6f1192dbeb3e8e73308f0ab51563ad30bb36ec67964b1"
+    "scripts/release/sparkle-public-key.swift": "3e6b9f283bed68ed7879b8e3bd4fca9b8fc453f62acf3dcbf73af7fac56f4563",
+    "scripts/release/sparkle_key.py": "8ec692dfe32c70d5f2bb3f2900cdf1da8b637023c4210524ece1a1adb910660b"
   },
   "nativePackageInvariants": [
     "// swift-tools-version: 5.10",
