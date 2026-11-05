@@ -80,13 +80,12 @@ final class IslandMoveTests: XCTestCase {
         defer { restore() }
         let controller = PanelController(model: model)
         defer { controller.stop() }
-        try await Task.sleep(nanoseconds: 200_000_000)
         // No button is held here, as just after a release whose mouse-up is still queued.
         model.onBeginMove?(CGPoint(x: 0.5, y: 0.5))
         XCTAssertTrue(model.islandMoving)
         model.onLayoutChange?()
         XCTAssertTrue(model.islandMoving, "A layout before the queued mouse-up must not drop the drop")
-        try await Task.sleep(nanoseconds: 800_000_000)
+        try await TestWait.until { !model.islandMoving }
         XCTAssertFalse(model.islandMoving, "A mouse-up that never arrives ends the move")
         XCTAssertNil(IslandPlacement.load(from: defaults), "and nothing is saved")
         await model.shutdown()

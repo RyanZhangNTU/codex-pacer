@@ -161,7 +161,7 @@ final class ClaudeActivityTelemetryTests: XCTestCase {
         try send(body.prefix(17), to: fd)
         try send(body.dropFirst(17), to: fd)
         XCTAssertTrue(try response(fd).hasPrefix("HTTP/1.1 200 OK"))
-        await fulfillment(of: [delivered], timeout: 2)
+        await fulfillment(of: [delivered], timeout: TestWait.limit)
         XCTAssertEqual(frames.all().count, 1)
         XCTAssertFalse(frames.all().contains { String(decoding: $0, as: UTF8.self).contains("PRIVATE") })
         XCTAssertEqual(receiver.counters, .init(httpRequests: 1, projectedRequests: 1, missingCorrelations: 0, rejectedRequests: 0))
@@ -202,7 +202,8 @@ final class ClaudeActivityTelemetryTests: XCTestCase {
         }
         // Existing incomplete clients occupy the request workers. The ninth
         // connection must close without gaining a worker or consuming a body.
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await TestWait.until { receiver.openConnections == 8 }
+        XCTAssertEqual(receiver.openConnections, 8)
         let excess = try connect(receiver.listeningPort); defer { Darwin.close(excess) }
         var byte: UInt8 = 0
         let count = Darwin.recv(excess, &byte, 1, 0), excessError = errno

@@ -139,19 +139,19 @@ final class RealtimeTransportTests: XCTestCase {
         defer { stdout.fileHandleForReading.readabilityHandler = nil; if child.isRunning { child.terminate() } }
         try child.run()
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
-        await fulfillment(of: [initial], timeout: 10)
+        await fulfillment(of: [initial], timeout: TestWait.limit)
         guard child.isRunning else {
             XCTFail(String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)); return
         }
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":5,\"flushPending\":false}\n".utf8))
-        await fulfillment(of: [queued], timeout: 10)
+        await fulfillment(of: [queued], timeout: TestWait.limit)
         // Advance the helper's monotonic clock after the event is queued.
         // A one-second clamp would flush it; the required five seconds do not.
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"testClock\",\"at\":2.3}\n".utf8))
-        await fulfillment(of: [checked], timeout: 10)
+        await fulfillment(of: [checked], timeout: TestWait.limit)
         XCTAssertFalse(capture.has("cadence-pending"), "Collapsed batches must not be clamped to the old one-second limit")
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
-        await fulfillment(of: [expanded], timeout: 10)
+        await fulfillment(of: [expanded], timeout: TestWait.limit)
         try stdin.fileHandleForWriting.close(); child.waitUntilExit()
         stdout.fileHandleForReading.readabilityHandler = nil
         _ = capture.append(stdout.fileHandleForReading.readDataToEndOfFile())

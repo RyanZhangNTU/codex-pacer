@@ -165,9 +165,11 @@ final class ClaudeHostTrackingTests: XCTestCase {
         model.showNavigationError("first")
         XCTAssertEqual(model.navigationError, "first")
         try await Task.sleep(nanoseconds: 100_000_000)
-        model.navigationErrorDuration = 0.4
+        // The newer failure outlives the older timer by most of a second, so a
+        // slow runner's late wake-up cannot reach the newer deadline.
+        model.navigationErrorDuration = 1
         model.showNavigationError("second")
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(model.navigationError, "second", "An older timer must not clear a newer failure")
         try await waitUntil { model.navigationError == nil }
         await model.shutdown()
@@ -212,11 +214,8 @@ final class ClaudeHostTrackingTests: XCTestCase {
         return value.canonicalized()
     }
 
-    private func waitUntil(timeout: TimeInterval = 2, _ condition: () async -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while await !condition() {
-            guard Date() < deadline else { return XCTFail("Timed out") }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
+    private func waitUntil(_ condition: () async -> Bool) async throws {
+        if try await TestWait.until(condition) { return }
+        XCTFail("Timed out")
     }
 }

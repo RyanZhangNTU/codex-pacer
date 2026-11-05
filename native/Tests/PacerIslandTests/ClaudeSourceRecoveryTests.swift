@@ -89,7 +89,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             if targets.allSatisfy({ statuses[$0.id]?.sourceAvailable == false }), seen.take(false) { parked.fulfill() }
             if let recovered, statuses["remote-ssh-discovered:fixture"]?.connected == true, seen.take(true) { recovered.fulfill() }
         }
-        await fulfillment(of: [parked], timeout: 5)
+        await fulfillment(of: [parked], timeout: TestWait.limit)
         XCTAssertFalse(model.hasSSHConnectionIssue)
     }
 
@@ -100,7 +100,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         XCTAssertEqual(before.count, 1); XCTAssertEqual(other.count, 1)
         let result = await fixture.model.configureClaudeRemote(targetID: "remote-ssh-discovered:fixture")
         XCTAssertNil(result)
-        await fulfillment(of: [recovered], timeout: 5)
+        await fulfillment(of: [recovered], timeout: TestWait.limit)
         XCTAssertEqual(try fixture.launches("fixture").count, 2, "Setup must bypass the existing 30-minute backoff")
         XCTAssertEqual(try fixture.launches("other"), other, "Setup must not reconnect another paused host")
         XCTAssertEqual(fixture.model.providerStreamStatuses(.claude)["remote-ssh-discovered:fixture"]?.sourceAvailable, true)
@@ -126,18 +126,16 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
 
     private func installerPID(_ fixture: Fixture, differentFrom previous: Int32? = nil) async throws -> Int32 {
         let file = fixture.root.appendingPathComponent("fixture.installer-pid")
-        for _ in 0..<300 {
-            if let text = try? String(contentsOf: file), let pid = Int32(text), pid != previous { return pid }
-            try await Task.sleep(nanoseconds: 10_000_000)
+        var started: Int32?
+        try await TestWait.until {
+            if let text = try? String(contentsOf: file), let pid = Int32(text), pid != previous { started = pid }
+            return started != nil
         }
-        return try XCTUnwrap(nil as Int32?, "Fixture installer did not start")
+        return try XCTUnwrap(started, "Fixture installer did not start")
     }
 
     private func assertInstallerExited(_ pid: Int32) async throws {
-        for _ in 0..<200 {
-            if kill(pid, 0) == -1, errno == ESRCH { return }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        if try await TestWait.until({ kill(pid, 0) == -1 && errno == ESRCH }) { return }
         XCTFail("Cancellation must stop the owned installer process")
     }
 

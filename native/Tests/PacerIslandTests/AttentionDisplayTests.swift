@@ -33,7 +33,7 @@ final class AttentionDisplayTests: XCTestCase {
             opened.fulfill(); return .openedConversation
         }
         model.openCompletionOrPin()
-        await fulfillment(of: [opened], timeout: 2)
+        await fulfillment(of: [opened], timeout: TestWait.limit)
         await Task.yield()
         XCTAssertEqual(model.pendingInputRequests.count, 1, "Opening is not answering")
         model.observeAttentionRequests([])

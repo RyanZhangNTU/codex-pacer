@@ -35,7 +35,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         try child.run()
         defer { if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: socket.path))
         let requested = expectation(description: "async request received"), resolved = expectation(description: "request explicitly resolved")
         let completed = expectation(description: "turn ended"), closed = expectation(description: "owned socket closed")
@@ -45,10 +45,10 @@ final class NativeDesktopSocketTests: XCTestCase {
             if flags.0 { requested.fulfill() }; if flags.1 { resolved.fulfill() }; if flags.2 { completed.fulfill() }
         }, onClosed: { closed.fulfill() })
         try collector.start()
-        await fulfillment(of: [requested, resolved, completed], timeout: 5)
+        await fulfillment(of: [requested, resolved, completed], timeout: TestWait.limit)
         collector.stop()
-        await fulfillment(of: [closed], timeout: 2)
-        await fulfillment(of: [childEnded], timeout: 5)
+        await fulfillment(of: [closed], timeout: TestWait.limit)
+        await fulfillment(of: [childEnded], timeout: TestWait.limit)
         guard !child.isRunning else { XCTFail("Socket fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         let captured = frames.all()
@@ -81,7 +81,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         child.standardOutput = FileHandle.nullDevice; child.standardError = stderr
         try child.run(); defer { if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         let initial = expectation(description: "initial count"), expanded = expectation(description: "pending count on expansion")
         let closed = expectation(description: "owned collector stopped")
         let frames = Frames()
@@ -93,14 +93,16 @@ final class NativeDesktopSocketTests: XCTestCase {
             if events.contains(where: { $0["outputTokens"] as? Int == 12 }) { expanded.fulfill() }
         }, onClosed: { closed.fulfill() })
         try collector.start()
-        await fulfillment(of: [initial], timeout: 2)
+        await fulfillment(of: [initial], timeout: TestWait.limit)
+        // These two bound timing: nothing flushes early, and expanding flushes
+        // well before the five-second batch would.
         try await Task.sleep(nanoseconds: 1_300_000_000)
         let pending = try frames.all().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
         XCTAssertFalse(pending.contains { ($0["events"] as? [[String: Any]])?.contains { $0["outputTokens"] as? Int == 12 } == true })
         collector.setBatchInterval(1, flushPending: true)
         await fulfillment(of: [expanded], timeout: 1)
-        collector.stop(); await fulfillment(of: [closed], timeout: 2)
-        await fulfillment(of: [childEnded], timeout: 3)
+        collector.stop(); await fulfillment(of: [closed], timeout: TestWait.limit)
+        await fulfillment(of: [childEnded], timeout: TestWait.limit)
         guard !child.isRunning else { XCTFail("Cadence fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
@@ -139,7 +141,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         try child.run()
         defer { if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         let first = expectation(description: "first question"), next = expectation(description: "same item in a new turn")
         let captured = Requests(), monitor = RealtimeActivityMonitor()
         await monitor.start(home: home, includeSSH: false, useSSHFallback: false) { _, _, _, requests, _, _, _ in
@@ -149,11 +151,11 @@ final class NativeDesktopSocketTests: XCTestCase {
             default: break
             }
         }
-        await fulfillment(of: [first], timeout: 5)
+        await fulfillment(of: [first], timeout: TestWait.limit)
         try input.fileHandleForWriting.write(contentsOf: Data("next-turn\n".utf8))
-        await fulfillment(of: [next], timeout: 5)
+        await fulfillment(of: [next], timeout: TestWait.limit)
         await monitor.shutdown()
-        await fulfillment(of: [exited], timeout: 5)
+        await fulfillment(of: [exited], timeout: TestWait.limit)
         let values = captured.all(), thread = "019a0000-0000-7000-8000-000000000001"
         XCTAssertEqual(values.count, 2)
         XCTAssertEqual(values.first?.id, values.last?.id, "Desktop's request ID alone cannot tell the two turns apart")
@@ -269,7 +271,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         try child.run()
         defer { try? commands.fileHandleForWriting.close(); if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: socket.path))
         let stages = ["initial", "measured", "disconnected", "resumed", "after-resume", "completed"]
         let observed = Dictionary(uniqueKeysWithValues: stages.map { ($0, expectation(description: "owner recovery " + $0)) })
@@ -280,12 +282,12 @@ final class NativeDesktopSocketTests: XCTestCase {
             XCTAssertTrue(requests.allSatisfy { $0.sourceHostID == host })
             if let stage = recovery.record(activities, requests: requests) { observed[stage]?.fulfill() }
         }
-        await fulfillment(of: [try XCTUnwrap(observed["initial"])], timeout: 3)
+        await fulfillment(of: [try XCTUnwrap(observed["initial"])], timeout: TestWait.limit)
         for (step, command) in [("measured", "measure"), ("disconnected", "disconnect"), ("resumed", "reconnect"),
                                 ("after-resume", "after-resume"), ("completed", "complete")] {
             recovery.arm(step)
             try commands.fileHandleForWriting.write(contentsOf: Data((command + "\n").utf8))
-            await fulfillment(of: [try XCTUnwrap(observed[step])], timeout: 4)
+            await fulfillment(of: [try XCTUnwrap(observed[step])], timeout: TestWait.limit)
         }
         let initial = try XCTUnwrap(recovery.snapshot("initial")), measured = try XCTUnwrap(recovery.snapshot("measured"))
         let disconnected = try XCTUnwrap(recovery.snapshot("disconnected")), resumed = try XCTUnwrap(recovery.snapshot("resumed"))
@@ -304,7 +306,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         XCTAssertNotNil(afterResume.activity.tokensPerSecond(at: afterResume.at))
         XCTAssertEqual(completed.activity.phase, .completed)
         await monitor.shutdown()
-        await fulfillment(of: [childEnded], timeout: 5)
+        await fulfillment(of: [childEnded], timeout: TestWait.limit)
         guard !child.isRunning else { XCTFail("Owner recovery fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         let summary = recovery.summary()
@@ -383,7 +385,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         try child.run()
         defer { try? commands.fileHandleForWriting.close(); if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         let local = expectation(description: "local runs before catalog responds"), measured = expectation(description: "local measured"), completed = expectation(description: "same revision stream completes")
         let observed = Observed(), monitor = RealtimeActivityMonitor(controlCatalog: catalog)
         addTeardownBlock { await gate.release(); await monitor.shutdown() }
@@ -397,19 +399,19 @@ final class NativeDesktopSocketTests: XCTestCase {
             }
         }
         defer { startup.cancel() }
-        await fulfillment(of: [fetching, local], timeout: 3)
+        await fulfillment(of: [fetching, local], timeout: TestWait.limit)
         XCTAssertEqual(observed.controlBindings, .init(hostIDs: [], authoritative: false), "A pending directory cannot confirm device removal")
         try commands.fileHandleForWriting.write(contentsOf: Data("measure\n".utf8))
-        await fulfillment(of: [measured], timeout: 3)
+        await fulfillment(of: [measured], timeout: TestWait.limit)
         await monitor.updateRefreshPolicy(.collapsed)
         await gate.release(); await startup.value
         let statuses = await monitor.statuses()
         XCTAssertEqual(statuses["remote-control:added"]?.sourceName, "Added device")
         XCTAssertEqual(observed.controlBindings, .init(hostIDs: ["remote-control:added"], authoritative: true), "The directory's source bindings reach the same ordered publication as its metadata")
         try commands.fileHandleForWriting.write(contentsOf: Data("complete\n".utf8))
-        await fulfillment(of: [completed], timeout: 3)
+        await fulfillment(of: [completed], timeout: TestWait.limit)
         await monitor.shutdown()
-        await fulfillment(of: [childEnded], timeout: 5)
+        await fulfillment(of: [childEnded], timeout: TestWait.limit)
         guard !child.isRunning else { XCTFail("Catalog fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         let report = try JSONSerialization.jsonObject(with: stdout.fileHandleForReading.readDataToEndOfFile()) as! [String: Int]
@@ -454,7 +456,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         try child.run()
         defer { try? commands.fileHandleForWriting.close(); if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         let initial = expectation(description: "original pending input"), restored = expectation(description: "fresh snapshot restores input")
         let closed = expectation(description: "device reset collector closed"), frames = Frames()
         let collector = NativeDesktopCollector(home: home, hosts: ["local", host], onFrame: { data in
@@ -469,13 +471,13 @@ final class NativeDesktopSocketTests: XCTestCase {
             if count == 2 { restored.fulfill() }
         }, onClosed: { closed.fulfill() })
         try collector.start(); defer { collector.stop() }
-        await fulfillment(of: [initial], timeout: 3)
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: home.appendingPathComponent("blocked").path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        await fulfillment(of: [initial], timeout: TestWait.limit)
+        try await TestWait.until { FileManager.default.fileExists(atPath: home.appendingPathComponent("blocked").path) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("blocked").path))
         collector.setHosts(["local"]); collector.setHosts(["local", host])
         try commands.fileHandleForWriting.write(contentsOf: Data("continue\n".utf8))
-        await fulfillment(of: [restored], timeout: 3)
-        collector.stop(); await fulfillment(of: [closed, childEnded], timeout: 3)
+        await fulfillment(of: [restored], timeout: TestWait.limit)
+        collector.stop(); await fulfillment(of: [closed, childEnded], timeout: TestWait.limit)
         guard !child.isRunning else { XCTFail("Device reset fixture did not exit"); return }
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
@@ -580,7 +582,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         try child.run()
         defer { if child.isRunning { child.terminate() } }
         let socket = home.appendingPathComponent("ipc/ipc.sock")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: socket.path) { try await Task.sleep(nanoseconds: 5_000_000) }
+        try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
         let ending = Ending(), delivered = expectation(description: "ending delivered before disconnect")
         let monitor = RealtimeActivityMonitor()
         await monitor.start(home: home, includeSSH: host != "local", useSSHFallback: false) { activities, _, _ in
@@ -595,10 +597,10 @@ final class NativeDesktopSocketTests: XCTestCase {
             await fulfillment(of: [ready], timeout: 120)
             try input.fileHandleForWriting.write(contentsOf: Data("continue\n".utf8))
         }
-        await fulfillment(of: [delivered], timeout: 5)
+        await fulfillment(of: [delivered], timeout: TestWait.limit)
         await monitor.shutdown()
         XCTAssertEqual(ending.unreadCount(), 1, "The reminder must outlive runtime release, trailing patches and EOF")
-        await fulfillment(of: [childEnded], timeout: 5)
+        await fulfillment(of: [childEnded], timeout: TestWait.limit)
         guard !child.isRunning else { XCTFail("EOF fixture did not exit"); return }
         let diagnostic = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         XCTAssertEqual(child.terminationStatus, 0, diagnostic)

@@ -31,7 +31,7 @@ final class WidthMeasurementTests: XCTestCase {
                 model.desktopApplicationResolver = { _ in URL(fileURLWithPath: "/Synthetic.app") }
             }
             model.refreshDesktopApplications()
-            try await Task.sleep(nanoseconds: 50_000_000)
+            try await TestWait.until { model.appButtonProviders == AgentProvider.allCases }
             XCTAssertEqual(model.appButtonProviders, AgentProvider.allCases)
             XCTAssertEqual(model.visibleActivities.count, 4)
             for language in AppLanguage.allCases {
@@ -48,7 +48,7 @@ final class WidthMeasurementTests: XCTestCase {
                 defer { window.orderOut(nil); window.close() }
                 host.frame = NSRect(x: 0, y: 0, width: oldAvailable, height: 28)
                 host.layoutSubtreeIfNeeded()
-                try await Task.sleep(nanoseconds: 50_000_000)
+                try await TestWait.until { capture.value > 0 }
                 let measured = capture.value
                 if demo {
                     XCTAssertGreaterThan(measured, oldAvailable, "The paginated toolbar needs more than the old 404-point panel in \(language)")

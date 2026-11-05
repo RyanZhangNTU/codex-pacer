@@ -42,6 +42,8 @@ public final class ClaudeActivityTelemetry: @unchecked Sendable {
     private var counts = Counters(httpRequests: 0, projectedRequests: 0, missingCorrelations: 0, rejectedRequests: 0)
     public var listeningPort: UInt16 { lock.lock(); defer { lock.unlock() }; return listener?.port ?? 0 }
     public var counters: Counters { lock.lock(); defer { lock.unlock() }; return counts }
+    /// Accepted clients that still hold a request worker; tests wait on it.
+    var openConnections: Int { lock.lock(); defer { lock.unlock() }; return connections.count }
 
     private func recordCounters(http: Int = 0, projected: Int = 0, missing: Int = 0, rejected: Int = 0) {
         lock.lock(); defer { lock.unlock() }
