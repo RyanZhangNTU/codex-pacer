@@ -65,39 +65,9 @@ internal static class IslandMoveChecks
             window.Reveal(); await window.WaitForPresentationAsync();
             Check(window.VisibleScreenBounds.Top < closed.Top && Math.Abs(window.VisibleScreenBounds.Bottom - closed.Bottom) <= 2,
                 $"The bottom bar opens upward without moving its edge (closed={closed}, open={window.VisibleScreenBounds})");
-            window.CollapseForAutomation(); await window.WaitForPresentationAsync();
-            var previous = session.Current.IslandPlacement;
-            int before = writes;
-            var menu = (MenuItem)window.FindName("MoveMenu");
-            menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            await KeyInput(Key.Left); await KeyInput(Key.Escape);
-            Check(writes == before && session.Current.IslandPlacement == previous, "Esc cancels keyboard movement without saving");
-            menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            await KeyInput(Key.Left); await KeyInput(Key.Enter);
-            await PresentationWait.UntilAsync(() => writes == before + 1 && session.Current.IslandPlacement != previous,
-                "The keyboard move commits once on Enter");
-            menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            await KeyInput(Key.Space);
-            Check(AutomationProperties.GetName(pin) == originalPin && writes == before + 1, "Space neither pins nor places the island during a keyboard move");
-            for (int i = 0; i < 400 && window.VisibleScreenBounds.Left > work.Left + 2; i++) await KeyInput(Key.Left);
-            for (int i = 0; i < 6; i++) await KeyInput(Key.Left);
-            double pressedPast = window.VisibleScreenBounds.Left;
-            await KeyInput(Key.Right);
-            Check(window.VisibleScreenBounds.Left > pressedPast, "After pressing past an edge, one press back moves the island");
-            await KeyInput(Key.Escape);
-            Check(writes == before + 1, "Cancelling the edge test saves nothing");
             Console.WriteLine("PASS island position (" + (window.GlassVisible ? "Glass" : surface) +
-                "): native drag, preview, four edges, click, bottom expansion, keyboard commit/cancel, edge presses and Space");
+                "): native drag, preview, four edges, click and bottom expansion");
 
-            async Task KeyInput(Key key)
-            {
-                await PresentationWait.UntilAsync(() => GetForegroundWindow() == hwnd && Keyboard.FocusedElement is Button button &&
-                    (button.Name == "HeaderAction" || button.Name == "StripAction"), "Move Island puts keyboard focus on the status bar");
-                ushort code = (ushort)KeyInterop.VirtualKeyFromKey(key);
-                Send([new Input { Type = 1, Data = new() { Key = new() { Code = code } } },
-                    new Input { Type = 1, Data = new() { Key = new() { Code = code, Flags = 2 } } }]);
-                await Task.Delay(60);
-            }
             async Task Press()
             {
                 var bar = ((FrameworkElement)window.FindName("Strip")).IsVisible ? (FrameworkElement)window.FindName("Strip") : (FrameworkElement)window.FindName("Header");
@@ -141,22 +111,16 @@ internal static class IslandMoveChecks
 
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private static void Move(int x, int y) { if (!SetCursorPos(x, y)) throw new Win32Exception(Marshal.GetLastWin32Error()); }
-    private static void SendMouse(uint flags) => Send([new Input { Data = new() { Mouse = new() { Flags = flags } } }]);
+    private static void SendMouse(uint flags) => Send([new Input { Mouse = new() { Flags = flags } }]);
     private static void Send(Input[] inputs)
     {
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) != inputs.Length)
             throw new Win32Exception(Marshal.GetLastWin32Error());
     }
-    [StructLayout(LayoutKind.Sequential)] private struct Input { internal uint Type; internal Payload Data; }
-    [StructLayout(LayoutKind.Explicit)] private struct Payload
-    {
-        [FieldOffset(0)] internal MouseInput Mouse;
-        [FieldOffset(0)] internal KeyboardInput Key;
-    }
+    // MOUSEINPUT is the largest INPUT member, so it sets the union's size.
+    [StructLayout(LayoutKind.Sequential)] private struct Input { internal uint Type; internal MouseInput Mouse; }
     [StructLayout(LayoutKind.Sequential)] private struct MouseInput { internal int X, Y; internal uint Data, Flags, Time; internal UIntPtr Extra; }
-    [StructLayout(LayoutKind.Sequential)] private struct KeyboardInput { internal ushort Code, Scan; internal uint Flags, Time; internal UIntPtr Extra; }
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(System.Drawing.Point point);
-    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] input, int size);
 }

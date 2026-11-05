@@ -2,7 +2,6 @@ using System;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -12,11 +11,11 @@ namespace CodexPacer.Windows;
 
 public partial class IslandWindow
 {
-    private sealed class MoveGesture(Point start, Point grab, DisplayMonitor? monitor, FrameworkElement? capture)
+    private sealed class MoveGesture(Point start, Point grab, DisplayMonitor? monitor, FrameworkElement capture)
     {
         internal Point Start { get; } = start;
         internal Point Grab { get; } = grab;
-        internal FrameworkElement? Capture { get; } = capture;
+        internal FrameworkElement Capture { get; } = capture;
         internal Point Cursor = start;
         internal DisplayMonitor? Monitor = monitor;
         internal bool Active;
@@ -40,10 +39,6 @@ public partial class IslandWindow
             bar.PreviewMouseMove += OnMovePointerMotion;
             bar.LostMouseCapture += (_, _) => { if (move?.Capture == bar) CancelMove(); };
         }
-        MoveMenu.Header = ui.Text("island.move");
-        MoveMenu.ToolTip = ui.Text("island.move_keyboard");
-        AutomationProperties.SetHelpText(MoveMenu, ui.Text("island.move_keyboard"));
-        Deactivated += (_, _) => { if (move is { Capture: null }) CancelMove(); };
         PreviewKeyDown += OnMoveKey;
     }
 
@@ -58,8 +53,6 @@ public partial class IslandWindow
 
     private void OnMovePointerDown(object sender, MouseButtonEventArgs e)
     {
-        // A press ends a keyboard move that was never placed.
-        if (move is { Capture: null }) CancelMove();
         if (presentationStopped || updateInputSuspended || move != null || sender is not FrameworkElement bar) return;
         // Measure across the whole visible bar; the header band is inset by its margins.
         var across = e.GetPosition(Shell); var within = e.GetPosition(bar);
@@ -73,7 +66,7 @@ public partial class IslandWindow
 
     private void OnMovePointerMotion(object sender, MouseEventArgs e)
     {
-        if (move is not { Capture: not null } gesture) return;
+        if (move is not { } gesture) return;
         if (e.LeftButton != MouseButtonState.Pressed) { CancelMove(); return; }
         if (!CanMove) return;
         var cursor = PointerPixels();
@@ -92,7 +85,7 @@ public partial class IslandWindow
 
     private void OnMovePointerUp(object sender, MouseButtonEventArgs e)
     {
-        if (move is not { Capture: { } bar } gesture) return;
+        if (move is not { } gesture) return;
         e.Handled = true;
         if (gesture.Active)
         {
@@ -101,50 +94,17 @@ public partial class IslandWindow
             return;
         }
         EndMove(gesture);
-        var point = e.GetPosition(bar);
-        if (new Rect(bar.RenderSize).Contains(point)) { SetPinned(!pinned); SetExpanded(true); }
+        var point = e.GetPosition(gesture.Capture);
+        if (new Rect(gesture.Capture.RenderSize).Contains(point)) { SetPinned(!pinned); SetExpanded(true); }
         else if (!pinned) collapse.Start();
     }
 
-    private void OnMoveIsland(object sender, RoutedEventArgs e)
-    {
-        MoreButton.ContextMenu.IsOpen = false;
-        if (!CanMove || move != null) return;
-        if (VisibleScreenBounds.IsEmpty) return;
-        // Arrow keys, Enter and Esc need focus; without it the move could never end.
-        if (!Activate()) return;
-        var gesture = new MoveGesture(default, new Point(.5, .5), SelectedDisplay.Display, null);
-        move = gesture;
-        StartMove(gesture);
-        var bar = layout.Position == 0 ? Header : Strip;
-        gesture.Cursor = bar.PointToScreen(new Point(bar.ActualWidth / 2, bar.ActualHeight / 2));
-        var target = layout.Position == 0 ? HeaderAction : StripAction;
-        // The focused control announces the mode and its keys to screen readers.
-        AutomationProperties.SetName(target, ui.Text("island.move"));
-        AutomationProperties.SetHelpText(target, ui.Text("island.move_keyboard"));
-        Keyboard.Focus(target);
-    }
-
+    // Esc drops a drag where it began, as on the Mac.
     private void OnMoveKey(object sender, KeyEventArgs e)
     {
-        if (move is not { } gesture) return;
-        if (e.Key == Key.Escape) { e.Handled = true; CancelMove(); return; }
-        if (gesture.Capture != null) return;
-        if (e.Key == Key.Enter) { e.Handled = true; _ = FinishMoveAsync(gesture); return; }
-        // Space would press the focused pin button instead of placing the island.
-        if (e.Key == Key.Space) { e.Handled = true; return; }
-        Vector delta = e.Key switch
-        {
-            Key.Left => new(-1, 0), Key.Right => new(1, 0), Key.Up => new(0, -1), Key.Down => new(0, 1), _ => new()
-        };
-        if (delta.LengthSquared == 0) return;
+        if (move == null || e.Key != Key.Escape) return;
         e.Handled = true;
-        double scale = VisualTreeHelper.GetDpi(this).DpiScaleX, step = 12 * scale;
-        var next = gesture.Cursor + delta * step;
-        // Against a display edge, a further press continues onto the adjacent display.
-        var beyond = gesture.Cursor + new Vector(delta.X * (gesture.Size.Width * scale / 2 + step), delta.Y * (gesture.Size.Height * scale / 2 + step));
-        if (IslandPlacementGeometry.MonitorAt(displays.Current, beyond.X, beyond.Y, null) is { } other && other != gesture.Monitor) next = beyond;
-        UpdateMove(gesture, next);
+        CancelMove();
     }
 
     private void StartMove(MoveGesture gesture)
@@ -169,10 +129,6 @@ public partial class IslandWindow
         gesture.Edge = IslandPlacementGeometry.SnapEdge(bounds.Item2, raw, gesture.Edge);
         gesture.Placement = IslandPlacementGeometry.FromFrame(gesture.Edge, bounds.Item2, raw);
         var moving = IslandPlacementGeometry.Clamp(bounds.Item2, raw);
-        // Keyboard moves follow the frame that is shown, so presses against an
-        // edge leave nothing to undo in the other direction.
-        if (gesture.Capture == null && !crossed)
-            gesture.Cursor = new Point((moving.X + gesture.Grab.X * moving.Width) * screen.Scale, (moving.Y + gesture.Grab.Y * moving.Height) * screen.Scale);
         try
         {
             surfaceBounds = moving;
@@ -212,13 +168,8 @@ public partial class IslandWindow
     private void EndMove(MoveGesture gesture)
     {
         move = null;
-        if (gesture.Capture?.IsMouseCaptured == true) gesture.Capture.ReleaseMouseCapture();
+        if (gesture.Capture.IsMouseCaptured) gesture.Capture.ReleaseMouseCapture();
         snapPreview?.Close(); snapPreview = null;
-        if (gesture.Capture == null)
-        {
-            foreach (var target in new[] { HeaderAction, StripAction }) target.ClearValue(AutomationProperties.HelpTextProperty);
-            UpdateMainAction();
-        }
     }
 
     private void CancelMove()

@@ -124,7 +124,6 @@
          <local:IconGlyph Symbol="ellipsis" Width="16" Height="16" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
          <Button.ContextMenu><ContextMenu>
           <MenuItem x:Name="RefreshMenu" Click="OnRefresh"/>
-          <MenuItem x:Name="MoveMenu" Click="OnMoveIsland"/>
           <MenuItem x:Name="SettingsMenu" Click="OnSettings"/>
           <Separator/>
           <MenuItem x:Name="QuitMenu" Click="OnQuit"/>

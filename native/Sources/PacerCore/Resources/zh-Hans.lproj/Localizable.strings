@@ -297,8 +297,6 @@
 "appearance.free_move" = "自由拖动";
 "appearance.free_move_detail" = "按住状态栏拖动，靠近屏幕边缘松手会贴边。";
 "appearance.position_reset" = "回到顶部中央";
-"island.move" = "移动灵动岛";
-"island.move_keyboard" = "用方向键移动灵动岛，按 Enter 确认位置，按 Esc 取消。";
 "position.center" = "中间";
 "position.topLeft" = "左上";
 "position.bottomLeft" = "左下";
@@ -855,7 +853,7 @@
 "help.hover.title" = "展开与收起";
 "help.hover.detail" = "鼠标移到折叠栏上就展开，移开就收起。";
 "help.move.title" = "移动灵动岛";
-"help.move.detail" = "按住状态栏拖动，靠近屏幕边缘松手会贴边。用键盘时，选“更多 → 移动灵动岛”。要恢复默认，选“设置 → 外观 → 回到顶部中央”。";
+"help.move.detail" = "按住状态栏拖动，靠近屏幕边缘松手会贴边。要恢复默认，选“设置 → 外观 → 回到顶部中央”。";
 "help.section.services" = "模块";
 "help.enable.title" = "选择模块";
 "help.enable.detail" = "Codex、Claude、DeepSeek 可以分别开关，在设置里对应模块的页面中启用。";

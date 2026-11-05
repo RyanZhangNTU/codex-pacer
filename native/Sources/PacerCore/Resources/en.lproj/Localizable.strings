@@ -297,8 +297,6 @@
 "appearance.free_move" = "Free Move";
 "appearance.free_move_detail" = "Drag the status bar. Release near an edge to snap.";
 "appearance.position_reset" = "Return to Top Center";
-"island.move" = "Move Island";
-"island.move_keyboard" = "Use the arrow keys to move the island. Press Enter to place it or Esc to cancel.";
 "position.center" = "Center";
 "position.topLeft" = "Top Left";
 "position.bottomLeft" = "Bottom Left";
@@ -855,7 +853,7 @@
 "help.hover.title" = "Expand and collapse";
 "help.hover.detail" = "Move the pointer onto the bar to expand it, and away to collapse it.";
 "help.move.title" = "Move the island";
-"help.move.detail" = "Drag the status bar; release near an edge to snap. With the keyboard, choose More → Move Island. To start over, use Settings → Appearance → Return to Top Center.";
+"help.move.detail" = "Drag the status bar; release near an edge to snap. To start over, use Settings → Appearance → Return to Top Center.";
 "help.section.services" = "Modules";
 "help.enable.title" = "Choose modules";
 "help.enable.detail" = "Turn Codex, Claude and DeepSeek on or off separately, each on its own page in Settings.";

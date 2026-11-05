@@ -2,7 +2,7 @@
 
 ## 4.2.4
 
-- Drag the island by its status bar on the Mac and on Windows. It stays where you drop it, snaps to a screen edge when you release it nearby, and opens toward the free side of the screen. Free Move replaces the fixed custom positions in Appearance, which also offers Return to Top Center; More → Move Island moves it with the arrow keys.
+- Drag the island by its status bar on the Mac and on Windows. It stays where you drop it, snaps to a screen edge when you release it nearby, and opens toward the free side of the screen. Free Move replaces the fixed custom positions in Appearance, which also offers Return to Top Center.
 - Only the open island's toolbar buttons show hover tooltips. Other island elements keep their descriptions for screen readers.
 - The welcome guide explains hover, leave and drag side by side, and Help has a row for moving the island.
 - A Claude Code subagent that finishes while its chat is busy now ends; its notification arrives as a queued attachment, which Pacer did not read. A background subagent's progress and speed keep updating after its chat starts another turn, and its own request timing counts toward the speed.

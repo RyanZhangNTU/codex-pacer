@@ -117,7 +117,7 @@ internal static class GuidePageChecks
             settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
             Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
             Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
-            Check(Has(settings, "help.move"), "Help explains dragging, keyboard movement and reset");
+            Check(Has(settings, "help.move"), "Help explains dragging, snapping and reset");
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
             { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }

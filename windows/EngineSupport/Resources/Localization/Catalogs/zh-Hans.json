@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "eb74bed831c9b82fd30e182a1e1f8185cd0e09e8c5b30a3222e8e94d363d0072",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1c5986e4d2ef9fc68ab99adb5b077804f10e4985c3e738a870f728d147f4d440",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
   },
   "strings": {
@@ -498,7 +498,7 @@
     "help.hover.title": "\u5c55\u5f00\u4e0e\u6536\u8d77",
     "help.link.guide": "\u4f7f\u7528\u8bf4\u660e",
     "help.link.issues": "\u53cd\u9988\u95ee\u9898",
-    "help.move.detail": "\u6309\u4f4f\u72b6\u6001\u680f\u62d6\u52a8\uff0c\u9760\u8fd1\u5c4f\u5e55\u8fb9\u7f18\u677e\u624b\u4f1a\u8d34\u8fb9\u3002\u7528\u952e\u76d8\u65f6\uff0c\u9009\u201c\u66f4\u591a \u2192 \u79fb\u52a8\u7075\u52a8\u5c9b\u201d\u3002\u8981\u6062\u590d\u9ed8\u8ba4\uff0c\u9009\u201c\u8bbe\u7f6e \u2192 \u5916\u89c2 \u2192 \u56de\u5230\u9876\u90e8\u4e2d\u592e\u201d\u3002",
+    "help.move.detail": "\u6309\u4f4f\u72b6\u6001\u680f\u62d6\u52a8\uff0c\u9760\u8fd1\u5c4f\u5e55\u8fb9\u7f18\u677e\u624b\u4f1a\u8d34\u8fb9\u3002\u8981\u6062\u590d\u9ed8\u8ba4\uff0c\u9009\u201c\u8bbe\u7f6e \u2192 \u5916\u89c2 \u2192 \u56de\u5230\u9876\u90e8\u4e2d\u592e\u201d\u3002",
     "help.move.title": "\u79fb\u52a8\u7075\u52a8\u5c9b",
     "help.open.detail": "\u70b9\u51fb\u4efb\u52a1\uff0c\u8df3\u8f6c\u5230\u5b83\u6240\u5728\u7684\u5e94\u7528\u548c\u4f1a\u8bdd\u3002",
     "help.open.title": "\u6253\u5f00\u4f1a\u8bdd",
@@ -520,8 +520,6 @@
     "help.tasks.title": "\u4efb\u52a1\u5fbd\u6807",
     "help.warnings.detail": "\u53ea\u5728\u51fa\u95ee\u9898\u65f6\u663e\u793a\uff0c\u6bd4\u5982\u989d\u5ea6\u5feb\u7528\u5b8c\u3001\u4f59\u989d\u4e0d\u8db3\u3001\u6570\u636e\u6ca1\u6709\u66f4\u65b0\u6216\u4e3b\u673a\u65ad\u5f00\u3002",
     "help.warnings.title": "\u8b66\u544a",
-    "island.move": "\u79fb\u52a8\u7075\u52a8\u5c9b",
-    "island.move_keyboard": "\u7528\u65b9\u5411\u952e\u79fb\u52a8\u7075\u52a8\u5c9b\uff0c\u6309 Enter \u786e\u8ba4\u4f4d\u7f6e\uff0c\u6309 Esc \u53d6\u6d88\u3002",
     "language.label": "\u754c\u9762\u8bed\u8a00",
     "language.missing_helper": "\u91cd\u542f\u7ec4\u4ef6\u7f3a\u5931\u3002",
     "language.restart_failed": "\u65e0\u6cd5\u81ea\u52a8\u91cd\u542f Codex Pacer\uff0c\u8bf7\u9000\u51fa\u540e\u91cd\u65b0\u6253\u5f00\u3002\n%1$@",

@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "818769383e8d795d5a0c2b7f1f780db2ea5b1bbaf91cd9fa11ee1740b72933e7",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "d7a05ecdc744574738dbcba2b4011ef8e0fac270aeec1f3885d0cba45e9677ab",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -498,7 +498,7 @@
     "help.hover.title": "Expand and collapse",
     "help.link.guide": "User Guide",
     "help.link.issues": "Report an Issue",
-    "help.move.detail": "Drag the status bar; release near an edge to snap. With the keyboard, choose More \u2192 Move Island. To start over, use Settings \u2192 Appearance \u2192 Return to Top Center.",
+    "help.move.detail": "Drag the status bar; release near an edge to snap. To start over, use Settings \u2192 Appearance \u2192 Return to Top Center.",
     "help.move.title": "Move the island",
     "help.open.detail": "Click a task to jump to its app and conversation.",
     "help.open.title": "Open a conversation",
@@ -520,8 +520,6 @@
     "help.tasks.title": "Task badge",
     "help.warnings.detail": "Appear only when something is wrong, such as quota running out, a low balance, data not updating or a host disconnecting.",
     "help.warnings.title": "Warnings",
-    "island.move": "Move Island",
-    "island.move_keyboard": "Use the arrow keys to move the island. Press Enter to place it or Esc to cancel.",
     "language.label": "App Language",
     "language.missing_helper": "The relaunch helper is missing.",
     "language.restart_failed": "Codex Pacer couldn\u2019t restart automatically. Quit and open it again.\n%1$@",
