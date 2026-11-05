@@ -259,7 +259,7 @@ Keep tests grouped by the behavior they protect. When consolidating overlapping 
 
 ## Continuous integration
 
-`.github/workflows/platforms.yml` tests each change once.
+`.github/workflows/platforms.yml` tests each change once, on its pull request into develop.
 
 - **Pull request into develop.** Only the platforms the change touches run. `scripts/ci/changed-platforms.py` decides this from the changed files:
   - Shared Core, the root package, `native/Info.plist`, the workflow and unknown files run both platforms.
@@ -267,12 +267,9 @@ Keep tests grouped by the behavior they protect. When consolidating overlapping 
   - Documentation runs nothing.
   - The Mac suite runs on Apple silicon.
   - A newer push cancels the pull request's older run.
-- **Push to develop or a promotion pull request into main.** Nothing runs: the change was already tested.
-- **Push to main (a release promotion) or a manual run.** Only the release checks the pull requests did not cover run:
-  - the full Mac suite and a release build on Intel, the only place the x86_64 slice runs before release;
-  - the Windows installers the release publishes, with their checks.
-
-  These runs are never cancelled, because [the release](releasing.md) takes its installers from the run on the exact release commit. If an unrelated job fails there, rerun only that job.
+- **Push to develop or a promotion pull request into main.** Nothing runs.
+- **Push to main (a release promotion).** The code is what develop already tested, so this run tests nothing again. It only builds the Windows installers the release publishes; [the release](releasing.md) takes them from the run on the exact release commit. The run is never cancelled. The local release build compiles both Mac architectures.
+- **Manual run.** Does the same as a push to main, on any branch.
 
 ## Performance checks
 

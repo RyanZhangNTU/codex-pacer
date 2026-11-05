@@ -1,8 +1,8 @@
 """Which platforms a pull request touches, so CI runs only their jobs.
 
-Pushes to main and manual runs build a release, so they always cover both
-platforms. A pull request runs a platform's jobs only when it changes files
-that platform builds or tests; documentation alone runs nothing.
+A pull request runs a platform's jobs only when it changes files that
+platform builds or tests; documentation alone runs nothing. Pushes to main and
+manual runs only build release installers, so both flags are set for them.
 """
 import os
 import subprocess
