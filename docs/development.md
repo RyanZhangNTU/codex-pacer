@@ -257,6 +257,23 @@ The collapsed bar has one configurable row, persisted as schema 9 in `compactIsl
 
 Keep tests grouped by the behavior they protect. When consolidating overlapping scenarios, preserve distinct input paths and boundary assertions, especially account isolation, sanitized transport, real helper shutdown and window rounding. Avoid fixed test counts or catalog-size thresholds as acceptance criteria. Source tests that supply their own events pass `demoArguments: nil` to `IslandModel(demo: true)` to skip built-in task fixtures while retaining I/O isolation and sample quotas. Demo regression tests supply launch arguments and exercise the retained scenario.
 
+## Continuous integration
+
+`.github/workflows/platforms.yml` tests each change once.
+
+- **Pull request into develop.** Only the platforms the change touches run. `scripts/ci/changed-platforms.py` decides this from the changed files:
+  - Shared Core, the root package, `native/Info.plist`, the workflow and unknown files run both platforms.
+  - Mac-only and Windows-only paths run only their platform.
+  - Documentation runs nothing.
+  - The Mac suite runs on Apple silicon.
+  - A newer push cancels the pull request's older run.
+- **Push to develop or a promotion pull request into main.** Nothing runs: the change was already tested.
+- **Push to main (a release promotion) or a manual run.** Only the release checks the pull requests did not cover run:
+  - the full Mac suite and a release build on Intel, the only place the x86_64 slice runs before release;
+  - the Windows installers the release publishes, with their checks.
+
+  These runs are never cancelled, because [the release](releasing.md) takes its installers from the run on the exact release commit. If an unrelated job fails there, rerun only that job.
+
 ## Performance checks
 
 The event benchmark compares the embedded Desktop IPC projection from two source trees with identical synthetic patches. It checks projected state and emitted events for equivalence, excluding wall-clock timestamps, and alternates execution order. To compare an uncommitted change against the current commit:
