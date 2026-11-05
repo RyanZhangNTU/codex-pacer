@@ -1,69 +1,279 @@
 name: Platforms
 
+# Each change is tested once: on its pull request into develop, running only the
+# platforms it touches. A push to main promotes code develop already tested, so
+# it tests nothing again and only builds the Windows installers the release
+# publishes. develop pushes and promotion pull requests run nothing.
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [develop, main]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push replaces an older pull request run. A main run is never
+# cancelled: the release takes its installers from that exact commit.
 concurrency:
   group: platforms-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  macos:
-    name: macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-26
-          - arch: x86_64
-            runner: macos-26-intel
+  changes:
+    name: Changed platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mac: ${{ steps.platforms.outputs.mac }}
+      windows: ${{ steps.platforms.outputs.windows }}
+      installer: ${{ steps.platforms.outputs.installer }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Verify architecture and compiler
-        env:
-          EXPECTED_ARCH: ${{ matrix.arch }}
+        with:
+          fetch-depth: 2
+      - name: Classify changed files
+        id: platforms
         run: |
-          test "$(uname -m)" = "$EXPECTED_ARCH"
-          xcodebuild -version
-          swift --version
-      - name: Platform contract
+          python3 scripts/ci/test_changed_platforms.py
+          python3 scripts/ci/changed-platforms.py
+
+  # Every pull request, whatever it touches. These checks need no platform, so
+  # they run once, on Linux.
+  contract:
+    name: Platform contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Platform contract and shared localization
         run: |
           python3 scripts/windows/test_contract.py
           python3 scripts/windows/check-contract.py
+          python3 scripts/windows/build-localization.py --check
+      - name: DeepSeek web identity contract
+        run: node scripts/windows/check-deepseek-web-identity.mjs
+
+  # Pull requests: the full Mac suite on Apple silicon.
+  macos:
+    name: macOS (arm64)
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.mac == 'true'
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Verify architecture and compiler
+        run: |
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          swift --version
       - name: Full tests
         run: |
           set -o pipefail
           python3 -u scripts/native/ci-test.py --timeout-seconds 1200 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
-      - name: Build app
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: macos-arm64-tests
+          path: |
+            ${{ runner.temp }}/pacer-tests.log
+            ${{ runner.temp }}/pacer-test-sample-*.txt
+          retention-days: 7
+
+  # Pull requests: the shared engine's compilation and tests, in parallel with
+  # the desktop job.
+  windows-engine:
+    name: Windows engine (x86_64)
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.windows == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Claude shell contract before compilation
         run: |
-          set -o pipefail
-          make build 2>&1 | tee "$RUNNER_TEMP/pacer-build.log"
-          task_app="$(sed -n 's/^App: //p' "$RUNNER_TEMP/pacer-build.log" | tail -n 1)"
-          ditto -c -k --sequesterRsrc --keepParent "$task_app" "$RUNNER_TEMP/Codex-Pacer-${{ matrix.arch }}.zip"
-      - name: Upload app and validation logs
+          python -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'The parent-created Claude fixture failed.' }
+          # Git Bash can change TokenOwner while keeping elevation. Exercise
+          # both inherited administrator-owned and Bash-created user-owned files.
+          $taskPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source.Replace('\','/')
+          $taskBash = Join-Path $env:ProgramFiles 'Git/bin/bash.exe'
+          & $taskBash --noprofile --norc -c 'exec "$@"' pacer $taskPython -S scripts/windows/check-claude-shell.py
+          if ($LASTEXITCODE -ne 0) { throw 'The Bash-created Claude fixture failed.' }
+      - name: Pinned Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1
+      - name: Shared source compilation and engine tests
+        run: |
+          ./scripts/windows/test-engine.ps1 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-tests.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-tests.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
+            throw 'Compiler warnings in Windows tests.'
+          }
+      - name: Upload engine test log
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-engine-tests
+          path: ${{ runner.temp }}/pacer-windows-tests.log
+          retention-days: 7
+
+  # Pull requests: the release engine and desktop, their integration,
+  # presentation and idle checks, and the package and installer checks when the
+  # change touches what the installers are built from or what those checks start.
+  windows-desktop:
+    name: Windows desktop (x86_64)
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.windows == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - name: Pinned Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1
+      - name: Build engine
+        run: |
+          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
+            throw 'Compiler warnings in Windows build.'
+          }
+      - name: Build Windows desktop
+        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+      - name: Build notification acceptance probe
+        run: |
+          dotnet publish windows/Tests/NotificationProbe/Pacer.NotificationProbe.csproj --configuration Release --runtime win-x64 --self-contained true --output output/windows/notification-probe -warnaserror -p:PacerArchitecture=x64 -p:RestoreLockedMode=true *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-notification-probe-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Notification acceptance probe build failed.' }
+      - name: Desktop integration tests
+        run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
+      - name: Claude runtime without user Python
+        run: ./scripts/windows/test-claude-runtime.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-claude-runtime.log"
+      - name: Functional presentation tests
+        run: ./scripts/windows/test-presentation.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
+      - name: Engine idle and shutdown protocol
+        run: |
+          . ./scripts/windows/environment.ps1
+          $taskEngine = Join-Path $taskScratchPath 'x86_64-unknown-windows-msvc/release/PacerEngine.exe'
+          python scripts/windows/check-engine-idle.py --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check failed.' }
+      - name: Package unsigned Windows application
+        if: needs.changes.outputs.installer == 'true'
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
+      - name: Windows installer lifecycle
+        if: needs.changes.outputs.installer == 'true'
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-tests.log"
+      - name: Windows patch installer lifecycle
+        if: needs.changes.outputs.installer == 'true'
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-patch.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-patch-tests.log"
+      - name: Upload validation logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-desktop-validation
+          path: |
+            ${{ runner.temp }}/pacer-windows-build.log
+            ${{ runner.temp }}/pacer-desktop-build.log
+            ${{ runner.temp }}/pacer-notification-probe-build.log
+            ${{ runner.temp }}/pacer-desktop-tests.log
+            ${{ runner.temp }}/pacer-claude-runtime.log
+            output/windows/claude-runtime-tests.json
+            ${{ runner.temp }}/pacer-presentation-tests.log
+            ${{ runner.temp }}/pacer-windows-idle.log
+            ${{ runner.temp }}/pacer-windows-idle.json
+            ${{ runner.temp }}/pacer-windows-package.log
+            ${{ runner.temp }}/pacer-installer-tests.log
+            ${{ runner.temp }}/pacer-patch-tests.log
+            output/windows/installer-tests.json
+            output/windows/patch-tests.json
+          retention-days: 7
+
+  # Releases: the x64 package and installer the release publishes. The tests
+  # already ran on the pull requests; packaging keeps its own smoke test.
+  windows-release:
+    name: Windows release (x86_64)
+    if: github.event_name != 'pull_request'
+    runs-on: windows-2025
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - name: Pinned Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1
+      - name: Build engine
+        run: |
+          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
+            throw 'Compiler warnings in Windows build.'
+          }
+      - name: Build Windows desktop
+        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+      - name: Package unsigned Windows application
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
+      - name: Upload unsigned Windows application
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-app-x64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/*-windows-x64-preview-*.zip
+            output/windows/*-windows-x64-preview-*.zip.sha256
+          retention-days: 7
+      - name: Package unsigned Windows installer
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          # Also a patch from the latest release, when that release published its manifest.
+          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture x64 -Output "$env:RUNNER_TEMP/pacer-update-base-x64.json" | Select-Object -Last 1
+          $taskArguments = @{ Archive = $taskArchive }
+          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
+          ./scripts/windows/package-installer.ps1 @taskArguments *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
+      - name: Upload unsigned Windows installer
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-installer-x64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/installer-artifact/*.exe
+            output/windows/installer-artifact/*.exe.sha256
+            output/windows/installer-artifact/*.json
+            output/windows/installer-artifact/*.json.sha256
+          retention-days: 7
+      - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: macos-${{ matrix.arch }}
+          name: windows-release-validation
           path: |
-            ${{ runner.temp }}/Codex-Pacer-*.zip
-            ${{ runner.temp }}/pacer-tests.log
-            ${{ runner.temp }}/pacer-test-sample-*.txt
-            ${{ runner.temp }}/pacer-build.log
+            ${{ runner.temp }}/pacer-windows-build.log
+            ${{ runner.temp }}/pacer-desktop-build.log
+            ${{ runner.temp }}/pacer-windows-package.log
+            ${{ runner.temp }}/pacer-installer-build.log
           retention-days: 7
 
+  # Pull requests compile ARM64; releases also package its application and
+  # installer. No tests run on it: the x64 jobs test the same sources.
   windows-arm64:
     name: Windows (arm64 build)
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-11-arm
     timeout-minutes: 60
     env:
@@ -87,8 +297,10 @@ jobs:
           ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
       - name: Package unsigned ARM64 application without runtime tests
+        if: github.event_name != 'pull_request'
         run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 -BuildOnly
       - name: Upload unsigned ARM64 application
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-app-arm64-unsigned
@@ -98,6 +310,7 @@ jobs:
             output/windows/*-windows-arm64-preview-*.zip.sha256
           retention-days: 7
       - name: Package unsigned ARM64 installer without installing
+        if: github.event_name != 'pull_request'
         run: |
           $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
           # Also a patch from the latest release, when that release published its manifest.
@@ -106,6 +319,7 @@ jobs:
           if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
           ./scripts/windows/package-installer.ps1 @taskArguments
       - name: Upload unsigned ARM64 installer
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-installer-arm64-unsigned
@@ -118,139 +332,11 @@ jobs:
             output/windows/installer-artifact/*-windows-arm64-patch-*
           retention-days: 7
       - name: Upload ARM64 build logs
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-arm64-build-validation
           path: |
             ${{ runner.temp }}/pacer-arm64-engine.log
             ${{ runner.temp }}/pacer-arm64-desktop.log
-          retention-days: 7
-
-  windows:
-    name: Windows (x86_64)
-    runs-on: windows-2025
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: 10.0.403
-      - name: Platform contract
-        run: |
-          python scripts/windows/test_contract.py
-          if ($LASTEXITCODE -ne 0) { throw 'Platform contract regression failed.' }
-          python scripts/windows/check-contract.py
-          if ($LASTEXITCODE -ne 0) { throw 'Platform contract failed.' }
-          python scripts/windows/build-localization.py --check
-          if ($LASTEXITCODE -ne 0) { throw 'Shared localization differs.' }
-      - name: DeepSeek web identity contract
-        run: |
-          node scripts/windows/check-deepseek-web-identity.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'DeepSeek web identity contract failed.' }
-      - name: Claude shell contract before compilation
-        run: |
-          python -S scripts/windows/check-claude-shell.py
-          if ($LASTEXITCODE -ne 0) { throw 'The parent-created Claude fixture failed.' }
-          # Git Bash can change TokenOwner while keeping elevation. Exercise
-          # both inherited administrator-owned and Bash-created user-owned files.
-          $taskPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source.Replace('\','/')
-          $taskBash = Join-Path $env:ProgramFiles 'Git/bin/bash.exe'
-          & $taskBash --noprofile --norc -c 'exec "$@"' pacer $taskPython -S scripts/windows/check-claude-shell.py
-          if ($LASTEXITCODE -ne 0) { throw 'The Bash-created Claude fixture failed.' }
-      - name: Pinned Swift toolchain
-        run: ./scripts/windows/setup-swift.ps1
-      - name: Shared source compilation and engine tests
-        run: |
-          ./scripts/windows/test-engine.ps1 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-tests.log"
-          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-tests.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
-            throw 'Compiler warnings in Windows tests.'
-          }
-      - name: Build engine
-        run: |
-          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
-          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
-            throw 'Compiler warnings in Windows build.'
-          }
-      - name: Build Windows desktop
-        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
-      - name: Build notification acceptance probe
-        run: |
-          dotnet publish windows/Tests/NotificationProbe/Pacer.NotificationProbe.csproj --configuration Release --runtime win-x64 --self-contained true --output output/windows/notification-probe -warnaserror -p:PacerArchitecture=x64 -p:RestoreLockedMode=true *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-notification-probe-build.log"
-          if ($LASTEXITCODE -ne 0) { throw 'Notification acceptance probe build failed.' }
-      - name: Desktop integration tests
-        run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
-      - name: Claude runtime without user Python
-        run: ./scripts/windows/test-claude-runtime.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-claude-runtime.log"
-      - name: Functional presentation tests
-        run: ./scripts/windows/test-presentation.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
-      - name: Package unsigned Windows application
-        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
-      - name: Upload unsigned Windows application
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-app-x64-unsigned
-          if-no-files-found: error
-          path: |
-            output/windows/*-windows-x64-preview-*.zip
-            output/windows/*-windows-x64-preview-*.zip.sha256
-          retention-days: 7
-      - name: Windows installer lifecycle
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          ./scripts/windows/test-installer.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-tests.log"
-      - name: Windows patch installer lifecycle
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          ./scripts/windows/test-patch.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-patch-tests.log"
-      - name: Package unsigned Windows installer
-        run: |
-          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
-          # Also a patch from the latest release, when that release published its manifest.
-          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture x64 -Output "$env:RUNNER_TEMP/pacer-update-base-x64.json" | Select-Object -Last 1
-          $taskArguments = @{ Archive = $taskArchive }
-          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
-          ./scripts/windows/package-installer.ps1 @taskArguments *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
-      - name: Upload unsigned Windows installer
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-installer-x64-unsigned
-          if-no-files-found: error
-          path: |
-            output/windows/installer-artifact/*.exe
-            output/windows/installer-artifact/*.exe.sha256
-            output/windows/installer-artifact/*.json
-            output/windows/installer-artifact/*.json.sha256
-          retention-days: 7
-      - name: Engine idle and shutdown protocol
-        run: |
-          . ./scripts/windows/environment.ps1
-          $taskEngine = Join-Path $taskScratchPath 'x86_64-unknown-windows-msvc/release/PacerEngine.exe'
-          python scripts/windows/check-engine-idle.py --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
-          if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check failed.' }
-      - name: Upload validation logs
-        if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-engine-validation
-          path: |
-            ${{ runner.temp }}/pacer-windows-tests.log
-            ${{ runner.temp }}/pacer-windows-build.log
-            ${{ runner.temp }}/pacer-windows-idle.log
-            ${{ runner.temp }}/pacer-windows-idle.json
-            ${{ runner.temp }}/pacer-desktop-build.log
-            ${{ runner.temp }}/pacer-notification-probe-build.log
-            ${{ runner.temp }}/pacer-desktop-tests.log
-            ${{ runner.temp }}/pacer-claude-runtime.log
-            output/windows/claude-runtime-tests.json
-            ${{ runner.temp }}/pacer-presentation-tests.log
-            ${{ runner.temp }}/pacer-windows-package.log
-            ${{ runner.temp }}/pacer-installer-tests.log
-            ${{ runner.temp }}/pacer-patch-tests.log
-            ${{ runner.temp }}/pacer-installer-build.log
-            output/windows/installer-tests.json
-            output/windows/patch-tests.json
           retention-days: 7

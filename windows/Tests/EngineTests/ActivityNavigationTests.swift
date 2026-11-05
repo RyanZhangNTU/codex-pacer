@@ -141,7 +141,8 @@ final class ActivityNavigationTests: XCTestCase {
     }
     func testOpeningIsSingleFlightAndFailureKeepsTheCapturedEndingUnread() async throws {
         let frames = NavigationFrames(), clock = date
-        let runtime = EngineRuntime(demo: true, now: { clock }, navigationErrorDuration: 0.02, output: { frames.append($0) })
+        // The error must outlive the hops before it is read on a slow runner.
+        let runtime = EngineRuntime(demo: true, now: { clock }, navigationErrorDuration: 1, output: { frames.append($0) })
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"]]))
         _ = await runtime.receive(try command("demoStage", ["demoStage": 3]))
         let link = try XCTUnwrap(frames.snapshot?.activityLinks?.first { link in frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true })
@@ -153,10 +154,7 @@ final class ActivityNavigationTests: XCTestCase {
         XCTAssertEqual(frames.snapshot?.navigationError?.message, "Synthetic host unavailable")
         XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
         XCTAssertFalse(frames.snapshot?.openingActivityIDs?.contains(link.activityID) == true)
-        for _ in 0..<200 {
-            if frames.snapshot?.navigationError == nil { break }
-            try await Task.sleep(nanoseconds: 5_000_000)
-        }
+        try await TestWait.until { frames.snapshot?.navigationError == nil }
         XCTAssertNil(frames.snapshot?.navigationError, "The shared error deadline publishes a display-only expiry")
         XCTAssertTrue(frames.snapshot?.tasks.contains { $0.id == link.activityID && $0.unread } == true)
         await runtime.stop()
