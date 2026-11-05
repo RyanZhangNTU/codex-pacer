@@ -17,7 +17,7 @@
     "scripts/release/build-macos-release.sh": "d2f275135ec9d649748f648f61c5f646450c29324f50cec319a9d15843eaa3a5",
     "scripts/release/dmg-background.swift": "55c3d7639804cecb9fdbcb45f4ee8f11c1bfa1d0ed603a2130b311d099cc364e",
     "scripts/release/dmg-requirements.txt": "95076c7eba194304f84f0b4e041a35aea7033155343e4ab94c5d25902fdc8eaf",
-    "scripts/release/notarize.py": "da4615bddaa7af96f0b0364f4f6837c98a186161b37d4ab73d2011758494fd49",
+    "scripts/release/notarize.py": "3664183db2f42bb5bb4886f2e576075bcf4e17847a4cba81c2ce3adb0ab36e7e",
     "scripts/release/package-dmg.py": "e103a5d0825a4faca5b1ffbcb540f5d4789a93acaf6eee57dd58fab2e561cf6c",
     "scripts/release/prepare-update.py": "1e9376a89a089ad05bffd7675de2b645ddcbef83c90a3f31fc9e6832c04be47f",
     "scripts/release/prepare-windows-update.py": "39a61748cc94a83b00b6723821cb07d947c7354b407d71938030a4a98d21647b",

@@ -30,7 +30,9 @@ def main():
     try:
         receipt = json.loads(result.stdout)
     except json.JSONDecodeError:
-        print("Notarization failed before a receipt was returned. Check credentials/connectivity.", file=sys.stderr)
+        # notarytool explains credential and network failures only on stderr; it never prints the key.
+        print("Notarization failed before a receipt was returned:", file=sys.stderr)
+        print((result.stderr or result.stdout or "notarytool gave no reason").strip(), file=sys.stderr)
         return 1
     status = receipt.get("status", "Unknown")
     request_id = receipt.get("id", "unavailable")
