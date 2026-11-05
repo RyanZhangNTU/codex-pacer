@@ -251,10 +251,22 @@ internal static class Program
             badge.Update(attention, motion); await Pump();
             Check(badge.TransientMotion.Ripple == motion, "New attention must play the native ripple only when motion is enabled");
             var completed = idle with { Ending = "checkmark.circle", EndingProvider = "codex", EndingIsCore = false };
-            badge.Update(completed, motion); await Pump();
-            if (motion) await Until(() => badge.TransientMotion.Bloom && badge.TransientMotion.Scale > 1.1,
-                "New endings must display the measured native bloom through the actual animation clock");
-            else Check(!badge.TransientMotion.Bloom && badge.TransientMotion.Scale == 1, "Reduced motion must keep the ending static");
+            // The bloom stays above 1.1 for only about 120 ms of its 0.48 s, so
+            // sample every rendered frame rather than polling for its peak.
+            double bloomPeak = 0;
+            void SampleBloom(object? sender, EventArgs args)
+            {
+                var state = badge.TransientMotion;
+                if (state.Bloom) bloomPeak = Math.Max(bloomPeak, state.Scale);
+            }
+            CompositionTarget.Rendering += SampleBloom;
+            try
+            {
+                badge.Update(completed, motion); await Pump();
+                if (motion) await Until(() => bloomPeak > 1.1, "New endings must display the measured native bloom through the actual animation clock");
+                else Check(!badge.TransientMotion.Bloom && badge.TransientMotion.Scale == 1, "Reduced motion must keep the ending static");
+            }
+            finally { CompositionTarget.Rendering -= SampleBloom; }
             await Until(() => !badge.TransientMotion.Ripple && !badge.TransientMotion.Bloom, "The native transient clocks must finish naturally"); await Pump();
             Check(!badge.TransientMotion.Ripple && !badge.TransientMotion.Bloom,
                 "The two native ripples and finite bloom must finish without recurring timers");
