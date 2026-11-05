@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Submit with a notarytool Keychain profile; passwords never reach this process."""
+"""Submit for notarization; passwords never reach this process.
+
+A release Mac uses a notarytool Keychain profile. The Release workflow uses an App
+Store Connect API key file it writes for the job and deletes afterwards.
+"""
 import json
 import os
 from pathlib import Path
@@ -7,14 +11,21 @@ import subprocess
 import sys
 
 
+def credentials():
+    key = os.environ.get("APPLE_NOTARY_KEY_PATH")
+    if key:
+        return ["--key", key, "--key-id", os.environ["APPLE_NOTARY_KEY_ID"], "--issuer", os.environ["APPLE_NOTARY_ISSUER_ID"]]
+    profile = os.environ.get("APPLE_NOTARY_PROFILE")
+    return ["--keychain-profile", profile] if profile else None
+
+
 def main():
     artifact = Path(sys.argv[1]).resolve(strict=True)
-    profile = os.environ.get("APPLE_NOTARY_PROFILE")
-    if not profile:
+    credential = credentials()
+    if not credential:
         print("Set APPLE_NOTARY_PROFILE to a profile created with `xcrun notarytool store-credentials`.", file=sys.stderr)
         return 2
-    args = ["xcrun", "notarytool", "submit", str(artifact), "--wait", "--output-format", "json",
-            "--keychain-profile", profile]
+    args = ["xcrun", "notarytool", "submit", str(artifact), "--wait", "--output-format", "json", *credential]
     result = subprocess.run(args, capture_output=True, text=True)
     try:
         receipt = json.loads(result.stdout)
@@ -30,7 +41,7 @@ def main():
     if "id" in receipt:
         # Apple's log names each rejected file and the signing rule it failed.
         log = Path(str(artifact) + ".notary-log.json")
-        subprocess.run(["xcrun", "notarytool", "log", request_id, "--keychain-profile", profile, str(log)],
+        subprocess.run(["xcrun", "notarytool", "log", request_id, *credential, str(log)],
                        capture_output=True, text=True)
         if log.exists():
             print(f"Notarization log: {log}", file=sys.stderr)

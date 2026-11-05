@@ -14,14 +14,17 @@
     "scripts/native/render-app-icon.swift": "003e374674b47ffc60e1db39199f5eee8d362b759f2425a516c6f7857b54b068",
     "scripts/native/swiftpm-environment.sh": "14f817c154e77c6f729aef3f73880abb04b37c867354364017c74185b2499d0f",
     "scripts/native/test-island.sh": "5dbb994707786c95c5101607c0b320d419548aaf9f2991cf50747550e0a19d11",
-    "scripts/release/build-macos-release.sh": "771257dede765afb10f489005a05cf684144feb5e6a154d7dabedafe3bf75898",
+    "scripts/release/build-macos-release.sh": "d2f275135ec9d649748f648f61c5f646450c29324f50cec319a9d15843eaa3a5",
     "scripts/release/dmg-background.swift": "55c3d7639804cecb9fdbcb45f4ee8f11c1bfa1d0ed603a2130b311d099cc364e",
     "scripts/release/dmg-requirements.txt": "95076c7eba194304f84f0b4e041a35aea7033155343e4ab94c5d25902fdc8eaf",
-    "scripts/release/notarize.py": "eec8af5b27f0cb06e76bcb8d3ef695c38fa92359a1940d6eba0c180e3fb587fd",
+    "scripts/release/notarize.py": "da4615bddaa7af96f0b0364f4f6837c98a186161b37d4ab73d2011758494fd49",
     "scripts/release/package-dmg.py": "e103a5d0825a4faca5b1ffbcb540f5d4789a93acaf6eee57dd58fab2e561cf6c",
-    "scripts/release/prepare-update.py": "42acda3581238084a922280d8a3cbadffa9fcf5b0c0656d7b42c477e6117cadf",
-    "scripts/release/prepare-windows-update.py": "71ecf1dbafc479a483b69b6db5b43c76556dd55dae1c599464f455d8984391a2",
-    "scripts/release/publish-github-release.sh": "9e9a17ec24586076a4dab3dad7b241eaea6f047bef6ece9b70de76fa902d6628"
+    "scripts/release/prepare-update.py": "1e9376a89a089ad05bffd7675de2b645ddcbef83c90a3f31fc9e6832c04be47f",
+    "scripts/release/prepare-windows-update.py": "39a61748cc94a83b00b6723821cb07d947c7354b407d71938030a4a98d21647b",
+    "scripts/release/publish-github-release.sh": "9e9a17ec24586076a4dab3dad7b241eaea6f047bef6ece9b70de76fa902d6628",
+    "scripts/release/sign-updates.sh": "a8b09bf3cdc7ca5ea765d26d8eee744e6ac6a6978ee02dcb0b298630bf84858e",
+    "scripts/release/sparkle-public-key.swift": "3e6b9f283bed68ed7879b8e3bd4fca9b8fc453f62acf3dcbf73af7fac56f4563",
+    "scripts/release/sparkle_key.py": "8ec692dfe32c70d5f2bb3f2900cdf1da8b637023c4210524ece1a1adb910660b"
   },
   "nativePackageInvariants": [
     "// swift-tools-version: 5.10",

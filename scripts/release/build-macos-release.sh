@@ -3,15 +3,21 @@ set -euo pipefail
 task_root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$task_root"
 task_mode=signed
-case "${1:-}" in
-    '') ;;
-    --unsigned) task_mode=unsigned ;;
-    *) echo 'Usage: build-macos-release.sh [--unsigned]' >&2; exit 2 ;;
-esac
-[[ $# -le 1 ]] || { echo 'Too many arguments.' >&2; exit 2; }
+# --dmg-only stops after the verified DMG: the Release workflow signs the update
+# feeds in a separate job, the only one holding the Sparkle key.
+task_stage=all
+for task_argument in "$@"; do
+    case "$task_argument" in
+        --unsigned) task_mode=unsigned ;;
+        --dmg-only) task_stage=dmg ;;
+        *) echo 'Usage: build-macos-release.sh [--unsigned] [--dmg-only]' >&2; exit 2 ;;
+    esac
+done
 if [[ "$task_mode" == signed ]]; then
     : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to a Developer ID Application identity}"
-    : "${APPLE_NOTARY_PROFILE:?Set APPLE_NOTARY_PROFILE to a notarytool Keychain profile}"
+    # The Release workflow notarizes with an API key file instead (see notarize.py).
+    [[ -n "${APPLE_NOTARY_PROFILE:-}${APPLE_NOTARY_KEY_PATH:-}" ]] \
+        || { echo 'Set APPLE_NOTARY_PROFILE to a notarytool Keychain profile' >&2; exit 1; }
     task_identity="$APPLE_SIGNING_IDENTITY"
 else
     # Apple Silicon still needs a local code signature. This is not Developer ID.
@@ -68,18 +74,6 @@ cmp "$task_app/Contents/MacOS/CodexPacerIsland" "$task_mount/Codex Pacer.app/Con
 hdiutil detach "$task_mount" >/dev/null
 trap - EXIT
 cp -X "$task_dmg" "$task_output/$task_name"
-python3 scripts/release/prepare-update.py --info-plist "$task_app/Contents/Info.plist" --archive "$task_output/$task_name" \
-    --tools "$task_sparkle_tools" --notes "$task_notes" --notes-zh "$task_notes_zh"
-# Windows installers come from the Platforms run on this commit and share the Mac update key.
-task_windows=()
-if python3 scripts/release/prepare-windows-update.py --enabled; then
-    python3 scripts/release/prepare-windows-update.py --output "$task_output" --tools "$task_sparkle_tools" \
-        --notes "$task_notes" --notes-zh "$task_notes_zh"
-    # Installers, manifests, any patches and the feed, as prepared and signed above.
-    while IFS= read -r task_asset; do task_windows+=("$task_asset"); done \
-        < <(python3 scripts/release/prepare-windows-update.py --assets --output "$task_output")
-fi
-(cd "$task_output" && shasum -a 256 "$task_name" appcast.xml ${task_windows[@]+"${task_windows[@]}"} > SHA256SUMS.txt)
 python3 - "$task_output" "$task_build" "$task_version" "$(git rev-parse HEAD)" "$task_mode" "$task_name" <<'PY'
 import json, pathlib, sys
 out, build, version, commit, mode, filename = sys.argv[1:]
@@ -92,4 +86,11 @@ pathlib.Path(out, 'build.json').write_text(json.dumps({
     'developerIDSigned': trusted, 'signed': trusted, 'notarized': trusted, 'stapled': trusted
 }, indent=2) + '\n')
 PY
+if [[ "$task_stage" == dmg ]]; then
+    ditto "$task_sparkle_tools" "$task_output/sparkle-tools"
+    printf 'Verified %s DMG: %s\n' "$task_mode" "$task_output/$task_name"
+    exit 0
+fi
+# The built app carries native/Info.plist unchanged, so the update scripts read that.
+bash scripts/release/sign-updates.sh "$task_output" "$task_sparkle_tools"
 printf 'Verified %s release: %s\n' "$task_mode" "$task_output/$task_name"

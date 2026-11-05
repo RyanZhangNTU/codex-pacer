@@ -8,7 +8,7 @@ The default is one background check per day, followed by user-confirmed download
 
 The stable feed is `https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast.xml`. Each release supplies an `appcast.xml` asset whose enclosure points to that release's own DMG. The checked-in `SUFeedURL` and `SUPublicEDKey` are embedded in installed versions; changing either requires a compatibility migration.
 
-The application requires Ed25519 signatures for both the feed and the downloaded archive, with archive verification before extraction. The public key is in `native/Info.plist`. The private key stays in the macOS login Keychain under Sparkle's account `com.codexpacer.app`; it must never enter Git, release assets, logs, or command-line arguments. Apple Developer ID signing/notarization and Sparkle update signatures serve different purposes; the update signature does not make an ad-hoc build notarized.
+The application requires Ed25519 signatures for both the feed and the downloaded archive, with archive verification before extraction. The public key is in `native/Info.plist`. The private key stays in the macOS login Keychain under Sparkle's account `com.codexpacer.app`, with a copy in the `release` environment's `SPARKLE_PRIVATE_KEY` secret for the Release workflow ([release secrets](releasing.md#release-secrets)); it must never enter Git, release assets, logs, or command-line arguments. `scripts/release/sparkle_key.py` hands the tools whichever source is present. Apple Developer ID signing/notarization and Sparkle update signatures serve different purposes; the update signature does not make an ad-hoc build notarized.
 
 Keep a secure backup of the release signing key using Sparkle's documented key export workflow when transferring release ownership or moving machines. Do not regenerate the key for a release. Losing it can prevent installed ad-hoc builds from accepting future updates.
 
@@ -16,7 +16,7 @@ Keep a secure backup of the release signing key using Sparkle's documented key e
 
 Follow [the release workflow](releasing.md) for authorization, versioning, signing commands, publication, isolated QA and installed-app acceptance.
 
-`build-macos-release.sh` embeds Sparkle and invokes `prepare-update.py`. It generates the archive signature, embeds English and Chinese Markdown with `xml:lang`, signs the completed feed, and verifies both signatures. Editing the XML after signing invalidates it. See Sparkle's [localized release notes](https://sparkle-project.org/documentation/publishing/#localization).
+`build-macos-release.sh` embeds Sparkle; `sign-updates.sh` invokes `prepare-update.py`. It generates the archive signature, embeds English and Chinese Markdown with `xml:lang`, signs the completed feed, and verifies both signatures. Editing the XML after signing invalidates it. See Sparkle's [localized release notes](https://sparkle-project.org/documentation/publishing/#localization).
 
 The panel collapses and suspends hover, pin and focus requests while update UI is active. On dismissal, restore its status-bar level before its frame: AppKit constrains normal-level windows below the menu bar, which would displace a Notch-mode island. Background checks without update UI leave the panel unchanged.
 
@@ -24,4 +24,4 @@ The panel collapses and suspends hover, pin and focus requests while update UI i
 
 The Windows app checks, downloads and verifies updates itself and shows them in Pacer's own update window ([details](windows-automatic-updates.md)); 4.2.2 and earlier used WinSparkle behind a loopback proxy. Its feed is `https://github.com/RyanZhangNTU/codex-pacer/releases/latest/download/appcast-windows.xml`, an asset of the same GitHub Release as the Mac DMG. The Mac `appcast.xml` is unchanged. `WindowsUpdateChannel.Production` in `windows/UpdateSupport/UpdateCatalog.cs` embeds this URL and the Mac `SUPublicEDKey`. A contract test keeps both in step with `native/Info.plist`, and installed Windows versions need the same compatibility migration to change either.
 
-The release Mac signs both Windows installers and `appcast-windows.xml` with the same Keychain key. The feed format, signatures, redirect rules and patch updates are described in [Windows automatic updates](windows-automatic-updates.md#network-and-verification); the release steps are in [the release workflow](releasing.md#3-build-and-publish-once).
+The Release workflow signs both Windows installers and `appcast-windows.xml` with the same key. The feed format, signatures, redirect rules and patch updates are described in [Windows automatic updates](windows-automatic-updates.md#network-and-verification); the release steps are in [the release workflow](releasing.md#3-build-and-publish-once).
