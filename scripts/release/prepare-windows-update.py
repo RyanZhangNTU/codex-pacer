@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Fetch, sign and verify the Windows installers and feed for a GitHub release.
 
-The Platforms workflow builds both Windows installers on the release commit. On the
-release Mac this script downloads them, checks their name, checksum and version
-resource, and signs them and appcast-windows.xml with the Sparkle Ed25519 key that
-already signs the Mac appcast. The installers are not Authenticode signed.
+The Release workflow builds both Windows installers on the release commit and
+passes them to this script with --artifacts; a local release downloads them from
+that workflow's newest run on the commit. The script checks their name, checksum
+and version resource, and signs them and appcast-windows.xml with the Sparkle
+Ed25519 key that already signs the Mac appcast. The installers are not
+Authenticode signed.
 
 Each release also publishes its file manifest. When CI built a patch installer
 from the latest published build, and that build is still the latest in the
@@ -15,19 +17,24 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
 
+# The contract tests load this file by path, so its directory is not always on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sparkle_key  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "RyanZhangNTU/codex-pacer"
-KEY_ACCOUNT = "com.codexpacer.app"
 NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 PACER_NAMESPACE = "urn:codex-pacer:windows-update"
 XML_LANGUAGE = "{http://www.w3.org/XML/1998/namespace}lang"
@@ -113,8 +120,8 @@ def file_version(data):
 
 
 def sign(tools, path):
-    """Sign bytes with the Keychain key; the file must not end in .xml, which sign_update treats as an appcast."""
-    output = subprocess.check_output([str(tools / "sign_update"), "--account", KEY_ACCOUNT, str(path)], text=True)
+    """Sign bytes with the update key; the file must not end in .xml, which sign_update treats as an appcast."""
+    output = sparkle_key.run(tools / "sign_update", path, capture=True)
     match = re.fullmatch(r'\s*sparkle:edSignature="([A-Za-z0-9+/]+=*)" length="(\d+)"\s*', output)
     if not match or int(match.group(2)) != path.stat().st_size or len(base64.b64decode(match.group(1), validate=True)) != 64:
         raise ValueError("sign_update returned an unexpected signature.")
@@ -123,7 +130,7 @@ def sign(tools, path):
 
 
 def verify(tools, path, signature):
-    subprocess.run([str(tools / "sign_update"), "--account", KEY_ACCOUNT, "--verify", str(path), signature], check=True)
+    sparkle_key.run(tools / "sign_update", "--verify", path, signature)
 
 
 def build_feed(version, build, notes, assets, minimum):
@@ -207,16 +214,20 @@ def validate_feed(body, version, build, assets, minimum):
 
 
 def download(commit, directory):
-    runs = json.loads(subprocess.check_output(["gh", "run", "list", "--repo", REPOSITORY, "--workflow", "platforms.yml", "--commit", commit,
-        "--branch", "main", "--event", "push", "--json", "databaseId,headSha,status,conclusion", "--limit", "20"], text=True))
-    runs = [run for run in runs if run["headSha"] == commit and run["status"] == "completed" and run["conclusion"] == "success"]
-    if not runs:
-        raise ValueError("Wait for a successful Platforms run on main for the release commit.")
-    run = max(runs, key=lambda value: value["databaseId"])["databaseId"]
-    for architecture in ARCHITECTURES:
-        subprocess.run(["gh", "run", "download", str(run), "--repo", REPOSITORY, "--name", f"windows-installer-{architecture}-unsigned",
-                        "--dir", str(directory / architecture)], check=True)
-    return run
+    """The installers of the newest Release workflow run on this commit that built both of them."""
+    runs = json.loads(subprocess.check_output(["gh", "run", "list", "--repo", REPOSITORY, "--workflow", "release.yml", "--commit", commit,
+        "--json", "databaseId,headSha,status", "--limit", "20"], text=True))
+    wanted = {f"windows-installer-{architecture}-unsigned" for architecture in ARCHITECTURES}
+    for run in sorted((run["databaseId"] for run in runs if run["headSha"] == commit and run["status"] == "completed"), reverse=True):
+        # A failed publish job still leaves the installers its Windows jobs built.
+        listed = json.loads(subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/actions/runs/{run}/artifacts",
+                                                     "--jq", "[.artifacts[] | select(.expired | not) | .name]"], text=True))
+        if wanted <= set(listed):
+            for architecture in ARCHITECTURES:
+                subprocess.run(["gh", "run", "download", str(run), "--repo", REPOSITORY, "--name", f"windows-installer-{architecture}-unsigned",
+                                "--dir", str(directory / architecture)], check=True)
+            return run
+    raise ValueError("No Release workflow run built the installers for this commit; start one manually, which publishes nothing.")
 
 
 def checked(directory, architecture, name):
@@ -291,28 +302,32 @@ def installer(directory, version, build, commit, architecture):
     return path, digest
 
 
-def prepare(tools, output, notes):
+def prepare(tools, output, notes, artifacts=None):
+    """artifacts: a directory holding each architecture's installer artifact in a subdirectory named after it."""
     version, build, public_key = application_version()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     minimum = minimum_windows()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pacer-windows-release-") as temporary:
         staging = Path(temporary)
-        run = download(commit, staging)
+        if artifacts is None:
+            source, run = staging, download(commit, staging)
+        else:
+            source, run = artifacts, int(os.environ.get("GITHUB_RUN_ID", "0")) or None
         bases = published_bases(tools)
         assets, digests, entries = [], {}, []
         for architecture in ARCHITECTURES:
-            source, digest = installer(staging, version, build, commit, architecture)
+            installer_path, digest = installer(source, version, build, commit, architecture)
             name = asset_name(version, architecture)
             target = output / name
-            shutil.copy2(source, target)
+            shutil.copy2(installer_path, target)
             signature = sign(tools, target)
             digests[name] = digest
-            manifest_source, manifest_digest = manifest(staging, version, build, commit, architecture)
+            manifest_source, manifest_digest = manifest(source, version, build, commit, architecture)
             shutil.copy2(manifest_source, output / manifest_name(version, architecture))
             entry = {"architecture": architecture, "name": name, "sha256": digest, "signature": signature,
                      "manifest": manifest_name(version, architecture), "manifestSHA256": manifest_digest, "patch": None}
-            found = patch(staging, version, build, commit, architecture, manifest_digest, bases)
+            found = patch(source, version, build, commit, architecture, manifest_digest, bases)
             if found:
                 patch_source, patch_digest, info = found
                 patch_target = output / patch_name(version, architecture, info["baseVersion"])
@@ -407,6 +422,7 @@ def main():
     parser.add_argument("--tools", type=Path, help="Sparkle tools directory with sign_update")
     parser.add_argument("--notes", type=Path, help="English Markdown release notes")
     parser.add_argument("--notes-zh", type=Path, help="Simplified Chinese Markdown release notes")
+    parser.add_argument("--artifacts", type=Path, help="Installer artifacts already downloaded, one subdirectory per architecture")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--check-latest", action="store_true")
     parser.add_argument("--enabled", action="store_true", help="Exit 0 when Windows joins this release, 1 otherwise")
@@ -429,7 +445,8 @@ def main():
     else:
         if args.notes is None or args.notes_zh is None:
             parser.error("--notes and --notes-zh are required to generate the bilingual Windows feed")
-        prepare(args.tools.resolve(), args.output.resolve(), {"en": args.notes.resolve(), "zh-CN": args.notes_zh.resolve()})
+        prepare(args.tools.resolve(), args.output.resolve(), {"en": args.notes.resolve(), "zh-CN": args.notes_zh.resolve()},
+                args.artifacts.resolve(strict=True) if args.artifacts else None)
 
 
 if __name__ == "__main__":
