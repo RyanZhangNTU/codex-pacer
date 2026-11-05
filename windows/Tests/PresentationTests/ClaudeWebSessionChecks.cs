@@ -99,12 +99,7 @@ internal static class ClaudeWebSessionChecks
             string target = Path.GetFullPath(root), parent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!target.StartsWith(parent, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(target).StartsWith("pacer-claude-web-fixture-", StringComparison.Ordinal) ||
                 new DirectoryInfo(target).LinkTarget != null) throw new InvalidOperationException("Unexpected Claude fixture directory");
-            for (int attempt = 0; attempt < 30; attempt++)
-            {
-                try { Directory.Delete(target, true); break; }
-                catch (IOException) { await Task.Delay(100); }
-                catch (UnauthorizedAccessException) { await Task.Delay(100); }
-            }
+            await PresentationWait.RemoveBrowserFixtureAsync(target);
         }
     }
     private static async Task Lifecycle(ClaudeWebSession session, Site site, string root)

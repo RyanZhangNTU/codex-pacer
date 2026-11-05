@@ -123,7 +123,7 @@ internal static class ClaudeConnectionChecks
         catch
         {
             var state = engine.LatestSnapshot?.ClaudeConnection;
-            Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}");
+            Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}, webview2={PresentationWait.WebViewProcesses()}");
             throw;
         }
         finally
@@ -132,7 +132,7 @@ internal static class ClaudeConnectionChecks
             string target = Path.GetFullPath(root), parent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!target.StartsWith(parent, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(target).StartsWith("pacer-claude-connection-", StringComparison.Ordinal) || new DirectoryInfo(target).LinkTarget != null)
                 throw new InvalidOperationException("Unexpected Claude connection fixture directory");
-            for (int attempt = 0; attempt < 30; attempt++) { try { Directory.Delete(target, true); break; } catch (IOException) { await Task.Delay(100); } catch (UnauthorizedAccessException) { await Task.Delay(100); } }
+            await PresentationWait.RemoveBrowserFixtureAsync(target);
         }
     }
     private static async Task<MenuItem> Menu(Button button, string id)

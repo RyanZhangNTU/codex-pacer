@@ -91,12 +91,7 @@ internal static class DeepSeekWebSessionChecks
             string target = Path.GetFullPath(root), parent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!target.StartsWith(parent, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(target).StartsWith("pacer-web-fixture-", StringComparison.Ordinal) ||
                 new DirectoryInfo(target).LinkTarget != null) throw new InvalidOperationException("Unexpected browser fixture directory");
-            for (int attempt = 0; attempt < 20; attempt++)
-            {
-                try { Directory.Delete(target, true); break; }
-                catch (IOException) { await Task.Delay(100); }
-                catch (UnauthorizedAccessException) { await Task.Delay(100); }
-            }
+            await PresentationWait.RemoveBrowserFixtureAsync(target);
         }
     }
     private static async Task Lifecycle(DeepSeekWebSession session, Site site)

@@ -122,6 +122,7 @@ internal static class DeepSeekWebConnectionChecks
             Console.WriteLine("Web connection state: " + JsonSerializer.Serialize(engine.LatestSnapshot?.DeepseekConnection));
             Console.WriteLine("Web dial state: " + JsonSerializer.Serialize(new { engine.LatestSnapshot?.Wallet?.Balance, engine.LatestSnapshot?.Wallet?.Dial }));
             Console.WriteLine("Web host failure: " + connection.LastFailure);
+            Console.WriteLine("WebView2 processes: " + PresentationWait.WebViewProcesses());
             throw;
         }
         finally
@@ -130,12 +131,8 @@ internal static class DeepSeekWebConnectionChecks
             string target = Path.GetFullPath(directory), parent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!target.StartsWith(parent, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(target).StartsWith("pacer-web-fixture-", StringComparison.Ordinal))
                 throw new InvalidOperationException("Unexpected browser fixture directory");
-            for (int attempt = 0; attempt < 20 && Directory.Exists(target); attempt++)
-            {
-                try { if (new DirectoryInfo(target).LinkTarget != null) throw new InvalidOperationException("Unexpected fixture link"); Directory.Delete(target, true); }
-                catch (IOException) { await Task.Delay(100); }
-                catch (UnauthorizedAccessException) { await Task.Delay(100); }
-            }
+            if (Directory.Exists(target) && new DirectoryInfo(target).LinkTarget != null) throw new InvalidOperationException("Unexpected fixture link");
+            await PresentationWait.RemoveBrowserFixtureAsync(target);
         }
     }
     private static async Task Recovery(EngineClient engine, IslandWindow island, DeepSeekWebSessionChecks.Site site,
