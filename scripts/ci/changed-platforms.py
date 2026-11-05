@@ -3,8 +3,8 @@
 A pull request runs a platform's jobs only when it changes files that
 platform builds or tests; documentation alone runs nothing. Its Windows
 installer and patch checks run only when it changes what the installers are
-built from or what those checks start in the app. Pushes to main and manual
-runs only build release installers, so every flag is set for them.
+built from or what those checks start in the app. A manual run tests every
+platform, so every flag is set for it.
 """
 import os
 import subprocess

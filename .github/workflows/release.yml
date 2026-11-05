@@ -1,0 +1,310 @@
+name: Release
+
+# Pushing a vVERSION tag on main builds, signs and publishes that release:
+# Windows installers, the notarized universal DMG, both Sparkle-signed update
+# feeds and the GitHub Release. The tests already ran on the pull requests.
+# Any other run (a manual run on develop) does everything except publishing,
+# and keeps the signed DMG and feeds as a workflow artifact for inspection.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per tag or branch, never cancelled halfway through a publication.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Release version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Version, notes and tag
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(python3 -c 'import plistlib; print(plistlib.load(open("native/Info.plist", "rb"))["CFBundleShortVersionString"])')"
+          test -f "docs/release-notes-$version.en.md" && test -f "docs/release-notes-$version.zh-CN.md"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "$GITHUB_REF_NAME" = "v$version" || { echo "::error::Tag $GITHUB_REF_NAME does not match version $version."; exit 1; }
+            # Only promoted code is released: main contains the tagged commit.
+            status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)"
+            case "$status" in identical|behind) ;; *) echo "::error::$GITHUB_REF_NAME is not on main."; exit 1 ;; esac
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # The installers are not Authenticode signed, so these jobs hold no secrets.
+  windows-x64:
+    name: Windows installer (x64)
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - name: Pinned Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1
+      - name: Build engine
+        run: |
+          ./scripts/windows/build-engine.ps1 -Configuration release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-build.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-windows-build.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') {
+            throw 'Compiler warnings in Windows build.'
+          }
+      - name: Build Windows desktop
+        run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
+      # Packaging keeps its own smoke test.
+      - name: Package unsigned Windows application
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
+      - name: Upload unsigned Windows application
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-app-x64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/*-windows-x64-preview-*.zip
+            output/windows/*-windows-x64-preview-*.zip.sha256
+          retention-days: 7
+      - name: Package unsigned Windows installer
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          # Also a patch from the latest published release, when that release published its manifest.
+          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture x64 -Output "$env:RUNNER_TEMP/pacer-update-base-x64.json" | Select-Object -Last 1
+          $taskArguments = @{ Archive = $taskArchive }
+          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
+          ./scripts/windows/package-installer.ps1 @taskArguments *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-installer-build.log"
+      - name: Upload unsigned Windows installer
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-installer-x64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/installer-artifact/*.exe
+            output/windows/installer-artifact/*.exe.sha256
+            output/windows/installer-artifact/*.json
+            output/windows/installer-artifact/*.json.sha256
+          retention-days: 7
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-x64-release-logs
+          path: |
+            ${{ runner.temp }}/pacer-windows-build.log
+            ${{ runner.temp }}/pacer-desktop-build.log
+            ${{ runner.temp }}/pacer-windows-package.log
+            ${{ runner.temp }}/pacer-installer-build.log
+          retention-days: 7
+
+  # ARM64 packages without installing: the x64 job's smoke test covers the same sources.
+  windows-arm64:
+    name: Windows installer (arm64)
+    needs: version
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    env:
+      PACER_ARCHITECTURE: arm64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.403
+      - name: Pinned native ARM64 Swift toolchain
+        run: ./scripts/windows/setup-swift.ps1 -Architecture arm64
+      - name: Build ARM64 engine
+        run: |
+          ./scripts/windows/build-engine.ps1 -Configuration release -Architecture arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-engine.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-engine.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 engine compiler warning.' }
+      - name: Build ARM64 desktop and native dependencies
+        run: |
+          ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
+          if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
+      - name: Package unsigned ARM64 application without runtime tests
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 -BuildOnly
+      - name: Upload unsigned ARM64 application
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-app-arm64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/*-windows-arm64-preview-*.zip
+            output/windows/*-windows-arm64-preview-*.zip.sha256
+          retention-days: 7
+      - name: Package unsigned ARM64 installer without installing
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          # Also a patch from the latest published release, when that release published its manifest.
+          $taskBase = ./scripts/windows/fetch-update-base.ps1 -Architecture arm64 -Output "$env:RUNNER_TEMP/pacer-update-base-arm64.json" | Select-Object -Last 1
+          $taskArguments = @{ Archive = $taskArchive; Architecture = 'arm64' }
+          if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
+          ./scripts/windows/package-installer.ps1 @taskArguments
+      - name: Upload unsigned ARM64 installer
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-installer-arm64-unsigned
+          if-no-files-found: error
+          path: |
+            output/windows/installer-artifact/*-windows-arm64-setup-*.exe
+            output/windows/installer-artifact/*-windows-arm64-setup-*.exe.sha256
+            output/windows/installer-artifact/*-windows-arm64-manifest-*.json
+            output/windows/installer-artifact/*-windows-arm64-manifest-*.json.sha256
+            output/windows/installer-artifact/*-windows-arm64-patch-*
+          retention-days: 7
+      - name: Upload ARM64 build logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-arm64-release-logs
+          path: |
+            ${{ runner.temp }}/pacer-arm64-engine.log
+            ${{ runner.temp }}/pacer-arm64-desktop.log
+          retention-days: 7
+
+  # Developer ID signing and notarization. The certificate lives only in a
+  # temporary keychain and the notary key only in a temporary file.
+  macos:
+    name: macOS DMG (universal)
+    needs: version
+    runs-on: macos-26
+    environment: release
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Signing keychain and notary key
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+        run: |
+          umask 077
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -f pkcs12 -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application: / { print $2; exit }')"
+          test -n "$identity" || { echo '::error::The certificate has no Developer ID Application identity.'; exit 1; }
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          printf '%s\n' "$APPLE_NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          echo "APPLE_NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+      - name: DMG tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dmg-tools"
+          "$RUNNER_TEMP/dmg-tools/bin/python" -m pip install --quiet -r scripts/release/dmg-requirements.txt
+      - name: Build, sign, notarize and verify the DMG
+        env:
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          PACER_DMG_PYTHON: ${{ runner.temp }}/dmg-tools/bin/python
+        run: bash scripts/release/build-macos-release.sh --dmg-only
+      # tar keeps the Sparkle tools executable for the publish job.
+      - name: Collect the DMG
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          output="output/releases/$VERSION"
+          tar -cf "$RUNNER_TEMP/mac-release.tar" -C "$output" "Codex-Pacer-$VERSION-universal.dmg" build.json sparkle-tools
+      - name: Upload the DMG
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: mac-release
+          if-no-files-found: error
+          path: ${{ runner.temp }}/mac-release.tar
+          retention-days: 7
+      - name: Remove signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2> /dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/certificate.p12"
+
+  # Sparkle signs both feeds here, the only job holding that key. A tag run then
+  # uploads everything to a draft, compares each file and makes it public/latest.
+  publish:
+    name: Sign updates and publish
+    needs: [version, windows-x64, windows-arm64, macos]
+    runs-on: macos-26
+    environment: release
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # The checkout leaves a lightweight tag; the publisher compares the annotated one.
+      - name: Release tag
+        if: github.ref_type == 'tag'
+        run: git fetch --no-tags --force origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: mac-release
+          path: ${{ runner.temp }}/mac
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: windows-installer-x64-unsigned
+          path: ${{ runner.temp }}/windows/x64
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: windows-installer-arm64-unsigned
+          path: ${{ runner.temp }}/windows/arm64
+      - name: Sign both update feeds
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          output="output/releases/$VERSION"
+          mkdir -p "$output"
+          tar -xf "$RUNNER_TEMP/mac/mac-release.tar" -C "$output"
+          bash scripts/release/sign-updates.sh "$output" "$output/sparkle-tools" "$RUNNER_TEMP/windows"
+      - name: Publish the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: bash scripts/release/publish-github-release.sh
+      # A manual run checks what the publisher checks before uploading, without
+      # the tag or the newer-than-latest requirements, and keeps the small files.
+      - name: Verify without publishing
+        if: github.ref_type != 'tag'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          output="output/releases/$VERSION"
+          dmg="$output/Codex-Pacer-$VERSION-universal.dmg"
+          (cd "$output" && shasum -a 256 -c SHA256SUMS.txt)
+          python3 scripts/release/prepare-update.py --verify --info-plist native/Info.plist --archive "$dmg" --tools "$output/sparkle-tools"
+          python3 scripts/release/prepare-windows-update.py --verify --output "$output" --tools "$output/sparkle-tools"
+          xcrun stapler validate "$dmg"
+          codesign --verify --strict "$dmg"
+      - name: Keep the signed DMG and feeds
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-dry-run
+          if-no-files-found: error
+          path: |
+            output/releases/${{ needs.version.outputs.version }}/*.dmg
+            output/releases/${{ needs.version.outputs.version }}/*.xml
+            output/releases/${{ needs.version.outputs.version }}/*.json
+            output/releases/${{ needs.version.outputs.version }}/SHA256SUMS.txt
+          retention-days: 3
