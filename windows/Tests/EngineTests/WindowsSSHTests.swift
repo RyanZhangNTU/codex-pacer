@@ -68,6 +68,16 @@ final class WindowsSSHTests: XCTestCase {
         let locations = WindowsSSHServices.desktopLocations(environment: ["APPDATA": "C:/fixture/Roaming", "LOCALAPPDATA": "C:/fixture/Local"])
         XCTAssertEqual(locations.count, 3); XCTAssertTrue(locations.allSatisfy { $0.lastPathComponent == "ssh_configs.json" })
         XCTAssertTrue(locations[1].path.contains("LocalCache/Roaming/Claude"))
+        let moved = FileManager.default.temporaryDirectory.appendingPathComponent("SSH desktop 中文 " + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: moved) }
+        let current = moved.appendingPathComponent("Local/Claude-Data/claude_pzs8sxrjxfjjc")
+        try write(["lastKnownAccountUuid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"], to: current.appendingPathComponent("config.json"))
+        let movedEnvironment = ["APPDATA": WindowsCodexExecutableDiscovery.path(moved.appendingPathComponent("Roaming")),
+                                "LOCALAPPDATA": WindowsCodexExecutableDiscovery.path(moved.appendingPathComponent("Local"))]
+        let expected = current.appendingPathComponent("ssh_configs.json").path
+        XCTAssertEqual(WindowsSSHServices.desktopLocations(environment: movedEnvironment).map(\.path), [expected])
+        XCTAssertEqual(WindowsSSHServices(userHome: moved, environment: movedEnvironment).desktopFile.path, expected,
+            "Before Desktop saves a connection, the moved folder is still the one read")
         var remote = target(); remote.sshIdentityFile = "C:/中文 key/key's name"; remote.sshPort = 2200
         let args = try XCTUnwrap(WindowsSSHServices.arguments(remote))
         XCTAssertEqual(Array(args.suffix(6)), ["-p", "2200", "-i", "C:/中文 key/key's name", "--", "alias-a"])

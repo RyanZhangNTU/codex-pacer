@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.2.5
+
+- Windows: fix opening Claude tasks from the island after a recent Claude update.
+
 ## 4.2.4
 
 - Drag the island by its status bar on the Mac and on Windows. It stays where you drop it, snaps to a screen edge when you release it nearby, and opens toward the free side of the screen. Free Move replaces the fixed custom positions in Appearance, which also offers Return to Top Center.

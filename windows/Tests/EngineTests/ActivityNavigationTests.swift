@@ -345,6 +345,51 @@ final class WindowsActivityNavigationTests: XCTestCase {
         XCTAssertThrowsError(try WindowsActivityNavigation.resolve(input(), userHome: root, records: records,
             writers: { _, _ in [.init(pid: 1, started: 10), .init(pid: 2, started: 20)] }, host: { .init(identity: $0, provider: nil) }))
     }
+    private struct DesktopLayout {
+        let environment: [String: String], current: URL, roaming: URL, packaged: URL
+    }
+    private func makeLayout() throws -> DesktopLayout {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-desktop-layout-中文-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
+        let local = base.appendingPathComponent("Local"), roaming = base.appendingPathComponent("Roaming")
+        return .init(environment: ["APPDATA": WindowsCodexExecutableDiscovery.path(roaming), "LOCALAPPDATA": WindowsCodexExecutableDiscovery.path(local)],
+            current: local.appendingPathComponent("Claude-Data/claude_pzs8sxrjxfjjc"), roaming: roaming.appendingPathComponent("Claude"),
+            packaged: local.appendingPathComponent("Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude"))
+    }
+    private func write(_ object: [String: Any], _ file: URL) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: object).write(to: file)
+    }
+    private let account = "33333333-3333-4333-8333-333333333333", stale = "44444444-4444-4444-8444-444444444444"
+    private func desktop(_ folder: URL) throws {
+        try write(["lastKnownAccountUuid": account], folder.appendingPathComponent("config.json"))
+        try write(["sessionId": local, "cliSessionId": session],
+            folder.appendingPathComponent("claude-code-sessions/" + account + "/55555555-5555-4555-8555-555555555555/" + local + ".json"))
+    }
+    private func marker(_ folder: URL) throws {
+        try write(["v": 1, "kind": "update_visible"], folder.appendingPathComponent(WindowsClaudeAccountBinding.movedMarker))
+    }
+    private func open(_ layout: DesktopLayout) throws -> EngineNavigationPlan {
+        try WindowsActivityNavigation.resolve(input(), userHome: root, environment: layout.environment, writers: { _, _ in [] })
+    }
+    func testMovedDesktopDataFolderResolvesItsContinueLinkPastStaleOlderFolders() throws {
+        let layout = try makeLayout()
+        try desktop(layout.current)
+        try write(["lastKnownAccountUuid": stale], layout.roaming.appendingPathComponent("config.json"))
+        try marker(layout.roaming); try marker(layout.packaged)
+        XCTAssertEqual(try open(layout).url, "claude://code/continue?session=" + local)
+        try FileManager.default.removeItem(at: layout.roaming.appendingPathComponent(WindowsClaudeAccountBinding.movedMarker))
+        XCTAssertEqual(try open(layout).url, "claude://code/continue?session=" + local, "The current folder supersedes an unmarked leftover")
+    }
+    func testMovedMarkerKeepsALeftoverAccountFromDisablingAnOlderLayoutMapping() throws {
+        let layout = try makeLayout()
+        try desktop(layout.packaged)
+        try write(["lastKnownAccountUuid": stale], layout.roaming.appendingPathComponent("config.json"))
+        XCTAssertThrowsError(try open(layout)) { XCTAssertEqual($0 as? ActivityNavigationError, .missingClaudeHost) }
+        try marker(layout.roaming)
+        XCTAssertEqual(try open(layout).url, "claude://code/continue?session=" + local)
+    }
     func testCodexDefaultProfileUsesItsThreadButCustomProfilesCannotBorrowIt() throws {
         let plan = try WindowsActivityNavigation.resolve(input(provider: .codex), userHome: root)
         XCTAssertEqual(plan.url, "codex://threads/" + session)
