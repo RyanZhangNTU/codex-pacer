@@ -194,7 +194,8 @@ final class IslandModel: ObservableObject {
         let hosts = hostTracking.labels(for: values, activities: activities, inbox: completionInbox,
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id))) { .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop) }
         return .init(hideProjects: hideProjects, hostApplications: hosts,
-            sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost)
+            sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
+            progressRingProviders: showsClaudeProgressRing ? [.claude] : [])
     }
     func taskSourceName(_ activity: SessionActivity) -> String? {
         ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
@@ -282,10 +283,32 @@ final class IslandModel: ObservableObject {
     enum ClaudeLocalSetup: Equatable { case checking, configuring, ready, missingHome, failed }
     /// Local hooks follow the Claude module: kept current while it is on.
     @Published private(set) var claudeLocalSetup: ClaudeLocalSetup = .checking
+    /// The latest hook setup; the next one waits for it, so two never edit
+    /// Claude's settings at the same time.
+    private var claudeHookSetup: Task<ClaudeHookInstaller.EnsureResult, Never>?
+    private func installClaudeHooks(home: URL) async -> ClaudeHookInstaller.EnsureResult {
+        let previous = claudeHookSetup
+        let setup = Task.detached(priority: .utility) {
+            _ = await previous?.value
+            return ClaudeHookInstaller.ensureInstalled(home: home)
+        }
+        claudeHookSetup = setup
+        return await setup.value
+    }
     private func ensureClaudeHooks(home: URL, generation: Int) async {
-        if claudeLocalSetup != .ready { claudeLocalSetup = .configuring }
-        let result = await Task.detached(priority: .utility) { ClaudeHookInstaller.ensureInstalled(home: home) }.value
         guard generation == claudeGeneration else { return }
+        if claudeLocalSetup != .ready { claudeLocalSetup = .configuring }
+        // A switch that Pacer's folder can already hold is set up in the same pass.
+        applyClaudeProgressSwitch(home: home)
+        var result = await installClaudeHooks(home: home)
+        guard generation == claudeGeneration else { return }
+        // Setup creates Pacer's hook folder, which the switch file needs, and
+        // confirms that Pacer manages this home.
+        if result == .current || result == .installed, applyClaudeProgressSwitch(home: home, setupConfirmed: true) {
+            let again = await installClaudeHooks(home: home)
+            guard generation == claudeGeneration else { return }
+            if again != .current { result = again }
+        }
         switch result {
         case .current: claudeLocalSetup = .ready
         case .installed: claudeLocalSetup = .ready; settingsRevision += 1
@@ -296,6 +319,47 @@ final class IslandModel: ObservableObject {
     func retryClaudeLocalSetup() {
         guard isModuleEnabled(.claude), !demo, !stopped else { return }
         let home = claudeHome, generation = claudeGeneration
+        launchOwnedWork(.init(.setup, provider: .claude, identifier: "local")) { [weak self] _ in
+            await self?.ensureClaudeHooks(home: home, generation: generation)
+        }
+    }
+    static let claudeProgressRingKey = "claudeProgressRing"
+    /// Claude's self-reported progress ring; off until the user turns it on.
+    var showsClaudeProgressRing: Bool { defaults.bool(forKey: Self.claudeProgressRingKey) }
+    /// The setting the last settings pass applied, so a switch reaches SSH hosts once.
+    private var appliedClaudeProgressRing = false
+    /// The Claude home where this app turned the ring's switch on.
+    private var claudeProgressSwitchHome: URL?
+    /// Only an app that manages the hooks writes the switch; a demo never
+    /// touches the Claude home. It removes only a switch it turned on itself,
+    /// or a leftover in a home whose setup just confirmed that Pacer manages
+    /// it, so a home it merely passed through is never changed. Returns
+    /// whether the switch file changed: it decides which settings entries
+    /// Pacer keeps, so a change brings the hooks current.
+    @discardableResult
+    func applyClaudeProgressSwitch(home: URL, setupConfirmed: Bool = false) -> Bool {
+        guard !demo else { return false }
+        let wanted = showsClaudeProgressRing && isModuleEnabled(.claude)
+        if let previous = claudeProgressSwitchHome, previous != home {
+            ClaudeProgressRingSwitch.apply(enabled: false, home: previous); claudeProgressSwitchHome = nil
+        }
+        let flag = ClaudeProgressRingSwitch.flagURL(home: home).path
+        let before = FileManager.default.contents(atPath: flag)
+        if wanted {
+            ClaudeProgressRingSwitch.apply(enabled: true, home: home)
+            if FileManager.default.fileExists(atPath: flag) { claudeProgressSwitchHome = home }
+        } else if claudeProgressSwitchHome == home || setupConfirmed {
+            ClaudeProgressRingSwitch.apply(enabled: false, home: home); claudeProgressSwitchHome = nil
+        }
+        return FileManager.default.contents(atPath: flag) != before
+    }
+    /// Follows the setting and the module outside a source restart, which
+    /// applies the switch as part of its own setup.
+    private func syncClaudeProgressSwitch() {
+        guard !demo, !stopped else { return }
+        let home = claudeHome
+        guard applyClaudeProgressSwitch(home: home), isModuleEnabled(.claude), !sleeping else { return }
+        let generation = claudeGeneration
         launchOwnedWork(.init(.setup, provider: .claude, identifier: "local")) { [weak self] _ in
             await self?.ensureClaudeHooks(home: home, generation: generation)
         }
@@ -515,7 +579,12 @@ final class IslandModel: ObservableObject {
     @Published private(set) var claudeRemoteSetupStatus: [String: ClaudeHookInstaller.Status] = [:]
     @Published private(set) var claudeRemoteSetupFailures: [String: String] = [:]
     private var claudeRemoteSetupFailedAt: [String: Date] = [:]
-    private lazy var claudeAdapterDigest: String? = try? ClaudeRemoteSetup.adapterDigest()
+    private lazy var claudeAdapterDigests: (off: String, on: String)? = {
+        guard let off = try? ClaudeRemoteSetup.adapterDigest(), let on = try? ClaudeRemoteSetup.adapterDigest(progressRing: true) else { return nil }
+        return (off, on)
+    }()
+    /// The digest includes the progress ring, so switching it sets connected hosts up again.
+    private var claudeAdapterDigest: String? { claudeAdapterDigests.map { showsClaudeProgressRing ? $0.on : $0.off } }
     /// True once this host carries the hooks shipped with this build.
     func claudeRemoteConfigured(_ target: RemoteActivityTarget) -> Bool {
         claudeAdapterDigest.map { ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults)[target.alias] == $0 } ?? false
@@ -528,7 +597,9 @@ final class IslandModel: ObservableObject {
               !configuringClaudeHosts.contains(targetID) else { return nil }
         let generation = claudeGeneration, requestID = UUID()
         let setup = claudeRemoteSetup
-        let task = Task { try await setup.install(target: target, requireHome: true) }
+        // The setup remembers what it installs, so a ring switched meanwhile sets the host up again.
+        let progressRing = showsClaudeProgressRing, digest = claudeAdapterDigest
+        let task = Task { try await setup.install(target: target, requireHome: true, progressRing: progressRing) }
         launchOwnedWork(.init(.setup, provider: .claude, identifier: targetID)) { _ in
             await withTaskCancellationHandler {
                 _ = try? await task.value
@@ -537,6 +608,9 @@ final class IslandModel: ObservableObject {
         claudeRemoteSetupTasks[targetID] = task
         claudeRemoteSetupIDs[targetID] = requestID
         configuringClaudeHosts.insert(targetID)
+        // Runs after the defer below has cleared this host's in-flight state.
+        var outdated = false
+        defer { if outdated { scheduleClaudeRemoteSetup() } }
         defer {
             // An old request must not clear a replacement started after reset.
             if generation == claudeGeneration, claudeRemoteSetupIDs[targetID] == requestID {
@@ -553,8 +627,9 @@ final class IslandModel: ObservableObject {
                   claudeRemoteTargets.contains(target), claudeRemoteSetupIDs[targetID] == requestID else { return nil }
             claudeRemoteSetupStatus[targetID] = status
             claudeRemoteSetupFailures.removeValue(forKey: targetID); claudeRemoteSetupFailedAt.removeValue(forKey: targetID)
-            if let digest = claudeAdapterDigest { ClaudeRemoteAutoSetup.recordConfigured(alias: target.alias, digest: digest, defaults: defaults) }
+            if let digest { ClaudeRemoteAutoSetup.recordConfigured(alias: target.alias, digest: digest, defaults: defaults) }
             await claudeMonitor.refresh(remoteTargetID: targetID)
+            outdated = digest != claudeAdapterDigest
             return nil
         } catch {
             guard !Task.isCancelled, generation == claudeGeneration, claudeRemoteSetupIDs[targetID] == requestID,
@@ -827,6 +902,7 @@ final class IslandModel: ObservableObject {
         self.installation = installation ?? (demo && demoArguments != nil
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         self.modules = .load(from: defaults)
+        self.appliedClaudeProgressRing = defaults.bool(forKey: Self.claudeProgressRingKey)
         self.demo = demo
         self.demoClock = demoClock
         self.demoArguments = demoArguments
@@ -1490,6 +1566,12 @@ final class IslandModel: ObservableObject {
             hasDemoSnapshot: demo && demoArguments != nil), explicitlyDisablesClaude: modules.claudeMode == .disabled)
         for provider in plan.changedProviders { navigation.cancel(provider: provider) }
         performLifecycle(plan)
+        // A restarted Claude source applies the ring's switch as part of its setup.
+        if !plan.changedProviders.contains(.claude) || !isModuleEnabled(.claude) { syncClaudeProgressSwitch() }
+        if appliedClaudeProgressRing != showsClaudeProgressRing {
+            appliedClaudeProgressRing = showsClaudeProgressRing
+            scheduleClaudeRemoteSetup()
+        }
         onLayoutChange?(); onStatusChange?()
     }
     private func resetCodexSource(versionInvalidated: Bool = false) {

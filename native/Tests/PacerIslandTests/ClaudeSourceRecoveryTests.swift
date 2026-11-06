@@ -47,6 +47,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             (root/(alias+'.installer-pid')).write_text(str(os.getpid()))
             while not (root/(alias+'.install-continue')).exists():time.sleep(.01)
             (root/(alias+'.settings-mutated')).write_text('simulated remote write')
+        (root/(alias+'.command')).write_text(sys.argv[-1])
         (root/(alias+'.ready')).write_text('ready')
         print(json.dumps({'hooksConfigured':True,'telemetryConfigured':True,'statusLineConfigured':True,'telemetryConflict':False}))
         """)
@@ -110,6 +111,31 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         XCTAssertEqual(targets.map { fixture.model.claudeRemoteConfigured($0) }, targets.map { $0.alias == "fixture" },
             "Success records the shipped adapter digest for that alias only, so automatic setup stays quiet")
         XCTAssertNil(fixture.model.claudeRemoteSetupFailures["remote-ssh-discovered:fixture"])
+    }
+
+    func testRemoteSetupCarriesTheProgressRingAndSwitchingItSetsTheHostUpAgain() async throws {
+        let fixture = try fixture(), model = fixture.model, targetID = "remote-ssh-discovered:fixture"
+        try await start(fixture)
+        let target = try XCTUnwrap(model.claudeRemoteTargets.first { $0.id == targetID })
+        func request() throws -> [String: Any] {
+            let command = try String(contentsOf: fixture.root.appendingPathComponent("fixture.command"))
+            let payload = try XCTUnwrap(command.split(separator: " ").last.flatMap { Data(base64Encoded: String($0)) })
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        }
+        let off = await model.configureClaudeRemote(targetID: targetID)
+        XCTAssertNil(off)
+        XCTAssertEqual(try request()["progressRing"] as? Bool, false, "Off is stated, so a host that had the ring loses it")
+        XCTAssertNil(try request()["progressServer"])
+        XCTAssertTrue(model.claudeRemoteConfigured(target))
+
+        fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
+        XCTAssertFalse(model.claudeRemoteConfigured(target), "The digest includes the ring, so switching it sets the host up again")
+        let on = await model.configureClaudeRemote(targetID: targetID)
+        XCTAssertNil(on)
+        let ring = try request()
+        XCTAssertEqual(ring["progressRing"] as? Bool, true)
+        XCTAssertFalse(((ring["progressServer"] as? String).flatMap { Data(base64Encoded: $0) } ?? Data()).isEmpty)
+        XCTAssertTrue(model.claudeRemoteConfigured(target))
     }
 
     func testFailedRemoteSetupDoesNotBypassSourceBackoff() async throws {

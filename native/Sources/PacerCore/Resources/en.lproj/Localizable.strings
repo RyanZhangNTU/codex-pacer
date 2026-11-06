@@ -899,6 +899,8 @@
 "whats_new.cloud_projects_detail" = "Threads and coordinators from your Projects now appear in the task list, with a cloud icon and the project’s name. They use your claude.ai sign-in; turn them off in Settings → Claude.";
 "whats_new.cloud_coordination" = "Threads and coordination";
 "whats_new.cloud_coordination_detail" = "Pacer reminds you when a thread needs a decision or a reply and when it is resolved, and a resolved thread you read in Claude clears here. A thread shows an estimated speed while it writes a reply, and the real speed when its turn ends.";
+"whats_new.progress_ring" = "Claude’s progress ring";
+"whats_new.progress_ring_detail" = "Turn it on in Settings → Claude, and Claude reports how much of your request is done as a ring around the task icon. The ring waits while Claude’s background work runs and fills when the request is done.";
 "whats_new.free_move" = "Move the island anywhere";
 "whats_new.free_move_detail" = "Drag the status bar to place the island where you want it. Release near a screen edge to snap. Free Move replaces the fixed positions in Appearance.";
 "whats_new.subagent_endings" = "Background subagents end on time";
