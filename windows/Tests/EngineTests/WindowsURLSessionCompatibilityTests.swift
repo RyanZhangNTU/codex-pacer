@@ -18,8 +18,11 @@ private final class CompatibilityLines: @unchecked Sendable {
 }
 
 final class WindowsURLSessionCompatibilityTests: XCTestCase {
-    private func until(_ condition: () -> Bool) async throws {
-        guard try await TestWait.until(condition) else { XCTFail("The compatibility transport did not finish"); throw URLError(.timedOut) }
+    private func until(file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
+        guard try await TestWait.until(condition) else {
+            XCTFail("The compatibility transport did not finish", file: file, line: line)
+            throw URLError(.timedOut)
+        }
     }
     private func client(_ fixture: URLSessionHTTPFixture, maximumBytes: Int = 1024, readsBody: @escaping @Sendable (Int) -> Bool = { _ in true }) -> WindowsHTTPClient {
         var options = WindowsHTTPClient.Options(idleTimeout: 5, totalTimeout: 10, maximumBytes: maximumBytes, readsBody: readsBody)
@@ -65,7 +68,9 @@ final class WindowsURLSessionCompatibilityTests: XCTestCase {
             let task = Task { try await client.data(for: request) }
             try await until { fixture.opened }
             fixture.respond(headers: declared ? ["Content-Length": "1025"] : [:])
-            if !declared { fixture.send(Data(repeating: 32, count: 1025)); fixture.finish() }
+            // Keep the stream open so the size limit must cancel it. A
+            // normally completed URLProtocol need not receive stopLoading.
+            if !declared { fixture.send(Data(repeating: 32, count: 1025)) }
             do { _ = try await task.value; XCTFail("An oversized compatibility response must fail") }
             catch let error as URLError { XCTAssertEqual(error.code, .dataLengthExceedsMaximum) }
             try await until { fixture.stopped }

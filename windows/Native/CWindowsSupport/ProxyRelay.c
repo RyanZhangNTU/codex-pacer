@@ -227,8 +227,12 @@ static int pacer_http_connect(PacerRelay *relay, SOCKET socket) {
     }
     int sent = length > 0 && length < (int)sizeof(request) && pacer_send_all(socket, request, length);
     SecureZeroMemory(request, sizeof(request));
-    if (!sent || pacer_read_head(socket, head, sizeof(head)) < 0) return 0;
-    return strncmp(head, "HTTP/1.", 7) == 0 && strncmp(head + 8, " 200", 4) == 0;
+    if (!sent || (length = pacer_read_head(socket, head, sizeof(head))) < 16 ||
+        strncmp(head, "HTTP/1.", 7) != 0 || head[7] < '0' || head[7] > '9' || head[8] != ' ') return 0;
+    // Every three-digit 2xx status establishes a CONNECT tunnel. Require the
+    // status boundary as well, so a malformed value such as 2000 is rejected.
+    return head[9] == '2' && head[10] >= '0' && head[10] <= '9' && head[11] >= '0' && head[11] <= '9' &&
+           (head[12] == ' ' || (head[12] == '\r' && head[13] == '\n'));
 }
 
 /* host:port or [v6]:port; the default port is used when none is given. */

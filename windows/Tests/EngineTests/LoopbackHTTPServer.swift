@@ -9,7 +9,7 @@ import WinSDK
 /// fixture it first completes a SOCKS or HTTP CONNECT handshake on the same
 /// connection, records it, and then serves the tunnelled request itself.
 final class LoopbackHTTPServer: @unchecked Sendable {
-    enum ProxyMode: Sendable { case socks4, socks5(credentials: Bool, refuse: Bool = false), httpConnect }
+    enum ProxyMode: Sendable { case socks4, socks5(credentials: Bool, refuse: Bool = false), httpConnect(status: Int = 200) }
     struct ProxyRequest: Equatable, Sendable {
         var version: UInt8, methods: [UInt8] = [], username: String?, password: String?
         var destination: String, port: UInt16, authorization: String?
@@ -116,7 +116,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
                             port: UInt16(port[0]) << 8 | UInt16(port[1]), authorization: nil)
             reply(socket, [5, refuse ? 5 : 0, 0, 1, 0, 0, 0, 0, 0, 0])
             if refuse { lock.withLock { tunnels.append(request) }; return false }
-        case .httpConnect:
+        case .httpConnect(let status):
             guard let head = line(socket), head.hasPrefix("CONNECT ") else { return false }
             let target = head.dropFirst(8).prefix { $0 != " " }
             let authorization = head.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("proxy-authorization:") }
@@ -125,7 +125,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
             request = .init(version: 1, username: nil, password: nil, destination: String(target[..<colon]),
                             port: colon < target.endIndex ? UInt16(target[target.index(after: colon)...]) ?? 0 : 0,
                             authorization: authorization)
-            reply(socket, Array("HTTP/1.1 200 Connection established\r\n\r\n".utf8))
+            reply(socket, Array("HTTP/1.1 \(status) Proxy fixture\r\n\r\n".utf8))
         }
         lock.withLock { tunnels.append(request) }
         return true

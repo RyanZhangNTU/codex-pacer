@@ -73,10 +73,31 @@ final class WindowsProxyRelayTests: XCTestCase {
         XCTAssertEqual(socks5.proxyRequests.map(\.methods), [[0]])
         XCTAssertEqual(socks5.proxyRequests.map(\.destination), ["198.51.100.7"])
 
-        let http = try LoopbackHTTPServer(proxy: .httpConnect); defer { http.stop() }
+        let http = try LoopbackHTTPServer(proxy: .httpConnect()); defer { http.stop() }
         _ = try await read(client(Upstream(kind: .http, host: "127.0.0.1", port: http.port, username: "user", password: "fixture")), from: http)
         XCTAssertEqual(http.proxyRequests, [.init(version: 1, username: nil, password: nil, destination: "pacer-fixture.invalid",
                                                   port: 80, authorization: "Basic dXNlcjpmaXh0dXJl")])
+    }
+
+    func testHTTPConnectAcceptsAllSuccessfulStatusesAndRejectsFailures() async throws {
+        for status in [200, 201, 204, 299, 199, 300, 407, 500, 2000] {
+            let server = try LoopbackHTTPServer(proxy: .httpConnect(status: status)); defer { server.stop() }
+            let upstream = Upstream(kind: .http, host: "127.0.0.1", port: server.port, username: "user", password: "fixture")
+            let client = client(upstream)
+            if (200..<300).contains(status) {
+                let task = Task { try await client.data(for: request) }; defer { task.cancel() }
+                try await until { server.opened }
+                server.respond(200, mime: "application/json", headers: ["Content-Length": "2"]); server.send("{}")
+                let (data, response) = try await task.value
+                XCTAssertEqual(data, Data("{}".utf8))
+                XCTAssertEqual(response.statusCode, 200, "The response is from the origin, not the proxy's CONNECT reply")
+            } else {
+                do { _ = try await client.data(for: request); XCTFail("CONNECT status \(status) must not establish a tunnel") }
+                catch is URLError { }
+                try await until { !server.proxyRequests.isEmpty }
+                XCTAssertTrue(server.requests.isEmpty, "Rejected CONNECT status \(status) forwarded an origin request")
+            }
+        }
     }
 
     /// The point of the relay: an idle message stream through a SOCKS proxy
