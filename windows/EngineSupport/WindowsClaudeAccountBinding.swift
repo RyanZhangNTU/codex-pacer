@@ -28,13 +28,34 @@ enum WindowsClaudeAccountBinding {
         return .init(accountID: cli.accountID ?? (accounts.count == 1 ? accounts.first : nil), organizationID: cli.organizationID,
             conflictingAccounts: cli.conflictingAccounts || bindings.contains(where: \.conflictingAccounts) || accounts.count > 1)
     }
-    static func locations(environment: [String: String]) -> [URL] {
-        var result: [URL] = []
-        if let roaming = WindowsEnvironment.value("APPDATA", in: environment), WindowsCodexExecutableDiscovery.absolute(roaming) {
-            result.append(URL(fileURLWithPath: roaming).appendingPathComponent("Claude/config.json"))
+    /// Desktop 4.23118 moves its data out of the MSIX package into a folder
+    /// named for the package, and leaves this marker in each folder it left.
+    static let movedMarker = ".user-data-left.claude_pzs8sxrjxfjjc"
+    /// The active Desktop's `config.json`. Once the current folder has one,
+    /// the older folders are leftovers; before that, a folder Desktop marked
+    /// as moved is skipped, so a stale account cannot disable every mapping.
+    static func locations(environment: [String: String], files: any PlatformFileSystem = WindowsFileSystem()) -> [URL] {
+        if let current = current(environment), files.metadata(current)?.isRegularFile == true { return [current] }
+        return legacy(environment).filter {
+            files.metadata($0.deletingLastPathComponent().appendingPathComponent(movedMarker)) == nil
         }
-        if let local = WindowsEnvironment.value("LOCALAPPDATA", in: environment), WindowsCodexExecutableDiscovery.absolute(local) {
-            let root = URL(fileURLWithPath: local).appendingPathComponent("Packages/Claude_pzs8sxrjxfjjc")
+    }
+    /// Every `config.json` location Desktop has used, current layout first.
+    static func candidates(environment: [String: String]) -> [URL] {
+        [current(environment)].compactMap { $0 } + legacy(environment)
+    }
+    private static func folder(_ key: String, _ environment: [String: String]) -> URL? {
+        guard let path = WindowsEnvironment.value(key, in: environment), WindowsCodexExecutableDiscovery.absolute(path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+    private static func current(_ environment: [String: String]) -> URL? {
+        folder("LOCALAPPDATA", environment)?.appendingPathComponent("Claude-Data/claude_pzs8sxrjxfjjc/config.json")
+    }
+    private static func legacy(_ environment: [String: String]) -> [URL] {
+        var result: [URL] = []
+        if let roaming = folder("APPDATA", environment) { result.append(roaming.appendingPathComponent("Claude/config.json")) }
+        if let local = folder("LOCALAPPDATA", environment) {
+            let root = local.appendingPathComponent("Packages/Claude_pzs8sxrjxfjjc")
             result.append(root.appendingPathComponent("LocalCache/Roaming/Claude/config.json"))
             result.append(root.appendingPathComponent("RoamingState/Claude/config.json"))
         }

@@ -1,6 +1,6 @@
 # Windows SSH sources
 
-Windows reads hosts already saved by Codex or Claude. It uses the shared discovery, canonical route keys, activity monitors, runtime projection and shutdown deadline. Claude Desktop routes come from the first existing `ssh_configs.json` in its roaming or packaged app-data locations; the selected Claude home's `settings.json` can override them. SSH identity paths use Windows absolute-path validation. Mac keeps its existing paths and validation defaults.
+Windows reads hosts already saved by Codex or Claude. It uses the shared discovery, canonical route keys, activity monitors, runtime projection and shutdown deadline. Claude Desktop routes come from `ssh_configs.json` in the [active Desktop data folder](windows-shell.md#claude-desktop-data-folder); the selected Claude home's `settings.json` can override them. SSH identity paths use Windows absolute-path validation. Mac keeps its existing paths and validation defaults.
 
 The General setting **Monitor Tasks on SSH Hosts** uses the Mac `monitorSSH` key, with an absent key meaning enabled. Disabling it closes owned helpers; enabling it discovers the saved sources again. Configuration refreshes retain healthy connections. Sleep and exit close stdin and use the shared 650 ms cleanup deadline, with forced termination of owned children when needed.
 

@@ -73,9 +73,36 @@ final class WindowsClaudeAccountBindingTests: XCTestCase {
     func testMetadataLocationsHonorWindowsEnvironmentCasingAndIgnoreRelativePaths() throws {
         let root = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
         let path = WindowsCodexExecutableDiscovery.path(root)
-        let locations = WindowsClaudeAccountBinding.locations(environment: ["aPpDaTa": path, "localappdata": path])
-        XCTAssertEqual(locations.count, 3); XCTAssertTrue(locations.allSatisfy { $0.lastPathComponent == "config.json" })
-        XCTAssertTrue(WindowsClaudeAccountBinding.locations(environment: ["APPDATA": "relative", "LOCALAPPDATA": "bad\npath"]).isEmpty)
+        let candidates = WindowsClaudeAccountBinding.candidates(environment: ["aPpDaTa": path, "localappdata": path])
+        XCTAssertEqual(candidates.count, 4); XCTAssertTrue(candidates.allSatisfy { $0.lastPathComponent == "config.json" })
+        XCTAssertTrue(candidates[0].path.hasSuffix("Claude-Data/claude_pzs8sxrjxfjjc/config.json"))
+        XCTAssertEqual(WindowsClaudeAccountBinding.locations(environment: ["aPpDaTa": path, "localappdata": path]), Array(candidates.dropFirst()),
+            "Without the current folder's config, older Desktop builds keep their three locations")
+        let invalid = ["APPDATA": "relative", "LOCALAPPDATA": "bad\npath"]
+        XCTAssertTrue(WindowsClaudeAccountBinding.candidates(environment: invalid).isEmpty)
+        XCTAssertTrue(WindowsClaudeAccountBinding.locations(environment: invalid).isEmpty)
+    }
+    func testMovedDesktopFolderOutranksLeftoversAndMarkedFoldersCannotConflict() throws {
+        let root = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let local = root.appendingPathComponent("Local"), roaming = root.appendingPathComponent("Roaming")
+        let environment = ["APPDATA": WindowsCodexExecutableDiscovery.path(roaming), "LOCALAPPDATA": WindowsCodexExecutableDiscovery.path(local)]
+        let current = local.appendingPathComponent("Claude-Data/claude_pzs8sxrjxfjjc/config.json")
+        let leftover = roaming.appendingPathComponent("Claude/config.json"), home = root.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try write(cli(account), to: root.appendingPathComponent(".claude.json"))
+        try write(["lastKnownAccountUuid": other], to: leftover)
+        XCTAssertTrue(WindowsClaudeAccountBinding.observe(userHome: root, home: home, environment: environment).conflictingAccounts)
+        try write(["v": 1, "kind": "update_visible"], to: leftover.deletingLastPathComponent().appendingPathComponent(WindowsClaudeAccountBinding.movedMarker))
+        XCTAssertFalse(WindowsClaudeAccountBinding.locations(environment: environment).map(\.path).contains(leftover.path))
+        XCTAssertFalse(WindowsClaudeAccountBinding.observe(userHome: root, home: home, environment: environment).conflictingAccounts)
+        try FileManager.default.removeItem(at: leftover.deletingLastPathComponent().appendingPathComponent(WindowsClaudeAccountBinding.movedMarker))
+        try write(["lastKnownAccountUuid": account], to: current)
+        XCTAssertEqual(WindowsClaudeAccountBinding.locations(environment: environment).map(\.path), [current.path])
+        let value = WindowsClaudeAccountBinding.observe(userHome: root, home: home, environment: environment)
+        XCTAssertEqual(value.accountID, account); XCTAssertFalse(value.conflictingAccounts)
+        try write(["lastKnownAccountUuid": other], to: current)
+        XCTAssertTrue(WindowsClaudeAccountBinding.observe(userHome: root, home: home, environment: environment).conflictingAccounts,
+            "The current Desktop account still has to match the CLI account")
     }
 }
 #endif
