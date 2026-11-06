@@ -120,12 +120,21 @@ enum ClaudeActivityRecord {
             result.append(value); return result.compactMap(encode)
         }
         var toolStarts: [(String, String)] = [], toolEnds: [String] = [], modelKinds: Set<String> = []
+        // A self-reported estimate (`⟦62%⟧`) opens a reply. Only the first few
+        // bytes of the text are decoded and only the number leaves this scope.
+        var progress: Int?
         if let content, content.isArray, let values = try? content.elements(maximumCount: 128) {
             for item in values {
-                guard let f = try? item.fields(["type", "id", "tool_use_id", "name"]), let type = f["type"]?.string() else { continue }
+                guard let f = try? item.fields(["type", "id", "tool_use_id", "name", "text"]), let type = f["type"]?.string() else { continue }
                 if type == "tool_use", let id = identifier(f["id"]?.string()) { toolStarts.append((id, f["name"]?.string() ?? "")) }
                 else if type == "tool_result", let id = identifier(f["tool_use_id"]?.string()) { toolEnds.append(id) }
-                else if ["thinking", "text"].contains(type) { modelKinds.insert(type) }
+                else if ["thinking", "text"].contains(type) {
+                    modelKinds.insert(type)
+                    if type == "text", kind == "assistant", progress == nil,
+                       let leading = f["text"]?.stringPrefix(maximumBytes: ProgressMarker.prefixBytes) {
+                        progress = ProgressMarker.percent(leading: leading)
+                    }
+                }
             }
         }
         if kind == "user", fields["isMeta"]?.boolean() != true, fields["isSynthetic"]?.boolean() != true,
@@ -162,6 +171,7 @@ enum ClaudeActivityRecord {
             }
             for type in modelKinds.sorted() {
                 var value = base; value["kind"] = type == "thinking" ? "thinking" : "response"
+                if type == "text", let progress { value["progress"] = progress }
                 value["itemId"] = id; result.append(value)
             }
             for (id, name) in toolStarts {
@@ -340,6 +350,27 @@ struct ClaudeActivityState: Sendable {
             guard !hooks.contains(key) else { return }
             value.markDiscontinuity(); sessions[key] = value; return
         }
+        // An estimate can arrive after newer tool hooks: the display observer
+        // runs in the background and transcripts are read after the hook
+        // spool. It still belongs to the current turn, so it is applied
+        // before the newest-evidence rule that lifecycle records follow.
+        if let percent = record["progress"] as? Int, kind == "progress" || kind == "response" {
+            if record["unownedTurn"] as? Bool != true,
+               let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID, turn == value.turnID {
+                value.reportProgress(percent, at: date, turnID: turn); sessions[key] = value
+            }
+            if kind == "progress" { return }
+        }
+        // The Stop hook saw background work this turn waits for: the request
+        // is paused until a notification wakes it, so its ending is not shown.
+        if kind == "waiting" {
+            guard record["unownedTurn"] as? Bool != true, date >= (value.lastObserved ?? .distantPast) else { return }
+            if let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID, turn == value.turnID {
+                let kinds = (record["background"] as? [String] ?? []).map { String($0.prefix(24)) }
+                value.waitForBackground(kinds: kinds, wakeups: record["wakeups"] as? Int ?? 0, at: date); sessions[key] = value
+            }
+            return
+        }
         if kind == "metadata" {
             var event: [String: Any] = ["method": "metadata", "threadId": thread, "at": seconds]
             if let project = record["project"] as? String, !project.isEmpty { event["cwd"] = String(project.prefix(240)) }
@@ -480,7 +511,11 @@ struct ClaudeActivityState: Sendable {
             requests = requests.filter { $0.value.threadID != thread }
             if record["typedInterruptMarker"] as? Bool == true { typedInterruptPrompts[key] = turn }
             else { typedInterruptPrompts.removeValue(forKey: key) }
+            let carried = value.currentProgress, waited = value.currentBackgroundWait != nil
+            let continuesRequest = [.running, .waitingForInput].contains(value.phase) && (record["wake"] as? Bool == true || waited)
             value.applyRuntime(event(attaching ? "turn/attached" : "turn/started"))
+            // A wake continues the request; so does a prompt typed while it waits.
+            if let carried, continuesRequest { value.carryProgress(carried, at: date) }
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
         case "subagentStart":
@@ -489,6 +524,7 @@ struct ClaudeActivityState: Sendable {
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
         case "toolStart":
+            value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/started", ["itemId": item, "itemType": "commandExecution"]))
             if let kind = (record["attention"] as? String).flatMap(PendingAttentionRequest.Kind.init(rawValue:)) {
                 attention(kind, thread: thread, item: item, at: date)
@@ -502,6 +538,7 @@ struct ClaudeActivityState: Sendable {
                 value.applyRuntime(event("thread/status/changed", ["status": "active", "flags": [pending.kind == .approval ? "waitingOnApproval" : "waitingOnUserInput"]]))
             } else { value.applyRuntime(event("thread/status/changed", ["status": "active"])) }
         case "thinking", "response":
+            value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/started", ["itemId": item, "itemType": kind == "thinking" ? "reasoning" : "agentMessage", "hasText": false]))
         case "responseDelta":
             // Old adapters could copy the *current* prompt into a delayed
@@ -510,6 +547,7 @@ struct ClaudeActivityState: Sendable {
                   ClaudeActivityRecord.identifier(record["promptId"] as? String) != nil,
                   record["partial"] as? Bool == true, record["index"] as? Int == 0,
                   ClaudeActivityRecord.identifier(record["displayTurnId"] as? String) != nil, record["hasText"] as? Bool == true else { return }
+            value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/agentMessage/delta", ["itemId": item, "hasText": true]))
         case "approval", "input":
             attention(kind == "approval" ? .approval : .input, thread: thread, item: item, at: date)
@@ -521,6 +559,9 @@ struct ClaudeActivityState: Sendable {
                 value.applyRuntime(event("thread/status/changed", ["status": "active", "flags": [pending.kind == .approval ? "waitingOnApproval" : "waitingOnUserInput"]]))
             } else { value.applyRuntime(event("thread/status/changed", ["status": "active"])) }
         case "stop", "stopVerified", "failure", "interrupt", "subagentStop":
+            // A turn paused for its background work keeps running until the
+            // wake; an interrupt or an error still ends it.
+            if ["stop", "stopVerified"].contains(kind), value.currentBackgroundWait != nil { sessions[key] = value; return }
             value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed"]))
             requests = requests.filter { $0.value.threadID != thread }
             // The ended turn's question stays until the next prompt answers it;

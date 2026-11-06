@@ -103,6 +103,17 @@
 "activity.page_region" = "任务分页区域";
 "activity.previous_page" = "上一页任务";
 "activity.responding" = "输出回复";
+"activity.background_wait" = "等待后台工作";
+"activity.progress_pending" = "等待进度";
+"activity.progress_reported" = "自报进度约 %ld%%";
+"activity.progress_cloud" = "云端任务不报告进度";
+"activity.progress_waiting_pending" = "等待后台工作";
+"activity.progress_waiting" = "等待后台工作，自报进度约 %ld%%";
+"activity.progress_long_step" = "正在执行一个长步骤，自报进度约 %ld%%";
+"activity.progress_attention" = "等你处理，自报进度约 %ld%%";
+"activity.progress_done" = "请求已完成";
+"activity.progress_interrupted" = "在自报约 %ld%% 时中断";
+"activity.progress_failed" = "在自报约 %ld%% 时出错";
 "activity.row_accessibility" = "%1$@，%2$@，%3$@。打开会话";
 "activity.running" = "运行中";
 "activity.running_count" = "%ld 个任务运行中";
@@ -875,6 +886,8 @@
 "claude.cloud.workers_help" = "此线程还有 %d 个会话在工作";
 "claude.cloud_projects" = "显示 Claude 云端项目";
 "claude.cloud_projects_help" = "跟随每个项目的线程和协调，结束或等你处理时提醒。需要上方的 claude.ai 登录。";
+"claude.progress_ring" = "显示 Claude 自报的任务进度";
+"claude.progress_ring_help" = "添加 Pacer 的 Claude Code 插件（只含一个 report_progress 工具），并在你每次提问时加入约 60 token 的说明，请 Claude 用它汇报进度。Pacer 把这个数字画成任务图标外的圆环，不保存其他内容。对之后新开的 Claude 会话生效；关闭即移除插件。";
 "connections.kind.claude_cloud" = "云端项目";
 "connections.state.cloud_signed_out" = "未登录 claude.ai，已暂停";
 "demo.cloud_project" = "发布计划";

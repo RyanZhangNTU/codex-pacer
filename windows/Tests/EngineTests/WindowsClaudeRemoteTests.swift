@@ -28,6 +28,14 @@ private actor RemoteSetupCapture {
     func publish(_ values: [EngineClaudeRemoteSetup]) { rows = values }
     func refreshed() { refreshes += 1 }
 }
+private final class RingCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var installed: [Bool] = [], digests: [String: String] = [:]
+    var rings: [Bool] { lock.lock(); defer { lock.unlock() }; return installed }
+    var saved: [String: String] { lock.lock(); defer { lock.unlock() }; return digests }
+    func install(_ ring: Bool) { lock.lock(); installed.append(ring); lock.unlock() }
+    func save(_ value: [String: String]) { lock.lock(); digests = value; lock.unlock() }
+}
 
 final class WindowsClaudeRemoteTests: XCTestCase {
     private let target = RemoteActivityTarget(id: "remote-ssh-discovered:alias-a", name: "Synthetic", alias: "alias-a", home: "~/.claude")
@@ -100,7 +108,7 @@ final class WindowsClaudeRemoteTests: XCTestCase {
     }
     func testThirtyMinuteBackoffManualRetryIdempotenceAndVersionRefreshUseSharedPolicy() async throws {
         let capture = RemoteSetupCapture(), clock = RemoteClock(), digest = String(repeating: "a", count: 64)
-        let services = EngineClaudeRemoteServices(digest: digest, install: { _ in try await capture.install() },
+        let services = EngineClaudeRemoteServices(digest: { _ in digest }, install: { _, _ in try await capture.install() },
             shutdown: { await capture.stop() }, loadDigests: { [:] }, saveDigests: { _ in })
         let coordinator = WindowsClaudeRemoteCoordinator(services: services, now: { clock.now() })
         var connected = RuntimeStreamStatus(); connected.connected = true; connected.sourceAvailable = true
@@ -128,15 +136,15 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         await coordinator.shutdown()
         let disabled = await coordinator.retry(sourceID: target.id, context: try XCTUnwrap(context)); XCTAssertFalse(disabled)
         // A new adapter digest must refresh a previously configured alias.
-        let changed = WindowsClaudeRemoteCoordinator(services: .init(digest: String(repeating: "b", count: 64),
-            install: { _ in try await capture.install() }, shutdown: {}, loadDigests: { ["alias-a": digest] }, saveDigests: { _ in }))
+        let changed = WindowsClaudeRemoteCoordinator(services: .init(digest: { _ in String(repeating: "b", count: 64) },
+            install: { _, _ in try await capture.install() }, shutdown: {}, loadDigests: { ["alias-a": digest] }, saveDigests: { _ in }))
         await changed.configure(targets: [target], statuses: statuses, enabled: true, version: 2, update: { _, _ in })
         try await wait { await capture.calls == 4 }; await changed.shutdown()
     }
     func testRemovalSleepAndLateCompletionCannotRestoreOldSourceOrCache() async throws {
         let capture = RemoteSetupCapture(); await capture.setFailure(nil); await capture.setHold()
-        let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: String(repeating: "c", count: 64),
-            install: { _ in try await capture.install() }, shutdown: { await capture.stop() }, loadDigests: { [:] },
+        let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { _ in String(repeating: "c", count: 64) },
+            install: { _, _ in try await capture.install() }, shutdown: { await capture.stop() }, loadDigests: { [:] },
             saveDigests: { _ in XCTFail("A removed source cannot update the digest cache") }))
         var status = RuntimeStreamStatus(); status.connected = true
         await coordinator.configure(targets: [target], statuses: [target.id: status], enabled: true, version: 1,
@@ -170,5 +178,139 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         let normal = try ClaudeRemoteSetup.arguments(target: target, validDestination: { _ in true })
         let injected = try ClaudeRemoteSetup.arguments(target: target, validDestination: { _ in true }, validIdentityFile: { _ in true })
         XCTAssertEqual(normal, injected)
+    }
+    func testProgressRingSetupInstallsSwitchAndPluginAndRemovesOnlyItsOwnEntries() async throws {
+        let (root, exe, env) = try fixture(), home = root.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent("settings.json")
+        try JSONSerialization.data(withJSONObject: ["permissions": ["allow": ["Read"]], "enabledPlugins": ["other@market": true]]).write(to: settings)
+        func current() throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]) }
+        let setup = installer(exe, env: env)
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        let pacer = home.appendingPathComponent("pacer"), flag = pacer.appendingPathComponent("progress-ring")
+        XCTAssertEqual(try Data(contentsOf: flag), Data("tool\n".utf8))
+        XCTAssertEqual(try Data(contentsOf: pacer.appendingPathComponent("plugin/pacer/progress_mcp.py")), try ClaudeRemoteSetup.progressServer())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pacer.appendingPathComponent("plugin/.claude-plugin/marketplace.json").path))
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: pacer.appendingPathComponent("plugin/pacer/.claude-plugin/plugin.json"))) as? [String: Any])
+        let server = try XCTUnwrap((manifest["mcpServers"] as? [String: Any])?["pacer"] as? [String: Any])
+        XCTAssertEqual(server["command"] as? String, "python3", "The remote host's own Python runs the server")
+        var value = try current()
+        XCTAssertEqual(value["enabledPlugins"] as? [String: Bool], ["other@market": true, "pacer@pacer": true])
+        XCTAssertEqual((value["permissions"] as? [String: Any])?["allow"] as? [String], ["Read", ClaudeHookInstaller.progressTool])
+        XCTAssertNotNil((value["extraKnownMarketplaces"] as? [String: Any])?["pacer"])
+        // A hand-written mode is kept, and a current host sees no rewrite.
+        try Data("tool 15\n".utf8).write(to: flag)
+        let installed = try Data(contentsOf: settings)
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        XCTAssertEqual(try Data(contentsOf: flag), Data("tool 15\n".utf8)); XCTAssertEqual(try Data(contentsOf: settings), installed)
+        // Off removes the switch and exactly Pacer's entries; the user's stay.
+        _ = try await setup.install(target: target, requireHome: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path))
+        value = try current()
+        XCTAssertEqual(value["enabledPlugins"] as? [String: Bool], ["other@market": true])
+        XCTAssertEqual((value["permissions"] as? [String: Any])?["allow"] as? [String], ["Read"])
+        XCTAssertNil(value["extraKnownMarketplaces"])
+        await setup.shutdown()
+    }
+    func testRemoteProgressPluginRejectsNameCollisionsAndPreservesUntrackedPermissions() async throws {
+        let (root, exe, env) = try fixture(), home = root.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent("settings.json")
+        let original: [String: Any] = ["extraKnownMarketplaces": ["pacer": ["source": ["source": "directory", "path": "/user/market"]]],
+            "enabledPlugins": ["pacer@pacer": false], "permissions": ["allow": [ClaudeHookInstaller.progressTool, "Read"]]]
+        let bytes = try JSONSerialization.data(withJSONObject: original); try bytes.write(to: settings)
+        let setup = installer(exe, env: env)
+        do { _ = try await setup.install(target: target, requireHome: true, progressRing: true); XCTFail("A foreign marketplace must not be replaced") }
+        catch { }
+        XCTAssertEqual(try Data(contentsOf: settings), bytes)
+        _ = try await setup.install(target: target, requireHome: true)
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+        for key in ["extraKnownMarketplaces", "enabledPlugins", "permissions"] {
+            XCTAssertTrue(NSDictionary(dictionary: value[key] as! [String: Any]).isEqual(to: original[key] as! [String: Any]), key)
+        }
+        await setup.shutdown()
+    }
+
+    func testRemoteProgressPluginRestoresPriorValuesAndPreservesARepointedNamespace() async throws {
+        let (root, exe, env) = try fixture(), home = root.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent("settings.json")
+        let setup = installer(exe, env: env)
+        func current() throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]) }
+        // The Windows SSH fixture uses native Python paths. Capture its exact
+        // marketplace spelling instead of inventing a different slash form.
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        let marketplace = try XCTUnwrap(current()["extraKnownMarketplaces"])
+        _ = try await setup.install(target: target, requireHome: true)
+        let original: [String: Any] = ["extraKnownMarketplaces": marketplace,
+            "enabledPlugins": ["pacer@pacer": false], "permissions": ["allow": [ClaudeHookInstaller.progressTool, "Read"]]]
+        try JSONSerialization.data(withJSONObject: original).write(to: settings)
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        XCTAssertEqual((try current()["enabledPlugins"] as? [String: Bool])?["pacer@pacer"], true)
+        _ = try await setup.install(target: target, requireHome: true)
+        let restored = try current()
+        for key in ["extraKnownMarketplaces", "enabledPlugins", "permissions"] {
+            XCTAssertTrue(NSDictionary(dictionary: restored[key] as! [String: Any]).isEqual(to: original[key] as! [String: Any]), key)
+        }
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        var edited = try current()
+        edited["extraKnownMarketplaces"] = ["pacer": ["source": ["source": "directory", "path": "/user/replacement"]]]
+        edited["enabledPlugins"] = ["pacer@pacer": false]
+        try JSONSerialization.data(withJSONObject: edited).write(to: settings)
+        _ = try await setup.install(target: target, requireHome: true)
+        let kept = try current()
+        for key in ["extraKnownMarketplaces", "enabledPlugins", "permissions"] {
+            XCTAssertTrue(NSDictionary(dictionary: kept[key] as! [String: Any]).isEqual(to: edited[key] as! [String: Any]), key)
+        }
+        await setup.shutdown()
+    }
+
+    func testSwitchingTheProgressRingSetsConnectedHostsUpAgain() async throws {
+        let capture = RingCapture(), off = String(repeating: "e", count: 64), on = String(repeating: "f", count: 64)
+        let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { $0 ? on : off }, install: { _, ring in
+            capture.install(ring); return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true, telemetryConflict: false)
+        }, shutdown: {}, loadDigests: { [:] }, saveDigests: { capture.save($0) }))
+        var connected = RuntimeStreamStatus(); connected.connected = true; connected.sourceAvailable = true
+        let alias = target.alias, statuses = [target.id: connected], targets = [target]
+        func configure(_ ring: Bool) async {
+            await coordinator.configure(targets: targets, statuses: statuses, enabled: true, progressRing: ring, version: 1, update: { _, _ in })
+        }
+        await configure(false)
+        try await wait { capture.rings == [false] && capture.saved[alias] == off }
+        await configure(true)
+        try await wait { capture.rings == [false, true] && capture.saved[alias] == on }
+        await configure(true)
+        XCTAssertEqual(capture.rings, [false, true], "A host that already has the ring is not set up again")
+        await configure(false)
+        try await wait { capture.rings == [false, true, false] && capture.saved[alias] == off }
+        await coordinator.shutdown()
+    }
+    func testHelperForwardsOnlyTheRingsNumbersKindsAndWakeFlag() throws {
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_TEST_PYTHON"])
+        let (root, _, _) = try fixture(), script = root.appendingPathComponent("helper.py"), input = root.appendingPathComponent("rows.jsonl")
+        try Data(ClaudeActivityProbe.script.utf8).write(to: script)
+        let rows: [[String: Any]] = [
+            ["kind": "progress", "origin": "hook", "sessionId": "s", "at": 1.0, "promptId": "p", "progress": 40],
+            ["kind": "progress", "origin": "hook", "sessionId": "s", "at": 1.0, "progress": 120],
+            ["kind": "progress", "origin": "hook", "sessionId": "s", "at": 1.0, "progress": true],
+            ["kind": "waiting", "origin": "hook", "sessionId": "s", "at": 1.0, "background": ["shell", "local_powershell"], "wakeups": 2, "description": "PRIVATE"],
+            ["kind": "prompt", "origin": "hook", "sessionId": "s", "at": 1.0, "promptId": "p", "wake": true],
+            ["kind": "prompt", "origin": "hook", "sessionId": "s", "at": 1.0, "promptId": "q", "wake": "yes"]]
+        let lines = try rows.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: input)
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: python)
+        process.arguments = ["-S", "-c", "import json,sys\nns={'__name__':'helper'}\nexec(open(sys.argv[1],encoding='utf-8').read(),ns)\n" +
+            "for line in open(sys.argv[2],encoding='utf-8'):print(json.dumps(ns['sanitized'](line),sort_keys=True))", script.path, input.path]
+        process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        try process.run(); let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        let results = String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).map(String.init)
+        XCTAssertEqual(results.count, rows.count)
+        guard results.count == rows.count else { return }
+        XCTAssertTrue(results[0].contains(#""progress": 40"#))
+        XCTAssertEqual(results[1], "[]", "An estimate above 100 is dropped"); XCTAssertEqual(results[2], "[]", "A boolean is not an estimate")
+        XCTAssertTrue(results[3].contains(#""background": ["shell", "local_powershell"]"#)); XCTAssertTrue(results[3].contains(#""wakeups": 2"#))
+        XCTAssertFalse(results[3].contains("PRIVATE"), "A waiting row carries task kinds, never descriptions")
+        XCTAssertTrue(results[4].contains(#""wake": true"#)); XCTAssertFalse(results[5].contains("wake"))
     }
 }

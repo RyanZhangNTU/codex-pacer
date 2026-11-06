@@ -72,7 +72,13 @@ public enum DemoScenario {
                        record("prompt", -40), record("thinking", -36, ["itemId": "thinking"])]
         if stage == .completed { records.append(record("stopVerified", 0)) }
         state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": records])!, now: now)
-        return state.activities[0]
+        // Its self-reported estimate is drawn only while the progress ring is on:
+        // none yet while thinking (the dashed ring), then 62%, then 100%.
+        var activity = state.activities[0]
+        if stage != .thinking {
+            activity.reportProgress(stage == .completed ? 100 : 62, at: now.addingTimeInterval(-12), turnID: "demo-prompt")
+        }
+        return activity
     }
 
     /// A cloud Project's coordinator and threads, through the same projection as real polls.

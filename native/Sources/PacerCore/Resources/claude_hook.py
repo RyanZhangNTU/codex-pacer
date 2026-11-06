@@ -1,7 +1,9 @@
 """Opt-in Claude hook/statusline adapter. Stdout never changes hook decisions.
 
 Claude Code waits for most hooks, so this file imports only what every call
-needs; slower modules load on the paths that use them.
+needs; slower modules load on the paths that use them. While Pacer's progress
+ring is switched on, a typed UserPromptSubmit adds one fixed line of model
+context, and a Stop that leaves background work running is recorded as a wait.
 """
 import fcntl, json, os, pathlib, sys, time
 
@@ -42,6 +44,111 @@ def read_object(path):
         if len(raw)>2*1024*1024:return {}
         value=json.loads(raw);return value if isinstance(value,dict) else {}
     except (OSError,ValueError):return {}
+# The progress ring's switch is pacer/progress-ring; "tool" in it asks for the
+# report_progress tool of Pacer's Claude Code plugin instead of a leading
+# marker, and "tool N" for a new estimate after a change of N points. The
+# lines are worded as the user's request; only each estimate's number comes back.
+OPEN,CLOSE=chr(0x27e6),chr(0x27e7);TOOL='mcp__plugin_pacer_pacer__report_progress'
+TOOLS=(TOOL,'mcp__pacer__report_progress')
+ASK="The user turned on Pacer's progress ring and asks that "
+WAKE=('<task-notification>','<side-sessions-event>','[SYSTEM NOTIFICATION','<agent-message')
+# Background work a stopped turn waits on is any task but long-lived monitors
+# and Claude Code's own memory and scan work; new task kinds count.
+IDLE=('monitor','dream','auto-mode scan','memory import','memory save')
+def ring_on(home):
+    try:fd=private_open(home/'pacer'/'progress-ring',os.O_RDONLY)
+    except OSError:return None
+    try:words=os.read(fd,16).split()
+    finally:os.close(fd)
+    if words[:1]!=[b'tool']:return 'marker'
+    return 'tool '+str(int(words[1])) if len(words)>1 and words[1].isdigit() and 0<int(words[1])<=50 else 'tool'
+def machine_prompt(value):
+    # Background reports, scheduled wakes and other sessions' messages also
+    # start turns; they continue the request the user typed.
+    source=value.get('source')
+    if source is not None:return source not in ('user','sdk')
+    prompt=value.get('prompt');return isinstance(prompt,str) and prompt.lstrip().startswith(WAKE)
+def progress_prompt(mode):
+    if mode=='marker':return ASK+"every message you write start with "+OPEN+"NN%"+CLOSE+", your best estimate of how much of their current request is done. Always give a number."
+    when=" after it moves "+mode[5:]+" points or more" if mode[5:] else " whenever you make progress"
+    return ASK+"you report your best estimate of how much of their current request is done with "+TOOL+": with your first tool calls,"+when+", and before you stop to wait for background work, in the same batch as your other tool calls. Always give a number."
+def spool(home,rows,session=None,change=None):
+    # Appends rows and updates the session's request state under events.lock.
+    folder=home/'pacer';lockfd=private_open(folder/'events.lock',os.O_CREAT|os.O_RDWR);result=None
+    try:
+        fcntl.flock(lockfd,fcntl.LOCK_EX)
+        if change:
+            path=folder/'progress-state.json';states=read_object(path)
+            state=states.get(session) if isinstance(states.get(session),dict) else {}
+            result=change(state);state['at']=time.time();states[session]=state
+            for old in sorted(states,key=lambda k:states[k].get('at',0) if isinstance(states[k],dict) else 0)[:max(0,len(states)-64)]:del states[old]
+            write_locked(path,states)
+        if rows:
+            fd=private_open(folder/'events.jsonl',os.O_CREAT|os.O_APPEND|os.O_WRONLY)
+            try:os.write(fd,b''.join(json.dumps(row,separators=(',',':')).encode()+b'\n' for row in rows))
+            finally:os.close(fd)
+    finally:os.close(lockfd)
+    return result
+def plugin_enabled(home):
+    plugins=read_object(home/'settings.json').get('enabledPlugins');return isinstance(plugins,dict) and plugins.get('pacer@pacer') is True
+def plugin_live(home,mode):
+    # Claude Code loads plugins when a session starts; Claude Desktop also
+    # adds a newly enabled plugin to sessions that are already running.
+    return mode!='marker' and os.environ.get('CLAUDE_CODE_ENTRYPOINT')=='claude-desktop' and plugin_enabled(home)
+def progress_context(home,value):
+    # A typed prompt starts a request; compaction can drop the earlier line.
+    # Only a session that has Pacer's plugin is asked to use its tool.
+    event=value.get('hook_event_name');session=ident(value.get('session_id'));mode=ring_on(home)
+    if value.get('agent_id') is not None or not session or not mode:return
+    if event=='SessionStart' and value.get('source')!='compact':
+        ready=mode!='marker' and plugin_enabled(home);spool(home,[],session,lambda state:state.update(ready=ready));return
+    typed=event=='UserPromptSubmit' and not machine_prompt(value)
+    if not typed and not (event=='SessionStart' and value.get('source')=='compact'):return
+    live=plugin_live(home,mode)
+    def begin(state):
+        if live:state['ready']=True
+        return mode=='marker' or state.get('ready') is True
+    if spool(home,[],session,begin):sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':event,'additionalContext':progress_prompt(mode)}},separators=(',',':')));sys.stdout.flush()
+def progress_marker(text):
+    # ProgressMarker.percent's grammar: a leading marker holding 0-100.
+    text=text.lstrip()
+    if text[:1]!=OPEN or CLOSE not in text[:16]:return None
+    inner=text[1:text.index(CLOSE)].strip(' ');digits=inner[:-1].rstrip(' ')
+    if inner[-1:]!='%' or not 1<=len(digits)<=3 or any(c not in '0123456789' for c in digits) or int(digits)>100:return None
+    return int(digits)
+def progress_display(home,value):
+    # Desktop transcripts can omit text written between tool calls, so each
+    # message's first displayed lines are read live, as is the tool's input;
+    # only the number is kept.
+    event=value.get('hook_event_name');delta=value.get('delta');session=ident(value.get('session_id'))
+    if value.get('agent_id') is not None or not session:return
+    if event=='PreToolUse' and value.get('tool_name') in TOOLS and isinstance(value.get('tool_input'),dict):
+        percent=value['tool_input'].get('percent')
+        if type(percent) is not int or not 0<=percent<=100 or not ring_on(home):return
+    else:
+        if event!='MessageDisplay' or type(value.get('index')) is not int or value['index']!=0 or not isinstance(delta,str):return
+        percent=progress_marker(delta[:64])
+        if percent is None or not ring_on(home):return
+        # The marker is hidden on screen; the stored message keeps it.
+        lead=delta.lstrip();sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':'MessageDisplay','displayContent':lead[lead.index(CLOSE)+1:].lstrip()}}));sys.stdout.flush()
+    row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'progress','progress':percent}
+    if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
+    # A session that called the tool has it.
+    spool(home,[row],session,(lambda state:state.update(ready=True)) if event=='PreToolUse' else None)
+def progress_stop(home,value):
+    # A turn that stops while its background work runs is waiting, not done.
+    # A stop with nothing left running ends the request; Pacer fills the ring
+    # then, so the turn is never held for a final estimate.
+    session=ident(value.get('session_id'));mode=ring_on(home)
+    if value.get('hook_event_name')!='Stop' or value.get('agent_id') is not None or not session or not mode:return
+    tasks=value.get('background_tasks');crons=value.get('session_crons')
+    waited=[str(task.get('type'))[:24] for task in tasks if isinstance(task,dict) and isinstance(task.get('type'),str) and task.get('type') not in IDLE][:16] if isinstance(tasks,list) else []
+    wakeups=min(len(crons),16) if isinstance(crons,list) else 0
+    # An empty snapshot clears a previous attempted Stop that another hook
+    # continued. It must not leave the request waiting after its final Stop.
+    row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
+    if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
+    spool(home,[row])
 def statusline(home,value,raw):
     import math
     rates=value.get('rate_limits');payload={}
@@ -178,6 +285,7 @@ def hook(home,value):
         if kind:
             row['kind']=kind
             if kind=='prompt' and value.get('prompt') in ('[Request interrupted by user]','[Request interrupted by user for tool use]'):row['typedInterruptMarker']=True
+            if kind=='prompt' and machine_prompt(value):row['wake']=True
             if kind=='toolStart':row['attention']='input' if value.get('tool_name')=='AskUserQuestion' else 'approval' if value.get('tool_name')=='ExitPlanMode' else 'none'
             if kind=='toolStart' and value.get('tool_name') in ('Agent','Skill'):row['agentTool']=True
             rows.append(row)
@@ -207,7 +315,14 @@ def main():
     home=pathlib.Path(sys.argv[2]).expanduser();value=json.loads(raw)
     if not isinstance(value,dict):return
     if sys.argv[1]=='statusline':statusline(home,value,raw)
-    elif sys.argv[1]=='hook':hook(home,value)
+    elif sys.argv[1]=='hook':
+        # The spool and the progress paths are independent: a busy spool lock
+        # or a full disk must not drop the progress instruction or estimate.
+        try:hook(home,value)
+        finally:
+            for extra in (progress_context,progress_display,progress_stop):
+                try:extra(home,value)
+                except OSError:pass
 if __name__=='__main__':
     try:main()
     except (OSError,ValueError,ImportError):pass

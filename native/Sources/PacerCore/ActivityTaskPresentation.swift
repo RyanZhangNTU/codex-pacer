@@ -1,7 +1,8 @@
 import Foundation
 
 public enum TaskSymbol: String, Sendable {
-    case thinking, tool, responding, starting, working, coordinating, approval, input, completed, interrupted, failed, unknown
+    /// `background`: the turn stopped while its background work runs; it resumes on the wake.
+    case thinking, tool, responding, starting, working, coordinating, background, approval, input, completed, interrupted, failed, unknown
     public static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil,
                               groupIsRunning: Bool = false) -> Self {
         if let attention { return attention == .approval ? .approval : .input }
@@ -12,6 +13,7 @@ public enum TaskSymbol: String, Sendable {
         case .interrupted: return activity.turnFailed ? .failed : .interrupted
         case .unknown: return .unknown
         case .running:
+            if activity.currentBackgroundWait != nil { return .background }
             switch activity.stage {
             case .thinking: return .thinking
             case .tool: return .tool
@@ -68,10 +70,12 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var hostApplications: [String: TaskHostLabel]
     public var sourceNames: [String: String]
     public var showsDeepSeekTurnCost: Bool
+    /// Providers whose rows draw the self-reported progress ring.
+    public var progressRingProviders: Set<AgentProvider>
     public init(hideProjects: Bool = false, hostApplications: [String: TaskHostLabel] = [:], sourceNames: [String: String] = [:],
-                showsDeepSeekTurnCost: Bool = true) {
+                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
         self.hideProjects = hideProjects; self.hostApplications = hostApplications; self.sourceNames = sourceNames
-        self.showsDeepSeekTurnCost = showsDeepSeekTurnCost
+        self.showsDeepSeekTurnCost = showsDeepSeekTurnCost; self.progressRingProviders = progressRingProviders
     }
 }
 
@@ -95,6 +99,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     public let ratePlaceholder: String?
     public let cost: String?
     public let peakCost: Bool
+    public let progressRing: TaskProgressRing?
     public var rateText: String? { rate.map { String(format: "%.1f", $0.value) } }
     public var subagentText: String { String(subagents) }
     public init(activity: SessionActivity, group: ActivityTaskGroup? = nil, attention: PendingAttentionRequest.Kind? = nil,
@@ -128,6 +133,7 @@ public struct ActivityTaskRowPresentation: Sendable {
         ratePlaceholder = activity.claudeCloud == nil ? L10n.text("performance.awaiting_usage") : nil
         cost = activity.provider == .deepseek && options.showsDeepSeekTurnCost ? activity.turnCost.map(DeepSeekWallet.turnAmount) : nil
         peakCost = (activity.turnPeakCost ?? 0) >= 0.005
+        progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now)
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
         hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project

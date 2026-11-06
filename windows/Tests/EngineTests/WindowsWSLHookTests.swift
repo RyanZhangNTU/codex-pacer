@@ -67,7 +67,7 @@ final class WindowsWSLHookTests: XCTestCase {
         if !ready { throw ClaudeRemoteSetup.Failure.timedOut }
     }
     private func services(_ jobs: WSLHookJobs, _ digests: WSLHookDigests, digest: String) -> EngineClaudeRemoteServices {
-        .init(digest: digest, install: { try await jobs.install($0) }, shutdown: {}, loadDigests: { digests.read() }, saveDigests: { digests.write($0) })
+        .init(digest: { _ in digest }, install: { target, _ in try await jobs.install(target) }, shutdown: {}, loadDigests: { digests.read() }, saveDigests: { digests.write($0) })
     }
     func testSSHAndWSLUseOneVersionCacheBackoffAndManualRetryPolicy() async throws {
         let jobs = WSLHookJobs(), clock = WSLHookClock(), digests = WSLHookDigests(), digest = String(repeating: "a", count: 64)

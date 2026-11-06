@@ -283,7 +283,7 @@ public actor ClaudeActivityMonitor {
         if value["kind"] as? String == "status" { return true }
         if value["attaching"] as? Bool == true { return true }
         let rows = value["records"] as? [[String: Any]] ?? [value]
-        return rows.contains { ["prompt", "responseDelta", "toolStart", "toolEnd", "agentResult", "agentNotification", "approval", "input", "attentionCleared", "stop", "stopVerified", "failure", "interrupt", "subagentStart", "subagentStop", "unavailable"].contains($0["kind"] as? String ?? "") }
+        return rows.contains { ["prompt", "responseDelta", "progress", "waiting", "toolStart", "toolEnd", "agentResult", "agentNotification", "approval", "input", "attentionCleared", "stop", "stopVerified", "failure", "interrupt", "subagentStart", "subagentStop", "unavailable"].contains($0["kind"] as? String ?? "") }
     }
     private static func startsNewSession(_ bytes: Data, known: Set<String>) -> Bool {
         guard let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return false }

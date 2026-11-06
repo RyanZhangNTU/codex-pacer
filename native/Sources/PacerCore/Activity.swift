@@ -138,6 +138,57 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var subagentStates: [String: SubagentEvidence] = [:]
     private var subagentStatesObservedAt: Date?
     private var projectedRate = false
+    /// The agent's latest estimate, kept with the turn it was written in.
+    public private(set) var selfReportedProgress: SelfReportedProgress?
+    /// The estimate for the current turn only; a new turn starts without one.
+    public var currentProgress: SelfReportedProgress? {
+        guard let selfReportedProgress, selfReportedProgress.turnID == turnID else { return nil }
+        return selfReportedProgress
+    }
+    /// A later estimate replaces an earlier one, including a lower one.
+    mutating func reportProgress(_ percent: Int, at date: Date, turnID: String) {
+        guard turnID == self.turnID, let value = SelfReportedProgress(percent: percent, reportedAt: date, turnID: turnID) else { return }
+        if let existing = selfReportedProgress, existing.turnID == turnID, existing.reportedAt > date { return }
+        selfReportedProgress = value
+    }
+    /// A turn that wakes the same request, or a prompt typed while it waits,
+    /// continues from the request's last estimate instead of starting over.
+    mutating func carryProgress(_ previous: SelfReportedProgress, at date: Date) {
+        guard let turnID, previous.turnID != turnID, currentProgress == nil else { return }
+        selfReportedProgress = SelfReportedProgress(percent: previous.percent, reportedAt: date, turnID: turnID)
+    }
+    /// Background work a turn stopped to wait for; the request is not done.
+    public struct BackgroundWait: Equatable, Sendable {
+        public let turnID: String
+        public let since: Date
+        /// Task kinds as Claude names them, e.g. `shell` or `subagent`.
+        public let kinds: [String]
+        public let wakeups: Int
+    }
+    private var backgroundWait: BackgroundWait?
+    /// Orders waiting snapshots, including clears, without hiding transcript evidence.
+    private var backgroundWaitObservedAt: Date?
+    /// The wait of the current turn only; a new turn clears it.
+    public var currentBackgroundWait: BackgroundWait? {
+        guard [.running, .waitingForInput].contains(phase) else { return nil }
+        return backgroundWait?.turnID == turnID ? backgroundWait : nil
+    }
+    mutating func resumeBackgroundWork(at date: Date) {
+        if let wait = currentBackgroundWait, date > wait.since {
+            backgroundWait = nil
+            backgroundWaitObservedAt = max(backgroundWaitObservedAt ?? date, date)
+        }
+    }
+    mutating func waitForBackground(kinds: [String], wakeups: Int, at date: Date) {
+        guard let turnID, [.running, .waitingForInput].contains(phase) else { return }
+        guard date >= (lastObserved ?? .distantPast) else { return }
+        guard date >= (backgroundWaitObservedAt ?? .distantPast) else { return }
+        backgroundWaitObservedAt = date
+        if kinds.isEmpty && wakeups == 0 { backgroundWait = nil; return }
+        backgroundWait = BackgroundWait(turnID: turnID, since: date, kinds: Array(kinds.prefix(16)), wakeups: min(max(wakeups, 0), 16))
+    }
+    /// When the oldest tool still running in this turn started.
+    public private(set) var toolWaitStartedAt: Date?
     mutating func applySubagentEvidence(_ evidence: SubagentEvidence) {
         guard !hasLiveEvidence, !isInternalReview, threadID != evidence.parentThreadID,
               parentThreadID == nil || parentThreadID == evidence.parentThreadID else { return }
@@ -428,6 +479,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if turnFailed, phase == .interrupted { return L10n.text("activity.failed") }
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return L10n.text("activity.last_waiting") }
         if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return L10n.text("activity.last_tool") }
+        // The turn stopped for its background work; its last stage is over.
+        if observedPhase(at: now) == .running, currentBackgroundWait != nil { return L10n.text("activity.background_wait") }
         return observedPhase(at: now) == .running ? stage.label : observedPhase(at: now).label
     }
 
@@ -552,7 +605,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             turnFailed = false; waitingForApproval = false
             waitingCallID = nil
             toolCalls.removeAll()
-            outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll()
+            outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
             performanceMeter.finish()
             phaseChangedAt = date
         case "token_count":
@@ -590,7 +643,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         waitingCallID = nil
         toolCalls.removeAll()
         outputRate.startTurn(at: date)
-        generationRate.start(); liveItems.removeAll()
+        generationRate.start(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
         performanceMeter.start(turnID: id, at: date, observed: observed)
         phaseChangedAt = date
     }
@@ -620,7 +673,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         phaseChangedAt = nil
         waitingCallID = nil
         toolCalls.removeAll()
-        outputRate = OutputRate(); generationRate = GenerationRate(); liveItems.removeAll(); hasLiveEvidence = false
+        outputRate = OutputRate(); generationRate = GenerationRate(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false
         performanceMeter = ResponsePerformanceMeter()
     }
 
@@ -628,7 +681,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         logTurnStart = nil
         phase = .unknown
         waitingForApproval = false
-        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
+        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
     }
 
     mutating func markPartialRate() {
@@ -792,7 +845,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             phase = event["status"] as? String == "completed" ? .completed : .interrupted
             turnFailed = event["status"] as? String == "failed"; waitingForApproval = false
             phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true
-            generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolCalls.removeAll()
+            generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; toolCalls.removeAll()
             performanceMeter.finish()
             return
         }
@@ -841,6 +894,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         if method == "item/started", let id = event["itemId"] as? String {
             if toolItem {
+                if liveItems.isEmpty || toolWaitStartedAt == nil { toolWaitStartedAt = date }
                 if liveItems.count < 128 { liveItems.insert(id) }
                 generationRate.setWaiting(true, at: date); phase = .running; stage = .tool
                 performanceMeter.setWaiting(true, at: date)
@@ -853,6 +907,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             }
         } else if method == "item/completed", let id = event["itemId"] as? String, liveItems.remove(id) != nil {
             if liveItems.isEmpty {
+                toolWaitStartedAt = nil
                 generationRate.setWaiting(false, at: date); phase = .running; stage = .thinking
                 performanceMeter.inputBoundary(at: date)
             }

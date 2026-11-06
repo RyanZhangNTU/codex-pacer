@@ -38,6 +38,17 @@ final class ClaudeRemoteSetupContractTests: XCTestCase {
         XCTAssertEqual(recorded["host-39"], "digest")
         XCTAssertFalse(try ClaudeRemoteSetup.adapterDigest().isEmpty)
         XCTAssertEqual(try ClaudeRemoteSetup.adapterDigest(), try ClaudeRemoteSetup.adapterDigest())
+        // Switching the progress ring changes the digest, so configured hosts are set up again.
+        XCTAssertNotEqual(try ClaudeRemoteSetup.adapterDigest(progressRing: true), try ClaudeRemoteSetup.adapterDigest())
+        func payload(_ ring: Bool) throws -> [String: Any] {
+            let command = try ClaudeRemoteSetup.command(progressRing: ring)
+            let encoded = try XCTUnwrap(command.split(separator: " ").last.map(String.init))
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(Data(base64Encoded: encoded))) as? [String: Any])
+        }
+        XCTAssertEqual(try payload(false)["progressRing"] as? Bool, false, "Off is stated, so a host loses an earlier ring")
+        XCTAssertNil(try payload(false)["progressServer"])
+        XCTAssertEqual(try payload(true)["progressRing"] as? Bool, true)
+        XCTAssertEqual((try payload(true)["progressServer"] as? String).flatMap { Data(base64Encoded: $0) }, try ClaudeRemoteSetup.progressServer())
     }
 
     func testSSHArgumentsRequireSafeAliasAndReturnOnlyStrictBooleanStatus() throws {

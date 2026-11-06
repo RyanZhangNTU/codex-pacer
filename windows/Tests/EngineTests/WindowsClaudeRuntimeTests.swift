@@ -280,4 +280,96 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         try runtime.uninstall(homes: [home])
         XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: try read(home.appendingPathComponent("settings.json"))))
     }
+    func testProgressRingHookAsksForTheMarkerAndHidesItOnScreen() throws {
+        let home = try fixture().homes[0], python = try package.appendingPathComponent("python.exe"), pacer = home.appendingPathComponent("pacer")
+        try FileManager.default.createDirectory(at: pacer, withIntermediateDirectories: true)
+        let hook = pacer.appendingPathComponent("hook.py"); try WindowsClaudeHookRuntime.script().write(to: hook)
+        func run(_ event: [String: Any], entrypoint: String? = nil) throws -> String {
+            let process = Process(), input = Pipe(), output = Pipe()
+            process.executableURL = python; process.arguments = ["-S", hook.path, "hook", home.path]
+            var environment = ProcessInfo.processInfo.environment.filter { $0.key.uppercased() != "CLAUDE_CODE_ENTRYPOINT" }
+            if let entrypoint { environment["CLAUDE_CODE_ENTRYPOINT"] = entrypoint }
+            process.environment = environment
+            process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+            try process.run()
+            input.fileHandleForWriting.write(try JSONSerialization.data(withJSONObject: event)); try input.fileHandleForWriting.close()
+            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            return String(decoding: data, as: UTF8.self)
+        }
+        func shown(_ text: String) throws -> String? {
+            let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+            return (value["hookSpecificOutput"] as? [String: Any])?["displayContent"] as? String
+        }
+        let open = "\u{27E6}", close = "\u{27E7}"
+        let prompt: [String: Any] = ["hook_event_name": "UserPromptSubmit", "session_id": "synthetic-ring-session", "prompt_id": "synthetic-prompt", "prompt": "PRIVATE"]
+        XCTAssertEqual(try run(prompt), "", "The ring stays off until its switch file exists")
+        try Data("on\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
+        XCTAssertTrue(try run(prompt).contains("additionalContext"))
+        func message(_ index: Int, _ delta: String, agent: String? = nil) -> [String: Any] {
+            var value = prompt.merging(["hook_event_name": "MessageDisplay", "turn_id": "turn", "message_id": "message", "final": false, "index": index, "delta": delta]) { _, new in new }
+            if let agent { value["agent_id"] = agent }
+            return value
+        }
+        // Claude shows displayContent in place of the lines; its stored message keeps the marker.
+        XCTAssertEqual(try shown(run(message(0, open + "62%" + close + " Reading the docs next.\n"))), "Reading the docs next.\n")
+        XCTAssertEqual(try shown(run(message(0, open + "63%" + close + "\n\n## Next\n"))), "## Next\n")
+        for unchanged in [message(1, open + "70%" + close + " later\n"), message(0, "No marker\n"),
+                          message(0, open + "120%" + close + " x\n"), message(0, open + "50%" + close + " x\n", agent: "child")] {
+            XCTAssertEqual(try run(unchanged), "", "Only a valid leading marker of a main-thread message is hidden")
+        }
+        // "tool" in the switch asks for the report_progress tool of Pacer's plugin, but only a
+        // session that started with the plugin enabled has it; its input is read before the call runs.
+        try Data("tool\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
+        XCTAssertEqual(try run(prompt), "", "A session without the plugin is never asked to call it")
+        let start: [String: Any] = ["hook_event_name": "SessionStart", "session_id": "synthetic-ring-session", "source": "startup"]
+        XCTAssertEqual(try run(start), "")
+        XCTAssertEqual(try run(prompt), "", "A session that started before the plugin was enabled still lacks it")
+        try JSONSerialization.data(withJSONObject: ["enabledPlugins": ["pacer@pacer": true]]).write(to: home.appendingPathComponent("settings.json"))
+        // Claude Desktop adds a newly enabled plugin to running sessions; other clients wait for a new session.
+        let running = prompt.merging(["session_id": "synthetic-running-session"]) { _, new in new }
+        XCTAssertEqual(try run(running), "")
+        XCTAssertTrue(try run(running, entrypoint: "claude-desktop").contains(ClaudeHookInstaller.progressTool))
+        XCTAssertEqual(try run(start), "")
+        XCTAssertTrue(try run(prompt).contains(ClaudeHookInstaller.progressTool))
+        XCTAssertFalse(try run(prompt).contains("points or more"), "Without a step, every batch reports")
+        try Data("tool 15\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
+        XCTAssertTrue(try run(prompt).contains("moves 15 points or more"))
+        try Data("tool progress\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
+        XCTAssertTrue(try run(prompt).contains("whenever you make progress"))
+        try Data("tool 99\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
+        XCTAssertFalse(try run(prompt).contains("points or more"), "A step outside 1-50 falls back to every batch")
+        func report(_ input: [String: Any], _ id: String, tool: String = "mcp__pacer__report_progress", agent: String? = nil) -> [String: Any] {
+            var value = prompt.merging(["hook_event_name": "PreToolUse", "tool_name": tool, "tool_use_id": id, "tool_input": input]) { _, new in new }
+            if let agent { value["agent_id"] = agent }
+            return value
+        }
+        for event in [report(["percent": 55], "toolu_a"), report(["percent": true], "toolu_b"), report(["percent": 101], "toolu_c"),
+                      report(["percent": 70], "toolu_d", tool: "Read"), report(["percent": 80], "toolu_e", agent: "child")] {
+            XCTAssertEqual(try run(event), "", "A tool call never changes Claude's decision")
+        }
+        // A woken turn continues the typed request: no second line, and its prompt row says so.
+        let wake = prompt.merging(["prompt_id": "woken-prompt", "prompt": "<task-notification>\n<task-id>x</task-id>"]) { _, new in new }
+        XCTAssertEqual(try run(wake), "")
+        // Stop: background work makes the turn wait; otherwise the request simply ends (Pacer fills the ring).
+        let stop: [String: Any] = ["hook_event_name": "Stop", "session_id": "synthetic-ring-session", "prompt_id": "synthetic-prompt",
+                                   "stop_hook_active": false, "session_crons": [],
+                                   "background_tasks": [["id": "b1", "type": "shell", "status": "running", "description": "PRIVATE"]]]
+        XCTAssertEqual(try run(stop), "", "Waiting for background work never blocks the stop")
+        var unnamed = stop; unnamed["background_tasks"] = [["id": "b2", "type": "local_powershell", "status": "running", "description": "PRIVATE"]]
+        XCTAssertEqual(try run(unnamed), "", "A task kind Claude Code has no label for still counts as work")
+        var idle = stop; idle["background_tasks"] = [["id": "m1", "type": "monitor", "status": "running", "description": "PRIVATE"]]
+        XCTAssertEqual(try run(idle), "", "A stop with only a monitor left ends the request without holding the turn")
+        var asked = idle; asked["background_tasks"] = []
+        XCTAssertEqual(try run(asked), "", "A stop below 100 is never held for a final estimate")
+        let all = try String(contentsOf: pacer.appendingPathComponent("events.jsonl"), encoding: .utf8).split(separator: "\n")
+            .compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        let rows = all.filter { $0["kind"] as? String == "progress" }
+        XCTAssertEqual(rows.compactMap { $0["progress"] as? Int }, [62, 63, 55])
+        XCTAssertEqual(all.first { $0["promptId"] as? String == "woken-prompt" && $0["kind"] as? String == "prompt" }?["wake"] as? Bool, true)
+        let waits = all.filter { $0["kind"] as? String == "waiting" }
+        XCTAssertEqual(waits.compactMap { $0["background"] as? [String] }, [["shell"], ["local_powershell"], [], []])
+        XCTAssertEqual(waits.suffix(2).compactMap { $0["wakeups"] as? Int }, [0, 0], "A later Stop without work clears an earlier attempted wait")
+        XCTAssertFalse(all.contains { String(describing: $0).contains("PRIVATE") && $0["kind"] as? String != "prompt" })
+    }
 }
