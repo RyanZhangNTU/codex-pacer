@@ -1593,7 +1593,8 @@ actor EngineRuntime {
     private func bindClaudeRemoteSetup() async {
         guard let setup = claudeRemoteSetup else { return }
         await setup.configure(targets: monitoredRemoteTargets(.claude), statuses: claudeRemoteStatuses,
-            enabled: active && (monitorSSH || monitorWSL) && enabled.contains(.claude), version: lifecycle.version(.claude),
+            enabled: active && (monitorSSH || monitorWSL) && enabled.contains(.claude), progressRing: claudeProgressRing,
+            version: lifecycle.version(.claude),
             update: { [weak self] rows, version in await self?.receiveClaudeRemoteSetups(rows, version: version) },
             didConfigure: { [weak self] source, version in await self?.refreshConfiguredClaudeRemote(source, version: version) })
     }

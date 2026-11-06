@@ -29,6 +29,12 @@ ENVIRONMENT = {
     'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT': 'http://127.0.0.1:4319/v1/traces',
     'OTEL_TRACES_EXPORT_INTERVAL': '1000'
 }
+# The progress ring, as ClaudeHookInstaller manages it locally: a switch file,
+# Pacer's Claude Code plugin in a local marketplace and the entries that list,
+# enable and pre-approve its one tool. Turning it off removes exactly those.
+PROGRESS_TOOL = 'mcp__plugin_pacer_pacer__report_progress'
+PLUGIN_KEY = 'pacer@pacer'
+PLUGIN_DESCRIPTION = "Reports progress to Pacer's progress ring."
 
 
 class Failure(Exception):
@@ -171,12 +177,97 @@ def removing_owned(groups, owned):
     return result
 
 
+def set_plugin(value, wanted, root):
+    # Leaves settings whose shapes Pacer does not expect untouched, as locally.
+    markets = value.get('extraKnownMarketplaces', {})
+    enabled = value.get('enabledPlugins', {})
+    permissions = value.get('permissions', {})
+    if not isinstance(markets, dict) or not isinstance(enabled, dict) or not isinstance(permissions, dict):
+        return
+    allow = permissions.get('allow', [])
+    if not isinstance(allow, list) or any(not isinstance(item, str) for item in allow):
+        return
+    source = {'source': {'source': 'directory', 'path': str(root)}}
+    ours = markets.get('pacer') == source
+    if wanted:
+        markets['pacer'] = source
+        enabled[PLUGIN_KEY] = True
+        if PROGRESS_TOOL not in allow:
+            allow = allow + [PROGRESS_TOOL]
+    else:
+        if not ours and PLUGIN_KEY not in enabled and PROGRESS_TOOL not in allow:
+            return
+        if ours:
+            markets.pop('pacer', None)
+            enabled.pop(PLUGIN_KEY, None)
+        allow = [item for item in allow if item != PROGRESS_TOOL]
+    for key, item in (('extraKnownMarketplaces', markets), ('enabledPlugins', enabled)):
+        if item:
+            value[key] = item
+        else:
+            value.pop(key, None)
+    if allow:
+        permissions['allow'] = allow
+    else:
+        permissions.pop('allow', None)
+    if permissions:
+        value['permissions'] = permissions
+    else:
+        value.pop('permissions', None)
+
+
+def plugin_files(home, root, server_bytes):
+    plugin = root / 'pacer'
+    script = plugin / 'progress_mcp.py'
+    catalog = {'name': 'pacer', 'owner': {'name': 'Codex Pacer'},
+               'plugins': [{'name': 'pacer', 'source': './pacer', 'description': PLUGIN_DESCRIPTION}]}
+    manifest = {'name': 'pacer', 'version': '1.0.0', 'description': PLUGIN_DESCRIPTION,
+                'mcpServers': {'pacer': {'command': 'python3', 'args': ['-S', str(script), '--home', str(home)]}}}
+    return [(root / '.claude-plugin' / 'marketplace.json', encoded(catalog)),
+            (plugin / '.claude-plugin' / 'plugin.json', encoded(manifest)), (script, server_bytes)]
+
+
+def apply_progress_ring(home, directory, wanted, server_bytes):
+    # The switch file holds `tool`; an older `on` is upgraded and a hand-written
+    # mode such as `tool 15` is kept. Off removes it.
+    flag = directory / 'progress-ring'
+    safe(flag)
+    current = read_bytes(flag)
+    if not wanted:
+        if current is not None:
+            flag.unlink()
+        return
+    root = directory / 'plugin'
+    for folder in (root, root / '.claude-plugin', root / 'pacer', root / 'pacer' / '.claude-plugin'):
+        if not folder.exists():
+            os.mkdir(str(folder), 0o700)
+        safe(folder, directory=True)
+    for path, raw in plugin_files(home, root, server_bytes):
+        if read_bytes(path) != raw:
+            atomic_bytes(path, raw)
+    if current is None or current == b'on\n':
+        atomic_bytes(flag, b'tool\n')
+
+
 def install(payload):
     path = payload.get('home')
     emitter = payload.get('hook')
     require_home = payload.get('requireHome', False)
+    progress_ring = payload.get('progressRing', False)
+    server = payload.get('progressServer')
     if not isinstance(path, str) or len(path) > 4096 or not isinstance(emitter, str) or len(emitter) > LIMIT or not isinstance(require_home, bool):
         raise Failure('invalidPayload')
+    if not isinstance(progress_ring, bool) or (progress_ring and (not isinstance(server, str) or len(server) > LIMIT)):
+        raise Failure('invalidPayload')
+    server_bytes = b''
+    if progress_ring:
+        try:
+            server_bytes = base64.b64decode(server, validate=True)
+            server_bytes.decode('utf-8')
+        except (ValueError, UnicodeError):
+            raise Failure('invalidPayload')
+        if not server_bytes:
+            raise Failure('invalidPayload')
     try:
         hook_bytes = base64.b64decode(emitter, validate=True)
         hook_bytes.decode('utf-8')
@@ -242,6 +333,7 @@ def install(payload):
     else:
         hooks.pop(DISPLAY_EVENT, None)
     value['hooks'] = hooks
+    set_plugin(value, progress_ring, directory / 'plugin')
     previous_line = value.get('statusLine')
     if 'statusLine' in value and (not isinstance(previous_line, dict) or previous_line.get('type') != 'command' or not isinstance(previous_line.get('command'), str)):
         raise Failure('invalidSettings')
@@ -265,6 +357,7 @@ def install(payload):
     # the user's files, their formatting and modification times alone.
     if read_bytes(script_path) != hook_bytes:
         atomic_bytes(script_path, hook_bytes, 0o700)
+    apply_progress_ring(home, directory, progress_ring, server_bytes)
     if read_bytes(settings_path) != original_settings or read_bytes(manifest_path) != original_manifest:
         raise Failure('changedSettings')
     manifest_changed = original_manifest is None or manifest != object_bytes(original_manifest)

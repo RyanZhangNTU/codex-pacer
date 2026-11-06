@@ -174,8 +174,8 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
 
-ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded'}
-KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request'}
+ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake'}
+KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
 
 def sanitized(raw):
     try: value = json.loads(raw)
@@ -195,6 +195,16 @@ def sanitized(raw):
     if 'promptOwned' in out and out['promptOwned'] is not True:out.pop('promptOwned')
     if 'embedded' in out and not isinstance(out['embedded'], bool):out.pop('embedded')
     if 'agentStatus' in out and out['agentStatus'] not in ('completed','async_launched','failed','killed'):out.pop('agentStatus')
+    # The progress ring's rows: a whole-number estimate, the kinds of background
+    # work a stopped turn waits for (never their descriptions) and a wake flag.
+    if 'progress' in out and (type(out['progress']) is not int or not 0<=out['progress']<=100):out.pop('progress')
+    if out['kind']=='progress' and 'progress' not in out:return []
+    if 'background' in out:
+        kinds=out['background']
+        if isinstance(kinds,list) and all(isinstance(k,str) for k in kinds):out['background']=[k[:24] for k in kinds[:16]]
+        else:out.pop('background')
+    if 'wakeups' in out and (type(out['wakeups']) is not int or not 0<=out['wakeups']<=16):out.pop('wakeups')
+    if 'wake' in out and out['wake'] is not True:out.pop('wake')
     return [out]
 
 OTEL_ATTRS = {'session.id','prompt.id','llm_request.context','agent_id','parent_agent_id','request_id','gen_ai.response.id','output_tokens','duration_ms','ttft_ms','first_content_ms','model','gen_ai.request.model','success'}
@@ -609,7 +619,7 @@ def main():
     try:interval=min(5,max(.1,float(sys.argv[2])))
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
-    urgent={'prompt','responseDelta','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
+    urgent={'prompt','responseDelta','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
     def queue_rows(rows):
         nonlocal pending,pending_due
         if not rows:return
