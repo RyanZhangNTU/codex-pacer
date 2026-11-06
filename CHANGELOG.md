@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.4.0 (in development)
+## 4.3.0 (in development)
 
 - Windows preview: Claude's self-reported progress ring. A switch in Settings → Claude adds Pacer's Claude Code plugin, whose one tool, report_progress, lets Claude report how much of your request is done. The ring follows the whole request: it waits while Claude's own background work runs, continues when Claude resumes, and ends only when nothing is left running. When Claude finishes normally, the ring fills to 100%. Tasks in Claude cloud Projects, which can't run the plugin, keep the dashed ring until they finish.
 
