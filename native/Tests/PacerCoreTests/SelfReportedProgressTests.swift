@@ -172,6 +172,73 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertEqual(try ring(at: 201).state, .pending)
     }
 
+    func testUnownedTranscriptEstimateCannotBorrowTheCurrentTurn() throws {
+        var state = ClaudeActivityState()
+        let start = now.timeIntervalSince1970
+        let records: [[String: Any]] = [
+            ["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": turn, "at": start],
+            ["kind": "progress", "origin": "hook", "sessionId": session, "promptId": turn, "progress": 40, "at": start + 1]
+        ]
+        for record in records { state.consume(ClaudeActivityRecord.encode(record)!, now: now.addingTimeInterval(100)) }
+        let raw: [String: Any] = ["type": "assistant", "sessionId": session, "uuid": "orphan-answer", "parentUuid": "missing-parent",
+            "timestamp": ISO8601DateFormatter().string(from: now.addingTimeInterval(2)),
+            "message": ["role": "assistant", "content": [["type": "text", "text": "⟦90%⟧ PRIVATE_REPLY"]]]]
+        let rows = ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(raw)!, sessionID: session)
+        XCTAssertTrue(rows.contains { String(decoding: $0, as: UTF8.self).contains(#""unownedTurn":true"#) })
+        for row in rows { state.consume(row, now: now.addingTimeInterval(100)) }
+        XCTAssertEqual(state.activities.first?.currentProgress?.percent, 40)
+        XCTAssertEqual(state.activities.first?.currentProgress?.turnID, turn)
+        XCTAssertEqual(state.activities.first?.phase, .running)
+    }
+
+    func testWaitingEndsWhenTheSameTurnResumesOrReportsAnEmptyStopSnapshot() throws {
+        let start = now.timeIntervalSince1970
+        for resumed in ["thinking", "response", "toolStart", "emptyStop"] {
+            var state = ClaudeActivityState()
+            func send(_ kind: String, _ offset: Double, _ extra: [String: Any] = [:]) {
+                var record: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": session, "promptId": turn, "itemId": "item", "at": start + offset]
+                record.merge(extra) { _, new in new }; state.consume(ClaudeActivityRecord.encode(record)!, now: now.addingTimeInterval(100))
+            }
+            send("prompt", 0); send("progress", 1, ["progress": 40])
+            send("waiting", 10, ["background": ["shell"], "wakeups": 0])
+            // A delayed model record from before the Stop cannot clear the wait.
+            send("response", 9, ["origin": "transcript"])
+            XCTAssertNotNil(state.activities.first?.currentBackgroundWait)
+            if resumed == "emptyStop" { send("waiting", 11, ["background": [String](), "wakeups": 0]) }
+            else { send(resumed, 11, ["origin": resumed == "toolStart" ? "hook" : "transcript", "attention": "none"]) }
+            XCTAssertNil(state.activities.first?.currentBackgroundWait, resumed)
+            send("waiting", 10, ["background": ["shell"], "wakeups": 0])
+            XCTAssertNil(state.activities.first?.currentBackgroundWait, "An older Stop cannot replace resumed work or a newer empty snapshot")
+            send("stopVerified", 12, ["origin": "transcript"])
+            let ended = try XCTUnwrap(state.activities.first)
+            XCTAssertEqual(ended.phase, .completed, resumed)
+            XCTAssertEqual(TaskProgressRing.make(ended, phase: ended.phase, enabled: true, at: now.addingTimeInterval(15))?.fraction, 1)
+        }
+    }
+
+    func testInterruptedOrFailedBackgroundWaitCannotCarryProgressToANewRequest() throws {
+        let start = now.timeIntervalSince1970
+        for ending in ["interrupt", "failure"] {
+            for wake in [false, true] {
+                var state = ClaudeActivityState()
+                let records: [[String: Any]] = [
+                    ["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": turn, "at": start],
+                    ["kind": "progress", "origin": "hook", "sessionId": session, "promptId": turn, "progress": 40, "at": start + 1],
+                    ["kind": "waiting", "origin": "hook", "sessionId": session, "promptId": turn, "background": [String](), "wakeups": 1, "at": start + 2],
+                    ["kind": ending, "origin": "transcript", "sessionId": session, "promptId": turn, "at": start + 3]]
+                for record in records { state.consume(ClaudeActivityRecord.encode(record)!, now: now.addingTimeInterval(100)) }
+                XCTAssertEqual(state.activities.first?.phase, .interrupted)
+                XCTAssertEqual(state.activities.first?.currentProgress?.percent, 40, "The ended request retains its own estimate")
+                XCTAssertNil(state.activities.first?.currentBackgroundWait)
+                state.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session,
+                    "promptId": nextTurn, "wake": wake, "at": start + 4])!, now: now.addingTimeInterval(100))
+                let next = try XCTUnwrap(state.activities.first)
+                XCTAssertNil(next.currentProgress, "A new request after \(ending) starts without the old estimate")
+                XCTAssertEqual(TaskProgressRing.make(next, phase: next.phase, enabled: true, at: now.addingTimeInterval(5))?.state, .pending)
+            }
+        }
+    }
+
     func testRingModeFollowsLongStepsAttentionAndEndings() throws {
         func activity(_ records: [[String: Any]]) throws -> SessionActivity {
             var state = ClaudeActivityState()

@@ -177,30 +177,53 @@ def removing_owned(groups, owned):
     return result
 
 
-def set_plugin(value, wanted, root):
+def set_plugin(value, manifest, wanted, root):
     # Leaves settings whose shapes Pacer does not expect untouched, as locally.
     markets = value.get('extraKnownMarketplaces', {})
     enabled = value.get('enabledPlugins', {})
     permissions = value.get('permissions', {})
     if not isinstance(markets, dict) or not isinstance(enabled, dict) or not isinstance(permissions, dict):
+        if wanted:
+            raise Failure('invalidSettings')
         return
     allow = permissions.get('allow', [])
     if not isinstance(allow, list) or any(not isinstance(item, str) for item in allow):
+        if wanted:
+            raise Failure('invalidSettings')
         return
     source = {'source': {'source': 'directory', 'path': str(root)}}
     ours = markets.get('pacer') == source
+    owned = manifest.get('progressPlugin')
+    owned = dict(owned) if isinstance(owned, dict) else {}
     if wanted:
-        markets['pacer'] = source
-        enabled[PLUGIN_KEY] = True
-        if PROGRESS_TOOL not in allow:
+        if ('pacer' in markets and not ours) or (PLUGIN_KEY in enabled and type(enabled[PLUGIN_KEY]) is not bool):
+            raise Failure('invalidSettings')
+        if 'pacer' not in markets and 'marketplaceAdded' not in owned:
+            markets['pacer'] = source
+            owned['marketplaceAdded'] = True
+        if enabled.get(PLUGIN_KEY) is not True and 'enabledPrevious' not in owned:
+            owned['enabledPrevious'] = enabled.get(PLUGIN_KEY)
+            enabled[PLUGIN_KEY] = True
+        if PROGRESS_TOOL not in allow and 'permissionAdded' not in owned:
             allow = allow + [PROGRESS_TOOL]
+            owned['permissionAdded'] = True
+        if owned:
+            manifest['progressPlugin'] = owned
     else:
-        if not ours and PLUGIN_KEY not in enabled and PROGRESS_TOOL not in allow:
+        if not owned:
             return
-        if ours:
-            markets.pop('pacer', None)
-            enabled.pop(PLUGIN_KEY, None)
-        allow = [item for item in allow if item != PROGRESS_TOOL]
+        if 'pacer' not in markets or ours:
+            if ours and owned.get('marketplaceAdded') is True:
+                markets.pop('pacer', None)
+            if 'enabledPrevious' in owned and enabled.get(PLUGIN_KEY) is True:
+                if owned['enabledPrevious'] is None:
+                    enabled.pop(PLUGIN_KEY, None)
+                else:
+                    enabled[PLUGIN_KEY] = owned['enabledPrevious']
+            if owned.get('permissionAdded') is True and PROGRESS_TOOL in allow:
+                allow = list(allow)
+                allow.remove(PROGRESS_TOOL)
+        manifest.pop('progressPlugin', None)
     for key, item in (('extraKnownMarketplaces', markets), ('enabledPlugins', enabled)):
         if item:
             value[key] = item
@@ -333,7 +356,7 @@ def install(payload):
     else:
         hooks.pop(DISPLAY_EVENT, None)
     value['hooks'] = hooks
-    set_plugin(value, progress_ring, directory / 'plugin')
+    set_plugin(value, manifest, progress_ring, directory / 'plugin')
     previous_line = value.get('statusLine')
     if 'statusLine' in value and (not isinstance(previous_line, dict) or previous_line.get('type') != 'command' or not isinstance(previous_line.get('command'), str)):
         raise Failure('invalidSettings')

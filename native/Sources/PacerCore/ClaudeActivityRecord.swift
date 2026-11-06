@@ -355,7 +355,8 @@ struct ClaudeActivityState: Sendable {
         // spool. It still belongs to the current turn, so it is applied
         // before the newest-evidence rule that lifecycle records follow.
         if let percent = record["progress"] as? Int, kind == "progress" || kind == "response" {
-            if let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID, turn == value.turnID {
+            if record["unownedTurn"] as? Bool != true,
+               let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID, turn == value.turnID {
                 value.reportProgress(percent, at: date, turnID: turn); sessions[key] = value
             }
             if kind == "progress" { return }
@@ -363,6 +364,7 @@ struct ClaudeActivityState: Sendable {
         // The Stop hook saw background work this turn waits for: the request
         // is paused until a notification wakes it, so its ending is not shown.
         if kind == "waiting" {
+            guard record["unownedTurn"] as? Bool != true, date >= (value.lastObserved ?? .distantPast) else { return }
             if let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID, turn == value.turnID {
                 let kinds = (record["background"] as? [String] ?? []).map { String($0.prefix(24)) }
                 value.waitForBackground(kinds: kinds, wakeups: record["wakeups"] as? Int ?? 0, at: date); sessions[key] = value
@@ -510,9 +512,10 @@ struct ClaudeActivityState: Sendable {
             if record["typedInterruptMarker"] as? Bool == true { typedInterruptPrompts[key] = turn }
             else { typedInterruptPrompts.removeValue(forKey: key) }
             let carried = value.currentProgress, waited = value.currentBackgroundWait != nil
+            let continuesRequest = [.running, .waitingForInput].contains(value.phase) && (record["wake"] as? Bool == true || waited)
             value.applyRuntime(event(attaching ? "turn/attached" : "turn/started"))
             // A wake continues the request; so does a prompt typed while it waits.
-            if let carried, record["wake"] as? Bool == true || waited { value.carryProgress(carried, at: date) }
+            if let carried, continuesRequest { value.carryProgress(carried, at: date) }
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
         case "subagentStart":
@@ -521,6 +524,7 @@ struct ClaudeActivityState: Sendable {
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
         case "toolStart":
+            value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/started", ["itemId": item, "itemType": "commandExecution"]))
             if let kind = (record["attention"] as? String).flatMap(PendingAttentionRequest.Kind.init(rawValue:)) {
                 attention(kind, thread: thread, item: item, at: date)
@@ -534,6 +538,7 @@ struct ClaudeActivityState: Sendable {
                 value.applyRuntime(event("thread/status/changed", ["status": "active", "flags": [pending.kind == .approval ? "waitingOnApproval" : "waitingOnUserInput"]]))
             } else { value.applyRuntime(event("thread/status/changed", ["status": "active"])) }
         case "thinking", "response":
+            value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/started", ["itemId": item, "itemType": kind == "thinking" ? "reasoning" : "agentMessage", "hasText": false]))
         case "responseDelta":
             // Old adapters could copy the *current* prompt into a delayed
@@ -542,6 +547,7 @@ struct ClaudeActivityState: Sendable {
                   ClaudeActivityRecord.identifier(record["promptId"] as? String) != nil,
                   record["partial"] as? Bool == true, record["index"] as? Int == 0,
                   ClaudeActivityRecord.identifier(record["displayTurnId"] as? String) != nil, record["hasText"] as? Bool == true else { return }
+            value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/agentMessage/delta", ["itemId": item, "hasText": true]))
         case "approval", "input":
             attention(kind == "approval" ? .approval : .input, thread: thread, item: item, at: date)

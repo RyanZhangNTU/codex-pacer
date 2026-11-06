@@ -144,10 +144,11 @@ def progress_stop(home,value):
     tasks=value.get('background_tasks');crons=value.get('session_crons')
     waited=[str(task.get('type'))[:24] for task in tasks if isinstance(task,dict) and isinstance(task.get('type'),str) and task.get('type') not in IDLE][:16] if isinstance(tasks,list) else []
     wakeups=min(len(crons),16) if isinstance(crons,list) else 0
-    if waited or wakeups:
-        row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
-        if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
-        spool(home,[row])
+    # An empty snapshot clears a previous attempted Stop that another hook
+    # continued. It must not leave the request waiting after its final Stop.
+    row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
+    if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
+    spool(home,[row])
 def statusline(home,value,raw):
     import math
     rates=value.get('rate_limits');payload={}

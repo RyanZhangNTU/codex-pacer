@@ -212,6 +212,59 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         XCTAssertNil(value["extraKnownMarketplaces"])
         await setup.shutdown()
     }
+    func testRemoteProgressPluginRejectsNameCollisionsAndPreservesUntrackedPermissions() async throws {
+        let (root, exe, env) = try fixture(), home = root.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent("settings.json")
+        let original: [String: Any] = ["extraKnownMarketplaces": ["pacer": ["source": ["source": "directory", "path": "/user/market"]]],
+            "enabledPlugins": ["pacer@pacer": false], "permissions": ["allow": [ClaudeHookInstaller.progressTool, "Read"]]]
+        let bytes = try JSONSerialization.data(withJSONObject: original); try bytes.write(to: settings)
+        let setup = installer(exe, env: env)
+        do { _ = try await setup.install(target: target, requireHome: true, progressRing: true); XCTFail("A foreign marketplace must not be replaced") }
+        catch { }
+        XCTAssertEqual(try Data(contentsOf: settings), bytes)
+        _ = try await setup.install(target: target, requireHome: true)
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+        for key in ["extraKnownMarketplaces", "enabledPlugins", "permissions"] {
+            XCTAssertTrue(NSDictionary(dictionary: value[key] as! [String: Any]).isEqual(to: original[key] as! [String: Any]), key)
+        }
+        await setup.shutdown()
+    }
+
+    func testRemoteProgressPluginRestoresPriorValuesAndPreservesARepointedNamespace() async throws {
+        let (root, exe, env) = try fixture(), home = root.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent("settings.json")
+        let setup = installer(exe, env: env)
+        func current() throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]) }
+        // The Windows SSH fixture uses native Python paths. Capture its exact
+        // marketplace spelling instead of inventing a different slash form.
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        let marketplace = try XCTUnwrap(current()["extraKnownMarketplaces"])
+        _ = try await setup.install(target: target, requireHome: true)
+        let original: [String: Any] = ["extraKnownMarketplaces": marketplace,
+            "enabledPlugins": ["pacer@pacer": false], "permissions": ["allow": [ClaudeHookInstaller.progressTool, "Read"]]]
+        try JSONSerialization.data(withJSONObject: original).write(to: settings)
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        XCTAssertEqual((try current()["enabledPlugins"] as? [String: Bool])?["pacer@pacer"], true)
+        _ = try await setup.install(target: target, requireHome: true)
+        let restored = try current()
+        for key in ["extraKnownMarketplaces", "enabledPlugins", "permissions"] {
+            XCTAssertTrue(NSDictionary(dictionary: restored[key] as! [String: Any]).isEqual(to: original[key] as! [String: Any]), key)
+        }
+        _ = try await setup.install(target: target, requireHome: true, progressRing: true)
+        var edited = try current()
+        edited["extraKnownMarketplaces"] = ["pacer": ["source": ["source": "directory", "path": "/user/replacement"]]]
+        edited["enabledPlugins"] = ["pacer@pacer": false]
+        try JSONSerialization.data(withJSONObject: edited).write(to: settings)
+        _ = try await setup.install(target: target, requireHome: true)
+        let kept = try current()
+        for key in ["extraKnownMarketplaces", "enabledPlugins", "permissions"] {
+            XCTAssertTrue(NSDictionary(dictionary: kept[key] as! [String: Any]).isEqual(to: edited[key] as! [String: Any]), key)
+        }
+        await setup.shutdown()
+    }
+
     func testSwitchingTheProgressRingSetsConnectedHostsUpAgain() async throws {
         let capture = RingCapture(), off = String(repeating: "e", count: 64), on = String(repeating: "f", count: 64)
         let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { $0 ? on : off }, install: { _, ring in

@@ -57,6 +57,7 @@ public sealed class TaskProgressRing : Grid
     /// Endless clocks are leased so stopping one removes it from WPF's clock
     /// manager; a clock only detached from its property ticks until a GC.
     private AnimationLease? spinLease, dotLease, breathLease;
+    private AnimationLease? sweepLease;
     private bool dotting => dotLease != null;
     /// The element whose opacity breathes while the request waits, if any.
     private UIElement? breathingTarget;
@@ -64,6 +65,7 @@ public sealed class TaskProgressRing : Grid
     /// attention, waiting, done, interrupted or failed.
     private string mode = "working";
     private double targetFraction;
+    private string? taskID;
 
     private sealed class Memory
     {
@@ -98,6 +100,7 @@ public sealed class TaskProgressRing : Grid
     /// the row can shrink or restore its icon in step with it.
     internal Change Show(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate)
     {
+        taskID = id;
         // Making the ring visible raises IsVisibleChanged synchronously. Its
         // looping motion starts once, from the finished state: started midway,
         // it would read stale fields and a later opacity fade would cancel it.
@@ -118,7 +121,7 @@ public sealed class TaskProgressRing : Grid
             // The turn ended without an estimate, or the switch went off.
             ink.Color = previous.Color;
             if (previous.State == "pending") { pending.Opacity = 0.6; track.Opacity = 0; }
-            else { track.Opacity = 1; DisplayFraction = previous.Displayed(now); }
+            else { track.Opacity = 1; SetFraction(previous.Displayed(now)); }
             Visibility = Visibility.Visible;
             if (!animate) { Visibility = Visibility.Collapsed; return Change.Disappeared; }
             var fade = new DoubleAnimation(1, 0, TimeSpan.FromSeconds(0.3)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn } };
@@ -162,7 +165,7 @@ public sealed class TaskProgressRing : Grid
             }
             else
             {
-                DisplayFraction = 0; track.Opacity = 0; pending.Opacity = 0.6;
+                SetFraction(0); track.Opacity = 0; pending.Opacity = 0.6;
                 if (leftBreath && previous!.State == "pending") EaseOutOfBreath(pending, 0.6, 0.6, now);
             }
             Memories[id] = memory;
@@ -174,10 +177,11 @@ public sealed class TaskProgressRing : Grid
         if (previous?.State == "reported" && Math.Abs(previous.To - target) < 0.0005)
         {
             // The same estimate on a rebuilt row: finish whatever was running.
-            double remaining = previous.Start + previous.Duration - now, shown = previous.Displayed(now);
+            double remaining = previous.Start + previous.Duration - now;
             track.Opacity = 1; pending.Opacity = 0; pendingShown = false;
-            if (animate && remaining > 0.02) Sweep(shown, target, remaining, previous.Ease, 0);
-            else DisplayFraction = target;
+            if (animate && remaining > 0.02)
+                Sweep(previous.From, target, previous.Duration, previous.Ease, Math.Max(0, previous.Start - now), Math.Max(0, now - previous.Start));
+            else SetFraction(target);
             previous.Seen = now; previous.Color = color;
             Fade(previous.Stale, dimmed, animate);
             if (leftBreath) EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
@@ -209,7 +213,7 @@ public sealed class TaskProgressRing : Grid
         }
         pendingShown = false;
         if (animate && previous != null && Math.Abs(target - from) > 0.0005) Sweep(from, target, duration, ease2, delay);
-        else { arc.BeginAnimation(OpacityProperty, null); BeginAnimation(DisplayFractionProperty, null); DisplayFraction = target; duration = 0; }
+        else { arc.BeginAnimation(OpacityProperty, null); SetFraction(target); duration = 0; }
         Fade(previous?.Stale ?? false, dimmed, animate && previous != null);
         if (leftBreath && previous!.State == "reported") EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
         bool full = target >= 0.9995;
@@ -230,9 +234,21 @@ public sealed class TaskProgressRing : Grid
 
     /// Motion follows the island: reduced motion, hidden or occluded panels
     /// show final values and never spin.
-    internal void SetMotion(bool value) { motion = value; UpdateSpin(); }
+    internal void SetMotion(bool value)
+    {
+        motion = value;
+        if (!value)
+        {
+            SetFraction(targetFraction);
+            // A rebuilt row inherits the settled value after reduced motion.
+            if (taskID != null && Memories.TryGetValue(taskID, out var memory))
+            { memory.From = memory.To; memory.Start = Now; memory.Duration = 0; }
+        }
+        UpdateSpin();
+    }
     internal void Halt()
     {
+        sweepLease?.Dispose(); sweepLease = null;
         spinLease?.Dispose(); spinLease = null; dotLease?.Dispose(); dotLease = null;
         breathLease?.Dispose(); breathLease = null; breathingTarget = null;
         rotation.BeginAnimation(RotateTransform.AngleProperty, null);
@@ -243,12 +259,19 @@ public sealed class TaskProgressRing : Grid
         ink.BeginAnimation(SolidColorBrush.ColorProperty, null);
     }
 
-    private void Sweep(double from, double to, double seconds, IEasingFunction? ease, double delay)
+    private void SetFraction(double value)
     {
-        DisplayFraction = from;
+        sweepLease?.Dispose(); sweepLease = null;
+        BeginAnimation(DisplayFractionProperty, null); DisplayFraction = value;
+    }
+    private void Sweep(double from, double to, double seconds, IEasingFunction? ease, double delay, double elapsed = 0)
+    {
+        SetFraction(from);
         var animation = new DoubleAnimation(from, to, TimeSpan.FromSeconds(Math.Max(0.01, seconds)))
             { EasingFunction = ease, BeginTime = TimeSpan.FromSeconds(delay) };
-        BeginAnimation(DisplayFractionProperty, animation, HandoffBehavior.SnapshotAndReplace);
+        sweepLease = new AnimationLease(animation, clock => ApplyAnimationClock(DisplayFractionProperty, clock),
+            () => { sweepLease = null; DisplayFraction = to; });
+        if (elapsed > 0) sweepLease.Seek(TimeSpan.FromSeconds(elapsed));
     }
     private void Fade(bool wasStale, bool stale, bool animate)
     {

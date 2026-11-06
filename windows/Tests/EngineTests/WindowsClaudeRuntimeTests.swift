@@ -367,7 +367,9 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let rows = all.filter { $0["kind"] as? String == "progress" }
         XCTAssertEqual(rows.compactMap { $0["progress"] as? Int }, [62, 63, 55])
         XCTAssertEqual(all.first { $0["promptId"] as? String == "woken-prompt" && $0["kind"] as? String == "prompt" }?["wake"] as? Bool, true)
-        XCTAssertEqual(all.filter { $0["kind"] as? String == "waiting" }.compactMap { $0["background"] as? [String] }, [["shell"], ["local_powershell"]])
+        let waits = all.filter { $0["kind"] as? String == "waiting" }
+        XCTAssertEqual(waits.compactMap { $0["background"] as? [String] }, [["shell"], ["local_powershell"], [], []])
+        XCTAssertEqual(waits.suffix(2).compactMap { $0["wakeups"] as? Int }, [0, 0], "A later Stop without work clears an earlier attempted wait")
         XCTAssertFalse(all.contains { String(describing: $0).contains("PRIVATE") && $0["kind"] as? String != "prompt" })
     }
 }

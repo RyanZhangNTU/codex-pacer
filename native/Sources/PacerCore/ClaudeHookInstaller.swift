@@ -80,7 +80,10 @@ public struct ClaudeHookInstaller {
         var status = Status(hooksConfigured: configured, telemetryConfigured: telemetry,
             statusLineConfigured: ownsStatusLine(lineCommand, home: home),
             telemetryConflict: conflict)
-        status.updateAvailable = configured && (migrated(value, home: home) != nil || installedScriptOutdated(home: home) ||
+        let needsMigration: Bool
+        do { needsMigration = try migrated(value, home: home) != nil }
+        catch { needsMigration = true }
+        status.updateAvailable = configured && (needsMigration || installedScriptOutdated(home: home) ||
             progressMode(home: home) == .tool && pluginOutdated(home: home))
         return status
     }
@@ -104,7 +107,7 @@ public struct ClaudeHookInstaller {
         setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value } || progressMode(home: home) == .marker, home: home)
         value["hooks"] = hooks
         let wantsPlugin = progressMode(home: home) == .tool
-        setPlugin(&value, wanted: wantsPlugin, home: home)
+        try setPlugin(&value, manifest: &manifest, wanted: wantsPlugin, home: home)
         let previousLine = value["statusLine"]
         if let previousLine, !(previousLine is [String: Any]) { throw Failure.invalidSettings }
         let previousCommand = (previousLine as? [String: Any])?["command"] as? String
@@ -121,15 +124,7 @@ public struct ClaudeHookInstaller {
         try safe(directory); try safe(home.appendingPathComponent("settings.json")); try safe(manifestURL)
         try writeScript(home: home)
         if wantsPlugin { try writePlugin(home: home) }
-        guard try settings(home: home).bytes == existing.bytes else { throw Failure.changedSettings }
-        let previousManifest = try? storage.read(manifestURL)
-        try write(manifest, to: manifestURL)
-        do { try write(value, to: home.appendingPathComponent("settings.json")) }
-        catch {
-            if let previousManifest { try? storage.replace(manifestURL, with: previousManifest, permissions: 0o600) }
-            else { try? storage.remove(manifestURL) }
-            throw error
-        }
+        try writeInstallation(value, manifest: manifest, home: home, expected: existing.bytes)
         return details(home: home)
     }
     /// Upgrade an existing installation in place: refresh Pacer's adapter and
@@ -144,15 +139,14 @@ public struct ClaudeHookInstaller {
             guard (try? writePlugin(home: home)) != nil else { return changed }
             changed = true
         }
-        guard let updated = migrated(existing.value, home: home) else { return changed }
-        guard (try? settings(home: home).bytes) == existing.bytes,
-              (try? write(updated, to: home.appendingPathComponent("settings.json"))) != nil else { return changed }
+        guard let updated = try? migrated(existing.value, home: home),
+              (try? writeInstallation(updated.value, manifest: updated.manifest, home: home, expected: existing.bytes)) != nil else { return changed }
         return true
     }
     public func uninstall(home: URL) throws {
         try safe(home)
         let existing = try settings(home: home), directory = home.appendingPathComponent("pacer"), manifestURL = directory.appendingPathComponent("installation.json")
-        guard let manifest = try? readObject(manifestURL) else { return }
+        guard var manifest = try? readObject(manifestURL) else { return }
         var value = existing.value, hooks = value["hooks"] as? [String: Any] ?? [:]
         for event in events + [displayEvent] {
             guard let groups = hooks[event] as? [[String: Any]] else { continue }
@@ -160,7 +154,7 @@ public struct ClaudeHookInstaller {
             if remaining.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = remaining }
         }
         if hooks.isEmpty { value.removeValue(forKey: "hooks") } else { value["hooks"] = hooks }
-        setPlugin(&value, wanted: false, home: home)
+        try setPlugin(&value, manifest: &manifest, wanted: false, home: home)
         var env = value["env"] as? [String: String] ?? [:]
         for (key, setting) in manifest["addedEnvironment"] as? [String: String] ?? [:] where env[key] == setting { env.removeValue(forKey: key) }
         if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env }
@@ -176,9 +170,11 @@ public struct ClaudeHookInstaller {
     }
     /// Settings with only Pacer-owned entries brought current, or nil when
     /// nothing differs. Missing events, environment or wrappers stay absent.
-    private func migrated(_ value: [String: Any], home: URL) -> [String: Any]? {
+    private func migrated(_ value: [String: Any], home: URL) throws -> (value: [String: Any], manifest: [String: Any])? {
         guard var hooks = value["hooks"] as? [String: Any] else { return nil }
         var result = value
+        let previousManifest = (try? readObject(home.appendingPathComponent("pacer/installation.json"))) ?? [:]
+        var manifest = previousManifest
         for event in events {
             guard let groups = hooks[event] as? [[String: Any]], groups.contains(where: { containsOwned($0, home: home) }) else { continue }
             hooks[event] = ensureOwned(groups, home: home, background: false)
@@ -194,12 +190,24 @@ public struct ClaudeHookInstaller {
             setDisplayObserver(&hooks, wanted: true, home: home)
         }
         result["hooks"] = hooks
-        setPlugin(&result, wanted: mode == .tool, home: home)
+        try setPlugin(&result, manifest: &manifest, wanted: mode == .tool, home: home)
         if var line = value["statusLine"] as? [String: Any], line["command"] as? String != statusLineCommand(home: home),
            ownsStatusLine(line["command"] as? String, home: home) {
             line["command"] = statusLineCommand(home: home); result["statusLine"] = line
         }
-        return NSDictionary(dictionary: result).isEqual(to: value) ? nil : result
+        return NSDictionary(dictionary: result).isEqual(to: value) && NSDictionary(dictionary: manifest).isEqual(to: previousManifest)
+            ? nil : (result, manifest)
+    }
+    private func writeInstallation(_ value: [String: Any], manifest: [String: Any], home: URL, expected: Data?) throws {
+        guard try settings(home: home).bytes == expected else { throw Failure.changedSettings }
+        let url = home.appendingPathComponent("pacer/installation.json"), previous = try? storage.read(url)
+        try write(manifest, to: url)
+        do { try write(value, to: home.appendingPathComponent("settings.json")) }
+        catch {
+            if let previous { try? storage.replace(url, with: previous, permissions: 0o600) }
+            else { try? storage.remove(url) }
+            throw error
+        }
     }
     private func ownedEntry(home: URL, background: Bool) -> [String: Any] {
         var entry: [String: Any] = ["type": "command", "command": hookCommand(home: home), "timeout": 5]
@@ -257,24 +265,46 @@ public struct ClaudeHookInstaller {
     public static let progressTool = "mcp__plugin_pacer_pacer__report_progress"
     private static let marketplace = "pacer", pluginKey = "pacer@pacer"
     private func pluginRoot(home: URL) -> URL { home.appendingPathComponent("pacer/plugin") }
-    private func setPlugin(_ value: inout [String: Any], wanted: Bool, home: URL) {
+    private func setPlugin(_ value: inout [String: Any], manifest: inout [String: Any], wanted: Bool, home: URL) throws {
         guard value["extraKnownMarketplaces"] == nil || value["extraKnownMarketplaces"] is [String: Any],
               value["enabledPlugins"] == nil || value["enabledPlugins"] is [String: Any],
-              value["permissions"] == nil || value["permissions"] is [String: Any] else { return }
+              value["permissions"] == nil || value["permissions"] is [String: Any] else {
+            if wanted { throw Failure.invalidSettings }; return
+        }
         var markets = value["extraKnownMarketplaces"] as? [String: Any] ?? [:], enabled = value["enabledPlugins"] as? [String: Any] ?? [:]
         var permissions = value["permissions"] as? [String: Any] ?? [:]
-        guard permissions["allow"] == nil || permissions["allow"] is [String] else { return }
+        guard permissions["allow"] == nil || permissions["allow"] is [String] else {
+            if wanted { throw Failure.invalidSettings }; return
+        }
         var allow = permissions["allow"] as? [String] ?? []
         let source: [String: Any] = ["source": ["source": "directory", "path": pluginRoot(home: home).path]]
         let ours = (markets[Self.marketplace] as? [String: Any]).map { NSDictionary(dictionary: $0).isEqual(to: source) } ?? false
+        var owned = manifest["progressPlugin"] as? [String: Any] ?? [:]
         if wanted {
-            markets[Self.marketplace] = source; enabled[Self.pluginKey] = true
-            if !allow.contains(Self.progressTool) { allow.append(Self.progressTool) }
+            // A name alone does not establish ownership of a marketplace.
+            guard markets[Self.marketplace] == nil || ours else { throw Failure.invalidSettings }
+            guard enabled[Self.pluginKey] == nil || enabled[Self.pluginKey] is Bool else { throw Failure.invalidSettings }
+            if markets[Self.marketplace] == nil, owned["marketplaceAdded"] == nil {
+                markets[Self.marketplace] = source; owned["marketplaceAdded"] = true
+            }
+            if enabled[Self.pluginKey] as? Bool != true, owned["enabledPrevious"] == nil {
+                owned["enabledPrevious"] = enabled[Self.pluginKey] ?? NSNull(); enabled[Self.pluginKey] = true
+            }
+            if !allow.contains(Self.progressTool), owned["permissionAdded"] == nil {
+                allow.append(Self.progressTool); owned["permissionAdded"] = true
+            }
+            if !owned.isEmpty { manifest["progressPlugin"] = owned }
         } else {
-            guard ours || enabled[Self.pluginKey] != nil || allow.contains(Self.progressTool) else { return }
-            if ours { markets.removeValue(forKey: Self.marketplace) }
-            if ours { enabled.removeValue(forKey: Self.pluginKey) }
-            allow.removeAll { $0 == Self.progressTool }
+            guard !owned.isEmpty else { return }
+            // A user who repointed the namespace now owns its dependent entries.
+            if markets[Self.marketplace] == nil || ours {
+                if ours, owned["marketplaceAdded"] as? Bool == true { markets.removeValue(forKey: Self.marketplace) }
+                if let previous = owned["enabledPrevious"], enabled[Self.pluginKey] as? Bool == true {
+                    if previous is NSNull { enabled.removeValue(forKey: Self.pluginKey) } else { enabled[Self.pluginKey] = previous }
+                }
+                if owned["permissionAdded"] as? Bool == true, let index = allow.firstIndex(of: Self.progressTool) { allow.remove(at: index) }
+            }
+            manifest.removeValue(forKey: "progressPlugin")
         }
         func place(_ key: String, _ dictionary: [String: Any], in target: inout [String: Any]) {
             if dictionary.isEmpty { target.removeValue(forKey: key) } else { target[key] = dictionary }
