@@ -12,7 +12,7 @@ final class WindowsRemoteControlHTTPTests: XCTestCase {
     private func fixture() throws -> (LoopbackHTTPServer, WindowsHTTPClient, URLRequest) {
         let server = try LoopbackHTTPServer(), port = server.port
         var options = WindowsRemoteControlHTTP.catalog.options
-        options.proxy = { _ in .success(nil) }
+        options.proxy = { _ in .success(.winHTTP(nil)) }
         options.target = { url in
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
             return .init(host: "127.0.0.1", port: port, secure: false, path: components.percentEncodedPath)

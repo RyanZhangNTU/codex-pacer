@@ -3,6 +3,10 @@ import Foundation
 import FoundationNetworking
 import CWindowsSupport
 
+protocol WindowsHTTPRead: AnyObject, Sendable {
+    func cancel()
+}
+
 /// One GET response read through WinHTTP.
 ///
 /// FoundationNetworking on Windows keeps a socket's write-readiness source
@@ -10,7 +14,7 @@ import CWindowsSupport
 /// worker thread for as long as its response is open. This transport waits on
 /// events instead. One thread opens, reads and closes it; `cancel()` is safe
 /// from any thread.
-final class WindowsHTTPStream: @unchecked Sendable {
+final class WindowsHTTPStream: WindowsHTTPRead, @unchecked Sendable {
     struct Target: Equatable, Sendable {
         var host: String, port: UInt16, secure: Bool, path: String
     }
@@ -135,38 +139,51 @@ final class WindowsHTTPStream: @unchecked Sendable {
     }
 }
 
-/// The proxy libcurl would use for an https request, so a stream takes the same
-/// route as the URLSession reads beside it. A configured proxy is never
-/// bypassed: one WinHTTP cannot use fails instead of connecting directly.
+/// Use WinHTTP for direct connections and plain HTTP proxies. Other proxy
+/// configurations retain URLSession's libcurl support, including credentials.
 enum WindowsHTTPProxy {
-    static func forHTTPS(host: String, environment: [String: String] = ProcessInfo.processInfo.environment) -> Result<String?, WindowsHTTPStream.Failure> {
+    enum Route: Equatable, Sendable { case winHTTP(String?), urlSession }
+
+    static func forHTTPS(host: String, environment: [String: String] = ProcessInfo.processInfo.environment) -> Result<Route, WindowsHTTPStream.Failure> {
         func value(_ name: String) -> String? {
             // Windows names are case-insensitive; libcurl prefers the lowercase spelling.
             if let exact = environment[name], !exact.isEmpty { return exact }
             return environment.first { $0.key.lowercased() == name && !$0.value.isEmpty }?.value
         }
-        guard let configured = value("https_proxy") ?? value("all_proxy") else { return .success(nil) }
+        guard let configured = value("https_proxy") ?? value("all_proxy") else { return .success(.winHTTP(nil)) }
         let host = host.lowercased()
         for entry in (value("no_proxy") ?? "").split(separator: ",") {
             var pattern = entry.trimmingCharacters(in: .whitespaces).lowercased()
-            if pattern == "*" { return .success(nil) }
+            if pattern == "*" { return .success(.winHTTP(nil)) }
             if pattern.hasPrefix(".") { pattern.removeFirst() }
-            if !pattern.isEmpty, host == pattern || host.hasSuffix("." + pattern) { return .success(nil) }
+            if !pattern.isEmpty, host == pattern || host.hasSuffix("." + pattern) { return .success(.winHTTP(nil)) }
         }
         var address = configured.trimmingCharacters(in: .whitespaces)
+        guard !address.isEmpty, !address.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 }) else {
+            return .failure(.failed)
+        }
         if let range = address.range(of: "://") {
-            guard address[..<range.lowerBound].lowercased() == "http" else { return .failure(.failed) }
+            guard address[..<range.lowerBound].lowercased() == "http" else { return .success(.urlSession) }
             address = String(address[range.upperBound...])
         }
         if address.hasSuffix("/") { address.removeLast() }
-        guard !address.isEmpty, !address.contains("@"), !address.contains("/"),
-              !address.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 }) else { return .failure(.failed) }
+        guard !address.isEmpty else { return .failure(.failed) }
+        guard !address.contains("@"), !address.contains("/") else { return .success(.urlSession) }
         let bracketed = address.hasPrefix("[")
         let hasPort = bracketed ? address.contains("]:") : address.contains(":")
-        if bracketed, !address.contains("]") { return .failure(.failed) }
-        if !bracketed, address.filter({ $0 == ":" }).count > 1 { return .failure(.failed) }
+        if bracketed, !address.contains("]") { return .success(.urlSession) }
+        if !bracketed, address.filter({ $0 == ":" }).count > 1 { return .success(.urlSession) }
         // libcurl's default proxy port.
-        return .success(hasPort ? address : address + ":1080")
+        return .success(.winHTTP(hasPort ? address : address + ":1080"))
+    }
+
+    static func configuration(idleTimeout: TimeInterval, totalTimeout: TimeInterval,
+                              base: URLSessionConfiguration = .ephemeral) -> URLSessionConfiguration {
+        let configuration = base.copy() as! URLSessionConfiguration
+        configuration.httpCookieStorage = nil; configuration.urlCache = nil; configuration.urlCredentialStorage = nil
+        configuration.httpShouldSetCookies = false; configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = idleTimeout; configuration.timeoutIntervalForResource = totalTimeout
+        return configuration
     }
 }
 #endif

@@ -5,8 +5,9 @@ import FoundationNetworking
 
 /// Delivers a Claude message stream's bounded lines to the original cloud
 /// stream parser. FoundationNetworking has no URLSession.AsyncBytes on Windows,
-/// and its open responses busy-loop a thread, so each stream is read through
-/// WinHTTP on its own thread, which waits for data without using the CPU.
+/// and its open responses busy-loop a thread. Direct connections and plain
+/// HTTP proxies use a WinHTTP thread that waits for data; other proxies retain
+/// URLSession's protocol and authentication support.
 enum WindowsClaudeCloudStream {
     struct Options: Sendable {
         /// The longest wait for the connection or for the next bytes, like
@@ -14,7 +15,8 @@ enum WindowsClaudeCloudStream {
         var idleTimeout: TimeInterval = 60
         /// Like URLSession's resource timeout; polling reopens the stream.
         var lifetime: TimeInterval = 24 * 3600
-        var proxy: @Sendable (String) -> Result<String?, WindowsHTTPStream.Failure> = { WindowsHTTPProxy.forHTTPS(host: $0) }
+        var proxy: @Sendable (String) -> Result<WindowsHTTPProxy.Route, WindowsHTTPStream.Failure> = { WindowsHTTPProxy.forHTTPS(host: $0) }
+        var compatibilityConfiguration: @Sendable () -> URLSessionConfiguration = { .ephemeral }
         /// Where an allowed request connects. Tests use a loopback fixture.
         var target: @Sendable (URL) -> WindowsHTTPStream.Target? = { WindowsHTTPStream.httpsTarget($0) }
     }
@@ -26,11 +28,17 @@ enum WindowsClaudeCloudStream {
                 guard allowed(request), let url = request.url, let target = options.target(url) else {
                     continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return
                 }
-                // A proxy WinHTTP cannot use fails like a refused connection.
-                guard case .success(let proxy) = options.proxy(target.host) else {
+                guard case .success(let route) = options.proxy(target.host) else {
                     continuation.finish(throwing: ClaudeCloudFailure.connection); return
                 }
                 guard let fields = WindowsHTTPStream.fields(of: request) else { continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return }
+                if case .urlSession = route {
+                    let read = WindowsURLSessionCloudStream()
+                    continuation.onTermination = { _ in read.cancel() }
+                    read.start(request, options: options, continuation: continuation)
+                    return
+                }
+                guard case .winHTTP(let proxy) = route else { continuation.finish(throwing: ClaudeCloudFailure.connection); return }
                 guard let transport = WindowsHTTPStream() else { continuation.finish(throwing: ClaudeCloudFailure.connection); return }
                 continuation.onTermination = { _ in transport.cancel() }
                 let thread = Thread {

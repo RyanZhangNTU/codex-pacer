@@ -2,7 +2,8 @@
 import Foundation
 import FoundationNetworking
 
-/// Bounded GET requests through WinHTTP, in place of URLSession on Windows.
+/// Bounded GET requests through WinHTTP, with URLSession for proxy
+/// configurations that need libcurl's protocol or authentication support.
 ///
 /// A URLSession request keeps one thread busy until it finishes (see
 /// `WindowsHTTPStream`). Claude's cloud polling makes up to 16 requests every
@@ -17,14 +18,15 @@ final class WindowsHTTPClient: @unchecked Sendable {
         var maximumBytes: Int
         /// Statuses whose body is read; other responses return with no body.
         var readsBody: @Sendable (Int) -> Bool = { _ in true }
-        var proxy: @Sendable (String) -> Result<String?, WindowsHTTPStream.Failure> = { WindowsHTTPProxy.forHTTPS(host: $0) }
+        var proxy: @Sendable (String) -> Result<WindowsHTTPProxy.Route, WindowsHTTPStream.Failure> = { WindowsHTTPProxy.forHTTPS(host: $0) }
+        var compatibilityConfiguration: @Sendable () -> URLSessionConfiguration = { .ephemeral }
         /// Where a request connects. Tests use a loopback fixture.
         var target: @Sendable (URL) -> WindowsHTTPStream.Target? = { WindowsHTTPStream.httpsTarget($0) }
     }
 
     let options: Options
     private let lock = NSLock()
-    private var active: [ObjectIdentifier: WindowsHTTPStream] = [:]
+    private var active: [ObjectIdentifier: any WindowsHTTPRead] = [:]
     private var invalidated = false
 
     init(_ options: Options) { self.options = options }
@@ -33,15 +35,17 @@ final class WindowsHTTPClient: @unchecked Sendable {
         try Task.checkCancellation()
         guard (request.httpMethod ?? "GET") == "GET", request.httpBody == nil, request.httpBodyStream == nil,
               let url = request.url, let target = options.target(url) else { throw URLError(.unsupportedURL) }
-        guard case .success(let proxy) = options.proxy(target.host) else { throw URLError(.cannotConnectToHost) }
+        guard case .success(let route) = options.proxy(target.host) else { throw URLError(.cannotConnectToHost) }
         guard let fields = WindowsHTTPStream.fields(of: request) else { throw URLError(.badURL) }
-        guard let transport = WindowsHTTPStream() else { throw URLError(.cannotConnectToHost) }
-        let key = ObjectIdentifier(transport)
-        let accepted = lock.withLock { () -> Bool in
-            guard !invalidated else { return false }
-            active[key] = transport; return true
+        if case .urlSession = route {
+            let read = WindowsURLSessionRead(options)
+            let key = try register(read)
+            defer { _ = lock.withLock { active.removeValue(forKey: key) } }
+            return try await read.run(request)
         }
-        guard accepted else { throw URLError(.cancelled) }
+        guard case .winHTTP(let proxy) = route else { throw URLError(.cannotConnectToHost) }
+        guard let transport = WindowsHTTPStream() else { throw URLError(.cannotConnectToHost) }
+        let key = try register(transport)
         defer { lock.withLock { active[key] = nil } }
         let options = options
         let result: Result<(Data, HTTPURLResponse), Error> = await withTaskCancellationHandler {
@@ -61,6 +65,15 @@ final class WindowsHTTPClient: @unchecked Sendable {
     func invalidate() {
         let transports = lock.withLock { invalidated = true; return Array(active.values) }
         transports.forEach { $0.cancel() }
+    }
+
+    private func register(_ read: any WindowsHTTPRead) throws -> ObjectIdentifier {
+        try lock.withLock {
+            guard !invalidated else { throw URLError(.cancelled) }
+            let key = ObjectIdentifier(read)
+            active[key] = read
+            return key
+        }
     }
 
     private static func run(_ url: URL, target: WindowsHTTPStream.Target, fields: (agent: String, headers: [(name: String, value: String)]),

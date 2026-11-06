@@ -9,7 +9,7 @@ final class WindowsHTTPClientTests: XCTestCase {
     private func fixture(idleTimeout: TimeInterval = 5, maximumBytes: Int = 1024) throws -> (LoopbackHTTPServer, WindowsHTTPClient) {
         let server = try LoopbackHTTPServer(), port = server.port
         var options = WindowsHTTPClient.Options(idleTimeout: idleTimeout, totalTimeout: 20, maximumBytes: maximumBytes)
-        options.proxy = { _ in .success(nil) }
+        options.proxy = { _ in .success(.winHTTP(nil)) }
         options.target = { url in
             guard WindowsHTTPStream.httpsTarget(url) != nil else { return nil }
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
@@ -98,6 +98,57 @@ final class WindowsHTTPClientTests: XCTestCase {
             do { _ = try await client.data(for: value); XCTFail("An unsupported request reached IO") } catch is URLError { }
         }
         XCTAssertFalse(unused.opened)
+    }
+
+    func testPrematureEOFRejectsEvenACompleteJSONPrefix() async throws {
+        let body = Data("{\"items\":[]}".utf8)
+        for chunked in [false, true] {
+            let (server, client) = try fixture(); defer { server.stop() }
+            let task = Task { try await client.data(for: request) }
+            try await until { server.opened }
+            server.respond(200, mime: "application/json", headers: chunked ? ["Transfer-Encoding": "chunked"] : ["Content-Length": "100"])
+            if chunked { server.send("64\r\n") }
+            server.send(body); server.finish()
+            do { _ = try await task.value; XCTFail("An incomplete HTTP body must not become a successful JSON response") }
+            catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
+        }
+    }
+
+    func testCompleteBodiesUseWireLengthsAndAllowBodylessStatuses() async throws {
+        let body = Data("{\"items\":[]}".utf8), expanded = Data(repeating: 120, count: 1200)
+        let gzip = Data([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 171, 168, 24, 5, 163, 96, 20, 140, 130, 161, 1, 0, 79, 104, 234, 131, 176, 4, 0, 0])
+        // WinHTTP's deflate decoder consumes the raw DEFLATE stream.
+        let deflate = Data([171, 168, 24, 5, 163, 96, 20, 140, 130, 161, 1, 0])
+        let cases: [(Int, [String: String], Data, Data)] = [
+            (200, ["Content-Length": String(body.count)], body, body),
+            (200, [:], body, body),
+            (200, ["Content-Length": "0"], Data(), Data()),
+            (204, [:], Data(), Data()),
+            (304, ["Content-Length": "100"], Data(), Data()),
+            (200, ["Transfer-Encoding": "chunked"], Data("c\r\n{\"items\":[]}\r\n0\r\n\r\n".utf8), body),
+            (200, ["Content-Encoding": "gzip", "Content-Length": String(gzip.count)], gzip, expanded),
+            (200, ["Content-Encoding": "deflate", "Content-Length": String(deflate.count)], deflate, expanded)]
+        for (status, headers, wire, expected) in cases {
+            let (server, client) = try fixture(maximumBytes: 2048); defer { server.stop() }
+            let task = Task { try await client.data(for: request) }
+            try await until { server.opened }; server.respond(status, mime: "application/json", headers: headers)
+            server.send(wire); server.finish()
+            do {
+                let (data, response) = try await task.value
+                XCTAssertEqual(response.statusCode, status); XCTAssertEqual(data, expected)
+            } catch { XCTFail("Complete response rejected: status=\(status), headers=\(headers), error=\(error)") }
+        }
+        for truncated in [false, true] {
+            let (server, client) = try fixture(maximumBytes: truncated ? 2048 : 1024); defer { server.stop() }
+            let task = Task { try await client.data(for: request) }
+            try await until { server.opened }
+            server.respond(200, mime: "application/json", headers: ["Content-Encoding": "gzip", "Content-Length": truncated ? "100" : String(gzip.count)])
+            server.send(gzip); server.finish()
+            do { _ = try await task.value; XCTFail("Truncated or oversized decompressed bodies must fail") }
+            catch let error as URLError {
+                if !truncated { XCTAssertEqual(error.code, .dataLengthExceedsMaximum) }
+            }
+        }
     }
 }
 #endif

@@ -28,7 +28,7 @@ final class WindowsClaudeCloudStreamTests: XCTestCase {
         var options = WindowsClaudeCloudStream.Options()
         options.idleTimeout = idleTimeout; options.lifetime = lifetime
         let port = server.port
-        options.proxy = { _ in .success(viaProxy ? "127.0.0.1:\(port)" : nil) }
+        options.proxy = { _ in .success(.winHTTP(viaProxy ? "127.0.0.1:\(port)" : nil)) }
         options.target = { url in
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
             let path = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
@@ -152,6 +152,15 @@ final class WindowsClaudeCloudStreamTests: XCTestCase {
         XCTAssertEqual(result.failure as? ClaudeCloudFailure, .connection)
     }
 
+    func testPrematureEOFIsAConnectionFailureForMessageStreams() async throws {
+        let (server, lines, request) = try fixture(); defer { server.stop() }
+        let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }
+        try await until { server.opened }
+        server.respond(headers: ["Content-Length": "100"]); server.send("data: fixture\n"); server.finish()
+        try await until { result.finished && server.closed }
+        XCTAssertEqual(result.failure as? ClaudeCloudFailure, .connection)
+    }
+
     func testForeignOriginsMethodsPathsAndHeadersNeverReachTheNetwork() async throws {
         let (server, lines, request) = try fixture(); defer { server.stop() }
         var foreign: [URLRequest] = []
@@ -177,21 +186,25 @@ final class WindowsClaudeCloudStreamTests: XCTestCase {
     }
 
     func testProxyFollowsTheCurlEnvironmentAndIsNeverBypassed() async throws {
-        func proxy(_ environment: [String: String]) -> String?? {
-            guard case .success(let value) = WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: environment) else { return .none }
-            return .some(value)
+        func proxy(_ environment: [String: String]) -> WindowsHTTPProxy.Route? {
+            guard case .success(let value) = WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: environment) else { return nil }
+            return value
         }
-        XCTAssertEqual(proxy([:]), .some(nil))
-        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890"]), .some("127.0.0.1:7890"))
-        XCTAssertEqual(proxy(["https_proxy": "127.0.0.2:8000/", "HTTPS_PROXY": "127.0.0.3:8000"]), .some("127.0.0.2:8000"))
-        XCTAssertEqual(proxy(["Https_Proxy": "proxy.example.test"]), .some("proxy.example.test:1080"))
-        XCTAssertEqual(proxy(["ALL_PROXY": "http://[::1]:3128"]), .some("[::1]:3128"))
-        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "example.test, .claude.ai"]), .some(nil))
-        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "no_proxy": "*"]), .some(nil))
-        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "laude.ai,claude.ai.example.test"]), .some("127.0.0.1:7890"))
-        for unusable in ["socks5://127.0.0.1:1080", "http://user:secret@127.0.0.1:8080", "https://127.0.0.1:8443", "http://127.0.0.1:8080/path", "::1:80"] {
-            XCTAssertEqual(proxy(["HTTPS_PROXY": unusable]), .none, unusable)
+        XCTAssertEqual(proxy([:]), .winHTTP(nil))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890"]), .winHTTP("127.0.0.1:7890"))
+        XCTAssertEqual(proxy(["https_proxy": "127.0.0.2:8000/", "HTTPS_PROXY": "127.0.0.3:8000"]), .winHTTP("127.0.0.2:8000"))
+        XCTAssertEqual(proxy(["Https_Proxy": "proxy.example.test"]), .winHTTP("proxy.example.test:1080"))
+        XCTAssertEqual(proxy(["ALL_PROXY": "http://[::1]:3128"]), .winHTTP("[::1]:3128"))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "example.test, .claude.ai"]), .winHTTP(nil))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "no_proxy": "*"]), .winHTTP(nil))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "laude.ai,claude.ai.example.test"]), .winHTTP("127.0.0.1:7890"))
+        for compatible in ["socks4://127.0.0.1:1080", "socks5://127.0.0.1:1080", "socks5h://127.0.0.1:1080",
+                           "http://user:fixture@127.0.0.1:8080", "https://127.0.0.1:8443", "http://127.0.0.1:8080/path", "::1:80"] {
+            XCTAssertEqual(proxy(["HTTPS_PROXY": compatible]), .urlSession, compatible)
+            XCTAssertEqual(proxy(["ALL_PROXY": compatible]), .urlSession, compatible)
+            XCTAssertEqual(proxy(["HTTPS_PROXY": compatible, "NO_PROXY": ".claude.ai"]), .winHTTP(nil))
         }
+        XCTAssertNil(proxy(["HTTPS_PROXY": "http://127.0.0.1:8080\r\nInjected"]))
 
         let (server, lines, request) = try fixture(viaProxy: true); defer { server.stop() }
         let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }

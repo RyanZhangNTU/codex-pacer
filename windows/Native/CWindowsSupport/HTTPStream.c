@@ -14,6 +14,7 @@ typedef struct {
     HANDLE completed, cancelled, closing;
     volatile LONG error;
     volatile DWORD bytes;
+    DWORD status_code;
     int failed, observed;
     BYTE buffer[16384];
 } PacerHTTPStream;
@@ -120,6 +121,7 @@ int pacer_http_stream_open(void *value, const uint16_t *host, uint16_t port, int
     if (!WinHttpQueryHeaders(stream->request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX)) { stream->failed = 1; return -1; }
     *status = code;
+    stream->status_code = code;
     return 0;
 }
 
@@ -141,6 +143,38 @@ int pacer_http_stream_raw_headers(void *value, uint16_t *output, size_t capacity
     return (int)(size / sizeof(WCHAR));
 }
 
+static int pacer_http_stream_end(PacerHTTPStream *stream) {
+    // These GET responses have no body, even with a representation's length.
+    if (stream->status_code == 204 || stream->status_code == 304) return 0;
+    DWORD size = 0;
+    BOOL encoded = WinHttpQueryHeaders(stream->request, WINHTTP_QUERY_TRANSFER_ENCODING, WINHTTP_HEADER_NAME_BY_INDEX,
+                                       NULL, &size, WINHTTP_NO_HEADER_INDEX);
+    DWORD error = GetLastError();
+    // Transfer-Encoding supplies its own framing and takes precedence.
+    if (encoded || error == ERROR_INSUFFICIENT_BUFFER) return 0;
+    if (error != ERROR_WINHTTP_HEADER_NOT_FOUND) { stream->failed = 1; return -1; }
+    ULONGLONG expected = 0;
+    size = sizeof(expected);
+    if (!WinHttpQueryHeaders(stream->request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER64,
+            WINHTTP_HEADER_NAME_BY_INDEX, &expected, &size, WINHTTP_NO_HEADER_INDEX)) {
+        if (GetLastError() == ERROR_WINHTTP_HEADER_NOT_FOUND) return 0;
+        stream->failed = 1; return -1;
+    }
+    // A short fixed-length response can look like EOF to both read APIs.
+    // Completed-request statistics count the encoded body, so gzip/deflate
+    // lengths are never compared with the decompressed bytes we returned.
+    WINHTTP_REQUEST_STATS stats = {0};
+    stats.cStats = WinHttpRequestStatLast;
+    size = sizeof(stats);
+    if (!WinHttpQueryOption(stream->request, WINHTTP_OPTION_REQUEST_STATS, &stats, &size)) {
+        stream->failed = 1; return -1;
+    }
+    ULONGLONG received = stats.rgullStats[WinHttpResponseBodyCompressedSize];
+    if (received == 0) received = stats.rgullStats[WinHttpResponseBodySize];
+    if (received != expected) { stream->failed = 1; return -1; }
+    return 0;
+}
+
 int64_t pacer_http_stream_read(void *value, uint8_t *bytes, size_t capacity, uint32_t timeout_ms) {
     PacerHTTPStream *stream = value;
     if (stream == NULL || stream->request == NULL || bytes == NULL || capacity == 0 || timeout_ms == 0) return -1;
@@ -152,16 +186,18 @@ int64_t pacer_http_stream_read(void *value, uint8_t *bytes, size_t capacity, uin
     if (!WinHttpQueryDataAvailable(stream->request, NULL)) { stream->failed = 1; return -1; }
     if ((result = pacer_http_wait(stream, timeout_ms)) != 0) return result;
     DWORD available = stream->bytes;
-    if (available == 0) return 0;
     if ((result = pacer_http_begin(stream)) != 0) return result;
     // WinHTTP fills the stream's own buffer, which outlives a cancelled read.
+    // Even when no bytes are available, ReadData must confirm EOF: a closed
+    // connection can otherwise hide an incomplete Content-Length response.
     DWORD chunk = capacity < sizeof(stream->buffer) ? (DWORD)capacity : (DWORD)sizeof(stream->buffer);
-    if (available < chunk) chunk = available;
+    if (available > 0 && available < chunk) chunk = available;
     stream->bytes = 0;
     if (!WinHttpReadData(stream->request, stream->buffer, chunk, NULL)) { stream->failed = 1; return -1; }
     if ((result = pacer_http_wait(stream, timeout_ms)) != 0) return result;
     DWORD count = stream->bytes;
     if (count > chunk) { stream->failed = 1; return -1; }
+    if (count == 0) return pacer_http_stream_end(stream);
     memcpy(bytes, stream->buffer, count);
     return (int64_t)count;
 }
