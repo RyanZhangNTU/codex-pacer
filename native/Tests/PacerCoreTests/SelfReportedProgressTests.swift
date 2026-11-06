@@ -199,6 +199,41 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertEqual(TaskProgressRing.make(done, phase: done.phase, enabled: true, at: now.addingTimeInterval(5))?.mode, .done)
     }
 
+    func testCloudRunsKeepTheDashedRingUntilTheyEnd() throws {
+        let thread = "cloud-thread-1", source = ClaudeCloudProjectState.sourceID, start = now.timeIntervalSince1970
+        func cloudActivity() -> SessionActivity {
+            SessionActivity(id: AgentProvider.claude.activityID(sessionID: thread, sourceHostID: source), project: "Project",
+                sourceHost: "Project", sourceHostID: source, provider: .claude, sessionID: thread)
+        }
+        func ring(_ activity: SessionActivity, at offset: Double = 0) -> TaskProgressRing? {
+            TaskProgressRing.make(activity, phase: activity.phase, enabled: true, at: now.addingTimeInterval(offset))
+        }
+        XCTAssertNil(ring(cloudActivity()), "A cloud thread that was never seen running has no ring")
+        var activity = cloudActivity()
+        activity.applyRuntime(["method": "thread/observed", "threadId": thread, "status": "active", "at": start])
+        XCTAssertNil(activity.turnID, "A cloud poll knows that a run is active, not its turn")
+        // Plugins cannot run in the cloud: the dashes stay, however long the run.
+        let running = try XCTUnwrap(ring(activity, at: 900))
+        XCTAssertEqual(running.state, .pending); XCTAssertEqual(running.mode, .working); XCTAssertTrue(running.cloud); XCTAssertFalse(running.stale)
+        XCTAssertEqual(running.accessibilityText, L10n.text("activity.progress_cloud"))
+        XCTAssertNil(TaskProgressRing.make(activity, phase: activity.phase, enabled: false, at: now))
+        let rows = ActivityTaskPresentation(activities: [activity], requests: [], inbox: CompletionInbox(),
+            options: .init(progressRingProviders: [.claude]), at: now.addingTimeInterval(5)).rows
+        XCTAssertEqual(rows.first?.progressRing?.state, .pending)
+        activity.applyRuntime(["method": "thread/observed", "threadId": thread, "status": "active", "flags": ["waitingOnUserInput"], "at": start + 10])
+        let asking = try XCTUnwrap(ring(activity, at: 10))
+        XCTAssertEqual(asking.state, .pending); XCTAssertEqual(asking.mode, .attention)
+        // The ending fills the dashed ring like any normal ending.
+        var ended = activity
+        ended.applyRuntime(["method": "turn/completed", "threadId": thread, "turnId": "cloud-1", "status": "completed", "at": start + 20])
+        let done = try XCTUnwrap(ring(ended, at: 30))
+        XCTAssertEqual(done.mode, .done); XCTAssertEqual(done.fraction, 1); XCTAssertEqual(done.accessibilityText, L10n.text("activity.progress_done"))
+        // A failed run leaves no estimate behind, so its ring goes.
+        var failed = activity
+        failed.applyRuntime(["method": "turn/completed", "threadId": thread, "turnId": "cloud-1", "status": "failed", "at": start + 20])
+        XCTAssertNil(ring(failed, at: 30))
+    }
+
     func testSwitchFileWaitsForPacersHookFolderAndRemovesCleanly() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-progress-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

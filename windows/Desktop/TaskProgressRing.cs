@@ -61,7 +61,7 @@ public sealed class TaskProgressRing : Grid
     /// The element whose opacity breathes while the request waits, if any.
     private UIElement? breathingTarget;
     /// The request's lifecycle mode from the engine: working, longStep,
-    /// attention, waiting, done, short, interrupted or failed.
+    /// attention, waiting, done, interrupted or failed.
     private string mode = "working";
     private double targetFraction;
 
@@ -188,10 +188,11 @@ public sealed class TaskProgressRing : Grid
         IEasingFunction ease2;
         if (previous?.State == "pending" && animate)
         {
-            // The first estimate: the dashes close into the track, then the arc sweeps.
+            // The first estimate, or the ending of a request that never reported
+            // (a cloud one): the dashes close into the track, then the arc sweeps.
             pending.BeginAnimation(OpacityProperty, new DoubleAnimation(previous.Breathing ? BreathOpacity(now, 0.6) : pending.Opacity, 0, TimeSpan.FromSeconds(0.2)));
             track.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.2)));
-            delay = 0.2; duration = 0.45; ease2 = new CubicEase { EasingMode = EasingMode.EaseOut };
+            delay = 0.2; duration = 0.3 + 0.3 * target; ease2 = new CubicEase { EasingMode = EasingMode.EaseOut };
         }
         else
         {
@@ -268,10 +269,12 @@ public sealed class TaskProgressRing : Grid
         bool spin = live && pendingShown && mode is "working" or "longStep";
         if (spin != (spinLease != null))
         {
+            // Stopping keeps the dashes where they are, so closing ones fade in place.
+            if (spinLease != null) rotation.Angle = SpinAngle;
             spinLease?.Dispose(); spinLease = null;
             if (spin)
             {
-                double phase = Now % RotationPeriod / RotationPeriod * 360;
+                double phase = SpinAngle;
                 spinLease = new AnimationLease(new DoubleAnimation(phase, phase + 360, TimeSpan.FromSeconds(RotationPeriod))
                     { RepeatBehavior = RepeatBehavior.Forever }, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
             }
@@ -307,6 +310,8 @@ public sealed class TaskProgressRing : Grid
             }
         }
     }
+    /// The dashes' turn on the shared clock, so every row spins in step.
+    private static double SpinAngle => Now % RotationPeriod / RotationPeriod * 360;
     /// The opacity a breathing element shows at `now`. The breath runs from
     /// `high` to `high * BreathLow` and back on the shared clock, so a rebuilt
     /// row can pick it up exactly where the old one was.

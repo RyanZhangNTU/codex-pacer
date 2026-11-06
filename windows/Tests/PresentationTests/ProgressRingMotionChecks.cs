@@ -49,9 +49,15 @@ internal static class ProgressRingMotionChecks
             Shown(null, "working", 0);
             Check(Shown("pending", "waiting", 0).Breathing, "A waiting request without an estimate breathes its dashes");
             Check(!Shown("reported", "done", 1).Breathing, "An ended request keeps still");
+            // A request that never reported (a cloud run) ends from its turning dashes.
+            Shown(null, "working", 0);
+            Check(Shown("pending", "working", 0).HasEndlessClocks, "Dashes turn while a request without an estimate works");
+            var filled = Shown("reported", "done", 1);
+            Check(!filled.HasEndlessClocks, "The ending stops the dashes");
+            Check(filled.DisplayFraction < 0.01 && filled.HasAnimatedProperties, "The ending sweeps the arc to full instead of jumping there");
             Discard();
             Check(IconGlyph.Has("zzz"), "A turn waiting for its background work has its own drawn glyph");
-            Console.WriteLine("PASS progress ring: waiting rows breathe after every rebuild, reduced motion and endings keep still");
+            Console.WriteLine("PASS progress ring: waiting rows breathe after every rebuild, reduced motion and endings keep still, unreported endings sweep from the dashes");
         }
         finally { window.Close(); }
     }

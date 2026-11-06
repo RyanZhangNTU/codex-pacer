@@ -51,6 +51,7 @@
     "activity.page_region": "任务分页区域",
     "activity.previous_page": "上一页任务",
     "activity.progress_attention": "等你处理，自报进度约 %ld%%",
+    "activity.progress_cloud": "云端任务不报告进度",
     "activity.progress_done": "请求已完成",
     "activity.progress_failed": "在自报约 %ld%% 时出错",
     "activity.progress_interrupted": "在自报约 %ld%% 时中断",

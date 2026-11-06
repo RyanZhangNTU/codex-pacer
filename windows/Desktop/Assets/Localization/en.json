@@ -51,6 +51,7 @@
     "activity.page_region": "Task pages",
     "activity.previous_page": "Previous Task Page",
     "activity.progress_attention": "Waiting for you, self-reported progress about %ld%%",
+    "activity.progress_cloud": "Cloud tasks don’t report progress",
     "activity.progress_done": "Request done",
     "activity.progress_failed": "Failed at a self-reported %ld%%",
     "activity.progress_interrupted": "Interrupted at a self-reported %ld%%",

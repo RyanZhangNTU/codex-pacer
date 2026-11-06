@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "181768ac6cbe220a317beec6f2e2310d04b04ac35129c2f1fc486d6aade34d91",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "73b3ee8f95c57867889952f54f42ac6e5761a35fd5f8f69a88b8a8f4c30d2b4c",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
   },
   "strings": {
@@ -55,6 +55,7 @@
     "activity.page_region": "\u4efb\u52a1\u5206\u9875\u533a\u57df",
     "activity.previous_page": "\u4e0a\u4e00\u9875\u4efb\u52a1",
     "activity.progress_attention": "\u7b49\u4f60\u5904\u7406\uff0c\u81ea\u62a5\u8fdb\u5ea6\u7ea6 %ld%%",
+    "activity.progress_cloud": "\u4e91\u7aef\u4efb\u52a1\u4e0d\u62a5\u544a\u8fdb\u5ea6",
     "activity.progress_done": "\u8bf7\u6c42\u5df2\u5b8c\u6210",
     "activity.progress_failed": "\u5728\u81ea\u62a5\u7ea6 %ld%% \u65f6\u51fa\u9519",
     "activity.progress_interrupted": "\u5728\u81ea\u62a5\u7ea6 %ld%% \u65f6\u4e2d\u65ad",

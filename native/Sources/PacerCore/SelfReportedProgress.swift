@@ -62,14 +62,19 @@ public struct TaskProgressRing: Equatable, Sendable {
     public let percent: Int?
     public let stale: Bool
     public let reportedAt: Date?
+    /// The request runs in a Claude cloud Project, where Pacer's plugin cannot
+    /// run: it never reports, so its ring stays dashed until it ends.
+    public private(set) var cloud = false
 
     /// An active request without an estimate shows the dashed ring. A normal
     /// ending fills it: a turn paused for background work keeps running, so a
     /// completed turn means the request is done. An interrupted or failed one
-    /// keeps its last estimate, and shows no ring without one.
+    /// keeps its last estimate, and shows no ring without one. A cloud run is
+    /// known only by its status until it ends, so it needs no turn ID to run.
     public static func make(_ activity: SessionActivity, phase: ActivityPhase, enabled: Bool, at now: Date) -> Self? {
-        guard enabled, activity.turnID != nil else { return nil }
-        let progress = activity.currentProgress, mode: Mode
+        let cloud = activity.provider == .claude && activity.sourceHostID == ClaudeCloudProjectState.sourceID
+        guard enabled, activity.turnID != nil || cloud && [.running, .waitingForInput].contains(phase) else { return nil }
+        let progress = cloud ? nil : activity.currentProgress, mode: Mode
         switch phase {
         case .running, .waitingForInput:
             if activity.currentBackgroundWait != nil { mode = .waiting }
@@ -87,11 +92,13 @@ public struct TaskProgressRing: Equatable, Sendable {
                 stale: stale, reportedAt: progress.reportedAt)
         }
         guard [.working, .longStep, .attention, .waiting].contains(mode) else { return nil }
-        return .init(state: .pending, mode: mode, fraction: 0, percent: nil, stale: false, reportedAt: nil)
+        return .init(state: .pending, mode: mode, fraction: 0, percent: nil, stale: false, reportedAt: nil, cloud: cloud)
     }
 
     public var accessibilityText: String {
-        guard let percent else { return L10n.text(mode == .waiting ? "activity.progress_waiting_pending" : "activity.progress_pending") }
+        guard let percent else {
+            return L10n.text(cloud ? "activity.progress_cloud" : mode == .waiting ? "activity.progress_waiting_pending" : "activity.progress_pending")
+        }
         switch mode {
         case .working: return L10n.text("activity.progress_reported", percent)
         case .longStep: return L10n.text("activity.progress_long_step", percent)

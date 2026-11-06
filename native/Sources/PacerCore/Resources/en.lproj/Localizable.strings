@@ -106,6 +106,7 @@
 "activity.background_wait" = "Waiting for background work";
 "activity.progress_pending" = "Waiting for progress";
 "activity.progress_reported" = "Self-reported progress about %ld%%";
+"activity.progress_cloud" = "Cloud tasks don’t report progress";
 "activity.progress_waiting_pending" = "Waiting for background work";
 "activity.progress_waiting" = "Waiting for background work, self-reported progress about %ld%%";
 "activity.progress_long_step" = "Running a long step, self-reported progress about %ld%%";

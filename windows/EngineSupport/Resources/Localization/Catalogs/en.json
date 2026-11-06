@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "78418e0c5bcf5e21bbae690d212d4ae73899437f2f9c39b3adfb4033b789fde9",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "071c199eb639205575b12effd738b12abfff88a459cd1bd08602ee061e385feb",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -55,6 +55,7 @@
     "activity.page_region": "Task pages",
     "activity.previous_page": "Previous Task Page",
     "activity.progress_attention": "Waiting for you, self-reported progress about %ld%%",
+    "activity.progress_cloud": "Cloud tasks don\u2019t report progress",
     "activity.progress_done": "Request done",
     "activity.progress_failed": "Failed at a self-reported %ld%%",
     "activity.progress_interrupted": "Interrupted at a self-reported %ld%%",
