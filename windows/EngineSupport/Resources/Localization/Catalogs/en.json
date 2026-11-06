@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "810d74356a0d2e59a0177b338dd2ffca579c5036fd66f48530d04a6761aa0daa",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "78418e0c5bcf5e21bbae690d212d4ae73899437f2f9c39b3adfb4033b789fde9",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -55,13 +55,12 @@
     "activity.page_region": "Task pages",
     "activity.previous_page": "Previous Task Page",
     "activity.progress_attention": "Waiting for you, self-reported progress about %ld%%",
-    "activity.progress_done": "Self-reported done",
+    "activity.progress_done": "Request done",
     "activity.progress_failed": "Failed at a self-reported %ld%%",
     "activity.progress_interrupted": "Interrupted at a self-reported %ld%%",
     "activity.progress_long_step": "Running a long step, self-reported progress about %ld%%",
     "activity.progress_pending": "Waiting for progress",
     "activity.progress_reported": "Self-reported progress about %ld%%",
-    "activity.progress_short": "Stopped at a self-reported %ld%%",
     "activity.progress_waiting": "Waiting for background work, self-reported progress about %ld%%",
     "activity.progress_waiting_pending": "Waiting for background work",
     "activity.resolved": "Resolved",

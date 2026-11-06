@@ -110,8 +110,7 @@
 "activity.progress_waiting" = "等待后台工作，自报进度约 %ld%%";
 "activity.progress_long_step" = "正在执行一个长步骤，自报进度约 %ld%%";
 "activity.progress_attention" = "等你处理，自报进度约 %ld%%";
-"activity.progress_done" = "自报已完成";
-"activity.progress_short" = "停在自报约 %ld%%";
+"activity.progress_done" = "请求已完成";
 "activity.progress_interrupted" = "在自报约 %ld%% 时中断";
 "activity.progress_failed" = "在自报约 %ld%% 时出错";
 "activity.row_accessibility" = "%1$@，%2$@，%3$@。打开会话";

@@ -46,7 +46,10 @@ public struct TaskProgressRing: Equatable, Sendable {
         case attention
         /// The turn stopped for background work that will wake the request.
         case waiting
-        case done, short, interrupted, failed
+        /// The turn ended normally with no background work left: the request
+        /// is done, so the ring is full whatever the last estimate was.
+        case done
+        case interrupted, failed
     }
     /// Without a new estimate for this long, a working task's ring fades.
     public static let staleInterval: TimeInterval = 120
@@ -60,9 +63,10 @@ public struct TaskProgressRing: Equatable, Sendable {
     public let stale: Bool
     public let reportedAt: Date?
 
-    /// An active request without an estimate shows the dashed ring. An ended
-    /// request keeps its last estimate and is filled only by a reported 100;
-    /// one that ended without any estimate shows no ring.
+    /// An active request without an estimate shows the dashed ring. A normal
+    /// ending fills it: a turn paused for background work keeps running, so a
+    /// completed turn means the request is done. An interrupted or failed one
+    /// keeps its last estimate, and shows no ring without one.
     public static func make(_ activity: SessionActivity, phase: ActivityPhase, enabled: Bool, at now: Date) -> Self? {
         guard enabled, activity.turnID != nil else { return nil }
         let progress = activity.currentProgress, mode: Mode
@@ -72,7 +76,8 @@ public struct TaskProgressRing: Equatable, Sendable {
             else if phase == .waitingForInput { mode = .attention }
             else if let since = activity.toolWaitStartedAt, now.timeIntervalSince(since) >= longStepInterval { mode = .longStep }
             else { mode = .working }
-        case .completed: mode = progress?.percent == 100 ? .done : .short
+        case .completed:
+            return .init(state: .reported, mode: .done, fraction: 1, percent: 100, stale: false, reportedAt: progress?.reportedAt)
         case .interrupted: mode = activity.turnFailed ? .failed : .interrupted
         default: return nil
         }
@@ -93,7 +98,6 @@ public struct TaskProgressRing: Equatable, Sendable {
         case .attention: return L10n.text("activity.progress_attention", percent)
         case .waiting: return L10n.text("activity.progress_waiting", percent)
         case .done: return L10n.text("activity.progress_done")
-        case .short: return L10n.text("activity.progress_short", percent)
         case .interrupted: return L10n.text("activity.progress_interrupted", percent)
         case .failed: return L10n.text("activity.progress_failed", percent)
         }

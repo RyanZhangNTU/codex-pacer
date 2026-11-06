@@ -3,8 +3,7 @@
 Claude Code waits for most hooks, so this file imports only what every call
 needs; slower modules load on the paths that use them. While Pacer's progress
 ring is switched on, a typed UserPromptSubmit adds one fixed line of model
-context, and a Stop without background work and below 100% asks once for a
-final estimate.
+context, and a Stop that leaves background work running is recorded as a wait.
 """
 import fcntl, json, os, pathlib, sys, time
 
@@ -52,7 +51,6 @@ def read_object(path):
 OPEN,CLOSE=chr(0x27e6),chr(0x27e7);TOOL='mcp__plugin_pacer_pacer__report_progress'
 TOOLS=(TOOL,'mcp__pacer__report_progress')
 ASK="The user turned on Pacer's progress ring and asks that "
-FINAL="Before you finish, the user asks for your final progress estimate for their current request: "
 WAKE=('<task-notification>','<side-sessions-event>','[SYSTEM NOTIFICATION','<agent-message')
 # Background work a stopped turn waits on is any task but long-lived monitors
 # and Claude Code's own memory and scan work; new task kinds count.
@@ -108,7 +106,6 @@ def progress_context(home,value):
     if not typed and not (event=='SessionStart' and value.get('source')=='compact'):return
     live=plugin_live(home,mode)
     def begin(state):
-        if typed:state.pop('last',None);state.pop('asked',None)
         if live:state['ready']=True
         return mode=='marker' or state.get('ready') is True
     if spool(home,[],session,begin):sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':event,'additionalContext':progress_prompt(mode)}},separators=(',',':')));sys.stdout.flush()
@@ -137,10 +134,11 @@ def progress_display(home,value):
     row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'progress','progress':percent}
     if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
     # A session that called the tool has it.
-    spool(home,[row],session,lambda state:state.update(last=percent,**({'ready':True} if event=='PreToolUse' else {})))
+    spool(home,[row],session,(lambda state:state.update(ready=True)) if event=='PreToolUse' else None)
 def progress_stop(home,value):
     # A turn that stops while its background work runs is waiting, not done.
-    # Otherwise an estimate below 100 is asked for once more, once a request.
+    # A stop with nothing left running ends the request; Pacer fills the ring
+    # then, so the turn is never held for a final estimate.
     session=ident(value.get('session_id'));mode=ring_on(home)
     if value.get('hook_event_name')!='Stop' or value.get('agent_id') is not None or not session or not mode:return
     tasks=value.get('background_tasks');crons=value.get('session_crons')
@@ -149,19 +147,7 @@ def progress_stop(home,value):
     if waited or wakeups:
         row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
         if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
-        spool(home,[row]);return
-    live=plugin_live(home,mode)
-    def ask(state):
-        if state.get('last')==100 or state.get('asked') or value.get('stop_hook_active'):return False
-        if mode!='marker' and state.get('ready') is not True and not live:return False
-        state['asked']=True;return True
-    if spool(home,[],session,ask):
-        # Only the number comes back: a marker alone is hidden on screen, and
-        # after the tool call the turn ends without a message. The tool only
-        # acknowledges, so the request says one call ends it; without that,
-        # models repeated the same report before ending.
-        how=("reply with only "+OPEN+"NN%"+CLOSE+". Write nothing else.") if mode=='marker' else ("report it with one call to "+TOOL+". Once it returns, end your turn without writing anything.")
-        sys.stdout.write(json.dumps({'decision':'block','reason':FINAL+how}));sys.stdout.flush()
+        spool(home,[row])
 def statusline(home,value,raw):
     import math
     rates=value.get('rate_limits');payload={}

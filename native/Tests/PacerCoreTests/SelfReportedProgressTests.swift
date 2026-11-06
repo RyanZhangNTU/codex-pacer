@@ -101,7 +101,10 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertNil(TaskProgressRing.make(activity, phase: .running, enabled: false, at: now))
         XCTAssertEqual(TaskProgressRing.make(activity, phase: .running, enabled: true, at: now)?.state, .pending)
         XCTAssertEqual(TaskProgressRing.make(activity, phase: .waitingForInput, enabled: true, at: now)?.state, .pending)
-        XCTAssertNil(TaskProgressRing.make(activity, phase: .completed, enabled: true, at: now))
+        // A normal ending fills the ring even when no estimate ever arrived.
+        let unreported = try XCTUnwrap(TaskProgressRing.make(activity, phase: .completed, enabled: true, at: now))
+        XCTAssertEqual(unreported.mode, .done); XCTAssertEqual(unreported.fraction, 1); XCTAssertEqual(unreported.percent, 100)
+        XCTAssertNil(TaskProgressRing.make(activity, phase: .interrupted, enabled: true, at: now), "An interruption without an estimate shows no ring")
 
         state.consume(ClaudeActivityRecord.encode(["kind": "response", "origin": "transcript", "sessionId": session, "promptId": turn,
             "itemId": "reply", "progress": 62, "at": start + 1])!, now: now.addingTimeInterval(100))
@@ -110,9 +113,13 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertEqual(fresh.state, .reported); XCTAssertEqual(fresh.fraction, 0.62, accuracy: 0.0001); XCTAssertFalse(fresh.stale)
         XCTAssertEqual(fresh.accessibilityText, L10n.text("activity.progress_reported", 62))
         XCTAssertTrue(try XCTUnwrap(TaskProgressRing.make(activity, phase: .running, enabled: true, at: now.addingTimeInterval(122))).stale)
-        // An ended turn keeps its own estimate and does not fade or fill.
+        // A normal ending is the request's end: the ring fills from the last estimate and never fades.
         let ended = try XCTUnwrap(TaskProgressRing.make(activity, phase: .completed, enabled: true, at: now.addingTimeInterval(600)))
-        XCTAssertEqual(ended.fraction, 0.62, accuracy: 0.0001); XCTAssertFalse(ended.stale)
+        XCTAssertEqual(ended.mode, .done); XCTAssertEqual(ended.fraction, 1); XCTAssertFalse(ended.stale)
+        XCTAssertEqual(ended.accessibilityText, L10n.text("activity.progress_done"))
+        // An interrupted one keeps its own estimate.
+        let stopped = try XCTUnwrap(TaskProgressRing.make(activity, phase: .interrupted, enabled: true, at: now.addingTimeInterval(600)))
+        XCTAssertEqual(stopped.fraction, 0.62, accuracy: 0.0001); XCTAssertEqual(stopped.mode, .interrupted)
 
         let rows = ActivityTaskPresentation(activities: [activity], requests: [], inbox: CompletionInbox(),
             options: .init(progressRingProviders: [.claude]), at: now.addingTimeInterval(30)).rows
@@ -153,10 +160,11 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertEqual(try ring(at: 125).mode, .working)
         XCTAssertNotEqual(try status(at: 125), L10n.text("activity.background_wait"))
         XCTAssertNotEqual(TaskSymbol.symbol(for: try XCTUnwrap(state.activities.first)), .background)
-        // Ending below 100 without background work keeps the estimate, dimmed.
+        // Ending without background work completes the request: the ring fills from 70.
         send(["kind": "stopVerified", "origin": "transcript", "sessionId": session, "promptId": nextTurn, "itemId": "end-2", "at": start + 130])
         XCTAssertEqual(state.activities.first?.phase, .completed)
-        XCTAssertEqual(try ring(at: 135).mode, .short)
+        let finished = try ring(at: 135)
+        XCTAssertEqual(finished.mode, .done); XCTAssertEqual(finished.fraction, 1)
         // A prompt typed after the request ended starts the next one fresh.
         let third = "6a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
         send(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": third, "at": start + 200])

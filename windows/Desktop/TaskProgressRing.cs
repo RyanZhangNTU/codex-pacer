@@ -71,6 +71,8 @@ public sealed class TaskProgressRing : Grid
         public double From, To, Start, Duration;
         public IEasingFunction? Ease;
         public bool Stale, Full;
+        /// The ring was breathing: a request waiting for its background work.
+        public bool Breathing;
         public Color Color;
         public double Seen;
         public double Displayed(double now)
@@ -141,9 +143,11 @@ public sealed class TaskProgressRing : Grid
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.85, 1, TimeSpan.FromSeconds(0.25)) { EasingFunction = ease });
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.85, 1, TimeSpan.FromSeconds(0.25)) { EasingFunction = ease });
         }
-        // A request that ended below 100 stays dim, like a stale estimate.
-        bool dimmed = state == "reported" && (stale || mode == "short");
-        var memory = new Memory { State = state, Color = color, Seen = now, Stale = dimmed };
+        // A working request without a new estimate for a while dims.
+        bool dimmed = state == "reported" && stale;
+        // Leaving the wait, the element eases from the breath's current opacity.
+        bool leftBreath = animate && previous?.Breathing == true && mode != "waiting";
+        var memory = new Memory { State = state, Color = color, Seen = now, Stale = dimmed, Breathing = mode == "waiting" };
         if (state == "pending")
         {
             double shown = previous?.State == "reported" ? previous.Displayed(now) : 0;
@@ -156,7 +160,11 @@ public sealed class TaskProgressRing : Grid
                 track.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, TimeSpan.FromSeconds(0.2)) { BeginTime = TimeSpan.FromSeconds(0.3) });
                 pending.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 0.6, TimeSpan.FromSeconds(0.2)) { BeginTime = TimeSpan.FromSeconds(0.3) });
             }
-            else { DisplayFraction = 0; track.Opacity = 0; pending.Opacity = 0.6; }
+            else
+            {
+                DisplayFraction = 0; track.Opacity = 0; pending.Opacity = 0.6;
+                if (leftBreath && previous!.State == "pending") EaseOutOfBreath(pending, 0.6, 0.6, now);
+            }
             Memories[id] = memory;
             return appeared ? Change.Appeared : Change.Shown;
         }
@@ -172,7 +180,8 @@ public sealed class TaskProgressRing : Grid
             else DisplayFraction = target;
             previous.Seen = now; previous.Color = color;
             Fade(previous.Stale, dimmed, animate);
-            previous.Stale = dimmed; Memories[id] = previous;
+            if (leftBreath) EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
+            previous.Stale = dimmed; previous.Breathing = mode == "waiting"; Memories[id] = previous;
             return Change.Shown;
         }
         double from = previous?.State == "reported" ? previous.Displayed(now) : 0, delay = 0, duration;
@@ -180,7 +189,7 @@ public sealed class TaskProgressRing : Grid
         if (previous?.State == "pending" && animate)
         {
             // The first estimate: the dashes close into the track, then the arc sweeps.
-            pending.BeginAnimation(OpacityProperty, new DoubleAnimation(pending.Opacity, 0, TimeSpan.FromSeconds(0.2)));
+            pending.BeginAnimation(OpacityProperty, new DoubleAnimation(previous.Breathing ? BreathOpacity(now, 0.6) : pending.Opacity, 0, TimeSpan.FromSeconds(0.2)));
             track.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.2)));
             delay = 0.2; duration = 0.45; ease2 = new CubicEase { EasingMode = EasingMode.EaseOut };
         }
@@ -201,6 +210,7 @@ public sealed class TaskProgressRing : Grid
         if (animate && previous != null && Math.Abs(target - from) > 0.0005) Sweep(from, target, duration, ease2, delay);
         else { arc.BeginAnimation(OpacityProperty, null); BeginAnimation(DisplayFractionProperty, null); DisplayFraction = target; duration = 0; }
         Fade(previous?.Stale ?? false, dimmed, animate && previous != null);
+        if (leftBreath && previous!.State == "reported") EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
         bool full = target >= 0.9995;
         if (full && animate && previous != null && previous.Full == false && mode is "working" or "done")
         {
@@ -297,6 +307,18 @@ public sealed class TaskProgressRing : Grid
             }
         }
     }
+    /// The opacity a breathing element shows at `now`. The breath runs from
+    /// `high` to `high * BreathLow` and back on the shared clock, so a rebuilt
+    /// row can pick it up exactly where the old one was.
+    private static double BreathOpacity(double now, double high)
+    {
+        double t = now % BreathPeriod / (BreathPeriod / 2);
+        double eased = (1 - Math.Cos(Math.PI * (t <= 1 ? t : 2 - t))) / 2;
+        return high - (high - high * BreathLow) * eased;
+    }
+    private static void EaseOutOfBreath(UIElement element, double high, double target, double now) =>
+        element.BeginAnimation(OpacityProperty, new DoubleAnimation(BreathOpacity(now, high), target, TimeSpan.FromSeconds(0.3))
+            { EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
     /// Ends the breath and leaves the element at its resting opacity.
     private void StopBreathing()
     {

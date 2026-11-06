@@ -110,8 +110,7 @@
 "activity.progress_waiting" = "Waiting for background work, self-reported progress about %ld%%";
 "activity.progress_long_step" = "Running a long step, self-reported progress about %ld%%";
 "activity.progress_attention" = "Waiting for you, self-reported progress about %ld%%";
-"activity.progress_done" = "Self-reported done";
-"activity.progress_short" = "Stopped at a self-reported %ld%%";
+"activity.progress_done" = "Request done";
 "activity.progress_interrupted" = "Interrupted at a self-reported %ld%%";
 "activity.progress_failed" = "Failed at a self-reported %ld%%";
 "activity.row_accessibility" = "%1$@, %2$@, %3$@. Open chat";

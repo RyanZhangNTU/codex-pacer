@@ -351,7 +351,7 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         // A woken turn continues the typed request: no second line, and its prompt row says so.
         let wake = prompt.merging(["prompt_id": "woken-prompt", "prompt": "<task-notification>\n<task-id>x</task-id>"]) { _, new in new }
         XCTAssertEqual(try run(wake), "")
-        // Stop: background work makes the turn wait; otherwise a final estimate is asked for once.
+        // Stop: background work makes the turn wait; otherwise the request simply ends (Pacer fills the ring).
         let stop: [String: Any] = ["hook_event_name": "Stop", "session_id": "synthetic-ring-session", "prompt_id": "synthetic-prompt",
                                    "stop_hook_active": false, "session_crons": [],
                                    "background_tasks": [["id": "b1", "type": "shell", "status": "running", "description": "PRIVATE"]]]
@@ -359,15 +359,9 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         var unnamed = stop; unnamed["background_tasks"] = [["id": "b2", "type": "local_powershell", "status": "running", "description": "PRIVATE"]]
         XCTAssertEqual(try run(unnamed), "", "A task kind Claude Code has no label for still counts as work")
         var idle = stop; idle["background_tasks"] = [["id": "m1", "type": "monitor", "status": "running", "description": "PRIVATE"]]
-        let block = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try run(idle).utf8)) as? [String: Any])
-        XCTAssertEqual(block["decision"] as? String, "block")
-        XCTAssertTrue((block["reason"] as? String)?.contains("final progress estimate") == true)
-        let reason = try XCTUnwrap(block["reason"] as? String)
-        XCTAssertTrue(reason.contains("one call to " + ClaudeHookInstaller.progressTool), "One report ends the request; the tool only acknowledges it")
-        XCTAssertTrue(reason.hasSuffix("Once it returns, end your turn without writing anything."), "Only the number comes back, without a closing message")
-        var again = idle; again["stop_hook_active"] = true
-        XCTAssertEqual(try run(again), "", "The stop hook's own continuation is never blocked")
-        XCTAssertEqual(try run(idle), "", "A request is asked once")
+        XCTAssertEqual(try run(idle), "", "A stop with only a monitor left ends the request without holding the turn")
+        var asked = idle; asked["background_tasks"] = []
+        XCTAssertEqual(try run(asked), "", "A stop below 100 is never held for a final estimate")
         let all = try String(contentsOf: pacer.appendingPathComponent("events.jsonl"), encoding: .utf8).split(separator: "\n")
             .compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
         let rows = all.filter { $0["kind"] as? String == "progress" }
