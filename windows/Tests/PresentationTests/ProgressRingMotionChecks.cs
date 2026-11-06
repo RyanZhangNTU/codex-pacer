@@ -1,8 +1,11 @@
 using System;
+using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using CodexPacer.Windows;
 
 /// The ring's looping motion starts from its finished state. Task rows are
@@ -69,17 +72,35 @@ internal static class ProgressRingMotionChecks
             Check(filled.DisplayFraction < 0.01 && filled.HasAnimatedProperties, "The ending sweeps the arc to full instead of jumping there");
             // Downward estimates use a sine curve. Reapplying that curve from
             // zero on each rebuild changes its trajectory; resume its clock.
-            await Shown("reported", "working", 0.9, animate: false);
-            await Shown("reported", "working", 0.1);
-            for (int rebuild = 0; rebuild < 3; rebuild++)
+            var tickTarget = new TranslateTransform();
+            using var tick = new AnimationLease(new DoubleAnimation(0, 1, TimeSpan.FromSeconds(1)) { RepeatBehavior = RepeatBehavior.Forever },
+                clock => tickTarget.ApplyAnimationClock(TranslateTransform.XProperty, clock));
+            foreach (int stalledMilliseconds in new[] { 0, 90, 170 })
             {
-                await Task.Delay(rebuild == 0 ? 130 : 80);
-                var replacement = await Loaded();
-                var removed = current!; double before = removed.DisplayFraction;
-                replacement.Show(id, "reported", "working", 0.1, false, Colors.Orange, true);
-                Check(Math.Abs(replacement.DisplayFraction - before) < 0.06,
-                    $"A downward estimate must stay continuous through rebuild {rebuild}: {before:F4} -> {replacement.DisplayFraction:F4}");
-                current = replacement; host.Children.Remove(removed); await Removed(removed);
+                await Shown("reported", "working", 0.9, animate: false);
+                await Task.Delay(35);
+                // Make the WPF time manager's last tick old before creating
+                // the sweep, as on a slow renderer. No dispatcher yield may
+                // refresh that tick between the stall and Show.
+                Thread.Sleep(stalledMilliseconds);
+                current!.Show(id, "reported", "working", 0.1, false, Colors.Orange, true);
+                for (int rebuild = 0; rebuild < 3; rebuild++)
+                {
+                    await Task.Delay(rebuild == 0 ? 130 : 80);
+                    var replacement = await Loaded();
+                    if (stalledMilliseconds == 90 && rebuild == 0)
+                    {
+                        // Reproduce the CI clock lead even on a fast renderer:
+                        // move the real WPF clock, not the remembered timeline.
+                        var sweep = (AnimationLease?)typeof(TaskProgressRing).GetField("sweepLease", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(current);
+                        if (sweep?.CurrentTime is TimeSpan elapsed) sweep.Seek(elapsed + TimeSpan.FromMilliseconds(45));
+                    }
+                    var removed = current!; double before = removed.DisplayFraction;
+                    replacement.Show(id, "reported", "working", 0.1, false, Colors.Orange, true);
+                    Check(Math.Abs(replacement.DisplayFraction - before) < 0.06,
+                        $"A downward estimate must stay continuous through rebuild {rebuild} after a {stalledMilliseconds} ms render stall: {before:F4} -> {replacement.DisplayFraction:F4}");
+                    current = replacement; host.Children.Remove(removed); await Removed(removed);
+                }
             }
             current!.SetMotion(false);
             Check(Math.Abs(current.DisplayFraction - 0.1) < 0.0001 && !current.HasEndlessClocks,

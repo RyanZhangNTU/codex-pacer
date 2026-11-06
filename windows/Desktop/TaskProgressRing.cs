@@ -77,11 +77,22 @@ public sealed class TaskProgressRing : Grid
         public bool Breathing;
         public Color Color;
         public double Seen;
+        public WeakReference<AnimationLease>? Sweep;
+        public int SweepGeneration;
+        public double Elapsed(double now)
+        {
+            // A live renderer is authoritative even if its last tick is old.
+            // Keep only a weak lease so remembered rows cannot retain clocks.
+            if (Sweep?.TryGetTarget(out var sweep) == true && sweep.IsActive)
+                return sweep.CurrentTime?.TotalSeconds ?? Math.Min(0, now - Start);
+            return now - Start;
+        }
         public double Displayed(double now)
         {
-            if (Duration <= 0 || now >= Start + Duration) return To;
-            if (now <= Start) return From;
-            double progress = (now - Start) / Duration;
+            double elapsed = Elapsed(now);
+            if (Duration <= 0 || elapsed >= Duration) return To;
+            if (elapsed <= 0) return From;
+            double progress = elapsed / Duration;
             return From + (To - From) * (Ease?.Ease(progress) ?? progress);
         }
     }
@@ -177,10 +188,10 @@ public sealed class TaskProgressRing : Grid
         if (previous?.State == "reported" && Math.Abs(previous.To - target) < 0.0005)
         {
             // The same estimate on a rebuilt row: finish whatever was running.
-            double remaining = previous.Start + previous.Duration - now;
+            double elapsed = previous.Elapsed(now), remaining = previous.Duration - elapsed;
             track.Opacity = 1; pending.Opacity = 0; pendingShown = false;
             if (animate && remaining > 0.02)
-                Sweep(previous.From, target, previous.Duration, previous.Ease, Math.Max(0, previous.Start - now), Math.Max(0, now - previous.Start));
+                Sweep(previous.From, target, previous.Duration, previous.Ease, Math.Max(0, -elapsed), Math.Max(0, elapsed), previous);
             else SetFraction(target);
             previous.Seen = now; previous.Color = color;
             Fade(previous.Stale, dimmed, animate);
@@ -212,8 +223,10 @@ public sealed class TaskProgressRing : Grid
             }
         }
         pendingShown = false;
-        if (animate && previous != null && Math.Abs(target - from) > 0.0005) Sweep(from, target, duration, ease2, delay);
-        else { arc.BeginAnimation(OpacityProperty, null); SetFraction(target); duration = 0; }
+        memory.From = from; memory.To = target; memory.Start = now + delay; memory.Duration = animate && previous != null ? duration : 0;
+        memory.Ease = ease2;
+        if (animate && previous != null && Math.Abs(target - from) > 0.0005) Sweep(from, target, duration, ease2, delay, memory: memory);
+        else { arc.BeginAnimation(OpacityProperty, null); SetFraction(target); duration = 0; memory.Duration = 0; }
         Fade(previous?.Stale ?? false, dimmed, animate && previous != null);
         if (leftBreath && previous!.State == "reported") EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
         bool full = target >= 0.9995;
@@ -226,8 +239,7 @@ public sealed class TaskProgressRing : Grid
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
         }
-        memory.From = from; memory.To = target; memory.Start = now + delay; memory.Duration = animate && previous != null ? duration : 0;
-        memory.Ease = ease2; memory.Full = full || previous?.Full == true && target >= 0.9995;
+        memory.Full = full || previous?.Full == true && target >= 0.9995;
         Memories[id] = memory;
         return appeared ? Change.Appeared : Change.Shown;
     }
@@ -264,13 +276,26 @@ public sealed class TaskProgressRing : Grid
         sweepLease?.Dispose(); sweepLease = null;
         BeginAnimation(DisplayFractionProperty, null); DisplayFraction = value;
     }
-    private void Sweep(double from, double to, double seconds, IEasingFunction? ease, double delay, double elapsed = 0)
+    private void Sweep(double from, double to, double seconds, IEasingFunction? ease, double delay, double elapsed = 0, Memory? memory = null)
     {
         SetFraction(from);
         var animation = new DoubleAnimation(from, to, TimeSpan.FromSeconds(Math.Max(0.01, seconds)))
             { EasingFunction = ease, BeginTime = TimeSpan.FromSeconds(delay) };
+        int generation = memory == null ? 0 : ++memory.SweepGeneration;
         sweepLease = new AnimationLease(animation, clock => ApplyAnimationClock(DisplayFractionProperty, clock),
-            () => { sweepLease = null; DisplayFraction = to; });
+            () =>
+            {
+                sweepLease = null; DisplayFraction = to;
+                if (memory != null && memory.SweepGeneration == generation)
+                { memory.Duration = 0; memory.From = to; memory.Sweep = null; }
+            }, clock =>
+            {
+                // WPF may start a new clock at an earlier time-manager tick.
+                // Calibrate from its real local time instead of Show's time.
+                if (memory != null && memory.SweepGeneration == generation && clock.CurrentTime is TimeSpan time)
+                    memory.Start = Now - time.TotalSeconds;
+            });
+        if (memory != null) memory.Sweep = new WeakReference<AnimationLease>(sweepLease);
         if (elapsed > 0) sweepLease.Seek(TimeSpan.FromSeconds(elapsed));
     }
     private void Fade(bool wasStale, bool stale, bool animate)

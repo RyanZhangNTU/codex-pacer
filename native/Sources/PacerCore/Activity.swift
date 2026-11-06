@@ -166,19 +166,24 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         public let wakeups: Int
     }
     private var backgroundWait: BackgroundWait?
+    /// Orders waiting snapshots, including clears, without hiding transcript evidence.
+    private var backgroundWaitObservedAt: Date?
     /// The wait of the current turn only; a new turn clears it.
     public var currentBackgroundWait: BackgroundWait? {
         guard [.running, .waitingForInput].contains(phase) else { return nil }
         return backgroundWait?.turnID == turnID ? backgroundWait : nil
     }
     mutating func resumeBackgroundWork(at date: Date) {
-        if let wait = currentBackgroundWait, date > wait.since { backgroundWait = nil }
+        if let wait = currentBackgroundWait, date > wait.since {
+            backgroundWait = nil
+            backgroundWaitObservedAt = max(backgroundWaitObservedAt ?? date, date)
+        }
     }
     mutating func waitForBackground(kinds: [String], wakeups: Int, at date: Date) {
         guard let turnID, [.running, .waitingForInput].contains(phase) else { return }
         guard date >= (lastObserved ?? .distantPast) else { return }
-        guard currentBackgroundWait.map({ date >= $0.since }) ?? true else { return }
-        lastObserved = date
+        guard date >= (backgroundWaitObservedAt ?? .distantPast) else { return }
+        backgroundWaitObservedAt = date
         if kinds.isEmpty && wakeups == 0 { backgroundWait = nil; return }
         backgroundWait = BackgroundWait(turnID: turnID, since: date, kinds: Array(kinds.prefix(16)), wakeups: min(max(wakeups, 0), 16))
     }
@@ -600,7 +605,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             turnFailed = false; waitingForApproval = false
             waitingCallID = nil
             toolCalls.removeAll()
-            outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil
+            outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
             performanceMeter.finish()
             phaseChangedAt = date
         case "token_count":
@@ -638,7 +643,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         waitingCallID = nil
         toolCalls.removeAll()
         outputRate.startTurn(at: date)
-        generationRate.start(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil
+        generationRate.start(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
         performanceMeter.start(turnID: id, at: date, observed: observed)
         phaseChangedAt = date
     }
@@ -668,7 +673,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         phaseChangedAt = nil
         waitingCallID = nil
         toolCalls.removeAll()
-        outputRate = OutputRate(); generationRate = GenerationRate(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; hasLiveEvidence = false
+        outputRate = OutputRate(); generationRate = GenerationRate(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false
         performanceMeter = ResponsePerformanceMeter()
     }
 
@@ -676,7 +681,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         logTurnStart = nil
         phase = .unknown
         waitingForApproval = false
-        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
+        outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
     }
 
     mutating func markPartialRate() {
@@ -840,7 +845,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             phase = event["status"] as? String == "completed" ? .completed : .interrupted
             turnFailed = event["status"] as? String == "failed"; waitingForApproval = false
             phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true
-            generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; toolCalls.removeAll()
+            generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; toolCalls.removeAll()
             performanceMeter.finish()
             return
         }

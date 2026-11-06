@@ -216,6 +216,38 @@ final class SelfReportedProgressTests: XCTestCase {
         }
     }
 
+    func testEmptyWaitingDoesNotHideTheFinalTranscriptResponse() throws {
+        var state = ClaudeActivityState()
+        let start = now.timeIntervalSince1970
+        func send(_ kind: String, _ offset: Double, _ extra: [String: Any] = [:]) {
+            var record: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": session, "promptId": turn,
+                "itemId": "item", "at": start + offset]
+            record.merge(extra) { _, new in new }
+            state.consume(ClaudeActivityRecord.encode(record)!, now: now.addingTimeInterval(100))
+        }
+        send("prompt", 0)
+        send("waiting", 10, ["background": ["shell"], "wakeups": 0])
+        send("waiting", 12, ["background": [String](), "wakeups": 0])
+        XCTAssertEqual(state.activities.first?.lastObserved, now, "Waiting snapshots have their own ordering clock")
+        // The spool is read first. The final reply predates its Stop, but its
+        // transcript may be read only after that empty waiting snapshot.
+        send("response", 11, ["origin": "transcript", "itemId": "final-reply"])
+        XCTAssertEqual(state.activities.first?.stage, .responding)
+        XCTAssertEqual(state.activities.first?.lastObserved, now.addingTimeInterval(11))
+        XCTAssertNil(state.activities.first?.currentBackgroundWait)
+        // Newer than the reply but older than the clear: lastObserved alone
+        // cannot reject this stale nonempty waiting snapshot.
+        send("waiting", 11.5, ["background": ["shell"], "wakeups": 0])
+        XCTAssertNil(state.activities.first?.currentBackgroundWait)
+        send("waiting", 13, ["background": ["subagent"], "wakeups": 0])
+        XCTAssertEqual(state.activities.first?.currentBackgroundWait?.kinds, ["subagent"])
+        send("waiting", 12.5, ["background": [String](), "wakeups": 0])
+        XCTAssertNotNil(state.activities.first?.currentBackgroundWait, "An older clear cannot replace newer background work")
+        send("waiting", 14, ["background": [String](), "wakeups": 0])
+        send("stopVerified", 15, ["origin": "transcript"])
+        XCTAssertEqual(state.activities.first?.phase, .completed)
+    }
+
     func testInterruptedOrFailedBackgroundWaitCannotCarryProgressToANewRequest() throws {
         let start = now.timeIntervalSince1970
         for ending in ["interrupt", "failure"] {
