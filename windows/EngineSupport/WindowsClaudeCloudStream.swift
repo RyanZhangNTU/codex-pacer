@@ -5,9 +5,10 @@ import FoundationNetworking
 
 /// Delivers a Claude message stream's bounded lines to the original cloud
 /// stream parser. FoundationNetworking has no URLSession.AsyncBytes on Windows,
-/// and its open responses busy-loop a thread. Direct connections and plain
-/// HTTP proxies use a WinHTTP thread that waits for data; other proxies retain
-/// URLSession's protocol and authentication support.
+/// and its open responses busy-loop a thread. Each stream is read through
+/// WinHTTP on a thread that waits for data, directly, through an HTTP proxy, or
+/// through the loopback relay for SOCKS and authenticated proxies. Only HTTPS
+/// proxies and forms WinHTTP cannot express keep URLSession.
 enum WindowsClaudeCloudStream {
     struct Options: Sendable {
         /// The longest wait for the connection or for the next bytes, like
@@ -38,12 +39,25 @@ enum WindowsClaudeCloudStream {
                     read.start(request, options: options, continuation: continuation)
                     return
                 }
-                guard case .winHTTP(let proxy) = route else { continuation.finish(throwing: ClaudeCloudFailure.connection); return }
-                guard let transport = WindowsHTTPStream() else { continuation.finish(throwing: ClaudeCloudFailure.connection); return }
+                let proxy: String?, relay: WindowsProxyRelay?
+                switch route {
+                case .winHTTP(let value): proxy = value; relay = nil
+                case .relay(let upstream):
+                    // Never a direct connection: without a relay the stream fails.
+                    guard let value = WindowsProxyRelay(upstream, target: target, timeout: options.idleTimeout) else {
+                        continuation.finish(throwing: ClaudeCloudFailure.connection); return
+                    }
+                    proxy = value.address; relay = value
+                case .urlSession: continuation.finish(throwing: ClaudeCloudFailure.connection); return
+                }
+                guard let transport = WindowsHTTPStream() else {
+                    relay?.close(); continuation.finish(throwing: ClaudeCloudFailure.connection); return
+                }
                 continuation.onTermination = { _ in transport.cancel() }
                 let thread = Thread {
                     read(url, target: target, headers: fields.headers, agent: fields.agent, proxy: proxy, options: options,
                          transport: transport, continuation: continuation)
+                    relay?.close()
                 }
                 thread.name = "Claude cloud stream"
                 thread.start()

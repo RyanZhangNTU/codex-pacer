@@ -198,11 +198,25 @@ final class WindowsClaudeCloudStreamTests: XCTestCase {
         XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "example.test, .claude.ai"]), .winHTTP(nil))
         XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "no_proxy": "*"]), .winHTTP(nil))
         XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "laude.ai,claude.ai.example.test"]), .winHTTP("127.0.0.1:7890"))
-        for compatible in ["socks4://127.0.0.1:1080", "socks5://127.0.0.1:1080", "socks5h://127.0.0.1:1080",
-                           "http://user:fixture@127.0.0.1:8080", "https://127.0.0.1:8443", "http://127.0.0.1:8080/path", "::1:80"] {
+        // SOCKS and credentials go through the loopback relay, still on WinHTTP.
+        typealias Upstream = WindowsHTTPProxy.Upstream
+        let relayed: [(String, Upstream)] = [
+            ("socks4://127.0.0.1:1080", .init(kind: .socks4, host: "127.0.0.1", port: 1080, username: nil, password: nil)),
+            ("socks4a://user@proxy.example.test", .init(kind: .socks4a, host: "proxy.example.test", port: 1080, username: "user", password: "")),
+            ("SOCKS5://127.0.0.1:7891", .init(kind: .socks5, host: "127.0.0.1", port: 7891, username: nil, password: nil)),
+            ("socks5h://fixture:p%40ss%3Aword@[::1]:1080/", .init(kind: .socks5h, host: "::1", port: 1080, username: "fixture", password: "p@ss:word")),
+            ("http://user:fixture@127.0.0.1:8080", .init(kind: .http, host: "127.0.0.1", port: 8080, username: "user", password: "fixture")),
+            ("user:fixture@proxy.example.test:3128", .init(kind: .http, host: "proxy.example.test", port: 3128, username: "user", password: "fixture"))]
+        for (value, upstream) in relayed {
+            XCTAssertEqual(proxy(["HTTPS_PROXY": value]), .relay(upstream), value)
+            XCTAssertEqual(proxy(["ALL_PROXY": value]), .relay(upstream), value)
+            XCTAssertEqual(proxy(["HTTPS_PROXY": value, "NO_PROXY": ".claude.ai"]), .winHTTP(nil))
+        }
+        // HTTPS proxies and forms WinHTTP cannot express keep libcurl's support.
+        for compatible in ["https://127.0.0.1:8443", "socks://127.0.0.1:1080", "http://127.0.0.1:8080/path", "::1:80",
+                           "socks5://127.0.0.1:70000", "socks5h://user:%ZZ@127.0.0.1:1080"] {
             XCTAssertEqual(proxy(["HTTPS_PROXY": compatible]), .urlSession, compatible)
             XCTAssertEqual(proxy(["ALL_PROXY": compatible]), .urlSession, compatible)
-            XCTAssertEqual(proxy(["HTTPS_PROXY": compatible, "NO_PROXY": ".claude.ai"]), .winHTTP(nil))
         }
         XCTAssertNil(proxy(["HTTPS_PROXY": "http://127.0.0.1:8080\r\nInjected"]))
 

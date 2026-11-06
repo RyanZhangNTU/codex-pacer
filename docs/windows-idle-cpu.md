@@ -60,7 +60,7 @@ WPR 的 CPU 采样被系统策略拒绝，错误码为 `0xc5585011`。没有提�
 
 三组使用同一个 4.2.5 外壳副本，只替换引擎，Claude 主目录与网页登录相同，依次测量。数值取进程 `TotalProcessorTime` 首尾之差，逐秒序列只用于定位。测量期间本机有正在运行的 Claude 会话。同一环境下的只读诊断引擎不连网页，15 秒短样本为 3.74%，可作为本地来源工作量的参照。
 
-栈采样显示热线程停在 libdispatch 的 socket 源回调中：libcurl 的 `curl_multi_socket_action` 反复调用 `select`，libdispatch 则用零字节 `send` 重新激活写就绪源，并立即投递完成包。FoundationNetworking 在 libcurl 从“读写”降为“只读”时，不取消已有的写就绪源。Windows 上的 libdispatch 每次重新激活这个源都会立即触发，所以请求在响应结束前会一直占用一个工作线程。最多四条项目消息流长期在线，因此空闲时接近一个核。回环对照中，同一工具链的 URLSession 保持一个空闲响应 3 秒，用掉 2.53 秒 CPU。只改消息流后，每 30 秒的云端轮询仍出现约 4 秒、40–90% 的尖峰，原因相同。周期请求也改用 WinHTTP 后，样本中不再出现网络相关栈帧。剩余 CPU 位于 Swift 并发工作线程，主要是快照 JSON 编码、宿主应用跟踪（Restart Manager 查询写入者和进程快照）以及轮询结果处理。实现与边界见 [HTTP through WinHTTP](windows-engine.md#http-through-winhttp)。数值和二进制哈希记录在 [数值记录](performance/windows-idle-cpu.json) 的 `claudeWebEngine` 中。
+栈采样显示热线程停在 libdispatch 的 socket 源回调中：libcurl 的 `curl_multi_socket_action` 反复调用 `select`，libdispatch 则用零字节 `send` 重新激活写就绪源，并立即投递完成包。FoundationNetworking 在 libcurl 从“读写”降为“只读”时，不取消已有的写就绪源。Windows 上的 libdispatch 每次重新激活这个源都会立即触发，所以请求在响应结束前会一直占用一个工作线程。最多四条项目消息流长期在线，因此空闲时接近一个核。回环对照中，同一工具链的 URLSession 保持一个空闲响应 3 秒，用掉 2.53 秒 CPU。只改消息流后，每 30 秒的云端轮询仍出现约 4 秒、40–90% 的尖峰，原因相同。周期请求也改用 WinHTTP 后，样本中不再出现网络相关栈帧。剩余 CPU 位于 Swift 并发工作线程，主要是快照 JSON 编码、宿主应用跟踪（Restart Manager 查询写入者和进程快照）以及轮询结果处理。设置了 SOCKS 代理或带账号密码的 HTTP 代理时，请求经引擎内的本地中转交给 WinHTTP。2026-11-07 用本机 SOCKS5h（带账号密码）代理复测 182 秒，单核 4.01%、整机 0.251%；引擎没有直连外网的连接，代理转发了 40 个 claude.ai 和 9 个 chatgpt.com 连接。只有 HTTPS 代理仍使用 URLSession。实现与边界见 [HTTP through WinHTTP](windows-engine.md#http-through-winhttp)。数值和二进制哈希记录在 [数值记录](performance/windows-idle-cpu.json) 的 `claudeWebEngine` 中。
 
 ## 遮挡夹具与全屏策略
 

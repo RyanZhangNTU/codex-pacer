@@ -139,10 +139,15 @@ final class WindowsHTTPStream: WindowsHTTPRead, @unchecked Sendable {
     }
 }
 
-/// Use WinHTTP for direct connections and plain HTTP proxies. Other proxy
-/// configurations retain URLSession's libcurl support, including credentials.
+/// Use WinHTTP for direct connections and plain HTTP proxies. SOCKS proxies
+/// and HTTP proxies with credentials reach WinHTTP through a loopback relay.
+/// HTTPS proxies and forms WinHTTP cannot express keep URLSession's libcurl.
 enum WindowsHTTPProxy {
-    enum Route: Equatable, Sendable { case winHTTP(String?), urlSession }
+    struct Upstream: Equatable, Sendable {
+        enum Kind: Int32, Sendable { case socks4 = 1, socks4a, socks5, socks5h, http }
+        var kind: Kind, host: String, port: UInt16, username: String?, password: String?
+    }
+    enum Route: Equatable, Sendable { case winHTTP(String?), relay(Upstream), urlSession }
 
     static func forHTTPS(host: String, environment: [String: String] = ProcessInfo.processInfo.environment) -> Result<Route, WindowsHTTPStream.Failure> {
         func value(_ name: String) -> String? {
@@ -162,19 +167,51 @@ enum WindowsHTTPProxy {
         guard !address.isEmpty, !address.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 }) else {
             return .failure(.failed)
         }
+        // libcurl assumes an HTTP proxy when the value has no scheme.
+        var scheme = "http"
         if let range = address.range(of: "://") {
-            guard address[..<range.lowerBound].lowercased() == "http" else { return .success(.urlSession) }
+            scheme = address[..<range.lowerBound].lowercased()
             address = String(address[range.upperBound...])
         }
+        let kinds: [String: Upstream.Kind] = ["http": .http, "socks4": .socks4, "socks4a": .socks4a, "socks5": .socks5, "socks5h": .socks5h]
+        guard let kind = kinds[scheme] else { return .success(.urlSession) }
         if address.hasSuffix("/") { address.removeLast() }
         guard !address.isEmpty else { return .failure(.failed) }
-        guard !address.contains("@"), !address.contains("/") else { return .success(.urlSession) }
-        let bracketed = address.hasPrefix("[")
-        let hasPort = bracketed ? address.contains("]:") : address.contains(":")
-        if bracketed, !address.contains("]") { return .success(.urlSession) }
-        if !bracketed, address.filter({ $0 == ":" }).count > 1 { return .success(.urlSession) }
-        // libcurl's default proxy port.
-        return .success(.winHTTP(hasPort ? address : address + ":1080"))
+        var username: String?, password: String?
+        if let at = address.lastIndex(of: "@") {
+            let credentials = address[..<at]
+            let colon = credentials.firstIndex(of: ":")
+            guard let user = String(credentials[..<(colon ?? credentials.endIndex)]).removingPercentEncoding,
+                  let secret = colon.map({ String(credentials[credentials.index(after: $0)...]).removingPercentEncoding }) ?? "" else {
+                return .success(.urlSession)
+            }
+            username = user; password = secret
+            address = String(address[address.index(after: at)...])
+        }
+        guard !address.isEmpty, !address.contains("/"), !address.contains("@") else { return .success(.urlSession) }
+        // host, host:port or [v6]:port; libcurl's default proxy port is 1080.
+        var proxyHost = address, port = 1080
+        if address.hasPrefix("[") {
+            guard let close = address.firstIndex(of: "]") else { return .success(.urlSession) }
+            proxyHost = String(address[address.index(after: address.startIndex)..<close])
+            let rest = address[address.index(after: close)...]
+            if !rest.isEmpty {
+                guard rest.hasPrefix(":"), let value = Int(rest.dropFirst()) else { return .success(.urlSession) }
+                port = value
+            }
+        } else if let colon = address.firstIndex(of: ":") {
+            guard address.filter({ $0 == ":" }).count == 1, let value = Int(address[address.index(after: colon)...]) else {
+                return .success(.urlSession)
+            }
+            proxyHost = String(address[..<colon]); port = value
+        }
+        guard !proxyHost.isEmpty, proxyHost.utf8.count <= 255, (1...65535).contains(port),
+              (username?.utf8.count ?? 0) <= 255, (password?.utf8.count ?? 0) <= 255,
+              ![username, password].contains(where: { $0?.utf8.contains(0) == true }) else { return .success(.urlSession) }
+        if kind == .http, username == nil {
+            return .success(.winHTTP((proxyHost.contains(":") ? "[\(proxyHost)]" : proxyHost) + ":\(port)"))
+        }
+        return .success(.relay(.init(kind: kind, host: proxyHost, port: UInt16(port), username: username, password: password)))
     }
 
     static func configuration(idleTimeout: TimeInterval, totalTimeout: TimeInterval,

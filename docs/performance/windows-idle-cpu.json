@@ -401,6 +401,20 @@
       "wallSeconds": 3.0,
       "cpuSeconds": 2.531
     },
-    "scope": "One device. Engine process CPU only; no FoundationNetworking, WinHTTP or schannel frames remained in the final stack samples. The streams-winhttp engine predates the request change, so only its numbers are kept. The final engine predates one change that maps an unusable proxy to a connection failure; no proxy was configured, so the measured path is unchanged."
+    "scope": "One device. Engine process CPU only; no FoundationNetworking, WinHTTP or schannel frames remained in the final stack samples. The streams-winhttp engine predates the request change, so only its numbers are kept. The final engine predates one change that maps an unusable proxy to a connection failure; no proxy was configured, so the measured path is unchanged.",
+    "socksProxySample": {
+      "date": "2026-11-07",
+      "proxy": "Local SOCKS5h with username and password, set through ALL_PROXY for the shell copy",
+      "engineSha256": "0BB87678D0E979CD81DFAB304DFE6946B1EFB39A628FD51FC781C3B991946206",
+      "wallSeconds": 182.0,
+      "cpuSeconds": 7.297,
+      "oneCorePercent": 4.01,
+      "hostPercent": 0.251,
+      "nonLoopbackEngineConnections": 0,
+      "proxiedConnections": {
+        "claude.ai:443": 40,
+        "chatgpt.com:443": 9
+      }
+    }
   }
 }

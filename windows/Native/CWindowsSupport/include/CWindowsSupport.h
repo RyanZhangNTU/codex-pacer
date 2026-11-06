@@ -40,6 +40,14 @@ int pacer_http_stream_raw_headers(void *stream, uint16_t *value, size_t capacity
 int64_t pacer_http_stream_read(void *stream, uint8_t *bytes, size_t capacity, uint32_t timeout_ms);
 void pacer_http_stream_cancel(void *stream);
 void pacer_http_stream_close(void *stream);
+// A loopback HTTP proxy that tunnels one request target through SOCKS4 (1),
+// SOCKS4a (2), SOCKS5 (3), SOCKS5h (4) or an HTTP proxy with Basic credentials
+// (5). It accepts CONNECT or an absolute http:// request only for that target.
+// Close stops it; threads release it as they exit. Strings are UTF-8.
+void *pacer_proxy_relay_start(int kind, const char *host, uint16_t port, const char *username, const char *password,
+                              int credentials, const char *target_host, uint16_t target_port, uint32_t timeout_ms,
+                              uint16_t *bound_port);
+void pacer_proxy_relay_close(void *relay);
 int pacer_is_windows_executable(const uint16_t *path);
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company);
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);

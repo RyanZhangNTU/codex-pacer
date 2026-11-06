@@ -23,14 +23,14 @@ final class WindowsURLSessionCompatibilityTests: XCTestCase {
     }
     private func client(_ fixture: URLSessionHTTPFixture, maximumBytes: Int = 1024, readsBody: @escaping @Sendable (Int) -> Bool = { _ in true }) -> WindowsHTTPClient {
         var options = WindowsHTTPClient.Options(idleTimeout: 5, totalTimeout: 10, maximumBytes: maximumBytes, readsBody: readsBody)
-        options.proxy = { _ in WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: ["ALL_PROXY": "socks5h://127.0.0.1:1080"]) }
+        options.proxy = { _ in WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: ["ALL_PROXY": "https://127.0.0.1:8443"]) }
         options.target = { _ in .init(host: "127.0.0.1", port: 0, secure: false, path: "/") }
         options.compatibilityConfiguration = { fixture.configuration() }
         return WindowsHTTPClient(options)
     }
     private func stream(_ fixture: URLSessionHTTPFixture) -> AsyncThrowingStream<Data, Error> {
         var options = WindowsClaudeCloudStream.Options()
-        options.proxy = { _ in WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: ["HTTPS_PROXY": "http://fixture:password@127.0.0.1:8080"]) }
+        options.proxy = { _ in WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: ["HTTPS_PROXY": "https://fixture:password@127.0.0.1:8443"]) }
         options.target = { _ in .init(host: "127.0.0.1", port: 0, secure: false, path: "/") }
         options.compatibilityConfiguration = { fixture.configuration() }
         return WindowsClaudeCloudStream.lines(options)(fixture.request(URL(string: "https://claude.ai/v1/code/channels/chan_fixture1/messages/stream")!))

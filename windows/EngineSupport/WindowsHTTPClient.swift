@@ -2,8 +2,9 @@
 import Foundation
 import FoundationNetworking
 
-/// Bounded GET requests through WinHTTP, with URLSession for proxy
-/// configurations that need libcurl's protocol or authentication support.
+/// Bounded GET requests through WinHTTP. SOCKS and authenticated proxies go
+/// through `WindowsProxyRelay`; only HTTPS proxies and forms WinHTTP cannot
+/// express keep URLSession and its CPU cost.
 ///
 /// A URLSession request keeps one thread busy until it finishes (see
 /// `WindowsHTTPStream`). Claude's cloud polling makes up to 16 requests every
@@ -43,7 +44,16 @@ final class WindowsHTTPClient: @unchecked Sendable {
             defer { _ = lock.withLock { active.removeValue(forKey: key) } }
             return try await read.run(request)
         }
-        guard case .winHTTP(let proxy) = route else { throw URLError(.cannotConnectToHost) }
+        let proxy: String?, relay: WindowsProxyRelay?
+        switch route {
+        case .winHTTP(let value): proxy = value; relay = nil
+        case .relay(let upstream):
+            // Never a direct connection: without a relay the request fails.
+            guard let value = WindowsProxyRelay(upstream, target: target, timeout: options.idleTimeout) else { throw URLError(.cannotConnectToHost) }
+            proxy = value.address; relay = value
+        case .urlSession: throw URLError(.cannotConnectToHost)
+        }
+        defer { relay?.close() }
         guard let transport = WindowsHTTPStream() else { throw URLError(.cannotConnectToHost) }
         let key = try register(transport)
         defer { lock.withLock { active[key] = nil } }
