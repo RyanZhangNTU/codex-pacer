@@ -1,7 +1,8 @@
 import Foundation
 
 public enum TaskSymbol: String, Sendable {
-    case thinking, tool, responding, starting, working, coordinating, approval, input, completed, interrupted, failed, unknown
+    /// `background`: the turn stopped while its background work runs; it resumes on the wake.
+    case thinking, tool, responding, starting, working, coordinating, background, approval, input, completed, interrupted, failed, unknown
     public static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil,
                               groupIsRunning: Bool = false) -> Self {
         if let attention { return attention == .approval ? .approval : .input }
@@ -12,6 +13,7 @@ public enum TaskSymbol: String, Sendable {
         case .interrupted: return activity.turnFailed ? .failed : .interrupted
         case .unknown: return .unknown
         case .running:
+            if activity.currentBackgroundWait != nil { return .background }
             switch activity.stage {
             case .thinking: return .thinking
             case .tool: return .tool

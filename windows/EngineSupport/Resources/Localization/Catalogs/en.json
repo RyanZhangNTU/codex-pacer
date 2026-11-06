@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "fb1a41ae5c1f6a857cdd813be5a1c2f102bbc82b9e051776f15eb6acbf3dcf5e",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "810d74356a0d2e59a0177b338dd2ffca579c5036fd66f48530d04a6761aa0daa",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -26,6 +26,7 @@
     "account.show_expiries": "Show reset expiry times",
     "account.unknown_expiry_count": "Resets with unknown expiry: %ld",
     "activity.app_missing": "Codex could not be found. Check that the Codex app is installed.",
+    "activity.background_wait": "Waiting for background work",
     "activity.claude_host_missing": "Pacer doesn\u2019t know which app started this Claude task. It can only see the app while the task is running.",
     "activity.codex_host_missing": "Pacer doesn\u2019t know which app started this Codex task. It can only see the app while the task is running.",
     "activity.coordinating": "Coordinating",

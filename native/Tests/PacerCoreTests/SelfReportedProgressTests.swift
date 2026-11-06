@@ -138,12 +138,21 @@ final class SelfReportedProgressTests: XCTestCase {
         let waiting = try ring(at: 300)
         XCTAssertEqual(waiting.mode, .waiting); XCTAssertEqual(waiting.percent, 70); XCTAssertFalse(waiting.stale, "Expected silence never fades")
         XCTAssertEqual(waiting.accessibilityText, L10n.text("activity.progress_waiting", 70))
+        func status(at offset: Double) throws -> String {
+            ActivityTaskRowPresentation(activity: try XCTUnwrap(state.activities.first), unread: false, at: now.addingTimeInterval(offset)).status
+        }
+        // The final reply was the turn's last stage; the row now says what it waits for.
+        send(["kind": "response", "origin": "transcript", "sessionId": session, "promptId": turn, "itemId": "reply", "at": start + 9])
+        XCTAssertEqual(try status(at: 300), L10n.text("activity.background_wait"))
+        XCTAssertEqual(TaskSymbol.symbol(for: try XCTUnwrap(state.activities.first)), .background, "A paused turn has its own glyph")
         // The completion notification wakes the same request in a new turn.
         send(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": nextTurn, "wake": true, "at": start + 120])
         XCTAssertEqual(state.activities.first?.turnID, nextTurn)
         XCTAssertEqual(state.activities.first?.currentProgress?.percent, 70)
         XCTAssertNil(state.activities.first?.currentBackgroundWait)
         XCTAssertEqual(try ring(at: 125).mode, .working)
+        XCTAssertNotEqual(try status(at: 125), L10n.text("activity.background_wait"))
+        XCTAssertNotEqual(TaskSymbol.symbol(for: try XCTUnwrap(state.activities.first)), .background)
         // Ending below 100 without background work keeps the estimate, dimmed.
         send(["kind": "stopVerified", "origin": "transcript", "sessionId": session, "promptId": nextTurn, "itemId": "end-2", "at": start + 130])
         XCTAssertEqual(state.activities.first?.phase, .completed)

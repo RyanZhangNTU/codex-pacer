@@ -103,6 +103,7 @@
 "activity.page_region" = "任务分页区域";
 "activity.previous_page" = "上一页任务";
 "activity.responding" = "输出回复";
+"activity.background_wait" = "等待后台工作";
 "activity.progress_pending" = "等待进度";
 "activity.progress_reported" = "自报进度约 %ld%%";
 "activity.progress_waiting_pending" = "等待后台工作";

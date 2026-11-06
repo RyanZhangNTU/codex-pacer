@@ -464,6 +464,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if turnFailed, phase == .interrupted { return L10n.text("activity.failed") }
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return L10n.text("activity.last_waiting") }
         if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return L10n.text("activity.last_tool") }
+        // The turn stopped for its background work; its last stage is over.
+        if observedPhase(at: now) == .running, currentBackgroundWait != nil { return L10n.text("activity.background_wait") }
         return observedPhase(at: now) == .running ? stage.label : observedPhase(at: now).label
     }
 

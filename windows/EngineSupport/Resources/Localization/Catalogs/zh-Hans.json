@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "93cc6df0690132e30494e4e23d4ff5973851f7a5a8f9eebe962e3857b671f263",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "2cae417dbb7080f9a58f0d96f2d5c2b997025393899a99dc557359666b0e4f47",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
   },
   "strings": {
@@ -26,6 +26,7 @@
     "account.show_expiries": "\u67e5\u770b\u91cd\u7f6e\u5230\u671f\u65f6\u95f4",
     "account.unknown_expiry_count": "%ld \u6b21\u91cd\u7f6e\u7684\u5230\u671f\u65f6\u95f4\u672a\u77e5",
     "activity.app_missing": "\u672a\u627e\u5230 Codex\uff0c\u8bf7\u786e\u8ba4\u5df2\u5b89\u88c5 Codex \u5e94\u7528\u3002",
+    "activity.background_wait": "\u7b49\u5f85\u540e\u53f0\u5de5\u4f5c",
     "activity.claude_host_missing": "\u4e0d\u77e5\u9053\u662f\u54ea\u4e2a\u5e94\u7528\u542f\u52a8\u4e86\u8fd9\u4e2a Claude \u4efb\u52a1\u3002Pacer \u53ea\u80fd\u5728\u4efb\u52a1\u8fd0\u884c\u65f6\u8bc6\u522b\u5b83\u7684\u5e94\u7528\u3002",
     "activity.codex_host_missing": "\u4e0d\u77e5\u9053\u662f\u54ea\u4e2a\u5e94\u7528\u542f\u52a8\u4e86\u8fd9\u4e2a Codex \u4efb\u52a1\u3002Pacer \u53ea\u80fd\u5728\u4efb\u52a1\u8fd0\u884c\u65f6\u8bc6\u522b\u5b83\u7684\u5e94\u7528\u3002",
     "activity.coordinating": "\u6b63\u5728\u534f\u8c03",

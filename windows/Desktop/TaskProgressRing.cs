@@ -35,7 +35,9 @@ public sealed class TaskProgressRing : Grid
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static readonly Dictionary<string, Memory> Memories = new();
     private static double Now => Clock.Elapsed.TotalSeconds;
-    private const double RotationPeriod = 6, DotTravel = 1.6, DotPeriod = 2, BreathPeriod = 3;
+    private const double RotationPeriod = 6, DotTravel = 1.6, DotPeriod = 2, BreathPeriod = 2.4;
+    /// A waiting ring breathes down to this share of its resting opacity.
+    private const double BreathLow = 0.2;
 
     private readonly Ellipse pending = new()
     {
@@ -51,7 +53,13 @@ public sealed class TaskProgressRing : Grid
     private readonly RotateTransform rotation = new();
     private readonly ScaleTransform scale = new(1, 1);
     private readonly SolidColorBrush ink = new(Colors.Transparent);
-    private bool motion, spinning, pendingShown, dotting, breathing, dim;
+    private bool motion, pendingShown, dim, showing;
+    /// Endless clocks are leased so stopping one removes it from WPF's clock
+    /// manager; a clock only detached from its property ticks until a GC.
+    private AnimationLease? spinLease, dotLease, breathLease;
+    private bool dotting => dotLease != null;
+    /// The element whose opacity breathes while the request waits, if any.
+    private UIElement? breathingTarget;
     /// The request's lifecycle mode from the engine: working, longStep,
     /// attention, waiting, done, short, interrupted or failed.
     private string mode = "working";
@@ -87,6 +95,15 @@ public sealed class TaskProgressRing : Grid
     /// Applies one row's ring. Returns how the ring changed for this task, so
     /// the row can shrink or restore its icon in step with it.
     internal Change Show(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate)
+    {
+        // Making the ring visible raises IsVisibleChanged synchronously. Its
+        // looping motion starts once, from the finished state: started midway,
+        // it would read stale fields and a later opacity fade would cancel it.
+        showing = true;
+        try { StopBreathing(); return Apply(id, state, lifecycle, fraction, stale, color, animate); }
+        finally { showing = false; UpdateSpin(); }
+    }
+    private Change Apply(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate)
     {
         motion = animate; mode = lifecycle ?? "working";
         double now = Now;
@@ -141,7 +158,6 @@ public sealed class TaskProgressRing : Grid
             }
             else { DisplayFraction = 0; track.Opacity = 0; pending.Opacity = 0.6; }
             Memories[id] = memory;
-            UpdateSpin();
             return appeared ? Change.Appeared : Change.Shown;
         }
         // Reported.
@@ -157,7 +173,6 @@ public sealed class TaskProgressRing : Grid
             previous.Seen = now; previous.Color = color;
             Fade(previous.Stale, dimmed, animate);
             previous.Stale = dimmed; Memories[id] = previous;
-            UpdateSpin();
             return Change.Shown;
         }
         double from = previous?.State == "reported" ? previous.Displayed(now) : 0, delay = 0, duration;
@@ -199,7 +214,6 @@ public sealed class TaskProgressRing : Grid
         memory.From = from; memory.To = target; memory.Start = now + delay; memory.Duration = animate && previous != null ? duration : 0;
         memory.Ease = ease2; memory.Full = full || previous?.Full == true && target >= 0.9995;
         Memories[id] = memory;
-        UpdateSpin();
         return appeared ? Change.Appeared : Change.Shown;
     }
 
@@ -208,7 +222,8 @@ public sealed class TaskProgressRing : Grid
     internal void SetMotion(bool value) { motion = value; UpdateSpin(); }
     internal void Halt()
     {
-        spinning = false; dotting = false; breathing = false;
+        spinLease?.Dispose(); spinLease = null; dotLease?.Dispose(); dotLease = null;
+        breathLease?.Dispose(); breathLease = null; breathingTarget = null;
         rotation.BeginAnimation(RotateTransform.AngleProperty, null);
         foreach (var element in new UIElement[] { this, pending, track, ghost, arc, dot }) element.BeginAnimation(OpacityProperty, null);
         BeginAnimation(DisplayFractionProperty, null); BeginAnimation(GhostFractionProperty, null); BeginAnimation(DotPhaseProperty, null);
@@ -238,24 +253,24 @@ public sealed class TaskProgressRing : Grid
     /// row's motion where the old one was.
     private void UpdateSpin()
     {
+        if (showing) return;
         bool live = motion && IsVisible && Visibility == Visibility.Visible;
         bool spin = live && pendingShown && mode is "working" or "longStep";
-        if (spin != spinning)
+        if (spin != (spinLease != null))
         {
-            spinning = spin;
-            if (!spin) rotation.BeginAnimation(RotateTransform.AngleProperty, null);
-            else
+            spinLease?.Dispose(); spinLease = null;
+            if (spin)
             {
                 double phase = Now % RotationPeriod / RotationPeriod * 360;
-                rotation.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(phase, phase + 360, TimeSpan.FromSeconds(RotationPeriod))
-                    { RepeatBehavior = RepeatBehavior.Forever });
+                spinLease = new AnimationLease(new DoubleAnimation(phase, phase + 360, TimeSpan.FromSeconds(RotationPeriod))
+                    { RepeatBehavior = RepeatBehavior.Forever }, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
             }
         }
         bool travel = live && !pendingShown && !dim && mode == "working" && targetFraction is > 0.04 and < 0.9995;
         if (travel != dotting)
         {
-            dotting = travel;
-            if (!travel) { BeginAnimation(DotPhaseProperty, null); DotPhase = 0; }
+            dotLease?.Dispose(); dotLease = null;
+            if (!travel) DotPhase = 0;
             else
             {
                 var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(DotPeriod), RepeatBehavior = RepeatBehavior.Forever,
@@ -263,26 +278,38 @@ public sealed class TaskProgressRing : Grid
                 run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
                 run.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(DotTravel)), new SineEase { EasingMode = EasingMode.EaseInOut }));
                 run.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(DotPeriod))));
-                BeginAnimation(DotPhaseProperty, run);
+                dotLease = new AnimationLease(run, clock => ApplyAnimationClock(DotPhaseProperty, clock));
             }
             UpdateDot();
         }
-        bool breathe = live && mode == "waiting";
-        if (breathe != breathing)
+        // The dashes breathe until the first estimate, the arc after it.
+        UIElement? breath = !live || mode != "waiting" ? null : pendingShown ? pending : (UIElement)arc;
+        if (breath != breathingTarget)
         {
-            breathing = breathe;
-            UIElement target = pendingShown ? pending : arc;
-            double high = pendingShown ? 0.6 : 1;
-            if (!breathe)
+            StopBreathing();
+            if (breath is UIElement element)
             {
-                pending.BeginAnimation(OpacityProperty, null); arc.BeginAnimation(OpacityProperty, null);
-                if (pendingShown) pending.Opacity = 0.6; else arc.Opacity = dim ? 0.45 : 1;
+                double high = element == pending ? 0.6 : 1;
+                breathLease = new AnimationLease(new DoubleAnimation(high, high * BreathLow, TimeSpan.FromSeconds(BreathPeriod / 2))
+                    { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+                      BeginTime = TimeSpan.FromSeconds(-(Now % BreathPeriod)) }, clock => element.ApplyAnimationClock(OpacityProperty, clock));
+                breathingTarget = element;
             }
-            else target.BeginAnimation(OpacityProperty, new DoubleAnimation(high, high * 0.55, TimeSpan.FromSeconds(BreathPeriod / 2))
-                { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-                  BeginTime = TimeSpan.FromSeconds(-(Now % BreathPeriod)) });
         }
     }
+    /// Ends the breath and leaves the element at its resting opacity.
+    private void StopBreathing()
+    {
+        if (breathingTarget == null) return;
+        breathLease?.Dispose(); breathLease = null;
+        breathingTarget.BeginAnimation(OpacityProperty, null);
+        if (breathingTarget == pending) pending.Opacity = pendingShown ? 0.6 : 0; else arc.Opacity = dim ? 0.45 : 1;
+        breathingTarget = null;
+    }
+    /// Whether a waiting request's ring is breathing; read by the presentation checks.
+    internal bool Breathing => breathLease?.IsActive == true && breathingTarget?.HasAnimatedProperties == true;
+    /// Whether any endless clock is still leased; read by the presentation checks.
+    internal bool HasEndlessClocks => spinLease != null || dotLease != null || breathLease != null;
     private void UpdateDot()
     {
         double phase = DotPhase;

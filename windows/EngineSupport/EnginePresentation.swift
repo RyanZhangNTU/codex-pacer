@@ -89,6 +89,7 @@ struct EngineTaskRow: Codable, Equatable {
         case .starting: return "hourglass"
         case .working: return "cloud"
         case .coordinating: return "arrow.triangle.branch"
+        case .background: return "zzz"
         case .approval: return "hand.raised"
         case .input: return "ellipsis.bubble"
         case .completed: return "checkmark.circle"

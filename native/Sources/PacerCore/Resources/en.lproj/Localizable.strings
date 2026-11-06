@@ -103,6 +103,7 @@
 "activity.page_region" = "Task pages";
 "activity.previous_page" = "Previous Task Page";
 "activity.responding" = "Writing a reply";
+"activity.background_wait" = "Waiting for background work";
 "activity.progress_pending" = "Waiting for progress";
 "activity.progress_reported" = "Self-reported progress about %ld%%";
 "activity.progress_waiting_pending" = "Waiting for background work";
