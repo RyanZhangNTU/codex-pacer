@@ -44,6 +44,19 @@ Windows adapters implement the Core file, process, executable, installation, cre
 
 `WindowsFileSystemTests` covers Unicode/UNC conversion and metadata, bounded reads and watches beyond 260 characters. `LongPathChecks` starts the actual engine with isolated Codex, Claude and DeepSeek homes, including Claude's encoded project directory, and checks discovery, initial reads and appended completions without a refresh command. A native PE-resource inspection confirmed the manifest in both executables. Local runs had `LongPathsEnabled=1`; the complete application has not been verified with that system policy disabled.
 
+## HTTP through WinHTTP
+
+FoundationNetworking's URLSession uses libcurl and libdispatch sources on Windows. When libcurl stops asking to write to a socket, URLSession keeps the socket's write source, and libdispatch on Windows signals that source again each time it is armed. A request therefore keeps one worker thread busy until its response ends. In the toolchain pinned here and in upstream `main`, `_SocketSources` cancels its sources only when libcurl removes the socket. A loopback response that stayed open used 84% of one core.
+
+Claude's cloud message streams stay open; up to four project streams and six thread streams can be open at once. Cloud polling also makes up to 16 requests every 30 seconds. On Windows, these and the other periodic reads use WinHTTP's asynchronous API through `WindowsHTTPStream`. A dedicated thread waits on events for each request, so a waiting request uses no CPU.
+
+- `WindowsClaudeCloudStream` reads message streams. Only `GET` requests to `https://claude.ai` message stream paths are allowed. The parser keeps the 4 MiB line limit and the eight-line buffer. The timeouts stay at 60 seconds idle and 24 hours in total.
+- `WindowsHTTPClient` makes the bounded `GET` requests for Claude web usage, Claude cloud polling, Remote Control catalogs and Claude OAuth usage. Claude web reads keep their 12-second request and 15-second total timeouts, and their bodies are limited to 32 MiB. Remote Control and OAuth reads keep 8 and 10 seconds, and 512 KiB and 2 MiB.
+
+Neither follows redirects: a redirect is returned as the response, as the URLSession delegates did. Cookies, stored or default credentials and caches are disabled. Headers that could start another line are rejected. Like libcurl, both use the proxy named in the `https_proxy` or `all_proxy` environment variables and honor `no_proxy`. If WinHTTP cannot use the named proxy, the request fails rather than connecting directly. DeepSeek balance reads still pass a URLSession to Core; they run only when a DeepSeek key is used and end within seconds.
+
+`WindowsClaudeCloudStreamTests`, `WindowsHTTPClientTests` and `WindowsRemoteControlHTTPTests` send loopback requests through the actual WinHTTP path. They cover headers, split UTF-8, cancellation, invalidation, status and redirect responses, size limits, slow consumers, timeouts, proxies and rejected requests. They also check that an idle open stream and a pending request each use less than 10% of one core. `check-engine-idle.py` cannot make these requests, because they need a Claude web session. Measure a signed-in engine as described in [Windows idle CPU](windows-idle-cpu.md).
+
 ## Shared Core and platform boundaries
 
 `PacerCore` owns provider parsing, state, projections and lifecycle policy. `PacerMacSupport` supplies Mac IO. The separate `PacerEngineSupport` target depends on Core and supplies Windows IO and engine protocol assembly; native Windows calls stay in host code. Core cannot depend on either host target. Both packages compile the entire `native/Sources/PacerCore` directory, so new Core files enter both builds automatically; there is no Windows source or test inventory.

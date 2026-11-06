@@ -27,6 +27,19 @@ int pacer_telemetry_read(void *client, uint8_t *bytes, size_t capacity, uint32_t
 int pacer_telemetry_write(void *client, const uint8_t *bytes, size_t count);
 void pacer_telemetry_interrupt(void *client);
 void pacer_telemetry_close(void *client);
+// One WinHTTP GET response without redirects, cookies or credentials. A null
+// proxy connects directly. Open waits for the response headers. Cancel is safe
+// from any thread during open or read; close runs after those calls return.
+// -1 = failure, -2 = timeout, -3 = cancelled. Read returns 0 at the end.
+void *pacer_http_stream_create(void);
+int pacer_http_stream_open(void *stream, const uint16_t *host, uint16_t port, int secure, const uint16_t *path,
+                           const uint16_t *headers, const uint16_t *agent, const uint16_t *proxy,
+                           uint32_t timeout_ms, uint32_t *status);
+int pacer_http_stream_header(void *stream, const uint16_t *name, uint16_t *value, size_t capacity);
+int pacer_http_stream_raw_headers(void *stream, uint16_t *value, size_t capacity);
+int64_t pacer_http_stream_read(void *stream, uint8_t *bytes, size_t capacity, uint32_t timeout_ms);
+void pacer_http_stream_cancel(void *stream);
+void pacer_http_stream_close(void *stream);
 int pacer_is_windows_executable(const uint16_t *path);
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company);
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);

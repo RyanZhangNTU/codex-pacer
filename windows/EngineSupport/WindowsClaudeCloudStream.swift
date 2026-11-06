@@ -3,29 +3,47 @@ import Foundation
 import PacerCore
 import FoundationNetworking
 
-/// FoundationNetworking has no URLSession.AsyncBytes on Windows. This adapter
-/// delivers the same bounded lines to the original cloud stream parser.
-final class WindowsClaudeCloudStream: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: AsyncThrowingStream<Data, Error>.Continuation?
-    private var session: URLSession?
-    private var task: URLSessionDataTask?
-    // URLSession serializes delegate callbacks. Cancellation never touches this buffer.
-    private var buffer = ClaudeCloudLineBuffer()
-    private var accepted = false
-    private var ended = false
+/// Delivers a Claude message stream's bounded lines to the original cloud
+/// stream parser. FoundationNetworking has no URLSession.AsyncBytes on Windows,
+/// and its open responses busy-loop a thread, so each stream is read through
+/// WinHTTP on its own thread, which waits for data without using the CPU.
+enum WindowsClaudeCloudStream {
+    struct Options: Sendable {
+        /// The longest wait for the connection or for the next bytes, like
+        /// URLSession's request timeout. An idle stream still sends keepalives.
+        var idleTimeout: TimeInterval = 60
+        /// Like URLSession's resource timeout; polling reopens the stream.
+        var lifetime: TimeInterval = 24 * 3600
+        var proxy: @Sendable (String) -> Result<String?, WindowsHTTPStream.Failure> = { WindowsHTTPProxy.forHTTPS(host: $0) }
+        /// Where an allowed request connects. Tests use a loopback fixture.
+        var target: @Sendable (URL) -> WindowsHTTPStream.Target? = { WindowsHTTPStream.httpsTarget($0) }
+    }
 
-    static func lines(configuration: URLSessionConfiguration) -> ClaudeCloudReplyStreams.Lines {
+    static func lines(_ options: Options = .init()) -> ClaudeCloudReplyStreams.Lines {
         { request in
             AsyncThrowingStream(bufferingPolicy: .bufferingOldest(8)) { continuation in
-                let exchange = WindowsClaudeCloudStream()
-                continuation.onTermination = { _ in exchange.cancel() }
-                exchange.start(request, configuration: configuration, continuation: continuation)
+                guard !Task.isCancelled else { continuation.finish(throwing: CancellationError()); return }
+                guard allowed(request), let url = request.url, let target = options.target(url) else {
+                    continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return
+                }
+                // A proxy WinHTTP cannot use fails like a refused connection.
+                guard case .success(let proxy) = options.proxy(target.host) else {
+                    continuation.finish(throwing: ClaudeCloudFailure.connection); return
+                }
+                guard let fields = WindowsHTTPStream.fields(of: request) else { continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return }
+                guard let transport = WindowsHTTPStream() else { continuation.finish(throwing: ClaudeCloudFailure.connection); return }
+                continuation.onTermination = { _ in transport.cancel() }
+                let thread = Thread {
+                    read(url, target: target, headers: fields.headers, agent: fields.agent, proxy: proxy, options: options,
+                         transport: transport, continuation: continuation)
+                }
+                thread.name = "Claude cloud stream"
+                thread.start()
             }
         }
     }
 
-    private static func allowed(_ request: URLRequest) -> Bool {
+    static func allowed(_ request: URLRequest) -> Bool {
         guard let url = request.url, url.scheme == "https", url.host == "claude.ai",
               url.port == nil || url.port == 443, url.user == nil, url.password == nil,
               url.fragment == nil, request.httpMethod == "GET",
@@ -34,76 +52,51 @@ final class WindowsClaudeCloudStream: NSObject, URLSessionDataDelegate, @uncheck
         return true
     }
 
-    private func start(_ request: URLRequest, configuration: URLSessionConfiguration,
-                       continuation: AsyncThrowingStream<Data, Error>.Continuation) {
-        guard !Task.isCancelled else { continuation.finish(throwing: CancellationError()); return }
-        guard Self.allowed(request) else { continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return }
-        let configuration = configuration.copy() as! URLSessionConfiguration
-        configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil; configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-        var request = request; request.httpShouldHandleCookies = false
-        let task = session.dataTask(with: request)
-        lock.lock()
-        guard !ended else {
-            lock.unlock(); task.cancel(); session.invalidateAndCancel(); continuation.finish(throwing: CancellationError()); return
+    private static func read(_ url: URL, target: WindowsHTTPStream.Target, headers: [(name: String, value: String)],
+                             agent: String, proxy: String?, options: Options, transport: WindowsHTTPStream,
+                             continuation: AsyncThrowingStream<Data, Error>.Continuation) {
+        defer { transport.close() }
+        func fail(_ failure: WindowsHTTPStream.Failure) {
+            continuation.finish(throwing: failure == .cancelled ? CancellationError() : ClaudeCloudFailure.connection)
         }
-        self.continuation = continuation; self.session = session; self.task = task
-        lock.unlock()
-        task.resume()
-    }
-
-    private func cancel() { finish(CancellationError()) }
-
-    private func finish(_ error: Error? = nil) {
-        lock.lock()
-        let continuation = self.continuation, session = self.session, task = self.task
-        ended = true
-        self.continuation = nil; self.session = nil; self.task = nil
-        lock.unlock()
-        task?.cancel(); session?.invalidateAndCancel()
-        if let error { continuation?.finish(throwing: error) } else { continuation?.finish() }
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard let response = response as? HTTPURLResponse, response.url?.scheme == "https", response.url?.host == "claude.ai" else {
-            completionHandler(.cancel); finish(ClaudeCloudFailure.invalidReply); return
+        let ends = Date().addingTimeInterval(options.lifetime)
+        let status: Int
+        switch transport.open(target, headers: headers, agent: agent, proxy: proxy, timeout: options.idleTimeout) {
+        case .success(let value): status = value
+        case .failure(let failure): fail(failure); return
         }
-        if let failure = ClaudeCloudFailure(streamResponse: response, at: Date()) {
-            completionHandler(.cancel); finish(failure); return
+        // Redirects are never followed, even to the same origin.
+        guard !(300..<400).contains(status) else { continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return }
+        var fields: [String: String] = [:]
+        for name in ["Content-Type", "Retry-After"] { fields[name] = transport.header(name) }
+        guard let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: fields) else {
+            continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return
         }
-        accepted = true; completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        lock.lock(); let continuation = self.continuation; lock.unlock()
-        guard accepted, let continuation else { return }
-        do {
-            for byte in data {
-                guard let line = try buffer.append(byte) else { continue }
-                switch continuation.yield(line) {
-                case .enqueued: break
-                // A slow consumer must not retain unbounded reply text or
-                // silently lose a line. Polling still owns task lifecycle.
-                case .dropped: finish(ClaudeCloudFailure.connection); return
-                case .terminated: cancel(); return
-                @unknown default: finish(ClaudeCloudFailure.connection); return
-                }
+        if let failure = ClaudeCloudFailure(streamResponse: response, at: Date()) { continuation.finish(throwing: failure); return }
+        var buffer = ClaudeCloudLineBuffer()
+        var bytes = [UInt8](repeating: 0, count: 16 * 1024)
+        while true {
+            let remaining = ends.timeIntervalSinceNow
+            guard remaining > 0 else { continuation.finish(throwing: ClaudeCloudFailure.connection); return }
+            switch transport.read(into: &bytes, timeout: min(options.idleTimeout, remaining)) {
+            case .failure(let failure): fail(failure); return
+            case .success(0): continuation.finish(); return
+            case .success(let count):
+                do {
+                    for byte in bytes[..<count] {
+                        guard let line = try buffer.append(byte) else { continue }
+                        switch continuation.yield(line) {
+                        case .enqueued: break
+                        // A slow consumer must not retain unbounded reply text or
+                        // silently lose a line. Polling still owns task lifecycle.
+                        case .dropped: continuation.finish(throwing: ClaudeCloudFailure.connection); return
+                        case .terminated: return
+                        @unknown default: continuation.finish(throwing: ClaudeCloudFailure.connection); return
+                        }
+                    }
+                } catch { continuation.finish(throwing: ClaudeCloudFailure.invalidReply); return }
             }
-        } catch { finish(ClaudeCloudFailure.invalidReply) }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error {
-            finish((error as? URLError)?.code == .cancelled ? CancellationError() : ClaudeCloudFailure.connection)
-        } else { finish() }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil); finish(ClaudeCloudFailure.invalidReply)
+        }
     }
 }
 #endif
