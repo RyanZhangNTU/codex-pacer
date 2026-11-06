@@ -2,39 +2,10 @@
 #if os(Windows)
 import Foundation
 import FoundationNetworking
+import WinSDK
 import XCTest
 @testable import PacerCore
 
-private final class CloudStreamFixture: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: CloudStreamProtocol?
-    private var stoppedValue = false
-    var opened: Bool { lock.lock(); defer { lock.unlock() }; return value != nil }
-    var stopped: Bool { lock.lock(); defer { lock.unlock() }; return stoppedValue }
-    func open(_ value: CloudStreamProtocol) { lock.lock(); self.value = value; lock.unlock() }
-    func stop() { lock.lock(); stoppedValue = true; lock.unlock() }
-    private func protocolValue() -> CloudStreamProtocol? { lock.lock(); defer { lock.unlock() }; return value }
-    func respond(_ code: Int = 200, mime: String = "text/event-stream", headers: [String: String] = [:]) {
-        guard let value = protocolValue() else { return }
-        value.client?.urlProtocol(value, didReceive: HTTPURLResponse(url: value.request.url!, statusCode: code, httpVersion: nil,
-            headerFields: headers.merging(["Content-Type": mime]) { first, _ in first })!, cacheStoragePolicy: .notAllowed)
-    }
-    func data(_ value: Data) { guard let item = protocolValue() else { return }; item.client?.urlProtocol(item, didLoad: value) }
-    func finish() { guard let item = protocolValue() else { return }; item.client?.urlProtocolDidFinishLoading(item) }
-}
-private final class CloudStreamRegistry: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [String: CloudStreamFixture] = [:]
-    func put(_ id: String, _ value: CloudStreamFixture?) { lock.lock(); values[id] = value; lock.unlock() }
-    func get(_ id: String) -> CloudStreamFixture? { lock.lock(); defer { lock.unlock() }; return values[id] }
-}
-private final class CloudStreamProtocol: URLProtocol {
-    static let registry = CloudStreamRegistry()
-    override class func canInit(with request: URLRequest) -> Bool { request.value(forHTTPHeaderField: "X-Fixture-ID") != nil }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { Self.registry.get(request.value(forHTTPHeaderField: "X-Fixture-ID") ?? "")?.open(self) }
-    override func stopLoading() { Self.registry.get(request.value(forHTTPHeaderField: "X-Fixture-ID") ?? "")?.stop() }
-}
 private final class CloudStreamOutcome: @unchecked Sendable {
     private let lock = NSLock()
     private var finishedValue = false
@@ -48,85 +19,222 @@ private final class CloudStreamOutcome: @unchecked Sendable {
 }
 
 final class WindowsClaudeCloudStreamTests: XCTestCase {
-    private func fixture() -> (String, CloudStreamFixture, ClaudeCloudReplyStreams.Lines, URLRequest) {
-        let id = UUID().uuidString, site = CloudStreamFixture()
-        CloudStreamProtocol.registry.put(id, site)
-        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [CloudStreamProtocol.self]
-        configuration.timeoutIntervalForRequest = 2; configuration.timeoutIntervalForResource = 4
-        var request = URLRequest(url: URL(string: "https://claude.ai/v1/code/channels/chan_fixture1/messages/stream?from=tail&caught_up=true")!)
-        request.setValue(id, forHTTPHeaderField: "X-Fixture-ID")
+    private static let path = "/v1/code/channels/chan_fixture1/messages/stream?from=tail&caught_up=true"
+
+    /// The production stream, with only its connection redirected to `server`.
+    private func fixture(idleTimeout: TimeInterval = 4, lifetime: TimeInterval = 60, viaProxy: Bool = false)
+        throws -> (LoopbackHTTPServer, ClaudeCloudReplyStreams.Lines, URLRequest) {
+        let server = try LoopbackHTTPServer()
+        var options = WindowsClaudeCloudStream.Options()
+        options.idleTimeout = idleTimeout; options.lifetime = lifetime
+        let port = server.port
+        options.proxy = { _ in .success(.winHTTP(viaProxy ? "127.0.0.1:\(port)" : nil)) }
+        options.target = { url in
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            let path = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
+            return viaProxy ? .init(host: "pacer-fixture.invalid", port: 80, secure: false, path: path)
+                : .init(host: "127.0.0.1", port: port, secure: false, path: path)
+        }
+        var request = URLRequest(url: URL(string: "https://claude.ai" + Self.path)!)
         request.setValue("sessionKey=synthetic-fixture", forHTTPHeaderField: "Cookie")
-        return (id, site, WindowsClaudeCloudStream.lines(configuration: configuration), request)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("PacerFixture/1", forHTTPHeaderField: "User-Agent")
+        return (server, WindowsClaudeCloudStream.lines(options), request)
     }
     private func consume(_ stream: AsyncThrowingStream<Data, Error>, into outcome: CloudStreamOutcome) -> Task<Void, Never> {
         Task { do { for try await line in stream { outcome.line(line) }; outcome.end() } catch { outcome.end(error) } }
     }
     private func until(_ condition: () -> Bool) async throws {
         if try await TestWait.until(condition) { return }
-        XCTFail("The intercepted FoundationNetworking stream did not finish its bounded operation")
+        XCTFail("The loopback WinHTTP stream did not finish its bounded operation")
         throw URLError(.timedOut)
     }
-    func testActualSessionDeliversSplitUtf8LinesAndCancelsOwnedTransport() async throws {
-        let (id, site, lines, request) = fixture(); defer { CloudStreamProtocol.registry.put(id, nil) }
+    private func processorSeconds() -> TimeInterval {
+        var creation = FILETIME(), exit = FILETIME(), kernel = FILETIME(), user = FILETIME()
+        guard GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user) else { return .infinity }
+        func seconds(_ time: FILETIME) -> TimeInterval { TimeInterval(UInt64(time.dwHighDateTime) << 32 | UInt64(time.dwLowDateTime)) / 10_000_000 }
+        return seconds(kernel) + seconds(user)
+    }
+
+    func testActualTransportDeliversSplitUtf8LinesAndCancellationClosesTheConnection() async throws {
+        let (server, lines, request) = try fixture(); defer { server.stop() }
         let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }
-        try await until { site.opened }; site.respond()
+        try await until { server.opened }
+        let head = try XCTUnwrap(server.requests.first)
+        XCTAssertTrue(head.hasPrefix("GET \(Self.path) HTTP/1.1\r\n"))
+        XCTAssertTrue(head.contains("\r\nCookie: sessionKey=synthetic-fixture\r\n"))
+        XCTAssertTrue(head.contains("\r\nAccept: text/event-stream\r\n"))
+        XCTAssertEqual(head.components(separatedBy: "User-Agent:").count, 2, "The agent is sent exactly once")
+        XCTAssertTrue(head.contains("\r\nUser-Agent: PacerFixture/1\r\n"))
+        server.respond()
         let content = Data("event: fixture\r\ndata: 合成回复\n\n".utf8), split = content.count - 5
-        site.data(content.prefix(split)); site.data(content.suffix(content.count - split)); site.finish()
+        server.send(content.prefix(split)); try await Task.sleep(nanoseconds: 50_000_000)
+        server.send(content.suffix(content.count - split)); server.finish()
         try await until { result.finished }
         XCTAssertNil(result.failure)
         XCTAssertEqual(result.lines.compactMap { String(data: $0, encoding: .utf8) }, ["event: fixture", "data: 合成回复"])
 
-        let (secondID, secondSite, secondLines, secondRequest) = fixture(); defer { CloudStreamProtocol.registry.put(secondID, nil) }
-        let pending = consume(secondLines(secondRequest), into: .init()); defer { pending.cancel() }
-        try await until { secondSite.opened }; pending.cancel()
-        try await until { secondSite.stopped }
+        let (second, secondLines, secondRequest) = try fixture(); defer { second.stop() }
+        let pending = CloudStreamOutcome(), waiting = consume(secondLines(secondRequest), into: pending)
+        try await until { second.opened }; waiting.cancel()
+        try await until { second.closed && pending.finished }
+        XCTAssertTrue(pending.lines.isEmpty)
     }
-    func testStatusAndHtmlFailuresAreTypedAndNeverDeliverResponseContent() async throws {
-        for (code, mime, expected) in [(401, "text/event-stream", ClaudeCloudFailure.signedOut),
-                                      (403, "text/event-stream", .denied), (200, "text/html", .challenge)] {
-            let (id, site, lines, request) = fixture(); defer { CloudStreamProtocol.registry.put(id, nil) }
+
+    /// FoundationNetworking keeps polling an open response on Windows; the
+    /// stream must instead wait for data without using the processor.
+    func testOpenIdleStreamWaitsWithoutUsingTheProcessor() async throws {
+        let (server, lines, request) = try fixture(idleTimeout: 30); defer { server.stop() }
+        let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }
+        try await until { server.opened }
+        server.respond(); server.send(": keepalive\nevent: ready\n")
+        try await until { result.lines.count == 2 }
+        let start = processorSeconds(), clock = ProcessInfo.processInfo.systemUptime
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        let used = processorSeconds() - start, elapsed = ProcessInfo.processInfo.systemUptime - clock
+        XCTAssertLessThan(used, 0.1 * elapsed, "An idle open stream used \(used) s of CPU in \(elapsed) s")
+        XCTAssertFalse(result.finished)
+        server.send("data: after idle\n")
+        try await until { result.lines.count == 3 }
+        task.cancel()
+        try await until { server.closed }
+    }
+
+    func testStatusRedirectAndHtmlFailuresAreTypedAndNeverDeliverResponseContent() async throws {
+        let cases: [(Int, String, [String: String], ClaudeCloudFailure)] = [
+            (401, "text/event-stream", [:], .signedOut), (403, "text/event-stream", [:], .denied),
+            (200, "text/html", [:], .challenge), (404, "text/event-stream", [:], .notEnabled),
+            (429, "text/event-stream", ["Retry-After": "120"], .throttled(nil)),
+            (302, "text/event-stream", ["Location": "https://claude.ai" + Self.path], .invalidReply)]
+        for (code, mime, headers, expected) in cases {
+            let (server, lines, request) = try fixture(); defer { server.stop() }
             let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }
-            try await until { site.opened }; site.respond(code, mime: mime)
+            try await until { server.opened }
+            server.respond(code, mime: mime, headers: headers); server.send("data: private\n")
             try await until { result.finished }
-            XCTAssertEqual(result.failure as? ClaudeCloudFailure, expected); XCTAssertTrue(result.lines.isEmpty)
+            if case .throttled = expected {
+                guard case .throttled(let date) = result.failure as? ClaudeCloudFailure else { XCTFail("Expected throttling"); continue }
+                XCTAssertNotNil(date, "Retry-After reaches the shared failure mapping")
+            } else { XCTAssertEqual(result.failure as? ClaudeCloudFailure, expected) }
+            XCTAssertTrue(result.lines.isEmpty)
+            try await until { server.closed }
+            XCTAssertEqual(server.requests.count, 1, "Redirects are never followed")
         }
     }
+
     func testOversizedLinesAndSlowConsumersStopTheTransport() async throws {
         for oversized in [false, true] {
-            let (id, site, lines, request) = fixture(); defer { CloudStreamProtocol.registry.put(id, nil) }
+            let (server, lines, request) = try fixture(); defer { server.stop() }
             let stream = lines(request)
-            try await until { site.opened }; site.respond()
-            site.data(oversized ? Data(repeating: 120, count: ClaudeCloudLineBuffer.maximumLine + 1) : Data(String(repeating: "fixture\n", count: 1000).utf8))
-            try await until { site.stopped }
+            try await until { server.opened }; server.respond()
+            server.send(oversized ? Data(repeating: 120, count: ClaudeCloudLineBuffer.maximumLine + 1) : Data(String(repeating: "fixture\n", count: 1000).utf8))
+            try await until { server.closed }
             let result = CloudStreamOutcome(), task = consume(stream, into: result); defer { task.cancel() }
             try await until { result.finished }
             XCTAssertEqual(result.failure as? ClaudeCloudFailure, oversized ? .invalidReply : .connection)
             XCTAssertLessThan(result.lines.count, 1000, "A stalled consumer cannot accumulate an unbounded stream")
         }
     }
-    func testForeignOriginsMethodsAndPathsNeverReachTheNetwork() async throws {
-        let (id, site, lines, request) = fixture(); defer { CloudStreamProtocol.registry.put(id, nil) }
+
+    func testSilentConnectionsAndExpiredStreamsEnd() async throws {
+        let (silent, silentLines, silentRequest) = try fixture(idleTimeout: 1); defer { silent.stop() }
+        let quiet = CloudStreamOutcome(), quietTask = consume(silentLines(silentRequest), into: quiet); defer { quietTask.cancel() }
+        try await until { silent.opened }; silent.respond()
+        try await until { quiet.finished && silent.closed }
+        XCTAssertEqual(quiet.failure as? ClaudeCloudFailure, .connection)
+
+        let (busy, busyLines, busyRequest) = try fixture(idleTimeout: 5, lifetime: 1); defer { busy.stop() }
+        let result = CloudStreamOutcome(), task = consume(busyLines(busyRequest), into: result); defer { task.cancel() }
+        try await until { busy.opened }; busy.respond()
+        let sender = Task { while !Task.isCancelled { busy.send(": keepalive\n"); try? await Task.sleep(nanoseconds: 100_000_000) } }
+        defer { sender.cancel() }
+        try await until { result.finished && busy.closed }
+        XCTAssertEqual(result.failure as? ClaudeCloudFailure, .connection)
+    }
+
+    func testPrematureEOFIsAConnectionFailureForMessageStreams() async throws {
+        let (server, lines, request) = try fixture(); defer { server.stop() }
+        let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }
+        try await until { server.opened }
+        server.respond(headers: ["Content-Length": "100"]); server.send("data: fixture\n"); server.finish()
+        try await until { result.finished && server.closed }
+        XCTAssertEqual(result.failure as? ClaudeCloudFailure, .connection)
+    }
+
+    func testForeignOriginsMethodsPathsAndHeadersNeverReachTheNetwork() async throws {
+        let (server, lines, request) = try fixture(); defer { server.stop() }
+        var foreign: [URLRequest] = []
         for address in ["http://claude.ai/v1/code/channels/chan_fixture1/messages/stream", "https://claude.ai.example.test/v1/code/channels/chan_fixture1/messages/stream",
                         "https://claude.ai:444/v1/code/channels/chan_fixture1/messages/stream", "https://user@claude.ai/v1/code/channels/chan_fixture1/messages/stream",
                         "https://claude.ai/api/organizations"] {
-            var foreign = request; foreign.url = URL(string: address)
-            let result = CloudStreamOutcome(), task = consume(lines(foreign), into: result); defer { task.cancel() }
+            var value = request; value.url = URL(string: address); foreign.append(value)
+        }
+        var write = request; write.httpMethod = "POST"; foreign.append(write)
+        for value in foreign {
+            let result = CloudStreamOutcome(), task = consume(lines(value), into: result); defer { task.cancel() }
             try await until { result.finished }; XCTAssertEqual(result.failure as? ClaudeCloudFailure, .invalidReply)
         }
-        var write = request; write.httpMethod = "POST"
-        let result = CloudStreamOutcome(), task = consume(lines(write), into: result); defer { task.cancel() }
-        try await until { result.finished }; XCTAssertEqual(result.failure as? ClaudeCloudFailure, .invalidReply)
-        XCTAssertFalse(site.opened)
+        XCTAssertFalse(server.opened)
+        // URLRequest already drops some unsafe values; the transport rejects
+        // any that would start another header or line.
+        XCTAssertEqual(WindowsHTTPStream.headerBlock([("Accept", "text/event-stream"), ("Cookie", "a=b\tc")]),
+                       Array("Accept: text/event-stream\r\nCookie: a=b\tc".utf16) + [0])
+        for header in [("anthropic-client-feature", "ccr\r\nX-Injected: 1"), ("Cookie", "a\nb"), ("Cookie", "a\u{0}b"),
+                       ("Bad Name", "value"), ("Bad:Name", "value"), ("", "value")] {
+            XCTAssertNil(WindowsHTTPStream.headerBlock([header]), header.0)
+        }
     }
-    func testRedirectDelegateRejectsEvenSameOriginRedirects() {
-        let session = URLSession(configuration: .ephemeral); defer { session.invalidateAndCancel() }
-        let url = URL(string: "https://claude.ai/v1/code/channels/chan_fixture1/messages/stream")!
-        let task = session.dataTask(with: url); defer { task.cancel() }
-        let delegate = WindowsClaudeCloudStream()
-        var called = false
-        delegate.urlSession(session, task: task, willPerformHTTPRedirection: HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: nil)!,
-                            newRequest: URLRequest(url: url)) { request in called = true; XCTAssertNil(request) }
-        XCTAssertTrue(called)
+
+    func testProxyFollowsTheCurlEnvironmentAndIsNeverBypassed() async throws {
+        func proxy(_ environment: [String: String]) -> WindowsHTTPProxy.Route? {
+            guard case .success(let value) = WindowsHTTPProxy.forHTTPS(host: "claude.ai", environment: environment) else { return nil }
+            return value
+        }
+        XCTAssertEqual(proxy([:]), .winHTTP(nil))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890"]), .winHTTP("127.0.0.1:7890"))
+        XCTAssertEqual(proxy(["https_proxy": "127.0.0.2:8000/", "HTTPS_PROXY": "127.0.0.3:8000"]), .winHTTP("127.0.0.2:8000"))
+        XCTAssertEqual(proxy(["Https_Proxy": "proxy.example.test"]), .winHTTP("proxy.example.test:1080"))
+        XCTAssertEqual(proxy(["ALL_PROXY": "http://[::1]:3128"]), .winHTTP("[::1]:3128"))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "example.test, .claude.ai"]), .winHTTP(nil))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "no_proxy": "*"]), .winHTTP(nil))
+        XCTAssertEqual(proxy(["HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "laude.ai,claude.ai.example.test"]), .winHTTP("127.0.0.1:7890"))
+        // SOCKS and credentials go through the loopback relay, still on WinHTTP.
+        typealias Upstream = WindowsHTTPProxy.Upstream
+        let relayed: [(String, Upstream)] = [
+            ("socks4://127.0.0.1:1080", .init(kind: .socks4, host: "127.0.0.1", port: 1080, username: nil, password: nil)),
+            ("socks4a://user@proxy.example.test", .init(kind: .socks4a, host: "proxy.example.test", port: 1080, username: "user", password: "")),
+            ("SOCKS5://127.0.0.1:7891", .init(kind: .socks5, host: "127.0.0.1", port: 7891, username: nil, password: nil)),
+            ("socks5h://fixture:p%40ss%3Aword@[::1]:1080/", .init(kind: .socks5h, host: "::1", port: 1080, username: "fixture", password: "p@ss:word")),
+            ("http://user:fixture@127.0.0.1:8080", .init(kind: .http, host: "127.0.0.1", port: 8080, username: "user", password: "fixture")),
+            ("user:fixture@proxy.example.test:3128", .init(kind: .http, host: "proxy.example.test", port: 3128, username: "user", password: "fixture"))]
+        for (value, upstream) in relayed {
+            XCTAssertEqual(proxy(["HTTPS_PROXY": value]), .relay(upstream), value)
+            XCTAssertEqual(proxy(["ALL_PROXY": value]), .relay(upstream), value)
+            XCTAssertEqual(proxy(["HTTPS_PROXY": value, "NO_PROXY": ".claude.ai"]), .winHTTP(nil))
+        }
+        // HTTPS proxies and forms WinHTTP cannot express keep libcurl's support.
+        for compatible in ["https://127.0.0.1:8443", "socks://127.0.0.1:1080", "http://127.0.0.1:8080/path", "::1:80",
+                           "socks5://127.0.0.1:70000", "socks5h://user:%ZZ@127.0.0.1:1080"] {
+            XCTAssertEqual(proxy(["HTTPS_PROXY": compatible]), .urlSession, compatible)
+            XCTAssertEqual(proxy(["ALL_PROXY": compatible]), .urlSession, compatible)
+        }
+        XCTAssertNil(proxy(["HTTPS_PROXY": "http://127.0.0.1:8080\r\nInjected"]))
+
+        let (server, lines, request) = try fixture(viaProxy: true); defer { server.stop() }
+        let result = CloudStreamOutcome(), task = consume(lines(request), into: result); defer { task.cancel() }
+        try await until { server.opened }
+        XCTAssertTrue(try XCTUnwrap(server.requests.first).hasPrefix("GET http://pacer-fixture.invalid\(Self.path) HTTP/1.1\r\n"))
+        server.respond(); server.send("data: proxied\n"); server.finish()
+        try await until { result.finished }
+        XCTAssertNil(result.failure)
+        XCTAssertEqual(result.lines, [Data("data: proxied".utf8)])
+
+        // An unusable proxy fails before any connection, never falling back to a direct one.
+        var refused = WindowsClaudeCloudStream.Options(); refused.proxy = { _ in .failure(.failed) }
+        let blocked = CloudStreamOutcome(), blockedTask = consume(WindowsClaudeCloudStream.lines(refused)(request), into: blocked)
+        defer { blockedTask.cancel() }
+        try await until { blocked.finished }
+        XCTAssertEqual(blocked.failure as? ClaudeCloudFailure, .connection)
     }
 }
 #endif

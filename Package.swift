@@ -19,7 +19,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
     zstd, gzip,
     .systemLibrary(name: "SQLite3", path: "windows/Native/SQLite3"),
     .target(name: "CWindowsSupport", path: "windows/Native/CWindowsSupport", linkerSettings:
-        ["bcrypt", "advapi32", "version", "rstrtmgr", "user32", "ws2_32", "shell32", "ole32"].map { .linkedLibrary($0) }),
+        ["bcrypt", "advapi32", "version", "rstrtmgr", "user32", "ws2_32", "shell32", "ole32", "winhttp"].map { .linkedLibrary($0) }),
     .target(name: "CryptoKit", dependencies: ["CWindowsSupport"], path: "windows/Native/CryptoKit"),
     .target(name: "PacerCore", dependencies: ["CZstd", "CGzip", "SQLite3", "CryptoKit"],
         path: "native/Sources/PacerCore", resources: [.process("Resources")]),
