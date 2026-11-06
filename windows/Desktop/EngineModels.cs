@@ -95,7 +95,9 @@ internal sealed record EnginePresentation(IReadOnlyList<EngineTaskRow> Rows, int
 internal sealed record EngineTaskRow(string Id, string Provider, string Title, string Status,
     string? Source, string? SourceLabel, string? SourceKind, string Phase, string Symbol, string? Attention,
     string Model, string? Effort, double? TokensPerSecond, bool RateIsFresh, string? RatePlaceholder,
-    string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null);
+    string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null,
+    string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
+    string? ProgressMode = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null);
 internal sealed record WalletSpan(double Start, double End);

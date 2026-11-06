@@ -48,6 +48,56 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertEqual(installer.ensureInstalled(home: home), .current); XCTAssertEqual(storage.replacements, writes)
         XCTAssertTrue(installer.details(home: home).telemetryConfigured)
     }
+    func testProgressRingSwitchAddsAndRemovesTheBackgroundDisplayObserver() throws {
+        let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
+        let flag = ClaudeProgressRingSwitch.flagURL(home: home)
+        func display() throws -> [[String: Any]]? { (try object(settings, storage)["hooks"] as? [String: [[String: Any]]])?["MessageDisplay"] }
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertNil(try display(), "Pacer telemetry alone keeps the display observer off")
+        storage.files[flag] = Data("on\n".utf8)
+        XCTAssertTrue(installer.details(home: home).updateAvailable)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        let entry = try XCTUnwrap((try display()?.first?["hooks"] as? [[String: Any]])?.first)
+        XCTAssertEqual(entry["async"] as? Bool, true, "The observer runs in the background and never holds display")
+        XCTAssertEqual(installer.ensureInstalled(home: home), .current)
+        storage.files.removeValue(forKey: flag)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertNil(try display())
+    }
+    func testToolModeListsEnablesAndApprovesPacersPluginAndRemovesOnlyItsOwnEntries() throws {
+        let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
+        let flag = ClaudeProgressRingSwitch.flagURL(home: home), root = home.appendingPathComponent("pacer/plugin")
+        let user: [String: Any] = ["permissions": ["allow": ["Bash(git status)"]], "enabledPlugins": ["other@market": true],
+            "extraKnownMarketplaces": ["market": ["source": ["source": "github", "repo": "fixture/market"]]]]
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: user)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        storage.files[flag] = Data("tool\n".utf8)
+        XCTAssertTrue(installer.details(home: home).updateAvailable)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        var value = try object(settings, storage)
+        XCTAssertEqual((value["permissions"] as? [String: Any])?["allow"] as? [String], ["Bash(git status)", ClaudeHookInstaller.progressTool])
+        XCTAssertEqual(value["enabledPlugins"] as? [String: Bool], ["other@market": true, "pacer@pacer": true])
+        let source = try XCTUnwrap(((value["extraKnownMarketplaces"] as? [String: Any])?["pacer"] as? [String: Any])?["source"] as? [String: String])
+        XCTAssertEqual(source, ["source": "directory", "path": root.path])
+        XCTAssertNil((value["hooks"] as? [String: Any])?["MessageDisplay"], "The tool needs no display observer")
+        let manifest = try object(root.appendingPathComponent("pacer/.claude-plugin/plugin.json"), storage)
+        let server = try XCTUnwrap((manifest["mcpServers"] as? [String: Any])?["pacer"] as? [String: Any])
+        XCTAssertEqual(server["command"] as? String, "fixture-python")
+        XCTAssertEqual(try object(root.appendingPathComponent(".claude-plugin/marketplace.json"), storage)["name"] as? String, "pacer")
+        XCTAssertNotNil(storage.files[root.appendingPathComponent("pacer/progress_mcp.py")])
+        XCTAssertEqual(storage.permissions[root], 0o700)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .current)
+        storage.files.removeValue(forKey: flag)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        value = try object(settings, storage)
+        XCTAssertTrue(NSDictionary(dictionary: value["permissions"] as? [String: Any] ?? [:]).isEqual(to: user["permissions"] as! [String: Any]))
+        XCTAssertEqual(value["enabledPlugins"] as? [String: Bool], ["other@market": true])
+        XCTAssertEqual((value["extraKnownMarketplaces"] as? [String: Any])?.keys.sorted(), ["market"])
+        storage.files[flag] = Data("tool\n".utf8)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        try installer.uninstall(home: home)
+        XCTAssertTrue(NSDictionary(dictionary: try object(settings, storage)).isEqual(to: user), "Uninstall leaves the user's own entries")
+    }
     func testConflictingTelemetryAndForeignStatusLineSurviveInstallAndUninstall() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
         let original: [String: Any] = ["env": ["OTEL_EXPORTER_OTLP_TRACES_HEADERS": "synthetic-header"],

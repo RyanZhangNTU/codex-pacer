@@ -119,6 +119,20 @@ package struct JSONFieldView {
             } while true
         }
     }
+    /// The opening characters of a string value, decoded from at most
+    /// `maximumBytes` of its literal; the rest of the text is never decoded.
+    /// A cut through an escape or a UTF-8 sequence backs off to a whole one.
+    func stringPrefix(maximumBytes: Int) -> String? {
+        guard data[range.lowerBound] == 34, range.count >= 2, maximumBytes > 0 else { return nil }
+        let start = range.lowerBound + 1, end = range.upperBound - 1, limit = min(end, start + maximumBytes)
+        var cut = limit
+        while cut >= start && cut > limit - 16 {
+            var literal = Data([34]); literal.append(data.subdata(in: start..<cut)); literal.append(34)
+            if let value = try? JSONDecoder().decode(String.self, from: literal) { return value }
+            cut -= 1
+        }
+        return nil
+    }
     package func string(limit: Int = 256) -> String? {
         guard data[range.lowerBound] == 34, range.count <= limit * 6 + 2,
               let value = try? JSONDecoder().decode(String.self, from: data.subdata(in: range)) else { return nil }

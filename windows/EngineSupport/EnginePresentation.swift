@@ -12,9 +12,9 @@ struct EnginePresentation: Codable, Equatable {
     let header: EngineHeader
 
     init(activities: [SessionActivity], requests: [PendingAttentionRequest], inbox: CompletionInbox,
-         hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
+         hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
         self.init(ActivityTaskPresentation(activities: activities, requests: requests, inbox: inbox,
-            options: .init(hideProjects: hideProjects, showsDeepSeekTurnCost: showsDeepSeekTurnCost), at: now))
+            options: .init(hideProjects: hideProjects, showsDeepSeekTurnCost: showsDeepSeekTurnCost, progressRingProviders: progressRingProviders), at: now))
     }
     init(_ value: ActivityTaskPresentation) {
         rows = value.rows.map(EngineTaskRow.init)
@@ -50,6 +50,14 @@ struct EngineTaskRow: Codable, Equatable {
     let dimmed: Bool
     let cost: String?
     let peakCost: Bool
+    /// Optional protocol-1 additions: absent when the progress ring is off.
+    /// `pending` draws the dashed ring; `reported` draws `progressFraction`.
+    let progressState: String?
+    /// The request's lifecycle mode (`TaskProgressRing.Mode`), which sets the ring's style.
+    let progressMode: String?
+    let progressFraction: Double?
+    let progressStale: Bool?
+    let progressText: String?
 
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
@@ -65,6 +73,9 @@ struct EngineTaskRow: Codable, Equatable {
         rateText = value.rateText; subagentText = value.subagentText
         ratePlaceholder = value.ratePlaceholder; turnTime = value.turnTime; subagents = value.subagents
         unread = value.unread; failed = value.activity.turnFailed; dimmed = value.dimmed; cost = value.cost; peakCost = value.peakCost
+        progressState = value.progressRing?.state.rawValue; progressMode = value.progressRing?.mode.rawValue
+        progressFraction = value.progressRing?.fraction
+        progressStale = value.progressRing?.stale; progressText = value.progressRing?.accessibilityText
     }
     static func symbol(_ activity: SessionActivity, attention: PendingAttentionRequest.Kind?) -> String {
         symbol(TaskSymbol.symbol(for: activity, attention: attention))

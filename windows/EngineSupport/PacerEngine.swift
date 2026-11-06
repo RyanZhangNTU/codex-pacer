@@ -239,6 +239,10 @@ actor EngineRuntime {
     private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
+    /// Claude's self-reported progress ring; off until the desktop turns it on.
+    private var claudeProgressRing = false
+    /// The Claude home where this engine switched the ring on.
+    private var claudeProgressSwitchHome: URL?
     private var deepseekNoticePolicy = DeepSeekNoticePolicy()
     private var spikeSnoozedUntil = Date.distantPast
     private var retention: TimeInterval = 30 * 60
@@ -932,6 +936,7 @@ actor EngineRuntime {
         }
         if let deepseek { deepseekHome = deepseek }
         if let executable = parameters.codexExecutable { codexExecutable = executable }
+        if let value = parameters.claudeProgressRing { claudeProgressRing = value }
         moduleSettings = updatedSettings; installation = detected
         if parameters.providerModes != nil { moduleConfigurationActive = true }
         else if explicitProviders != nil { moduleConfigurationActive = false }
@@ -974,6 +979,7 @@ actor EngineRuntime {
             codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
             wslNeedsReconcile = true
         }
+        applyClaudeProgressSwitch()
         bindCodexCompletionSources()
         bindWSLCompletionSources(.claude)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
@@ -1059,7 +1065,33 @@ actor EngineRuntime {
     private func receiveClaudeHookSetup(_ report: EngineClaudeHookSetup, request: UUID, home: URL) {
         guard initialized, claudeHookRequest == request, claudeHookHome == home else { return }
         claudeHookTask = nil; claudeHookSetup = report
+        // Setup creates Pacer's hook folder, which the switch file needs, and
+        // confirms that this engine manages that home.
+        applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
         publish(notices: [])
+    }
+    /// Only an engine that manages the hooks writes the switch; demo and
+    /// read-only diagnostics never touch the Claude home. It removes only a
+    /// switch it turned on itself, or a leftover in the home its hook setup
+    /// just confirmed, so a home it merely passed through is never changed.
+    private func applyClaudeProgressSwitch(setupConfirmed: Bool = false) {
+        guard claudeHookServices != nil else { return }
+        let wanted = claudeProgressRing && enabled.contains(.claude)
+        func present(_ home: URL) -> Bool { FileManager.default.fileExists(atPath: ClaudeProgressRingSwitch.flagURL(home: home).path) }
+        if let previous = claudeProgressSwitchHome, previous != claudeHome {
+            ClaudeProgressRingSwitch.apply(enabled: false, home: previous); claudeProgressSwitchHome = nil
+        }
+        func contents(_ home: URL) -> Data? { FileManager.default.contents(atPath: ClaudeProgressRingSwitch.flagURL(home: home).path) }
+        let before = contents(claudeHome)
+        if wanted {
+            ClaudeProgressRingSwitch.apply(enabled: true, home: claudeHome)
+            if present(claudeHome) { claudeProgressSwitchHome = claudeHome }
+        } else if claudeProgressSwitchHome == claudeHome || setupConfirmed {
+            ClaudeProgressRingSwitch.apply(enabled: false, home: claudeHome); claudeProgressSwitchHome = nil
+        }
+        // The switch also decides which settings entries Pacer keeps (the
+        // display observer or its plugin), so a change brings them current.
+        if contents(claudeHome) != before { scheduleClaudeHooks(force: true) }
     }
     private static func measured(_ rows: [SessionActivity], _ performance: [SessionPerformanceUpdate]) -> [SessionActivity] {
         var result = rows
@@ -1910,7 +1942,8 @@ actor EngineRuntime {
             options: .init(hideProjects: hideProjects,
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
-                }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost))
+                }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
+                progressRingProviders: claudeProgressRing ? [.claude] : []))
         scheduleActivityDisplay(at: date)
         var failedProviders = Set<AgentProvider>(), refreshingProviders = Set<AgentProvider>(), quotaErrors: [AgentProvider: String] = [:], sourceTexts: [AgentProvider: String] = [:]
         if !demo {
@@ -1994,6 +2027,7 @@ actor EngineRuntime {
                 .init(provider: $0.rawValue, mode: moduleSettings.mode(for: $0).rawValue,
                     installed: installation?.isInstalled($0), enabled: enabled.contains($0))
             } : nil, quotaDashboard: dashboard, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
+            progressRingProviders: claudeProgressRing ? [.claude] : [],
             compactWarnings: compactWarnings, compactContext: compactContext, taskPresentation: taskPresentation,
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },

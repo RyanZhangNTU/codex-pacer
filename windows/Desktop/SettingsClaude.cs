@@ -7,7 +7,7 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? claudeEnabled, claudeCloudProjects, claudeEmbedded;
+    private CheckBox? claudeEnabled, claudeCloudProjects, claudeEmbedded, claudeProgress;
     private Button? claudeAutomatic, claudeSetupRetry;
     private TextBlock? claudeDetection, claudeLocalState, claudeSetupState;
     private StackPanel? claudeSections;
@@ -15,7 +15,7 @@ internal sealed partial class SettingsWindow
     private void ClearClaude()
     {
         ClearClaudeConnection();
-        claudeEnabled = claudeCloudProjects = claudeEmbedded = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
+        claudeEnabled = claudeCloudProjects = claudeEmbedded = claudeProgress = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
         claudeSetupRetry = null; claudeSetupState = null;
     }
     private void BuildClaude()
@@ -62,9 +62,12 @@ internal sealed partial class SettingsWindow
         var embedded = Toggle("claude.embedded_sessions", "claude.embedded_sessions_help", "settings.claude.embedded", out var embeddedSwitch);
         claudeEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
         BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedClaudeSessions = value });
+        var progress = Toggle("claude.progress_ring", "claude.progress_ring_help", "settings.claude.progress_ring", out var progressSwitch);
+        claudeProgress = progressSwitch; editors.Add(progressSwitch);
+        BindToggle(progressSwitch, (p, value) => p with { ClaudeProgressRing = value });
         claudeSections.Children.Add(Card(Row(Label(ui.Text("windows.claude.local_logs")), claudeLocalState), help,
             Row(claudeSetupState, claudeSetupRetry),
-            BuildClaudeConnection(), cloud, embedded, ProviderHomeEditor("claude")));
+            BuildClaudeConnection(), cloud, embedded, progress, ProviderHomeEditor("claude")));
         BuildClaudeHistory(claudeSections);
     }
     private void RefreshClaude()
@@ -84,6 +87,8 @@ internal sealed partial class SettingsWindow
         claudeCloudProjects!.IsChecked = session.Current.ShowClaudeCloudProjects;
         claudeEmbedded!.IsChecked = session.Current.ShowEmbeddedClaudeSessions;
         claudeEmbedded.IsEnabled = enabled && connected && !busy && !session.RequiresRestart;
+        claudeProgress!.IsChecked = session.Current.ClaudeProgressRing;
+        claudeProgress.IsEnabled = claudeEmbedded.IsEnabled;
         claudeCloudProjects.IsEnabled = enabled && connected && !busy && !claudeAccountBusy && !session.RequiresRestart;
         claudeLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>
             (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true ? "provider.state.found" : "provider.state.no_home");

@@ -30,11 +30,30 @@ public partial class TaskRow : Button
         MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
-        Loaded += (_, _) => ApplyAppearance();
+        Loaded += (_, _) => { ApplyAppearance(); if (!progressShown) { progressShown = true; ShowProgress(); } };
+    }
+    private bool progressShown;
+    private readonly ScaleTransform glyphScale = new(1, 1);
+    /// The icon gives the ring room: 20 pt alone, 16 pt inside the ring.
+    private void ShowProgress()
+    {
+        var state = (TaskRowState)DataContext;
+        var row = state.Value;
+        var color = state.StatusInk is SolidColorBrush solid ? solid.Color : Colors.White;
+        bool animate = animations && IsVisible;
+        var change = Ring.Show(row.Id, row.ProgressState, row.ProgressMode, row.ProgressFraction ?? 0, row.ProgressStale == true, color, animate);
+        Glyph.RenderTransform = glyphScale;
+        double target = change is TaskProgressRing.Change.Appeared or TaskProgressRing.Change.Shown ? 0.8 : 1;
+        double from = change switch { TaskProgressRing.Change.Appeared => 1, TaskProgressRing.Change.Disappeared => 0.8, _ => target };
+        if (!animate || from == target) { glyphScale.ScaleX = glyphScale.ScaleY = target; return; }
+        var resize = new DoubleAnimation(from, target, TimeSpan.FromSeconds(change == TaskProgressRing.Change.Appeared ? 0.25 : 0.3))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        glyphScale.BeginAnimation(ScaleTransform.ScaleXProperty, resize);
+        glyphScale.BeginAnimation(ScaleTransform.ScaleYProperty, resize);
     }
     internal void SetOpenAction(Action? action, string help, bool animate)
-    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); }
-    internal void SetAnimations(bool value) { animations = value; if (!value) UpdateHover(); }
+    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Ring.SetMotion(animate); }
+    internal void SetAnimations(bool value) { animations = value; Ring.SetMotion(value); if (!value) UpdateHover(); }
     internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()
     {
@@ -89,7 +108,11 @@ internal sealed class TaskRowState(EngineTaskRow value)
     public Visibility PeakVisible => Visible(Value.PeakCost);
     public Visibility EffortVisible => Visible(Value.Effort != null);
     public string SourceSymbol => Value.SourceKind == "cloud" ? "cloud" : "server.rack";
-    public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.Source,
+    /// Inside the progress ring an ending glyph drops its own circle, as the
+    /// Mac's StatusSymbols.enclosed does, so the ring is the only outline.
+    public string GlyphSymbol => Value.ProgressState != null && Value.Symbol.EndsWith(".circle", StringComparison.Ordinal)
+        ? Value.Symbol[..^".circle".Length] : Value.Symbol;
+    public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.ProgressText, Value.Source,
         Value.Model, Value.Effort, RateText + RateUnit, Value.TurnTime, Value.Cost }.Where(s => !string.IsNullOrEmpty(s)));
     private static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 }

@@ -103,6 +103,16 @@
 "activity.page_region" = "Task pages";
 "activity.previous_page" = "Previous Task Page";
 "activity.responding" = "Writing a reply";
+"activity.progress_pending" = "Waiting for progress";
+"activity.progress_reported" = "Self-reported progress about %ld%%";
+"activity.progress_waiting_pending" = "Waiting for background work";
+"activity.progress_waiting" = "Waiting for background work, self-reported progress about %ld%%";
+"activity.progress_long_step" = "Running a long step, self-reported progress about %ld%%";
+"activity.progress_attention" = "Waiting for you, self-reported progress about %ld%%";
+"activity.progress_done" = "Self-reported done";
+"activity.progress_short" = "Stopped at a self-reported %ld%%";
+"activity.progress_interrupted" = "Interrupted at a self-reported %ld%%";
+"activity.progress_failed" = "Failed at a self-reported %ld%%";
 "activity.row_accessibility" = "%1$@, %2$@, %3$@. Open chat";
 "activity.running" = "Running";
 "activity.running_count" = "%ld tasks running";
@@ -875,6 +885,8 @@
 "claude.cloud.workers_help" = "%d more sessions working in this thread";
 "claude.cloud_projects" = "Show Claude cloud Projects";
 "claude.cloud_projects_help" = "Follows each Project’s threads and coordinator and reminds you when they end or wait for you. Needs the claude.ai sign-in above.";
+"claude.progress_ring" = "Show Claude’s Self-Reported Progress";
+"claude.progress_ring_help" = "Adds Pacer’s Claude Code plugin, which has one tool, report_progress, and about 60 tokens to each prompt you type asking Claude to report its progress with it. Pacer draws the number as a ring around the task icon and stores nothing else. Applies to Claude sessions opened afterwards; turning it off removes the plugin.";
 "connections.kind.claude_cloud" = "Cloud Projects";
 "connections.state.cloud_signed_out" = "Not signed in to claude.ai, paused";
 "demo.cloud_project" = "Launch plan";
