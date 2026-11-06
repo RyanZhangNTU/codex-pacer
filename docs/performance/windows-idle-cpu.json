@@ -363,5 +363,58 @@
     "adopted": false,
     "reason": "End-of-sample guard rejected both independent-topmost covers; no five-minute CPU result adopted. Owned fixture retains the all-surface guard."
   },
-  "scope": "Process CPU; fixed synthetic shell input. Real engine samples are read-only and have different event volumes. No DWM/GPU attribution or fullscreen-policy acceptance. Initial visible/hidden samples precede the occlusion-only fix; final covered samples include it. Raw traces and rejected samples remain local."
+  "scope": "Process CPU; fixed synthetic shell input. Real engine samples are read-only and have different event volumes. No DWM/GPU attribution or fullscreen-policy acceptance. Initial visible/hidden samples precede the occlusion-only fix; final covered samples include it. Raw traces and rejected samples remain local.",
+  "claudeWebEngine": {
+    "date": "2026-11-06",
+    "method": "Signed-in Claude web session, same Claude home; copy of the 4.2.5 shell with only PacerEngine.exe replaced; sequential windows; process TotalProcessorTime at start and end. A Claude session was running during all samples.",
+    "shellSourceCommit": "14a7e6df35bfb9d5dd436f88f7720e3268465802",
+    "shellSha256": "4A778E758E365B3590098A188AB4D194B9E436332C1D0C65989C37B087443974",
+    "samples": [
+      {
+        "case": "4.2.5-installed",
+        "engineSha256": "29A64364BF14E61F69C4D2C73BEB160A8EE0429FC396F819E22C7AE316D5475B",
+        "wallSeconds": 30.02,
+        "cpuSeconds": 28.094,
+        "oneCorePercent": 93.59,
+        "hostPercent": 5.85,
+        "claudeConnections": 3
+      },
+      {
+        "case": "streams-winhttp",
+        "wallSeconds": 120.01,
+        "cpuSeconds": 12.781,
+        "oneCorePercent": 10.65,
+        "hostPercent": 0.666,
+        "claudeConnections": 3
+      },
+      {
+        "case": "streams-and-requests-winhttp",
+        "engineSha256": "A903018AF0D82170DD111DBD50013AFB9C3054959BB13BA6E136408A811CCC90",
+        "wallSeconds": 303.3,
+        "cpuSeconds": 16.844,
+        "oneCorePercent": 5.55,
+        "hostPercent": 0.347,
+        "claudeConnections": 3
+      }
+    ],
+    "loopbackURLSessionIdleResponse": {
+      "wallSeconds": 3.0,
+      "cpuSeconds": 2.531
+    },
+    "scope": "One device. Engine process CPU only; no FoundationNetworking, WinHTTP or schannel frames remained in the final stack samples. The streams-winhttp engine predates the request change, so only its numbers are kept. The final engine predates one change that maps an unusable proxy to a connection failure; no proxy was configured, so the measured path is unchanged.",
+    "socksProxySample": {
+      "date": "2026-11-07",
+      "proxy": "Local SOCKS5h with username and password, set through ALL_PROXY for the shell copy",
+      "engineSha256": "0BB87678D0E979CD81DFAB304DFE6946B1EFB39A628FD51FC781C3B991946206",
+      "wallSeconds": 182.0,
+      "cpuSeconds": 7.297,
+      "oneCorePercent": 4.01,
+      "hostPercent": 0.251,
+      "nonLoopbackEngineConnections": 0,
+      "proxiedConnections": {
+        "claude.ai:443": 40,
+        "chatgpt.com:443": 9
+      }
+    }
+  }
 }

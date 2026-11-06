@@ -3,22 +3,14 @@ import Foundation
 import PacerCore
 import FoundationNetworking
 
-private final class WindowsClaudeRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-}
-
-private enum WindowsClaudeHTTP {
-    static func configuration(timeout: TimeInterval) -> URLSessionConfiguration {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil; configuration.urlCache = nil; configuration.urlCredentialStorage = nil
-        configuration.httpShouldSetCookies = false; configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = min(30, max(1, timeout))
-        configuration.timeoutIntervalForResource = min(35, max(2, timeout + 3))
-        return configuration
-    }
-    static func session(timeout: TimeInterval) -> URLSession {
-        URLSession(configuration: configuration(timeout: timeout), delegate: WindowsClaudeRedirectDelegate(), delegateQueue: nil)
+/// Claude web reads use WinHTTP: URLSession keeps a thread busy for each
+/// request in progress on Windows, and cloud polling makes many of them.
+enum WindowsClaudeHTTP {
+    /// Far above any project, session or usage reply; it only bounds memory.
+    static let maximumBytes = 32 * 1024 * 1024
+    static func client(timeout: TimeInterval) -> WindowsHTTPClient {
+        WindowsHTTPClient(.init(idleTimeout: min(30, max(1, timeout)), totalTimeout: min(35, max(2, timeout + 3)),
+                                maximumBytes: maximumBytes))
     }
 }
 
@@ -28,15 +20,11 @@ extension ClaudeWebQuotaClient {
         selectedOrganizationProvider: @escaping @Sendable () -> String? = { nil },
         metadataProvider: MetadataProvider? = nil, timeout: TimeInterval = 12) {
         let home = home ?? userHome.appendingPathComponent(".claude")
-        let session = WindowsClaudeHTTP.session(timeout: timeout)
+        let client = WindowsClaudeHTTP.client(timeout: timeout)
         self.init(cookieProvider: cookieProvider,
             metadataProvider: metadataProvider ?? { WindowsClaudeAccountBinding.observe(userHome: userHome, home: home) },
             selectedOrganizationProvider: selectedOrganizationProvider,
-            transport: { request in
-                let (data, response) = try await session.data(for: request)
-                guard let response = response as? HTTPURLResponse else { throw ClaudeQuotaError.invalidReply }
-                return (data, response)
-            }, now: { Date() }, invalidateTransport: { session.invalidateAndCancel() })
+            transport: { request in try await client.data(for: request) }, now: { Date() }, invalidateTransport: { client.invalidate() })
     }
 }
 
@@ -44,16 +32,10 @@ extension ClaudeCloudProjectMonitor {
     public init(cookieProvider: @escaping ClaudeWebQuotaClient.CookieProvider,
         selectedOrganization: @escaping @Sendable () -> String? = { nil },
         localSessions: @escaping LocalSessions = { [] }, timeout: TimeInterval = 12) {
-        let session = WindowsClaudeHTTP.session(timeout: timeout)
-        let streaming = WindowsClaudeHTTP.configuration(timeout: timeout)
-        streaming.timeoutIntervalForRequest = 60; streaming.timeoutIntervalForResource = 24 * 3600
+        let client = WindowsClaudeHTTP.client(timeout: timeout)
         self.init(cookieProvider: cookieProvider, selectedOrganization: selectedOrganization, localSessions: localSessions,
-            transport: { request in
-                let (data, response) = try await session.data(for: request)
-                guard let response = response as? HTTPURLResponse else { throw ClaudeCloudFailure.invalidReply }
-                return (data, response)
-            }, streamLines: WindowsClaudeCloudStream.lines(configuration: streaming), now: { Date() },
-            invalidateTransport: { session.invalidateAndCancel() })
+            transport: { request in try await client.data(for: request) }, streamLines: WindowsClaudeCloudStream.lines(), now: { Date() },
+            invalidateTransport: { client.invalidate() })
     }
 }
 #endif
