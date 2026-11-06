@@ -362,7 +362,9 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let block = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try run(idle).utf8)) as? [String: Any])
         XCTAssertEqual(block["decision"] as? String, "block")
         XCTAssertTrue((block["reason"] as? String)?.contains("final progress estimate") == true)
-        XCTAssertTrue((block["reason"] as? String)?.hasSuffix("Write nothing else.") == true, "Only the number comes back, without a closing message")
+        let reason = try XCTUnwrap(block["reason"] as? String)
+        XCTAssertTrue(reason.contains("one call to " + ClaudeHookInstaller.progressTool), "One report ends the request; the tool only acknowledges it")
+        XCTAssertTrue(reason.hasSuffix("Once it returns, end your turn without writing anything."), "Only the number comes back, without a closing message")
         var again = idle; again["stop_hook_active"] = true
         XCTAssertEqual(try run(again), "", "The stop hook's own continuation is never blocked")
         XCTAssertEqual(try run(idle), "", "A request is asked once")

@@ -157,9 +157,11 @@ def progress_stop(home,value):
         state['asked']=True;return True
     if spool(home,[],session,ask):
         # Only the number comes back: a marker alone is hidden on screen, and
-        # after the tool call the turn ends without a message.
-        how=("reply with only "+OPEN+"NN%"+CLOSE) if mode=='marker' else ("report it with "+TOOL+" and end your turn")
-        sys.stdout.write(json.dumps({'decision':'block','reason':FINAL+how+". Write nothing else."}));sys.stdout.flush()
+        # after the tool call the turn ends without a message. The tool only
+        # acknowledges, so the request says one call ends it; without that,
+        # models repeated the same report before ending.
+        how=("reply with only "+OPEN+"NN%"+CLOSE+". Write nothing else.") if mode=='marker' else ("report it with one call to "+TOOL+". Once it returns, end your turn without writing anything.")
+        sys.stdout.write(json.dumps({'decision':'block','reason':FINAL+how}));sys.stdout.flush()
 def statusline(home,value,raw):
     import math
     rates=value.get('rate_limits');payload={}
