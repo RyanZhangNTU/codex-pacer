@@ -18,9 +18,10 @@ struct WindowsSSHServices: Sendable {
         let environment = environment ?? ProcessInfo.processInfo.environment
         let appData = WindowsEnvironment.value("APPDATA", in: environment).map { URL(fileURLWithPath: $0) }
             ?? userHome.appendingPathComponent("AppData/Roaming")
+        // Before Desktop saves a connection, read the active Desktop folder's path.
         let candidates = Self.desktopLocations(environment: environment)
         self.desktopFile = desktopFile ?? candidates.first { FileManager.default.fileExists(atPath: $0.path) }
-            ?? appData.appendingPathComponent("Claude/ssh_configs.json")
+            ?? candidates.first ?? appData.appendingPathComponent("Claude/ssh_configs.json")
         let programData = WindowsEnvironment.value("PROGRAMDATA", in: environment) ?? "C:/ProgramData"
         discovery = ClaudeSSHDiscovery(resolve: resolve ?? { await ClaudeSSHRouteResolver.resolve(host: $0, port: $1, executable: ssh) },
             validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { Self.validIdentity($0) },
