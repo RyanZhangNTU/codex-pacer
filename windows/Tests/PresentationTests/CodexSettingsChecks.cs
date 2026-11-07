@@ -50,15 +50,17 @@ internal static class CodexSettingsChecks
             Toggle(embedded);
             await Until(() => session.Current.ShowEmbeddedCodexSessions && embedded.IsEnabled, "The embedded-session choice must restore immediately");
             var progress = Find<CheckBox>(window, "settings.codex.progress_ring");
-            Check(progress.IsEnabled && progress.IsChecked == false, "Codex progress is independently off by default");
+            Check(progress.IsEnabled && progress.IsChecked == true, "Codex progress is on by default, as on the Mac");
             Toggle(progress);
-            await Until(() => session.Current.CodexProgressRing && !session.Current.ClaudeProgressRing &&
+            await Until(() => !session.Current.CodexProgressRing && session.Current.ClaudeProgressRing && progress.IsEnabled &&
+                engine.LatestSnapshot?.Presentation?.Rows.All(row => row.Provider != "codex" || row.ProgressState == null) == true,
+                "Disabling Codex progress must remove only its rings after acknowledgement");
+            Toggle(progress);
+            await Until(() => session.Current.CodexProgressRing && session.Current.ClaudeProgressRing &&
                 engine.LatestSnapshot?.Presentation?.Rows.Any(row => row.Provider == "codex" && row.ProgressState == "pending") == true,
                 "Enabling Codex progress must reach the engine and show the dashed ring");
             Toggle(progress);
-            await Until(() => !session.Current.CodexProgressRing && progress.IsEnabled &&
-                engine.LatestSnapshot?.Presentation?.Rows.All(row => row.Provider != "codex" || row.ProgressState == null) == true,
-                "Disabling Codex progress must remove its rings after acknowledgement");
+            await Until(() => !session.Current.CodexProgressRing && progress.IsEnabled, "Codex progress can be turned off again");
             var remote = Find<CheckBox>(window, "settings.codex.remote_control");
             Check(remote.IsEnabled && remote.IsChecked == true, "Remote Control defaults to the Mac preference's enabled state");
             Toggle(remote);

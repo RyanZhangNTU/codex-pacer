@@ -51,7 +51,8 @@ internal sealed record DesktopPreferences
     public string DeepSeekRingPeriod { get; init; } = "day";
     public string DeepSeekSpeedSource { get; init; } = "local";
     public bool DeepSeekShowsTurnCost { get; init; } = true;
-    public bool DeepSeekProgressRing { get; init; }
+    // Progress rings are on until the user turns one off, as on the Mac; a saved choice is kept.
+    public bool DeepSeekProgressRing { get; init; } = true;
     public bool SystemNotifications { get; init; }
     public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget"];
     public double? DeepSeekLowBalanceLine { get; init; }
@@ -65,8 +66,8 @@ internal sealed record DesktopPreferences
     public bool MonitorWSL { get; init; } = true;
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
-    public bool ClaudeProgressRing { get; init; }
-    public bool CodexProgressRing { get; init; }
+    public bool ClaudeProgressRing { get; init; } = true;
+    public bool CodexProgressRing { get; init; } = true;
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;

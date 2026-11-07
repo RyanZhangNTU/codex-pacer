@@ -45,7 +45,7 @@ internal static class TypographyLocaleChecks
                         Check(settings.Language.IetfLanguageTag.Equals(expected, StringComparison.OrdinalIgnoreCase) &&
                             island.Language.IetfLanguageTag.Equals(expected, StringComparison.OrdinalIgnoreCase), "Both actual windows must use their selected UI language");
                         var text = SelfAndDescendants(settings.ClientContent).OfType<TextBlock>()
-                            .Single(value => value.Text == ui.Text("settings.pane.collapsed") && value.FontSize == 20);
+                            .Single(value => value.Text == ui.Text("settings.pane.collapsed") && value.FontSize == 22);
                         Check(text.Language == settings.Language, "The actual heading must inherit its window's rendering language");
                         var heading = Glyphs(text).ToArray();
                         Check(heading.Length > 0, "The heading must have rendered glyphs, not only a declared typeface");

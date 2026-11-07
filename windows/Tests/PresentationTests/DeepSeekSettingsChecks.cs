@@ -47,8 +47,11 @@ internal static class DeepSeekSettingsChecks
                 "DeepSeek must retain the original settings canvas and acknowledged module state");
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "The page must keep the unsupported account connection action disabled");
             Check(Descendants(island).OfType<CompactQuotaGlyph>().All(value => value.RingCount == 0 && value.ShowsPriceClock), "DeepSeek without budgets must show its actual price clock in the header and strip");
-            Check(progress.IsChecked == false && engine.LatestSnapshot?.Presentation?.Rows.All(row => row.ProgressMode == null) == true,
-                "DeepSeek progress is off until the switch is enabled");
+            Check(progress.IsChecked == true, "DeepSeek progress is on by default, as on the Mac");
+            Toggle(progress); await Until(() => !session.Current.DeepSeekProgressRing && progress.IsEnabled);
+            await island.WaitForPresentationAsync();
+            Check(engine.LatestSnapshot?.Presentation?.Rows.All(row => row.ProgressMode == null) == true,
+                "DeepSeek progress is off once the switch is turned off");
             Toggle(progress); await Until(() => session.Current.DeepSeekProgressRing && progress.IsEnabled);
             await island.WaitForPresentationAsync();
             Check(engine.LatestSnapshot?.Presentation?.Rows.Any(row => row.Provider == "deepseek" && row.ProgressState == "pending") == true,
