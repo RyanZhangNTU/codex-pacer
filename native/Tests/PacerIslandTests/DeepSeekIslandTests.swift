@@ -2,17 +2,18 @@ import XCTest
 import UserNotifications
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class DeepSeekIslandTests: XCTestCase {
     private func defaults(_ modules: ProviderModules) throws -> (UserDefaults, String) {
-        let domain = "com.codexpacer.deepseek-island-tests." + UUID().uuidString
+        let domain = testDefaultsName("deepseek-island-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(false, forKey: "monitorSSH")
         defaults.set(0, forKey: "completedRetentionMinutes")
         defaults.set("/private/tmp/pacer-deepseek-tests-" + UUID().uuidString, forKey: "deepseekHome")
         modules.save(to: defaults)
-        addTeardownBlock { UserDefaults(suiteName: domain)?.removePersistentDomain(forName: domain) }
+        addTeardownBlock { removeTestDefaults(domain) }
         return (defaults, domain)
     }
     private func ended(_ provider: AgentProvider, session: String, cost: Double? = nil) -> SessionActivity {

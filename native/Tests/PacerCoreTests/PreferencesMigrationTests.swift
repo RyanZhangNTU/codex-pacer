@@ -4,9 +4,9 @@ import XCTest
 
 final class PreferencesMigrationTests: XCTestCase {
     func testMigrationPreservesUserChoicesWithoutImportingUnrelatedDataOrOverwritingProduction() throws {
-        let name = "pacer-migration-test-\(UUID().uuidString)"
+        let name = testDefaultsName("pacer-migration-test")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         defaults.set(false, forKey: "showInFullscreen")
         PreferencesMigration.migrate(to: defaults, from: [
             "showInFullscreen": true, "compactMetric": "pace", "islandDisplayMode": "notch",

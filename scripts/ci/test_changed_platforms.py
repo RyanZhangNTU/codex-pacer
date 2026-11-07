@@ -15,7 +15,8 @@ class ChangedPlatformsTests(unittest.TestCase):
 
     def test_each_platform_runs_only_for_its_own_files(self):
         self.assertEqual(platforms.classify(["native/Sources/PacerIsland/PanelController.swift",
-            "native/Tests/PacerMacSupportTests/TestWait.swift", "scripts/native/ci-test.py", "Makefile"]), (True, False, False))
+            "native/Tests/PacerMacSupportTests/TestWait.swift", "native/Tests/PacerTestSupport/TestDefaults.swift",
+            "scripts/native/ci-test.py", "Makefile"]), (True, False, False))
         self.assertEqual(platforms.classify(["windows/Desktop/MainWindow.xaml.cs", "scripts/windows/test-engine.ps1"]),
             (False, True, False))
 

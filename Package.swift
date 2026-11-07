@@ -46,7 +46,8 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pla
         .target(name: "PacerCore", dependencies: ["CZstd", "CGzip"], path: "native/Sources/PacerCore",
             resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(name: "PacerMacSupport", dependencies: ["PacerCore"], path: "native/Sources/PacerMacSupport"),
-        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport"], path: "native/Tests/PacerCoreTests"),
+        .target(name: "PacerTestSupport", path: "native/Tests/PacerTestSupport"),
+        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport", "PacerTestSupport"], path: "native/Tests/PacerCoreTests"),
         .testTarget(name: "PacerMacSupportTests", dependencies: ["PacerCore", "PacerMacSupport"], path: "native/Tests/PacerMacSupportTests")
     ])
 #endif

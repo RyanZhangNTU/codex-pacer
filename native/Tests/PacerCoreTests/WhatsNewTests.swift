@@ -3,9 +3,9 @@ import XCTest
 
 final class WhatsNewTests: XCTestCase {
     private func defaults() throws -> UserDefaults {
-        let name = "WhatsNewTests." + UUID().uuidString
+        let name = testDefaultsName("WhatsNewTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        addTeardownBlock { removeTestDefaults(name) }
         return defaults
     }
 

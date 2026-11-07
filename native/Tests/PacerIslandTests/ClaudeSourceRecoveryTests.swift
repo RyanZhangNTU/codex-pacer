@@ -4,6 +4,7 @@ import Darwin
 import AppKit
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class ClaudeSourceRecoveryTests: XCTestCase {
@@ -51,7 +52,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         (root/(alias+'.ready')).write_text('ready')
         print(json.dumps({'hooksConfigured':True,'telemetryConfigured':True,'statusLineConfigured':True,'telemetryConflict':False}))
         """)
-        let domain = "com.codexpacer.source-recovery-tests." + UUID().uuidString
+        let domain = testDefaultsName("source-recovery-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(codexHome.path, forKey: "codexHome")
         defaults.set(home.path, forKey: "claudeHome")
@@ -67,7 +68,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             claudeMonitor: monitor, claudeRemoteSetup: ClaudeRemoteSetup(executable: installer, timeout: blockingSetup ? 5 : 2))
         addTeardownBlock {
             await model.shutdown()
-            UserDefaults(suiteName: domain)?.removePersistentDomain(forName: domain)
+            removeTestDefaults(domain)
             try? FileManager.default.removeItem(at: root)
         }
         return Fixture(root: root, home: home, model: model, monitor: monitor, defaults: defaults)

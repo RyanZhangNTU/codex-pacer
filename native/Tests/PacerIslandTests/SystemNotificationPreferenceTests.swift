@@ -1,5 +1,6 @@
 import XCTest
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class SystemNotificationPreferenceTests: XCTestCase {
@@ -22,9 +23,9 @@ final class SystemNotificationPreferenceTests: XCTestCase {
     }
 
     private func defaults() throws -> UserDefaults {
-        let domain = "com.codexpacer.notification-tests." + UUID().uuidString
+        let domain = testDefaultsName("notification-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain) }
+        addTeardownBlock { removeTestDefaults(domain) }
         return defaults
     }
 

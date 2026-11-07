@@ -3,6 +3,7 @@ import PacerMacSupport
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 /// The Mac's side of Claude's self-reported progress ring: the setting, the
 /// switch file it keeps in the selected Claude home, and the rows it draws.
@@ -18,7 +19,7 @@ final class ClaudeProgressRingTests: XCTestCase {
         let root = URL(fileURLWithPath: "/private/tmp/pacer-progress-ring-" + UUID().uuidString)
         let home = root.appendingPathComponent("claude-home")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let domain = "com.codexpacer.progress-ring-tests." + UUID().uuidString
+        let domain = testDefaultsName("progress-ring-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(root.path, forKey: "codexHome")
         defaults.set(home.path, forKey: "claudeHome")
@@ -31,7 +32,7 @@ final class ClaudeProgressRingTests: XCTestCase {
         model.hostApplicationResolver = { _, _, _ in [:] }
         addTeardownBlock {
             await model.shutdown()
-            UserDefaults(suiteName: domain)?.removePersistentDomain(forName: domain)
+            removeTestDefaults(domain)
             try? FileManager.default.removeItem(at: root)
         }
         return Fixture(model: model, defaults: defaults, home: home, root: root)

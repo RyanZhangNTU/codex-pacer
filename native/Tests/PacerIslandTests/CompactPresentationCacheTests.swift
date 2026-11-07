@@ -1,11 +1,12 @@
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class CompactPresentationCacheTests: XCTestCase {
     private func defaults() throws -> (UserDefaults, String) {
-        let suite = "CompactPresentationCacheTests-" + UUID().uuidString
+        let suite = testDefaultsName("CompactPresentationCacheTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set(false, forKey: "monitorSSH")
         return (defaults, suite)
@@ -13,7 +14,7 @@ final class CompactPresentationCacheTests: XCTestCase {
 
     func testAlternatingStatusRequestsKeepSeparateCachedLayoutsAndInvalidateIndependently() async throws {
         let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         CompactIslandLayout(leading: [.activity, .status, .tps], trailing: [.quotaLabel]).save(to: defaults)
         let model = IslandModel(defaults: defaults,
             installation: .init(codexInstalled: true, claudeInstalled: false, deepseekInstalled: false))
@@ -41,7 +42,7 @@ final class CompactPresentationCacheTests: XCTestCase {
 
     func testStatusRequestsHaveSeparateCacheSlotsEvenWhenTheSavedLayoutOmitsStatus() async throws {
         let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         CompactIslandLayout.standard.save(to: defaults)
         let model = IslandModel(defaults: defaults,
             installation: .init(codexInstalled: false, claudeInstalled: false, deepseekInstalled: false))
@@ -54,7 +55,7 @@ final class CompactPresentationCacheTests: XCTestCase {
 
     func testInvalidProjectionAndMissingComponentsHideSafelyThenRecover() async throws {
         let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         let model = IslandModel(defaults: defaults,
             installation: .init(codexInstalled: false, claudeInstalled: false, deepseekInstalled: false))
         model.now = Date(timeIntervalSince1970: .infinity)
@@ -76,7 +77,7 @@ final class CompactPresentationCacheTests: XCTestCase {
 
     func testMalformedSavedOptionsKeepTheirOriginalDefaultsWithoutRewritingPreferences() async throws {
         let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         defaults.set("future", forKey: "compactSingleTask")
         defaults.set("future", forKey: "compactMetric")
         defaults.set("", forKey: QuotaRingSlot.outer.defaultsKey)

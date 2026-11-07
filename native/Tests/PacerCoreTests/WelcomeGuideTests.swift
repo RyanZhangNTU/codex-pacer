@@ -3,9 +3,9 @@ import XCTest
 
 final class WelcomeGuideTests: XCTestCase {
     func testGuideShowsOncePerMajorLineForFreshInstallsAndUpgrades() throws {
-        let name = "WelcomeGuideTests." + UUID().uuidString
+        let name = testDefaultsName("WelcomeGuideTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertTrue(WelcomeGuide.shouldShow(defaults: defaults), "A fresh install sees the guide")
         defaults.set(2, forKey: WelcomeGuide.defaultsKey)
         XCTAssertTrue(WelcomeGuide.shouldShow(defaults: defaults), "An upgrade from an earlier major line sees the guide")
