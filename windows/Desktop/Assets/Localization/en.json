@@ -870,6 +870,8 @@
     "whats_new.mark_all_read": "Mark all as read",
     "whats_new.mark_all_read_detail": "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.",
     "whats_new.open_at_login": "Start Pacer with your Mac. You can change this anytime in Settings > General.",
+    "whats_new.progress_ring": "Claude’s progress ring",
+    "whats_new.progress_ring_detail": "Turn it on in Settings → Claude, and Claude reports how much of your request is done as a ring around the task icon. The ring waits while Claude’s background work runs and fills when the request is done.",
     "whats_new.release_notes": "Release Notes",
     "whats_new.remote_control": "Clearer Remote Control connections",
     "whats_new.remote_control_detail": "Recognize devices by name and see whether they are online, offline or waiting for a session.",

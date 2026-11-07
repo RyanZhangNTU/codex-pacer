@@ -27,12 +27,12 @@ internal static class GuideSessionChecks
                     && json.RootElement.GetProperty("welcomeGuideVersion").GetInt32() == 4 && json.RootElement.GetProperty("whatsNewVersion").GetString() == "4.2.4", "Schema 2 persists the exact Mac preference keys");
             var reopened = new PreferencesSession(new PreferencesStore(file).Load().Value, _ => throw new Exception("Unexpected collector change"), value => store.Save(value));
             Check((await new GuideSession(reopened, Query, "4.2.4", "en", false, false).LoadAsync()).Page == null, "Restarting the same version opens neither window");
-            var update = new GuideSession(reopened, Query, "4.3.0", "en", false, false);
+            var update = new GuideSession(reopened, Query, "4.2.5", "en", false, false);
             Check((await update.LoadAsync()).Page == null && await update.RecordAsync(false) == PreferencesApplyResult.Applied, "Versions without highlights update quietly");
-            Check(reopened.Current.WelcomeGuideVersion == 4 && reopened.Current.WhatsNewVersion == "4.3.0", "Quiet updates retain the completed major line");
-            await ColdRead(file, "4.3.0", 4);
+            Check(reopened.Current.WelcomeGuideVersion == 4 && reopened.Current.WhatsNewVersion == "4.2.5", "Quiet updates retain the completed major line");
+            await ColdRead(file, "4.2.5", 4);
             Check(await new GuideSession(reopened, Query, "4.2.0", "en", false, false).RecordAsync(true) == PreferencesApplyResult.Applied
-                && reopened.Current.WhatsNewVersion == "4.3.0", "An older copy cannot roll the recorded note backwards");
+                && reopened.Current.WhatsNewVersion == "4.2.5", "An older copy cannot roll the recorded note backwards");
             int beforeQuiet = saved;
             foreach (var flags in new[] { (Demo: true, Settings: false), (Demo: true, Settings: true) })
             {
