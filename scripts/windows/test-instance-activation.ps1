@@ -60,7 +60,8 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             if ($taskAction -eq 'settings' -and !$taskReceipt.settingsVisible) { throw 'The native request did not directly open Settings.' }
             if ($taskAction -ne 'settings' -and (!$taskReceipt.visible -or !$taskReceipt.expanded)) { throw 'The native request did not directly reveal the island.' }
             if ($taskAction -ne 'settings' -and (!$taskMetadata.expanded -or !$taskMetadata.windowVisible)) { throw 'A second launch did not reveal the existing island.' }
-            if ($taskAction -eq 'settings' -and $taskMetadata.pane -ne 'general') { throw 'The Settings activation did not reach the existing Settings window.' }
+            # A fresh profile opens Settings on Overview, as the Mac's main window does.
+            if ($taskAction -eq 'settings' -and $taskMetadata.pane -ne 'overview') { throw 'The Settings activation did not reach the existing Settings window.' }
             $taskChecks += @{language=$taskLanguage;action=$taskAction;receiver=$taskReceipt.receiver;firstExit=$taskFirst.ExitCode;secondExit=$taskSecond.ExitCode;capture=[IO.Path]::GetFileName($taskImage)}
             Write-Output ('PASS actual two-process activation: ' + $taskName)
         } finally {

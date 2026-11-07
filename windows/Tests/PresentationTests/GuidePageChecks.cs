@@ -208,6 +208,8 @@ internal static class GuidePageChecks
     }
     private static void CheckHelpProviderText(SettingsWindow window, Color expected)
     {
+        // The chips may have been built in this same pass; read them laid out.
+        window.UpdateLayout();
         var background = ((SolidColorBrush)window.Resources["SettingsBackground"]).Color;
         foreach (string provider in new[] { "codex", "claude", "deepseek" })
         {
