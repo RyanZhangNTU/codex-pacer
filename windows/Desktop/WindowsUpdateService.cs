@@ -11,6 +11,7 @@ internal sealed record WindowsUpdateStatus(bool Available, bool Busy, string Mes
 /// The update window, kept separate so the service has no WPF dependency.
 internal interface IWindowsUpdatePresenter
 {
+    bool KeepsResultOpen => false;
     void Checking();
     void Offer(WindowsUpdatePackage package, bool manual);
     void UpToDate();
@@ -98,28 +99,32 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             {
                 found = await client.ReadOfferAsync(lifetime.Token);
                 state?.Write(LastCheckKey, lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
+                // A manual check can still offer a skipped build.
+                if (found != null && !manual && state?.Read(SkipKey) == found.Build.ToString()) found = null;
             }
             catch (Exception error) when (Recoverable(error))
             {
                 if (disposed) return false;
-                if (manual) { Publish(Status with { Busy = true, MessageKey = "windows.updates.failed" }); Presenter?.Failed(); }
-                else Publish(Status with { MessageKey = "windows.updates.failed" });
+                Publish(Status with { MessageKey = "windows.updates.failed" });
+                if (manual) Presenter?.Failed();
                 return false;
             }
+            bool usePatch = found != null && await Task.Run(() => PatchApplies(found));
             if (disposed) return false;
-            // A skipped build stays quiet until a newer one appears; a manual check still offers it.
-            if (found != null && !manual && state?.Read(SkipKey) == found.Build.ToString()) found = null;
+            offer = found;
+            offeredAt = now();
+            incremental = usePatch;
             if (found == null)
             {
-                if (manual) { Publish(Status with { Busy = true, MessageKey = "updates.no_update" }); Presenter?.UpToDate(); }
-                else Publish(Status with { MessageKey = "updates.no_update" });
+                Publish(Status with { MessageKey = "updates.no_update" });
+                if (manual) Presenter?.UpToDate();
                 return true;
             }
-            offer = found; offeredAt = now(); incremental = await Task.Run(() => PatchApplies(found));
-            Publish(new(true, true, "windows.updates.available")); Presenter?.Offer(CurrentOffer!, manual);
+            Publish(Status with { MessageKey = "windows.updates.available" });
+            Presenter?.Offer(CurrentOffer!, manual);
             return true;
         }
-        finally { operations.Release(); if (!Status.Busy) ArmAutomatic(); }
+        finally { FinishOperation(manual && Presenter?.KeepsResultOpen == true); }
     }
     /// Downloads and verifies the current offer into a new session directory.
     /// An offer older than OfferLifetime is verified again first; a different
@@ -127,31 +132,57 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     internal async Task<VerifiedDownload> DownloadAsync(IProgress<UpdateProgress>? progress, CancellationToken cancellation)
     {
         if (client == null || identity == null || offer == null || disposed || installing) throw new InvalidOperationException("No update is offered.");
-        if (now() - offeredAt > OfferLifetime)
+        if (!await operations.WaitAsync(0)) throw new InvalidOperationException("An update operation is already running.");
+        try
         {
-            var fresh = await client.ReadOfferAsync(cancellation);
-            if (fresh == null || fresh != offer)
+            autoWake?.Cancel();
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
+            Publish(Status with { Busy = true, MessageKey = "windows.updates.downloading" });
+            if (now() - offeredAt > OfferLifetime)
             {
-                offer = fresh; offeredAt = now(); incremental = fresh != null && await Task.Run(() => PatchApplies(fresh));
-                throw new InvalidDataException("The offered update changed.");
+                var fresh = await client.ReadOfferAsync(linked.Token);
+                if (fresh != offer)
+                {
+                    bool usePatch = fresh != null && await Task.Run(() => PatchApplies(fresh));
+                    linked.Token.ThrowIfCancellationRequested();
+                    offer = fresh;
+                    incremental = usePatch;
+                    offeredAt = now();
+                    throw new InvalidDataException("The offered update changed.");
+                }
+                offeredAt = now();
             }
-            offeredAt = now();
+            linked.Token.ThrowIfCancellationRequested();
+            var item = CurrentOffer ?? throw new InvalidOperationException("No update is offered.");
+            string session = UpdateSessions.Create(identity);
+            try { return await client.DownloadAsync(item, session, progress, linked.Token); }
+            catch { UpdateSessions.Clean(identity.DataRoot); throw; }
         }
-        var item = CurrentOffer!;
-        string session = UpdateSessions.Create(identity);
-        Publish(Status with { MessageKey = "windows.updates.downloading" });
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
-        try { return await client.DownloadAsync(item, session, progress, linked.Token); }
-        catch { UpdateSessions.Clean(identity.DataRoot); throw; }
+        finally { FinishOperation(Presenter?.KeepsResultOpen == true, offer == null ? "updates.no_update" : "windows.updates.available"); }
+    }
+    private void FinishOperation(bool keepBusy, string? messageKey = null)
+    {
+        try
+        {
+            if (disposed || installing) return;
+            if (Status.Busy && !keepBusy) Publish(Status with { Busy = false, MessageKey = messageKey ?? Status.MessageKey });
+            if (!Status.Busy) ArmAutomatic();
+        }
+        finally { operations.Release(); }
     }
     /// Hands a verified download to the helper; the app then quits.
     internal bool Install(VerifiedDownload download)
     {
-        if (disposed || installing || channel == null || identity == null || offer == null || download.Package != CurrentOffer) return false;
-        var prepared = UpdateHandoff.Prepare(download, channel, identity, Path.Combine(identity.Root, "Maintenance", "PacerMaintenance.exe"), language);
-        UpdateHandoff.Start(prepared); installing = true;
-        Publish(Status with { MessageKey = "windows.updates.installing" });
-        post(() => installStarted?.Invoke()); return true;
+        if (!operations.Wait(0)) return false;
+        try
+        {
+            if (disposed || installing || channel == null || identity == null || offer == null || download.Package != CurrentOffer) return false;
+            var prepared = UpdateHandoff.Prepare(download, channel, identity, Path.Combine(identity.Root, "Maintenance", "PacerMaintenance.exe"), language);
+            UpdateHandoff.Start(prepared); installing = true;
+            Publish(Status with { Busy = true, MessageKey = "windows.updates.installing" });
+            post(() => installStarted?.Invoke()); return true;
+        }
+        finally { operations.Release(); }
     }
     // A patch is used only for the exact installation it was built from, and
     // not again for a build whose patch already failed to install here. The

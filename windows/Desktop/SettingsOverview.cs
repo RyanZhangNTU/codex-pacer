@@ -142,6 +142,7 @@ internal sealed partial class SettingsWindow
             attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
         if (key == overviewKey) return;
         overviewKey = key;
+        editors.RemoveAll(editor => editor.IsDescendantOf(overviewBody));
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);
         overviewBody.Children.Clear();
         if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
@@ -206,7 +207,11 @@ internal sealed partial class SettingsWindow
         bannerProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
         bannerProgress.IsIndeterminate = downloading && inlineFraction == null; if (inlineFraction is { } value) bannerProgress.Value = value;
         if (bannerNotes != null) bannerNotes.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
-        if (bannerInstall != null) bannerInstall.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
+        if (bannerInstall != null)
+        {
+            bannerInstall.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
+            bannerInstall.IsEnabled = updater?.Status is { Available: true, Busy: false } && !busy && !session.RequiresRestart;
+        }
         if (bannerCancel != null) bannerCancel.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
         // Closing waits until the install finishes, as on the Mac.
         if (bannerLater != null) bannerLater.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
@@ -227,7 +232,8 @@ internal sealed partial class SettingsWindow
             var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(Label(item.Title, 13, FontWeights.SemiBold)); var detail = Detail(item.Detail); detail.FontSize = 11.5; text.Children.Add(detail);
             Grid.SetColumn(text, 1); row.Children.Add(text);
-            var action = new Button { Content = item.Action, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+            var action = new Button { Content = item.Action, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+                IsEnabled = !busy && !session.RequiresRestart };
             Identify(action, "settings.overview.attention." + item.Id, item.Title + " · " + item.Action); editors.Add(action);
             action.Click += async (_, _) =>
             {

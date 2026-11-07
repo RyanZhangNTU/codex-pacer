@@ -21,18 +21,38 @@ public partial class App
     private string updateVersion = "";
     private sealed class UpdatePresenter(App app) : IWindowsUpdatePresenter
     {
-        // While Help & Updates is showing, a check reports in its card instead of a window, as on the Mac.
-        private bool Inline => app.settings?.ShowsUpdatesInline == true && app.updateWindow == null;
-        public void Checking() { if (Inline) app.settings!.InlineUpdate("checking"); else app.PresentUpdate(true, window => window.Checking()); }
-        // An automatic check opens no window, as on the Mac: the found version shows on Overview's banner and as
-        // a dot by Help & Updates. A manual check outside Help & Updates still opens the update window.
+        private SettingsWindow? checkSettings;
+        public bool KeepsResultOpen => app.updateWindow != null;
+
+        public void Checking()
+        {
+            // Keep the result on the surface where the check started.
+            checkSettings = !KeepsResultOpen && app.settings is { ShowsUpdatesInline: true } settings ? settings : null;
+            if (checkSettings != null) checkSettings.InlineUpdate("checking");
+            else app.PresentUpdateCheck();
+        }
+
         public void Offer(WindowsUpdatePackage package, bool manual)
         {
             if (!manual) { app.settings?.InlineUpdate("offer"); return; }
-            if (Inline) app.settings!.InlineUpdate("offer"); else app.PresentUpdate(true, window => window.Offer(package, true));
+            Complete("offer", window => window.Offer(package, true));
         }
-        public void UpToDate() { if (Inline) app.settings!.InlineUpdate("upToDate"); else app.PresentUpdate(true, window => window.UpToDate()); }
-        public void Failed() { if (Inline) app.settings!.InlineUpdate("failed"); else app.PresentUpdate(true, window => window.Failed()); }
+
+        public void UpToDate() => Complete("upToDate", window => window.UpToDate());
+        public void Failed() => Complete("failed", window => window.Failed());
+
+        private void Complete(string phase, Action<UpdateWindow> apply)
+        {
+            var settings = checkSettings;
+            checkSettings = null;
+            if (app.quitting) return;
+            if (settings != null) settings.InlineUpdate(phase);
+            else if (app.updateWindow is { } window)
+            {
+                apply(window);
+                window.Activate();
+            }
+        }
     }
     private Task CreateWindowsUpdaterAsync(string[] arguments, Guid? qa, bool reference)
     {
@@ -99,20 +119,19 @@ public partial class App
             await Task.Delay(TimeSpan.FromSeconds(2));
         }
     }
-    /// The single update window: automatic offers appear without taking focus.
-    private void PresentUpdate(bool activate, Action<UpdateWindow> apply)
+    private void PresentUpdateCheck()
     {
         if (quitting || ui == null || updates == null) return;
         bool created = updateWindow == null;
         if (updateWindow == null)
         {
-            var window = new UpdateWindow(ui, updates, updateVersion, demoDark, island?.AppearanceSource) { ShowActivated = activate };
+            var window = new UpdateWindow(ui, updates, updateVersion, demoDark, island?.AppearanceSource);
             window.Closed += (_, _) => { if (ReferenceEquals(updateWindow, window)) updateWindow = null; island?.SetUpdateInputSuspended(updates.Status.Busy || updateNotes != null); };
             updateWindow = window;
         }
-        apply(updateWindow);
+        updateWindow.Checking();
         if (created) updateWindow.Show();
-        if (activate) updateWindow.Activate();
+        updateWindow.Activate();
     }
     /// Brings the update window forward instead of opening something behind it.
     private bool FocusUpdateWindow()

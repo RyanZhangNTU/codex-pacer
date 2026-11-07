@@ -1,3 +1,4 @@
+import Sparkle
 import XCTest
 @testable import PacerIsland
 
@@ -29,6 +30,29 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertEqual(flow.phase, .upToDate)
         XCTAssertNil(flow.available, "A version the feed no longer offers is forgotten")
         XCTAssertNil(flow.request)
+    }
+
+    func testScheduledCheckClearsAWithdrawnVersionButKeepsItAfterNetworkFailure() {
+        var flow = UpdateFlow(available: release)
+        flow.finishedCycle(error: URLError(.notConnectedToInternet))
+        XCTAssertEqual(flow.available, release)
+
+        flow.finishedCycle(error: NSError(domain: SUSparkleErrorDomain, code: Int(SUError.noUpdateError.rawValue)))
+        XCTAssertNil(flow.available)
+        XCTAssertEqual(flow.phase, .idle, "A background check does not show a manual result")
+    }
+
+    func testCancellingOrDeferringInstallerAuthorizationAllowsRetry() {
+        for error in [SUError.installationCanceledError, .installationAuthorizeLaterError] {
+            var flow = UpdateFlow(available: release)
+            flow.begin(.install)
+            flow.installing()
+            flow.dismissed()
+            flow.finishedCycle(error: NSError(domain: SUSparkleErrorDomain, code: Int(error.rawValue)))
+            XCTAssertEqual(flow.phase, .idle)
+            XCTAssertNil(flow.request)
+            XCTAssertEqual(flow.available, release)
+        }
     }
 
     func testOneClickInstallsWithoutAskingAgainAndKeepsInstallingThroughDismissal() {

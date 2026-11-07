@@ -110,6 +110,19 @@ struct UpdateFlow: Equatable {
         request = nil
     }
 
+    /// Sparkle reports some results only when the cycle ends.
+    mutating func finishedCycle(error: Error?) {
+        guard let failure = error as NSError?, failure.domain == SUSparkleErrorDomain else { return }
+        switch failure.code {
+        case Int(SUError.noUpdateError.rawValue):
+            notFound()
+        case Int(SUError.installationCanceledError.rawValue), Int(SUError.installationAuthorizeLaterError.rawValue):
+            cancelled()
+        default:
+            break
+        }
+    }
+
     /// A remembered version that this build already has (or passed) is stale.
     static func pending(_ stored: Release?, currentBuild: String?) -> Release? {
         guard let stored, let currentBuild else { return stored }
@@ -211,6 +224,11 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate, SPUUserD
             ? failure.localizedDescription.replacingOccurrences(of: path, with: " …", options: .regularExpression)
             : lines.joined(separator: "\n")
         return CodexDiagnosticText.sanitized(message)
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        cancelDownload = nil
+        update { $0.finishedCycle(error: error) }
     }
 
     // MARK: SPUUserDriver

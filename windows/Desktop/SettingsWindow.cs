@@ -143,7 +143,7 @@ internal sealed partial class SettingsWindow : Window
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
         {
-            sourceClosed = true; IsEnabled = false; sourceInspectionRevision++; ClearProviderHome();
+            sourceClosed = true; inlineDownload?.Cancel(); IsEnabled = false; sourceInspectionRevision++; ClearProviderHome();
             appearance.Changed -= OnAppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose(); session.Changed -= OnPreferencesChanged;
             if (notifications != null) notifications.Changed -= OnNotificationsChanged;
             if (surfaceWindow != null) surfaceWindow.SurfaceChanged -= RefreshSurfaceStatus;
@@ -368,6 +368,7 @@ internal sealed partial class SettingsWindow : Window
     {
         foreach (var editor in editors) editor.IsEnabled = enabled;
         RefreshUpdates();
+        RefreshBanner();
         codexHistory?.SetInteractionEnabled(enabled);
         foreach (var item in navigation) item.Value.IsEnabled = enabled && PaneAvailable(item.Key);
         RefreshConnections();

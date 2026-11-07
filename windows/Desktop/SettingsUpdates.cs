@@ -23,6 +23,7 @@ internal sealed partial class SettingsWindow
     internal bool ShowsUpdatesInline => IsVisible && !sourceClosed && activePane == "about" && updateStatus != null;
     internal void InlineUpdate(string phase)
     {
+        if (sourceClosed) return;
         inlineUpdateFailed = phase == "failed";
         inlineUpdateText = phase switch
         {
@@ -31,29 +32,31 @@ internal sealed partial class SettingsWindow
             "failed" => ui.Text("windows.updates.failed"),
             _ => null
         };
-        RefreshUpdates(); RefreshSidebar(); RefreshOverview();
+        RefreshUpdates(); RefreshSidebar(); RefreshOverview(); RefreshBanner();
     }
     /// Update and Restart: download with real progress, verify, then hand off to the installer, which restarts Pacer.
     internal async System.Threading.Tasks.Task InstallInlineAsync()
     {
-        if (updater?.CurrentOffer is not { } package || inlineDownload != null || sourceClosed) return;
-        inlineDownload = new System.Threading.CancellationTokenSource(); inlineFraction = 0; inlineUpdateText = null; inlineUpdateFailed = false; RefreshUpdates();
+        if (updater?.CurrentOffer == null || updater.Status.Busy || inlineDownload != null || sourceClosed || busy || session.RequiresRestart) return;
+        using var download = new System.Threading.CancellationTokenSource();
+        inlineDownload = download; inlineFraction = 0; inlineUpdateText = null; inlineUpdateFailed = false; RefreshUpdates();
         try
         {
             RefreshOverview(); RefreshBanner();
             var verified = await updater.DownloadAsync(new System.Progress<UpdateProgress>(value =>
             {
+                if (sourceClosed || inlineDownload != download) return;
                 if (value.Total > 0) inlineFraction = System.Math.Clamp((double)value.Received / value.Total, 0, 1);
                 RefreshUpdates(); RefreshBanner();
-            }), inlineDownload.Token);
-            if (sourceClosed) return;
+            }), download.Token);
+            download.Token.ThrowIfCancellationRequested();
             inlineFraction = null; inlineUpdateText = ui.Text("main.update.installing"); RefreshUpdates();
             if (!updater.Install(verified)) { inlineUpdateText = ui.Text("windows.updates.failed"); inlineUpdateFailed = true; }
         }
         catch (System.OperationCanceledException) { inlineUpdateText = null; }
         catch (System.Exception error) when (WindowsUpdateService.Recoverable(error))
         { inlineUpdateText = ui.Text("main.update.failed").Replace("%@", ui.Text("windows.updates.failed"), System.StringComparison.Ordinal); inlineUpdateFailed = true; }
-        finally { inlineDownload?.Dispose(); inlineDownload = null; inlineFraction = null; if (!sourceClosed) { RefreshUpdates(); RefreshOverview(); RefreshBanner(); } }
+        finally { inlineDownload = null; inlineFraction = null; if (!sourceClosed) { RefreshUpdates(); RefreshOverview(); RefreshBanner(); } }
     }
     /// Idle, the card says when Pacer last checked, or nothing; other states say themselves.
     private string IdleUpdateText(string key)
@@ -93,7 +96,7 @@ internal sealed partial class SettingsWindow
             }
             // A found version replaces the check with the one-click update; while it downloads, Cancel takes its place.
             if (updateCheck != null) updateCheck.Visibility = found == null && !downloading ? Visibility.Visible : Visibility.Collapsed;
-            if (updateInstall != null) { updateInstall.Visibility = found != null && !downloading ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = !status.Busy && !busy; }
+            if (updateInstall != null) { updateInstall.Visibility = found != null && !downloading ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = available; }
             if (updateCancel != null) updateCancel.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
             if (updateDownloadPage != null) updateDownloadPage.Visibility = inlineUpdateFailed && !downloading ? Visibility.Visible : Visibility.Collapsed;
         }
