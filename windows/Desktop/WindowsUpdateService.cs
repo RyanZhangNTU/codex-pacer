@@ -128,15 +128,20 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     }
     /// Downloads and verifies the current offer into a new session directory.
     /// An offer older than OfferLifetime is verified again first; a different
-    /// result replaces it and fails this download.
+    /// result replaces it and fails this download. A background check that is
+    /// still running is waited for, and fails this download the same way if it
+    /// changed the offer.
     internal async Task<VerifiedDownload> DownloadAsync(IProgress<UpdateProgress>? progress, CancellationToken cancellation)
     {
         if (client == null || identity == null || offer == null || disposed || installing) throw new InvalidOperationException("No update is offered.");
-        if (!await operations.WaitAsync(0)) throw new InvalidOperationException("An update operation is already running.");
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
+        var requested = offer;
+        await operations.WaitAsync(linked.Token);
         try
         {
+            if (disposed || installing) throw new InvalidOperationException("No update is offered.");
+            if (offer != requested) throw new InvalidDataException("The offered update changed.");
             autoWake?.Cancel();
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
             Publish(Status with { Busy = true, MessageKey = "windows.updates.downloading" });
             if (now() - offeredAt > OfferLifetime)
             {

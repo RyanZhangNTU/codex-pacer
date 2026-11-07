@@ -15,7 +15,7 @@ The automatic preference defaults to enabled and persists under `SUEnableAutomat
 
 Escape closes the window. Later, Cancel and closing all discard an unfinished download.
 
-Inline checks release the island as soon as the result is available. A background offer leaves the island interactive. The offered version stays available if a check fails or the user cancels a download. A successful check that finds no update clears the offer. Closing Settings during an inline download cancels it.
+Inline checks release the island as soon as the result is available. A background offer leaves the island interactive. The offered version stays available if a check fails or the user cancels a download. A successful check that finds no update clears the offer. Update and Restart during a background check waits for that check, and fails like a changed offer if the check replaced the version. Closing Settings during an inline download cancels it.
 
 The notes are the signed Markdown from the feed, rendered from a small subset: headings, paragraphs, lists, bold, code and links. Their colors come only from the Settings palette, so they stay readable in light, dark and high contrast. HTML and other markup stay literal text. Links stay active only for HTTPS GitHub URLs; external release-note URLs and active HTML are never followed.
 

@@ -88,15 +88,19 @@ internal static class WindowsUpdateChecks
         internal byte[]? Package;
         internal bool Fail, Corrupt, Stall, Unsized;
         internal TimeSpan Pause = TimeSpan.Zero;
+        /// While set, feed reads wait for it, so a check stays in progress.
+        internal TaskCompletionSource? FeedHold;
         internal readonly List<Uri> Calls = [];
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls.Add(request.RequestUri!);
             byte[] body = Package ?? Payload;
-            HttpContent content = request.RequestUri!.AbsolutePath.EndsWith(".xml", StringComparison.Ordinal) ? new ByteArrayContent(Feed)
+            bool feedRead = request.RequestUri!.AbsolutePath.EndsWith(".xml", StringComparison.Ordinal);
+            if (feedRead && FeedHold is { } hold) await hold.Task.WaitAsync(cancellationToken);
+            HttpContent content = feedRead ? new ByteArrayContent(Feed)
                 : Corrupt ? new ByteArrayContent([1, 2, 3]) : Stall ? new StreamContent(new Silent())
                 : Unsized || Pause > TimeSpan.Zero ? new StreamContent(new Paced(body, Pause)) : new ByteArrayContent(body);
-            return Task.FromResult(new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK) { RequestMessage = request, Content = content });
+            return new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK) { RequestMessage = request, Content = content };
         }
     }
     /// Absolute URLs answer with a body or a redirect; anything else is missing.
@@ -315,6 +319,20 @@ internal static class WindowsUpdateChecks
         Check(!await updates.CheckAsync() && !updates.Status.Busy && updates.CurrentOffer != null, "An inline error allows retry without losing the offer");
         transport.Fail = false; transport.Feed = key.Feed();
         Check(await updates.CheckAsync() && !updates.Status.Busy && updates.CurrentOffer == null, "A successful inline check clears an offer the feed withdrew");
+        // Update and Restart during a background check waits for it instead of failing.
+        transport.Feed = key.Feed(Item(key, build: "1.2.3.7"));
+        Check(await updates.CheckAsync() && updates.CurrentOffer?.Build == new Version(1, 2, 3, 7), "An inline check offers a newer build");
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.FeedHold = hold;
+        var background = updates.RetryAfterFailedPatchAsync();
+        var waiting = updates.DownloadAsync(null, CancellationToken.None);
+        Check(!background.IsCompleted && !waiting.IsCompleted && !updates.Status.Busy, "A download asked for during a background check waits for it");
+        transport.FeedHold = null; hold.SetResult();
+        Check(await background, "The background check finishes first");
+        var afterCheck = await waiting;
+        Check(afterCheck.Package == updates.CurrentOffer && File.Exists(afterCheck.Installer) && !updates.Status.Busy,
+            "The waiting download then runs and restores input");
+        updates.Dismiss();
         Check(!presenter.Events.Contains("quit"), "No check or dismissal hands off an installer");
     }
     private static async Task HttpsChecks(SigningFixture key, WindowsUpdateChannel template, string root)
