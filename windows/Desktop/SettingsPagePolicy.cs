@@ -14,6 +14,9 @@ internal static class SettingsPagePolicy
         => !enabled.ToHashSet(StringComparer.Ordinal).SetEquals(["deepseek"]);
     internal static Uri PricingDocumentation(string language)
         => new("https://api-docs.deepseek.com/" + (language == "zh-Hans" ? "zh-cn/" : "") + "quick_start/pricing");
+    /// Where a failed update can be downloaded by hand, as the Mac's Download from GitHub.
+    internal static readonly Uri DownloadPage = new("https://github.com/RyanZhangNTU/codex-pacer/releases/latest");
+    internal static bool OpenDownloadPage(Func<Uri, bool>? launch = null) => Open(DownloadPage, launch);
     internal static bool OpenTransparency(Func<Uri, bool>? launch = null)
         => Open(new("ms-settings:easeofaccess-visualeffects"), launch);
     internal static bool OpenPricing(string language, Func<Uri, bool>? launch = null)

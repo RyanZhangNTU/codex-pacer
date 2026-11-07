@@ -8,11 +8,11 @@ internal sealed partial class SettingsWindow
 {
     private readonly WindowsUpdateService? updater;
     private CheckBox? automaticUpdates;
-    private Button? updateCheck, updateNotesButton, updateInstall;
+    private Button? updateCheck, updateNotesButton, updateInstall, updateDownloadPage;
     private TextBlock? updateStatus;
     private bool changingUpdates, readingUpdateNotes;
     internal event System.Action<string>? SignedReleaseNotesRequested;
-    private void OnUpdateStatus(WindowsUpdateStatus value) { RefreshUpdates(); RefreshSidebar(); RefreshOverview(); }
+    private void OnUpdateStatus(WindowsUpdateStatus value) { RefreshUpdates(); RefreshSidebar(); RefreshOverview(); RefreshBanner(); }
     // Checks, progress, cancel and failures started here show in the card, as on the Mac.
     private string? inlineUpdateText; private bool inlineUpdateFailed;
     private System.Threading.CancellationTokenSource? inlineDownload;
@@ -40,10 +40,11 @@ internal sealed partial class SettingsWindow
         inlineDownload = new System.Threading.CancellationTokenSource(); inlineFraction = 0; inlineUpdateText = null; inlineUpdateFailed = false; RefreshUpdates();
         try
         {
+            RefreshOverview(); RefreshBanner();
             var verified = await updater.DownloadAsync(new System.Progress<UpdateProgress>(value =>
             {
                 if (value.Total > 0) inlineFraction = System.Math.Clamp((double)value.Received / value.Total, 0, 1);
-                RefreshUpdates();
+                RefreshUpdates(); RefreshBanner();
             }), inlineDownload.Token);
             if (sourceClosed) return;
             inlineFraction = null; inlineUpdateText = ui.Text("main.update.installing"); RefreshUpdates();
@@ -52,7 +53,7 @@ internal sealed partial class SettingsWindow
         catch (System.OperationCanceledException) { inlineUpdateText = null; }
         catch (System.Exception error) when (WindowsUpdateService.Recoverable(error))
         { inlineUpdateText = ui.Text("main.update.failed").Replace("%@", ui.Text("windows.updates.failed"), System.StringComparison.Ordinal); inlineUpdateFailed = true; }
-        finally { inlineDownload?.Dispose(); inlineDownload = null; inlineFraction = null; if (!sourceClosed) RefreshUpdates(); }
+        finally { inlineDownload?.Dispose(); inlineDownload = null; inlineFraction = null; if (!sourceClosed) { RefreshUpdates(); RefreshOverview(); RefreshBanner(); } }
     }
     /// Idle, the card says when Pacer last checked, or nothing; other states say themselves.
     private string IdleUpdateText(string key)
@@ -94,6 +95,7 @@ internal sealed partial class SettingsWindow
             if (updateCheck != null) updateCheck.Visibility = found == null && !downloading ? Visibility.Visible : Visibility.Collapsed;
             if (updateInstall != null) { updateInstall.Visibility = found != null && !downloading ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = !status.Busy && !busy; }
             if (updateCancel != null) updateCancel.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
+            if (updateDownloadPage != null) updateDownloadPage.Visibility = inlineUpdateFailed && !downloading ? Visibility.Visible : Visibility.Collapsed;
         }
         finally { synchronizing = syncing; }
     }

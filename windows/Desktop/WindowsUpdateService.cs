@@ -44,6 +44,13 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     internal WindowsUpdateStatus Status { get; private set; } = new(false, false, "windows.updates.unconfigured");
     /// When Pacer last asked for an update, if it ever has.
     internal DateTimeOffset? LastCheck => lastCheck == DateTimeOffset.MinValue ? null : lastCheck;
+    internal const string BannerDismissedKey = "PacerUpdateBannerDismissed";
+    /// The version whose Overview banner was closed, kept across launches as the Mac's updateBannerDismissed.
+    internal string? DismissedBanner
+    {
+        get { try { return state?.Read(BannerDismissedKey); } catch (Exception error) when (Recoverable(error)) { return null; } }
+        set { try { state?.Write(BannerDismissedKey, value ?? ""); } catch (Exception error) when (Recoverable(error)) { } }
+    }
     internal event Action<WindowsUpdateStatus>? Changed;
     internal IWindowsUpdatePresenter? Presenter { get; set; }
     /// What Install would download: the patch when it applies to this

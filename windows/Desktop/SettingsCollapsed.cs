@@ -98,7 +98,7 @@ internal sealed partial class SettingsWindow
             form.Children.Add(Detail(!ShellProjection.HasFailure("projectCompactBar") ? "…" : ui.Text("windows.connection.refresh_failed")));
             return;
         }
-        compactEditor = new CompactLayoutEditorView(ui, Resources, EditCompact); editors.Add(compactEditor); form.Children.Add(Card(compactEditor));
+        compactEditor = new CompactLayoutEditorView(ui, Resources, EditCompact) { Margin = new Thickness(0, 0, 0, 22) }; editors.Add(compactEditor); form.Children.Add(compactEditor);
         // Restore Defaults sits at the header's end, as on the Mac.
         var restore = new Button { Content = ui.Text("common.restore_defaults") };
         Identify(restore, "compact.restore", ui.Text("common.restore_defaults")); editors.Add(restore);
@@ -289,7 +289,7 @@ internal sealed partial class SettingsWindow
         compactProjection = projection;
         var providers = CompactProviders(); bool docked = session.Current.DisplayMode != "notch" &&
             (session.Current.IslandPlacement?.Vertical ?? session.Current.Position != "center");
-        compactEditor.Update(projection, docked); compactEditor.IsEnabled = !busy && !session.RequiresRestart;
+        compactEditor.Update(projection, docked, session.Current.DisplayMode == "notch", engine?.LatestSnapshot); compactEditor.IsEnabled = !busy && !session.RequiresRestart;
         var components = projection.Components.ToDictionary(value => value.Id);
         // The chosen component, or the first one on the bar, so the inspector always describes something.
         var available = projection.Groups.SelectMany(group => group.Components).Where(id => components.TryGetValue(id, out var item) && item.Available).ToArray();

@@ -134,6 +134,8 @@ internal static class GuidePageChecks
             Check(enable.Visibility != Visibility.Visible, "The module footer stays hidden on the bar topics");
             Check(new[] { "help.welcome", "guide.link.manual", "guide.link.issues" }.All(id => Find<Button>(settings, id).Focusable && AutomationProperties.GetHelpText(Find<Button>(settings, id)).Length > 0),
                 "Help's three ways in are keyboard buttons that say where they lead");
+            // Help may already be open from the remembered tab, so let its chips lay out first.
+            await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
             Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump();
             Check(Has(settings, "help.hover") && !Has(settings, "help.move"), "The expanded topic replaces the collapsed marks");
@@ -165,13 +167,14 @@ internal static class GuidePageChecks
             var support = SelfAndDescendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.qq.code")); await Pump();
             Check(support.QqCodePopup?.IsOpen == true && SelfAndDescendants(support.QqCodePopup.Child).OfType<Image>().Single().ActualWidth == 220
                 && SelfAndDescendants(support.QqCodePopup.Child).OfType<TextBlock>().Any(text => text.Text == ui.Text("support.qq.hint")), "The packaged QQ group code opens only on request");
-            Escape(Find<Button>(support.QqCodePopup!.Child, "support.qq.close")); await Pump();
+            Check(Find<Border>(support.QqCodePopup!.Child, "support.qq.panel").Focusable, "The QQ code card can take focus, so Escape reaches it");
+            Escape(Find<Border>(support.QqCodePopup!.Child, "support.qq.panel")); await Pump();
             Check(!support.QqCodePopup.IsOpen && settings.IsVisible, "Escape closes the QQ code before the settings window");
             Invoke(Find<Button>(settings, "support.wechat")); await Pump();
             Check(support.SupportCodePopup?.IsOpen == true && SelfAndDescendants(support.SupportCodePopup.Child).OfType<Image>().Single().ActualWidth == 220, "The packaged WeChat QR code opens only on request");
-            var qrClose = Find<Button>(support.SupportCodePopup!.Child, "support.wechat.close"); Space(qrClose); await Pump();
+            var qrPanel = Find<Border>(support.SupportCodePopup!.Child, "support.wechat.panel"); Escape(qrPanel); await Pump();
             Check(support.SupportCodePopup.IsOpen == false && settings.IsVisible, "Keyboard closes the QR layer while preserving Settings");
-            Invoke(Find<Button>(settings, "support.wechat")); await Pump(); Escape(Find<Button>(support.SupportCodePopup.Child, "support.wechat.close")); await Pump();
+            Invoke(Find<Button>(settings, "support.wechat")); await Pump(); Escape(Find<Border>(support.SupportCodePopup.Child, "support.wechat.panel")); await Pump();
             Check(!support.SupportCodePopup.IsOpen && settings.IsVisible, "Escape belongs to the QR layer before the settings window");
             Check(saved == beforeReadOnly && JsonSerializer.Serialize(session.Current) == beforeBytes, "Help tabs, public links and Support never write any preferences");
             settings.CapturePreview(Path.Combine(output, "pages-support-" + language + (dark ? "-dark" : "-light") + ".png"));

@@ -232,6 +232,11 @@ internal sealed partial class SettingsWindow : Window
         var number = new System.Windows.Documents.Run("  " + (Version.Length > 0 ? Version : ui.Text("build.development"))); number.SetResourceReference(TextElement.ForegroundProperty, "SettingsSecondary"); name.Inlines.Add(number);
         AutomationProperties.SetName(name, "Codex Pacer " + Version); labels.Children.Add(name);
         updateStatus = Detail(""); updateStatus.FontSize = 12.5; updateStatus.Margin = new Thickness(0, 3, 0, 0); labels.Children.Add(updateStatus);
+        // A failed update offers the download page, as on the Mac.
+        updateDownloadPage = new Button { Content = ui.Text("main.update.download_page"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        Identify(updateDownloadPage, "settings.update.download_page", ui.Text("main.update.download_page"));
+        updateDownloadPage.Click += (_, _) => { if (!SettingsPagePolicy.OpenDownloadPage(guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
+        labels.Children.Add(updateDownloadPage);
         Identify(updateStatus, "settings.update.status", ""); AutomationProperties.SetLiveSetting(updateStatus, AutomationLiveSetting.Polite);
         updateProgress = new ProgressBar { Style = (Style)FindResource("SettingsProgressBar"), Maximum = 1, MaxWidth = 240, Height = 4, Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         Identify(updateProgress, "settings.update.progress", ui.Text("main.update.downloading")); labels.Children.Add(updateProgress);
@@ -407,7 +412,7 @@ internal sealed partial class SettingsWindow : Window
             login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; startupRow = null;
             SetPaneHeader(defaultHeader); paneSubtitle.Text = ""; paneSubtitle.Visibility = Visibility.Collapsed;
             quotaRows.Clear(); ClearOverview(); form.MaxWidth = headerColumn.MaxWidth = ColumnWidth; language = null; restart = null; restartHint = null;
-            automaticUpdates = null; updateCheck = updateNotesButton = updateInstall = updateCancel = null; updateStatus = null; updateProgress = null;
+            automaticUpdates = null; updateCheck = updateNotesButton = updateInstall = updateCancel = updateDownloadPage = null; updateStatus = null; updateProgress = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();

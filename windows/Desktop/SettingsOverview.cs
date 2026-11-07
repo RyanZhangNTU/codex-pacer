@@ -98,7 +98,7 @@ internal sealed partial class SettingsWindow
         }
     }
 
-    private void ClearOverview() { overviewBody = historyBody = null; overviewSubtitle = null; overviewKey = historyKey = null; }
+    private void ClearOverview() { overviewBody = historyBody = null; overviewSubtitle = null; overviewKey = historyKey = null; bannerStatus = null; bannerProgress = null; bannerNotes = bannerInstall = bannerCancel = bannerLater = null; }
 
     private void BuildOverview()
     {
@@ -139,12 +139,12 @@ internal sealed partial class SettingsWindow
         var attention = AttentionItems();
         string? update = updater?.CurrentOffer?.Version;
         string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
-            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
+            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
         if (key == overviewKey) return;
         overviewKey = key;
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);
         overviewBody.Children.Clear();
-        if (update != null && update != dismissedUpdate) overviewBody.Children.Add(UpdateBanner(update));
+        if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
         if (attention.Count > 0) overviewBody.Children.Add(AttentionCard(attention));
         var enabled = closed ? [] : EnabledProviders();
         if (enabled.Length == 0)
@@ -164,22 +164,52 @@ internal sealed partial class SettingsWindow
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(Label(ui.Text("main.update.banner").Replace("%@", version, StringComparison.Ordinal), 13, FontWeights.SemiBold));
         var detail = Detail(ui.Text("main.update.banner_detail")); detail.FontSize = 11.5; text.Children.Add(detail);
+        bannerStatus = detail;
+        bannerProgress = new ProgressBar { Style = (Style)FindResource("SettingsProgressBar"), Maximum = 1, MaxWidth = 240, Height = 4, Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        text.Children.Add(bannerProgress);
         Grid.SetColumn(text, 1); grid.Children.Add(text);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        // Its notes, as on the Mac, while nothing is downloading.
+        bannerNotes = new Button { Content = ui.Text("main.update.notes"), Margin = new Thickness(0, 0, 8, 0) };
+        Identify(bannerNotes, "settings.overview.update_notes", ui.Text("main.update.notes")); bannerNotes.Click += ReadUpdateNotes;
+        actions.Children.Add(bannerNotes);
         var install = new Button { Content = ui.Text("main.update.install"), Style = (Style)FindResource("SettingsProminentButton") };
-        Identify(install, "settings.overview.update", ui.Text("main.update.install"));
-        // One click downloads and installs from Help & Updates, where its progress shows.
-        install.Click += async (_, _) => { await NavigateAsync("about"); await InstallInlineAsync(); };
+        Identify(install, "settings.overview.update", ui.Text("main.update.install")); bannerInstall = install;
+        // One click downloads, installs and restarts right here, with its progress in the banner, as on the Mac.
+        install.Click += async (_, _) => await InstallInlineAsync();
         actions.Children.Add(install);
+        bannerCancel = new Button { Content = ui.Text("common.cancel"), Visibility = Visibility.Collapsed };
+        Identify(bannerCancel, "settings.overview.update_cancel", ui.Text("common.cancel")); bannerCancel.Click += (_, _) => inlineDownload?.Cancel();
+        actions.Children.Add(bannerCancel);
         var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
         var later = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, Margin = new Thickness(8, 0, 0, 0), ToolTip = ui.Text("main.update.later") };
         Identify(later, "settings.overview.update_later", ui.Text("main.update.later"));
-        later.Click += (_, _) => { dismissedUpdate = version; RefreshOverview(); };
-        actions.Children.Add(later);
+        later.Click += (_, _) => { dismissedUpdate = version; if (updater != null) updater.DismissedBanner = version; RefreshOverview(); };
+        bannerLater = later; actions.Children.Add(later);
         Grid.SetColumn(actions, 2); grid.Children.Add(actions);
         var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 22), Child = grid };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
-        return card;
+        RefreshBanner(); return card;
+    }
+    private TextBlock? bannerStatus;
+    private ProgressBar? bannerProgress;
+    private Button? bannerNotes, bannerInstall, bannerCancel, bannerLater;
+    /// The banner's line and buttons follow the same download as Help & Updates' card.
+    private void RefreshBanner()
+    {
+        if (bannerStatus == null || bannerProgress == null) return;
+        bool downloading = inlineDownload != null;
+        bannerStatus.Text = downloading && inlineFraction is { } fraction
+            ? ui.Text("main.update.downloading_percent").Replace("%@", ((int)Math.Floor(fraction * 100)).ToString(CultureInfo.CurrentCulture), StringComparison.Ordinal).Replace("%%", "%", StringComparison.Ordinal)
+            : inlineUpdateText ?? ui.Text("main.update.banner_detail");
+        bannerStatus.SetResourceReference(TextBlock.ForegroundProperty, inlineUpdateFailed ? "SettingsWarning" : "SettingsSecondary");
+        bannerProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
+        bannerProgress.IsIndeterminate = downloading && inlineFraction == null; if (inlineFraction is { } value) bannerProgress.Value = value;
+        if (bannerNotes != null) bannerNotes.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
+        if (bannerInstall != null) bannerInstall.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
+        if (bannerCancel != null) bannerCancel.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
+        // Closing waits until the install finishes, as on the Mac.
+        if (bannerLater != null) bannerLater.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private Border AttentionCard(IReadOnlyList<AttentionItem> items)
@@ -250,7 +280,7 @@ internal sealed partial class SettingsWindow
         Grid.SetColumn(details, 2); header.Children.Add(details);
         content.Children.Add(header);
         string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
-        if (provider == "deepseek") content.Children.Add(new DeepSeekSoloView(snapshot.Wallet, ui, false, connectUnavailable: connectUnavailable) { Margin = new Thickness(0) });
+        if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable));
         else if (snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading)
         {
             var raw = snapshot.Quota.FirstOrDefault(value => value.Provider == provider);
@@ -265,6 +295,26 @@ internal sealed partial class SettingsWindow
         }
         else content.Children.Add(new TextBlock { Text = ui.Text("provider.state.searching"), FontSize = 12, Foreground = PacerPalette.Secondary });
         var card = IslandCard(content); Identify(card, "settings.overview.service." + provider, PaneTitle(provider)); return card;
+    }
+
+    /// The dial as the island draws it, without its name, then today or the budgets and the speed beside it, as on the Mac.
+    private Grid DeepSeekOverview(EngineWallet? wallet, string connectUnavailable)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(118) }); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) }); grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.Children.Add(new DeepSeekQuotaCell(wallet, ui, 104, connectUnavailable: connectUnavailable, showsName: false) { HorizontalAlignment = HorizontalAlignment.Center });
+        var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var data = wallet?.Solo;
+        if (data?.Budgets.Count > 0) right.Children.Add(new DeepSeekBudgetDetails(data.Budgets, ui));
+        else if (data != null)
+        {
+            var label = DeepSeekElements.Text(data.TodayLabel, 11, PacerPalette.Tertiary, FontWeights.SemiBold); right.Children.Add(label);
+            var today = DeepSeekElements.Text(data.TodayText, 20, PacerPalette.Primary, FontWeights.SemiBold); today.Margin = new Thickness(0, 2, 0, 0);
+            AutomationProperties.SetHelpText(today, data.TodayHelp); AutomationProperties.SetAutomationId(today, "settings.overview.deepseek.today"); right.Children.Add(today);
+        }
+        if (data?.Speed != null) { var speed = new DeepSeekSpeedView(data.Speed, data.TodayLabel) { Margin = new Thickness(0, 12, 0, 0) }; right.Children.Add(speed); }
+        Grid.SetColumn(right, 2); grid.Children.Add(right);
+        return grid;
     }
 
     private Border TasksCard(EngineSnapshot? snapshot, IReadOnlyList<EngineTaskRow> rows)

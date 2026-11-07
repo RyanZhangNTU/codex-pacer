@@ -755,14 +755,10 @@ internal sealed class GuideContent : StackPanel
             {
                 var button = Button(ui.Text("support.code.wechat"), "support.wechat", () => { if (code != null) code.IsOpen = !code.IsOpen; });
                 WithGlyph(button, "qrcode", ui.Text("support.code.wechat")); coffeeActions.Insert(0, button);
-                var content = new StackPanel { Margin = new Thickness(12) };
-                content.Children.Add(new Image { Source = BitmapFrame.Create(new Uri(imageFile)), Width = 220, Height = 220, Stretch = Stretch.Uniform });
-                var hint = Text(ui.Text("support.code.wechat_hint"), 12); hint.Foreground = Brushes.Black; content.Children.Add(hint);
-                var close = Button(ui.Text("whats_new.done"), "support.wechat.close", () => { if (code != null) code.IsOpen = false; button.Focus(); }); content.Children.Add(close);
-                code = new Popup { PlacementTarget = button, Placement = PlacementMode.Bottom, StaysOpen = false,
-                    Child = new Border { Background = Brushes.White, BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = content } };
+                var content = CodeCard(imageFile, ui.Text("support.code.wechat_hint"), "support.wechat.panel");
+                code = new Popup { PlacementTarget = button, Placement = PlacementMode.Bottom, StaysOpen = false, Child = content };
                 content.PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape) { code.IsOpen = false; button.Focus(); args.Handled = true; } };
-                WindowRendering.Prepare(code); code.Opened += (_, _) => close.Focus();
+                WindowRendering.Prepare(code); code.Opened += (_, _) => content.Focus();
             }
         }
         // Three ways to help back side by side, their buttons pinned to the bottom so the cards line up.
@@ -818,19 +814,24 @@ internal sealed class GuideContent : StackPanel
             Popup? popup = null;
             var show = Button(ui.Text("support.qq.code"), "support.qq.code", () => { if (popup != null) popup.IsOpen = !popup.IsOpen; }); show.Margin = new Thickness(6, 3, 0, 3);
             WithGlyph(show, "qrcode", ui.Text("support.qq.code"));
-            var content = new StackPanel { Margin = new Thickness(12) };
-            content.Children.Add(new Image { Source = BitmapFrame.Create(new Uri(image)), Width = 220, Height = 220, Stretch = Stretch.Uniform });
-            var hint = Text(ui.Text("support.qq.hint"), 12); hint.Foreground = Brushes.Black; hint.HorizontalAlignment = HorizontalAlignment.Center; content.Children.Add(hint);
-            var close = Button(ui.Text("whats_new.done"), "support.qq.close", () => { if (popup != null) popup.IsOpen = false; show.Focus(); }); content.Children.Add(close);
-            popup = new Popup { PlacementTarget = show, Placement = PlacementMode.Bottom, StaysOpen = false,
-                Child = new Border { Background = Brushes.White, BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = content } };
+            var content = CodeCard(image, ui.Text("support.qq.hint"), "support.qq.panel");
+            popup = new Popup { PlacementTarget = show, Placement = PlacementMode.Bottom, StaysOpen = false, Child = content };
             content.PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape) { popup.IsOpen = false; show.Focus(); args.Handled = true; } };
-            WindowRendering.Prepare(popup); popup.Opened += (_, _) => close.Focus();
+            WindowRendering.Prepare(popup); popup.Opened += (_, _) => content.Focus();
             qqCode = popup; actions.Children.Add(show);
         }
         Grid.SetColumn(actions, 2); row.Children.Add(actions);
         AutomationProperties.SetName(row, ui.Text("support.qq.title") + " " + detail.Text);
         return row;
+    }
+    /// A QR code on white with its hint under it; the card itself takes focus so Escape closes it.
+    private Border CodeCard(string image, string hint, string id)
+    {
+        var content = new StackPanel { Margin = new Thickness(12) };
+        content.Children.Add(new Image { Source = BitmapFrame.Create(new Uri(image)), Width = 220, Height = 220, Stretch = Stretch.Uniform });
+        var line = Text(hint, 12); line.Foreground = Brushes.Black; line.HorizontalAlignment = HorizontalAlignment.Center; line.Margin = new Thickness(0, 6, 0, 0); content.Children.Add(line);
+        var card = new Border { Background = Brushes.White, CornerRadius = new CornerRadius(10), Child = content, Focusable = true, FocusVisualStyle = null };
+        Identify(card, id, hint); return card;
     }
     /// A feedback form opened in the browser: tile, title and a chevron.
     private Grid FeedbackRow(Button link, string symbol, Color tint)

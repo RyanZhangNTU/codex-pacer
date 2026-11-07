@@ -24,7 +24,13 @@ public partial class App
         // While Help & Updates is showing, a check reports in its card instead of a window, as on the Mac.
         private bool Inline => app.settings?.ShowsUpdatesInline == true && app.updateWindow == null;
         public void Checking() { if (Inline) app.settings!.InlineUpdate("checking"); else app.PresentUpdate(true, window => window.Checking()); }
-        public void Offer(WindowsUpdatePackage package, bool manual) { if (manual && Inline) app.settings!.InlineUpdate("offer"); else app.PresentUpdate(manual, window => window.Offer(package, manual)); }
+        // An automatic check opens no window, as on the Mac: the found version shows on Overview's banner and as
+        // a dot by Help & Updates. A manual check outside Help & Updates still opens the update window.
+        public void Offer(WindowsUpdatePackage package, bool manual)
+        {
+            if (!manual) { app.settings?.InlineUpdate("offer"); return; }
+            if (Inline) app.settings!.InlineUpdate("offer"); else app.PresentUpdate(true, window => window.Offer(package, true));
+        }
         public void UpToDate() { if (Inline) app.settings!.InlineUpdate("upToDate"); else app.PresentUpdate(true, window => window.UpToDate()); }
         public void Failed() { if (Inline) app.settings!.InlineUpdate("failed"); else app.PresentUpdate(true, window => window.Failed()); }
     }

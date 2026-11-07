@@ -104,7 +104,9 @@ internal sealed partial class SettingsWindow
         Border Line() { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line; }
         var body = new StackPanel(); body.Children.Add(Row(deepseekConnectionTitle, connection, 44));
         deepseekConnectionSeparator = Line(); body.Children.Add(deepseekConnectionSeparator);
-        deepseekDetectedSource = DeepSeekCaption(""); body.Children.Add(deepseekDetectedSource);
+        // Where the balance comes from reads as a row title, as on the Mac.
+        deepseekDetectedSource = DeepSeekCaption(""); deepseekDetectedSource.FontSize = 13; deepseekDetectedSource.Margin = new Thickness(14, 12, 14, 12);
+        deepseekDetectedSource.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary"); body.Children.Add(deepseekDetectedSource);
         var accountHelp = DeepSeekCaption(DeepSeekWebHelp);
         if (!DeepSeekOfflineDemo)
         {
@@ -122,7 +124,7 @@ internal sealed partial class SettingsWindow
         var keys = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         // Keep one invalid extra character so paste cannot truncate an oversized
         // key into an accepted 256-byte credential and replace a saved key.
-        deepseekKeyInput = new PasswordBox { MaxLength = 257, Width = 220, HorizontalContentAlignment = HorizontalAlignment.Left,
+        deepseekKeyInput = new PasswordBox { MaxLength = 257, HorizontalContentAlignment = HorizontalAlignment.Left, MinWidth = 160,
             Style = (Style)FindResource("SettingsSecretInput"), VerticalAlignment = VerticalAlignment.Center };
         Identify(deepseekKeyInput, "settings.deepseek.key.input", ui.Text("deepseek.paste_key")); editors.Add(deepseekKeyInput);
         var input = new Grid(); input.Children.Add(deepseekKeyInput);
@@ -140,9 +142,13 @@ internal sealed partial class SettingsWindow
         var saveButton = deepseekKeySave; var removeButton = deepseekKeyRemove;
         saveButton.Click += async (_, _) => { if (ReferenceEquals(deepseekKeySave, saveButton) && saveButton.IsVisible && saveButton.IsEnabled) await SaveDeepSeekKey(); };
         removeButton.Click += async (_, _) => { if (ReferenceEquals(deepseekKeyRemove, removeButton) && removeButton.IsVisible && removeButton.IsEnabled) await RunDeepSeekConnection("removeDeepSeekKey"); };
-        var keyLabel = Label(ui.Text("deepseek.paste_key")); Identify(keyLabel, "settings.deepseek.key.label", ui.Text("deepseek.paste_key"));
-        deepseekKeyEditor.Children.Add(Row(keyLabel, keys, 44)); deepseekKeyEditor.Children.Add(Line());
-        deepseekKeyIssue = DeepSeekCaption(DeepSeekKeyHelp); deepseekKeyIssue.Margin = new Thickness(10, 10, 10, 12);
+        // One row, as on the Mac: the key field across it, then Save and Remove, with the help under them.
+        var keyRow = new Grid { MinHeight = 44, Margin = new Thickness(14, 0, 14, 0) };
+        keyRow.ColumnDefinitions.Add(new ColumnDefinition()); keyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        keys.Children.Remove(input); input.VerticalAlignment = VerticalAlignment.Center; keyRow.Children.Add(input);
+        Grid.SetColumn(keys, 1); keyRow.Children.Add(keys); deepseekKeyEditor.Children.Add(keyRow);
+        deepseekKeySave.Style = (Style)FindResource("SettingsProminentButton");
+        deepseekKeyIssue = DeepSeekCaption(DeepSeekKeyHelp); deepseekKeyIssue.FontSize = 11.5; deepseekKeyIssue.Margin = new Thickness(14, 0, 14, 12);
         Identify(deepseekKeyIssue, "settings.deepseek.key.issue", ""); deepseekKeyEditor.Children.Add(deepseekKeyIssue);
         body.Children.Add(deepseekKeyEditor); return body;
     }
