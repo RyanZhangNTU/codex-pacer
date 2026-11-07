@@ -29,7 +29,9 @@ internal sealed partial class SettingsWindow
     private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true, double artHeight = 44)
     {
         var choice = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = group, IsEnabled = enabled };
-        var content = new StackPanel();
+        // Taller scenes grow the tile instead of clipping its title.
+        if (artHeight > 44) choice.Height = double.NaN;
+        var content = new StackPanel { Margin = new Thickness(0, 0, 0, artHeight > 44 ? 10 : 0) };
         var artHost = new Grid { Height = artHeight }; artHost.Children.Add(art); content.Children.Add(artHost);
         var title = Label(name, 12); title.HorizontalAlignment = HorizontalAlignment.Center; title.Margin = new Thickness(0, 7, 0, 0);
         title.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = choice });
@@ -74,9 +76,9 @@ internal sealed partial class SettingsWindow
         }
         var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
         segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
-        BuildAccentSection();
         // The expanded panel's choices follow Position, as on the Mac.
         expandedQuotaRow = Row(Label(ui.Text("main.appearance.quota_style")), segments);
+        BuildAccentSection();
         form.Children.Add(SectionHeader("appearance.position", 20));
         // Both positions are shown moving, with the welcome guide's scenes, as on the Mac.
         notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", ModeScene(new WelcomeGestureScene()), artHeight: 96);

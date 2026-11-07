@@ -53,8 +53,9 @@ internal sealed partial class SettingsWindow
         // The chosen color's name sits under the swatches, as in System Settings.
         accentName = Label("", 11); accentName.HorizontalAlignment = HorizontalAlignment.Right; accentName.Margin = new Thickness(0, 4, 0, 0);
         accentName.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); swatches.Children.Add(accentName);
-        form.Children.Add(SectionHeader("appearance.accent", 20));
-        form.Children.Add(Card(InfoRow(ui.Text("appearance.accent"), swatches, ui.Has("appearance.accent_info") ? ui.Text("appearance.accent_info") : null, id: "appearance.accent", minHeight: 56)));
+        // Accent is one row in its own card, with no section title, as on the Mac.
+        var card = Card(InfoRow(ui.Text("appearance.accent"), swatches, ui.Has("appearance.accent_info") ? ui.Text("appearance.accent_info") : null, id: "appearance.accent", minHeight: 56));
+        card.Margin = new Thickness(0, 10, 0, 12); form.Children.Add(card);
     }
 
     private void RefreshAppearanceTheme()
