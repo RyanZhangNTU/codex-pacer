@@ -513,6 +513,11 @@
 "support.coffee.detail" = "Entirely optional. Nothing in Pacer depends on it.";
 "support.code.wechat" = "WeChat";
 "support.code.wechat_hint" = "Scan with WeChat";
+"support.qq.title" = "QQ Group";
+"support.qq.number" = "Group number %@";
+"support.qq.copy" = "Copy Number";
+"support.qq.code" = "QR Code";
+"support.qq.hint" = "Scan with QQ to join";
 "help.section.collapsed" = "Collapsed Bar";
 "help.section.expanded" = "Expanded Panel";
 "help.section.more" = "More";
@@ -1040,7 +1045,7 @@
 "main.history.subtitle" = "This cycle";
 "main.quota.left_5h" = "5h %@%% left";
 "main.quota.left_7d" = "7d %@%% left";
-"main.support.feedback" = "Feedback";
+"main.support.feedback" = "Feedback & Community";
 "main.update.sidebar" = "%@ available";
 "main.update.banner" = "Pacer %@ is available";
 "main.update.banner_detail" = "One click downloads and installs it, then Pacer restarts.";

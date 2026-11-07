@@ -45,6 +45,21 @@ final class ProjectSupportTests: XCTestCase {
         XCTAssertEqual(codes.map(\.titleKey), ["support.code.wechat"])
         XCTAssertEqual(codes.first?.hintKey, "support.code.wechat_hint")
         XCTAssertEqual(codes.first?.image.lastPathComponent, "support-wechat.png")
+
+        // The QQ group's code is not a coffee code, and it too needs its image.
+        XCTAssertNil(ProjectSupport.qqGroupCode(in: try bundle(holding: ["support-wechat.png"])))
+        let both = try bundle(holding: ["support-wechat.png", "support-qq-group.png"])
+        XCTAssertEqual(ProjectSupport.codes(in: both).map(\.titleKey), ["support.code.wechat"])
+        let qq = try XCTUnwrap(ProjectSupport.qqGroupCode(in: both))
+        XCTAssertEqual(qq.titleKey, "support.qq.code")
+        XCTAssertEqual(qq.hintKey, "support.qq.hint")
+        XCTAssertEqual(qq.image.lastPathComponent, "support-qq-group.png")
+    }
+
+    func testTheQQGroupShipsWithItsNumberAndCode() {
+        XCTAssertEqual(ProjectSupport.qqGroupNumber, "1131553244")
+        XCTAssertNotNil(ProjectSupport.qqGroupCode(), "The app bundles the group's QR code")
+        XCTAssertTrue(L10n.text("support.qq.number", ProjectSupport.qqGroupNumber).contains(ProjectSupport.qqGroupNumber))
     }
 
     func testEveryLineOfThePageHasItsText() {
@@ -52,7 +67,9 @@ final class ProjectSupportTests: XCTestCase {
                     "support.star.title", "support.star.detail", "support.star.action", "support.star.feature", "support.star.bug",
                     "support.share.title", "support.share.detail", "support.share.action",
                     "support.share.copy", "support.share.copied", "support.share.subject", "support.share.message",
-                    "support.coffee.title", "support.coffee.detail", "support.code.wechat", "support.code.wechat_hint"] {
+                    "support.coffee.title", "support.coffee.detail", "support.code.wechat", "support.code.wechat_hint",
+                    "main.support.feedback", "support.qq.title", "support.qq.number", "support.qq.copy",
+                    "support.qq.code", "support.qq.hint"] {
             XCTAssertNotEqual(L10n.text(key), key)
         }
     }

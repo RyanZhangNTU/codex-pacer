@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "45a2e4d1c259d045b03aa2e3cfce7f787e1061757ab95f583382a60978546a9e",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "e000a16e32a6a8c2a830c88a48e408a9088b2f34287db2b5299a518dcd05092b",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -750,7 +750,7 @@
     "main.section.startup": "Startup & Window",
     "main.section.status": "Status",
     "main.subtitle.notifications": "Choose where each event reminds you",
-    "main.support.feedback": "Feedback",
+    "main.support.feedback": "Feedback & Community",
     "main.update.available": "Version %@ is available.",
     "main.update.banner": "Pacer %@ is available",
     "main.update.banner_detail": "One click downloads and installs it, then Pacer restarts.",
@@ -939,6 +939,11 @@
     "support.code.wechat_hint": "Scan with WeChat",
     "support.coffee.detail": "Entirely optional. Nothing in Pacer depends on it.",
     "support.coffee.title": "Buy us a coffee",
+    "support.qq.code": "QR Code",
+    "support.qq.copy": "Copy Number",
+    "support.qq.hint": "Scan with QQ to join",
+    "support.qq.number": "Group number %@",
+    "support.qq.title": "QQ Group",
     "support.share.action": "Share\u2026",
     "support.share.copied": "Copied",
     "support.share.copy": "Copy Link",

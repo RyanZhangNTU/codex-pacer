@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "48213e09170e004ee1850f98023a9074647e10d4f1cb58e5548f2f833e12bdde",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "51decc9b6b61139ccc97728cf07489e9057f2552fef11c707d6c99bb241131fa",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
   },
   "strings": {
@@ -750,7 +750,7 @@
     "main.section.startup": "\u542f\u52a8\u4e0e\u7a97\u53e3",
     "main.section.status": "\u72b6\u6001",
     "main.subtitle.notifications": "\u6bcf\u4ef6\u4e8b\u9009\u5728\u54ea\u91cc\u63d0\u9192\u4f60",
-    "main.support.feedback": "\u53cd\u9988",
+    "main.support.feedback": "\u53cd\u9988\u4e0e\u4ea4\u6d41",
     "main.update.available": "\u65b0\u7248\u672c %@ \u53ef\u4ee5\u66f4\u65b0\u3002",
     "main.update.banner": "Pacer %@ \u53ef\u4ee5\u66f4\u65b0",
     "main.update.banner_detail": "\u70b9\u4e00\u4e0b\u5373\u53ef\u4e0b\u8f7d\u5b89\u88c5\uff0c\u5b8c\u6210\u540e Pacer \u4f1a\u81ea\u52a8\u91cd\u542f\u3002",
@@ -939,6 +939,11 @@
     "support.code.wechat_hint": "\u7528\u5fae\u4fe1\u626b\u4e00\u626b",
     "support.coffee.detail": "\u5b8c\u5168\u81ea\u613f\uff0c\u4e0d\u5f71\u54cd\u4efb\u4f55\u529f\u80fd\u3002",
     "support.coffee.title": "\u8bf7\u6211\u4eec\u559d\u676f\u5496\u5561",
+    "support.qq.code": "\u4e8c\u7ef4\u7801",
+    "support.qq.copy": "\u590d\u5236\u7fa4\u53f7",
+    "support.qq.hint": "\u7528 QQ \u626b\u4e00\u626b\u52a0\u5165",
+    "support.qq.number": "\u7fa4\u53f7 %@",
+    "support.qq.title": "QQ \u4ea4\u6d41\u7fa4",
     "support.share.action": "\u5206\u4eab\u2026",
     "support.share.copied": "\u5df2\u590d\u5236",
     "support.share.copy": "\u590d\u5236\u94fe\u63a5",
