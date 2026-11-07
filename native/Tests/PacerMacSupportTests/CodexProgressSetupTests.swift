@@ -1,3 +1,4 @@
+import Darwin
 import PacerMacSupport
 import XCTest
 @testable import PacerCore
@@ -97,5 +98,32 @@ final class CodexProgressSetupTests: XCTestCase {
         XCTAssertTrue(flagged(new), "The profile still wanted keeps reporting while its setup runs")
         _ = gate.change(home: foreign, wanted: false, previous: nil, storage: storage)
         XCTAssertEqual(try Data(contentsOf: CodexProgressSetup.flag(foreign)), Data("kept\n".utf8), "Only Pacer's own flag is removed")
+    }
+
+    func testDisableRejectsANamedPipeInPlaceOfTheFlag() async throws {
+        let home = try profile(), flag = CodexProgressSetup.flag(home)
+        try FileManager.default.createDirectory(at: flag.deletingLastPathComponent(), withIntermediateDirectories: true)
+        XCTAssertEqual(mkfifo(flag.path, 0o600), 0)
+        let storage = storage, finished = ShutdownSignal()
+        let setup = Task.detached {
+            defer { finished.finish() }
+            _ = CodexProgressSwitchGate().change(home: home, wanted: false, previous: nil, storage: storage)
+            return await CodexProgressSetup.apply(home: home, reporter: nil, storage: storage, owns: { _ in false }) { nil }
+        }
+        guard try await TestWait.until({ finished.isFinished }) else {
+            // Release a blocked open if the storage regressed, so the test can exit.
+            let writer = open(flag.path, O_WRONLY | O_NONBLOCK)
+            if writer >= 0 {
+                try? FileManager.default.removeItem(at: flag)
+                close(writer)
+            }
+            XCTFail("Disabling waited for a pipe writer")
+            return
+        }
+        let status = await setup.value
+        XCTAssertEqual(status, .failed)
+        var info = stat()
+        XCTAssertEqual(lstat(flag.path, &info), 0)
+        XCTAssertEqual(info.st_mode & S_IFMT, S_IFIFO)
     }
 }

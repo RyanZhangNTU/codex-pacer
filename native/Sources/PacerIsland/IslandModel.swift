@@ -328,6 +328,7 @@ final class IslandModel: ObservableObject {
     @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
     private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
     private var codexProgressSetupTask: Task<Void, Never>?
+    private var codexProgressFlagTask: Task<Int, Never>?
     private var codexProgressSetupRequest: UUID?
     private let codexProgressGate = CodexProgressSwitchGate()
     var showsCodexProgressRing: Bool { defaults.bool(forKey: Self.codexProgressRingKey) }
@@ -338,16 +339,21 @@ final class IslandModel: ObservableObject {
         let previous = codexProgressTarget
         guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
         codexProgressTarget = (home, executable, wanted)
-        // Turning reporting off, or leaving a home, takes effect at once: an
-        // earlier setup may still be waiting for Codex, and Pacer may quit
-        // before the registration itself is removed.
+        // Apply flag changes in order, off the main actor and independently
+        // of any earlier setup that is still waiting for Codex.
         let gate = codexProgressGate
-        let generation = gate.change(home: home, wanted: wanted, previous: previous?.home, storage: MacClaudeHookStorage())
+        let previousFlagTask = codexProgressFlagTask
+        let flagTask = Task.detached(priority: .userInitiated) {
+            _ = await previousFlagTask?.value
+            return gate.change(home: home, wanted: wanted, previous: previous?.home, storage: MacClaudeHookStorage())
+        }
+        codexProgressFlagTask = flagTask
         let pending = codexProgressSetupTask, request = UUID()
         codexProgressSetupRequest = request
         codexProgressSetup = wanted ? .settingUp : nil
         codexProgressSetupTask = Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
+                let generation = await flagTask.value
                 await pending?.value
                 if let previous, previous.home != home {
                     _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
@@ -356,6 +362,7 @@ final class IslandModel: ObservableObject {
                                                          gate: gate, request: generation)
             }.value
             guard let self, !stopped, codexProgressSetupRequest == request else { return }
+            codexProgressFlagTask = nil
             codexProgressSetupTask = nil
             codexProgressSetup = status
         }
@@ -1716,6 +1723,9 @@ final class IslandModel: ObservableObject {
     }
 
     func shutdown() async {
+        // A saved opt-out also takes effect if the settings view has not yet
+        // applied its pending changes.
+        if codexProgressTarget?.enabled == true, !showsCodexProgressRing { syncCodexProgressSwitch() }
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()
@@ -1728,7 +1738,9 @@ final class IslandModel: ObservableObject {
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
         let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup, realtime = realtimeMonitor
+        let progressFlag = codexProgressFlagTask
         let completed = await ApplicationLifecycleCoordinator.cleanup([
+            .codexProgressFlag: { _ = await progressFlag?.value },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
             .cloud: { await cloud?.stop() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
             .deepseekActivity: { await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },

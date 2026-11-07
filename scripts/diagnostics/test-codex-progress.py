@@ -9,6 +9,7 @@ from pathlib import Path
 import plistlib
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -24,13 +25,15 @@ REPORTS = [63, 41]
 MAC_QA_ID = "com.codexpacer.app.qa.codex-progress"
 MAC_OWNER = {"PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"}
 MAC_SWITCH = "Show Codex Task Progress"
-MAC_SETUP = {"ready": "Progress reporting is ready for new local Codex sessions.",
+MAC_SETUP = {"settingUp": "Setting up progress reporting…",
+             "ready": "Progress reporting is ready for new local Codex sessions.",
              "conflict": "The Codex MCP configuration already has an entry named pacer_progress."}
 MAC_RING = {"working": "Self-reported progress about %d%%", "done": "Request done", "failed": "Failed at a self-reported %d%%"}
 # Lists a process's windows, prints the accessibility text of its windows one
 # element per line, or presses the control a label names (its own label, or a
 # text beside it in the same row). SwiftUI builds the tree once a client asks.
 MAC_HELPER = r"""
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -64,7 +67,7 @@ var pressed = false
 func walk(_ element: AXUIElement, depth: Int) {
     guard depth < 40, !pressed else { return }
     let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    if mode == "press" {
+    if mode == "press" || mode == "press-and-quit" {
         // A Settings section is one group: a switch follows its title and help text.
         let needle = CommandLine.arguments[3]
         var control = pressable(element) && labels(element).contains(needle) ? element : nil
@@ -78,6 +81,10 @@ func walk(_ element: AXUIElement, depth: Int) {
     for child in children { walk(child, depth: depth + 1) }
 }
 for window in value(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { walk(window, depth: 0) }
+if mode == "press-and-quit" {
+    guard pressed else { exit(1) }
+    exit(NSRunningApplication(processIdentifier: pid)?.terminate() == true ? 0 : 2)
+}
 exit(mode == "press" && !pressed ? 1 : 0)
 """
 
@@ -369,11 +376,15 @@ class MacHost:
         result = subprocess.run([str(self.helper), "ax", str(self.process.pid)], capture_output=True, text=True, timeout=15)
         return result.stdout.splitlines()
 
-    def press(self, label):
+    def press(self, label, quit_after=False):
         deadline = time.monotonic() + 20
+        mode = "press-and-quit" if quit_after else "press"
         while time.monotonic() < deadline:
-            if subprocess.run([str(self.helper), "press", str(self.process.pid), label], capture_output=True, timeout=15).returncode == 0:
+            result = subprocess.run([str(self.helper), mode, str(self.process.pid), label], capture_output=True, timeout=15)
+            if result.returncode == 0:
                 return
+            if result.returncode != 1:
+                result.check_returncode()
             time.sleep(0.25)
         self.capture("failure")
         raise RuntimeError("The macOS app has no control named " + repr(label))
@@ -385,13 +396,6 @@ class MacHost:
                 return
             time.sleep(0.2)
         raise RuntimeError(failure)
-
-    def reporting(self):
-        """Whether a reporter that Codex already started still accepts an estimate."""
-        with Lines([str(self.executable), "--codex-progress-mcp", str(self.profile)], self.profile, os.environ) as reporter:
-            reporter.rpc("initialize", {"protocolVersion": "2025-06-18"}, mcp=True)
-            call = {"name": "report_progress", "arguments": {"percent": 41}}
-            return not reporter.rpc("tools/call", call, mcp=True)["isError"]
 
     def wait_label(self, accept, description, timeout=20, expanded=False):
         deadline = time.monotonic() + timeout
@@ -483,19 +487,25 @@ class MacHost:
         # at once must still stop every reporter Codex already started.
         slow = workspace / "slow-codex" / "codex"
         slow.parent.mkdir()
-        slow.write_text('#!/bin/sh\nsleep 6\nexec "%s" "$@"\n' % self.codex, encoding="utf-8")
+        slow.write_text('#!/bin/sh\nsleep 6\nexec %s "$@"\n' % shlex.quote(self.codex), encoding="utf-8")
         slow.chmod(0o755)
         self.launch(str(slow))
-        self.press(MAC_SWITCH)
-        self.wait_until(lambda: not self.flag.exists(), "Turning the switch off waited for the slow setup", timeout=3)
-        self.quit()
-        if self.flag.exists() or self.reporting():
-            raise RuntimeError("A reporter still accepted estimates after the switch turned off during a slow setup")
+        self.wait_setup("settingUp")
+        with Lines([str(self.executable), "--codex-progress-mcp", str(self.profile)], self.profile, self.env) as reporter:
+            reporter.rpc("initialize", {"protocolVersion": "2025-06-18"}, mcp=True)
+            call = {"name": "report_progress", "arguments": {"percent": 41}}
+            if reporter.rpc("tools/call", call, mcp=True)["isError"]:
+                raise RuntimeError("The existing reporter was not enabled before turning the switch off")
+            self.press(MAC_SWITCH, quit_after=True)
+            if self.process.wait(timeout=5) != 0:
+                raise RuntimeError("The macOS copy did not quit normally")
+            if self.flag.exists() or not reporter.rpc("tools/call", call, mcp=True)["isError"]:
+                raise RuntimeError("A connected reporter stayed enabled after turning off and immediately quitting")
         self.launch()
         self.wait_until(lambda: self.entry() is None, "The next launch kept the leftover registration")
         self.press(MAC_SWITCH)
         self.wait_setup("ready")
-        print("PASS macOS switch: turning off during a slow setup stops reporting at once; the next launch cleans up", flush=True)
+        print("PASS macOS switch: a connected reporter stops after turning off and immediately quitting; the next launch cleans up", flush=True)
 
     def check_ring(self, mode, fraction):
         text = MAC_RING[mode] % round(fraction * 100) if "%" in MAC_RING[mode] else MAC_RING[mode]
