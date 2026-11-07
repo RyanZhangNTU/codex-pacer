@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "cf8218f006e16dedb3a70e6c21e8805a07816be369334bc3746c0791ebc5e848",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "278878c7061010a985cdef8f1b428c2c41a4e2f16374205f3041b21f5906e3ae",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -396,7 +396,7 @@
     "deepseek.platform_account": "Platform account",
     "deepseek.price_list": "DeepSeek pricing",
     "deepseek.pricing_note": "Costs are estimated on this Mac from token counts and DeepSeek\u2019s published prices: doubled on Beijing weekdays 09:00\u201312:00 and 14:00\u201318:00, off-peak on weekends and 2026 public holidays (make-up working days count as weekends, so this is an estimate). Web search costs \u00a55 per 1,000 calls from 1 Nov 2026. Only DeepSeek\u2019s own channels are estimated; your platform bill is authoritative.",
-    "deepseek.progress_cleanup.conflict": "Pacer couldn\u2019t remove its reporting tool because its entry in cordis.patch.yml was edited. Remove the lines between the Codex Pacer markers and retry.",
+    "deepseek.progress_cleanup.conflict": "Pacer couldn\u2019t remove its reporting tool because its entry in cordis.patch.yml was edited. Remove both Codex Pacer marker lines and everything between them, then retry.",
     "deepseek.progress_cleanup.failed": "Couldn\u2019t remove the reporting tool. Check the Harness data folder and retry.",
     "deepseek.progress_ring": "Show DeepSeek Task Progress",
     "deepseek.progress_ring_help": "Adds Pacer\u2019s reporting tool to the Harness data folder, for every profile in Harness and its CLI. The ring shows DeepSeek\u2019s estimate for your request.",

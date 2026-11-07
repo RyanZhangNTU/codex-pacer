@@ -392,7 +392,7 @@
     "deepseek.platform_account": "Platform account",
     "deepseek.price_list": "DeepSeek pricing",
     "deepseek.pricing_note": "Costs are estimated on this Mac from token counts and DeepSeek’s published prices: doubled on Beijing weekdays 09:00–12:00 and 14:00–18:00, off-peak on weekends and 2026 public holidays (make-up working days count as weekends, so this is an estimate). Web search costs ¥5 per 1,000 calls from 1 Nov 2026. Only DeepSeek’s own channels are estimated; your platform bill is authoritative.",
-    "deepseek.progress_cleanup.conflict": "Pacer couldn’t remove its reporting tool because its entry in cordis.patch.yml was edited. Remove the lines between the Codex Pacer markers and retry.",
+    "deepseek.progress_cleanup.conflict": "Pacer couldn’t remove its reporting tool because its entry in cordis.patch.yml was edited. Remove both Codex Pacer marker lines and everything between them, then retry.",
     "deepseek.progress_cleanup.failed": "Couldn’t remove the reporting tool. Check the Harness data folder and retry.",
     "deepseek.progress_ring": "Show DeepSeek Task Progress",
     "deepseek.progress_ring_help": "Adds Pacer’s reporting tool to the Harness data folder, for every profile in Harness and its CLI. The ring shows DeepSeek’s estimate for your request.",

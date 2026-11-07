@@ -38,7 +38,7 @@ StartupApproved 的二进制格式没有公开 API 契约。当前识别已观�
 
 Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 Pacer 自有的当前或旧版 hook 命令；status-line 仍是 Pacer 包装时恢复原值；只移除安装记录里由 Pacer 添加且未被用户修改的环境值。原有或后来添加的用户 hooks、status-line 和其他配置不删除。处理本机默认、已配置及运行时索引记录的 Claude home，不处理远程 hooks。无安装记录时不推测归属。全部 hook 清理后，再按所有权和引用检查删除共享运行时；未知文件或用户引用会阻止删除。
 
-DeepSeek Harness 的进度上报在 `%USERPROFILE%\.dsh`（设置了 `DSH_HOME` 时用它）和 Pacer 设置中选择的数据目录里清理，只处理含 `pacer\deepseek-progress` 的目录。卸载先预检，再在关闭应用后移除 cordis.patch.yml 中校验和仍匹配的 Pacer 条目、开关文件和带 Pacer 标记的上报脚本。条目被改过时保留文件，作为清理失败报告，并给出手动删除两行标记之间内容的方法。
+DeepSeek Harness 的进度上报在 `%USERPROFILE%\.dsh`（设置了 `DSH_HOME` 时用它）和 Pacer 设置中选择的数据目录里清理，只处理含 `pacer\deepseek-progress` 的目录。卸载先预检，再在关闭应用后移除 cordis.patch.yml 中校验和仍匹配的 Pacer 条目、开关文件和带 Pacer 标记的上报脚本。条目被改过时保留文件，作为清理失败报告，并给出手动删除两行标记及其之间全部内容的方法。
 
 偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；正常清理后，配置不再引用这些脚本。
 
